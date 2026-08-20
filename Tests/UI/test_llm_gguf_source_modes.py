@@ -114,6 +114,14 @@ async def _mount_models(
     for _ in range(4):
         await pilot.pause()
     window = screen.query_one(LLMManagementWindow)
+    await _settle_pilot_until(
+        pilot,
+        lambda: (
+            window.active_view == "llama-cpp"
+            and len(window.query("#llm-view-remote")) == 1
+        ),
+        message="deferred model views did not finish mounting",
+    )
     return app, pilot, context, screen, window, inventory_service
 
 
@@ -1187,8 +1195,13 @@ async def test_supported_width_keyboard_reaches_each_provider_source_and_actions
         await pilot.press("tab")
         await _settle_pilot_until(
             pilot,
-            lambda: managed.has_focus,
-            message=f"{provider} managed selector did not receive focus",
+            lambda: (
+                managed.has_focus
+                and managed in app.screen._compositor.visible_widgets
+                and managed.region.y >= view.content_region.y
+                and managed.region.bottom <= view.content_region.bottom
+            ),
+            message=f"{provider} managed selector did not settle inside its view",
         )
         assert managed.has_focus
         assert not managed.expanded
@@ -1254,7 +1267,15 @@ async def test_supported_width_keyboard_reaches_each_provider_source_and_actions
             ".gguf-source-copy", Static
         )
         copy.scroll_visible(animate=False)
-        await pilot.pause()
+        await _settle_pilot_until(
+            pilot,
+            lambda: (
+                copy in app.screen._compositor.visible_widgets
+                and copy.region.y >= view.content_region.y
+                and copy.region.bottom <= view.content_region.bottom
+            ),
+            message=f"{provider} external copy did not settle inside its view",
+        )
         _assert_painted_inside(app, copy, view)
         external_svg = app.export_screenshot(simplify=True)
         assert all(

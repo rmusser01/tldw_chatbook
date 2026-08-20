@@ -573,16 +573,12 @@ async def test_menu_open_row_body_click_dismisses_menu_and_toggles():
         await _drag_over_body(pilot, row, start_x=3, end_x=11)
         assert len(app.query(ConsoleSelectionMenu)) == 1  # menu open at release
 
-        # Click ANOTHER row's body. The screen-anchored menu can cover that
-        # cell, so popover semantics apply: the first click dismisses the
-        # selection UI, the second (menu gone) toggles the row.
+        # Click ANOTHER row's body. The press dismisses the selection UI and
+        # the same genuine click still toggles the target row.
         other_body = app.query_one("#console-message-m2 .console-transcript-message-body")
         await pilot.click(other_body, offset=(0, 1))
         await pilot.pause()
         assert not app.query(ConsoleSelectionMenu)  # folded
-
-        await pilot.click(other_body, offset=(0, 1))
-        await pilot.pause()
         assert transcript.selected_message_id == "m2"  # toggle still works
 
 

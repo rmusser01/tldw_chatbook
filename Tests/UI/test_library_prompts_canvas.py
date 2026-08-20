@@ -1777,7 +1777,7 @@ async def test_library_shell_prompt_select_mode_geometry_matrix(
 
     async with host.run_test(size=size) as pilot:
         await _wait_for_library_shell(screen, pilot)
-        screen.query_one("#library-row-browse-prompts").press()
+        await _open_prompts_list(screen, pilot)
         await _wait_for_selector(screen, pilot, "#library-prompt-row-5")
         if shell_case == "mutation":
             screen._library_prompts_mutation_in_flight = True
@@ -2493,11 +2493,20 @@ async def _wait_for_prompt_browse_scope(
     screen: LibraryScreen,
     pilot,
     scope: PromptBrowseScope,
+    *,
+    timeout: float = 30.0,
 ) -> None:
     """Wait for the exact mounted Prompt browse projection to settle."""
-    for _ in range(200):
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
         result = screen._library_prompt_browse_controller.result
-        if result.scope == scope and result.status not in {"loading", "error"}:
+        canvases = list(screen.query("#library-prompts-canvas"))
+        if (
+            result.scope == scope
+            and result.status != "loading"
+            and len(canvases) == 1
+            and canvases[0].browse_result == result
+        ):
             await pilot.pause()
             return
         await pilot.pause(0.02)
@@ -3034,7 +3043,7 @@ async def test_prompt_selection_persists_across_search_page_sort_and_collection(
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
-        screen.query_one("#library-row-browse-prompts").press()
+        await _open_prompts_list(screen, pilot)
         await _wait_for_selector(screen, pilot, "#library-prompt-row-31")
 
         screen.query_one("#library-prompts-select", Button).press()
@@ -3486,7 +3495,7 @@ async def test_library_shell_prompts_row_press_renders_list_canvas():
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
-        screen.query_one("#library-row-browse-prompts").press()
+        await _open_prompts_list(screen, pilot)
         await _wait_for_selector(screen, pilot, "#library-prompt-row-5")
 
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
@@ -4045,7 +4054,7 @@ async def test_library_prompts_enter_flushes_debounce_without_duplicate_call():
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
-        screen.query_one("#library-row-browse-prompts").press()
+        await _open_prompts_list(screen, pilot)
         await _wait_for_selector(screen, pilot, "#library-prompt-row-5")
 
         screen._queue_library_prompts_search("plan")
@@ -4073,7 +4082,7 @@ async def test_library_prompts_retry_recovers_service_error():
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
-        screen.query_one("#library-row-browse-prompts").press()
+        await _open_prompts_list(screen, pilot)
         await _wait_for_selector(screen, pilot, "#library-prompts-retry")
         first_token = screen._library_prompt_browse_controller.result.request_token
 
@@ -4113,7 +4122,7 @@ async def test_library_prompts_browse_failure_keeps_exception_details_out_of_log
         async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
             screen = _active_library_screen(host)
             await _wait_for_library_shell(screen, pilot)
-            screen.query_one("#library-row-browse-prompts").press()
+            await _open_prompts_list(screen, pilot)
             error = await _wait_for_selector(
                 screen, pilot, "#library-prompts-page-status"
             )
@@ -4156,7 +4165,7 @@ async def test_library_prompts_result_restores_row_or_toolbar_focus(next_page: i
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
-        screen.query_one("#library-row-browse-prompts").press()
+        await _open_prompts_list(screen, pilot)
         await _wait_for_selector(screen, pilot, "#library-prompt-row-1")
         row = screen.query_one("#library-prompt-row-1", Button)
         row.focus()
@@ -4202,7 +4211,7 @@ async def test_library_prompts_search_preserves_filter_caret_while_loading_and_r
         async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
             screen = _active_library_screen(host)
             await _wait_for_library_shell(screen, pilot)
-            screen.query_one("#library-row-browse-prompts").press()
+            await _open_prompts_list(screen, pilot)
             await _wait_for_selector(screen, pilot, "#library-prompt-row-5")
 
             prompt_filter = screen.query_one("#library-prompts-filter", Input)
@@ -4252,7 +4261,7 @@ async def test_library_prompts_debounced_search_uses_live_caret_at_dispatch():
         async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
             screen = _active_library_screen(host)
             await _wait_for_library_shell(screen, pilot)
-            screen.query_one("#library-row-browse-prompts").press()
+            await _open_prompts_list(screen, pilot)
             await _wait_for_selector(screen, pilot, "#library-prompt-row-5")
 
             prompt_filter = screen.query_one("#library-prompts-filter", Input)
@@ -4303,7 +4312,7 @@ async def test_library_prompts_settlement_keeps_newer_surviving_focus():
         async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
             screen = _active_library_screen(host)
             await _wait_for_library_shell(screen, pilot)
-            screen.query_one("#library-row-browse-prompts").press()
+            await _open_prompts_list(screen, pilot)
             await _wait_for_selector(screen, pilot, "#library-prompt-row-5")
 
             prompt_filter = screen.query_one("#library-prompts-filter", Input)
@@ -4358,7 +4367,7 @@ async def test_library_prompts_settlement_keeps_any_live_canvas_control_focus(
         async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
             screen = _active_library_screen(host)
             await _wait_for_library_shell(screen, pilot)
-            screen.query_one("#library-row-browse-prompts").press()
+            await _open_prompts_list(screen, pilot)
             await _wait_for_selector(screen, pilot, "#library-prompt-row-5")
 
             prompt_filter = screen.query_one("#library-prompts-filter", Input)
@@ -4407,7 +4416,7 @@ async def test_library_prompts_live_focus_that_disappears_uses_bounded_fallback(
         async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
             screen = _active_library_screen(host)
             await _wait_for_library_shell(screen, pilot)
-            screen.query_one("#library-row-browse-prompts").press()
+            await _open_prompts_list(screen, pilot)
             await _wait_for_selector(screen, pilot, "#library-prompt-row-5")
 
             prompt_filter = screen.query_one("#library-prompts-filter", Input)
@@ -4464,7 +4473,7 @@ async def test_library_prompts_stale_search_cannot_restore_an_old_filter_caret()
         async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
             screen = _active_library_screen(host)
             await _wait_for_library_shell(screen, pilot)
-            screen.query_one("#library-row-browse-prompts").press()
+            await _open_prompts_list(screen, pilot)
             await _wait_for_selector(screen, pilot, "#library-prompt-row-5")
 
             prompt_filter = screen.query_one("#library-prompts-filter", Input)
@@ -4530,7 +4539,7 @@ async def test_library_shell_prompts_row_secondary_line_shows_details_not_author
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
-        screen.query_one("#library-row-browse-prompts").press()
+        await _open_prompts_list(screen, pilot)
         await _wait_for_selector(screen, pilot, "#library-prompt-row-5")
 
         button = screen.query_one("#library-prompt-row-5", Button)
@@ -4591,7 +4600,7 @@ async def test_library_real_recipe_list_pipeline_preserves_type_source_and_lanes
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
-        screen.query_one("#library-row-browse-prompts").press()
+        await _open_prompts_list(screen, pilot)
         await _wait_for_selector(screen, pilot, f"#library-prompt-row-{prompt_id}")
 
         button = screen.query_one(f"#library-prompt-row-{prompt_id}", Button)
@@ -4914,7 +4923,7 @@ def _wire_empty_non_prompt_services(app) -> None:
 
 async def _open_prompt_editor(screen, pilot, prompt_id: int) -> None:
     """Open the rail's Prompts row, then a specific prompt's row."""
-    screen.query_one("#library-row-browse-prompts").press()
+    await _open_prompts_list(screen, pilot)
     row = await _wait_for_selector(
         screen,
         pilot,
@@ -6429,6 +6438,11 @@ async def test_library_prompt_import_blocks_undo_until_import_settles(tmp_path):
         assert screen._library_prompts_import_status == (
             "1 imported · 0 skipped (duplicate name)"
         )
+        # Import completion starts a separate browse projection; retry only
+        # after its recompose so this press targets the live receipt button.
+        await _wait_for_prompt_browse_scope(
+            screen, pilot, screen._library_prompt_browse_controller.scope
+        )
 
         await _wait_for_prompt_browse_scope(
             screen,
@@ -6643,6 +6657,10 @@ async def test_cancelled_prompt_import_retains_writer_ownership_until_commit(tmp
         imported = db.fetch_prompt_details("Cancelled import settles")
         assert imported is not None
         assert imported["deleted"] == 0
+        # The import worker settles before its follow-up browse projection.
+        await _wait_for_prompt_browse_scope(
+            screen, pilot, screen._library_prompt_browse_controller.scope
+        )
 
         await _wait_for_prompt_browse_scope(
             screen,
@@ -9396,7 +9414,11 @@ async def test_library_use_recipe_creates_unsaved_prompt_copy_without_staging(tm
         await _open_prompt_editor(screen, pilot, prompt_id)
 
         screen.query_one("#library-prompt-insert-console", Button).press()
-        await pilot.pause()
+        await _wait_for_selector(
+            screen,
+            pilot,
+            "#prompt-block-syntax-goal",
+        )
 
         app.stage_console_prompt_insert.assert_not_called()
         assert screen._selected_prompt_id is None
@@ -9628,13 +9650,12 @@ async def test_library_prompt_compatibility_editor_discard_returns_to_current_li
             (scope_before, f"library-prompt-row-{prompt_id}")
         ]
         assert refresh_calls == 1
-        for _ in range(100):
-            row = screen.query_one(f"#library-prompt-row-{prompt_id}", Button)
-            if screen.focused is row:
+        row_id = f"library-prompt-row-{prompt_id}"
+        for _ in range(500):
+            if getattr(screen.focused, "id", None) == row_id:
                 break
             await pilot.pause(0.02)
-        row = screen.query_one(f"#library-prompt-row-{prompt_id}", Button)
-        assert screen.focused is row
+        assert getattr(screen.focused, "id", None) == row_id
 
     save_prompt.assert_not_awaited()
     after = db.fetch_prompt_details(prompt_id)
@@ -9736,9 +9757,21 @@ async def test_library_prompt_discard_refuses_while_save_is_in_flight(tmp_path):
 
 async def _open_prompts_list(screen, pilot) -> None:
     """Open the rail's Prompts row (list view, not the editor)."""
+    previous_token = screen._library_prompt_browse_controller.result.request_token
     screen.query_one("#library-row-browse-prompts").press()
-    await pilot.pause()
-    await pilot.pause()
+    deadline = asyncio.get_running_loop().time() + 30.0
+    while asyncio.get_running_loop().time() < deadline:
+        result = screen._library_prompt_browse_controller.result
+        if result.request_token > previous_token:
+            break
+        await pilot.pause(0.02)
+    else:
+        raise AssertionError("Prompts rail press never started a browse request")
+    await _wait_for_prompt_browse_scope(
+        screen,
+        pilot,
+        result.scope,
+    )
 
 
 @pytest.mark.asyncio
@@ -12236,7 +12269,8 @@ async def test_library_prompt_open_existing_button_shows_only_in_name_in_use_sta
         assert screen._selected_prompt_id == alpha_id
 
         for _ in range(150):
-            if screen.query_one("#library-prompt-name", Input).value == "Alpha":
+            names = list(screen.query("#library-prompt-name"))
+            if names and names[0].value == "Alpha":
                 break
             await pilot.pause(0.02)
         assert screen.query_one("#library-prompt-name", Input).value == "Alpha"
@@ -12299,7 +12333,9 @@ async def test_library_prompt_open_existing_resolves_offending_name_not_drifted_
         # failed/empty lookup for the drifted "Not A Real Prompt" text.
         assert screen._selected_prompt_id == alpha_id
         for _ in range(150):
-            if screen.query_one("#library-prompt-name", Input).value == "Alpha":
+            names = list(screen.query("#library-prompt-name"))
+            if names and names[0].value == "Alpha":
+                await pilot.pause()
                 break
             await pilot.pause(0.02)
         assert screen.query_one("#library-prompt-name", Input).value == "Alpha"

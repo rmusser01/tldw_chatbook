@@ -595,6 +595,7 @@ def test_required_node_alias_cannot_hide_beside_the_exact_node(
         "/Users/runner/work/private/test_executor_process_tree.py",
         r"C:\a\private\test_executor_process_tree.py",
     ),
+    ids=("posix-private-path", "windows-private-path"),
 )
 def test_junit_file_is_never_authority_and_wrong_module_fails(
     tmp_path: Path,
@@ -748,6 +749,16 @@ def test_failure_documents_accept_only_stable_codes_and_stages(
         ("handle", "0x1af"),
         ("username", "runneradmin"),
         ("command", "python -m pytest"),
+    ),
+    ids=(
+        "posix-home-path",
+        "posix-opt-path",
+        "windows-user-path",
+        "unc-path",
+        "pid",
+        "handle",
+        "username",
+        "command",
     ),
 )
 def test_result_validation_rejects_path_process_and_user_material(

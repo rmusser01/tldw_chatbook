@@ -44,6 +44,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from Tests.UI.background_signals import (
+    await_background_task,
+    wait_for_background_signal,
+)
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_character_session_prompt_seed import (
     _character_screen,
@@ -359,16 +363,25 @@ async def test_concurrent_character_handoff_does_not_duplicate_session_or_greeti
 
     screen.app_instance.character_persona_scope_service.get_character = get_character
     payload = _start_chat_handoff(card)
-    first = asyncio.create_task(
-        screen._session._start_character_console_session(payload)
+
+    async def start_both() -> list[bool]:
+        return await asyncio.gather(
+            screen._session._start_character_console_session(payload),
+            screen._session._start_character_console_session(payload),
+        )
+
+    both = asyncio.create_task(start_both())
+    await wait_for_background_signal(
+        both_fetches_started,
+        both,
+        what="both concurrent character fetches to start",
     )
-    second = asyncio.create_task(
-        screen._session._start_character_console_session(payload)
-    )
-    await both_fetches_started.wait()
     release_fetches.set()
 
-    assert await asyncio.gather(first, second) == [True, True]
+    assert await await_background_task(
+        both,
+        what="both concurrent character handoffs to finish",
+    ) == [True, True]
     assert len(store.sessions()) == 1
     assert len(store.messages_for_session(store.active_session_id)) == 1
 

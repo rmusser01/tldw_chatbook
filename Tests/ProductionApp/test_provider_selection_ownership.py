@@ -5,7 +5,7 @@ import logging
 
 import pytest
 from textual.css.query import NoMatches
-from textual.widgets import Input, OptionList, Select
+from textual.widgets import Input, OptionList
 
 import tldw_chatbook.app as app_module
 from tldw_chatbook.app import LLMProviderProvider, TldwCli
@@ -90,39 +90,31 @@ async def _wait_for_widget(screen, pilot, selector: str, widget_type):
     raise AssertionError(f"production screen did not render {selector}")
 
 
-async def _wait_for_stable_provider_select(
+async def _wait_for_stable_provider_picker(
     settings: SettingsScreen,
     pilot,
-) -> Select:
+) -> OptionList:
     for _ in range(300):
-        settings_workers = tuple(
-            worker for worker in settings.app.workers if worker.node is settings
-        )
-        if settings_workers:
-            await settings.app.workers.wait_for_complete(settings_workers)
-            await pilot.pause()
-            continue
         try:
-            provider_select = settings.query_one("#settings-provider-value", Select)
-            overlay = provider_select.query_one("SelectOverlay")
+            provider_picker = settings.query_one(
+                "#settings-provider-picker", OptionList
+            )
         except NoMatches:
             await pilot.pause(0.01)
             continue
         if (
-            provider_select.is_mounted
-            and overlay.is_mounted
-            and provider_select.region.width > 0
-            and provider_select.region.height > 0
+            provider_picker.is_mounted
+            and provider_picker.region.width > 0
+            and provider_picker.region.height > 0
         ):
             await pilot.pause()
-            if settings.query_one(
-                "#settings-provider-value", Select
-            ) is provider_select and not any(
-                worker.node is settings for worker in settings.app.workers
+            if (
+                settings.query_one("#settings-provider-picker", OptionList)
+                is provider_picker
             ):
-                return provider_select
+                return provider_picker
         await pilot.pause(0.01)
-    raise AssertionError("production Settings provider control did not stabilize")
+    raise AssertionError("production Settings provider picker did not stabilize")
 
 
 async def _wait_until(pilot, predicate, failure: str) -> None:
@@ -297,14 +289,31 @@ async def test_settings_save_preserves_user_session_then_away_command_hands_off(
                 await pilot.pause(0.01)
             assert settings.active_category == SettingsCategoryId.PROVIDERS_MODELS.value
 
-            provider_select = await _wait_for_stable_provider_select(settings, pilot)
-            selected_provider = settings._provider_select_value_for_provider(
-                "Anthropic"
+            provider_picker = await _wait_for_stable_provider_picker(settings, pilot)
+            provider_search = await _wait_for_widget(
+                settings,
+                pilot,
+                "#settings-provider-search",
+                Input,
             )
-            provider_select.value = selected_provider
-            settings.handle_provider_value_changed(
-                Select.Changed(provider_select, selected_provider)
+            provider_search.value = "anthropic"
+            await _wait_until(
+                pilot,
+                lambda: (
+                    provider_picker.highlighted is not None
+                    and getattr(
+                        provider_picker.get_option_at_index(
+                            provider_picker.highlighted
+                        ),
+                        "provider_id",
+                        None,
+                    )
+                    == "anthropic"
+                ),
+                "the provider picker did not highlight Anthropic",
             )
+            provider_picker.focus()
+            await pilot.press("enter")
             await _wait_until(
                 pilot,
                 lambda: (

@@ -392,7 +392,9 @@ def test_context_controls_add_no_forbidden_keybindings() -> None:
             *ConsoleModelPopover.BINDINGS,
             *ConsoleSettingsModal.BINDINGS,
         )
-        for key in str(binding[0]).split(",")
+        for key in str(
+            binding.key if hasattr(binding, "key") else binding[0]
+        ).split(",")
     }
     assert keys.isdisjoint(forbidden)
 

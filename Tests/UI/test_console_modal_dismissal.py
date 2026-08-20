@@ -20,6 +20,10 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, Input, Select, Static
 
+from Tests.UI.background_signals import (
+    await_background_task,
+    wait_for_background_signal,
+)
 from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
 from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostRowTotals
 from tldw_chatbook.Chat.console_prompt_queue import ConsolePromptQueueRegistry
@@ -1924,14 +1928,25 @@ async def test_confirmation_cancel_callback_is_once_across_repeated_and_nested_i
         await pilot.pause()
 
         first_request = asyncio.create_task(modal.action_request_safe_cancel())
-        await entered.wait()
+        await wait_for_background_signal(
+            entered,
+            first_request,
+            what="the confirmation cancel callback to start",
+        )
         repeated_escape = asyncio.create_task(modal.action_request_safe_cancel())
         await pilot.click(offset=(0, 0))
         assert callback_calls == 1
         assert app.screen is modal
 
         release.set()
-        await asyncio.gather(first_request, repeated_escape)
+        await await_background_task(
+            first_request,
+            what="the confirmation cancel callback to finish",
+        )
+        await await_background_task(
+            repeated_escape,
+            what="the repeated confirmation cancel request to finish",
+        )
         await pilot.pause()
         assert app.screen is nested
         assert app.results == []
@@ -2548,7 +2563,11 @@ async def test_single_shot_consumes_repeated_escape_and_backdrop_while_pending()
         await _mount_modal(app, pilot, modal, results)
 
         first_escape = asyncio.create_task(modal.action_request_safe_cancel())
-        await entered.wait()
+        await wait_for_background_signal(
+            entered,
+            first_escape,
+            what="the single-shot cancel effect to start",
+        )
         second_escape = asyncio.create_task(modal.action_request_safe_cancel())
         backdrop = _outside_click(modal)
         backdrop_request = asyncio.create_task(modal.on_click(backdrop))
@@ -2562,11 +2581,17 @@ async def test_single_shot_consumes_repeated_escape_and_backdrop_while_pending()
             assert backdrop._no_default_action
         finally:
             release.set()
-            await asyncio.gather(
+            await await_background_task(
                 first_escape,
+                what="the single-shot cancel effect to finish",
+            )
+            await await_background_task(
                 second_escape,
+                what="the repeated single-shot cancel request to finish",
+            )
+            await await_background_task(
                 backdrop_request,
-                return_exceptions=True,
+                what="the pending backdrop request to finish",
             )
         await pilot.pause()
 
@@ -2886,12 +2911,19 @@ async def test_pending_escape_records_backdrop_before_terminal_dismissal():
         await _mount_modal(app, pilot, modal, results)
 
         pending_escape = asyncio.create_task(modal.action_request_safe_cancel())
-        await entered.wait()
+        await wait_for_background_signal(
+            entered,
+            pending_escape,
+            what="the pending escape effect to start",
+        )
         await pilot.click(offset=click_point)
         assert app.screen is modal
 
         release.set()
-        await pending_escape
+        await await_background_task(
+            pending_escape,
+            what="the pending escape effect to finish",
+        )
         await pilot.pause()
         assert app.screen is app.host
 
@@ -3004,7 +3036,11 @@ async def test_old_request_generation_cannot_dismiss_repushed_presentation():
         click_point = (underlying.region.x + 1, underlying.region.y + 1)
         await _mount_modal(app, pilot, modal, first_results)
         old_request = asyncio.create_task(modal.action_request_safe_cancel())
-        await first_entered.wait()
+        await wait_for_background_signal(
+            first_entered,
+            old_request,
+            what="the first modal generation effect to start",
+        )
 
         modal.dismiss(None)
         await pilot.pause()
@@ -3015,10 +3051,17 @@ async def test_old_request_generation_cannot_dismiss_repushed_presentation():
         new_request = asyncio.create_task(
             modal.on_click(_outside_click(modal, *click_point))
         )
-        await second_entered.wait()
+        await wait_for_background_signal(
+            second_entered,
+            new_request,
+            what="the replacement modal generation effect to start",
+        )
 
         first_release.set()
-        await old_request
+        await await_background_task(
+            old_request,
+            what="the retired modal generation effect to finish",
+        )
         await pilot.pause()
 
         try:
@@ -3029,7 +3072,10 @@ async def test_old_request_generation_cannot_dismiss_repushed_presentation():
             assert effect_calls == 2
         finally:
             second_release.set()
-            await new_request
+            await await_background_task(
+                new_request,
+                what="the replacement modal generation effect to finish",
+            )
         await pilot.pause()
 
         assert app.screen is app.host

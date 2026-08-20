@@ -138,6 +138,13 @@ def test_sensitive_container_value_is_redacted_before_recursion(value) -> None:
             "api_key=\nrefresh_token=***REDACTED***",
         ),
     ],
+    ids=(
+        "quoted-api-key",
+        "password-with-spaces",
+        "later-api-key",
+        "query-api-key",
+        "multiline-refresh-token",
+    ),
 )
 def test_assignment_scanner_contract(raw: str, expected: str) -> None:
     """Redact classified assignments without consuming later candidates."""
@@ -234,6 +241,7 @@ def test_url_userinfo_removes_both_username_and_password() -> None:
         "sk-DONOTUSEEXAMPLEONLY1234567890",
         "AIza" + "DO_NOT_USE_EXAMPLE_ONLY_" + "0" * 11,
     ],
+    ids=("openai-project", "anthropic", "openai-legacy", "google"),
 )
 def test_standalone_credential_shapes_are_replaced_wholly(raw: str) -> None:
     """Replace every recognized standalone key shape with exactly one marker."""
@@ -248,6 +256,12 @@ def test_standalone_credential_shapes_are_replaced_wholly(raw: str) -> None:
         "SK-DONOTUSEEXAMPLEONLY1234567890",
         "AIZA" + "DO_NOT_USE_EXAMPLE_ONLY_" + "0" * 11,
     ],
+    ids=(
+        "openai-project-uppercase",
+        "anthropic-uppercase",
+        "openai-legacy-uppercase",
+        "google-uppercase",
+    ),
 )
 def test_uppercase_standalone_credential_shapes_are_not_recognized(raw: str) -> None:
     """Keep standalone credential family recognition intentionally case-sensitive."""

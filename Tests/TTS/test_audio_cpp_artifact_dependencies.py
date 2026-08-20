@@ -449,6 +449,7 @@ def test_global_default_fails_closed_on_catalog_and_saved_disagreement() -> None
         "private transcript\nsecond line",
         "x" * 257,
     ),
+    ids=("path-shaped", "multiline", "oversized"),
 )
 def test_removal_evidence_rejects_unbounded_or_path_shaped_public_labels(
     private_value: str,

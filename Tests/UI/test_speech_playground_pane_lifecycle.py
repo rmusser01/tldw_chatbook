@@ -2759,6 +2759,10 @@ async def test_ready_clone_setup_preserves_editable_text_and_current_result_geom
         screen = _PaneScreen()
         await app.push_screen(screen)
         await _wait_until(pilot, lambda: len(screen.query(SpeechCloneSetup)) == 1)
+        await _wait_until(
+            pilot,
+            lambda: len(screen.query("#speech-clone-reference-text")) == 1,
+        )
         pane = screen.query_one(SpeechPlaygroundPane)
         screen.query_one("#tts-text-input", TextArea).text = "Generate speech."
         screen.query_one("#speech-clone-reference-text", TextArea).text = (
@@ -2784,6 +2788,10 @@ async def test_ready_clone_setup_preserves_editable_text_and_current_result_geom
         current_result = screen.query_one("#audio-player-container")
         export_result = screen.query_one("#audio-export-btn", Button)
         save_profile = screen.query_one("#audio-save-profile-btn", Button)
+        await _wait_until(
+            pilot,
+            lambda: save_profile.display and save_profile.region.height > 0,
+        )
         split = screen.query_one(".speech-split")
         assert split.region.height >= 6
         assert text_input.region.height >= 4

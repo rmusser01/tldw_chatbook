@@ -26,6 +26,7 @@ from tldw_chatbook.Chat.console_roleplay_identity import (
 )
 from tldw_chatbook.Widgets.Console.console_transcript import (
     ConsoleMarkdownMessage,
+    ConsoleMessageHeader,
     ConsoleRoleplayMarkdown,
     ConsoleTranscript,
     ConsoleTranscriptMessage,
@@ -192,7 +193,8 @@ async def test_immersive_markdown_flavor_is_distinct_and_accessibly_painted(them
 
         row = transcript.query_one("#console-message-a1", ConsoleMarkdownMessage)
         markdown = row.query_one(ConsoleRoleplayMarkdown)
-        label = row.query_one(".console-markdown-header", Static)
+        header = row.query_one(".console-markdown-header", ConsoleMessageHeader)
+        label = header.query_one(".console-transcript-speaker-label", Static)
         assert label.renderable.plain == "Alraune"
 
         styles = {
@@ -282,8 +284,9 @@ async def test_assistant_rows_render_markdown_and_other_roles_stay_plain():
         )
         row = transcript.query_one("#console-message-a1")
         assert isinstance(row, ConsoleMarkdownMessage)
-        header = row.query_one(".console-markdown-header")
-        assert "Generating…" in header.renderable.plain
+        header = row.query_one(".console-markdown-header", ConsoleMessageHeader)
+        label = header.query_one(".console-transcript-speaker-label", Static)
+        assert "Generating…" in label.renderable.plain
         # Empty message: footer hidden.
         assert row.query_one(".console-markdown-footer").display is False
 
@@ -381,8 +384,9 @@ async def test_streaming_appends_without_reparse(monkeypatch):
         await pilot.pause()
         assert len(append_calls) == 1
         assert not update_calls
-        header = row.query_one(".console-markdown-header")
-        assert "[streaming]" not in header.renderable.plain
+        header = row.query_one(".console-markdown-header", ConsoleMessageHeader)
+        label = header.query_one(".console-transcript-speaker-label", Static)
+        assert "[streaming]" not in label.renderable.plain
 
         # Non-prefix change (an edit / variant switch): full update fallback.
         transcript.set_messages([_assistant("rewritten", status="complete")])

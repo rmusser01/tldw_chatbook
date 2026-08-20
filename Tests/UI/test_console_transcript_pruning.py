@@ -113,11 +113,11 @@ async def test_pruning_drops_oldest_rows_over_high_watermark():
     app = PruneHarness(low=25, high=0)
     async with app.run_test() as pilot:
         transcript = app.query_one(ConsoleTranscript)
-        transcript.set_messages(_messages(12))
+        transcript.set_messages(_messages(14))
         await transcript.refresh_messages()
         await pilot.pause()
 
-        assert len(_mounted_message_ids(transcript)) == 12, (
+        assert len(_mounted_message_ids(transcript)) == 14, (
             "seed must mount every row before pruning runs"
         )
         assert transcript.virtual_size.height > 40, "seed must cross the high mark"
@@ -126,25 +126,25 @@ async def test_pruning_drops_oldest_rows_over_high_watermark():
         await transcript.refresh_messages()
 
         assert await _wait_for(
-            pilot, lambda: len(_mounted_message_ids(transcript)) < 12
+            pilot, lambda: len(_mounted_message_ids(transcript)) < 14
         ), "pruning never fired"
 
         mounted = _mounted_message_ids(transcript)
         assert "m0" not in mounted
         assert mounted, "pruning must keep the newest rows"
-        assert mounted[-1] == "m11"
-        assert len(mounted) == 12 - len(transcript._pruned_message_ids)
+        assert mounted[-1] == "m13"
+        assert len(mounted) == 14 - len(transcript._pruned_message_ids)
         # TASK-15453: explicit order, not just first/last presence -- the
         # surviving rows must render in the same relative order as the
         # (unpruned) message store.
         expected_order = [
-            f"m{i}" for i in range(12) if f"m{i}" not in transcript._pruned_message_ids
+            f"m{i}" for i in range(14) if f"m{i}" not in transcript._pruned_message_ids
         ]
         assert mounted == expected_order
         # Pruned down to (at most) the high watermark, erring on keeping rows.
         assert transcript.virtual_size.height <= 40
         # The store snapshot the widget was handed is untouched.
-        assert len(transcript._messages) == 12
+        assert len(transcript._messages) == 14
 
 
 @pytest.mark.asyncio
@@ -152,7 +152,7 @@ async def test_pruning_is_view_only_store_keeps_full_history():
     """messages_for_session still returns everything after pruning (AC4)."""
     store = ConsoleChatStore()
     session = store.create_session()
-    for message in _messages(12):
+    for message in _messages(14):
         store.append_message(
             session.id,
             role=message.role,
@@ -170,11 +170,11 @@ async def test_pruning_is_view_only_store_keeps_full_history():
         ), "pruning never fired"
 
         remaining = store.messages_for_session(session.id)
-        assert len(remaining) == 12
+        assert len(remaining) == 14
         # Exports render the full history, pruned rows included.
         plain = transcript.to_plain_text(width=40)
         assert "line 0.0" in plain
-        assert "line 11.3" in plain
+        assert "line 13.3" in plain
 
 
 @pytest.mark.asyncio
@@ -212,7 +212,7 @@ async def test_pruning_preserves_scroll_position_when_scrolled_up():
         # Grow the transcript past the high mark again (assistant growth, like
         # streaming, must not yank the reader either).
         history = list(transcript._messages) + [
-            _msg(100 + i, ConsoleMessageRole.ASSISTANT) for i in range(3)
+            _msg(100 + i, ConsoleMessageRole.ASSISTANT) for i in range(5)
         ]
         transcript.set_messages(history)
         await transcript.refresh_messages()
@@ -237,7 +237,7 @@ async def test_pruning_reanchors_when_following_tail():
     app = PruneHarness(low=25, high=40)
     async with app.run_test() as pilot:
         transcript = app.query_one(ConsoleTranscript)
-        transcript.set_messages(_messages(12))
+        transcript.set_messages(_messages(14))
         await transcript.refresh_messages()
 
         assert await _wait_for(
@@ -292,7 +292,7 @@ async def test_refresh_and_recompose_do_not_resurrect_pruned_rows():
     app = PruneHarness(low=25, high=40)
     async with app.run_test() as pilot:
         transcript = app.query_one(ConsoleTranscript)
-        history = _messages(12)
+        history = _messages(14)
         transcript.set_messages(history)
         await transcript.refresh_messages()
 

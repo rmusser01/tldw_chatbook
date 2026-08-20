@@ -497,6 +497,14 @@ def test_duration_validation_rejects_non_finite_or_unbounded_values(duration) ->
         ("detail", r"C:\\Users\\runner\\private"),
         ("detail", "hf_secret_credential"),
     ),
+    ids=(
+        "forbidden-path-key",
+        "forbidden-exception-key",
+        "forbidden-token-key",
+        "posix-home-value",
+        "windows-user-value",
+        "credential-like-value",
+    ),
 )
 def test_nested_private_content_is_rejected(key: str, value: str) -> None:
     evidence = _load(EVIDENCE_PATH, "evidence")

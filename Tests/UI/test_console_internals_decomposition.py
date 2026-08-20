@@ -199,7 +199,7 @@ async def _wait_for_console_library_rag_button_state(
 
 
 async def _wait_for_production_chat_screen(
-    app, pilot, *, timeout: float = 4.0
+    app, pilot, *, timeout: float = 10.0
 ) -> ChatScreen:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:

@@ -11544,11 +11544,16 @@ class LibraryScreen(BaseAppScreen):
         def restore_focus() -> None:
             if not self._library_entry_reconcile_is_current(generation, route_key):
                 return
-            if result.status == "loading" and focus_identity in {
-                "library-prompts-page-next",
-                "library-prompts-page-previous",
-            }:
-                return
+            if result.status == "loading" and focus_identity is not None:
+                if focus_identity in {
+                    "library-prompts-page-next",
+                    "library-prompts-page-previous",
+                }:
+                    return
+                try:
+                    self.query_one(f"#{focus_identity}", Widget)
+                except (NoMatches, QueryError):
+                    return
             if result.status == "loading" or restore_identity is not None:
                 self._restore_library_prompts_focus(
                     restore_identity,

@@ -1796,6 +1796,13 @@ async def test_console_workspace_sync_while_scrolled_keeps_scroll_range_stable()
     async with host.run_test(size=(120, 34)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-conversations")
+        # This contract needs the scrollable Context body; current Console
+        # startup may leave Context collapsed while Inspector owns the band.
+        console._set_console_rail_preference(
+            left_open=True,
+            notify_on_failure=False,
+        )
+        await pilot.pause()
 
         workspace_context = console.query_one(
             "#console-workspace-context",
@@ -2212,6 +2219,15 @@ async def test_section_header_caret_is_clickable_at_its_rendered_screen_coordina
         await _seed_console_transcript_message(console)
         await pilot.pause(0.3)
 
+        conversations_body = console.query_one(
+            "#console-rail-section-body-conversations"
+        )
+        chats_toggle = console.query_one(
+            "#console-conversation-browser-section-toggle-chats", Button
+        )
+        conversations_body.scroll_to_widget(chats_toggle, animate=False)
+        await pilot.pause()
+
         # Click #1 at the CARET'S rendered screen coordinates: collapse.
         lines = _render_screen_lines(console)
         x, y = _find_caret_in_row_with(lines, "Chats")
@@ -2222,6 +2238,9 @@ async def test_section_header_caret_is_clickable_at_its_rendered_screen_coordina
             "Real Click Chat A" not in " ".join(text.split())
             for text in _conversation_row_texts(console)
         ), "collapse via glyph-coordinate click did not take effect"
+
+        conversations_body.scroll_to_widget(chats_toggle, animate=False)
+        await pilot.pause()
 
         # Click #2: re-locate the caret in the FRESHLY rendered pane (not
         # the widget tree, not a cached position) and click there again.
@@ -2271,11 +2290,6 @@ async def test_empty_copy_estimator_handles_three_plus_line_wrap() -> None:
         "later, even after switching workspaces around."
     )
 
-    # Tall enough that the injected multi-line empty copy doesn't push
-    # "Chats" below the rail's own scroll fold -- this test is about the
-    # estimator undercounting the tray's OWN box, not about needing to
-    # scroll first (round 1 already covers that: "you cannot click what is
-    # not on screen" is expected, not a bug).
     async with host.run_test(size=(160, 70)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
@@ -2351,10 +2365,22 @@ async def test_empty_copy_estimator_handles_three_plus_line_wrap() -> None:
             == rows_height + header_count + empty_copies_height
         ), "the estimator disagrees with the real settled Static heights"
 
+        # TASK-15110 caps each expanded rail section and gives it its own
+        # scrollbar. Mirror the user action that reveals the last browser
+        # group before applying the same coordinate-honest hit-test.
+        conversations_body = console.query_one(
+            "#console-rail-section-body-conversations"
+        )
+        chats_toggle = console.query_one(
+            "#console-conversation-browser-section-toggle-chats", Button
+        )
+        conversations_body.scroll_to_widget(chats_toggle, animate=False)
+        await pilot.pause()
+
         # Coordinate-honest: "Chats" (the LAST section, rendered after the
-        # 3+-line "Starred" empty copy) must still be hittable at its
-        # rendered screen coordinates -- not clipped out of the tray's own
-        # box by an undercounted estimate.
+        # 3+-line "Starred" empty copy) must be hittable at its rendered
+        # screen coordinates after that bounded inner-section scroll -- not
+        # clipped out of the tray's own box by an undercounted estimate.
         lines = _render_screen_lines(console)
         x, y = _find_caret_in_row_with(lines, "Chats")
         widget_at, _ = console.screen.get_widget_at(x, y)

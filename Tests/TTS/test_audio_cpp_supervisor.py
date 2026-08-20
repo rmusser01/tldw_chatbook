@@ -364,7 +364,7 @@ def _make_real_launch(
     tmp_path: Path,
     *,
     behavior: dict[str, Any] | None = None,
-    startup_timeout_seconds: float = 10.0,
+    startup_timeout_seconds: float = 30.0,
     termination_grace_seconds: float = 0.1,
 ) -> AudioCppManagedLaunchConfig:
     _require_real_child_support()

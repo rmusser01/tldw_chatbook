@@ -299,6 +299,15 @@ OPTIONAL_FEATURES: dict[str, OptionalFeatureInfo] = {
         "Search/RAG queries",
         OWNER_LIBRARY_RAG,
     ),
+    "frontmatter": _feature(
+        "frontmatter",
+        "Markdown front matter",
+        AREA_VISUALIZATION,
+        ("mdit-py-plugins",),
+        "Library > Notes",
+        "Markdown front matter parsing",
+        OWNER_LIBRARY,
+    ),
     "higgs_tts": _feature(
         "higgs_tts",
         "Higgs Audio TTS",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Iterable, Sequence
 from typing import Any
@@ -73,7 +74,7 @@ async def _wait_for_library_conversation_selection(
         ) == conversation_id and expected_title in _visible_text(screen):
             await pilot.pause()
             return
-        await pilot.pause(0.05)
+        await asyncio.sleep(0.05)
     raise AssertionError(
         f"Conversation {conversation_id!r} was not selected. "
         f"selected={getattr(screen, '_selected_conversation_id', None)!r}; "

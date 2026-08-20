@@ -735,6 +735,7 @@ def _sync_stub(activity: str, effective: str | None = None):
         ),
         set_citation_counts=Mock(),
         set_original_attempt_previews=Mock(),
+        set_annotation_previews=Mock(),
         set_summary_boundary=Mock(),
         sync_jump_indicator=Mock(),
         set_image_specs=Mock(),

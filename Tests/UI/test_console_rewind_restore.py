@@ -201,8 +201,13 @@ async def test_summarize_up_to_choice_dispatches_console_run_worker_without_muta
         )
         await pilot.pause()
 
-    assert spy_worker.call_count == 1
-    group = spy_worker.call_args.kwargs.get("group")
+    run_calls = [
+        call
+        for call in spy_worker.call_args_list
+        if call.kwargs.get("group") == f"console-run-{session.id}"
+    ]
+    assert len(run_calls) == 1
+    group = run_calls[0].kwargs.get("group")
     assert isinstance(group, str) and group.startswith("console-run-"), group
     assert group == f"console-run-{session.id}", group
     # Summarize never mutates the transcript tree, and nothing is stored until
@@ -244,7 +249,10 @@ async def test_summarize_up_to_choice_blocked_while_a_run_is_streaming():
         )
         await pilot.pause()
 
-    assert spy_worker.call_count == 0
+    assert not any(
+        call.kwargs.get("group") == f"console-run-{session.id}"
+        for call in spy_worker.call_args_list
+    )
     assert (CONSOLE_RUN_ALREADY_RUNNING_COPY, "warning") in notices
     assert store.active_path_message_ids(session.id) == original_path
     assert store.session_context_summary(session.id) == (None, None)

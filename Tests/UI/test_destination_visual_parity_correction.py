@@ -1046,7 +1046,11 @@ SOURCE_PREP_WORKBENCHES_HORIZONTAL = {
 }
 
 
-@pytest.mark.parametrize("route,contract", SOURCE_PREP_WORKBENCHES_HORIZONTAL.items())
+@pytest.mark.parametrize(
+    "route,contract",
+    SOURCE_PREP_WORKBENCHES_HORIZONTAL.items(),
+    ids=("artifacts", "personas", "skills"),
+)
 @pytest.mark.asyncio
 async def test_source_prep_destinations_use_list_detail_inspector_workbench(
     route, contract
@@ -1073,7 +1077,11 @@ async def test_source_prep_destinations_use_list_detail_inspector_workbench(
         )
 
 
-@pytest.mark.parametrize("route,contract", SOURCE_PREP_WORKBENCHES_HORIZONTAL.items())
+@pytest.mark.parametrize(
+    "route,contract",
+    SOURCE_PREP_WORKBENCHES_HORIZONTAL.items(),
+    ids=("artifacts", "personas", "skills"),
+)
 @pytest.mark.asyncio
 async def test_source_prep_default_empty_or_unavailable_states_preserve_workbench_geometry(
     route, contract
@@ -1689,6 +1697,15 @@ async def test_watchlists_right_rail_does_not_clip_action_labels(size):
         # The legacy ccp route/screen was retired; its workbench is the Personas
         # destination, covered by Tests/UI/test_personas_workbench.py.
     ),
+    ids=(
+        "artifacts",
+        "personas",
+        "schedules",
+        "workflows",
+        "acp",
+        "skills",
+        "settings",
+    ),
 )
 @pytest.mark.asyncio
 async def test_destination_pane_titles_are_user_facing_not_ordinal(
@@ -1964,6 +1981,7 @@ SOURCE_PREP_LOADING_CONTRACTS = [
 @pytest.mark.parametrize(
     "route,screen_cls,refresh_method,loading_marker,contract,loading_container",
     SOURCE_PREP_LOADING_CONTRACTS,
+    ids=("artifacts", "skills"),
 )
 @pytest.mark.asyncio
 async def test_source_prep_loading_states_preserve_workbench_geometry(
@@ -2698,7 +2716,11 @@ TOP_LEVEL_WORKBENCH_SELECTORS = {
 }
 
 
-@pytest.mark.parametrize("route,contract", COMPACT_DESTINATION_CONTRACTS.items())
+@pytest.mark.parametrize(
+    "route,contract",
+    COMPACT_DESTINATION_CONTRACTS.items(),
+    ids=tuple(COMPACT_DESTINATION_CONTRACTS),
+)
 @pytest.mark.asyncio
 async def test_top_level_destinations_keep_primary_workbench_visible_at_compact_size(
     route, contract
@@ -2832,7 +2854,11 @@ TAB_ORDER_ATTEMPTS = {
 }
 
 
-@pytest.mark.parametrize("route,targets", VISIBLE_FOCUS_TARGETS.items())
+@pytest.mark.parametrize(
+    "route,targets",
+    VISIBLE_FOCUS_TARGETS.items(),
+    ids=tuple(VISIBLE_FOCUS_TARGETS),
+)
 @pytest.mark.asyncio
 async def test_tab_order_reaches_visible_primary_action(route, targets):
     app = _build_test_app()

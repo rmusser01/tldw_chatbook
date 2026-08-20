@@ -187,6 +187,13 @@ async def test_f6_rail_stop_paints_accent_frame_and_restores_on_leave():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         _select_llamacpp_console(console)
+        # The focus-frame contract needs the expanded rail; current Console
+        # startup may leave Context collapsed while Inspector owns the band.
+        console._set_console_rail_preference(
+            left_open=True,
+            notify_on_failure=False,
+        )
+        await pilot.pause()
         rail = console.query_one("#console-left-rail")
 
         from textual.color import Color

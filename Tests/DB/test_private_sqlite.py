@@ -2335,6 +2335,7 @@ def test_read_only_path_query_characters_are_percent_encoded(tmp_path, monkeypat
             "file://server/share/A%20B/%E9%9B%AA%3F%23.sqlite?mode=ro",
         ),
     ],
+    ids=("windows-drive-path", "windows-unc-path"),
 )
 def test_windows_read_only_uri_builder_percent_encodes_path(path, expected):
     assert _build_read_only_uri(path, windows=True) == expected

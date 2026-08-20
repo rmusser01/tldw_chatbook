@@ -99,6 +99,7 @@ class SelectionManager:
         self._active = False
         self._finished = None
         self._just_finished = False
+        self._release_click_pending = False
 
 
 def cap_quote(text: str) -> str:

@@ -52,6 +52,9 @@ from tldw_chatbook.UI.Speech.speech_playground_pane import (
     PLAYGROUND_ACTIONS,
     SpeechPlaygroundPane,
 )
+from tldw_chatbook.UI.Speech.speech_runtime_status import (
+    SpeechLocalDependencyAvailability,
+)
 from tldw_chatbook.UI.Speech.speech_settings_contracts import (
     SpeechTTSConnectionState,
     SpeechTTSNavigationIntent,
@@ -61,7 +64,6 @@ from tldw_chatbook.UI.stts_playground_catalog import (
     PlaygroundControls,
 )
 from tldw_chatbook.UI.stts_profile_library import TTSProfileNameModal
-from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
 
 
 class _PaneScreen(Screen):
@@ -1327,16 +1329,15 @@ def faked_service(monkeypatch: pytest.MonkeyPatch) -> FakeTTSService:
 @pytest.mark.asyncio
 async def test_playground_status_keeps_external_provider_and_local_deps_independent(
     faked_service: FakeTTSService,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    for dependency in (
-        "stt_processing",
-        "kokoro_onnx",
-        "chatterbox",
-        "higgs_tts",
-    ):
-        monkeypatch.setitem(DEPENDENCIES_AVAILABLE, dependency, False)
-    app = _AxisHarness()
+    app = _AxisHarness(
+        local_dependencies=SpeechLocalDependencyAvailability(
+            stt=False,
+            kokoro=False,
+            chatterbox=False,
+            higgs=False,
+        )
+    )
 
     async with app.run_test(size=(160, 60)) as pilot:
         await _wait_until(

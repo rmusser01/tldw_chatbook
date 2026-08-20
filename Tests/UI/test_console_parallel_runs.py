@@ -1956,14 +1956,15 @@ async def test_navigating_away_with_busy_fleet_confirms_and_records_teardown() -
         # only finishes when `handle_screen_navigation`'s own `await
         # self.switch_screen(...)` completes. `app.screen` can therefore
         # already read "HomeScreen" before that recording has happened;
-        # wait for the OLD screen to actually finish tearing down
-        # (`_console_chat_controller` cleared in `on_unmount`) rather than
-        # racing it.
+        # wait for the OLD screen to actually finish detaching from the
+        # app-owned runtime rather than racing it. The controller deliberately
+        # survives screen unmount since task-15860.
+        runtime = app.console_runtime
         for _ in range(150):
-            if console._console_chat_controller is None:
+            if runtime.view is None:
                 break
             await asyncio.sleep(0.02)
-        assert console._console_chat_controller is None, (
+        assert runtime.view is None, (
             "outgoing Console screen never finished on_unmount"
         )
         assert app._console_fleet_teardown_notice == 1
@@ -1988,6 +1989,14 @@ async def test_navigating_away_with_busy_fleet_confirms_and_records_teardown() -
         assert "1 agent run" in teardown_toasts[0]
 
         # A second mount with nothing new killed stays silent.
+        # This harness created only a synthetic STREAMING marker, not a real
+        # task whose cancellation would publish its terminal state. The
+        # app-owned controller survives navigation now, so settle that test
+        # double explicitly before asserting the next idle leave.
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.IDLE, ""),
+            session_id=session_id,
+        )
         app.post_message(NavigateToScreen("home"))
         await _wait_for_screen("HomeScreen")
         notifications.clear()
@@ -2163,13 +2172,14 @@ async def test_navigation_guard_survives_stay_then_renavigate_then_leave_by_coor
         await _real_click(x2, y2)
 
         await asyncio.wait_for(_wait_for_screen("HomeScreen"), timeout=5)
-        # See the sibling test's comment on why this polls for on_unmount
-        # to actually finish rather than racing `app.screen`'s sync update.
+        # See the sibling test's comment on why this polls for the app-owned
+        # runtime to detach rather than racing `app.screen`'s sync update.
+        runtime = app.console_runtime
         for _ in range(150):
-            if console._console_chat_controller is None:
+            if runtime.view is None:
                 break
             await asyncio.sleep(0.02)
-        assert console._console_chat_controller is None, (
+        assert runtime.view is None, (
             "Leave must tear the outgoing Console's fleet down"
         )
         assert app._console_fleet_teardown_notice == 1

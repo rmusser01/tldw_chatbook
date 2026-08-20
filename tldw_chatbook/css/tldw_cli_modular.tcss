@@ -6149,7 +6149,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
 .console-voice-status {
     width: 0;
     min-width: 0;
-    margin: 0 1 0 0;
+    margin: 0;
     padding: 0 1;
     background: $ds-surface-raised;
     color: $ds-status-running;

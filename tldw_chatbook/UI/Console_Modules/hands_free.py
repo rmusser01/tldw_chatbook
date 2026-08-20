@@ -379,7 +379,7 @@ class ConsoleHandsFreeController:
         not mounted (pre-mount, mid-teardown).
         """
         try:
-            from ..Widgets.Console.console_control_bar import ConsoleControlBar
+            from ...Widgets.Console.console_control_bar import ConsoleControlBar
 
             control_bar = self._screen.query_one(
                 "#console-control-bar", ConsoleControlBar

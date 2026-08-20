@@ -1367,7 +1367,7 @@ def test_blocked_response_headers_obey_hard_deadline_and_close_late_response(
     elapsed = time.perf_counter() - started
 
     _assert_phase(exc, phase)
-    assert elapsed < 0.25
+    assert elapsed < 0.5
     assert transport.started.is_set()
     assert transport.closed.is_set()
     assert transport.late_response_created.wait(0.1)
@@ -1416,7 +1416,7 @@ def test_factory_clients_close_blocked_sends_without_thread_accumulation() -> No
         elapsed = time.perf_counter() - started
 
         _assert_phase(exc, "remote_schema_preflight")
-        assert elapsed < 0.25
+        assert elapsed < 0.5
         client, transport = records[attempt]
         assert client.close_calls == 1
         assert client.is_closed

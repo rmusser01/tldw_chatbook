@@ -212,8 +212,9 @@ def _valid_openai_artifact(
     )
 
 
-async def _wait_until(pilot, predicate, *, attempts: int = 120) -> None:
-    for _ in range(attempts):
+async def _wait_until(pilot, predicate, *, timeout: float = 30.0) -> None:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
         if predicate():
             return
         await pilot.pause(0.01)
@@ -256,7 +257,16 @@ async def _open_real_profile_test(
 
     library.query_one("#stts-profile-preview-btn", Button).press()
     await _wait_until(pilot, lambda: _playground_ready(screen))
-    return selected_scroll, screen.query_one(SpeechPlaygroundPane)
+    playground = screen.query_one(SpeechPlaygroundPane)
+    await _wait_until(
+        pilot,
+        lambda: (
+            playground._profile_test_context is not None
+            and not playground._profile_preview_loading
+            and playground._profile_voice_validation_token is None
+        ),
+    )
+    return selected_scroll, playground
 
 
 async def _deliver_profile_sample(
@@ -269,6 +279,7 @@ async def _deliver_profile_sample(
     playground._generation_operation_id = artifact.operation_id
     playground._generation_complete(artifact)
     if expect_save:
+        await playground.workers.wait_for_complete()
         await _wait_until(
             pilot,
             lambda: not playground.query_one(
@@ -460,7 +471,11 @@ async def test_main_navigation_clears_voice_tool_origin_before_reopen() -> None:
         screen.query_one("#voice-profiles", Button).press()
         await _wait_until(
             pilot,
-            lambda: screen.stts_window.current_view == "profiles",
+            lambda: (
+                screen.stts_window.current_view == "profiles"
+                and len(screen.query(STTSProfileLibrary)) == 1
+                and len(screen.query("#speech-destination-back")) == 1
+            ),
         )
         assert screen.stts_window._voice_tool_origin is not None
         assert len(screen.query("#speech-destination-back")) == 1
@@ -468,7 +483,10 @@ async def test_main_navigation_clears_voice_tool_origin_before_reopen() -> None:
         screen.query_one("#lab-speech-row-playground", Button).press()
         await _wait_until(
             pilot,
-            lambda: screen.stts_window.current_view == "playground",
+            lambda: (
+                screen.stts_window.current_view == "playground"
+                and len(screen.query(SpeechPlaygroundPane)) == 1
+            ),
         )
         assert screen.stts_window._voice_tool_origin is None
 

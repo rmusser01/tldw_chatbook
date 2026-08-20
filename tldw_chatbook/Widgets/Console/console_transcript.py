@@ -4967,6 +4967,8 @@ class ConsoleTranscript(VerticalScroll):
         """Escape dismissal clears the whole selection UI (strip included)."""
         event.stop()
         self._remove_selection_menu()
+        self.selection_manager.cancel()
+        self._selection_origin_row = None
 
     @on(ConsoleSelectionMenu.MoreDetails)
     def _selection_more_details(
@@ -5336,6 +5338,9 @@ class ConsoleTranscript(VerticalScroll):
             event.stop()
         elif event.key == "escape":
             self.action_clear_selection()
+            self._remove_selection_menu()
+            self.selection_manager.cancel()
+            self._selection_origin_row = None
             event.stop()
 
     def _select_relative(self, offset: int) -> None:

@@ -247,10 +247,15 @@ RUNTIME_POLICY_LOADER = "load_runtime_policy_for_app"
 
 
 @cache
+def _source(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+@cache
 def _parse(path: Path) -> ast.Module:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SyntaxWarning)
-        return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        return ast.parse(_source(path), filename=str(path))
 
 
 def _chain(node: ast.AST) -> str:
@@ -384,6 +389,8 @@ class _NamedOccurrenceCollector(ast.NodeVisitor):
 def _occurrences(
     path: Path, target: str
 ) -> list[tuple[str, str, tuple[str, ...], int]]:
+    if target not in _source(path):
+        return []
     collector = _NamedOccurrenceCollector(path, target)
     collector.visit(_parse(path))
     return collector.occurrences
@@ -1164,14 +1171,18 @@ def test_legacy_chat_root_state_and_accessors_are_absent() -> None:
     violations: dict[
         str, list[tuple[str, str, tuple[str, ...], int] | tuple[str, str, int]]
     ] = {}
-    for name in LEGACY_CHAT_ROOT_NAMES:
+    targets = frozenset(LEGACY_CHAT_ROOT_NAMES)
+    for name in targets:
         occurrences = _occurrences(APP_PATH, name)
-        for path in sorted(PRODUCTION_ROOT.rglob("*.py")):
-            if path == APP_PATH:
-                continue
-            occurrences.extend(_root_app_occurrences(path, name))
         if occurrences:
             violations[name] = occurrences
+    for path in sorted(PRODUCTION_ROOT.rglob("*.py")):
+        if path == APP_PATH:
+            continue
+        if not any(target in _source(path) for target in targets):
+            continue
+        for target, relative, kind, line in _root_app_target_occurrences(path, targets):
+            violations.setdefault(target, []).append((relative, kind, line))
 
     for method_name in LEGACY_CHAT_ROOT_METHOD_NAMES:
         occurrences = _production_occurrences(method_name)
@@ -1186,14 +1197,18 @@ def test_legacy_ccp_prompt_root_state_and_accessors_are_absent() -> None:
     violations: dict[
         str, list[tuple[str, str, tuple[str, ...], int] | tuple[str, str, int]]
     ] = {}
-    for name in LEGACY_CCP_ROOT_NAMES:
+    targets = frozenset(LEGACY_CCP_ROOT_NAMES)
+    for name in targets:
         occurrences = _occurrences(APP_PATH, name)
-        for path in sorted(PRODUCTION_ROOT.rglob("*.py")):
-            if path == APP_PATH:
-                continue
-            occurrences.extend(_root_app_occurrences(path, name))
         if occurrences:
             violations[name] = occurrences
+    for path in sorted(PRODUCTION_ROOT.rglob("*.py")):
+        if path == APP_PATH:
+            continue
+        if not any(target in _source(path) for target in targets):
+            continue
+        for target, relative, kind, line in _root_app_target_occurrences(path, targets):
+            violations.setdefault(target, []).append((relative, kind, line))
 
     for method_name in LEGACY_CCP_ROOT_METHOD_NAMES:
         occurrences = _production_occurrences(method_name)
@@ -1286,14 +1301,18 @@ def test_retired_destination_root_state_and_handlers_are_absent() -> None:
     violations: dict[
         str, list[tuple[str, str, tuple[str, ...], int] | tuple[str, str, int]]
     ] = {}
-    for name in RETIRED_DESTINATION_ROOT_NAMES:
+    targets = frozenset(RETIRED_DESTINATION_ROOT_NAMES)
+    for name in targets:
         occurrences: list[
             tuple[str, str, tuple[str, ...], int] | tuple[str, str, int]
         ] = [*_tldw_cli_occurrences(name)]
-        for path in sorted(PRODUCTION_ROOT.rglob("*.py")):
-            occurrences.extend(_root_app_occurrences(path, name))
         if occurrences:
             violations[name] = occurrences
+    for path in sorted(PRODUCTION_ROOT.rglob("*.py")):
+        if not any(target in _source(path) for target in targets):
+            continue
+        for target, relative, kind, line in _root_app_target_occurrences(path, targets):
+            violations.setdefault(target, []).append((relative, kind, line))
 
     for method_name in RETIRED_DESTINATION_ROOT_METHOD_NAMES:
         occurrences = _tldw_cli_occurrences(method_name)

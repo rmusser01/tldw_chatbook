@@ -2510,6 +2510,7 @@ async def test_protocol_and_settings_wrappers_have_distinct_boundaries(
             "Skill import is not wired in this shell yet.",
         ),
     ],
+    ids=("skills",),
 )
 @pytest.mark.asyncio
 async def test_unwired_destination_actions_are_disabled_with_honest_copy(
@@ -4200,7 +4201,7 @@ async def test_models_shell_keeps_external_paths_inside_the_dedicated_edit_view(
     async with app.run_test(size=(100, 32)) as pilot:
         screen = LLMScreen(app)
         await app.push_screen(screen)
-        await _wait_for_selector(screen, pilot, "#external-models-view")
+        await _wait_for_selector(screen, pilot, "#external-models-view", timeout=30.0)
         external = screen.query_one(ExternalModelView)
         path_nodes = [
             node

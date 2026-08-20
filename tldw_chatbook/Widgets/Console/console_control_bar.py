@@ -308,7 +308,8 @@ class ConsoleControlBar(Vertical):
         except Exception:
             return
         if switch.value is not active:
-            switch.value = active
+            with self.prevent(Switch.Changed):
+                switch.value = active
 
     def compose(self) -> ComposeResult:
         with Horizontal(
