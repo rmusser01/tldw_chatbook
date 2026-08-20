@@ -89,6 +89,11 @@ class ProductionCssWidgetHarness(App):
         self._widget_factory = widget_factory
 
     def compose(self) -> ComposeResult:
+        """Yield the single probe widget under the production stylesheet.
+
+        Returns:
+            The composed widget tree: exactly the one factory-built widget.
+        """
         yield self._widget_factory()
 
 
