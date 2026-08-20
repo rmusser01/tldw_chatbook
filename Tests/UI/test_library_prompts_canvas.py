@@ -12333,7 +12333,9 @@ async def test_library_prompt_open_existing_resolves_offending_name_not_drifted_
         # failed/empty lookup for the drifted "Not A Real Prompt" text.
         assert screen._selected_prompt_id == alpha_id
         for _ in range(150):
-            if screen.query_one("#library-prompt-name", Input).value == "Alpha":
+            names = list(screen.query("#library-prompt-name"))
+            if names and names[0].value == "Alpha":
+                await pilot.pause()
                 break
             await pilot.pause(0.02)
         assert screen.query_one("#library-prompt-name", Input).value == "Alpha"
