@@ -29,6 +29,8 @@ import pytest
 from textual.containers import Horizontal
 from textual.widgets import Button
 
+from tldw_chatbook.Widgets.Console.console_context_modal import ConsoleContextModal
+
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -115,10 +117,26 @@ async def test_clicking_open_then_collapse_toggles_visibility_and_persists():
         # pins that every id inside the moved block survived the click path,
         # not just the rail's own root.
         assert pilot.app.screen.query_one("#console-inspector-rail-body")
+        project_row = pilot.app.screen.query_one("#console-project-instruction-status")
+        staged = pilot.app.screen.query_one("#console-staged-context-tray")
+        assert project_row.region.y < staged.region.y
         assert pilot.app.screen.query_one("#console-staged-context-tray")
         assert pilot.app.screen.query_one("#console-run-inspector")
         assert pilot.app.screen.query_one("#console-run-inspector-state")
         assert pilot.app.screen.query_one("#console-settings-summary")
+        controller = pilot.app.screen._ensure_console_chat_controller()
+        assert controller._confirm_project_instruction_dispatch.__self__ is (
+            pilot.app.screen._session
+        )
+        assert controller._select_project_instruction_binding.__self__ is (
+            pilot.app.screen._session
+        )
+
+        await pilot.click("#console-project-instruction-status-button")
+        await pilot.pause()
+        assert isinstance(pilot.app.screen, ConsoleContextModal)
+        await pilot.press("escape")
+        await pilot.pause()
 
         await pilot.click("#console-inspector-rail-collapse")
         await pilot.pause(0.2)

@@ -117,10 +117,12 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, replace
+import json
 from sqlite3 import Error as SQLiteError
 from typing import Any, Optional, TYPE_CHECKING
 import asyncio
 import re
+import threading
 import uuid
 import weakref
 
@@ -150,6 +152,17 @@ from ...Chat.console_roleplay_identity import (
     normalize_chat_display_name,
 )
 from ...Chat.console_conversation_hydration import apply_resume_settings_overrides
+from ...Chat.console_display_state import (
+    ConsoleProjectInstructionSourceRow,
+    ConsoleProjectInstructionState,
+    build_console_project_instruction_state,
+)
+from ...Chat.console_project_instructions import (
+    ProjectInstructionControlState,
+    decode_project_context_json,
+    encode_project_context_json,
+)
+from ...Chat.console_prefill import pinned_prefill_from_conversation_metadata
 from ...Chat.console_session_settings import (
     ConsoleSessionSettings,
     build_console_settings_readiness,
@@ -163,7 +176,14 @@ from ...Character_Chat.visual_identity import (
 )
 from ...DB.VisualIdentity_DB import VisualIdentityRepository
 from ...config import coerce_bool_setting
-from ...Widgets.Console import ConsoleComposerUndoHistory, ConsoleRenameSessionModal
+from ...Widgets.Console import (
+    ConsoleComposerUndoHistory,
+    ConsoleRenameSessionModal,
+    ProjectInstructionBindingOption,
+    ProjectInstructionNoticeModal,
+    ProjectInstructionSetupModal,
+    ProjectInstructionSetupResult,
+)
 from ...Widgets.Console.console_reaction_picker_modal import (
     ConsoleReactionPickerModal,
     ReactionOption,
@@ -2663,6 +2683,9 @@ class ConsoleSessionController:
             # and the next send writes it to the DB.
             "ephemeral": session.ephemeral,
             _CONSOLE_TODO_STATE_KEY: session.todo_store.export_snapshot(),
+            "project_instructions": json.loads(
+                encode_project_context_json(session.project_instruction_state)
+            ),
         }
 
     def _console_session_from_state(
@@ -2803,7 +2826,133 @@ class ConsoleSessionController:
         )
         # Legacy payloads predate the key; absent means saved, never temporary.
         session_kwargs["ephemeral"] = raw_session.get("ephemeral") is True
+        raw_project_state = raw_session.get("project_instructions")
+        try:
+            encoded_project_state = json.dumps(raw_project_state)
+        except (TypeError, ValueError):
+            encoded_project_state = None
+        session_kwargs["project_instruction_state"] = decode_project_context_json(
+            encoded_project_state
+        )
         return ConsoleChatSession(**session_kwargs)
+
+    def _build_console_project_instruction_display_state(
+        self,
+    ) -> ConsoleProjectInstructionState:
+        """Return the active session's content-free rail/Context state."""
+        session = self._active_native_console_session()
+        control = (
+            session.project_instruction_state
+            if session is not None
+            else ProjectInstructionControlState.legacy_disabled()
+        )
+        sources: tuple[ConsoleProjectInstructionSourceRow, ...] = ()
+        warning_codes: tuple[str, ...] = ()
+        if session is not None:
+            controller = self._ensure_console_chat_controller()
+            metadata = controller.project_instruction_display_metadata(session.id)
+            if metadata is not None:
+                outcomes = tuple(metadata.get("outcomes") or ())
+                warning_codes = outcomes
+                relative_source = metadata.get("relative_source")
+                if relative_source:
+                    sources = (
+                        ConsoleProjectInstructionSourceRow(
+                            relative_source=str(relative_source),
+                            scope=str(metadata.get("scope") or "."),
+                            byte_count=int(metadata.get("byte_count") or 0),
+                            outcome="active" if not outcomes else str(outcomes[0]),
+                            warning_code=str(outcomes[0]) if outcomes else "",
+                        ),
+                    )
+        return build_console_project_instruction_state(
+            control,
+            binding_label=control.working_folder_binding_id or "",
+            locator_matches=(
+                True if control.working_folder_locator_fingerprint else None
+            ),
+            sources=sources,
+            warning_codes=warning_codes,
+        )
+
+    async def _select_project_instruction_binding(
+        self,
+        session_id: str,
+        selections: tuple[Any, ...],
+        recovery_code: str,
+    ) -> tuple[str, str | None]:
+        """Collect one setup decision on the Textual main loop."""
+
+        def owning_session_exists() -> bool:
+            store = self._console_chat_store
+            return store is not None and any(
+                session.id == session_id for session in store.sessions()
+            )
+
+        if not owning_session_exists():
+            return "cancel", None
+        options = tuple(
+            ProjectInstructionBindingOption(
+                binding_id=str(selection.binding.binding_id),
+                label=str(
+                    getattr(selection.binding, "display_name", "")
+                    or getattr(selection.binding, "label", "")
+                    or f"Folder {index + 1}"
+                ),
+                eligible=True,
+            )
+            for index, selection in enumerate(selections)
+        )
+        if not options:
+            options = (
+                ProjectInstructionBindingOption(
+                    binding_id="",
+                    label="No eligible folders",
+                    eligible=False,
+                    recovery=recovery_code,
+                ),
+            )
+        result = await self._screen.app.push_screen_wait(
+            ProjectInstructionSetupModal(options)
+        )
+        if not owning_session_exists() or not isinstance(
+            result, ProjectInstructionSetupResult
+        ):
+            return "cancel", None
+        return result.action, result.binding_id
+
+    def _confirm_project_instruction_dispatch(self, notice: Any) -> str:
+        """Marshal a worker-thread notice to Textual and wait fail-closed."""
+        decided = threading.Event()
+        result = {"decision": "cancel"}
+
+        def finish(decision: str | None) -> None:
+            sessions = (
+                self._console_chat_store.sessions() if self._console_chat_store else ()
+            )
+            if any(session.id == notice.session_id for session in sessions):
+                if decision in {"proceed", "cancel", "disable"}:
+                    result["decision"] = decision
+            decided.set()
+
+        def mount() -> None:
+            sessions = (
+                self._console_chat_store.sessions() if self._console_chat_store else ()
+            )
+            if not any(session.id == notice.session_id for session in sessions):
+                decided.set()
+                return
+            self.push_screen(ProjectInstructionNoticeModal(notice), callback=finish)
+
+        call_from_thread = getattr(self.app_instance, "call_from_thread", None)
+        if not callable(call_from_thread):
+            return "cancel"
+        try:
+            call_from_thread(mount)
+        except RuntimeError:
+            return "cancel"
+        decided.wait(120.0)
+        return result["decision"]
 
     @staticmethod
     def _serialize_console_settings(

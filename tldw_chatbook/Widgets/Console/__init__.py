@@ -25,6 +25,14 @@ from .console_edit_message_modal import ConsoleEditMessageModal, ConsoleEditResu
 from .console_rail_handle import ConsoleRailHandle
 from .console_prompts_modal import ConsolePromptsModal
 from .console_prompts_state import ConsolePromptsState, PromptBrowseResult
+from .console_project_instructions import (
+    ConsoleProjectInstructionContextPanel,
+    ConsoleProjectInstructionStatusRow,
+    ProjectInstructionBindingOption,
+    ProjectInstructionNoticeModal,
+    ProjectInstructionSetupModal,
+    ProjectInstructionSetupResult,
+)
 from .console_rename_session_modal import ConsoleRenameSessionModal
 from .console_retrieval_scope_row import ConsoleRetrievalScopeRow
 from .console_run_inspector import ConsoleRunInspector
@@ -61,6 +69,8 @@ __all__ = [
     "ConsoleRailHandle",
     "ConsolePromptsModal",
     "ConsolePromptsState",
+    "ConsoleProjectInstructionContextPanel",
+    "ConsoleProjectInstructionStatusRow",
     "ConsoleRenameSessionModal",
     "ConsoleRetrievalScopeRow",
     "ConsoleRunInspector",
@@ -77,6 +87,10 @@ __all__ = [
     "ConsoleWorkspaceRenameModal",
     "ConsoleWorkspaceSwitcherModal",
     "PromptBrowseResult",
+    "ProjectInstructionBindingOption",
+    "ProjectInstructionNoticeModal",
+    "ProjectInstructionSetupModal",
+    "ProjectInstructionSetupResult",
     "build_console_citation_source_rows",
     "build_console_context_control_state",
 ]

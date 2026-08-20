@@ -46,6 +46,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleCitationPhase,
     ConsoleCitationPresentation,
     ConsoleContextSnapshot,
+    ProjectInstructionPreview,
     ConsoleMessageRole,
     ConsoleProviderSelection,
     ConsoleRunMarker,
@@ -187,6 +188,10 @@ from tldw_chatbook.Agents.project_instruction_resolver import (
     InstructionSnapshot,
     ProjectInstructionResolver,
     StartupInstructionCandidate,
+)
+from tldw_chatbook.Agents.agent_service import (
+    append_project_instruction_rows,
+    build_project_instruction_row,
 )
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall, MCPToolProvider
 from tldw_chatbook.Agents.run_context import current_run_id
@@ -338,6 +343,31 @@ class ProjectInstructionDispatchNotice:
     warning_codes: tuple[str, ...]
 
 
+def build_project_instruction_preview(
+    base_messages: list[dict[str, Any]],
+    startup_candidate: StartupInstructionCandidate,
+    request_builder: Callable[[list[dict[str, Any]]], dict[str, Any]],
+) -> ProjectInstructionPreview:
+    """Build one disposable exact-request preview without touching live state."""
+    messages = copy.deepcopy(base_messages)
+    source = startup_candidate.source
+    if source is not None:
+        messages = append_project_instruction_rows(
+            messages, [build_project_instruction_row(source)]
+        )
+    payload = copy.deepcopy(request_builder(copy.deepcopy(messages)))
+    return ProjectInstructionPreview(
+        relative_source=source.relative_path if source else None,
+        scope=source.scope if source else ".",
+        byte_count=source.byte_count if source else 0,
+        outcomes=tuple(outcome.code for outcome in startup_candidate.outcomes),
+        warning_codes=tuple(
+            dict.fromkeys(outcome.code for outcome in startup_candidate.outcomes)
+        ),
+        next_send_payload=payload,
+    )
+
+
 def build_project_instruction_dispatch_notice(
     snapshot: InstructionSnapshot, *, session_id: str, resolution: Any
 ) -> ProjectInstructionDispatchNotice:
@@ -358,9 +388,7 @@ def build_project_instruction_dispatch_notice(
         relative_source=source.relative_path if source else None,
         scope=source.scope if source else ".",
         byte_count=source.byte_count if source else 0,
-        outcomes=tuple(
-            outcome.code for outcome in snapshot.primary_delivery.outcomes
-        ),
+        outcomes=tuple(outcome.code for outcome in snapshot.primary_delivery.outcomes),
         warning_codes=snapshot.warning_codes,
     )
 
@@ -413,68 +441,79 @@ def resolve_project_instruction_binding(
     if registry is None:
         raise ProjectInstructionBindingRecovery("binding_unavailable")
 
-    def validate(binding: Any) -> ProjectInstructionBindingSelection | None:
-        if binding is None or str(getattr(binding, "workspace_id", "")) != str(
-            session.workspace_id
-        ):
-            return None
-        kind = getattr(getattr(binding, "binding_kind", None), "value", None) or str(
-            getattr(binding, "binding_kind", "")
-        )
-        status = getattr(getattr(binding, "status", None), "value", None) or str(
-            getattr(binding, "status", "")
-        )
-        if kind != "local-filesystem" or status != "ready":
-            return None
-        try:
-            lexical = Path(str(binding.locator)).expanduser().absolute()
-            if _capture_project_root_identity(lexical) is None:
-                return None
-            root = lexical.resolve(strict=True)
-        except (OSError, RuntimeError, ValueError):
-            return None
-        if root != lexical:
-            return None
-        root_identity = _capture_project_root_identity(root)
-        if root_identity is None:
-            return None
-        fingerprint = fingerprint_canonical_locator(str(root))
-        return ProjectInstructionBindingSelection(
-            binding=binding,
-            root=root,
-            locator_fingerprint=fingerprint,
-            allow_write=str(getattr(binding, "metadata", {}).get("access", "ro"))
-            == "rw",
-            root_identity=root_identity,
-        )
-
     selected_id = state.working_folder_binding_id
     if selected_id:
         try:
             binding = registry.get_runtime_binding(selected_id)
         except (KeyError, OSError, RuntimeError, ValueError, AttributeError):
             raise ProjectInstructionBindingRecovery("binding_unavailable") from None
-        selection = validate(binding)
+        selection = _validate_project_instruction_binding(session, binding)
         if selection is None:
             raise ProjectInstructionBindingRecovery("binding_unavailable")
         if selection.locator_fingerprint != state.working_folder_locator_fingerprint:
             raise ProjectInstructionBindingRecovery("binding_retargeted")
         return selection
-
-    try:
-        bindings = registry.list_runtime_bindings(session.workspace_id)
-    except (KeyError, OSError, RuntimeError, ValueError, AttributeError):
-        raise ProjectInstructionBindingRecovery("binding_unavailable") from None
-    eligible = tuple(
-        selection
-        for binding in bindings
-        if (selection := validate(binding)) is not None
-    )
+    eligible = list_project_instruction_bindings(session, registry)
     if not eligible:
         raise ProjectInstructionBindingRecovery("no_eligible_binding")
     if len(eligible) != 1:
         raise ProjectInstructionBindingRecovery("choose_binding")
     return eligible[0]
+
+
+def list_project_instruction_bindings(
+    session: ConsoleChatSession, registry: Any
+) -> tuple[ProjectInstructionBindingSelection, ...]:
+    """Return currently eligible bindings for an explicit setup choice."""
+    if registry is None:
+        return ()
+
+    try:
+        bindings = registry.list_runtime_bindings(session.workspace_id)
+    except (KeyError, OSError, RuntimeError, ValueError, AttributeError):
+        raise ProjectInstructionBindingRecovery("binding_unavailable") from None
+    return tuple(
+        selection
+        for binding in bindings
+        if (selection := _validate_project_instruction_binding(session, binding))
+        is not None
+    )
+
+
+def _validate_project_instruction_binding(
+    session: ConsoleChatSession, binding: Any
+) -> ProjectInstructionBindingSelection | None:
+    if binding is None or str(getattr(binding, "workspace_id", "")) != str(
+        session.workspace_id
+    ):
+        return None
+    kind = getattr(getattr(binding, "binding_kind", None), "value", None) or str(
+        getattr(binding, "binding_kind", "")
+    )
+    status = getattr(getattr(binding, "status", None), "value", None) or str(
+        getattr(binding, "status", "")
+    )
+    if kind != "local-filesystem" or status != "ready":
+        return None
+    try:
+        lexical = Path(str(binding.locator)).expanduser().absolute()
+        if _capture_project_root_identity(lexical) is None:
+            return None
+        root = lexical.resolve(strict=True)
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if root != lexical:
+        return None
+    root_identity = _capture_project_root_identity(root)
+    if root_identity is None:
+        return None
+    return ProjectInstructionBindingSelection(
+        binding=binding,
+        root=root,
+        locator_fingerprint=fingerprint_canonical_locator(str(root)),
+        allow_write=str(getattr(binding, "metadata", {}).get("access", "ro")) == "rw",
+        root_identity=root_identity,
+    )
 
 
 def _same_project_instruction_authority(
@@ -505,8 +544,7 @@ def project_instruction_authority_is_current(
     state = session.project_instruction_state
     if (
         not state.project_instructions_enabled
-        or state.working_folder_binding_id
-        != expected_selection.binding.binding_id
+        or state.working_folder_binding_id != expected_selection.binding.binding_id
         or state.working_folder_locator_fingerprint
         != expected_selection.locator_fingerprint
     ):
@@ -558,6 +596,7 @@ def commit_project_instruction_dispatch_decision(
         ),
     )
     return decision
+
 
 #: TASK-1861: the tool result a call gets when the user refused it at the
 #: approval card. The runtime turns any non-"proceed" verdict string into the
@@ -1501,6 +1540,11 @@ class ConsoleChatController:
             [ProjectInstructionDispatchNotice], Literal["proceed", "cancel", "disable"]
         ]
         | None = None,
+        select_project_instruction_binding: Callable[
+            [str, tuple[ProjectInstructionBindingSelection, ...], str],
+            Awaitable[tuple[Literal["select", "disable", "cancel"], str | None]],
+        ]
+        | None = None,
     ) -> None:
         self.store = store
         self.provider_gateway = provider_gateway
@@ -1577,6 +1621,10 @@ class ConsoleChatController:
         self._confirm_project_instruction_dispatch = (
             confirm_project_instruction_dispatch
         )
+        self._select_project_instruction_binding = select_project_instruction_binding
+        self._project_instruction_candidates: dict[
+            str, StartupInstructionCandidate
+        ] = {}
         # Parallel-agents spec §2: run state is a PER-SESSION map, not a
         # single global slot -- two sessions can each have their own
         # in-flight/terminal run without stamping each other. `run_state`/
@@ -5298,11 +5346,11 @@ class ConsoleChatController:
                 project_root_guard
                 if project_root_guard is not None
                 else (
-                    lambda: _project_root_identity_matches(
-                        root, project_root_identity
+                    lambda: (
+                        _project_root_identity_matches(root, project_root_identity)
+                        if project_root_identity is not None
+                        else True
                     )
-                    if project_root_identity is not None
-                    else True
                 )
             ),
             resolve_state=service.gate_tool_test,
@@ -7616,9 +7664,15 @@ class ConsoleChatController:
                     else prefill,
                     "agent_loop_bypassed": True,
                 }
+            preview = await self._build_project_instruction_preview_for_session(
+                session_id, next_send_payload
+            )
+            if preview is not None:
+                next_send_payload = preview.next_send_payload
             return ConsoleContextSnapshot(
                 current_messages=copied_messages,
                 next_send_payload=next_send_payload,
+                project_instruction_preview=preview,
             )
         except Exception as exc:
             logger.exception(
@@ -7663,6 +7717,66 @@ class ConsoleChatController:
                     "error": f"Failed to build context snapshot: {exc}",
                 },
             )
+
+    async def _build_project_instruction_preview_for_session(
+        self, session_id: str, base_payload: dict[str, Any]
+    ) -> ProjectInstructionPreview | None:
+        """Securely reread root guidance into a disposable preview only."""
+        if not self._agent_runtime_enabled:
+            return None
+        session = next(
+            (item for item in self.store.sessions() if item.id == session_id), None
+        )
+        if (
+            session is None
+            or not session.project_instruction_state.project_instructions_enabled
+        ):
+            return None
+        registry = getattr(self.app, "workspace_registry_service", None)
+        try:
+            selection = resolve_project_instruction_binding(session, registry)
+            if selection is None:
+                return None
+            candidate = await asyncio.to_thread(
+                ProjectInstructionResolver().resolve_startup,
+                binding_id=selection.binding.binding_id,
+                binding_root=selection.root,
+                locator_fingerprint=selection.locator_fingerprint,
+                max_bytes=coerce_int_setting(
+                    get_cli_setting(
+                        "console",
+                        "project_instructions_startup_max_bytes",
+                        DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    ),
+                    DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    minimum=MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    maximum=MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                ),
+                dispatch_started_wall_ns=time.time_ns(),
+            )
+        except Exception:  # noqa: BLE001 - preview failure stays content-free
+            return None
+        base_messages = list(base_payload.get("messages") or ())
+        return build_project_instruction_preview(
+            base_messages,
+            candidate,
+            lambda messages: {**base_payload, "messages": messages},
+        )
+
+    def project_instruction_display_metadata(
+        self, session_id: str
+    ) -> dict[str, Any] | None:
+        """Return content-free metadata for the last captured root candidate."""
+        candidate = self._project_instruction_candidates.get(session_id)
+        if candidate is None:
+            return None
+        source = candidate.source
+        return {
+            "relative_source": source.relative_path if source else None,
+            "scope": source.scope if source else ".",
+            "byte_count": source.byte_count if source else 0,
+            "outcomes": tuple(outcome.code for outcome in candidate.outcomes),
+        }
 
     @staticmethod
     def _replace_image_data_with_placeholders(
@@ -10967,7 +11081,10 @@ class ConsoleChatController:
         project_selection: ProjectInstructionBindingSelection | None = None
         confirm_project_dispatch = None
         project_authority_guard = None
-        if session is not None and session.project_instruction_state.project_instructions_enabled:
+        if (
+            session is not None
+            and session.project_instruction_state.project_instructions_enabled
+        ):
             try:
                 registry = getattr(self.app, "workspace_registry_service", None)
             except Exception:
@@ -10977,7 +11094,46 @@ class ConsoleChatController:
                     session, registry
                 )
             except ProjectInstructionBindingRecovery as exc:
-                return ConsoleSubmitResult(False, False, str(exc))
+                callback = self._select_project_instruction_binding
+                if callback is None:
+                    return ConsoleSubmitResult(False, False, str(exc))
+                try:
+                    options = list_project_instruction_bindings(session, registry)
+                except ProjectInstructionBindingRecovery:
+                    options = ()
+                action, binding_id = await callback(session_id, options, str(exc))
+                if action == "disable":
+                    self.store.set_session_project_instruction_state(
+                        session_id, ProjectInstructionControlState.legacy_disabled()
+                    )
+                    return ConsoleSubmitResult(
+                        False, False, "project_instructions_disabled"
+                    )
+                if action != "select" or binding_id is None:
+                    return ConsoleSubmitResult(False, False, str(exc))
+                project_selection = next(
+                    (
+                        option
+                        for option in options
+                        if str(option.binding.binding_id) == str(binding_id)
+                    ),
+                    None,
+                )
+                if project_selection is None:
+                    return ConsoleSubmitResult(False, False, str(exc))
+                self.store.set_session_project_instruction_state(
+                    session_id,
+                    ProjectInstructionControlState(
+                        project_instructions_enabled=True,
+                        working_folder_binding_id=(
+                            project_selection.binding.binding_id
+                        ),
+                        working_folder_locator_fingerprint=(
+                            project_selection.locator_fingerprint
+                        ),
+                        project_instruction_notice_key=None,
+                    ),
+                )
             if project_selection is not None:
                 state = session.project_instruction_state
                 if state.working_folder_binding_id is None:
@@ -10991,9 +11147,7 @@ class ConsoleChatController:
                         ),
                         project_instruction_notice_key=None,
                     )
-                    self.store.set_session_project_instruction_state(
-                        session_id, state
-                    )
+                    self.store.set_session_project_instruction_state(session_id, state)
                 startup_candidate = ProjectInstructionResolver().resolve_startup(
                     binding_id=project_selection.binding.binding_id,
                     binding_root=project_selection.root,
@@ -11010,6 +11164,7 @@ class ConsoleChatController:
                     ),
                     dispatch_started_wall_ns=time.time_ns(),
                 )
+                self._project_instruction_candidates[session_id] = startup_candidate
                 destination_provider = str(
                     getattr(resolution, "execution_key", "")
                     or getattr(resolution, "provider", "")
@@ -11075,6 +11230,7 @@ class ConsoleChatController:
                             decision=decision,
                         )
                     )
+
         self._active_assistant_message_ids[session_id] = assistant_message_id
         self._active_stream_tasks[session_id] = asyncio.current_task()
         self._stop_requested = False

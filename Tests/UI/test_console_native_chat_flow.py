@@ -55,6 +55,9 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderGateway,
     ConsoleProviderResolution,
 )
+from tldw_chatbook.Chat.console_project_instructions import (
+    ProjectInstructionControlState,
+)
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
@@ -12167,9 +12170,6 @@ def test_console_screen_state_round_trips_the_temporary_flag():
     drop is not cosmetic -- the next send would write the chat to the
     database.
     """
-    from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
-    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-
     screen = ChatScreen.__new__(ChatScreen)
     screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
 
@@ -12195,6 +12195,54 @@ def test_console_screen_state_round_trips_the_temporary_flag():
         ).ephemeral
         is False
     ), "a payload with no key must default to saved"
+
+
+def test_console_screen_state_round_trips_only_project_instruction_controls():
+    screen = ChatScreen.__new__(ChatScreen)
+    screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
+    state = ProjectInstructionControlState(
+        project_instructions_enabled=True,
+        working_folder_binding_id="binding-1",
+        working_folder_locator_fingerprint="f" * 64,
+        project_instruction_notice_key="n" * 64,
+    )
+    session = ConsoleChatSession(project_instruction_state=state)
+
+    payload = screen._session._console_session_to_state(session)
+    restored = screen._session._console_session_from_state(payload)
+
+    assert restored.project_instruction_state == state
+    encoded = json.dumps(payload)
+    assert "/Users/" not in encoded
+    assert "AGENTS" not in encoded
+    assert "instruction body" not in encoded
+
+
+@pytest.mark.parametrize(
+    "raw_project_state",
+    [
+        None,
+        {"version": 99},
+        {"version": 1, "project_instructions_enabled": "yes"},
+        {
+            "version": 1,
+            "project_instructions_enabled": True,
+            "working_folder_binding_id": "binding-1",
+            "working_folder_locator_fingerprint": "f" * 64,
+            "project_instruction_notice_key": None,
+            "raw_path": "/private/repo",
+        },
+    ],
+)
+def test_console_screen_state_invalid_project_instruction_state_fails_disabled(
+    raw_project_state,
+):
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+    payload = {"id": "session", "project_instructions": raw_project_state}
+    restored = controller._console_session_from_state(payload)
+    assert restored.project_instruction_state == (
+        ProjectInstructionControlState.legacy_disabled()
+    )
 
 
 def test_temporary_tab_marker_is_presentation_only():

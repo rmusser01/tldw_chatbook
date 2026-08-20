@@ -3309,6 +3309,7 @@ class ChatScreen(BaseAppScreen):
                 estimate_factory=_estimate_factory,
                 in_progress=in_progress,
                 ephemeral=self._console_active_session_is_ephemeral(),
+                project_instruction_state=self._session._build_console_project_instruction_display_state(),
             )
         )
 
@@ -5474,6 +5475,12 @@ class ChatScreen(BaseAppScreen):
         # can clear all of them at detach. This block used to assign each
         # one by hand and had no counterpart anywhere.
         self._console_runtime().attach_view(self)
+        self._console_chat_controller._confirm_project_instruction_dispatch = (
+            self._session._confirm_project_instruction_dispatch
+        )
+        self._console_chat_controller._select_project_instruction_binding = (
+            self._session._select_project_instruction_binding
+        )
         # MCP batch-approval bridge (task-5): `request_mcp_approvals` runs
         # on the agent bridge's worker thread and needs a
         # `call_from_thread`-capable App handle. Deliberately NOT a
@@ -13241,6 +13248,7 @@ class ChatScreen(BaseAppScreen):
                     retrieval_scope_state=retrieval_scope_state,
                     inspector_state=inspector_state,
                     changed_files_state=self._build_console_changed_files_state(),
+                    project_instruction_state=self._session._build_console_project_instruction_display_state(),
                     settings_summary_state=self._build_console_settings_summary_state(),
                     live_work_card_builder=(
                         lambda: (

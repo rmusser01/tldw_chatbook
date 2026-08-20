@@ -680,6 +680,22 @@ class ConsoleVariantSet:
 
 
 @dataclass(frozen=True)
+class ProjectInstructionPreview:
+    """Disposable, user-requested preview of automatic project context.
+
+    Only ``next_send_payload`` may contain the instruction body. The remaining
+    fields are content-free metadata suitable for the Context diagnostics UI.
+    """
+
+    relative_source: str | None
+    scope: str
+    byte_count: int
+    outcomes: tuple[str, ...]
+    warning_codes: tuple[str, ...]
+    next_send_payload: dict[str, Any]
+
+
+@dataclass(frozen=True)
 class ConsoleContextSnapshot:
     """Independent snapshot of current transcript and next-send provider payload.
 
@@ -692,6 +708,7 @@ class ConsoleContextSnapshot:
 
     current_messages: list[ConsoleChatMessage]
     next_send_payload: dict[str, Any]
+    project_instruction_preview: ProjectInstructionPreview | None = None
 
 
 def fold_greeting_into_system_prompt(system_prompt: str, greeting: str) -> str:

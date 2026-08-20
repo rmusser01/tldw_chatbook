@@ -13,6 +13,14 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleContextSnapshot,
     ConsoleMessageRole,
+    ProjectInstructionPreview,
+)
+from tldw_chatbook.Chat.console_display_state import (
+    ConsoleProjectInstructionSourceRow,
+    build_console_project_instruction_state,
+)
+from tldw_chatbook.Chat.console_project_instructions import (
+    ProjectInstructionControlState,
 )
 from tldw_chatbook.Widgets.Console import console_context_modal
 from tldw_chatbook.Widgets.Console.console_context_modal import ConsoleContextModal
@@ -30,6 +38,23 @@ SNAPSHOT = ConsoleContextSnapshot(
 )
 
 EMPTY_SNAPSHOT = ConsoleContextSnapshot(current_messages=[], next_send_payload={})
+
+PROJECT_SNAPSHOT = ConsoleContextSnapshot(
+    current_messages=[],
+    next_send_payload={"messages": []},
+    project_instruction_preview=ProjectInstructionPreview(
+        relative_source="nested/AGENTS.md",
+        scope="nested",
+        byte_count=33,
+        outcomes=("active",),
+        warning_codes=(),
+        next_send_payload={"messages": []},
+    ),
+)
+
+
+async def _project_snapshot_factory() -> ConsoleContextSnapshot:
+    return PROJECT_SNAPSHOT
 
 
 async def _snapshot_factory() -> ConsoleContextSnapshot:
@@ -66,6 +91,38 @@ async def test_context_modal_renders_tabs():
         next_container = modal.query_one("#console-context-next-send-body", Vertical)
         labels = list(next_container.query(Label))
         assert any("gpt-4" in str(label.renderable) for label in labels)
+
+
+@pytest.mark.asyncio
+async def test_context_modal_shows_metadata_only_project_instruction_section():
+    state = build_console_project_instruction_state(
+        ProjectInstructionControlState(True, "binding", "f" * 64, None),
+        binding_label="Repo [untrusted]",
+        locator_matches=True,
+        sources=(
+            ConsoleProjectInstructionSourceRow(
+                relative_source="nested/AGENTS.md",
+                scope="nested",
+                byte_count=33,
+                outcome="active",
+            ),
+        ),
+    )
+    app = ActionHarness()
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.push_screen(
+            ConsoleContextModal(
+                _project_snapshot_factory,
+                project_instruction_state=state,
+            )
+        )
+        await pilot.pause()
+        panel = app.screen.query_one("#console-context-project-instructions")
+        text = " ".join(str(item.renderable) for item in panel.query(Static))
+        assert "Repo [untrusted]" in text
+        assert "nested/AGENTS.md" in text
+        assert "33 bytes" in text
+        assert "AUTOMATIC_BODY_ONLY_IN_EXPLICIT_PREVIEW" not in text
 
 
 @pytest.mark.asyncio
@@ -143,6 +200,41 @@ async def test_context_modal_refresh_invokes_factory():
         await pilot.click("#console-context-refresh")
         await pilot.pause()
         assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_context_modal_refreshes_project_metadata_in_place():
+    display = build_console_project_instruction_state(
+        ProjectInstructionControlState(True, "binding", "f" * 64, None),
+        binding_label="Repo",
+        locator_matches=True,
+    )
+    snapshots = [
+        ConsoleContextSnapshot(current_messages=[], next_send_payload={}),
+        PROJECT_SNAPSHOT,
+    ]
+
+    async def changing_factory() -> ConsoleContextSnapshot:
+        return snapshots.pop(0)
+
+    app = ActionHarness()
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.push_screen(
+            ConsoleContextModal(
+                changing_factory,
+                project_instruction_state=display,
+            )
+        )
+        await pilot.pause()
+        modal = app.screen
+        await pilot.click("#console-context-refresh")
+        await pilot.pause()
+        assert app.screen is modal
+        assert modal.snapshot.project_instruction_preview is not None
+        panel = modal.query_one("#console-context-project-instructions")
+        text = " ".join(str(item.renderable) for item in panel.query(Static))
+        assert "nested/AGENTS.md" in text
+        assert "33 bytes" in text
 
 
 @pytest.mark.asyncio

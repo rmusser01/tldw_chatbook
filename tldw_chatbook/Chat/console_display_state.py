@@ -13,6 +13,9 @@ from rich.cells import cell_len
 from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle
 from tldw_chatbook.Chat.console_ephemeral import blocked_reason
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
+from tldw_chatbook.Chat.console_project_instructions import (
+    ProjectInstructionControlState,
+)
 from tldw_chatbook.Chat.rag_scope import EffectiveScope, RagScope
 from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
 from tldw_chatbook.Workspaces.change_tracking import ChangedFile
@@ -276,6 +279,66 @@ class ConsoleDisplayRow:
     def text(self) -> str:
         suffix = f" - {self.recovery}" if self.recovery else ""
         return f"{self.label}: {self.value}{suffix}"
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleProjectInstructionSourceRow:
+    """Content-free metadata for one automatically resolved source."""
+
+    relative_source: str
+    scope: str
+    byte_count: int
+    outcome: str
+    warning_code: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleProjectInstructionState:
+    """Pure display state for the Inspector and Context surfaces."""
+
+    status: str
+    enabled: bool
+    binding_label: str
+    locator_match: str
+    sources: tuple[ConsoleProjectInstructionSourceRow, ...] = ()
+    warning_codes: tuple[str, ...] = ()
+
+
+def build_console_project_instruction_state(
+    control: ProjectInstructionControlState,
+    *,
+    binding_label: str = "",
+    locator_matches: bool | None = None,
+    sources: tuple[ConsoleProjectInstructionSourceRow, ...] = (),
+    warning_codes: tuple[str, ...] = (),
+) -> ConsoleProjectInstructionState:
+    """Build the five-state project-instruction summary without source bodies."""
+    if not control.project_instructions_enabled:
+        status = "Off"
+    elif warning_codes or locator_matches is False:
+        status = "Warning"
+    elif not control.working_folder_binding_id:
+        status = "Choose folder"
+    elif sources:
+        loaded = sum(row.outcome == "active" for row in sources)
+        status = f"{loaded} loaded"
+    else:
+        status = "None"
+    locator_match = (
+        "match"
+        if locator_matches is True
+        else "mismatch"
+        if locator_matches is False
+        else "not checked"
+    )
+    return ConsoleProjectInstructionState(
+        status=status,
+        enabled=control.project_instructions_enabled,
+        binding_label=str(binding_label or ""),
+        locator_match=locator_match,
+        sources=tuple(sources),
+        warning_codes=tuple(str(code) for code in warning_codes),
+    )
 
 
 @dataclass(frozen=True)

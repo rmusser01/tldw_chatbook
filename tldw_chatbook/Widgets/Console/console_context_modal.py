@@ -29,8 +29,12 @@ from textual.widgets import (
 from textual.worker import Worker, WorkerState
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
+from tldw_chatbook.Chat.console_display_state import ConsoleProjectInstructionState
 from tldw_chatbook.Chat.console_ephemeral import blocked_reason
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
+from tldw_chatbook.Widgets.Console.console_project_instructions import (
+    ConsoleProjectInstructionContextPanel,
+)
 
 
 SIZE_THRESHOLD_BYTES = 1 * 1024 * 1024
@@ -82,6 +86,7 @@ class ConsoleContextModal(SafeModalDismissMixin, ModalScreen[None]):
         estimate_factory: Callable[[], int | None] | None = None,
         in_progress: bool = False,
         ephemeral: bool = False,
+        project_instruction_state: ConsoleProjectInstructionState | None = None,
     ) -> None:
         super().__init__()
         self._snapshot_factory = snapshot_factory
@@ -89,11 +94,17 @@ class ConsoleContextModal(SafeModalDismissMixin, ModalScreen[None]):
         self.token_estimate = token_estimate
         self.in_progress = in_progress
         self._save_blocked_reason = blocked_reason("save-context", ephemeral=ephemeral)
+        self._project_instruction_state = project_instruction_state
 
     def compose(self) -> ComposeResult:
         with Vertical(id="console-context-modal"):
             yield Static("Chat Context", id="console-context-header")
             yield Static("", id="console-context-warning")
+            if self._project_instruction_state is not None:
+                yield ConsoleProjectInstructionContextPanel(
+                    self._project_instruction_state,
+                    id="console-context-project-instructions",
+                )
             yield LoadingIndicator(id="console-context-loading")
 
             with TabbedContent(id="console-context-tabs"):
@@ -141,6 +152,11 @@ class ConsoleContextModal(SafeModalDismissMixin, ModalScreen[None]):
         # show yet; the full 95x40 frame is only earned by actual content.
         modal = self.query_one("#console-context-modal", Vertical)
         modal.set_class(not self.snapshot.current_messages, "context-empty")
+        if self._project_instruction_state is not None:
+            self.query_one(
+                "#console-context-project-instructions",
+                ConsoleProjectInstructionContextPanel,
+            ).sync_preview(self.snapshot.project_instruction_preview)
 
         warning = self.query_one("#console-context-warning", Static)
         if self.in_progress:
