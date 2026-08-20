@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-08-18 23:56'
+updated_date: '2026-08-20 15:16'
 labels:
   - llm
 dependencies: []
@@ -37,3 +38,9 @@ model_capabilities.py now has the right shape to extend -- a prefix/suffix-toler
 - [ ] #3 A new model release in a covered family does not require editing a marker list to avoid a 400
 - [ ] #4 Models currently working are unchanged, pinned by regression tests
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+PARTIAL EVIDENCE from TASK-18802 (2026-08-20, real key, standalone curl against api.openai.com/v1/chat/completions -- no tldw imports): the API-side behavior behind findings 1 and 2 is now PROBE-VERIFIED. (a) max_tokens is rejected on gpt-5, gpt-5.6, o3 and o4-mini: HTTP 400 {"error":{"code":"unsupported_parameter","message":"Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead.","param":"max_tokens","type":"invalid_request_error"}}. (b) Non-default temperature is rejected on gpt-5 and gpt-5.6: HTTP 400 {"error":{"code":"unsupported_value","message":"Unsupported value: 'temperature' does not support 0.7 with this model. Only the default (1) value is supported.","param":"temperature","type":"invalid_request_error"}}; temperature=1 (the default) IS accepted (HTTP 200), so the rejection is value-level, not parameter-level. (c) max_completion_tokens with no sampling params returns 200 on gpt-5 (chatcmpl-EEyVqbObmis1VBHXSitpSz9aLoylo), gpt-5.6 (served as gpt-5.6-sol) and o4-mini. (d) Controls gpt-4o and gpt-4.1 return 200 with temperature=0.7 + max_tokens unchanged. Still owed by this task: reproducing that chat_with_openai's builder actually emits max_tokens for gpt-5/o-series with no reasoning effort configured (LLM_API_Calls.py :695-698 branch -- code-read only), plus the Moonshot and Z.ai claims. Reusable plumbing now exists: TASK-18802 added openai_model_rejects_sampling_params and openai_model_requires_max_completion_tokens to model_capabilities.py (immutable, outside the config-driven tables) and wired them into the summarization path; this task can consult the same predicates for the chat path.
+<!-- SECTION:NOTES:END -->
