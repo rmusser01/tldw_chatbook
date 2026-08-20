@@ -6429,6 +6429,11 @@ async def test_library_prompt_import_blocks_undo_until_import_settles(tmp_path):
         assert screen._library_prompts_import_status == (
             "1 imported · 0 skipped (duplicate name)"
         )
+        # Import completion starts a separate browse projection; retry only
+        # after its recompose so this press targets the live receipt button.
+        await _wait_for_prompt_browse_scope(
+            screen, pilot, screen._library_prompt_browse_controller.scope
+        )
 
         await _wait_for_prompt_browse_scope(
             screen,
@@ -6643,6 +6648,10 @@ async def test_cancelled_prompt_import_retains_writer_ownership_until_commit(tmp
         imported = db.fetch_prompt_details("Cancelled import settles")
         assert imported is not None
         assert imported["deleted"] == 0
+        # The import worker settles before its follow-up browse projection.
+        await _wait_for_prompt_browse_scope(
+            screen, pilot, screen._library_prompt_browse_controller.scope
+        )
 
         await _wait_for_prompt_browse_scope(
             screen,
