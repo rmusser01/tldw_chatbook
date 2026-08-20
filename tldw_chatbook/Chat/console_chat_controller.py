@@ -271,6 +271,10 @@ CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS: frozenset = frozenset(
 #: run is stopped/cancelled. A positive value still fails undecided calls
 #: closed to ``"timeout"``. A human prompt is not a wedged tool; making the
 #: user race a clock to keep their run was the defect, auto-deny is opt-in.
+_WINDOWS = os.name == "nt"
+_REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", None)
+
+
 #:
 #: The PRE-ADR default was 120.0, kept strictly below
 #: ``RunBudget.max_tool_call_seconds`` (300s at defaults,
@@ -354,7 +358,9 @@ def build_project_instruction_dispatch_notice(
         relative_source=source.relative_path if source else None,
         scope=source.scope if source else ".",
         byte_count=source.byte_count if source else 0,
-        outcomes=tuple(outcome.code for outcome in snapshot.global_outcomes),
+        outcomes=tuple(
+            outcome.code for outcome in snapshot.primary_delivery.outcomes
+        ),
         warning_codes=snapshot.warning_codes,
     )
 
@@ -367,14 +373,27 @@ def _capture_project_root_identity(
     try:
         for component in (*reversed(root.parents), root):
             value = os.lstat(component)
-            if stat.S_ISLNK(value.st_mode) or not stat.S_ISDIR(value.st_mode):
+            if (
+                stat.S_ISLNK(value.st_mode)
+                or _is_project_root_reparse(value)
+                or not stat.S_ISDIR(value.st_mode)
+            ):
                 return None
             identities.append(
                 (str(component), value.st_dev, value.st_ino, value.st_mode)
             )
-    except (OSError, ValueError):
+    except (AttributeError, OSError, TypeError, ValueError):
         return None
     return tuple(identities)
+
+
+def _is_project_root_reparse(value: object) -> bool:
+    if not _WINDOWS:
+        return False
+    attributes = getattr(value, "st_file_attributes")
+    if attributes is None or _REPARSE_POINT is None:
+        raise ValueError("unsafe reparse metadata")
+    return bool(int(attributes) & int(_REPARSE_POINT))
 
 
 def _project_root_identity_matches(
@@ -413,6 +432,8 @@ def resolve_project_instruction_binding(
                 return None
             root = lexical.resolve(strict=True)
         except (OSError, RuntimeError, ValueError):
+            return None
+        if root != lexical:
             return None
         root_identity = _capture_project_root_identity(root)
         if root_identity is None:

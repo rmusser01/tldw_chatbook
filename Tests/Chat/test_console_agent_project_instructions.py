@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,22 +16,29 @@ from tldw_chatbook.Agents.agent_models import (
     RUN_DONE,
     SPAWN_TOOL_NAME,
     AgentConfig,
+    RunOutcome,
 )
 from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.project_instruction_resolver import (
+    InstructionChainDelivery,
+    InstructionSnapshot,
     InstructionSource,
     StartupInstructionCandidate,
 )
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRegistry
 from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+from tldw_chatbook.Chat import console_chat_controller as controller_mod
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.console_chat_controller import (
+    ConsoleChatController,
     ProjectInstructionBindingRecovery,
     build_project_instruction_dispatch_notice,
     commit_project_instruction_dispatch_decision,
     project_instruction_authority_is_current,
     resolve_project_instruction_binding,
 )
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
     fingerprint_canonical_locator,
@@ -423,6 +431,64 @@ def test_child_chain_uses_its_own_exact_first_request_budget(monkeypatch, tmp_pa
     assert len(_sentinel_rows(chat.calls[2])) == 1
 
 
+def test_primary_token_omission_is_delivery_local_when_child_admits(
+    monkeypatch, tmp_path
+):
+    spawn = {
+        "content": None,
+        "tool_calls": [
+            {
+                "id": "spawn-1",
+                "type": "function",
+                "function": {
+                    "name": SPAWN_TOOL_NAME,
+                    "arguments": json.dumps({"task": "inspect"}),
+                },
+            }
+        ],
+    }
+    snapshots = []
+    service, chat = _service(
+        tmp_path,
+        [spawn, "child done", "parent done"],
+        startup_instruction_candidate=_candidate(tmp_path),
+        confirm_project_instruction_dispatch=lambda snapshot: (
+            snapshots.append(snapshot) or "proceed"
+        ),
+    )
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a, **_k: 100)
+    monkeypatch.setattr(agent_service, "count_tokens_messages", lambda *_a, **_k: 20)
+    monkeypatch.setattr(agent_service, "estimate_tokens", lambda *_a, **_k: 0)
+    monkeypatch.setattr(
+        agent_service,
+        "_count_model_messages",
+        lambda messages, *_a: (
+            10 if "sub-agent" in str(messages[0].get("content", "")).lower() else 95
+        ),
+    )
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "question"}],
+        config=_cfg(
+            native_tools=True,
+            allowed_tools=(SPAWN_TOOL_NAME,),
+            response_reserve_tokens=10,
+        ),
+        api_endpoint="openai",
+    )
+
+    snapshot = snapshots[0]
+    assert outcome.status == RUN_DONE
+    assert snapshot.global_outcomes == ()
+    assert [item.code for item in snapshot.primary_delivery.outcomes] == [
+        "omitted_token_budget"
+    ]
+    assert len(_sentinel_rows(chat.calls[0])) == 0
+    assert len(_sentinel_rows(chat.calls[1])) == 1
+    assert len(_sentinel_rows(chat.calls[2])) == 0
+
+
 def test_exact_request_builder_is_the_payload_sent(tmp_path):
     service, chat = _service(tmp_path, ["done"])
     config = _cfg()
@@ -655,6 +721,42 @@ def test_binding_with_symlinked_ancestor_is_never_auto_selected(tmp_path):
         )
 
 
+def test_noncanonical_binding_locator_is_never_auto_selected(tmp_path):
+    child = tmp_path / "child"
+    child.mkdir()
+    binding = _binding(child / "..")
+
+    with pytest.raises(ProjectInstructionBindingRecovery, match="no_eligible_binding"):
+        resolve_project_instruction_binding(
+            _session(ProjectInstructionControlState.new_session()),
+            _BindingRegistry([binding]),
+        )
+
+
+def test_windows_reparse_component_is_never_eligible(monkeypatch, tmp_path):
+    real_lstat = controller_mod.os.lstat
+
+    def reparse_lstat(path):
+        value = real_lstat(path)
+        attributes = 0x400 if Path(path) == tmp_path else 0
+        return SimpleNamespace(
+            st_mode=value.st_mode,
+            st_dev=value.st_dev,
+            st_ino=value.st_ino,
+            st_file_attributes=attributes,
+        )
+
+    monkeypatch.setattr(controller_mod, "_WINDOWS", True, raising=False)
+    monkeypatch.setattr(controller_mod, "_REPARSE_POINT", 0x400, raising=False)
+    monkeypatch.setattr(controller_mod.os, "lstat", reparse_lstat)
+
+    with pytest.raises(ProjectInstructionBindingRecovery, match="no_eligible_binding"):
+        resolve_project_instruction_binding(
+            _session(ProjectInstructionControlState.new_session()),
+            _BindingRegistry([_binding(tmp_path)]),
+        )
+
+
 def test_zero_or_multiple_bindings_hold_for_recovery(tmp_path):
     session = _session(ProjectInstructionControlState.new_session())
     for bindings, code in (
@@ -739,6 +841,91 @@ def test_stale_consent_never_overwrites_changed_state_or_access(tmp_path):
     )
     assert result == "cancel"
     assert writes == []
+
+
+@pytest.mark.asyncio
+async def test_controller_notice_uses_owning_session_and_drift_cancels_bridge_send(
+    tmp_path,
+):
+    (tmp_path / "AGENTS.md").write_text(SENTINEL)
+    binding = _binding(tmp_path)
+    registry = _BindingRegistry([binding])
+    store = ConsoleChatStore()
+    session = store.create_session(workspace_id="w1")
+    notices = []
+    owning_loop_calls = []
+    provider_transmissions = []
+    main_thread = threading.get_ident()
+
+    def call_from_thread(callback):
+        owning_loop_calls.append(threading.get_ident())
+        return callback()
+
+    def confirm(notice):
+        assert threading.get_ident() != main_thread
+        notices.append(notice)
+        store.set_session_project_instruction_state(
+            session.id, ProjectInstructionControlState.legacy_disabled()
+        )
+        return "proceed"
+
+    class Bridge:
+        def run_reply(self, **kwargs):
+            candidate = kwargs["startup_instruction_candidate"]
+            delivery = InstructionChainDelivery(
+                source_digests=(candidate.source.digest,),
+                outcomes=candidate.outcomes,
+            )
+            snapshot = InstructionSnapshot(
+                binding_id=candidate.binding_id,
+                binding_root=candidate.binding_root,
+                locator_fingerprint=candidate.locator_fingerprint,
+                dispatch_started_wall_ns=candidate.dispatch_started_wall_ns,
+                startup_source=candidate.source,
+                global_outcomes=candidate.outcomes,
+                primary_delivery=delivery,
+                warning_codes=(),
+            )
+            decision = kwargs["confirm_project_instruction_dispatch"](snapshot)
+            if decision == "proceed":
+                provider_transmissions.append(True)
+            return "run-1", RunOutcome(status=RUN_CANCELLED, steps=[], final_text="")
+
+    class Gateway:
+        async def resolve_for_send(self, _selection):
+            return ConsoleProviderResolution(
+                provider="OpenAI",
+                base_url="https://user:password@api.example/v1?secret=yes",
+                model="test-model",
+                ready=True,
+                readiness_key="openai",
+                execution_key="openai",
+                max_tokens=128,
+            )
+
+    gateway = Gateway()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        provider="openai",
+        model="test-model",
+        agent_bridge=Bridge(),
+        agent_runtime_enabled=True,
+        confirm_project_instruction_dispatch=confirm,
+    )
+    controller.app = SimpleNamespace(
+        call_from_thread=call_from_thread,
+        workspace_registry_service=registry,
+    )
+
+    result = await controller.submit_draft("question")
+
+    assert result.accepted is True
+    assert provider_transmissions == []
+    assert len(owning_loop_calls) == 2
+    assert notices[0].session_id == session.id
+    assert notices[0].destination_label == "OpenAI (https://api.example)"
+    assert SENTINEL not in repr(notices[0])
 
 
 def test_removed_or_retargeted_binding_never_silently_retargets(tmp_path):

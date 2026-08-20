@@ -535,7 +535,9 @@ def project_instruction_notice_metadata(
         "relative_source": source.relative_path if source else None,
         "scope": source.scope if source else ".",
         "byte_count": source.byte_count if source else 0,
-        "outcomes": tuple(outcome.code for outcome in snapshot.global_outcomes),
+        "outcomes": tuple(
+            outcome.code for outcome in snapshot.primary_delivery.outcomes
+        ),
         "warning_codes": snapshot.warning_codes,
     }
 
@@ -1217,16 +1219,18 @@ class AgentService:
         delivery = self._startup_delivery_for_request(
             candidate, config, api_endpoint, request
         )
-        outcomes = delivery.outcomes
+        primary_outcomes = delivery.outcomes
         return InstructionSnapshot(
             binding_id=candidate.binding_id,
             binding_root=candidate.binding_root,
             locator_fingerprint=candidate.locator_fingerprint,
             dispatch_started_wall_ns=candidate.dispatch_started_wall_ns,
             startup_source=source,
-            global_outcomes=outcomes,
+            global_outcomes=candidate.outcomes,
             primary_delivery=delivery,
-            warning_codes=tuple(dict.fromkeys(outcome.code for outcome in outcomes)),
+            warning_codes=tuple(
+                dict.fromkeys(outcome.code for outcome in primary_outcomes)
+            ),
             startup_source_metadata=(
                 InstructionSourceMetadata(
                     relative_path=source.relative_path,
