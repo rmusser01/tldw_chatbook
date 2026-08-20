@@ -8,6 +8,7 @@ import threading
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import replace
+from itertools import product
 from pathlib import Path
 from time import perf_counter
 from unittest.mock import AsyncMock, patch
@@ -626,7 +627,7 @@ async def test_folder_files_authority_row_tracks_root_save_and_session_git(
         workspace._root = root
         workspace._root_offline = False
         workspace._update_root_surface()
-        assert "Local folder: notes" in _static_text(
+        assert "Folder: notes" in _static_text(
             workspace,
             "#file-notes-authority",
         )
@@ -639,15 +640,15 @@ async def test_folder_files_authority_row_tracks_root_save_and_session_git(
             workspace,
             "#file-notes-save-status",
         )
-        assert "Next: Retry or save a copy." in save_failure
+        assert "Next: Retry/copy." in save_failure
 
         workspace._set_save_state("saved")
         workspace._push_phase = "needs_attention"
         workspace._render_session_git_label(2)
         git_attention = _static_text(workspace, "#file-notes-authority")
-        assert "Saved to local folder" in git_attention
-        assert "Session Git: 2 changes · Push needs attention" in git_attention
-        assert "Next: Review session changes." in git_attention
+        assert "Saved" in git_attention
+        assert "Session Git: 2 · Push attention" in git_attention
+        assert "Next: Review changes." in git_attention
     replica.close()
 
 
@@ -673,8 +674,8 @@ async def test_folder_files_authority_status_survives_in_surface_navigation(
         await pilot.pause()
 
         assert _static_text(workspace, "#file-notes-authority") == expected
-        assert "Push needs attention" in expected
-        assert "Next: Review session changes." in expected
+        assert "Push attention" in expected
+        assert "Next: Review changes." in expected
 
     await workspace.shutdown()
     replica.close()
@@ -716,7 +717,7 @@ async def test_folder_files_authority_merges_save_and_git_in_either_update_order
             workspace._render_session_git_label()
 
         expected = _static_text(workspace, "#file-notes-authority")
-        assert "Local folder: notes" in expected
+        assert "Folder: notes" in expected
         assert (
             "Conflict" if save_state == "conflict" else "Save failed"
         ) in expected
@@ -736,22 +737,17 @@ async def test_folder_files_authority_merges_save_and_git_in_either_update_order
     replica.close()
 
 
-@pytest.mark.parametrize(
-    ("size", "expected_height"),
-    (((160, 45), 1), ((120, 40), 1), ((60, 20), 2)),
-)
+@pytest.mark.parametrize("size", ((160, 45), (120, 40), (60, 20)))
 @pytest.mark.asyncio
 async def test_file_notes_authority_copy_is_complete_and_bounded(
     tmp_path: Path,
     size: tuple[int, int],
-    expected_height: int,
 ) -> None:
     """Verify authority copy uses bounded rows at supported terminal sizes.
 
     Args:
         tmp_path: Temporary directory used as the linked File Notes root.
         size: Terminal dimensions used to mount the workspace.
-        expected_height: Expected rendered height of the authority copy.
     """
     root = tmp_path / "notes"
     root.mkdir()
@@ -762,8 +758,8 @@ async def test_file_notes_authority_copy_is_complete_and_bounded(
         poll_interval=10,
     )
     expected = (
-        "Folder files · Local folder: notes · Ready · Session Git: 0 changes · "
-        "Next: Choose a file or create one."
+        "Folder files · Folder: notes · Ready "
+        "Session Git: 0 changes · Next: Choose/new file."
     )
 
     async with _WorkspaceHarness(workspace).run_test(size=size) as pilot:
@@ -774,9 +770,109 @@ async def test_file_notes_authority_copy_is_complete_and_bounded(
             for row in range(purpose.region.height)
         )
         assert " ".join(rendered.split()) == expected
-        assert purpose.region.height == expected_height
-        assert purpose.region.height <= 2
+        assert purpose.region.height == 2
         assert workspace.query_one("#file-notes-body").region.height >= 8
+
+    replica.close()
+
+
+def test_configured_root_authority_state_table_is_two_line_and_bounded(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "Research notes with a very long private directory name"
+    root.mkdir()
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(root=root, replica=replica)
+    root_states = (
+        (False, "", ""),
+        (None, "", "Checking"),
+        (True, "", "Offline"),
+        (True, "Replica warning", "Offline+Warning"),
+        (False, "Replica warning", "Warning"),
+    )
+    transitions = (
+        (False, False, ""),
+        (True, False, "Changing folder"),
+        (False, True, "File operation"),
+    )
+    save_states = (
+        ("idle", ""),
+        ("dirty", "Unsaved"),
+        ("saving", "Saving"),
+        ("saved", "Saved"),
+        ("conflict", "Conflict"),
+        ("error", "Save failed"),
+    )
+    push_states = (
+        ("idle", ""),
+        ("checking", "Check push"),
+        ("pushing", "Pushing"),
+        ("needs_attention", "Push attention"),
+    )
+
+    for root_state, transition, save_state, push_state, git_count in product(
+        root_states,
+        transitions,
+        save_states,
+        push_states,
+        (0, 1, 125),
+    ):
+        offline, warning, root_copy = root_state
+        root_transitioning, path_transitioning, transition_copy = transition
+        save_value, save_copy = save_state
+        push_value, push_copy = push_state
+        workspace._root_offline = offline
+        workspace._runtime_warning = warning
+        workspace._root_transitioning = root_transitioning
+        workspace._path_transitioning = path_transitioning
+        workspace._save_state = save_value
+        workspace._push_phase = push_value
+        authority = workspace._authority_copy(git_count)
+        lines = authority.splitlines()
+        context = (root_state, transition, save_state, push_state, git_count)
+
+        assert len(lines) == 2, context
+        assert all(cell_len(line) <= 60 for line in lines), (context, lines)
+        assert "Folder files" in lines[0], context
+        assert "Folder:" in lines[0], context
+        state_copy = transition_copy or root_copy
+        if state_copy:
+            assert state_copy in lines[0], context
+        if save_copy:
+            assert save_copy in lines[0], context
+        elif not state_copy:
+            assert "Ready" in lines[0], context
+        expected_count = "99+" if git_count > 99 else str(git_count)
+        assert f"Session Git: {expected_count}" in lines[1], context
+        if push_copy:
+            assert push_copy in lines[1], context
+        assert "Next:" in lines[1], context
+
+        if root_transitioning:
+            next_copy = "Wait for change."
+        elif path_transitioning:
+            next_copy = "Wait for file."
+        elif offline is None:
+            next_copy = "Wait for check."
+        elif offline is True:
+            next_copy = "Reconnect/change."
+        elif warning:
+            next_copy = "Open Details."
+        elif save_value == "conflict":
+            next_copy = "Resolve/copy."
+        elif save_value == "error":
+            next_copy = "Retry/copy."
+        elif save_value == "saving":
+            next_copy = "Wait for save."
+        elif save_value == "dirty":
+            next_copy = "Keep editing."
+        elif push_value != "idle" or git_count:
+            next_copy = "Review changes."
+        elif save_value == "saved":
+            next_copy = "Keep editing."
+        else:
+            next_copy = "Choose/new file."
+        assert f"Next: {next_copy}" in lines[1], context
 
     replica.close()
 
@@ -1119,9 +1215,9 @@ async def test_initial_root_scan_projects_checking_authority_while_actions_are_g
                 "#file-notes-root-status",
             )
             authority = _static_text(workspace, "#file-notes-authority")
-            assert "Checking folder" in authority
+            assert "Checking" in authority
             assert "Ready" not in authority
-            assert "Next: Wait for folder check." in authority
+            assert "Next: Wait for check." in authority
             assert workspace.query_one("#file-notes-new", Button).disabled
         finally:
             release_scan.set()
@@ -1134,6 +1230,10 @@ async def test_initial_root_scan_projects_checking_authority_while_actions_are_g
 @pytest.mark.parametrize(
     ("save_state", "save_copy"),
     (("error", "Save failed"), ("conflict", "Conflict")),
+)
+@pytest.mark.parametrize(
+    ("push_phase", "push_copy", "git_count"),
+    (("idle", "", 0), ("needs_attention", "Push attention", 1)),
 )
 @pytest.mark.asyncio
 async def test_wide_files_task_return_restores_database_browse_receipt() -> None:
@@ -1237,6 +1337,9 @@ async def test_path_transition_authority_names_file_operation_and_settles(
     tmp_path: Path,
     save_state: str,
     save_copy: str,
+    push_phase: str,
+    push_copy: str,
+    git_count: int,
 ) -> None:
     root = tmp_path / "Research notes with a very long private directory name"
     root.mkdir()
@@ -1246,9 +1349,11 @@ async def test_path_transition_authority_names_file_operation_and_settles(
     async with _CssTrueWorkspaceHarness(workspace).run_test(size=(60, 20)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
         workspace._set_save_state(save_state, "a long private filesystem detail")
+        workspace._push_phase = push_phase
 
         with workspace._hold_path_transition() as transition:
             assert transition is not None
+            workspace._render_session_git_label(git_count)
             await pilot.pause()
             authority = workspace.query_one("#file-notes-authority", Static)
             authority_copy = _static_text(workspace, "#file-notes-authority")
@@ -1259,17 +1364,61 @@ async def test_path_transition_authority_names_file_operation_and_settles(
                 cell_len(row) <= authority.region.width
                 for row in authority_copy.splitlines()
             )
-            assert "Folder: Resea…" in painted
+            assert "Folder: Rese…" in painted
             assert "File operation" in painted
             assert save_copy in painted
             assert "Changing folder" not in painted
-            assert "Session Git: 0 changes" in painted
-            assert "Next: Wait for file operation." in painted
+            assert f"Session Git: {git_count}" in painted
+            if push_copy:
+                assert push_copy in painted
+            assert "Next: Wait for file." in painted
 
         await pilot.pause()
         authority = _static_text(workspace, "#file-notes-authority")
         assert "File operation" not in authority
         assert save_copy in authority
+
+    replica.close()
+
+
+@pytest.mark.parametrize(
+    ("push_phase", "push_copy"),
+    (("idle", ""), ("needs_attention", "Push attention")),
+)
+@pytest.mark.asyncio
+async def test_saved_authority_with_session_git_paints_at_60x20(
+    tmp_path: Path,
+    push_phase: str,
+    push_copy: str,
+) -> None:
+    root = tmp_path / "Research notes with a very long private directory name"
+    root.mkdir()
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(root=root, replica=replica, poll_interval=10)
+
+    async with _CssTrueWorkspaceHarness(workspace).run_test(size=(60, 20)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        workspace._set_save_state("saved")
+        workspace._push_phase = push_phase
+        workspace._render_session_git_label(1)
+        await pilot.pause()
+
+        authority = workspace.query_one("#file-notes-authority", Static)
+        authority_copy = _static_text(workspace, "#file-notes-authority")
+        painted = _painted_text_in_region(pilot.app, authority.region)
+        assert authority.region.height == 2
+        assert len(authority_copy.splitlines()) == 2
+        assert all(
+            cell_len(row) <= authority.region.width
+            for row in authority_copy.splitlines()
+        )
+        assert "Folder files" in painted
+        assert "Folder: Rese…" in painted
+        assert "Saved" in painted
+        assert "Session Git: 1" in painted
+        if push_copy:
+            assert push_copy in painted
+        assert "Next: Review changes." in painted
 
     replica.close()
 
@@ -1329,7 +1478,7 @@ async def test_root_transition_retains_and_freezes_old_document_until_scan_finis
         assert workspace.query_one("#file-notes-search", Input).disabled
         authority = _static_text(workspace, "#file-notes-authority")
         assert "Changing folder" in authority
-        assert "Next: Wait for folder change." in authority
+        assert "Next: Wait for change." in authority
         assert (old_root / "old.md").read_text(encoding="utf-8") == (
             "saved before root change"
         )
@@ -4187,8 +4336,8 @@ async def test_file_notes_authority_is_painted_and_contained_at_60x20_shell(
 @pytest.mark.parametrize(
     ("save_state", "state_copy", "next_copy"),
     (
-        ("error", "Save failed", "Next: Retry or save a copy."),
-        ("conflict", "Conflict", "Next: Resolve conflict or copy."),
+        ("error", "Save failed", "Next: Retry/copy."),
+        ("conflict", "Conflict", "Next: Resolve/copy."),
     ),
 )
 @pytest.mark.asyncio
@@ -4248,7 +4397,7 @@ async def test_file_notes_merged_recovery_authority_paints_at_60x20_shell(
         assert canvas.content_region.contains_region(workspace.region)
         assert authority.region.height == 2
         assert "Folder files" in painted
-        assert "Local folder: Research no…" in painted
+        assert "Folder: Rese…" in painted
         assert state_copy in painted
         assert "Session Git: 1 change" in painted
         assert next_copy in painted
@@ -4331,7 +4480,7 @@ async def test_file_notes_combined_non_ready_authority_matrix_paints_at_60x20(
                 for row in authority_copy.splitlines()
             )
             assert "Folder files" in painted
-            assert "Folder: Research…" in painted
+            assert "Folder: Rese…" in painted
             assert ("Offline" if root_state == "offline" else "Warning") in painted
             assert ("Conflict" if save_state == "conflict" else "Save failed") in painted
             assert "Session Git: 1" in painted

@@ -1355,133 +1355,74 @@ class LibraryFileNotesWorkspace(Vertical):
             return "Folder files · No folder selected · Next: Choose folder."
         folder_name = self._root.name or self._root.anchor or str(self._root)
         folder_label = Text(folder_name)
-        folder_label.truncate(12, overflow="ellipsis")
-        segments = ["Folder files", f"Local folder: {folder_label.plain}"]
-        if self._root_offline is True:
-            segments.append("Folder offline")
+        folder_label.truncate(5, overflow="ellipsis")
+        first_line = ["Folder files", f"Folder: {folder_label.plain}"]
+        state_copy = ""
+        next_action = ""
+        if self._root_transitioning:
+            state_copy = "Changing folder"
+            next_action = "Wait for change."
+        elif self._path_transitioning:
+            state_copy = "File operation"
+            next_action = "Wait for file."
+        elif self._root_offline is None:
+            state_copy = "Checking"
+            next_action = "Wait for check."
+        elif self._root_offline is True:
+            state_copy = "Offline+Warning" if self._runtime_warning else "Offline"
+            next_action = "Reconnect/change."
         elif self._runtime_warning:
-            segments.append("Folder needs attention")
-        if self._save_state in {"conflict", "error"}:
-            segments.append(
-                "Conflict" if self._save_state == "conflict" else "Save failed"
-            )
-        elif self._save_state == "saving":
-            segments.append("Saving to local folder…")
-        elif self._save_state == "dirty":
-            segments.append("Auto-save pending")
-        elif self._save_state == "saved":
-            segments.append("Saved to local folder")
-        else:
-            segments.append("Ready")
+            state_copy = "Warning"
+            next_action = "Open Details."
+        if state_copy:
+            first_line.append(state_copy)
+        save_copy = {
+            "dirty": "Unsaved",
+            "saving": "Saving",
+            "saved": "Saved",
+            "conflict": "Conflict",
+            "error": "Save failed",
+        }.get(self._save_state, "")
+        if save_copy:
+            first_line.append(save_copy)
+        elif not state_copy:
+            first_line.append("Ready")
         if session_git_count is None:
             binding = self._session_binding
             changes = (
                 () if binding is None else self._session_owner.snapshot(binding).changes
             )
             session_git_count = len(coalesce_session_changes(changes))
-        change_word = "change" if session_git_count == 1 else "changes"
-        segments.append(f"Session Git: {session_git_count} {change_word}")
-        root_state = ""
-        root_next = ""
-        if self._root_transitioning:
-            root_state = "Changing folder"
-            root_next = "Wait for folder change."
-        elif self._path_transitioning:
-            root_state = "File operation"
-            root_next = "Wait for file operation."
-        elif self._root_offline is None:
-            root_state = "Checking folder"
-            root_next = "Wait for folder check."
-        elif self._root_offline is True:
-            root_state = "Offline"
-            root_next = "Reconnect/change."
-        elif self._runtime_warning:
-            root_state = "Warning"
-            root_next = "Open Details."
-        save_state = {
-            "conflict": "Conflict",
-            "error": "Save failed",
-            "saving": "Saving",
-            "dirty": "Save pending",
-            "saved": "Saved",
-        }.get(self._save_state, "")
-        save_non_ready = self._save_state in {"conflict", "error", "saving", "dirty"}
-        if root_state or save_non_ready:
-            if root_state or self._save_state in {"saving", "dirty"}:
-                compact_folder = Text(folder_name)
-                compact_folder.truncate(
-                    6 if self._path_transitioning else 9,
-                    overflow="ellipsis",
-                )
-                first_line = ["Folder files", f"Folder: {compact_folder.plain}"]
-                if root_state:
-                    first_line.append(root_state)
-                if save_state:
-                    first_line.append(save_state)
-            else:
-                first_line = segments[:-1]
-            if self._push_phase == "idle":
-                git_copy = segments[-1]
-            else:
-                push_copy = {
-                    "checking": "Check push",
-                    "pushing": "Pushing",
-                    "needs_attention": "Push attention",
-                }[self._push_phase]
-                git_copy = f"Session Git: {session_git_count} · {push_copy}"
-            if root_next:
-                next_action = root_next
-                if self._push_phase != "idle" and root_state == "Changing folder":
-                    next_action = "Wait for change."
-                elif self._push_phase != "idle" and root_state == "Checking folder":
-                    next_action = "Wait for check."
-            elif self._save_state == "conflict":
-                next_action = (
-                    "Resolve conflict or copy."
-                    if self._push_phase == "idle"
-                    else "Resolve/copy."
-                )
+        git_count_copy = "99+" if session_git_count > 99 else str(session_git_count)
+        if self._push_phase == "idle":
+            change_word = "change" if session_git_count == 1 else "changes"
+            git_copy = f"Session Git: {git_count_copy} {change_word}"
+        else:
+            push_copy = {
+                "checking": "Check push",
+                "pushing": "Pushing",
+                "needs_attention": "Push attention",
+            }[self._push_phase]
+            git_copy = f"Session Git: {git_count_copy} · {push_copy}"
+        if not next_action:
+            if self._save_state == "conflict":
+                next_action = "Resolve/copy."
             elif self._save_state == "error":
-                next_action = (
-                    "Retry or save a copy."
-                    if self._push_phase == "idle"
-                    else "Retry/copy."
-                )
+                next_action = "Retry/copy."
             elif self._save_state == "saving":
                 next_action = "Wait for save."
-            else:
+            elif self._save_state == "dirty":
                 next_action = "Keep editing."
-            return (
-                f"{' · '.join(first_line)}\n"
-                f"{git_copy} · Next: {next_action}"
-            )
-        if self._push_phase != "idle":
-            status = {
-                "checking": "Checking push",
-                "pushing": "Pushing",
-                "needs_attention": "Push needs attention",
-            }[self._push_phase]
-            segments.append(status)
-
-        if self._root_offline is True:
-            next_action = "Reconnect or choose another folder."
-        elif self._runtime_warning:
-            next_action = "Open Details."
-        elif self._save_state == "conflict":
-            next_action = "Resolve the conflict or save the draft as a copy."
-        elif self._save_state == "error":
-            next_action = "Resolve the save error or save the draft as a copy."
-        elif self._save_state == "saving":
-            next_action = "Wait for saving to finish."
-        elif self._save_state == "dirty":
-            next_action = "Keep editing while auto-save runs."
-        elif self._push_phase != "idle" or session_git_count:
-            next_action = "Review session changes."
-        elif self._save_state == "saved":
-            next_action = "Keep editing or review session changes."
-        else:
-            next_action = "Choose a file or create one."
-        return f"{' · '.join(segments)} · Next: {next_action}"
+            elif self._push_phase != "idle" or session_git_count:
+                next_action = "Review changes."
+            elif self._save_state == "saved":
+                next_action = "Keep editing."
+            else:
+                next_action = "Choose/new file."
+        return (
+            f"{' · '.join(first_line)}\n"
+            f"{git_copy} · Next: {next_action}"
+        )
 
     def on_mount(self) -> None:
         """Start background initialization and polling for this mount."""
