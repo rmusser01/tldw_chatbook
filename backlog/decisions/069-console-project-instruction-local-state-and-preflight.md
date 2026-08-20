@@ -38,10 +38,17 @@ data. Null, invalid, forward-versioned, or legacy screen state is disabled.
 Temporary sessions remain in live/screen state and write the column only if
 they become durable conversations.
 
-Every inbound `ClientSyncEngine` create/update/delete/undelete/replay and forced
-conflict-resolution path preserves an existing local project-context column.
-Remote apply uses the synchronized-column allowlist and never row replacement;
-only a genuinely new remote conversation starts with local state null.
+Chatbook currently has no inbound conversation-sync/apply service;
+`DB.Sync_Client.ClientSyncEngine` is media-only. V1 therefore excludes this
+column from outbound conversation triggers and payloads and requires all
+existing conversation mutation and Chatbook import paths to preserve it.
+Ordinary updates and soft delete/restore change explicit synchronized columns.
+The current importer does not overwrite an existing conversation: `SKIP`
+leaves it untouched, while every non-skip resolution creates a new row whose
+local state starts null. Any future inbound conversation-sync/apply service
+must use a synchronized-column allowlist and preserve this local column through
+create/update/delete/undelete/replay and conflict resolution; that future
+service is outside this decision's v1 implementation scope.
 
 The notice key is a domain-separated SHA-256 value derived from the locator
 fingerprint plus the resolved provider destination identity (provider adapter
@@ -110,6 +117,7 @@ nonexistent problem.
 | Keep a relative working-directory field | The selected folder is already the tool-relative working directory, and lazy activation covers descendants; no current UX or runtime needs a second cwd. |
 | Extend `review_tool_calls` with a union return type | Couples optional context preparation to permission and change-review contracts and their failure policies. |
 | Add mid-agent compaction support | No such runtime compaction exists; `/rewind` already operates before ephemeral riders are added. |
+| Add an inbound conversation-sync service solely for this feature | No such conversation service exists today; outbound exclusion and preservation in real mutation/import paths satisfy v1 without inventing unrelated sync architecture. |
 | Infer `fs_glob` scope from a static pattern prefix | The tool has no search-root argument, and pattern inference would create a second ambiguous path grammar. |
 
 ## Consequences
@@ -142,8 +150,10 @@ nonexistent problem.
   bypass workspace access metadata.
 - The runtime adds a preparation phase but leaves existing security-review
   call sites and string verdicts unchanged.
-- Inbound sync and conflict application preserve device-local control state;
-  outbound-trigger exclusion alone is not treated as sufficient evidence.
+- Existing conversation updates, soft delete/restore, and Chatbook import
+  conflict handling preserve device-local control state. There is no current
+  inbound conversation apply owner; any future owner inherits the same
+  preservation invariant and must prove it at its apply boundary.
 - Current `/rewind` behavior needs a boundary regression test, not new
   compaction machinery. Any future mid-agent compactor must make a new design
   decision that preserves automatic-context ephemerality.
