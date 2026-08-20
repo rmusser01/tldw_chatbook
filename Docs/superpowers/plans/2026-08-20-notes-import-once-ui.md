@@ -44,6 +44,8 @@ Explicit limits:
 - Modify: `tldw_chatbook/Widgets/Library/library_notes_canvas.py`
 - Modify: `tldw_chatbook/UI/Screens/library_screen.py`
 - Modify: `tldw_chatbook/Notes/note_import_receipts.py`
+- Modify: `tldw_chatbook/DB/private_sqlite.py`
+- Modify: `backlog/docs/sqlite-private-owner-inventory.md`
 - Modify: `Docs/User_Guide/library/notes.md`
 - Create: `Tests/Library/test_library_note_import_state.py`
 - Create: `Tests/UI/Library_Modules/test_library_note_import_controller.py`
@@ -58,6 +60,9 @@ Explicit limits:
 - Regression: `Tests/Notes/test_note_import_executor.py`
 - Regression: `Tests/Notes/test_note_import_planner.py`
 - Regression: `Tests/Notes/test_note_import_windows_fs.py`
+- Modify: `Tests/DB/test_private_sqlite.py`
+- Modify: `Tests/DB/test_private_sqlite_inventory.py`
+- Modify: `Tests/DB/test_private_sqlite_interop_owners.py`
 
 - [ ] Start TASK-19003 and add its implementation plan.
 
@@ -91,18 +96,20 @@ Explicit limits:
 
 - [ ] Write a failing no-mutation prior-observation test.
 
-  Add a test to `Tests/Notes/test_note_import_receipts.py` that calls a new read-only observation method when the database path is missing and when a SQLite file exists without the receipt schema. Assert the file is not created, schema/user version is unchanged, and the result is empty or a bounded typed unavailable result.
+  Add a test to `Tests/Notes/test_note_import_receipts.py` that calls a new read-only observation method when the database path is missing and when a SQLite file exists without the receipt schema. Assert the file is not created, schema/user version is unchanged, and the result is empty or a bounded typed unavailable result. Add RED private-SQLite policy/inventory tests proving the existing `notes.sync_state` owner, and only that owner, may use an SQLite-enforced read-only URI while backup remains disallowed.
 
-  Expected: FAIL because `prior_observations_for_plan()` currently initializes schema inside a transaction.
+  Expected: FAIL because `prior_observations_for_plan()` currently initializes schema inside a transaction and the current private-SQLite policy authorizes `PRIVATE_FILE` only.
 
 - [ ] Add the narrow read-only receipt lookup.
 
-  Add `prior_observations_for_plan_read_only(plan)` to `NoteImportReceiptRepository`. Open an existing database in SQLite URI `mode=ro`; never call `_initialize_schema()` or the write transaction helper. Treat missing file/table as no prior observations and propagate corrupt/newer-schema conditions as bounded planning failures. Keep `prior_observations_for_plan()` unchanged for executor compatibility.
+  Extend the existing `notes.sync_state` policy to `{PRIVATE_FILE, READ_ONLY_URI}` and keep `centralized_backup_allowed=False`. Keep the default `preserve_read_only_source_mode=False`: this process owns the private database, so ADR-029 permission hardening still applies on reads. Update C50 and its exact inventory/interop tests; do not add a second owner or a raw `sqlite3.connect()` URI.
+
+  Change `NoteImportReceiptRepository._connect()` to `_connect(*, read_only=False, must_exist=False)` and route both modes through its one `connect_private_sqlite(...)` call. Existing write transactions keep the default arguments. Add `prior_observations_for_plan_read_only(plan)`: return no observations when the path is missing, otherwise call `_connect(read_only=True, must_exist=True)`, validate `user_version` and required import tables, and never call `_initialize_schema()` or the write transaction helper. Treat missing tables as no prior observations and propagate corrupt/newer-schema conditions as bounded planning failures. Keep `prior_observations_for_plan()` unchanged for executor compatibility. A writable connection plus an existence check is not acceptable because it does not enforce no data/schema writes at SQLite level; owner-private permission hardening remains allowed storage-boundary behavior.
 
   Run:
 
   ```bash
-  ../../.venv/bin/python -B -m pytest -q -p no:cacheprovider -o addopts="" Tests/Notes/test_note_import_receipts.py Tests/Notes/test_note_import_planner.py
+  ../../.venv/bin/python -B -m pytest -q -p no:cacheprovider -o addopts="" Tests/Notes/test_note_import_receipts.py Tests/Notes/test_note_import_planner.py Tests/DB/test_private_sqlite.py Tests/DB/test_private_sqlite_inventory.py Tests/DB/test_private_sqlite_interop_owners.py
   ```
 
 - [ ] Write failing canvas rendering and physical-message tests.
@@ -159,7 +166,7 @@ Explicit limits:
 
   ```bash
   ../../.venv/bin/python -B -m pytest -q -p no:cacheprovider -o addopts="" Tests/Library/test_library_note_import_state.py Tests/UI/Library_Modules/test_library_note_import_controller.py Tests/Widgets/Library/test_library_note_import_canvas.py Tests/UI/test_library_note_import_flow.py Tests/UI/test_library_canvas_scoped_sync.py Tests/UI/test_library_modal_dismissal.py Tests/Widgets/Library/test_library_notes_canvas.py
-  ../../.venv/bin/python -B -m pytest -q -p no:cacheprovider -o addopts="" Tests/Notes/test_note_import_execution_models.py Tests/Notes/test_note_import_receipts.py Tests/Notes/test_note_import_executor.py Tests/Notes/test_note_import_planner.py Tests/Notes/test_note_import_windows_fs.py Tests/Notes/test_note_folder_models.py Tests/Notes/test_note_folder_repository.py Tests/Notes/test_notes_scope_service.py Tests/Notes/test_notes_scope_service_folders.py Tests/DB/test_private_sqlite.py Tests/DB/test_private_sqlite_inventory.py
+  ../../.venv/bin/python -B -m pytest -q -p no:cacheprovider -o addopts="" Tests/Notes/test_note_import_execution_models.py Tests/Notes/test_note_import_receipts.py Tests/Notes/test_note_import_executor.py Tests/Notes/test_note_import_planner.py Tests/Notes/test_note_import_windows_fs.py Tests/Notes/test_note_folder_models.py Tests/Notes/test_note_folder_repository.py Tests/Notes/test_notes_scope_service.py Tests/Notes/test_notes_scope_service_folders.py Tests/DB/test_private_sqlite.py Tests/DB/test_private_sqlite_inventory.py Tests/DB/test_private_sqlite_interop_owners.py
   ../../.venv/bin/python -B -m pytest -q -p no:cacheprovider -o addopts="" Tests/UI/test_library_shell.py
   git diff --check
   ```

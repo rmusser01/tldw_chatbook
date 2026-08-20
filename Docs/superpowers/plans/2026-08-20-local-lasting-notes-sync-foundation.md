@@ -50,22 +50,21 @@ Tasks 19006, 19007, and 19008 may run concurrently after their prerequisites bec
 - Create: `tldw_chatbook/Notes/notes_sync_models.py`
 - Modify: `tldw_chatbook/Notes/note_import_receipts.py`
 - Modify: `tldw_chatbook/DB/private_sqlite.py`
-- Modify: `tldw_chatbook/Utils/sensitive_paths.py`
 - Modify: `backlog/docs/sqlite-private-owner-inventory.md`
 - Create: `Tests/Notes/test_notes_device_state_store.py`
 - Create: `Tests/Notes/test_notes_sync_models.py`
 - Modify: `Tests/Notes/test_note_import_receipts.py`
+- Regression: `Tests/Notes/test_note_import_executor.py`
 - Modify: `Tests/DB/test_private_sqlite_inventory.py`
 - Modify: `Tests/DB/test_private_sqlite_interop_owners.py`
-- Modify: `Tests/Utils/test_sensitive_paths.py`
 
 - [ ] Start TASK-19004 and write RED migration tests.
 
-  Cover empty v0 -> current, a real shipped v1 import-receipt database -> current, idempotent reopen, newer-version refusal, receipt regression, and no access to the real profile path. Expected initial failure: the shared owner/store modules do not exist.
+  Cover empty v0 -> current, a pinned historical v1 DDL fixture with seeded import receipts -> current, value-for-value receipt preservation, idempotent reopen, rollback after an injected migration failure, newer-version refusal, receipt/executor regression, and no access to the real profile path. Do not manufacture the historical fixture by stamping the evolving current bootstrap schema as v1. Expected initial failure: the shared owner/store modules do not exist.
 
 - [ ] Introduce the single private owner without changing receipt APIs.
 
-  `NotesDeviceStateStore` owns `_connect()`, `transaction(immediate=False)`, and `initialize()`. `notes_device_state_schema.py` owns `LATEST_NOTES_DEVICE_SCHEMA_VERSION`, v0 import-ledger DDL, and the next lasting-sync migration. `NoteImportReceiptRepository(database_path)` delegates connection/migration/transactions while preserving every public method and the read-only lookup added by TASK-19003.
+  `NotesDeviceStateStore` owns `_connect(*, read_only=False, must_exist=False)`, `transaction(immediate=False)`, and `initialize()`. `notes_device_state_schema.py` owns the shipped v1 import-ledger DDL, `LATEST_NOTES_DEVICE_SCHEMA_VERSION`, and the v1-to-current lasting-sync migration. Preserve all existing receipt tables, columns, checks, foreign keys, unique constraints, and named indexes; a v1 reopen still repairs missing receipt indexes, while malformed or newer schemas fail closed. `NoteImportReceiptRepository(database_path)` delegates connection/migration/transactions while preserving every public method and TASK-19003's SQLite-enforced read-only lookup. Preserve TASK-19003's single-owner `{PRIVATE_FILE, READ_ONLY_URI}` policy, default `preserve_read_only_source_mode=False`, and ADR-029 permission hardening; moving ownership must not weaken it to a writable existence check or introduce a second/raw connection path.
 
   Keep only these lasting tables unless a test proves another is required:
 
@@ -82,12 +81,12 @@ Tasks 19006, 19007, and 19008 may run concurrently after their prerequisites bec
 
 - [ ] Move inventory ownership and prove privacy.
 
-  Point `notes.sync_state` at `NotesDeviceStateStore._connect`, keep backup disabled, add `get_notes_sync_state_db_path` to sensitive path accessors, and update the private-owner inventory. Public diagnostic models must exclude absolute paths, contents, hashes, recovery bytes, and exception messages.
+  Point the existing `notes.sync_state`/C50 entry at `NotesDeviceStateStore._connect`, keep backup disabled, and update the exact private-owner inventory instead of adding another owner or row. The existing user-data-directory containment already protects this direct-child database, so do not add a redundant sensitive-path accessor. New lasting-sync public projections and diagnostics must exclude absolute paths, contents, hashes, recovery bytes, and exception messages; preserve the existing receipt records' public digest fields because the executor contract consumes them.
 
 - [ ] Run the task gate and commit.
 
   ```bash
-  ../../.venv/bin/python -B -m pytest -q -p no:cacheprovider -o addopts="" Tests/Notes/test_notes_device_state_store.py Tests/Notes/test_notes_sync_models.py Tests/Notes/test_note_import_receipts.py Tests/DB/test_private_sqlite.py Tests/DB/test_private_sqlite_inventory.py Tests/DB/test_private_sqlite_interop_owners.py Tests/Utils/test_sensitive_paths.py
+  ../../.venv/bin/python -B -m pytest -q -p no:cacheprovider -o addopts="" Tests/Notes/test_notes_device_state_store.py Tests/Notes/test_notes_sync_models.py Tests/Notes/test_note_import_receipts.py Tests/Notes/test_note_import_executor.py Tests/DB/test_private_sqlite.py Tests/DB/test_private_sqlite_inventory.py Tests/DB/test_private_sqlite_interop_owners.py
   git diff --check
   ```
 
