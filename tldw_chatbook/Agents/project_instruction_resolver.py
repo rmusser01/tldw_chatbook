@@ -41,6 +41,15 @@ class InstructionSource:
 
 
 @dataclass(frozen=True, slots=True)
+class InstructionSourceMetadata:
+    """Content-free source identity retained even when token-omitted."""
+
+    relative_path: str
+    scope: str
+    byte_count: int
+
+
+@dataclass(frozen=True, slots=True)
 class InstructionOutcome:
     """Content-free result for a source that was not delivered."""
 
@@ -81,6 +90,7 @@ class InstructionSnapshot:
     global_outcomes: tuple[InstructionOutcome, ...]
     primary_delivery: InstructionChainDelivery
     warning_codes: tuple[str, ...]
+    startup_source_metadata: InstructionSourceMetadata | None = None
 
 
 @dataclass(frozen=True, slots=True)

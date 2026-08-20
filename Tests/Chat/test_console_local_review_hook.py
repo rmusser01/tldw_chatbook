@@ -515,6 +515,34 @@ def test_compose_local_provider_selected_root_overrides_disabled_fallback(
     assert {"fs_write", "fs_edit", "fs_patch"}.isdisjoint(selected_names)
 
 
+def test_selected_root_swap_fails_closed_before_local_invoke(monkeypatch, tmp_path):
+    selected = tmp_path / "selected"
+    selected.mkdir()
+    (selected / "secret.txt").write_text("inside")
+    identity = controller_mod._capture_project_root_identity(selected)
+    monkeypatch.setattr(controller_mod, "get_cli_setting", _console_settings())
+    controller = _bare_controller(
+        SimpleNamespace(unified_mcp_service=_FakeService(state=ALLOW))
+    )
+    local_provider, review = controller._compose_local_provider(
+        project_root=selected,
+        project_root_identity=identity,
+    )
+
+    moved = tmp_path / "moved"
+    selected.rename(moved)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("outside")
+    selected.symlink_to(outside, target_is_directory=True)
+
+    assert review([ToolCall(name="fs_read", args={"path": "secret.txt"})]) == {}
+    result = local_provider.invoke("fs_read", {"path": "secret.txt"})
+    assert result.ok is False
+    assert "root changed" in result.error.lower()
+    assert "outside" not in result.error
+
+
 def test_compose_local_provider_tilde_workspace_root_expands_home(
     monkeypatch, tmp_path
 ):

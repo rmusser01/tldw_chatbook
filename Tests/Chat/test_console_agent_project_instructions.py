@@ -26,6 +26,9 @@ from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.console_chat_controller import (
     ProjectInstructionBindingRecovery,
+    build_project_instruction_dispatch_notice,
+    commit_project_instruction_dispatch_decision,
+    project_instruction_authority_is_current,
     resolve_project_instruction_binding,
 )
 from tldw_chatbook.Chat.console_project_instructions import (
@@ -231,6 +234,67 @@ def test_notice_metadata_is_content_free_and_proceed_never_rereads(tmp_path):
     assert seen[0]["byte_count"] == len(SENTINEL.encode())
 
 
+def test_token_omission_notice_keeps_content_free_source_metadata(
+    monkeypatch, tmp_path
+):
+    seen = []
+    snapshots = []
+    service, _chat = _service(
+        tmp_path,
+        ["done"],
+        startup_instruction_candidate=_candidate(tmp_path),
+        confirm_project_instruction_dispatch=lambda snapshot: (
+            snapshots.append(snapshot)
+            or seen.append(
+                agent_service.project_instruction_notice_metadata(
+                    snapshot, destination_label="OpenAI"
+                )
+            )
+            or "proceed"
+        ),
+    )
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a, **_k: 1)
+    service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "question"}],
+        config=_cfg(response_reserve_tokens=1),
+        api_endpoint="openai",
+    )
+    assert seen[0]["relative_source"] == "AGENTS.md"
+    assert seen[0]["scope"] == "."
+    assert seen[0]["byte_count"] == len(SENTINEL.encode())
+    assert "omitted_token_budget" in seen[0]["outcomes"]
+    assert SENTINEL not in json.dumps(seen[0])
+    assert snapshots[0].startup_source.body == SENTINEL
+    assert snapshots[0].primary_delivery.source_digests == ()
+
+
+def test_consent_notice_carries_owning_session_and_sanitized_exact_destination(
+    tmp_path,
+):
+    service, _chat = _service(tmp_path, [])
+    snapshot = service._freeze_startup_snapshot(
+        _candidate(tmp_path),
+        _cfg(),
+        "openai",
+        agent_service.ModelRequest(messages=(), tools=()),
+    )
+    notice = build_project_instruction_dispatch_notice(
+        snapshot,
+        session_id="session-owning-background-run",
+        resolution=SimpleNamespace(
+            provider="OpenAI",
+            execution_key="openai",
+            base_url="https://user:password@api.example/v1?token=secret#fragment",
+        ),
+    )
+    assert notice.session_id == "session-owning-background-run"
+    assert notice.destination_label == "OpenAI (https://api.example)"
+    assert "password" not in repr(notice)
+    assert "secret" not in repr(notice)
+    assert SENTINEL not in repr(notice)
+
+
 def test_cancel_and_disable_abort_before_provider_and_discard_snapshot(tmp_path):
     for decision in ("cancel", "disable"):
         service, chat = _service(
@@ -247,6 +311,33 @@ def test_cancel_and_disable_abort_before_provider_and_discard_snapshot(tmp_path)
         )
         assert outcome.status == RUN_CANCELLED
         assert chat.calls == []
+
+
+def test_missing_or_raising_consent_callback_fails_closed_without_provider(tmp_path):
+    cases = (
+        {},
+        {
+            "confirm_project_instruction_dispatch": lambda _snapshot: (
+                _ for _ in ()
+            ).throw(RuntimeError(SENTINEL))
+        },
+    )
+    for index, kwargs in enumerate(cases):
+        service, chat = _service(
+            tmp_path / str(index),
+            ["must not run"],
+            startup_instruction_candidate=_candidate(tmp_path),
+            **kwargs,
+        )
+        run_id, outcome = service.run_turn(
+            conversation_id=str(index),
+            messages=[{"role": "user", "content": "question"}],
+            config=_cfg(),
+            api_endpoint="openai",
+        )
+        assert outcome.status == RUN_CANCELLED
+        assert chat.calls == []
+        assert SENTINEL not in json.dumps(service.db.get_run(run_id), default=str)
 
 
 def test_primary_and_child_each_receive_same_snapshot_once_per_request(tmp_path):
@@ -284,6 +375,54 @@ def test_primary_and_child_each_receive_same_snapshot_once_per_request(tmp_path)
     assert all(len(_sentinel_rows(call)) == 1 for call in chat.calls)
 
 
+def test_child_chain_uses_its_own_exact_first_request_budget(monkeypatch, tmp_path):
+    spawn = {
+        "content": None,
+        "tool_calls": [
+            {
+                "id": "spawn-1",
+                "type": "function",
+                "function": {
+                    "name": SPAWN_TOOL_NAME,
+                    "arguments": json.dumps({"task": "inspect"}),
+                },
+            }
+        ],
+    }
+    service, chat = _service(
+        tmp_path,
+        [spawn, "child done", "parent done"],
+        startup_instruction_candidate=_candidate(tmp_path),
+        confirm_project_instruction_dispatch=lambda _snapshot: "proceed",
+    )
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a, **_k: 100)
+    monkeypatch.setattr(agent_service, "count_tokens_messages", lambda *_a, **_k: 20)
+    monkeypatch.setattr(agent_service, "estimate_tokens", lambda *_a, **_k: 0)
+    monkeypatch.setattr(
+        agent_service,
+        "_count_model_messages",
+        lambda messages, *_a: (
+            95 if "sub-agent" in str(messages[0].get("content", "")).lower() else 10
+        ),
+    )
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "question"}],
+        config=_cfg(
+            native_tools=True,
+            allowed_tools=(SPAWN_TOOL_NAME,),
+            response_reserve_tokens=10,
+        ),
+        api_endpoint="openai",
+    )
+
+    assert outcome.status == RUN_DONE
+    assert len(_sentinel_rows(chat.calls[0])) == 1
+    assert len(_sentinel_rows(chat.calls[1])) == 0
+    assert len(_sentinel_rows(chat.calls[2])) == 1
+
+
 def test_exact_request_builder_is_the_payload_sent(tmp_path):
     service, chat = _service(tmp_path, ["done"])
     config = _cfg()
@@ -300,6 +439,60 @@ def test_exact_request_builder_is_the_payload_sent(tmp_path):
     )
     assert chat.calls[0]["messages_payload"] == list(expected.messages)
     assert chat.calls[0].get("tools") == (list(expected.tools) or None)
+
+
+def test_eviction_settings_are_frozen_before_consent(monkeypatch, tmp_path):
+    class ActiveWriter:
+        log_dir = None
+        is_active = False
+
+        def bind(self, _run_id):
+            self.is_active = True
+
+        def append(self, **_kwargs):
+            return None
+
+        def write_manifest(self, _manifest):
+            return None
+
+        def close(self):
+            return None
+
+    toggle = {"enabled": True, "min_rounds": 7}
+
+    def setting(key, default):
+        if key == agent_service.RUN_LOG_EVICT_ENABLED_KEY:
+            return toggle["enabled"]
+        if key == agent_service.RUN_LOG_EVICT_MIN_RECENT_ROUNDS_KEY:
+            return toggle["min_rounds"]
+        return default
+
+    seen = []
+    real_bound = agent_service.bound_history_for_send
+
+    def bound(messages, **kwargs):
+        seen.append((kwargs["enabled"], kwargs["min_recent_rounds"]))
+        return real_bound(messages, **kwargs)
+
+    monkeypatch.setattr(agent_service, "_setting", setting)
+    monkeypatch.setattr(agent_service, "bound_history_for_send", bound)
+    service, _chat = _service(
+        tmp_path,
+        ["done"],
+        startup_instruction_candidate=_candidate(tmp_path),
+        confirm_project_instruction_dispatch=lambda _snapshot: (
+            toggle.update(enabled=False, min_rounds=1) or "proceed"
+        ),
+        run_log_writer=ActiveWriter(),
+    )
+    service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "question"}],
+        config=_cfg(allowed_tools=("calculator",)),
+        api_endpoint="openai",
+    )
+    assert seen
+    assert set(seen) == {(True, 7)}
 
 
 def test_safe_project_instruction_tokens_counts_tools_rows_and_reserve(
@@ -447,6 +640,21 @@ def test_sole_eligible_binding_auto_selects_and_captures_fingerprint(tmp_path):
     )
 
 
+def test_binding_with_symlinked_ancestor_is_never_auto_selected(tmp_path):
+    real_parent = tmp_path / "real"
+    real_root = real_parent / "repo"
+    real_root.mkdir(parents=True)
+    alias_parent = tmp_path / "alias"
+    alias_parent.symlink_to(real_parent, target_is_directory=True)
+    binding = _binding(alias_parent / "repo")
+
+    with pytest.raises(ProjectInstructionBindingRecovery, match="no_eligible_binding"):
+        resolve_project_instruction_binding(
+            _session(ProjectInstructionControlState.new_session()),
+            _BindingRegistry([binding]),
+        )
+
+
 def test_zero_or_multiple_bindings_hold_for_recovery(tmp_path):
     session = _session(ProjectInstructionControlState.new_session())
     for bindings, code in (
@@ -479,6 +687,58 @@ def test_enabled_session_missing_or_failing_registry_holds_for_recovery(tmp_path
     )
     with pytest.raises(ProjectInstructionBindingRecovery, match="binding_unavailable"):
         resolve_project_instruction_binding(_session(selected), FailingRegistry())
+
+
+def test_stale_consent_never_overwrites_changed_state_or_access(tmp_path):
+    binding = _binding(tmp_path, access="rw")
+    registry = _BindingRegistry([binding])
+    store = SimpleNamespace()
+    session = _session(ProjectInstructionControlState.new_session())
+    session.id = "session-1"
+    expected_selection = resolve_project_instruction_binding(session, registry)
+    expected_state = ProjectInstructionControlState(
+        project_instructions_enabled=True,
+        working_folder_binding_id=binding.binding_id,
+        working_folder_locator_fingerprint=expected_selection.locator_fingerprint,
+    )
+    session.project_instruction_state = expected_state
+    writes = []
+    store.sessions = lambda: (session,)
+    store.set_session_project_instruction_state = lambda _session_id, state: (
+        writes.append(state)
+    )
+
+    registry.bindings[binding.binding_id] = _binding(tmp_path, access="ro")
+    assert not project_instruction_authority_is_current(
+        store=store,
+        session_id=session.id,
+        registry=registry,
+        expected_selection=expected_selection,
+    )
+    result = commit_project_instruction_dispatch_decision(
+        store=store,
+        session_id=session.id,
+        registry=registry,
+        expected_state=expected_state,
+        expected_selection=expected_selection,
+        notice_key="n" * 64,
+        decision="proceed",
+    )
+    assert result == "cancel"
+    assert writes == []
+
+    session.project_instruction_state = ProjectInstructionControlState.legacy_disabled()
+    result = commit_project_instruction_dispatch_decision(
+        store=store,
+        session_id=session.id,
+        registry=registry,
+        expected_state=expected_state,
+        expected_selection=expected_selection,
+        notice_key="n" * 64,
+        decision="proceed",
+    )
+    assert result == "cancel"
+    assert writes == []
 
 
 def test_removed_or_retargeted_binding_never_silently_retargets(tmp_path):

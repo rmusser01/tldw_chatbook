@@ -9,6 +9,7 @@ import hashlib
 import inspect
 import os
 import re
+import stat
 import threading
 import time
 from collections import OrderedDict
@@ -133,6 +134,7 @@ from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
     fingerprint_canonical_locator,
     project_instruction_notice_key,
+    sanitized_destination_label,
 )
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationConflictError,
@@ -182,6 +184,7 @@ from tldw_chatbook.Agents.builtin_tool_gate import (
 from tldw_chatbook.Agents.human_input_wait import use_human_input_wait
 from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
 from tldw_chatbook.Agents.project_instruction_resolver import (
+    InstructionSnapshot,
     ProjectInstructionResolver,
     StartupInstructionCandidate,
 )
@@ -315,6 +318,70 @@ class ProjectInstructionBindingSelection:
     root: Path
     locator_fingerprint: str
     allow_write: bool
+    root_identity: tuple[tuple[str, int, int, int], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectInstructionDispatchNotice:
+    """Content-free consent data for one owning session and destination."""
+
+    session_id: str
+    destination_label: str
+    relative_source: str | None
+    scope: str
+    byte_count: int
+    outcomes: tuple[str, ...]
+    warning_codes: tuple[str, ...]
+
+
+def build_project_instruction_dispatch_notice(
+    snapshot: InstructionSnapshot, *, session_id: str, resolution: Any
+) -> ProjectInstructionDispatchNotice:
+    """Build sanitized consent data from the exact resolved destination."""
+    source = getattr(snapshot, "startup_source_metadata", None)
+    if source is None:
+        source = snapshot.startup_source
+    provider_label = str(
+        getattr(resolution, "provider", "")
+        or getattr(resolution, "execution_key", "")
+        or "Provider"
+    )
+    return ProjectInstructionDispatchNotice(
+        session_id=session_id,
+        destination_label=sanitized_destination_label(
+            provider_label, getattr(resolution, "base_url", None)
+        ),
+        relative_source=source.relative_path if source else None,
+        scope=source.scope if source else ".",
+        byte_count=source.byte_count if source else 0,
+        outcomes=tuple(outcome.code for outcome in snapshot.global_outcomes),
+        warning_codes=snapshot.warning_codes,
+    )
+
+
+def _capture_project_root_identity(
+    root: Path,
+) -> tuple[tuple[str, int, int, int], ...] | None:
+    """Capture root/ancestor identities while rejecting every symlink component."""
+    identities: list[tuple[str, int, int, int]] = []
+    try:
+        for component in (*reversed(root.parents), root):
+            value = os.lstat(component)
+            if stat.S_ISLNK(value.st_mode) or not stat.S_ISDIR(value.st_mode):
+                return None
+            identities.append(
+                (str(component), value.st_dev, value.st_ino, value.st_mode)
+            )
+    except (OSError, ValueError):
+        return None
+    return tuple(identities)
+
+
+def _project_root_identity_matches(
+    root: Path, expected: tuple[tuple[str, int, int, int], ...]
+) -> bool:
+    """Fail closed when a selected root or any ancestor changed identity."""
+    return _capture_project_root_identity(root) == expected
 
 
 def resolve_project_instruction_binding(
@@ -342,10 +409,13 @@ def resolve_project_instruction_binding(
             return None
         try:
             lexical = Path(str(binding.locator)).expanduser().absolute()
-            if lexical.is_symlink() or not lexical.is_dir():
+            if _capture_project_root_identity(lexical) is None:
                 return None
             root = lexical.resolve(strict=True)
         except (OSError, RuntimeError, ValueError):
+            return None
+        root_identity = _capture_project_root_identity(root)
+        if root_identity is None:
             return None
         fingerprint = fingerprint_canonical_locator(str(root))
         return ProjectInstructionBindingSelection(
@@ -354,6 +424,7 @@ def resolve_project_instruction_binding(
             locator_fingerprint=fingerprint,
             allow_write=str(getattr(binding, "metadata", {}).get("access", "ro"))
             == "rw",
+            root_identity=root_identity,
         )
 
     selected_id = state.working_folder_binding_id
@@ -383,6 +454,89 @@ def resolve_project_instruction_binding(
     if len(eligible) != 1:
         raise ProjectInstructionBindingRecovery("choose_binding")
     return eligible[0]
+
+
+def _same_project_instruction_authority(
+    current: ProjectInstructionBindingSelection,
+    expected: ProjectInstructionBindingSelection,
+) -> bool:
+    return (
+        str(current.binding.binding_id) == str(expected.binding.binding_id)
+        and current.root == expected.root
+        and current.locator_fingerprint == expected.locator_fingerprint
+        and current.allow_write == expected.allow_write
+        and current.root_identity == expected.root_identity
+        and _project_root_identity_matches(expected.root, expected.root_identity)
+    )
+
+
+def project_instruction_authority_is_current(
+    *,
+    store: Any,
+    session_id: str,
+    registry: Any,
+    expected_selection: ProjectInstructionBindingSelection,
+) -> bool:
+    """Re-resolve binding state and selected-root identity without retargeting."""
+    session = next((item for item in store.sessions() if item.id == session_id), None)
+    if session is None:
+        return False
+    state = session.project_instruction_state
+    if (
+        not state.project_instructions_enabled
+        or state.working_folder_binding_id
+        != expected_selection.binding.binding_id
+        or state.working_folder_locator_fingerprint
+        != expected_selection.locator_fingerprint
+    ):
+        return False
+    try:
+        current_selection = resolve_project_instruction_binding(session, registry)
+    except ProjectInstructionBindingRecovery:
+        return False
+    return current_selection is not None and _same_project_instruction_authority(
+        current_selection, expected_selection
+    )
+
+
+def commit_project_instruction_dispatch_decision(
+    *,
+    store: Any,
+    session_id: str,
+    registry: Any,
+    expected_state: ProjectInstructionControlState,
+    expected_selection: ProjectInstructionBindingSelection,
+    notice_key: str,
+    decision: Literal["proceed", "cancel", "disable"] | None,
+) -> Literal["proceed", "cancel", "disable", "prompt"]:
+    """Atomically validate authority and apply consent on the owning loop."""
+    session = next((item for item in store.sessions() if item.id == session_id), None)
+    if session is None or session.project_instruction_state != expected_state:
+        return "cancel"
+    if not project_instruction_authority_is_current(
+        store=store,
+        session_id=session_id,
+        registry=registry,
+        expected_selection=expected_selection,
+    ):
+        return "cancel"
+    if expected_state.project_instruction_notice_key == notice_key:
+        return "proceed"
+    if decision is None:
+        return "prompt"
+    if decision == "cancel":
+        return "cancel"
+    enabled = decision == "proceed"
+    store.set_session_project_instruction_state(
+        session_id,
+        ProjectInstructionControlState(
+            project_instructions_enabled=enabled,
+            working_folder_binding_id=expected_selection.binding.binding_id,
+            working_folder_locator_fingerprint=expected_selection.locator_fingerprint,
+            project_instruction_notice_key=notice_key if enabled else None,
+        ),
+    )
+    return decision
 
 #: TASK-1861: the tool result a call gets when the user refused it at the
 #: approval card. The runtime turns any non-"proceed" verdict string into the
@@ -1322,7 +1476,9 @@ class ConsoleChatController:
         context_repository: ConsoleContextRepository | None = None,
         turn_context_provider: "Callable[[str], ConsoleTurnExecutionContext] | None" = None,
         queued_staged_rider_provider: "Callable[[str], bool] | None" = None,
-        confirm_project_instruction_dispatch: Callable[[Any], Literal["proceed", "cancel", "disable"]]
+        confirm_project_instruction_dispatch: Callable[
+            [ProjectInstructionDispatchNotice], Literal["proceed", "cancel", "disable"]
+        ]
         | None = None,
     ) -> None:
         self.store = store
@@ -4965,6 +5121,8 @@ class ConsoleChatController:
         *,
         project_root: Path | None = None,
         allow_write: bool = True,
+        project_root_identity: tuple[tuple[str, int, int, int], ...] | None = None,
+        project_root_guard: Callable[[], bool] | None = None,
     ) -> tuple[
         LocalToolProvider | None, Callable[[list["ToolCall"]], dict[str, str]] | None
     ]:
@@ -5115,6 +5273,17 @@ class ConsoleChatController:
         provider = LocalToolProvider(
             workspace_root=root,
             allow_write=allow_write,
+            root_guard=(
+                project_root_guard
+                if project_root_guard is not None
+                else (
+                    lambda: _project_root_identity_matches(
+                        root, project_root_identity
+                    )
+                    if project_root_identity is not None
+                    else True
+                )
+            ),
             resolve_state=service.gate_tool_test,
             kill_switch=_kill_switch,
             approval_callback=bound_request_approvals,
@@ -10776,6 +10945,7 @@ class ConsoleChatController:
         startup_candidate: StartupInstructionCandidate | None = None
         project_selection: ProjectInstructionBindingSelection | None = None
         confirm_project_dispatch = None
+        project_authority_guard = None
         if session is not None and session.project_instruction_state.project_instructions_enabled:
             try:
                 registry = getattr(self.app, "workspace_registry_service", None)
@@ -10830,42 +11000,60 @@ class ConsoleChatController:
                     destination_provider,
                     destination_endpoint,
                 )
+                expected_project_state = state
+
+                def on_owning_loop(callback):
+                    call_from_thread = getattr(self.app, "call_from_thread", None)
+                    if callable(call_from_thread):
+                        return call_from_thread(callback)
+                    return callback()
+
+                def project_authority_guard():
+                    return bool(
+                        on_owning_loop(
+                            lambda: project_instruction_authority_is_current(
+                                store=self.store,
+                                session_id=session_id,
+                                registry=registry,
+                                expected_selection=project_selection,
+                            )
+                        )
+                    )
 
                 def confirm_project_dispatch(snapshot):
-                    current = session.project_instruction_state
-                    if current.project_instruction_notice_key == notice_key:
-                        return "proceed"
+                    initial = on_owning_loop(
+                        lambda: commit_project_instruction_dispatch_decision(
+                            store=self.store,
+                            session_id=session_id,
+                            registry=registry,
+                            expected_state=expected_project_state,
+                            expected_selection=project_selection,
+                            notice_key=notice_key,
+                            decision=None,
+                        )
+                    )
+                    if initial != "prompt":
+                        return initial
                     callback = self._confirm_project_instruction_dispatch
-                    decision = callback(snapshot) if callback is not None else "cancel"
-                    if decision == "proceed":
-                        self.store.set_session_project_instruction_state(
-                            session_id,
-                            ProjectInstructionControlState(
-                                project_instructions_enabled=True,
-                                working_folder_binding_id=(
-                                    project_selection.binding.binding_id
-                                ),
-                                working_folder_locator_fingerprint=(
-                                    project_selection.locator_fingerprint
-                                ),
-                                project_instruction_notice_key=notice_key,
-                            ),
+                    notice = build_project_instruction_dispatch_notice(
+                        snapshot,
+                        session_id=session_id,
+                        resolution=resolution,
+                    )
+                    decision = callback(notice) if callback is not None else "cancel"
+                    if decision not in {"proceed", "cancel", "disable"}:
+                        decision = "cancel"
+                    return on_owning_loop(
+                        lambda: commit_project_instruction_dispatch_decision(
+                            store=self.store,
+                            session_id=session_id,
+                            registry=registry,
+                            expected_state=expected_project_state,
+                            expected_selection=project_selection,
+                            notice_key=notice_key,
+                            decision=decision,
                         )
-                    elif decision == "disable":
-                        self.store.set_session_project_instruction_state(
-                            session_id,
-                            ProjectInstructionControlState(
-                                project_instructions_enabled=False,
-                                working_folder_binding_id=(
-                                    project_selection.binding.binding_id
-                                ),
-                                working_folder_locator_fingerprint=(
-                                    project_selection.locator_fingerprint
-                                ),
-                                project_instruction_notice_key=None,
-                            ),
-                        )
-                    return decision
+                    )
         self._active_assistant_message_ids[session_id] = assistant_message_id
         self._active_stream_tasks[session_id] = asyncio.current_task()
         self._stop_requested = False
@@ -11000,6 +11188,10 @@ class ConsoleChatController:
             turn_context=turn_context,
             project_root=(project_selection.root if project_selection else None),
             allow_write=(project_selection.allow_write if project_selection else True),
+            project_root_identity=(
+                project_selection.root_identity if project_selection else None
+            ),
+            project_root_guard=project_authority_guard,
         )
         if local_review_hook is not None:
             review_hook = build_combined_review_hook([review_hook, local_review_hook])

@@ -92,6 +92,9 @@ LOCAL_KILL_SWITCH_REFUSAL = "blocked — local tools are switched off"
 LOCAL_GATE_ERROR_REFUSAL = (
     f"blocked — {PERMISSION_STATE_UNRESOLVED_CLAUSE}; retrying may succeed"
 )
+LOCAL_ROOT_CHANGED_REFUSAL = (
+    "Selected workspace root changed after dispatch started; the tool was not run."
+)
 
 _MAX_RESULT_BYTES = 32 * 1024
 _MAX_ERROR_CHARS = 300
@@ -202,6 +205,7 @@ class LocalToolProvider:
         watchlists_service: WatchlistsToolService | None = None,
         no_callback_refusal: str | None = None,
         allow_write: bool = True,
+        root_guard: Callable[[], bool] | None = None,
     ) -> None:
         self._root = workspace_root
         selected_specs = (
@@ -233,6 +237,7 @@ class LocalToolProvider:
         self._persist_approval = persist_approval
         self._record_decision = record_decision
         self._no_callback_refusal = no_callback_refusal
+        self._root_guard = root_guard
         # PR2a Task 5: keyed (run_id, tool_name), not tool_name -- one
         # provider instance is shared by a parent run and every sub-agent
         # it spawns, so a name-keyed dict let any run's turn clear or
@@ -446,6 +451,8 @@ class LocalToolProvider:
         # Same `local:`-prefix tolerance as invoke()/load_schema(): the
         # registry invokes by catalog id ("local:fs_list") while the review
         # hook resolves by LLM-facing name ("fs_list").
+        if not self._root_is_valid():
+            return None
         name = name.split(":", 1)[1] if ":" in name else name
         spec = self._specs.get(name)
         if spec is None:
@@ -545,6 +552,8 @@ class LocalToolProvider:
         spec = self._specs.get(name)
         if spec is None:
             return ToolResult(ok=False, error=f"Unknown local tool: {name}")
+        if not self._root_is_valid():
+            return ToolResult(ok=False, error=LOCAL_ROOT_CHANGED_REFUSAL)
         if self._kill_switch_engaged():
             self._record_decision_safe(self.hub_tool_for(name), "denied")
             return ToolResult(ok=False, error=LOCAL_KILL_SWITCH_REFUSAL)
@@ -555,6 +564,8 @@ class LocalToolProvider:
         # writes, so such a call resolves through the fresh gate below.
         verdict = self._verdict_for(name, args, current_run_id())
         if verdict == "allow":
+            if not self._root_is_valid():
+                return ToolResult(ok=False, error=LOCAL_ROOT_CHANGED_REFUSAL)
             try:
                 return ToolResult(ok=True, content=_fit_result(spec.handler(args)))
             except Exception as exc:  # noqa: BLE001 — never raises across the boundary
@@ -586,6 +597,15 @@ class LocalToolProvider:
         # "deny" and any unrecognized verdict fail closed the same way.
         self._record_decision_safe(self.hub_tool_for(name), "denied")
         return ToolResult(ok=False, error=LOCAL_DENY_REFUSAL)
+
+    def _root_is_valid(self) -> bool:
+        """Never raise while revalidating an optional selected-root guard."""
+        if self._root_guard is None:
+            return True
+        try:
+            return bool(self._root_guard())
+        except Exception:  # noqa: BLE001 - invocation must fail closed
+            return False
 
     def _kill_switch_engaged(self) -> bool:
         """Never-raise kill-switch read.

@@ -106,6 +106,7 @@ from .project_instruction_resolver import (
     InstructionOutcome,
     InstructionSnapshot,
     InstructionSource,
+    InstructionSourceMetadata,
     StartupInstructionCandidate,
 )
 from .tool_catalog import (
@@ -528,7 +529,7 @@ def project_instruction_notice_metadata(
     snapshot: InstructionSnapshot, *, destination_label: str
 ) -> dict[str, object]:
     """Return the content-free metadata allowed in first-use notice UI."""
-    source = snapshot.startup_source
+    source = snapshot.startup_source_metadata or snapshot.startup_source
     return {
         "destination_label": destination_label,
         "relative_source": source.relative_path if source else None,
@@ -1082,6 +1083,8 @@ class AgentService:
         )
         self._startup_instruction_snapshot: InstructionSnapshot | None = None
         self._tool_protocol_cache: dict[tuple[str, ...], str] = {}
+        self._run_log_evict_enabled = False
+        self._run_log_min_recent_rounds = DEFAULT_MIN_RECENT_ROUNDS
 
     # -- internals -------------------------------------------------------
 
@@ -1115,10 +1118,8 @@ class AgentService:
         if log_active:
             system_content = f"{system_content}\n\n{RUN_LOG_PROMPT_SECTION}"
         raw_payload = [{"role": "system", "content": system_content}, *messages]
-        evict_enabled = log_active and _setting(RUN_LOG_EVICT_ENABLED_KEY, False)
-        min_recent_rounds = coerce_min_recent_rounds(
-            _setting(RUN_LOG_EVICT_MIN_RECENT_ROUNDS_KEY, DEFAULT_MIN_RECENT_ROUNDS)
-        )
+        evict_enabled = log_active and self._run_log_evict_enabled
+        min_recent_rounds = self._run_log_min_recent_rounds
         payload = bound_history_for_send(
             raw_payload,
             model=config.model,
@@ -1169,17 +1170,16 @@ class AgentService:
             return 0
         return max(0, limit - reserve - used)
 
-    def _freeze_startup_snapshot(
+    def _startup_delivery_for_request(
         self,
         candidate: StartupInstructionCandidate,
         config: AgentConfig,
         api_endpoint: str,
         request: ModelRequest,
-    ) -> InstructionSnapshot:
-        """Whole-source admit one captured startup candidate without rereading."""
+    ) -> InstructionChainDelivery:
+        """Whole-source admit a captured source against one chain request."""
         source = candidate.source
         outcomes = list(candidate.outcomes)
-        admitted_source = None
         source_digests: tuple[str, ...] = ()
         if source is not None:
             row = build_project_instruction_row(source)
@@ -1193,7 +1193,6 @@ class AgentService:
             except Exception:
                 required = 0
             if type(required) is int and required > 0 and required <= available:
-                admitted_source = source
                 source_digests = (source.digest,)
             else:
                 outcomes.append(
@@ -1201,19 +1200,42 @@ class AgentService:
                         source.relative_path, source.scope, "omitted_token_budget"
                     )
                 )
-        delivery = InstructionChainDelivery(
+        return InstructionChainDelivery(
             source_digests=source_digests,
             outcomes=tuple(outcomes),
         )
+
+    def _freeze_startup_snapshot(
+        self,
+        candidate: StartupInstructionCandidate,
+        config: AgentConfig,
+        api_endpoint: str,
+        request: ModelRequest,
+    ) -> InstructionSnapshot:
+        """Freeze primary admission plus content-free captured metadata."""
+        source = candidate.source
+        delivery = self._startup_delivery_for_request(
+            candidate, config, api_endpoint, request
+        )
+        outcomes = delivery.outcomes
         return InstructionSnapshot(
             binding_id=candidate.binding_id,
             binding_root=candidate.binding_root,
             locator_fingerprint=candidate.locator_fingerprint,
             dispatch_started_wall_ns=candidate.dispatch_started_wall_ns,
-            startup_source=admitted_source,
-            global_outcomes=tuple(outcomes),
+            startup_source=source,
+            global_outcomes=outcomes,
             primary_delivery=delivery,
             warning_codes=tuple(dict.fromkeys(outcome.code for outcome in outcomes)),
+            startup_source_metadata=(
+                InstructionSourceMetadata(
+                    relative_path=source.relative_path,
+                    scope=source.scope,
+                    byte_count=source.byte_count,
+                )
+                if source is not None
+                else None
+            ),
         )
 
     def _make_call_model(
@@ -2030,6 +2052,7 @@ class AgentService:
             runtime_schemas.append(RUN_LOG_SLICE_TOOL_SCHEMA)
 
         run_messages = messages
+        chain_delivery: InstructionChainDelivery | None = None
         if (
             agent_kind == AGENT_KIND_PRIMARY
             and self.startup_instruction_candidate is not None
@@ -2049,11 +2072,14 @@ class AgentService:
                 api_endpoint,
                 first_request,
             )
-            decision = (
-                self.confirm_project_instruction_dispatch(snapshot)
-                if self.confirm_project_instruction_dispatch is not None
-                else "proceed"
-            )
+            try:
+                decision = (
+                    self.confirm_project_instruction_dispatch(snapshot)
+                    if self.confirm_project_instruction_dispatch is not None
+                    else "cancel"
+                )
+            except Exception:  # noqa: BLE001 - consent failures are content-free
+                decision = "cancel"
             if decision not in {"proceed", "cancel", "disable"}:
                 decision = "cancel"
             if decision != "proceed":
@@ -2061,9 +2087,36 @@ class AgentService:
                 self._persist(run_id, outcome)
                 return run_id, outcome
             self._startup_instruction_snapshot = snapshot
+            chain_delivery = snapshot.primary_delivery
 
         snapshot = self._startup_instruction_snapshot
-        if snapshot is not None and snapshot.startup_source is not None:
+        if (
+            agent_kind == AGENT_KIND_SUBAGENT
+            and self.startup_instruction_candidate is not None
+            and snapshot is not None
+        ):
+            child_request = self._build_model_request(
+                config,
+                api_endpoint,
+                runtime_schemas,
+                messages,
+                tuple(active),
+                log_active,
+            )
+            chain_delivery = self._startup_delivery_for_request(
+                self.startup_instruction_candidate,
+                config,
+                api_endpoint,
+                child_request,
+            )
+        elif snapshot is not None and chain_delivery is None:
+            chain_delivery = snapshot.primary_delivery
+        if (
+            snapshot is not None
+            and snapshot.startup_source is not None
+            and chain_delivery is not None
+            and snapshot.startup_source.digest in chain_delivery.source_digests
+        ):
             run_messages = append_project_instruction_rows(
                 messages, [build_project_instruction_row(snapshot.startup_source)]
             )
@@ -4169,6 +4222,15 @@ class AgentService:
         turn_started = self.clock()
         self._startup_instruction_snapshot = None
         self._tool_protocol_cache.clear()
+        self._run_log_evict_enabled = bool(
+            _setting(RUN_LOG_EVICT_ENABLED_KEY, False)
+        )
+        self._run_log_min_recent_rounds = coerce_min_recent_rounds(
+            _setting(
+                RUN_LOG_EVICT_MIN_RECENT_ROUNDS_KEY,
+                DEFAULT_MIN_RECENT_ROUNDS,
+            )
+        )
         run_id, outcome = self._run_one(
             conversation_id=conversation_id,
             messages=messages,
