@@ -33,10 +33,10 @@ Port of hermes-agent's Mixture-of-Agents-as-models concept (2026-08-19 hermes-re
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes.
-ADR path: backlog/decisions/068-council-moa-presets-as-virtual-models.md (to be drafted before implementation).
+ADR path: backlog/decisions/073-council-moa-presets-as-virtual-models.md (to be drafted before implementation).
 Reason: new virtual-provider/model-system boundary and a cross-module interface (model picker ↔ agent runtime/fleet); long-lived UX structure. The ADR must decide storage (config vs DB), the pseudo-provider identity, and failure semantics when a member's provider is unavailable.
 
-1. Draft ADR-068 (storage, picker identity, member-failure semantics, accounting)
+1. Draft ADR-073 (storage, picker identity, member-failure semantics, accounting)
 2. Preset definition + storage; virtual-model registration in the picker seam
 3. Runtime: fan-out via existing fleet spawn, labelled member blocks, aggregator turn
 4. Accounting integration + fleet-panel/display polish

@@ -1,8 +1,9 @@
 ---
 id: TASK-18940
 title: 'Server-offloaded scheduled agent tasks: execution seam and result pass-back'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@robert'
 created_date: '2026-08-19 11:05'
 updated_date: '2026-08-19 11:05'
 labels:
@@ -49,7 +50,7 @@ This is architecture-first work: an ADR defining the client↔server execution c
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes.
-ADR path: backlog/decisions/071-server-offloaded-scheduled-agent-tasks.md (to be drafted before implementation; amends ADR-018's "execution remains execution_unavailable until server-side automation execution is integrated" clause).
+ADR path: backlog/decisions/072-server-offloaded-scheduled-agent-tasks.md (DRAFTED 2026-08-19 — review before implementation; amends ADR-018's "execution remains execution_unavailable until server-side automation execution is integrated" clause).
 Reason: cross-system service contract (client↔server execution ownership, result delivery, approval policy for server-side tool use) — squarely in ADR-required territory, and the owner has stated the long-term direction this task exists to realize.
 
 1. Draft ADR-071: execution contract, result-delivery channels, approval policy, reconciliation semantics

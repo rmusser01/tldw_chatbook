@@ -33,11 +33,11 @@ A kanban surface exists in the app but is not directly accessible and its UI is 
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes.
-ADR path: backlog/decisions/070-kanban-board-foundation.md (to be drafted before implementation).
+ADR path: backlog/decisions/075-kanban-board-foundation.md (to be drafted before implementation).
 Reason: long-lived application-structure decision — replaces an existing (broken) surface with a ported architecture and defines the board's data ownership (local store vs Scheduling/agent-run sources). Not immediate: sequence after current Console/fleet work settles.
 
 1. Audit the existing kanban surface and data; record findings in this task
-2. Draft ADR-070: port vs rewrite boundary, data ownership, integration seams (Scheduling, agent runs)
+2. Draft ADR-075: port vs rewrite boundary, data ownership, integration seams (Scheduling, agent runs)
 3. Port/adapt the backlog-md-py board UI as a self-contained Textual surface
 4. Shell entry points + keyboard conventions per ADR-031
 5. Tests + user guide page

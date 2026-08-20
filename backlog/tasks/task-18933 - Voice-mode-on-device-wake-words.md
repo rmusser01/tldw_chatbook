@@ -32,10 +32,10 @@ Add open-vocabulary wake-word detection to chatbook's existing voice mode (Mic d
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes.
-ADR path: backlog/decisions/069-voice-wake-word-on-device-boundary.md (to be drafted before implementation).
+ADR path: backlog/decisions/074-voice-wake-word-on-device-boundary.md (to be drafted before implementation).
 Reason: introduces an always-on audio dependency and a new privacy boundary (on-device detection only, no egress while armed) — dependency/tooling choice plus security/privacy decision per the ADR policy.
 
-1. Draft ADR-069: engine choice (e.g. open-wake-word-class dependency vs vendored detector), arm/disarm lifecycle, privacy guarantees
+1. Draft ADR-074: engine choice (e.g. open-wake-word-class dependency vs vendored detector), arm/disarm lifecycle, privacy guarantees
 2. Wake listener lifecycle integrated with the existing voice-mode audio path
 3. Phrase config + stop-phrase handling
 4. No-egress test, gating tests, measured accuracy report, docs (Speech services guide)
