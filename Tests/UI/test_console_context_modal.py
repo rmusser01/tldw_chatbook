@@ -257,6 +257,94 @@ async def test_context_modal_refreshes_project_metadata_in_place():
 
 
 @pytest.mark.asyncio
+async def test_context_modal_none_preview_replaces_stale_loaded_state():
+    loaded = build_console_project_instruction_state(
+        ProjectInstructionControlState(True, "binding", "f" * 64, None),
+        binding_label="Repo",
+        locator_matches=True,
+        sources=(
+            ConsoleProjectInstructionSourceRow(
+                relative_source="AGENTS.md",
+                scope=".",
+                byte_count=33,
+                outcome="active",
+            ),
+        ),
+    )
+    disabled = build_console_project_instruction_state(
+        ProjectInstructionControlState.legacy_disabled()
+    )
+    snapshots = [PROJECT_SNAPSHOT, EMPTY_SNAPSHOT]
+    states = [loaded, disabled]
+
+    async def changing_factory() -> ConsoleContextSnapshot:
+        return snapshots.pop(0)
+
+    async def changing_state_factory():
+        return states.pop(0)
+
+    app = ActionHarness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.push_screen(
+            ConsoleContextModal(
+                changing_factory,
+                project_instruction_state=loaded,
+                project_instruction_state_factory=changing_state_factory,
+            )
+        )
+        await pilot.pause()
+        modal = app.screen
+        panel = modal.query_one("#console-context-project-instructions")
+        assert "AGENTS.md" in " ".join(
+            str(item.renderable) for item in panel.query(Static)
+        )
+
+        await pilot.click("#console-context-refresh")
+        await pilot.pause()
+
+        assert app.screen is modal
+        assert modal.snapshot.project_instruction_preview is None
+        text = " ".join(str(item.renderable) for item in panel.query(Static))
+        assert "State: Off" in text
+        assert "AGENTS.md" not in text
+
+
+@pytest.mark.asyncio
+async def test_context_modal_authority_warning_suppresses_stale_preview_rows():
+    loaded = build_console_project_instruction_state(
+        ProjectInstructionControlState(True, "binding", "f" * 64, None),
+        binding_label="Repo",
+        locator_matches=True,
+    )
+    warning = build_console_project_instruction_state(
+        ProjectInstructionControlState(True, "binding", "f" * 64, None),
+        binding_label="Repo moved",
+        locator_matches=False,
+        warning_codes=("binding_retargeted",),
+    )
+
+    async def state_factory():
+        return warning
+
+    app = ActionHarness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.push_screen(
+            ConsoleContextModal(
+                _project_snapshot_factory,
+                project_instruction_state=loaded,
+                project_instruction_state_factory=state_factory,
+            )
+        )
+        await pilot.pause()
+
+        panel = app.screen.query_one("#console-context-project-instructions")
+        text = " ".join(str(item.renderable) for item in panel.query(Static))
+        assert "State: Warning" in text
+        assert "binding_retargeted" in text
+        assert "nested/AGENTS.md" not in text
+
+
+@pytest.mark.asyncio
 async def test_context_modal_close_dismisses():
     app = ActionHarness()
 

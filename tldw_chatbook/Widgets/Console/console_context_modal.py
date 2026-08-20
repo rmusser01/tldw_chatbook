@@ -101,6 +101,10 @@ class ConsoleContextModal(SafeModalDismissMixin, ModalScreen[None]):
         in_progress: bool = False,
         ephemeral: bool = False,
         project_instruction_state: ConsoleProjectInstructionState | None = None,
+        project_instruction_state_factory: Callable[
+            [], Awaitable[ConsoleProjectInstructionState]
+        ]
+        | None = None,
     ) -> None:
         super().__init__()
         self._snapshot_factory = snapshot_factory
@@ -109,6 +113,7 @@ class ConsoleContextModal(SafeModalDismissMixin, ModalScreen[None]):
         self.in_progress = in_progress
         self._save_blocked_reason = blocked_reason("save-context", ephemeral=ephemeral)
         self._project_instruction_state = project_instruction_state
+        self._project_instruction_state_factory = project_instruction_state_factory
 
     def compose(self) -> ComposeResult:
         with Vertical(id="console-context-modal"):
@@ -167,10 +172,16 @@ class ConsoleContextModal(SafeModalDismissMixin, ModalScreen[None]):
         modal = self.query_one("#console-context-modal", Vertical)
         modal.set_class(not self.snapshot.current_messages, "context-empty")
         if self._project_instruction_state is not None:
-            self.query_one(
+            project_panel = self.query_one(
                 "#console-context-project-instructions",
                 ConsoleProjectInstructionContextPanel,
-            ).sync_preview(self.snapshot.project_instruction_preview)
+            )
+            project_panel.sync_state(self._project_instruction_state)
+            if (
+                self._project_instruction_state.enabled
+                and self._project_instruction_state.locator_match == "match"
+            ):
+                project_panel.sync_preview(self.snapshot.project_instruction_preview)
 
         warning = self.query_one("#console-context-warning", Static)
         if self.in_progress:
@@ -339,7 +350,12 @@ class ConsoleContextModal(SafeModalDismissMixin, ModalScreen[None]):
     async def _load_snapshot(self) -> None:
         self.loading = True
         try:
-            self.snapshot = await self._snapshot_factory()
+            snapshot = await self._snapshot_factory()
+            if self._project_instruction_state_factory is not None:
+                self._project_instruction_state = (
+                    await self._project_instruction_state_factory()
+                )
+            self.snapshot = snapshot
             if self._estimate_factory is not None:
                 self.token_estimate = self._estimate_factory()
         finally:

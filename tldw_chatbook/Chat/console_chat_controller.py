@@ -189,10 +189,6 @@ from tldw_chatbook.Agents.project_instruction_resolver import (
     ProjectInstructionResolver,
     StartupInstructionCandidate,
 )
-from tldw_chatbook.Agents.agent_service import (
-    append_project_instruction_rows,
-    build_project_instruction_row,
-)
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall, MCPToolProvider
 from tldw_chatbook.Agents.run_context import current_run_id
 from tldw_chatbook.Agents.session_todo_store import (
@@ -354,31 +350,6 @@ class ProjectInstructionDisplayMetadata:
     byte_count: int
     outcome: str
     warning_codes: tuple[str, ...]
-
-
-def build_project_instruction_preview(
-    base_messages: list[dict[str, Any]],
-    startup_candidate: StartupInstructionCandidate,
-    request_builder: Callable[[list[dict[str, Any]]], dict[str, Any]],
-) -> ProjectInstructionPreview:
-    """Build one disposable exact-request preview without touching live state."""
-    messages = copy.deepcopy(base_messages)
-    source = startup_candidate.source
-    if source is not None:
-        messages = append_project_instruction_rows(
-            messages, [build_project_instruction_row(source)]
-        )
-    payload = copy.deepcopy(request_builder(copy.deepcopy(messages)))
-    return ProjectInstructionPreview(
-        relative_source=source.relative_path if source else None,
-        scope=source.scope if source else ".",
-        byte_count=source.byte_count if source else 0,
-        outcomes=tuple(outcome.code for outcome in startup_candidate.outcomes),
-        warning_codes=tuple(
-            dict.fromkeys(outcome.code for outcome in startup_candidate.outcomes)
-        ),
-        next_send_payload=payload,
-    )
 
 
 def build_project_instruction_dispatch_notice(
@@ -5262,6 +5233,36 @@ class ConsoleChatController:
         self._publish_mcp_inspector_counts(len(catalog), provider.not_connected_count)
         return provider
 
+    async def _compose_agent_request_providers(
+        self,
+        *,
+        session_id: str,
+        project_selection: ProjectInstructionBindingSelection | None,
+        project_authority_guard: Callable[[], bool] | None,
+        turn_context: ConsoleTurnExecutionContext | None = None,
+    ) -> tuple[
+        MCPToolProvider | None,
+        "BuiltinToolGate",
+        LocalToolProvider | None,
+        Callable[[list["ToolCall"]], dict[str, str]] | None,
+    ]:
+        """Compose the per-request providers shared by live and preview."""
+        mcp_provider = await self._compose_mcp_provider(session_id)
+        builtin_gate = build_builtin_gate(
+            getattr(self.app, "unified_mcp_service", None)
+        )
+        local_provider, local_review_hook = self._compose_local_provider(
+            session_id=session_id,
+            turn_context=turn_context,
+            project_root=(project_selection.root if project_selection else None),
+            allow_write=(project_selection.allow_write if project_selection else True),
+            project_root_identity=(
+                project_selection.root_identity if project_selection else None
+            ),
+            project_root_guard=project_authority_guard,
+        )
+        return mcp_provider, builtin_gate, local_provider, local_review_hook
+
     def _compose_local_provider(
         self,
         session_id: str | None = None,
@@ -7621,6 +7622,9 @@ class ConsoleChatController:
         if not session_id:
             return ConsoleContextSnapshot(current_messages=[], next_send_payload={})
 
+        session = next(
+            (item for item in self.store.sessions() if item.id == session_id), None
+        )
         current_messages = list(self.store.messages_for_session(session_id))
         staged_sources_list = [
             {"source_id": s.source_id, "label": s.label, "type": s.source_type}
@@ -7700,6 +7704,12 @@ class ConsoleChatController:
                     },
                 ]
 
+            # Preserve the exact provider projection for disposable agent
+            # admission.  Redaction and image placeholders are display-only:
+            # applying either before AgentService's token admission can change
+            # whether the project source fits compared with the live request.
+            exact_provider_messages = copy.deepcopy(provider_messages)
+
             # Replace image data with placeholders for the preview, including historical images.
             provider_messages = self._replace_image_data_with_placeholders(
                 provider_messages
@@ -7748,9 +7758,13 @@ class ConsoleChatController:
                     else prefill,
                     "agent_loop_bypassed": True,
                 }
-            preview = await self._build_project_instruction_preview_for_session(
-                session_id, next_send_payload
-            )
+            preview = None
+            if self._agent_dispatch_is_eligible(session, prefill=prefill):
+                preview = await self._build_project_instruction_preview_for_session(
+                    session_id,
+                    next_send_payload,
+                    exact_provider_messages,
+                )
             if preview is not None:
                 next_send_payload = preview.next_send_payload
             return ConsoleContextSnapshot(
@@ -7803,10 +7817,13 @@ class ConsoleChatController:
             )
 
     async def _build_project_instruction_preview_for_session(
-        self, session_id: str, base_payload: dict[str, Any]
+        self,
+        session_id: str,
+        base_payload: dict[str, Any],
+        provider_messages: list[dict[str, Any]],
     ) -> ProjectInstructionPreview | None:
         """Securely reread root guidance into a disposable preview only."""
-        if not self._agent_runtime_enabled:
+        if not self._agent_runtime_enabled or self._agent_bridge is None:
             return None
         session = next(
             (item for item in self.store.sessions() if item.id == session_id), None
@@ -7815,6 +7832,14 @@ class ConsoleChatController:
             session is None
             or not session.project_instruction_state.project_instructions_enabled
         ):
+            return None
+        try:
+            resolution = await self.provider_gateway.resolve_for_send(
+                self._provider_selection()
+            )
+        except Exception:  # noqa: BLE001 - preview failure stays content-free
+            return None
+        if not getattr(resolution, "ready", True):
             return None
         registry = getattr(self.app, "workspace_registry_service", None)
         try:
@@ -7843,7 +7868,16 @@ class ConsoleChatController:
         bridge = self._agent_bridge
         if bridge is None:
             return None
-        agent_messages = copy.deepcopy(list(base_payload.get("messages") or ()))
+        bound = bound_messages_to_window(
+            copy.deepcopy(provider_messages),
+            model=getattr(resolution, "model", None) or "",
+            provider=getattr(resolution, "provider", "") or "",
+            response_reservation=(
+                getattr(resolution, "max_tokens", None)
+                or DEFAULT_RESPONSE_RESERVATION
+            ),
+        )
+        agent_messages = list(bound.messages)
         session_system_prompt = ""
         if (
             agent_messages
@@ -7851,22 +7885,40 @@ class ConsoleChatController:
         ):
             session_system_prompt = str(agent_messages[0].get("content", ""))
             agent_messages = agent_messages[1:]
+        mcp_provider, builtin_gate, local_provider, _local_review_hook = (
+            await self._compose_agent_request_providers(
+                session_id=session_id,
+                project_selection=selection,
+                project_authority_guard=None,
+            )
+        )
         try:
             exact_payload, snapshot = await asyncio.to_thread(
                 bridge.build_project_instruction_preview_request,
                 candidate=candidate,
-                model=str(base_payload.get("model") or ""),
+                session_id=session_id,
+                resolution=resolution,
+                fallback_model=self.model or self.configured_model or "",
                 session_system_prompt=session_system_prompt,
                 agent_messages=agent_messages,
-                api_endpoint=self.provider or "agent",
-                response_reserve_tokens=self.max_tokens
-                or DEFAULT_RESPONSE_RESERVATION,
+                mcp_provider=mcp_provider,
+                builtin_gate=builtin_gate,
+                local_provider=local_provider,
+                request_skill_install_enabled=True,
+                request_skill_script_enabled=(
+                    self.set_pending_skill_script is not None
+                ),
             )
         except Exception:  # noqa: BLE001 - preview failure stays content-free
             return None
         payload = copy.deepcopy(base_payload)
         payload.pop("tools", None)
-        payload.update(copy.deepcopy(exact_payload))
+        display_payload = self._replace_image_data_with_placeholders(
+            copy.deepcopy(exact_payload.get("messages") or ())
+        )
+        projected_exact = copy.deepcopy(exact_payload)
+        projected_exact["messages"] = self._redact_secrets(display_payload)
+        payload.update(projected_exact)
         messages = list(payload.get("messages") or ())
         payload["system"] = (
             [copy.deepcopy(messages[0])]
@@ -7885,6 +7937,16 @@ class ConsoleChatController:
             outcomes=outcomes,
             warning_codes=tuple(snapshot.warning_codes),
             next_send_payload=payload,
+        )
+
+    def _agent_dispatch_is_eligible(self, session, *, prefill: str | None) -> bool:
+        """Return the single live/preview agent-dispatch eligibility decision."""
+        return bool(
+            self._agent_runtime_enabled
+            and self._agent_bridge is not None
+            and not prefill
+            and session is not None
+            and session.assistant_kind != "character"
         )
 
     def _remember_project_instruction_delivery(
@@ -10024,7 +10086,6 @@ class ConsoleChatController:
         # present. Keyed on the message's OWNING session (looked up here,
         # not the controller's active session) so a session switch racing
         # this send can't flip which branch a still-in-flight message uses.
-        force_plain = owner is not None and owner.assistant_kind == "character"
         # Cost-ticker PR3: record this send's payload-fingerprint baseline at
         # the single dispatch choke point covering BOTH the direct-provider
         # and agent paths (they branch further down). Two boundaries are
@@ -11445,8 +11506,16 @@ class ConsoleChatController:
         # outside this task's file scope, so keeping that function
         # byte-identical and building the run-level hook separately here
         # is the lower-blast-radius choice.
-        mcp_provider = await self._compose_mcp_provider(
-            session_id
+        (
+            mcp_provider,
+            builtin_gate,
+            local_provider,
+            local_review_hook,
+        ) = await self._compose_agent_request_providers(
+            session_id=session_id,
+            project_selection=project_selection,
+            project_authority_guard=project_authority_guard,
+            turn_context=turn_context,
         )
         self._mcp_provider = mcp_provider
 
@@ -11459,9 +11528,6 @@ class ConsoleChatController:
         # gate, and vice versa. `build_builtin_gate(None)` (no
         # `unified_mcp_service` on the app) is fail-closed-correct, not
         # "ungated" -- see that function's own docstring.
-        builtin_gate = build_builtin_gate(
-            getattr(self.app, "unified_mcp_service", None)
-        )
         # Only `.tool_for(name)` is used by the review hook below, to
         # resolve a `ToolCall.name` to the `Tool` object `builtin_gate.
         # resolve` needs -- this instance is never used to invoke a tool,
@@ -11504,16 +11570,6 @@ class ConsoleChatController:
         # Local tools (ADR-032): same per-run composition point. Both
         # hooks see every batch; each gates only what its provider owns,
         # so the combined hook is a collision-free merge.
-        local_provider, local_review_hook = self._compose_local_provider(
-            session_id=session_id,
-            turn_context=turn_context,
-            project_root=(project_selection.root if project_selection else None),
-            allow_write=(project_selection.allow_write if project_selection else True),
-            project_root_identity=(
-                project_selection.root_identity if project_selection else None
-            ),
-            project_root_guard=project_authority_guard,
-        )
         if local_review_hook is not None:
             review_hook = build_combined_review_hook(
                 [review_hook, local_review_hook]

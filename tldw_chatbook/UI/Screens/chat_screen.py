@@ -3300,6 +3300,11 @@ class ChatScreen(BaseAppScreen):
         def _estimate_factory() -> int | None:
             return self._estimate_tokens({"draft": _captured_draft()})
 
+        async def _project_instruction_state_factory():
+            return await self._session._refresh_console_project_instruction_display_state(
+                session_id
+            )
+
         token_estimate = _estimate_factory()
         in_progress = controller.run_state.status in CONSOLE_ACTIVE_RUN_STATUSES
         self.app.push_screen(
@@ -3309,7 +3314,10 @@ class ChatScreen(BaseAppScreen):
                 estimate_factory=_estimate_factory,
                 in_progress=in_progress,
                 ephemeral=self._console_active_session_is_ephemeral(),
-                project_instruction_state=self._session._build_console_project_instruction_display_state(),
+                project_instruction_state=self._session._build_console_project_instruction_display_state(
+                    session_id
+                ),
+                project_instruction_state_factory=_project_instruction_state_factory,
             )
         )
 

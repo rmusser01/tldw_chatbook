@@ -159,6 +159,11 @@ class ConsoleProjectInstructionContextPanel(Widget):
         )
         self.refresh(recompose=True)
 
+    def sync_state(self, state: ConsoleProjectInstructionState) -> None:
+        """Replace the complete content-free state for a modal refresh."""
+        self._state = state
+        self.refresh(recompose=True)
+
 
 class ProjectInstructionSetupModal(ModalScreen[ProjectInstructionSetupResult]):
     """Choose one eligible binding, disable the feature, or cancel."""

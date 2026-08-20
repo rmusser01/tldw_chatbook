@@ -695,6 +695,12 @@ class ConsoleSessionController:
         self._reaction_preview_target_ref: (
             weakref.ReferenceType[ConsoleReactionPickerModal] | None
         ) = None
+        self._console_project_instruction_display_cache: dict[
+            str, tuple[ProjectInstructionControlState, ConsoleProjectInstructionState]
+        ] = {}
+        self._console_project_instruction_refresh_inflight: dict[
+            str, ProjectInstructionControlState
+        ] = {}
 
     # -- Framework services (live-read via `@property`) --------------------
 
@@ -1379,6 +1385,8 @@ class ConsoleSessionController:
             self._ensure_console_chat_controller().close_session(session_id)
             self._clear_session_manual_reactions(session_id)
             self._console_undo_histories.pop(session_id, None)
+            self._console_project_instruction_display_cache.pop(session_id, None)
+            self._console_project_instruction_refresh_inflight.pop(session_id, None)
             await self._sync_native_console_chat_ui()
 
         while True:
@@ -2850,65 +2858,152 @@ class ConsoleSessionController:
 
     def _build_console_project_instruction_display_state(
         self,
+        session_id: str | None = None,
     ) -> ConsoleProjectInstructionState:
-        """Return the active session's content-free rail/Context state."""
-        session = self._active_native_console_session()
+        """Return cached content-free state without filesystem authority I/O."""
+        store = self._console_chat_store
+        session = None
+        if store is not None:
+            target_id = session_id or store.active_session_id
+            session = next(
+                (item for item in store.sessions() if item.id == target_id), None
+            )
         control = (
             session.project_instruction_state
             if session is not None
             else ProjectInstructionControlState.legacy_disabled()
         )
-        sources: tuple[ConsoleProjectInstructionSourceRow, ...] = ()
-        warning_codes: tuple[str, ...] = ()
-        binding_label = control.working_folder_binding_id or ""
-        locator_matches: bool | None = None
-        if (
-            session is not None
-            and control.project_instructions_enabled
-            and control.working_folder_binding_id is not None
-        ):
-            controller = self._ensure_console_chat_controller()
-            registry = getattr(self.app_instance, "workspace_registry_service", None)
+        cache = getattr(self, "_console_project_instruction_display_cache", {})
+        cached = cache.get(session.id) if session is not None else None
+        if cached is not None and cached[0] == control:
+            return cached[1]
+        return build_console_project_instruction_state(
+            control,
+            binding_label=control.working_folder_binding_id or "",
+        )
+
+    async def _refresh_console_project_instruction_display_state(
+        self, session_id: str
+    ) -> ConsoleProjectInstructionState:
+        """Resolve authority off-loop and publish only content-free state."""
+        store = self._console_chat_store
+        session = (
+            next((item for item in store.sessions() if item.id == session_id), None)
+            if store is not None
+            else None
+        )
+        if session is None:
+            return build_console_project_instruction_state(
+                ProjectInstructionControlState.legacy_disabled()
+            )
+        control = session.project_instruction_state
+        controller = self._ensure_console_chat_controller()
+        metadata = controller.project_instruction_display_metadata(session_id)
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+
+        def resolve_content_free() -> tuple[str, bool | None, tuple[str, ...]]:
+            label = control.working_folder_binding_id or ""
+            if not control.project_instructions_enabled or not label:
+                return label, None, ()
             try:
                 binding = registry.get_runtime_binding(
                     control.working_folder_binding_id
                 )
                 if binding is not None:
-                    binding_label = str(getattr(binding, "label", "") or binding_label)
+                    label = str(getattr(binding, "label", "") or label)
                 resolve_project_instruction_binding(session, registry)
-                locator_matches = True
             except (AttributeError, ProjectInstructionBindingRecovery) as exc:
-                locator_matches = False
-                warning_codes = (str(exc) or "binding_unavailable",)
-                clear = getattr(controller, "_clear_project_instruction_delivery", None)
-                if callable(clear):
-                    clear(session.id)
-                metadata = None
-            else:
-                metadata = controller.project_instruction_display_metadata(session.id)
-            if metadata is not None:
-                warning_codes = metadata.warning_codes
-                relative_source = metadata.relative_source
-                if relative_source:
-                    sources = (
-                        ConsoleProjectInstructionSourceRow(
-                            relative_source=str(relative_source),
-                            scope=metadata.scope,
-                            byte_count=metadata.byte_count,
-                            outcome=metadata.outcome,
-                            warning_code=(
-                                metadata.warning_codes[0]
-                                if metadata.warning_codes
-                                else ""
-                            ),
+                return label, False, (str(exc) or "binding_unavailable",)
+            return label, True, ()
+
+        binding_label, locator_matches, authority_warnings = await asyncio.to_thread(
+            resolve_content_free
+        )
+        current = next(
+            (item for item in store.sessions() if item.id == session_id), None
+        )
+        if current is None or current.project_instruction_state != control:
+            return self._build_console_project_instruction_display_state(session_id)
+        sources: tuple[ConsoleProjectInstructionSourceRow, ...] = ()
+        warning_codes = authority_warnings
+        if locator_matches is False:
+            clear = getattr(controller, "_clear_project_instruction_delivery", None)
+            if callable(clear):
+                clear(session_id)
+            metadata = None
+        if metadata is not None:
+            warning_codes = tuple(metadata.warning_codes)
+            if metadata.relative_source:
+                sources = (
+                    ConsoleProjectInstructionSourceRow(
+                        relative_source=str(metadata.relative_source),
+                        scope=metadata.scope,
+                        byte_count=metadata.byte_count,
+                        outcome=metadata.outcome,
+                        warning_code=(
+                            metadata.warning_codes[0]
+                            if metadata.warning_codes
+                            else ""
                         ),
-                    )
-        return build_console_project_instruction_state(
+                    ),
+                )
+        state = build_console_project_instruction_state(
             control,
             binding_label=binding_label,
             locator_matches=locator_matches,
             sources=sources,
             warning_codes=warning_codes,
+        )
+        cache = getattr(self, "_console_project_instruction_display_cache", None)
+        if cache is None:
+            cache = self._console_project_instruction_display_cache = {}
+        cache[session_id] = (control, state)
+        return state
+
+    def _request_console_project_instruction_display_refresh(
+        self, session_id: str
+    ) -> None:
+        """Start at most one authority refresh for a session/control snapshot."""
+        store = self._console_chat_store
+        session = (
+            next((item for item in store.sessions() if item.id == session_id), None)
+            if store is not None
+            else None
+        )
+        if session is None:
+            return
+        control = session.project_instruction_state
+        inflight = getattr(self, "_console_project_instruction_refresh_inflight", None)
+        if inflight is None:
+            inflight = self._console_project_instruction_refresh_inflight = {}
+        if inflight.get(session_id) == control:
+            return
+        inflight[session_id] = control
+
+        async def refresh() -> None:
+            try:
+                state = await self._refresh_console_project_instruction_display_state(
+                    session_id
+                )
+                active = self._active_native_console_session()
+                if active is not None and active.id == session_id:
+                    try:
+                        row = self._screen.query_one(
+                            "#console-project-instruction-status",
+                            ConsoleProjectInstructionStatusRow,
+                        )
+                    except QueryError:
+                        pass
+                    else:
+                        row.sync_state(state)
+            finally:
+                if inflight.get(session_id) == control:
+                    inflight.pop(session_id, None)
+
+        self.run_worker(
+            refresh(),
+            exclusive=True,
+            group=f"console-project-instructions-{session_id}",
         )
 
     def _sync_console_project_instruction_status_row(self) -> None:
@@ -2921,6 +3016,9 @@ class ConsoleSessionController:
         except QueryError:
             return
         row.sync_state(self._build_console_project_instruction_display_state())
+        session = self._active_native_console_session()
+        if session is not None:
+            self._request_console_project_instruction_display_refresh(session.id)
 
     async def _select_project_instruction_binding(
         self,
@@ -2980,6 +3078,12 @@ class ConsoleSessionController:
             )
             return any(session.id == notice.session_id for session in sessions)
 
+        def owning_run_cancelled() -> bool:
+            controller = getattr(self._screen, "_console_chat_controller", None)
+            events = getattr(controller, "_active_cancel_events", {})
+            event = events.get(notice.session_id)
+            return bool(event is not None and event.is_set())
+
         def finish(decision: str | None) -> None:
             if owning_session_exists():
                 if decision in {"proceed", "cancel", "disable"}:
@@ -3020,7 +3124,11 @@ class ConsoleSessionController:
             ),
         )
         deadline = time.monotonic() + timeout
-        while not decided.is_set() and owning_session_exists():
+        while (
+            not decided.is_set()
+            and owning_session_exists()
+            and not owning_run_cancelled()
+        ):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break

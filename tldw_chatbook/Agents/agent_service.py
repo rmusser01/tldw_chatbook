@@ -59,6 +59,7 @@ from .agent_models import (
     SkillFileBindings,
     ToolCall,
     ToolResult,
+    ToolSchema,
     clamp_child_budget,
     contain_child_budget,
     definition_from_row,
@@ -499,6 +500,62 @@ class ModelRequest:
 
     messages: tuple[dict, ...]
     tools: tuple[dict, ...] = ()
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class FirstRequestSchemaPlan:
+    """Pure disclosure/runtime-schema plan for a primary first request."""
+
+    active_schemas: tuple[ToolSchema, ...]
+    runtime_schemas: tuple[ToolSchema, ...]
+    offer_find_load: bool
+    log_active: bool
+
+
+def build_first_request_schema_plan(
+    registry: ToolCatalogRegistry,
+    allowed_tools: tuple[str, ...],
+    budget,
+    *,
+    skill_file_enabled: bool,
+    install_skill_enabled: bool,
+    run_skill_script_enabled: bool,
+    run_log_active: bool,
+) -> FirstRequestSchemaPlan:
+    """Return the exact first-turn schemas without binding a run or log."""
+    active, offer_find_load = initial_disclosure(registry, budget)
+    active = tuple(schema for schema in active if schema.name in allowed_tools)
+    runtime: list[ToolSchema] = []
+    if budget.max_subagents > 0:
+        runtime.append(SPAWN_TOOL_SCHEMA)
+    if offer_find_load:
+        runtime.extend((FIND_TOOLS_SCHEMA, LOAD_TOOLS_SCHEMA))
+    if skill_file_enabled:
+        runtime.append(SKILL_FILE_TOOL_SCHEMA)
+    if install_skill_enabled:
+        runtime.append(INSTALL_SKILL_TOOL_SCHEMA)
+    if run_skill_script_enabled:
+        runtime.append(RUN_SKILL_SCRIPT_TOOL_SCHEMA)
+    log_active = bool(run_log_active and (runtime or active))
+    if log_active:
+        runtime.extend(
+            (
+                SEARCH_RUN_LOG_TOOL_SCHEMA,
+                RUN_LOG_STATS_TOOL_SCHEMA,
+                RUN_LOG_SLICE_TOOL_SCHEMA,
+            )
+        )
+    return FirstRequestSchemaPlan(
+        active_schemas=active,
+        runtime_schemas=tuple(runtime),
+        offer_find_load=offer_find_load,
+        log_active=log_active,
+    )
+
+
+def run_log_requested() -> bool:
+    """Return the content-free config gate used by disposable preflight."""
+    return bool(_setting("run_log_enabled", True))
 
 
 def build_project_instruction_row(source: InstructionSource) -> dict:
@@ -2089,16 +2146,13 @@ class AgentService:
             and (runtime_schemas or active)
         )
         if log_active:
-            runtime_schemas.append(SEARCH_RUN_LOG_TOOL_SCHEMA)
-            # Phase 2 (task-1271): run_log_stats/run_log_slice compute over
-            # the same log search_run_log reads, so they share its EXACT
-            # gate rather than getting their own -- both need a bound,
-            # active writer (nothing to aggregate/slice otherwise) and the
-            # same primary-agent-only isolation argument (a child's log
-            # view would otherwise widen past its own short, already-in-
-            # context history into its parent's whole run tree).
-            runtime_schemas.append(RUN_LOG_STATS_TOOL_SCHEMA)
-            runtime_schemas.append(RUN_LOG_SLICE_TOOL_SCHEMA)
+            runtime_schemas.extend(
+                (
+                    SEARCH_RUN_LOG_TOOL_SCHEMA,
+                    RUN_LOG_STATS_TOOL_SCHEMA,
+                    RUN_LOG_SLICE_TOOL_SCHEMA,
+                )
+            )
 
         run_messages = messages
         chain_delivery: InstructionChainDelivery | None = None

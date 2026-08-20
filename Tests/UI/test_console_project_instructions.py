@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import importlib
 import inspect
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -14,8 +16,14 @@ from textual.app import App, ComposeResult
 from textual.widgets import Button, Footer, Static
 
 from tldw_chatbook.Agents import agent_service
-from tldw_chatbook.Agents.agent_models import AgentConfig, RunBudget
-from tldw_chatbook.Agents.agent_service import AgentService
+from tldw_chatbook.Agents.agent_models import (
+    AgentConfig,
+    RunBudget,
+    ToolCatalogEntry,
+    ToolResult,
+    ToolSchema,
+)
+from tldw_chatbook.Agents.agent_service import RUN_LOG_PROMPT_SECTION, AgentService
 from tldw_chatbook.Agents.project_instruction_resolver import (
     InstructionOutcome,
     InstructionSource,
@@ -29,8 +37,8 @@ from tldw_chatbook.Agents.tool_catalog import (
 from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleChatController,
     ProjectInstructionDispatchNotice,
-    build_project_instruction_preview,
 )
+from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 import tldw_chatbook.Chat.console_chat_controller as controller_module
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
@@ -67,6 +75,33 @@ def _candidate(tmp_path: Path) -> StartupInstructionCandidate:
         source=source,
         outcomes=(),
     )
+
+
+class _PreviewCatalogProvider:
+    def __init__(self, name: str, source: str) -> None:
+        self.name = name
+        self.source = source
+
+    def list_catalog(self):
+        return [
+            ToolCatalogEntry(
+                id=self.name,
+                name=self.name,
+                one_line_description=f"{self.source} tool",
+                source=self.source,
+            )
+        ]
+
+    def load_schema(self, tool_id):
+        return ToolSchema(
+            id=tool_id,
+            name=self.name,
+            description=f"{self.source} schema",
+            parameters={"type": "object", "properties": {}},
+        )
+
+    def invoke(self, tool_id, args):
+        return ToolResult(ok=True, content=f"{tool_id}:{args}")
 
 
 def test_display_states_are_metadata_only():
@@ -120,7 +155,8 @@ def test_display_states_are_metadata_only():
         assert all("body" not in item.__dataclass_fields__ for item in state.sources)
 
 
-def test_display_revalidates_binding_and_drops_stale_loaded_metadata(tmp_path):
+@pytest.mark.asyncio
+async def test_display_revalidates_binding_and_drops_stale_loaded_metadata(tmp_path):
     original = tmp_path / "original"
     retargeted = tmp_path / "retargeted"
     original.mkdir()
@@ -158,14 +194,17 @@ def test_display_revalidates_binding_and_drops_stale_loaded_metadata(tmp_path):
         outcome="active",
     )
     backend = SimpleNamespace(
-        project_instruction_display_metadata=lambda _session_id: stale_metadata
+        project_instruction_display_metadata=lambda _session_id: stale_metadata,
+        _clear_project_instruction_delivery=Mock(),
     )
     controller = ConsoleSessionController.__new__(ConsoleSessionController)
     controller._current_chat_store_accessor = lambda: store
     controller._ensure_console_chat_controller_fn = lambda: backend
     controller.app_instance = SimpleNamespace(workspace_registry_service=registry)
 
-    state = controller._build_console_project_instruction_display_state()
+    state = await controller._refresh_console_project_instruction_display_state(
+        session.id
+    )
 
     assert state.status == "Warning"
     assert state.binding_label == "Repo [literal]"
@@ -174,26 +213,98 @@ def test_display_revalidates_binding_and_drops_stale_loaded_metadata(tmp_path):
     assert state.warning_codes
 
 
-def test_preview_uses_copies_and_is_repeatable_without_live_side_effects(tmp_path):
-    candidate = _candidate(tmp_path)
-    base = [{"role": "user", "content": "question"}]
-    original = copy.deepcopy(base)
-    calls: list[list[dict]] = []
+@pytest.mark.asyncio
+async def test_status_sync_never_resolves_authority_and_async_refresh_publishes(
+    tmp_path, monkeypatch
+):
+    display = importlib.import_module("tldw_chatbook.Chat.console_display_state")
+    root = tmp_path / "repo"
+    root.mkdir()
+    control = ProjectInstructionControlState(True, "binding-1", "f" * 64, None)
+    store = ConsoleChatStore()
+    session = store.create_session(
+        workspace_id="workspace-1", project_instruction_state=control
+    )
+    binding = WorkspaceRuntimeBinding(
+        workspace_id="workspace-1",
+        binding_id="binding-1",
+        binding_kind="local-filesystem",
+        label="Repo [literal]",
+        locator=str(root),
+        status="ready",
+        metadata={"access": "rw"},
+    )
+    registry = SimpleNamespace(get_runtime_binding=lambda _binding_id: binding)
+    loaded = display.build_console_project_instruction_state(
+        control,
+        binding_label="old",
+        locator_matches=None,
+    )
+    row = SimpleNamespace(sync_state=Mock())
+    backend = SimpleNamespace(
+        project_instruction_display_metadata=lambda _session_id: None,
+        _clear_project_instruction_delivery=Mock(),
+    )
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+    controller._current_chat_store_accessor = lambda: store
+    controller._ensure_console_chat_controller_fn = lambda: backend
+    controller.app_instance = SimpleNamespace(workspace_registry_service=registry)
+    controller._screen = SimpleNamespace(query_one=lambda *_args, **_kwargs: row)
+    controller._console_project_instruction_display_cache = {
+        session.id: (control, loaded)
+    }
+    controller._console_project_instruction_refresh_inflight = {session.id: control}
+    started = threading.Event()
+    release = threading.Event()
 
-    def request_builder(messages: list[dict]) -> dict:
-        calls.append(copy.deepcopy(messages))
-        return {"model": "gpt-test", "messages": messages}
+    def slow_resolve(_session, _registry):
+        started.set()
+        assert release.wait(2)
+        return SimpleNamespace(binding=binding)
 
-    first = build_project_instruction_preview(base, candidate, request_builder)
-    second = build_project_instruction_preview(base, candidate, request_builder)
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Console_Modules.session.resolve_project_instruction_binding",
+        slow_resolve,
+    )
 
-    assert base == original
-    assert first == second
-    assert len(calls) == 2
-    assert calls[0] is not base
-    assert "AUTOMATIC_BODY_ONLY_IN_EXPLICIT_PREVIEW" in str(first.next_send_payload)
-    assert first.relative_source == "AGENTS.md"
-    assert not hasattr(first, "ledger")
+    refresh = asyncio.create_task(
+        controller._refresh_console_project_instruction_display_state(session.id)
+    )
+    assert await asyncio.to_thread(started.wait, 1)
+
+    # The 5 Hz UI tick consumes only the cached DTO; the resolver remains
+    # blocked in its disposable worker and is never called a second time.
+    controller._sync_console_project_instruction_status_row()
+    row.sync_state.assert_called_once_with(loaded)
+
+    release.set()
+    state = await refresh
+    assert state.binding_label == "Repo [literal]"
+    assert state.locator_match == "match"
+    assert controller._build_console_project_instruction_display_state() == state
+
+
+def test_status_sync_schedules_bounded_async_authority_refresh():
+    display = importlib.import_module("tldw_chatbook.Chat.console_display_state")
+    control = ProjectInstructionControlState(True, "binding-1", "f" * 64, None)
+    store = ConsoleChatStore()
+    session = store.create_session(project_instruction_state=control)
+    cached = display.build_console_project_instruction_state(control)
+    row = SimpleNamespace(sync_state=Mock())
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+    controller._current_chat_store_accessor = lambda: store
+    controller._screen = SimpleNamespace(query_one=lambda *_args, **_kwargs: row)
+    controller._console_project_instruction_display_cache = {
+        session.id: (control, cached)
+    }
+    controller._request_console_project_instruction_display_refresh = Mock()
+
+    controller._sync_console_project_instruction_status_row()
+
+    row.sync_state.assert_called_once_with(cached)
+    controller._request_console_project_instruction_display_refresh.assert_called_once_with(
+        session.id
+    )
 
 
 def test_disposable_preview_matches_live_exact_request_when_source_is_omitted(
@@ -264,6 +375,111 @@ def test_disposable_preview_matches_live_exact_request_when_source_is_omitted(
     assert list(preview_request.messages) == calls[0]["messages_payload"]
     assert list(preview_request.tools) == calls[0].get("tools", [])
     preview_consent.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_controller_preview_uses_live_destination_fresh_tools_and_raw_admission(
+    tmp_path, monkeypatch
+):
+    secret = "api_key=" + "s" * 80
+    candidate = _candidate(tmp_path)
+    control = ProjectInstructionControlState(
+        project_instructions_enabled=True,
+        working_folder_binding_id="binding-1",
+        working_folder_locator_fingerprint="f" * 64,
+        project_instruction_notice_key=None,
+    )
+    store = ConsoleChatStore()
+    session = store.create_session(project_instruction_state=control)
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content=f"question {secret}",
+    )
+    resolution = SimpleNamespace(
+        ready=True,
+        provider="friendly-alias",
+        execution_key="openai",
+        model="resolved-model",
+        max_tokens=20,
+        base_url="https://example.invalid/v1",
+    )
+
+    class Gateway:
+        def __init__(self) -> None:
+            self.resolve_for_send = AsyncMock(return_value=resolution)
+
+    gateway = Gateway()
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=AgentRunsDB(tmp_path / "preview-plan.db", client_id="test"),
+        store=store,
+        provider_gateway=gateway,
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        provider="stale-display-provider",
+        model="stale-model",
+        max_tokens=20,
+        agent_bridge=bridge,
+        agent_runtime_enabled=True,
+    )
+    controller.app = SimpleNamespace(
+        workspace_registry_service=object(), unified_mcp_service=None
+    )
+    selection = SimpleNamespace(
+        binding=SimpleNamespace(binding_id="binding-1"),
+        root=tmp_path,
+        locator_fingerprint="f" * 64,
+        allow_write=True,
+        root_identity=None,
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "resolve_project_instruction_binding",
+        lambda _session, _registry: selection,
+    )
+    monkeypatch.setattr(
+        controller_module.ProjectInstructionResolver,
+        "resolve_startup",
+        lambda _resolver, **_kwargs: candidate,
+    )
+    mcp_provider = _PreviewCatalogProvider("mcp__srv__search", "mcp")
+    local_provider = _PreviewCatalogProvider("fs_read", "local")
+    controller._compose_mcp_provider = AsyncMock(return_value=mcp_provider)
+    controller._compose_local_provider = Mock(return_value=(local_provider, None))
+
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a, **_k: 200)
+
+    def count_messages(messages, *_args, **_kwargs):
+        rendered = str(messages)
+        if "AUTOMATIC_BODY_ONLY_IN_EXPLICIT_PREVIEW" in rendered:
+            return 20
+        return 190 if secret in rendered else 10
+
+    monkeypatch.setattr(agent_service, "count_tokens_messages", count_messages)
+    monkeypatch.setattr(agent_service, "estimate_tokens", lambda *_a, **_k: 0)
+
+    snapshot = await controller.build_context_snapshot("", session_id=session.id)
+
+    preview = snapshot.project_instruction_preview
+    assert preview is not None
+    assert "omitted_token_budget" in preview.outcomes
+    assert preview.next_send_payload["model"] == "resolved-model"
+    assert secret not in str(preview.next_send_payload)
+    assert "AUTOMATIC_BODY_ONLY_IN_EXPLICIT_PREVIEW" not in str(
+        preview.next_send_payload
+    )
+    native_names = {
+        item["function"]["name"] for item in preview.next_send_payload["tools"]
+    }
+    assert {"fs_read", "mcp__srv__search", "search_run_log"} <= native_names
+    assert "install_skill" not in native_names
+    assert "run_skill_script" not in native_names
+    assert RUN_LOG_PROMPT_SECTION in preview.next_send_payload["messages"][0]["content"]
+    gateway.resolve_for_send.assert_awaited_once()
+    controller._compose_mcp_provider.assert_awaited_once_with(session.id)
+    controller._compose_local_provider.assert_called_once()
 
 
 def test_controller_has_no_candidate_or_body_cache():
@@ -398,21 +614,33 @@ async def test_controller_preview_does_not_advance_live_session_state(
             ),
         )
     )
+    resolution = SimpleNamespace(
+        ready=True,
+        provider="openai",
+        execution_key="openai",
+        model="gpt-test",
+        max_tokens=20,
+    )
+    gateway = SimpleNamespace(resolve_for_send=AsyncMock(return_value=resolution))
     controller = ConsoleChatController(
         store=store,
-        provider_gateway=Mock(),
+        provider_gateway=gateway,
         agent_bridge=SimpleNamespace(
             build_project_instruction_preview_request=exact_builder
         ),
         agent_runtime_enabled=True,
         confirm_project_instruction_dispatch=consent,
     )
-    controller.app = SimpleNamespace(workspace_registry_service=object())
+    controller.app = SimpleNamespace(
+        workspace_registry_service=object(), unified_mcp_service=None
+    )
     controller._run_state_histories[session.id] = []
     selection = SimpleNamespace(
         binding=SimpleNamespace(binding_id="binding-1"),
         root=tmp_path,
         locator_fingerprint="f" * 64,
+        allow_write=True,
+        root_identity=None,
     )
     monkeypatch.setattr(
         controller_module,
@@ -438,7 +666,9 @@ async def test_controller_preview_does_not_advance_live_session_state(
         "admission": {"warning": "omitted_token_budget"},
     }
     preview = await controller._build_project_instruction_preview_for_session(
-        session.id, payload
+        session.id,
+        payload,
+        [{"role": "user", "content": "question"}],
     )
 
     assert preview is not None
@@ -453,6 +683,75 @@ async def test_controller_preview_does_not_advance_live_session_state(
     consent.assert_not_called()
     state_setter.assert_not_called()
     exact_builder.assert_called_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mode", "runtime_enabled", "bridge_present"),
+    [
+        ("response_prefill", True, True),
+        ("character", True, True),
+        ("missing_bridge", True, False),
+        ("runtime_disabled", False, True),
+    ],
+)
+async def test_context_preview_never_reads_project_instructions_when_agent_dispatch_is_bypassed(
+    tmp_path, monkeypatch, mode, runtime_enabled, bridge_present
+):
+    control = ProjectInstructionControlState(
+        project_instructions_enabled=True,
+        working_folder_binding_id="binding-1",
+        working_folder_locator_fingerprint="f" * 64,
+        project_instruction_notice_key=None,
+    )
+    store = ConsoleChatStore()
+    session = store.create_session(
+        assistant_kind="character" if mode == "character" else "generic",
+        project_instruction_state=control,
+    )
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="question",
+    )
+    if mode == "response_prefill":
+        store.set_session_one_shot_prefill(session.id, "prefilled response")
+
+    bridge = (
+        SimpleNamespace(
+            build_project_instruction_preview_request=Mock(),
+            native_tool_schemas=lambda: [],
+        )
+        if bridge_present
+        else None
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=Mock(),
+        agent_bridge=bridge,
+        agent_runtime_enabled=runtime_enabled,
+    )
+    controller.app = SimpleNamespace(workspace_registry_service=object())
+    binding_resolver = Mock(
+        side_effect=AssertionError("bypassed dispatch resolved project binding")
+    )
+    startup_reader = Mock(
+        side_effect=AssertionError("bypassed dispatch read AGENTS.md")
+    )
+    monkeypatch.setattr(
+        controller_module, "resolve_project_instruction_binding", binding_resolver
+    )
+    monkeypatch.setattr(
+        controller_module.ProjectInstructionResolver,
+        "resolve_startup",
+        startup_reader,
+    )
+
+    snapshot = await controller.build_context_snapshot("", session_id=session.id)
+
+    assert snapshot.project_instruction_preview is None
+    binding_resolver.assert_not_called()
+    startup_reader.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -572,6 +871,49 @@ def test_notice_timeout_fails_closed_and_dismisses_owning_modal():
     assert decision == "cancel"
     assert len(mounted) == 1
     mounted[0][0].dismiss.assert_called_once_with("cancel")
+
+
+def test_notice_observes_owning_run_stop_and_dismisses_promptly():
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+    controller._current_chat_store_accessor = lambda: SimpleNamespace(
+        sessions=lambda: [SimpleNamespace(id="session-a")]
+    )
+    mounted = threading.Event()
+    modal_holder = []
+
+    def push_screen(modal, callback):
+        modal.dismiss = Mock(side_effect=lambda decision: callback(decision))
+        modal_holder.append(modal)
+        mounted.set()
+
+    cancel_event = threading.Event()
+    controller._screen = SimpleNamespace(
+        app=SimpleNamespace(push_screen=push_screen),
+        _console_chat_controller=SimpleNamespace(
+            _active_cancel_events={"session-a": cancel_event}
+        ),
+    )
+    controller.app_instance = SimpleNamespace(
+        call_from_thread=lambda callback: callback()
+    )
+    controller._project_instruction_notice_timeout_seconds = 30.0
+    result = []
+    worker = threading.Thread(
+        target=lambda: result.append(
+            controller._confirm_project_instruction_dispatch(
+                SimpleNamespace(session_id="session-a")
+            )
+        )
+    )
+    worker.start()
+    assert mounted.wait(1)
+
+    cancel_event.set()
+    worker.join(1)
+
+    assert not worker.is_alive()
+    assert result == ["cancel"]
+    modal_holder[0].dismiss.assert_called_once_with("cancel")
 
 
 class _ModalHarness(App):
