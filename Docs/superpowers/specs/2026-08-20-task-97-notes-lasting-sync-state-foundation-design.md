@@ -118,21 +118,27 @@ than widening one owner to several connection callers.
 Initialization must:
 
 1. open the existing private connection with the owner's established pragmas;
-2. enter `BEGIN IMMEDIATE` before deciding whether migration is required;
-3. re-read `PRAGMA user_version` after the writer lock is held;
-4. create the complete v2 schema for a new database or migrate v1 to v2
-   additively;
+2. read `PRAGMA user_version` without reserving the writer slot;
+3. when it is 2, validate the exact committed census in a read transaction and
+   take no writer lock;
+4. when it is 0 or 1, enter `BEGIN IMMEDIATE`, re-read `user_version` after the
+   writer lock is held, and either validate v2 if another initializer won or
+   create/migrate to the complete v2 schema additively;
 5. reject unknown future or malformed supported versions without destructive
    repair;
 6. set `user_version = 2` only after every required table, index, and constraint
-   exists; and
-7. commit atomically or roll back completely; and
-8. only after schema initialization commits, begin the repository operation's
+   exists;
+7. commit schema initialization atomically or roll it back completely; and
+8. only after schema initialization ends, begin the repository operation's
    requested deferred or immediate transaction and yield the connection.
 
-The lock-and-reread sequence is required. Checking the version before acquiring
-the writer lock would allow two real connections to both choose a migration
-path from stale state.
+The writer-lock reread is required only for 0/1 migration paths. Checking a
+version before the lock and migrating from that stale value would let two real
+connections choose the same path. Conversely, making every ordinary v2 receipt
+read acquire `BEGIN IMMEDIATE` would turn readers into competing writers and
+violate receipt compatibility. Seeing committed version 2 is safe because the
+atomic migrator writes `user_version` last; its read-only census fast path never
+observes a partially committed v2.
 
 The existing receipt tables, columns, indexes, rows, and lifecycle semantics are
 not rebuilt or transformed. The compatibility promise is behavioral: existing
@@ -172,9 +178,6 @@ CREATE TABLE sync_migration_runs (
         ),
     state TEXT NOT NULL DEFAULT 'pending_recheck'
         CHECK (state IN ('pending_recheck', 'matched_recheck', 'drifted')),
-    root_count INTEGER NOT NULL CHECK (root_count >= 0),
-    binding_count INTEGER NOT NULL CHECK (binding_count >= 0),
-    failure_count INTEGER NOT NULL CHECK (failure_count >= 0),
     created_at INTEGER NOT NULL CHECK (created_at > 0),
     updated_at INTEGER NOT NULL CHECK (updated_at > 0),
     UNIQUE (source_kind, source_revision_before),
@@ -200,7 +203,9 @@ CREATE TABLE sync_roots (
     display_name TEXT NOT NULL
         CHECK (length(display_name) BETWEEN 1 AND 255),
     direction TEXT NOT NULL
-        CHECK (direction IN ('folder_to_notes', 'notes_to_folder', 'bidirectional')),
+        CHECK (direction IN (
+            'unspecified', 'folder_to_notes', 'notes_to_folder', 'bidirectional'
+        )),
     state TEXT NOT NULL DEFAULT 'candidate'
         CHECK (state IN ('candidate', 'paused', 'disconnected')),
     row_version INTEGER NOT NULL DEFAULT 1 CHECK (row_version > 0),
@@ -309,7 +314,45 @@ CREATE TABLE sync_migration_items (
         )
     ),
     created_at INTEGER NOT NULL CHECK (created_at > 0),
-    PRIMARY KEY (migration_id, item_kind, source_locator_digest)
+    PRIMARY KEY (migration_id, item_kind, source_locator_digest),
+    CHECK (
+        (
+            item_kind = 'root'
+            AND outcome IN ('created', 'matched', 'needs_rescan')
+            AND root_id IS NOT NULL
+            AND binding_id IS NULL
+            AND (
+                (outcome IN ('created', 'matched') AND reason_code IS NULL)
+                OR (outcome = 'needs_rescan' AND reason_code IS NOT NULL)
+            )
+        ) OR (
+            item_kind = 'root'
+            AND outcome = 'rejected'
+            AND root_id IS NULL
+            AND binding_id IS NULL
+            AND reason_code IS NOT NULL
+        ) OR (
+            item_kind = 'binding'
+            AND outcome IN ('created', 'matched', 'needs_rescan')
+            AND root_id IS NULL
+            AND binding_id IS NOT NULL
+            AND (
+                (outcome IN ('created', 'matched') AND reason_code IS NULL)
+                OR (outcome = 'needs_rescan' AND reason_code IS NOT NULL)
+            )
+        ) OR (
+            item_kind = 'binding'
+            AND outcome = 'rejected'
+            AND root_id IS NULL
+            AND binding_id IS NULL
+            AND reason_code IS NOT NULL
+        ) OR (
+            item_kind = 'legacy_conflict'
+            AND outcome = 'needs_rescan'
+            AND reason_code IS NOT NULL
+            AND NOT (root_id IS NOT NULL AND binding_id IS NOT NULL)
+        )
+    )
 );
 ```
 
@@ -341,6 +384,9 @@ canonical table SQL, index columns, uniqueness, and partial-index SQL. A
 database claiming v2 but differing from that census fails closed. Tests compare
 a hand-authored fresh-v2 fixture with an actual v1 repository database upgraded
 through the coordinator; init-order equality alone is not the oracle.
+Migration-run root, binding, and failure counts are derived from
+`sync_migration_items` in the same read transaction. They are not stored as
+independently mutable summary columns.
 
 ### 3. Lasting-sync repository
 
@@ -368,6 +414,10 @@ A root projection maps exactly the `sync_roots` columns above. The v2 lifecycle
 contains only `candidate`, `paused`, and `disconnected`; active/running is not a
 representable value. Its source fields are all-null for a future user-created
 candidate or all-present for a legacy migration generation.
+
+Direction `unspecified` is permitted only for a migrated legacy value that is
+missing or invalid; it always carries `needs_rescan = 1`, and the setup slice
+must require a direction choice before admission.
 
 Verified canonical identity and filesystem capability do not exist in v2. The
 later setup slice adds them in a new schema version after it defines their exact
@@ -413,6 +463,16 @@ The exact partial unique indexes above express these invariants in SQLite.
 Repository preflight still provides deterministic batch behavior; indexes are
 the final race guard, not a mechanism for choosing an arbitrary winner.
 
+Root lifecycle changes use named repository operations, not a generic state
+setter. `disconnect_root(root_id, expected_version)` is one immediate
+transaction that changes the root to `disconnected`, advances its version, and
+changes every non-disconnected child binding to `disconnected` with its own
+version advance. A disconnected root cannot be reopened. An individual binding
+may disconnect without disconnecting its root. Repository reads fail closed if
+corrupt data ever presents a disconnected root with a live child binding. Thus
+root disconnection releases both root and binding capacity and cannot leave a
+hidden note owner behind.
+
 ## Legacy Metadata Migration Seam
 
 ### Invocation and authority
@@ -442,13 +502,16 @@ is:
 
 1. read config snapshot A through the real config boundary;
 2. open a fresh ChaChaNotes read transaction and read Notes snapshot A;
-3. form a canonically ordered source projection from config fields
+3. form the canonical source projection defined below from config fields
    `sync_directory`, `sync_direction`, and `sync_conflict_resolution`, plus each
    relevant note's `id`, `file_path_on_disk`,
    `relative_file_path_on_disk`, `sync_root_folder`,
    `last_synced_disk_file_hash`, `last_synced_disk_file_mtime`,
    `is_externally_synced`, `sync_strategy`, `sync_excluded`, `file_extension`,
-   `version`, and `deleted`; derive private digest A;
+   `version`, and `deleted`, plus the legacy `sync_conflicts` fields `id`,
+   `session_id`, `note_id`, `file_path`, `conflict_type`, `db_content_hash`,
+   `disk_content_hash`, `db_modified_time`, `disk_modified_time`, `resolution`,
+   and `resolved_at`; derive private digest A;
 4. under one `notes.sync_state` immediate transaction, insert or reopen a
    `pending_recheck` migration run keyed by `(source_kind, digest A)`, preflight
    the complete batch, and write its provisional candidates/items atomically;
@@ -466,6 +529,118 @@ revalidation requirement. A new digest creates a new migration run and may
 update only migration-owned `candidate` rows through their stable private
 source-locator digests. It cannot overwrite a paused/reviewed row, activate,
 delete, or steal an existing non-disconnected binding.
+
+Replay follows one exact state machine:
+
+- no run for digest A: execute step 4 once, including candidate/item writes;
+- existing `pending_recheck` run for digest A: do not preflight or rewrite its
+  candidates/items; perform only a fresh snapshot B and the final state update;
+- existing `matched_recheck` or `drifted` run for digest A: return its immutable
+  receipt without source or candidate writes; and
+- a genuinely new digest: open a new run. An exact source-locator match owned by
+  the same migration run is `matched`, never a duplicate. An exact locator
+  owned by an older run may be version-updated/rebound only while the row is
+  still migration-owned `candidate`; a paused, needs-attention, disconnected,
+  manually created, or differently located claim is not overwritten.
+
+Duplicate-note preflight excludes exact locator matches permitted by this state
+machine. All other incoming locators in the same note equivalence class are
+rejected together, and a claim against a different existing live locator is
+rejected. This makes replay independent of input and insertion order.
+
+### Canonical source and locator digests
+
+Every migration digest uses the existing Notes import canonical JSON contract:
+`json.dumps(value, ensure_ascii=True, separators=(",", ":"), sort_keys=True)`,
+encoded as UTF-8 and hashed with SHA-256 lowercase hex. Values are validated
+before hashing; JSON scalar types are preserved and Unicode is not normalized.
+SQLite REAL timestamp fields are encoded as `float.hex()` strings; non-finite
+values use the literal marker `"invalid_non_finite_real"` and make their source
+item rejected/review-only without blocking valid siblings. Missing config keys
+use the current product defaults exactly:
+`sync_directory = "~/Documents/Notes"` and
+`sync_direction = "bidirectional"`. For conflict policy, the newer
+`notes.sync_conflict_resolution` key wins when present; otherwise the legacy
+`notes.conflict_resolution` key is read; otherwise the value is
+`"newer_wins"`. The selected value is stored in the projection under
+`sync_conflict_resolution`. Present config values must be JSON scalars and are
+encoded with their exact type; a non-string directory/direction is retained in
+the digest but yields a rejected root or `unspecified` direction respectively.
+Non-scalar config values abort before destination writes with bounded reason
+`invalid_config_type`. Conflict policy is digest input only in TASK-97 and
+grants no new resolution behavior.
+
+The source-revision value has this exact top-level shape:
+
+```json
+{
+  "config": {
+    "sync_conflict_resolution": "<json-scalar>",
+    "sync_direction": "<json-scalar>",
+    "sync_directory": "<json-scalar>"
+  },
+  "conflicts": [
+    {
+      "db_content_hash": "<string-or-null>",
+      "db_modified_time": "<string-or-null>",
+      "disk_content_hash": "<string-or-null>",
+      "disk_modified_time": "<hex-float-string-or-null>",
+      "file_path": "<string>",
+      "id": "<integer>",
+      "note_id": "<string-or-null>",
+      "resolution": "<string-or-null>",
+      "resolved_at": "<string-or-null>",
+      "session_id": "<string>",
+      "conflict_type": "<string>"
+    }
+  ],
+  "notes": [
+    {
+      "deleted": "<boolean>",
+      "file_extension": "<string-or-null>",
+      "file_path_on_disk": "<string-or-null>",
+      "id": "<string>",
+      "is_externally_synced": "<boolean>",
+      "last_synced_disk_file_hash": "<string-or-null>",
+      "last_synced_disk_file_mtime": "<hex-float-string-or-null>",
+      "relative_file_path_on_disk": "<string-or-null>",
+      "sync_excluded": "<boolean>",
+      "sync_root_folder": "<string-or-null>",
+      "sync_strategy": "<string-or-null>",
+      "version": "<integer>"
+    }
+  ],
+  "type": "tldw_notes_sync_legacy_source_revision",
+  "version": 1
+}
+```
+
+Angle-bracket strings above denote the required scalar type, not literal
+stored values. Notes are sorted by exact `id` text. Conflicts are sorted by
+integer `id`. Within objects, `sort_keys=True` supplies key order. String/null,
+integer, boolean, and finite-real types remain distinct JSON scalars, so values
+such as `null`, `false`, `0`, and `"0"` cannot collide.
+
+Stable locator digests use the same canonical encoder:
+
+- root: `{"lexical_root_path": <exact bounded stored text>, "type":
+  "tldw_notes_sync_legacy_root_locator", "version": 1}`;
+- recognizable binding: `{"lexical_relative_path": <exact bounded stored
+  text>, "note_id": <exact note id>, "root_locator_digest": <root digest>,
+  "type": "tldw_notes_sync_legacy_binding_locator", "version": 1}`; and
+- migration item: `{"item_kind": <root|binding|legacy_conflict>,
+  "legacy_primary_key": <root digest | [note id, root digest, relative path] |
+  integer conflict id>, "type": "tldw_notes_sync_legacy_item_locator",
+  "version": 1}`.
+
+The migration-item form also identifies rejected inputs and therefore never
+depends on a destination ID. Lexical root grouping compares exact stored
+strings; it performs no Unicode, case, separator, tilde, environment-variable,
+absolute-path, or filesystem normalization. Legacy direction maps
+`disk_to_db`/`folder_to_notes` to `folder_to_notes`,
+`db_to_disk`/`notes_to_folder` to `notes_to_folder`, and `bidirectional` to
+itself. A missing key takes the default above; any other value produces
+`unspecified` plus a bounded review reason.
 
 ### Grouping and malformed inputs
 
@@ -569,6 +744,10 @@ construction.
   contend. Prove they converge without duplicate migration, partial schema, or
   lock leakage.
 - Mutation-test the post-lock `user_version` reread and final version write.
+- Prove ordinary committed-v2 reads validate through the read-only fast path
+  and do not reserve SQLite's writer slot.
+- Compare a hand-authored complete fresh-v2 schema to a real v1 upgrade using
+  the exact census, including table checks and partial-index predicates.
 
 ### Root and binding contracts
 
@@ -578,6 +757,9 @@ construction.
 - Prove conditional path-key uniqueness and allow null provisional keys until
   dry-run.
 - Prove optimistic version checks and atomic batch rejection.
+- Prove root disconnect atomically disconnects/version-bumps every live child,
+  releases both ceilings, cannot reopen, and rejects corrupted
+  disconnected-root/live-binding state.
 - Cover exact limits at 64 roots and 100,000 bindings plus one-over rejection
   without constructing unbounded payload content.
 
@@ -588,6 +770,11 @@ construction.
 - Cover multiple lexical roots, duplicate equivalence classes with no arbitrary
   winner, malformed siblings,
   legacy conflict markers, idempotent replay, and a changed source revision.
+- Mutation-test canonical digest stability across row input order, dictionary
+  order, Unicode spellings, missing/default/aliased config, and distinct JSON
+  scalar types; prove every locator input change changes the intended digest.
+- Reject impossible migration-item field combinations through the canonical
+  DDL and derive aggregate counts from items rather than stored summaries.
 - Simulate cross-owner drift and prove the resulting generation remains
   provisional and marked for rescan.
 - Use operand-aware filesystem spies and nonexistent/adversarial stored paths;
