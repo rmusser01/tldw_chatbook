@@ -566,12 +566,14 @@ def test_prompts_sort_choice_requests_exact_scope():
     refreshes = []
 
     def make_fake(sort_by: str):
+        applied_scope = PromptBrowseScope(sort_by=sort_by)
         return SimpleNamespace(
             # task-15790: production gained this in-flight guard; stale double.
             _library_prompts_mutation_in_flight=False,
             _library_prompts_sort_choices_visible=True,
             _library_prompt_browse_controller=SimpleNamespace(
-                scope=PromptBrowseScope(sort_by=sort_by)
+                scope=applied_scope,
+                visible_result=SimpleNamespace(scope=applied_scope),
             ),
             _request_library_prompts_browse=lambda scope, focus_identity=None: (
                 requests.append((scope, focus_identity))
