@@ -529,6 +529,11 @@ async def test_empty_models_recovery_routes_hold_at_80_columns(
         )
         import_button = installed.query_one("#installed-models-import-gguf", Button)
         installed_parent = window.query_one("#llm-view-installed")
+        assert await _wait_for(
+            lambda: import_button in app.screen._compositor.visible_widgets,
+            pilot,
+            attempts=500,
+        )
         assert import_button in app.screen._compositor.visible_widgets
         assert import_button.is_on_screen
         assert import_button.region.right <= app.size.width

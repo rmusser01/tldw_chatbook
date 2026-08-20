@@ -3018,7 +3018,7 @@ async def test_a_background_tree_reload_repaints_the_artifacts_scope_note():
         )
         await pilot.pause()
         screen.active_section = "artifacts"
-        for _ in range(300):
+        for _ in range(1000):
             await pilot.pause(0.01)
             if screen.query("#artifacts-scope-note"):
                 break

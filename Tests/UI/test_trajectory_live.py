@@ -215,6 +215,10 @@ async def test_live_revision_change_appends_rows_and_follows_tail():
         assert table.row_count == 8 + 4
         # follow was never suspended: the ledger sits at the tail
         assert screen._follow is True
+        for _ in range(500):
+            if table.scroll_y == table.max_scroll_y:
+                break
+            await pilot.pause(0.01)
         assert table.scroll_y == table.max_scroll_y
         # live screen advertises the follow key
         assert "follow" in str(

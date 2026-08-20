@@ -863,15 +863,22 @@ async def test_nav_strip_never_renders_a_partial_destination_label_under_bundled
     app = TestApp()
 
     async with app.run_test(size=(width, 24)) as pilot:
-        await pilot.pause(0.6)
-
         strip = app.query_one("#nav-destination-strip", Horizontal)
+        active_button = app.query_one(f"#nav-{active}", Button)
+        for _ in range(500):
+            if (
+                _straddling_buttons(app, strip) == []
+                and active_button.region.width > 0
+                and active_button.region.x >= strip.region.x
+                and active_button.region.right <= strip.region.right
+            ):
+                break
+            await pilot.pause(0.02)
 
         # Geometry: nothing straddles the viewport edge with real content.
         assert _straddling_buttons(app, strip) == []
 
         # The active destination is always fully, genuinely visible.
-        active_button = app.query_one(f"#nav-{active}", Button)
         assert active_button.display
         assert not active_button.has_class("nav-button-clip-ghost")
         assert active_button.region.width > 0
@@ -1539,4 +1546,3 @@ async def test_recenter_strip_and_focused_strip_button_survive_a_detached_bar():
         assert nav._focused_strip_button() is None
         nav._recenter_strip()
         nav._ghost_clipped_buttons()
-

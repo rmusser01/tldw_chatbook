@@ -42,7 +42,11 @@ def _test_cli_setting(section: str, key: str, default=None):
 
 async def _wait_for_screen(app, pilot, screen_type, tab: str):
     for _ in range(300):
-        if app.current_tab == tab and isinstance(app.screen, screen_type):
+        if (
+            app.current_tab == tab
+            and isinstance(app.screen, screen_type)
+            and app.screen.query(AppFooterStatus)
+        ):
             return app.screen
         await pilot.pause(0.01)
     raise AssertionError(

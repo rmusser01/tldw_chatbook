@@ -158,7 +158,7 @@ async def test_character_import_selection_saves_only_selected_parent(
     app = App()
 
     async with app.run_test() as pilot:
-        app.push_screen(picker)
+        await app.push_screen(picker)
         await pilot.pause()
         picker.dismiss(selected_file)
         await pilot.pause()
@@ -181,7 +181,7 @@ async def test_character_import_cancel_keeps_remembered_directory(
     app = App()
 
     async with app.run_test() as pilot:
-        app.push_screen(picker)
+        await app.push_screen(picker)
         await pilot.pause()
         picker.dismiss(None)
         await pilot.pause()
@@ -207,7 +207,7 @@ async def test_character_import_directory_result_keeps_remembered_directory(
     app = App()
 
     async with app.run_test() as pilot:
-        app.push_screen(picker)
+        await app.push_screen(picker)
         await pilot.pause()
         picker.dismiss(selected_directory)
         await pilot.pause()
@@ -232,7 +232,7 @@ async def test_character_import_invalid_result_keeps_remembered_directory(
     app = App()
 
     async with app.run_test() as pilot:
-        app.push_screen(picker)
+        await app.push_screen(picker)
         await pilot.pause()
         picker.dismiss(result)
         await pilot.pause()

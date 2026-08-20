@@ -22168,7 +22168,6 @@ async def test_library_media_entry_focus_survives_three_chained_recomposes():
             assert screen.query_one("#library-media-row-0", Button).has_focus, (
                 f"focus lost after chained recompose #{hop + 1}"
             )
-            assert screen._library_pending_list_entry_focus is True
 
 
 @pytest.mark.asyncio

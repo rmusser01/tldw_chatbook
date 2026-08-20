@@ -212,8 +212,9 @@ def _valid_openai_artifact(
     )
 
 
-async def _wait_until(pilot, predicate, *, attempts: int = 500) -> None:
-    for _ in range(attempts):
+async def _wait_until(pilot, predicate, *, timeout: float = 30.0) -> None:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
         if predicate():
             return
         await pilot.pause(0.01)

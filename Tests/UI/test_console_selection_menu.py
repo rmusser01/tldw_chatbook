@@ -35,6 +35,15 @@ from tldw_chatbook.Widgets.Console.console_transcript import (
 )
 
 
+async def _wait_for_menu(app, pilot, predicate):
+    for _ in range(500):
+        menus = list(app.query(ConsoleSelectionMenu))
+        if menus and predicate(menus[0]):
+            return menus[0]
+        await pilot.pause(0.02)
+    raise AssertionError("Selection menu never reached the expected geometry")
+
+
 class _MenuApp(App[None]):
     def __init__(self) -> None:
         super().__init__()
@@ -490,9 +499,11 @@ async def test_last_row_release_keeps_menu_within_transcript_not_composer():
                 screen_y=region.bottom - 1,  # release at the transcript's last row
             )
         )
-        await pilot.pause()
-        await pilot.pause()  # let the post-layout clamp settle
-        menu = app.query_one(ConsoleSelectionMenu)
+        menu = await _wait_for_menu(
+            app,
+            pilot,
+            lambda candidate: candidate.region.right <= region.right,
+        )
         assert region.x <= menu.region.x
         assert menu.region.right <= region.right
         assert region.y <= menu.region.y
@@ -554,11 +565,12 @@ async def test_short_owner_box_shrinks_menu_and_keeps_containment():
                 screen_y=region.bottom - 1,
             )
         )
-        await pilot.pause()
-        await pilot.pause()  # measured clamp pass
-        await pilot.pause()  # shrink pass re-measures after the class flip
-        await pilot.pause()
-        menu = app.query_one(ConsoleSelectionMenu)
+        menu = await _wait_for_menu(
+            app,
+            pilot,
+            lambda candidate: candidate.has_class("shrunk-for-short-owner")
+            and candidate.region.bottom <= region.bottom,
+        )
         assert menu.has_class("shrunk-for-short-owner")
         assert not menu.query_one("#console-selection-feedback-hint").display
         # All six actions stay mounted and displayed (no action-hiding).
@@ -660,9 +672,11 @@ async def test_top_row_selection_bottom_overflow_pins_to_box_bottom():
                 screen_y=region.bottom - 1,  # release at the box's last row
             )
         )
-        await pilot.pause()
-        await pilot.pause()
-        menu = app.query_one(ConsoleSelectionMenu)
+        menu = await _wait_for_menu(
+            app,
+            pilot,
+            lambda candidate: candidate.region.bottom <= region.bottom,
+        )
         assert menu.region.bottom <= region.bottom  # pinned inside the box
         assert region.y <= menu.region.y
         assert region.x <= menu.region.x
@@ -825,9 +839,11 @@ async def test_far_right_release_keeps_menu_inside_transcript():
                 screen_y=region.bottom - 3,
             )
         )
-        await pilot.pause()
-        await pilot.pause()  # let the post-layout clamp settle
-        menu = app.query_one(ConsoleSelectionMenu)
+        menu = await _wait_for_menu(
+            app,
+            pilot,
+            lambda candidate: candidate.region.right <= region.right,
+        )
         assert region.x <= menu.region.x
         assert menu.region.right <= region.right
         assert region.y <= menu.region.y
