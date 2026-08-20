@@ -35,17 +35,20 @@ Top to bottom:
 - **Control bar** — one row of buttons: **New tab**, **Settings**,
   **Attach context**, **Search Library**, **Help**. (**Save as Chatbook**
   lives in the composer's **Menu** button, left of the draft.)
-- **Left rail: "Console context"** — sections **Session** (workspace and
-  the conversation browser), **Model**, **Agent**, and **Details**. The
-  **◂** button in the rail header collapses it; while collapsed, a thin
-  **Context ▸** handle on the far left brings it back.
+- **Left rail: "Console context"** — separate sections for **Sessions**
+  (the active conversation), **Workspaces** (workspace switching and RAG
+  scope), **Conversations** (search and resume), **Model**, **Agent**, and
+  **Details**, plus **Character** when character avatars are enabled. The
+  full-width **<---------|Context** header button collapses the rail; while
+  collapsed, the **Context->** handle on the far left brings it back.
 - **Conversation pane** — titled "Conversation", extended to
   "Conversation | \<session title\>" once a session is active.
   Above it sits the session tab strip: one button per tab (each with a
   **✕** close button) ending in **New tab**.
-- **Right rail: "Inspector"** — collapsed by default. Its handle on the
-  right edge reads "Inspector" and grows small badges when something needs
-  you (pending approvals, an available artifact). Opened, it holds
+- **Right rail: "Inspector"** — collapsed by default. Its **<-Inspect**
+  handle on the right edge grows small badges when something needs you
+  (pending approvals, an available artifact). Opened, its full-width
+  **Inspect|--------->** header button collapses it, and the body holds
   **Sources**, the retrieval scope row ("Scope: everything" until you
   narrow it), a run status line, groups such as **Run**, **Tools**,
   **Approvals**, and **Artifacts**, the **"Live work sources"** card
@@ -95,8 +98,9 @@ The shell adapts instead of clipping: below 35 rows the header banner hides
 so the status identity survives); below 150 columns the Inspector rail
 starts collapsed and below 100 columns the left rail starts collapsed too —
 these compact collapses are only the default: opening a rail from its
-handle (or via the **Sources**/**Tools** chips) always works, at any width,
-and your stored open/closed preference is kept and restored at wider sizes;
+handle (or via the **Sources**/**Tools** chips) works while the viewport can
+still keep a usable transcript, and your stored open/closed preference is
+kept and restored at wider sizes;
 and below 84 columns the workspace switches to a single pane — both edge
 handles hide and the transcript takes the full width, so it stays usable
 even at 80x24 or 60x18. An explicitly opened rail yields to this rule once
@@ -165,10 +169,12 @@ composer-level strip below shows once setup completes.
 
 | Control | What it does |
 |---|---|
-| **◂** / **▸** (rail headers) | Collapse that rail (**◂** on "Console context", **▸** on "Inspector"). |
-| **Context ▸** handle | Reopens the collapsed "Console context" rail. |
-| **Inspector** handle | Reopens the collapsed "Inspector" rail; shows badges like "1 appr" (pending approvals) or "art" (artifact ready). |
-| **Session** section | Workspace controls and the conversation browser — see [Sessions, tabs & workspaces](console/sessions-tabs-workspaces.md). |
+| **<---------\|Context** / **Inspect\|--------->** headers | Collapse the open Context or Inspector rail; the entire painted header is the button. |
+| **Context->** handle | Reopens the collapsed "Console context" rail when the viewport can retain a usable transcript. |
+| **<-Inspect** handle | Reopens the collapsed "Inspector" rail when the viewport can retain a usable transcript; shows badges like "1 appr" (pending approvals) or "art" (artifact ready). |
+| **Sessions** section | Names the active conversation. |
+| **Workspaces** section | Shows the active workspace and provides **Switch**, **New**, and **RAG Scope** actions. |
+| **Conversations** section | Searches, starts, stars, and resumes conversations — see [Sessions, tabs & workspaces](console/sessions-tabs-workspaces.md). |
 | **Model** section | Read-only Provider / Model / Temperature / Max tokens lines plus a **Configure** button that opens Console Settings. |
 | **Agent** section | Live run status and the full run log — see [Agent runs & tools](console/agent-runs-and-tools.md). |
 | **Details** section | Storage, sync, file tools, server, and handoff status for the workspace. |
@@ -375,8 +381,8 @@ and a one-time toast on return reports what was cancelled. Details in
 3. **Make today's provider the default.** Open **Settings**, configure
    provider and model, and press **Save as default** — the next launch
    starts there.
-4. **Get a distraction-free transcript.** Click **◂** in the "Console
-   context" rail header (the Inspector is already collapsed by default);
+4. **Get a distraction-free transcript.** Click **<---------|Context** in
+   the "Console context" rail header (the Inspector is already collapsed by default);
    click **Composer ▾** to hide the composer too, and press **Esc** to
    bring it back. Reopen the rails from the edge handles.
 5. **Find any Console shortcut.** Press **F1** — the help panel lists the

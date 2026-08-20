@@ -62,4 +62,15 @@ The same Textual-floor run exposed a pre-existing deferred-canvas mount race: Te
 The task was renumbered from the provisional TASK-14801 to TASK-14810 after the required all-remote sweep found TASK-14801 already claimed on `origin/codex/roleplay-chat-identity`.
 
 ADR: existing `backlog/decisions/017-console-left-rail-usability.md`; no new ADR required.
+
+TASK-18912 status reconciliation (2026-08-20, latest `origin/dev` at
+`a1d6df3f89244e918a1fb12facbd4ed0d927c24c`): the two former Confluence
+collection blockers no longer reproduce in the repository development
+environment (31 tests collect), and the focused rail-width budget file now
+passes all eight tests. The repository architecture gate remains red:
+`chat_screen.py` measures 21,292 lines against its unchanged 17,727-line
+one-way budget (+3,565). TASK-14810 therefore remains **In Progress**. Its
+checked acceptance criteria and shipped implementation are not being
+misrepresented as repository-level completion; closing it still requires an
+honest resolution of that recorded Definition-of-Done blocker.
 <!-- SECTION:NOTES:END -->

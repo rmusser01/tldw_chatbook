@@ -16,10 +16,10 @@ layout tour). Everything on this page lives in two places:
 
 - The **tab strip** — the row of tabs directly under the
   "Conversation" title above the transcript.
-- The **"Console context"** rail on the left — its "Session" section (the
-  Workspace block and the "Conversations" browser) and its "Details" section.
-  If the rail is collapsed, click the "Context ▸" handle at the left edge to
-  open it.
+- The **"Console context"** rail on the left — its separate **Sessions**,
+  **Workspaces**, **Conversations**, and **Details** sections. If the rail is
+  collapsed, click the **Context->** handle at the left edge to open it when
+  the viewport can retain a usable transcript.
 
 ## Layout tour
 
@@ -39,15 +39,17 @@ strip: "Each tab runs its own agent — up to 3 in parallel (change in
 Settings > Console Behavior)." Dismiss it with its "✕". The "3" is the
 default limit — the banner shows whatever your configured limit is.
 
-**Session block** (left rail, "Session" section). Shows "Workspace" plus the
-active workspace name, with "Switch", "New", and "RAG Scope" buttons, and a
-"Conversation" line naming the active conversation ("—" when no conversation
-is active yet). "RAG Scope" narrows retrieval to this workspace's items — see
+**Sessions section** (left rail). Names the active conversation ("None" when
+no conversation is active yet); hover the value to see its durable id.
+
+**Workspaces section** (left rail). Shows "Workspace" plus the active
+workspace name, with "Switch", "New", and "RAG Scope" buttons. "RAG Scope"
+narrows retrieval to this workspace's items — see
 [Context & RAG](context-and-rag.md).
 
-**Conversations browser** (below the Session block). A "Conversations" header,
-a "Search conversations" box with a "Clear" button, a "New conversation"
-button, and three collapsible groups: "Starred", "Workspaces", and "Chats".
+**Conversations section** (left rail). A "Search conversations" box with a
+"Clear" button, a "New conversation" button, and three collapsible groups:
+"Starred", "Workspaces", and "Chats".
 Empty groups start collapsed as quiet one-line headers — expand one to see
 its empty copy (for example "No starred conversations."); while you search,
 groups with no matches stay expanded so the "No ... conversations." feedback
@@ -177,13 +179,13 @@ single summary line quoted in the layout tour instead.
 
 **Create and switch to a new workspace**
 
-1. In the "Session" block, click "New" — the "New Workspace" dialog opens
+1. In the **Workspaces** section, click "New" — the "New Workspace" dialog opens
    with a prefilled "Workspace N" name.
 2. Optional: edit the name, and add a project folder (type a path or click
    "Browse…", then "Add folder") so agents have file access there.
 3. Leave "Switch to this workspace" checked and click "Create" — the
    workspace is created and becomes active; new chats now land in it. A
-   toast confirms the switch even if the Session block is scrolled out of
+   toast confirms the switch even if the Workspaces section is scrolled out of
    view.
 4. To go back, press Alt+W (or click "Switch") and pick
    "Default (everyday chats)".

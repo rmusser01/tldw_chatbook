@@ -1,0 +1,167 @@
+# TASK-18913: Console Exact-100-Column Containment Design
+
+## Summary
+
+Keep the Console's current Context-only layout at exactly 100 terminal columns,
+but let the transcript yield its standard minimum-width constraint at that one
+responsive boundary. This reuses the existing compact-override mechanism that
+already keeps explicitly opened rails solvable at narrower widths. It changes no
+rail visibility, preference, ordering, label, focus, or mobile behavior.
+
+## Problem
+
+At 100x30 on current `origin/dev`, a fresh Context-only Console can expand far
+beyond the viewport: the Context rail measures roughly 255 columns, the
+transcript begins around x=257, and the collapsed Inspector handle lands around
+x=1362.
+
+The source-level width budget explains the boundary failure:
+
+- The framed workspace grid has 96 content columns at a 100-column viewport
+  after its two border cells and two horizontal padding cells.
+- The displayed children require Context's 30-column minimum, the transcript's
+  56-column standard minimum, and the horizontal Inspector handle's 11 columns.
+- Those minimums total 97, one column more than the grid can provide.
+- Textual 8.x does not degrade this fractional row by one cell; its min-clamped
+  fractional resolution expands the row dramatically instead.
+
+The same layout is already safe below 100 because Context is responsively
+collapsed by default, and safe in compact-override states because the
+transcript minimum is waived. The gap is the exact 100-column boundary: Context
+is correctly open there, but the existing waiver is defined only below the
+boundary.
+
+## Users and desired outcome
+
+- First-time technical and non-technical users keep both the visible Context
+  rail and an immediately usable transcript instead of encountering a mostly
+  blank/off-screen Console.
+- Regular technical and non-technical power users retain the exact stored rail
+  state and current keyboard/focus behavior across resize.
+- At wider, narrower, stacked-handle, Inspector-open, and single-pane states,
+  the current product contract remains unchanged.
+
+## Decision
+
+Make the left-rail compact override inclusive at its 100-column boundary while
+leaving the left-rail collapse rule exclusive below 100.
+
+In practical terms, a Context rail that renders open at exactly 100 columns
+receives the same existing `left_compact_override` / `compact_override`
+authority as an explicitly opened Context rail below 100. The screen's two
+existing compose-time and live-sync paths already translate that authority into
+`#console-main-column` having a zero minimum width. Textual can then allocate the
+actual remaining transcript width (about 55 columns) and keep the complete row
+inside the 96-column grid content region.
+
+This deliberately broadens the meaning of the override flag from “an explicit
+open below the compact threshold” to “an open rail at or below the compact
+boundary whose row may require the transcript minimum-width waiver.” It does
+not broaden persistence authority and does not change which rail is open.
+
+## Alternatives considered
+
+### Fix Context to 30 columns at exactly 100
+
+This also gives the transcript the remaining width, but introduces a second
+boundary-specific rail sizing mode and requires both compose and live-sync code
+to keep width units synchronized. Rejected as more brittle than reusing the
+existing waiver seam.
+
+### Collapse Context at 100 columns
+
+Changing the collapse condition from below 100 to 100-and-below would avoid the
+overflow. Rejected because it changes the visible responsive contract and
+removes useful Context information where a usable 55-column transcript fits.
+
+### Reduce the transcript minimum from 56 to 55 everywhere
+
+This removes the one-cell deficit but weakens the standard layout at every
+width and still relies on Textual's fractional min-clamp behavior. Rejected as
+unnecessarily global and less robust.
+
+## Scope
+
+### In scope
+
+- Pure rail-state classification for the exact 100-column, Context-open state.
+- Production-CSS compositor coverage of the full workspace hierarchy.
+- Cold-start and resize containment evidence.
+- Regression coverage at adjacent and representative widths.
+- Comments and documentation that describe the inclusive override boundary.
+
+### Out of scope
+
+- Changing the 100-column Context collapse threshold.
+- Changing 70/74-column explicit-open floors, single-pane behavior, or
+  Inspector priority.
+- Moving or regrouping Context/Inspector content.
+- Changing rail widths, labels, handles, badges, focus, or persistence.
+- Phone, touch, hover, pointer, soft-keyboard, or served-browser work owned by
+  TASK-18911.
+- Adding overlays, new settings, or a second layout system.
+
+## State and layout flow
+
+1. `build_console_rail_state()` receives the available terminal width and
+   current stored preferences.
+2. Existing collapse logic continues to keep Context open at 100 and collapse
+   it by default below 100.
+3. When Context is open at 100, the existing left/aggregate compact-override
+   flags are set.
+4. Existing Console compose and visibility-sync paths read the aggregate flag
+   and waive the transcript minimum width.
+5. Textual resolves Context, transcript, and collapsed Inspector handle inside
+   the framed grid.
+6. No preference is written as a consequence of the viewport width.
+
+There is no new error state or recovery path. If width is unavailable, the
+current standard state remains unchanged.
+
+## Verification design
+
+Follow test-driven development:
+
+1. Add a production-hierarchy, exact-production-CSS compositor regression at
+   100x30. It must fail on current `origin/dev` because displayed grid children
+   escape the grid and viewport.
+2. Assert the displayed set is Context, transcript, and collapsed Inspector
+   handle; every child has positive geometry, remains within both grid content
+   and screen bounds, and the transcript is present in the compositor.
+3. Add pure state coverage proving Context remains open at 100, its stored
+   preference is untouched, and the compact override is active only as needed.
+4. Pin adjacent 99/101-column controls plus 80x24, 120x30, 160x45, and 235x52
+   representative layouts.
+5. Cover cold start and live resize to 100 so the two existing application
+   paths cannot diverge.
+6. Mutation-check the regression by reverting the inclusive boundary: the
+   exact-100 containment test must fail, then pass again when restored.
+7. Run the directly reachable Console rail/state/resize/compositor suites,
+   import provenance, CSS bundle integrity, Ruff, formatting, duplicate task-ID,
+   and diff checks. Record any unchanged repository baseline failures rather
+   than claiming they are green.
+
+## Accessibility and NNG alignment
+
+- **Visibility of system status:** the active layout no longer disappears
+  beyond the viewport at a common breakpoint.
+- **User control and freedom:** stored rail choices and collapse controls remain
+  intact and reversible.
+- **Consistency and standards:** the fix uses the existing compact-width
+  resolution behavior rather than introducing a special overlay or alternate
+  rail.
+- **Error prevention:** the production-CSS boundary regression prevents a
+  one-cell budget mismatch from becoming a catastrophic layout expansion.
+- **Flexibility and efficiency:** Context remains visible for power users while
+  first-time users retain a readable transcript.
+
+## Architecture decision record
+
+ADR required: no
+
+ADR path: `backlog/decisions/043-console-rail-compact-collapse-yields-to-explicit-toggle.md`
+
+Reason: this is a direct defect correction within ADR-043's existing
+minimum-width-waiver and grid-resolution mechanism. It does not change storage,
+persistence, rail ownership, responsive priority, or long-lived application
+structure.
