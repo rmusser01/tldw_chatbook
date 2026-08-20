@@ -60,6 +60,18 @@ FALLBACK_ACTIONS = (
 )
 
 
+class ConsoleHandsFreeToggleRequested(Message):
+    """User flipped the visible hands-free Switch (task-18911 fix 2).
+
+    Emitted only for user gestures; programmatic ``sync_hands_free_state``
+    repaints silently so lifecycle sync never re-enters the toggle path.
+    """
+
+    def __init__(self, enabled: bool) -> None:
+        super().__init__()
+        self.enabled = enabled
+
+
 class ConsoleAutoSpeakChanged(Message):
     """User requested a durable Speak replies state change."""
 
@@ -284,6 +296,20 @@ class ConsoleControlBar(Vertical):
         resume = self.query_one("#console-auto-speak-resume", Button)
         resume.display = self.auto_speak_enabled and self.auto_speak_paused
 
+    def sync_hands_free_state(self, active: bool) -> None:
+        """Mirror the hands-free session state onto the visible Switch.
+
+        task-18911 (fix 2): called by ChatScreen whenever the session state
+        changes from any path (switch itself, keybinding, run end) so the
+        control never disagrees with reality. Silently no-ops pre-mount.
+        """
+        try:
+            switch = self.query_one("#console-hands-free-switch", Switch)
+        except Exception:
+            return
+        if switch.value is not active:
+            switch.value = active
+
     def compose(self) -> ComposeResult:
         with Horizontal(
             id="console-control-action-row", classes="console-control-action-row"
@@ -336,6 +362,36 @@ class ConsoleControlBar(Vertical):
                 auto_speak_switch.styles.padding = 0
                 auto_speak_switch.styles.border = ("none", "transparent")
                 yield auto_speak_switch
+            # task-18911 (fix 2): visible hands-free toggle. The mode was
+            # keybinding-only (ctrl+shift+h / escape), unreachable on a soft
+            # keyboard; this Switch mirrors the Speak-replies control beside it.
+            # ChatScreen keeps it in sync when the session exits by any path.
+            with Horizontal(id="console-hands-free-control") as hands_free_control:
+                hands_free_control.styles.width = "auto"
+                hands_free_control.styles.height = 1
+                hands_free_label = Static(
+                    "Hands-free",
+                    id="console-hands-free-label",
+                    markup=False,
+                )
+                hands_free_label.styles.width = "auto"
+                yield hands_free_label
+                hands_free_switch = Switch(
+                    False,
+                    name="Hands-free",
+                    id="console-hands-free-switch",
+                    tooltip=(
+                        "Voice conversation loop: speak prompts, hear replies "
+                        "(Ctrl+Shift+H)."
+                    ),
+                )
+                hands_free_switch.styles.width = "auto"
+                hands_free_switch.styles.height = 1
+                hands_free_switch.styles.min_height = 1
+                hands_free_switch.styles.max_height = 1
+                hands_free_switch.styles.padding = 0
+                hands_free_switch.styles.border = ("none", "transparent")
+                yield hands_free_switch
             retry = Button(
                 "Retry speech",
                 id="console-auto-speak-retry",
@@ -425,6 +481,12 @@ class ConsoleControlBar(Vertical):
             return
         event.stop()
         self.post_message(WorkbenchActionRequested(action_id))
+
+    @on(Switch.Changed, "#console-hands-free-switch")
+    def on_console_hands_free_switch_changed(self, event: Switch.Changed) -> None:
+        """Forward the gesture; the screen owns the hands-free session."""
+        event.stop()
+        self.post_message(ConsoleHandsFreeToggleRequested(event.value))
 
     @on(Switch.Changed, "#console-auto-speak")
     def on_console_auto_speak_changed(self, event: Switch.Changed) -> None:

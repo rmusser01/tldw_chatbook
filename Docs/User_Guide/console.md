@@ -158,6 +158,8 @@ composer-level strip below shows once setup completes.
 | **Search Library** | Searches Library evidence before sending — see [Context & RAG](console/context-and-rag.md). |
 | **Save as Chatbook** (composer **Menu**) | Saves this run as a Chatbook — see [Artifacts](artifacts.md). |
 | **Help** | Opens the Console help panel (same as F1). |
+| **Speak replies** | Speaks new assistant replies in this conversation. |
+| **Hands-free** | Enters/exits the voice conversation loop (same as Ctrl+Shift+H) — the switch is the touch/soft-keyboard route into the mode. |
 
 ### Rails and handles
 
