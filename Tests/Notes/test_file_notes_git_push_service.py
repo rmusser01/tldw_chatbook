@@ -1052,6 +1052,14 @@ def test_network_environment_pins_authorized_owner_agent_socket(
         agent_path.unlink()
         replacement = _bound_agent_socket(agent_path)
         try:
+            # The pinned socket is validated by (device, inode) AND mode.
+            # Linux inode allocation frequently recycles the freed inode for
+            # the rebind at the same path, which alone can leave the
+            # identity comparison passing (a filesystem limitation, not a
+            # validator gap). Loosen the replacement's mode so the pinned
+            # mode check trips on every platform: the substituted socket is
+            # distinguishable from the pinned one wherever it is created.
+            os.chmod(agent_path, 0o777)
             with pytest.raises(git_network.NetworkContextError):
                 context.command_settings()
         finally:
