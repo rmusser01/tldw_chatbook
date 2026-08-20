@@ -167,6 +167,13 @@ def test_the_queued_round_mounts_when_the_head_resolves(controller):
     assert _wait_until(lambda: len(_round_ids(controller)) == 2)
     round_2 = [r for r in _round_ids(controller) if r != round_1][0]
 
+    # Pre-condition: the head still owns the card. Without this, the test
+    # cannot tell FIFO promotion from the arm-time clobber it exists to
+    # catch -- round_2 would already be mounted and the post-assert below
+    # would pass for the wrong reason, on both sides of the fix.
+    time.sleep(0.1)
+    assert _mounted_round(controller) == round_1
+
     controller.resolve_pending_approval({"alpha": "approve_once"}, round_id=round_1)
     first.join(timeout=5)
 
@@ -197,7 +204,9 @@ def test_last_round_teardown_clears_the_card(controller):
 
 Run: `.venv/bin/python -m pytest Tests/UI/test_console_parked_payload_rekey.py -v`
 
-Expected: `test_arming_a_second_same_session_round_does_not_evict_the_first_card` FAILS — the second arm overwrites `_parked_approval_payloads[session_id]` and marshals its own payload, so `_mounted_round` is `round_2`. `test_the_queued_round_mounts_when_the_head_resolves` FAILS — nothing re-derives a head. `test_last_round_teardown_clears_the_card` may already PASS; that is expected and it guards against regressing the single-round case.
+Expected: BOTH `test_arming_a_second_same_session_round_does_not_evict_the_first_card` and `test_the_queued_round_mounts_when_the_head_resolves` FAIL, each on the assertion that the head still owns the card — the second arm overwrites `_parked_approval_payloads[session_id]` and marshals its own payload, so `_mounted_round` is `round_2`. `test_last_round_teardown_clears_the_card` may already PASS; that is expected and it guards against regressing the single-round case.
+
+A failure that is an import, fixture, or API error is NOT valid RED — fix the harness until each failure is a real assertion failure.
 
 - [ ] **Step 3: Commit the failing tests**
 
