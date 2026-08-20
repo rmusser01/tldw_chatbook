@@ -1,7 +1,7 @@
 # Actor Pack, Persona Buddy, and Streaming Emote Programme Design
 
 Date: 2026-08-20
-Status: Approved for spec review
+Status: Approved
 Repository: `tldw_chatbook`
 Server reference: `tldw_server` dev commit
 `385afa951922c8a9dc2002c675bb6cad65e4ac23`
@@ -167,19 +167,19 @@ cross-store protocol.
 
 ### ADR boundary
 
-Two new ADRs are required:
+Two governing ADRs are filed:
 
-1. **Portable Actor Packs and local Persona Visual runtime** — governs the separate
+1. [ADR-074: Portable Actor Packs and local Persona Visual runtime](../../../backlog/decisions/074-portable-actor-packs-and-local-persona-visual-runtime.md)
+   — governs the separate
    runtime boundary, local persistence, asset ownership, portable identity, the
    Persona JSON/SQLite mutation journal and recovery boundary, archive format, import
    trust boundary, activation, and rollback.
-2. **Durable character emote metadata** — amends ADR-067's session-only message
+2. [ADR-075: Durable character emote metadata](../../../backlog/decisions/075-durable-character-emote-metadata.md)
+   — amends ADR-067's session-only message
    boundary for server-parity directives, immutable final-expression references, and
    history reload.
 
-The task files and later implementation plans must link the relevant ADR. ADR numbers
-are allocated only when the documents are created, after a fresh all-ref collision
-check.
+The task files and later implementation plans must link the relevant filed ADR.
 
 ## Persona Visual runtime
 
@@ -542,7 +542,7 @@ Emote: annoyed
 ```
 
 The list preserves the active version's stored asset order after normalization and
-deduplication, exposes the first 25 states, and appends the exact `(+N more)` suffix
+deduplication, exposes the first 25 states, and appends the exact ` (+N more)` suffix
 when additional states exist, matching the pinned server. It contains no imported
 display labels or arbitrary text.
 
@@ -720,6 +720,17 @@ scratch pytest file outside `Tests/` without recreating the suite's isolation.
 
 ## Task programme and dependencies
 
+| Task | Title | Dependencies |
+| --- | --- | --- |
+| [TASK-19053](../../../backlog/tasks/task-19053%20-%20Add-local-Persona-Visual-pack-foundation.md) | Add local Persona Visual pack foundation | None |
+| [TASK-19054](../../../backlog/tasks/task-19054%20-%20Author-and-import-Persona-Visual-packs.md) | Author and import Persona Visual packs | `TASK-19053` |
+| [TASK-19055](../../../backlog/tasks/task-19055%20-%20Add-opt-in-app-wide-floating-Persona-Buddy.md) | Add opt-in app-wide floating Persona Buddy | `TASK-19053` |
+| [TASK-19056](../../../backlog/tasks/task-19056%20-%20Enable-Shared-Visual-Identity-for-Persona-actors.md) | Enable Shared Visual Identity for Persona actors | `TASK-16319` |
+| [TASK-19057](../../../backlog/tasks/task-19057%20-%20Define-and-create-portable-Actor-Packs.md) | Define and create portable Actor Packs | None |
+| [TASK-19058](../../../backlog/tasks/task-19058%20-%20Export-self-contained-Actor-Packs.md) | Export self-contained Actor Packs | `TASK-19053`, `TASK-19056`, `TASK-19057` |
+| [TASK-19059](../../../backlog/tasks/task-19059%20-%20Import-review-and-activate-Actor-Packs.md) | Import, review, and activate Actor Packs | `TASK-19053`, `TASK-19055`, `TASK-19056`, `TASK-19057`, `TASK-19058` |
+| [TASK-19060](../../../backlog/tasks/task-19060%20-%20Match-server-streaming-emotes-and-persistence.md) | Match server streaming emotes and persistence | `TASK-16319` |
+
 ### Task 1 — Add local Persona Visual pack foundation
 
 Deliver server-aligned manifest/state models, renderer capabilities, schema,
@@ -789,7 +800,7 @@ text, heuristic fallback, bounded message metadata, and final-expression history
 restore.
 
 Prompting preserves canonical active-version order, exposes 25 states, and reports
-the hidden remainder with the pinned `(+N more)` suffix.
+the hidden remainder with the pinned ` (+N more)` suffix.
 
 Depends only on the merged TASK-16319/ADR-067 foundation and may proceed independently
 of Tasks 1–7.
