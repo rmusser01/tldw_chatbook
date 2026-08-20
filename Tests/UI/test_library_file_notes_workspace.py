@@ -3275,6 +3275,10 @@ async def test_conflict_resolution_discloses_only_safe_choices(
             "#file-notes-resolution-save-new",
             Button,
         )
+        assert save_new.tooltip == (
+            "Write the complete draft to the Target path without replacing "
+            "an existing file"
+        )
         discard = workspace.query_one(
             "#file-notes-resolution-discard",
             Button,
@@ -3655,6 +3659,7 @@ async def test_reload_confirmation_rejects_stale_editor_identity(
             lambda: workspace.reload_confirmation_active,
             "reload confirmation did not open",
         )
+        assert not workspace.has_class("-reload-confirming")
 
         if stale_axis == "root":
             workspace._session_owner.select_root(tmp_path / "other-root")
@@ -5643,7 +5648,8 @@ async def test_production_compact_folder_files_disclosure_and_states_are_painted
         assert opened is not None
 
         toggle = workspace.query_one("#file-notes-maintenance-toggle", Button)
-        toggle.press()
+        toggle.focus()
+        await pilot.press("enter")
         await _wait_until(
             pilot,
             lambda: workspace.query_one(
@@ -5652,15 +5658,13 @@ async def test_production_compact_folder_files_disclosure_and_states_are_painted
             "More file actions did not disclose compact maintenance actions",
         )
         for selector, label in (
-            ("#file-notes-protect", "Protect"),
             ("#file-notes-reload", "Reload"),
+            ("#file-notes-protect", "Protect"),
             ("#file-notes-refresh", "Refresh"),
         ):
             action = workspace.query_one(selector, Button)
             assert action.display and not action.disabled
-            action.scroll_visible(animate=False)
-            await pilot.pause()
-            action.focus()
+            await pilot.press("tab")
             await pilot.pause()
             assert action.has_focus
             assert workspace.region.contains_region(action.region)

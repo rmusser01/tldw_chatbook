@@ -1309,7 +1309,7 @@ class LibraryFileNotesWorkspace(Vertical):
                         compact=True,
                     )
                     save_new.tooltip = (
-                        "Write the complete draft to the New note path without "
+                        "Write the complete draft to the Target path without "
                         "replacing an existing file"
                     )
                     yield save_new
@@ -4327,7 +4327,7 @@ class LibraryFileNotesWorkspace(Vertical):
             and self._save_state == "conflict"
             and self._opened is not None
         )
-        self.set_class(confirming_reload, "-reload-confirming")
+        critical_reload = self._save_state in {"conflict", "error"}
         self.set_class(resolving_conflict, "-resolving-conflict")
         has_service = self._service is not None
         has_document = self._opened is not None
@@ -4367,6 +4367,24 @@ class LibraryFileNotesWorkspace(Vertical):
         visibility["file-notes-maintenance-toggle"] = (
             maintenance_available and not resolving_conflict
         )
+        file_actions = self.query_one("#file-notes-file-actions")
+        reload_button = self.query_one("#file-notes-reload", Button)
+        reload_target = self.query_one(
+            (
+                "#file-notes-save-copy"
+                if critical_reload
+                else "#file-notes-maintenance-toggle"
+            ),
+            Button,
+        )
+        action_children = tuple(file_actions.children)
+        reload_index = action_children.index(reload_button)
+        target_index = action_children.index(reload_target)
+        if critical_reload:
+            if reload_index != target_index - 1:
+                file_actions.move_child(reload_button, before=reload_target)
+        elif reload_index != target_index + 1:
+            file_actions.move_child(reload_button, after=reload_target)
         focused = self.app.focused
         for action_id, displayed in visibility.items():
             if action_id in maintenance_ids:
@@ -4374,7 +4392,7 @@ class LibraryFileNotesWorkspace(Vertical):
                     self._maintenance_expanded
                     or (
                         action_id == "file-notes-reload"
-                        and self._save_state in {"conflict", "error"}
+                        and critical_reload
                     )
                 )
             if confirming_reload:
