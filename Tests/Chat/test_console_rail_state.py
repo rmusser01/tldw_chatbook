@@ -731,6 +731,7 @@ def test_console_rail_priority_resolves_two_open_rails(
         assert resolved == replace(
             snapshot,
             left_open=False,
+            left_compact_override=False,
             right_compact_override=True,
             compact_override=True,
         )

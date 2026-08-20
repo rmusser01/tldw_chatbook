@@ -570,6 +570,7 @@ def resolve_console_rail_priority(
     return replace(
         rail_state,
         left_open=False,
+        left_compact_override=False,
         right_compact_override=True,
         compact_override=True,
     )
