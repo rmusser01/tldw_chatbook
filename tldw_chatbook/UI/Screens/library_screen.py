@@ -3029,6 +3029,8 @@ class LibraryScreen(BaseAppScreen):
         # growing a flag of its own.
         self._library_media_bulk_delete_in_flight: bool = False
         self._library_media_mutation_scope: MediaBrowseScope | None = None
+        self._library_media_mutation_authority: int | None = None
+        self._library_media_lifecycle_generation: int = 0
         # task-4022 AC2: the ids from the most recently completed media
         # delete (bulk OR, since task-14901, the single-item viewer
         # delete), rendered as a "✓ deleted · N items" receipt (with
@@ -5714,6 +5716,7 @@ class LibraryScreen(BaseAppScreen):
         # before any awaited shutdown work can yield back to its completion.
         self._library_conversation_request_generation += 1
         self._invalidate_library_prompts_browse()
+        self._library_media_lifecycle_generation += 1
         self._library_media_browse_controller.invalidate()
         workspace = self._library_file_notes_workspace
         if workspace is not None:
@@ -10315,8 +10318,12 @@ class LibraryScreen(BaseAppScreen):
             self._library_media_mutation_scope = (
                 self._library_media_browse_controller.begin_mutation()
             )
+            self._library_media_mutation_authority = (
+                self._library_media_lifecycle_generation
+            )
             self._library_media_type_choices_visible = False
             self._sync_library_media_browse_state(None)
+            self._sync_library_media_viewer_mutation_gate()
         return self._library_media_mutation_scope
 
     def _complete_library_media_mutation(
@@ -10328,10 +10335,16 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         """Release the write interlock and refresh its full applied scope."""
         scope = self._library_media_mutation_scope
+        has_authority = (
+            self._library_media_mutation_authority
+            == self._library_media_lifecycle_generation
+        )
         self._library_media_mutation_scope = None
+        self._library_media_mutation_authority = None
         self._library_media_bulk_delete_in_flight = False
         if not committed and not remove_ids and not upsert_items:
-            self._sync_library_media_browse_state(None)
+            if has_authority:
+                self._sync_library_media_browse_state(None)
             return
         controller = self._library_media_browse_controller
         controller.reconcile_committed_mutation(
@@ -10339,7 +10352,10 @@ class LibraryScreen(BaseAppScreen):
             upsert_items=upsert_items,
         )
         refresh_scope = scope or controller.mutation_refresh_scope
-        if self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA:
+        if (
+            not has_authority
+            or self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA
+        ):
             return
         controller.request(refresh_scope, focus_identity=None)
         controller.request_facets(fingerprint=refresh_scope.fingerprint)
@@ -16148,7 +16164,8 @@ class LibraryScreen(BaseAppScreen):
         button the same way. Reuses ``_cancel_library_media_bulk_delete``
         rather than duplicating the Cancel button's body.
         """
-        self._cancel_library_media_bulk_delete()
+        if not self._library_media_bulk_delete_in_flight:
+            self._cancel_library_media_bulk_delete()
 
     async def _delete_library_media_selection(self, media_ids: tuple[str, ...]) -> None:
         """Soft-delete every selected Library media item (task-2853 AC3).
@@ -16583,7 +16600,8 @@ class LibraryScreen(BaseAppScreen):
         ``check_action`` gates this to the media canvas genuinely showing
         its Trash view, so it only ever fires there.
         """
-        self._exit_library_media_trash()
+        if not self._library_media_bulk_delete_in_flight:
+            self._exit_library_media_trash()
 
     def _focus_library_media_trash_entry(self) -> None:
         """Focus the Trash view's first row, or its back action when empty.
@@ -16805,6 +16823,8 @@ class LibraryScreen(BaseAppScreen):
 
     def _required_library_media_backing_id(self, media_id: str) -> int:
         """Return one positive local mutation id or fail before persistence."""
+        if type(media_id) is not str:
+            raise ValueError("Media mutation requires a positive backing id.")
         resolved = self._library_media_backing_id(media_id)
         if type(resolved) is int and resolved > 0:
             return resolved
@@ -18729,6 +18749,7 @@ class LibraryScreen(BaseAppScreen):
             return (
                 self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
                 and getattr(self, "_library_media_view", "list") == "viewer"
+                and not self._library_media_bulk_delete_in_flight
             )
         if action == "library_media_trash_back":
             # task-4025: only while the media canvas genuinely shows its
@@ -18736,6 +18757,7 @@ class LibraryScreen(BaseAppScreen):
             return (
                 self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
                 and getattr(self, "_library_media_view", "list") == "trash"
+                and not self._library_media_bulk_delete_in_flight
             )
         if action == "library_note_editor_back":
             return self._library_note_editor_active()
@@ -18756,7 +18778,10 @@ class LibraryScreen(BaseAppScreen):
             # ALSO True on this exact state (the list is still genuinely
             # showing), so declaration order is what keeps this one
             # exclusive, not this predicate.
-            return self._library_media_confirming_bulk_delete
+            return (
+                self._library_media_confirming_bulk_delete
+                and not self._library_media_bulk_delete_in_flight
+            )
         if action == "library_ingest_retry_last":
             # task-3313: only on the Ingest canvas AND while the affordance
             # itself is offered. THE SAME predicate the state builder uses
@@ -28776,6 +28801,8 @@ class LibraryScreen(BaseAppScreen):
         button does (that button's own behavior is unchanged; widening
         ITS guard is outside this task).
         """
+        if self._library_media_bulk_delete_in_flight:
+            return
         if self._library_media_editing:
             self._library_media_editing = False
             self.refresh(recompose=True)
@@ -28937,12 +28964,14 @@ class LibraryScreen(BaseAppScreen):
                 )
         else:
             self._notify_library_media_edit_warning("Media editing is unavailable.")
-        self._complete_library_media_mutation(
-            committed=committed,
-            upsert_items=(updated_item,) if updated_item is not None else (),
-        )
         self._library_media_editing = False
-        await self._refresh_library_media_detail(media_id)
+        try:
+            await self._refresh_library_media_detail(media_id)
+        finally:
+            self._complete_library_media_mutation(
+                committed=committed,
+                upsert_items=(updated_item,) if updated_item is not None else (),
+            )
 
     def _patch_local_media_record(
         self,
@@ -29431,7 +29460,19 @@ class LibraryScreen(BaseAppScreen):
         viewer.content_match_index = self._library_media_content_match_index
         viewer.content_mode = self._library_media_content_mode
         viewer.refresh(recompose=True)
+        self.call_after_refresh(self._sync_library_media_viewer_mutation_gate)
         return True
+
+    def _sync_library_media_viewer_mutation_gate(self) -> None:
+        """Disable a still-mounted edit Save while its write is unsettled."""
+        try:
+            save = self.query_one("#library-media-edit-save", Button)
+        except (NoMatches, QueryError):
+            return
+        if self._library_media_bulk_delete_in_flight:
+            save.label = library_disabled_action_label("Save", True)
+            save.disabled = True
+            save.tooltip = "Media change in progress."
 
     def _mounted_library_media_viewer(self) -> LibraryMediaViewer | None:
         """Return the mounted media viewer, or ``None`` during teardown."""

@@ -19,23 +19,53 @@ from tldw_chatbook.Library.library_export_scope import ExportScope
 from tldw_chatbook.Library.library_media_state import (
     LibraryMediaCanvasState,
     LibraryMediaRow,
+    MediaBrowseScope,
     build_library_media_state,
 )
+from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_MEDIA
 from tldw_chatbook.Widgets.Library.library_media_canvas import LibraryMediaCanvas
 
 
 def _bind_media_mutation_seams(fake):
     """Give direct method fakes the production mutation boundary shape."""
-    fake._begin_library_media_mutation = lambda: None
+    if not hasattr(fake, "_library_media_bulk_delete_in_flight"):
+        fake._library_media_bulk_delete_in_flight = True
+    events = []
+    scope = MediaBrowseScope()
+    controller = SimpleNamespace(
+        mutation_refresh_scope=scope,
+        begin_mutation=lambda: events.append(("begin",)) or scope,
+        reconcile_committed_mutation=lambda **kwargs: events.append(
+            ("reconcile", kwargs)
+        ),
+        request=lambda requested, **kwargs: events.append(
+            ("request", requested, kwargs)
+        ),
+        request_facets=lambda **kwargs: events.append(("facets", kwargs)),
+    )
+    fake._mutation_events = events
+    fake._library_media_browse_controller = controller
+    fake._library_media_mutation_scope = None
+    fake._library_media_mutation_authority = None
+    fake._library_media_lifecycle_generation = 0
+    fake._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+    fake._library_media_type_choices_visible = False
+    fake._sync_library_media_browse_state = lambda *_args: events.append(("sync",))
+    fake._sync_library_media_viewer_mutation_gate = lambda: None
+    fake._begin_library_media_mutation = types.MethodType(
+        LibraryScreen._begin_library_media_mutation, fake
+    )
     fake._required_library_media_backing_id = types.MethodType(
         LibraryScreen._required_library_media_backing_id, fake
     )
     fake._library_media_mutation_summary = types.MethodType(
         LibraryScreen._library_media_mutation_summary, fake
     )
-    fake._complete_library_media_mutation = lambda **_kwargs: setattr(
-        fake, "_library_media_bulk_delete_in_flight", False
+    fake._complete_library_media_mutation = types.MethodType(
+        LibraryScreen._complete_library_media_mutation, fake
     )
+    if fake._library_media_bulk_delete_in_flight:
+        fake._begin_library_media_mutation()
     return fake
 
 
@@ -781,6 +811,35 @@ def _bulk_delete_fake(*, db, records, counts, selected_ids):
     return _bind_media_mutation_seams(fake)
 
 
+@pytest.mark.parametrize(
+    "media_id",
+    ("local:media:local:media:1", "local:media:0", "0", "-1", True),
+)
+@pytest.mark.asyncio
+async def test_invalid_mutation_ids_never_reach_delete_service(tmp_path, media_id):
+    db = MediaDatabase(db_path=str(tmp_path / "media.db"), client_id="invalid-id")
+    fake = _bulk_delete_fake(
+        db=db,
+        records=(),
+        counts={"media": 0},
+        selected_ids=[],
+    )
+    calls = []
+
+    async def delete_media_item(**kwargs):
+        calls.append(kwargs)
+
+    fake.app_instance.media_reading_scope_service = SimpleNamespace(
+        delete_media_item=delete_media_item
+    )
+
+    await LibraryScreen._delete_library_media_selection(fake, (media_id,))
+
+    assert calls == []
+    with pytest.raises(ValueError, match="positive backing id"):
+        LibraryScreen._required_library_media_backing_id(fake, media_id)
+
+
 @pytest.mark.asyncio
 async def test_delete_selection_soft_deletes_via_real_db_and_updates_records_and_counts(
     tmp_path,
@@ -864,6 +923,10 @@ async def test_delete_selection_soft_deletes_via_real_db_and_updates_records_and
     # actually completes, so a legitimate follow-up bulk delete is never
     # left permanently blocked.
     assert fake._library_media_bulk_delete_in_flight is False
+    assert fake._mutation_events[0] == ("begin",)
+    assert any(event[0] == "reconcile" for event in fake._mutation_events)
+    assert any(event[0] == "request" for event in fake._mutation_events)
+    assert any(event[0] == "facets" for event in fake._mutation_events)
 
     db.close_connection()
 
@@ -926,6 +989,10 @@ async def test_delete_selection_partial_failure_keeps_select_mode_and_warns(
     # focused once the confirm row's "Delete" button (which had focus) is
     # gone from the DOM after the recompose above.
     assert fake._entry_focus_arm_calls == [True]
+    assert fake._mutation_events[0] == ("begin",)
+    assert any(event[0] == "reconcile" for event in fake._mutation_events)
+    assert any(event[0] == "request" for event in fake._mutation_events)
+    assert any(event[0] == "facets" for event in fake._mutation_events)
     assert fake._library_media_bulk_delete_in_flight is False
 
     db.close_connection()
@@ -1045,6 +1112,10 @@ async def test_undo_restores_items_via_real_db_and_updates_records_and_counts(
     # it -- entry focus must be re-armed the same way the delete path's own
     # tail already does.
     assert fake._entry_focus_arm_calls == [True]
+    assert fake._mutation_events[0] == ("begin",)
+    assert any(event[0] == "reconcile" for event in fake._mutation_events)
+    assert any(event[0] == "request" for event in fake._mutation_events)
+    assert any(event[0] == "facets" for event in fake._mutation_events)
 
     db.close_connection()
 
@@ -1432,6 +1503,10 @@ async def test_single_item_delete_also_arms_entry_focus_on_success(tmp_path):
     assert fake._entry_focus_arm_calls == [True]
     # task-3020 AC5: rail count decremented in place, like the bulk path.
     assert fake._local_source_counts["media"] == 0
+    assert fake._mutation_events[0] == ("begin",)
+    assert any(event[0] == "reconcile" for event in fake._mutation_events)
+    assert any(event[0] == "request" for event in fake._mutation_events)
+    assert any(event[0] == "facets" for event in fake._mutation_events)
 
     db.close_connection()
 

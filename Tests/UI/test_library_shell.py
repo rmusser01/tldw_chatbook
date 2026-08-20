@@ -408,6 +408,32 @@ class GatedMutationLibraryMediaScopeService(StaticLibraryMediaScopeService):
         return True
 
 
+class GatedEditLibraryMediaScopeService(StaticLibraryMediaScopeService):
+    """Hold edit persistence and its detail refresh independently."""
+
+    def __init__(self, media_items):
+        super().__init__(media_items)
+        self.update_entered = threading.Event()
+        self.update_release = threading.Event()
+        self.detail_entered = threading.Event()
+        self.detail_release = threading.Event()
+
+    async def update_media_item(self, *, media_id, **kwargs):
+        self.update_entered.set()
+        await asyncio.to_thread(
+            self.update_release.wait, _GATED_RELEASE_TIMEOUT_SECONDS
+        )
+        return await super().update_media_item(media_id=media_id, **kwargs)
+
+    async def get_media_item(self, *, media_id, **kwargs):
+        if self.update_calls:
+            self.detail_entered.set()
+            await asyncio.to_thread(
+                self.detail_release.wait, _GATED_RELEASE_TIMEOUT_SECONDS
+            )
+        return await super().get_media_item(media_id=media_id, **kwargs)
+
+
 def _open_source_test_app() -> SimpleNamespace:
     """Return the smallest mutable app seam needed by open-source tests."""
 
@@ -4762,6 +4788,64 @@ async def test_library_shell_media_edit_save_persists_and_exits_edit_mode():
         assert title == "Interview Recording (Revised)"
 
 
+@pytest.mark.asyncio
+async def test_library_media_edit_save_stays_gated_through_detail_refresh() -> None:
+    app = _build_test_app()
+    media = _two_media_items()
+    _seed_conversations(app, _two_conversations(), media=media)
+    service = GatedEditLibraryMediaScopeService(media)
+    app.media_reading_scope_service = service
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            screen.query_one("#library-row-browse-media").press()
+            await _wait_for_selector(screen, pilot, "#library-media-row-1")
+            screen.query_one("#library-media-row-1").press()
+            await _wait_for_selector(screen, pilot, "#library-media-edit")
+            screen.query_one("#library-media-edit").press()
+            await _wait_for_selector(screen, pilot, "#library-media-edit-save")
+            initial_searches = len(service.search_calls)
+            initial_facets = len(service.type_calls)
+
+            save = screen.query_one("#library-media-edit-save", Button)
+            save.press()
+            await _wait_for_condition(
+                pilot,
+                service.update_entered.is_set,
+                message="Media edit never entered its durable write.",
+            )
+            assert save.disabled is True
+
+            service.update_release.set()
+            await _wait_for_condition(
+                pilot,
+                service.detail_entered.is_set,
+                message="Media edit never entered its detail refresh.",
+            )
+            assert screen._library_media_bulk_delete_in_flight is True
+            assert screen.query_one("#library-media-edit-save", Button).disabled is True
+            screen.query_one("#library-media-edit-save", Button).press()
+            await pilot.pause()
+            assert len(service.update_calls) == 1
+
+            service.detail_release.set()
+            await _wait_for_condition(
+                pilot,
+                lambda: not screen._library_media_bulk_delete_in_flight,
+                message="Media edit interlock never released after detail refresh.",
+            )
+            assert len(service.update_calls) == 1
+            assert len(service.search_calls) == initial_searches + 1
+            assert len(service.type_calls) == initial_facets + 1
+            assert screen._library_media_mutation_scope is None
+    finally:
+        service.update_release.set()
+        service.detail_release.set()
+
+
 async def _open_media_edit_and_save_title(screen, pilot, new_title):
     """Open media-1's edit form, set the title, save, and wait for completion."""
     screen.query_one("#library-row-browse-media").press()
@@ -5097,6 +5181,40 @@ async def test_library_shell_media_delete_confirm_uses_raw_backing_id():
         assert screen._library_media_confirming_delete is False
         assert screen._library_media_view == "list"
         assert not screen.query("#library-media-viewer")
+
+
+@pytest.mark.asyncio
+async def test_library_media_delete_escape_is_inert_during_durable_write() -> None:
+    app = _build_test_app()
+    media = _two_media_items()
+    _seed_conversations(app, _two_conversations(), media=media)
+    service = GatedMutationLibraryMediaScopeService(media)
+    app.media_reading_scope_service = service
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            screen.query_one("#library-row-browse-media").press()
+            await _wait_for_selector(screen, pilot, "#library-media-row-1")
+            screen.query_one("#library-media-row-1").press()
+            await _wait_for_selector(screen, pilot, "#library-media-delete")
+            screen.query_one("#library-media-delete").press()
+            await _wait_for_selector(screen, pilot, "#library-media-delete-confirm")
+            screen.query_one("#library-media-delete-confirm").press()
+            await _wait_for_condition(
+                pilot,
+                service.delete_entered.is_set,
+                message="Media delete never entered its durable write.",
+            )
+
+            await pilot.press("escape")
+            assert screen._library_media_confirming_delete is True
+            assert screen._library_media_view == "viewer"
+            assert screen.check_action("library_media_viewer_back", ()) is False
+    finally:
+        service.delete_release.set()
 
 
 @pytest.mark.asyncio
@@ -7273,6 +7391,53 @@ async def test_library_media_durable_mutation_gates_and_refreshes_applied_scope(
 
 
 @pytest.mark.asyncio
+async def test_library_media_restore_refresh_makes_reappearing_facet_visible() -> None:
+    media = [
+        {
+            "id": "media-1",
+            "title": "Video",
+            "type": "video",
+            "last_modified": "2026-08-20T00:00:00Z",
+        }
+    ]
+    app = _build_test_app()
+    _seed_conversations(app, [], media=media)
+    service = StaticLibraryMediaScopeService(media)
+    app.media_reading_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-media", Button).press()
+        controller = screen._library_media_browse_controller
+        await _wait_for_condition(
+            pilot,
+            lambda: controller.type_options == ("video",),
+            message="Initial Media facet never settled.",
+        )
+
+        restored = {
+            "id": "media-2",
+            "title": "Restored audio",
+            "type": "audio",
+            "last_modified": "2026-08-20T01:00:00Z",
+        }
+        screen._library_media_bulk_delete_in_flight = True
+        screen._begin_library_media_mutation()
+        service.media_items = (*service.media_items, restored)
+        screen._complete_library_media_mutation(
+            upsert_items=(screen._library_media_mutation_summary("2", restored),)
+        )
+
+        await _wait_for_condition(
+            pilot,
+            lambda: controller.type_options == ("audio", "video"),
+            message="Restored Media type never reappeared in complete facets.",
+        )
+
+
+@pytest.mark.asyncio
 async def test_library_media_newer_page_and_facet_generations_win() -> None:
     app = _build_test_app()
     _seed_conversations(app, [], media=_two_media_items())
@@ -7350,6 +7515,66 @@ async def test_library_media_unmount_fences_gated_reads_before_await() -> None:
     finally:
         service.page_release.set()
         service.facet_release.set()
+
+
+@pytest.mark.asyncio
+async def test_library_media_mutation_completion_after_unmount_only_reconciles() -> None:
+    app = _build_test_app()
+    media = _two_media_items()
+    _seed_conversations(app, [], media=media)
+    service = GatedMutationLibraryMediaScopeService(media)
+    app.media_reading_scope_service = service
+    screen = LibraryScreen(app)
+    screen.restore_state({"library_selected_row_id": LIBRARY_ROW_BROWSE_MEDIA})
+    host = LibraryHarness(app, screen=screen)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen._library_media_browse_controller.applied_result is not None
+                    and not screen._library_media_browse_controller.facet_loading
+                ),
+                message="Initial Media page/facets never settled.",
+            )
+            controller = screen._library_media_browse_controller
+            initial_searches = len(service.search_calls)
+            initial_facets = len(service.type_calls)
+            sync_calls = []
+            original_sync = screen._sync_library_media_browse_state
+
+            def record_sync(focus=None):
+                sync_calls.append(focus)
+                original_sync(focus)
+
+            screen._sync_library_media_browse_state = record_sync
+            screen._library_media_bulk_delete_in_flight = True
+            screen._begin_library_media_mutation()
+            initial_syncs = len(sync_calls)
+            mutation = asyncio.create_task(
+                screen._delete_library_media_item("local:media:1")
+            )
+            await _wait_for_condition(
+                pilot,
+                service.delete_entered.is_set,
+                message="Media mutation never entered its durable write.",
+            )
+
+            await screen.on_unmount()
+            service.delete_release.set()
+            await mutation
+            await pilot.pause()
+
+            assert "local:media:1" not in {
+                item["id"] for item in controller.retained_items
+            }
+            assert controller.freshness == "stale"
+            assert len(service.search_calls) == initial_searches
+            assert len(service.type_calls) == initial_facets
+            assert len(sync_calls) == initial_syncs
+    finally:
+        service.delete_release.set()
 
 
 def test_library_media_applied_scope_restore_is_strict_and_transient_free() -> None:

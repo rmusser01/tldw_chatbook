@@ -385,3 +385,41 @@ async def test_mutation_begin_fences_page_and_facet_results_before_write() -> No
 
     assert controller.applied_result is None
     assert controller.type_options == ()
+
+
+@pytest.mark.asyncio
+async def test_filtered_mutation_does_not_retain_out_of_scope_restore() -> None:
+    screen = _Screen()
+    service = _Service(_page(1, 1), RuntimeError("refresh failed"))
+    controller = _controller(screen, service)
+    scope = MediaBrowseScope(media_type="video")
+    controller.request(scope, focus_identity=None)
+    await screen.pending.pop()
+    restored = dict(_item(99), media_type="audio")
+
+    controller.begin_mutation()
+    controller.reconcile_committed_mutation(upsert_items=(restored,))
+    controller.request(scope, focus_identity=None)
+    await screen.pending.pop()
+
+    assert [item["id"] for item in controller.retained_items] == ["local:media:1"]
+    assert controller.freshness == "stale"
+
+
+@pytest.mark.asyncio
+async def test_mutation_refresh_clamps_once_after_page_two_becomes_empty() -> None:
+    screen = _Screen()
+    service = _Service(_page(2, 21), _page(2, 20), _page(1, 20))
+    controller = _controller(screen, service)
+    scope = MediaBrowseScope(page=2)
+    controller.request(scope, focus_identity=None)
+    await screen.pending.pop()
+
+    controller.begin_mutation()
+    controller.reconcile_committed_mutation(remove_ids=("local:media:21",))
+    controller.request(scope, focus_identity=None)
+    await screen.pending.pop()
+
+    assert [call["offset"] for call in service.search_calls] == [20, 20, 0]
+    assert controller.applied_scope == MediaBrowseScope(page=1)
+    assert controller.freshness == "fresh"
