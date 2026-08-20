@@ -1,11 +1,11 @@
 ---
 id: TASK-19001
 title: Refine Folder Files target path and action hierarchy
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-20 07:40'
-updated_date: '2026-08-20 21:07'
+updated_date: '2026-08-20 21:14'
 labels:
   - notes
   - files
@@ -40,5 +40,5 @@ Reduce competing controls in Folder files while preserving disk authority, exist
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Reopened after TASK-19002 baseline exposed a reproducible compact regression in Tests/UI/test_library_file_notes_git.py::test_narrow_editor_actions_keep_complete_labels_at_40_by_20: after Protect, #file-notes-back paints at y=2 while #file-notes-editor-pane begins at y=3. The prior owning suite did not include this adjacent Git-panel compact contract. Diagnose and fix before continuing TASK-19002, then rerun the owning and adjacent Git UI gates and update closeout evidence.
+Implemented the approved Folder Files action hierarchy without changing storage, routing, guarded file handlers, service calls, messages, or shortcuts. The target input keeps the persistent label Target path · New / Move / Save copy; normal primary order is New, Move, Delete, More file actions; state-critical Restore, Reload, and Save copy/Export exact copy are promoted while Protect, normal Reload, and Refresh remain keyboard-disclosed. Forward Tab traverses More, Reload, Protect, Refresh; conflict/error place Reload before Save copy. Reload confirmation remains Cancel-first with Target path and Save copy reachable; compact editor scrolling and safe focus are production-tested. Updated the File Notes guide. Existing ADR-021, ADR-029, and ADR-031 govern unchanged boundaries; no new ADR was required. After TASK-19002 baseline exposed a stale adjacent compact oracle, the test helper was corrected to scroll/focus each displayed action before asserting paint and containment; no production change was needed. Final evidence: Folder Files 122 passed; both adjacent Git UI suites 209 passed; root focused slice 14 passed; CSS integrity 11 passed; CSS bundle parity and git diff --check passed; Ruff clean apart from documented pre-existing Tests/UI/test_library_file_notes_git.py:16 F401. Independent spec and quality reviews approved with no remaining findings.
 <!-- SECTION:NOTES:END -->
