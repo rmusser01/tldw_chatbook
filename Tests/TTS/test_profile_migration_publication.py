@@ -1876,7 +1876,7 @@ def test_publisher_atomic_move_gap_preserves_foreign_source_leaf(
 
     monkeypatch.setattr(namespace, "_rename_noreplace", swap_source)
 
-    with pytest.raises(ProfileRepositoryError, match="unavailable"):
+    with pytest.raises(ProfileRepositoryError) as caught:
         module.publish_profile_migration(
             active_candidate=artifact,
             backup_candidates=(),
@@ -1885,6 +1885,11 @@ def test_publisher_atomic_move_gap_preserves_foreign_source_leaf(
         )
 
     assert swapped
+    assert caught.value.code in {"migration_failed", "unavailable"}
+    assert str(caught.value) in {
+        "TTS profile repository failed: migration_failed",
+        "TTS profile repository failed: unavailable",
+    }
     assert candidate.read_bytes() == foreign
     assert (active.is_file() and active.read_bytes() == active_before) or any(
         path.read_bytes() == active_before

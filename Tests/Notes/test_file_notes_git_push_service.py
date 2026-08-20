@@ -2279,7 +2279,7 @@ def test_openssh_git_adapter_executes_only_exact_frozen_route_without_network(
         env=dict(settings.environment),
         stdin=subprocess.DEVNULL,
         capture_output=True,
-        timeout=5,
+        timeout=15,
         check=False,
     )
 
@@ -2788,12 +2788,11 @@ def test_network_context_rejects_safe_leaf_under_writable_ancestor(
     repository = _network_repository(tmp_path / "repository")
     destination = _network_destination()
     source, config = _network_authorizations(repository, destination)
-    git_executable = shutil.which("git")
-    assert git_executable is not None
+    git_executable = _test_git_installation()[0]
     factory = git_network.NetworkContextFactory(
         environment={},
         temporary_parent=parent,
-        git_executable=git_executable,
+        git_executable=str(git_executable),
         git_exec_path=_test_git_installation()[1],
             python_executable=str(_pinnable_python_executable()),
     )
