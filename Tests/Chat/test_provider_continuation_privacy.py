@@ -154,7 +154,34 @@ def test_exported_json_import_restores_exact_assistant_owner_without_running() -
         database.close_connection()
 
 
-def _kimi_family_checkpoint(content: str, *, model: str = "kimi-k2.6") -> dict:
+def _kimi_family_checkpoint(
+    content: str, *, model: str = "kimi-k2.6", post_tool_only: bool = False
+) -> dict:
+    rounds: list[dict]
+    if post_tool_only:
+        rounds = [
+            {
+                "assistant_content": "",
+                "reasoning_blocks": ["PRIVATE-FAMILY-REASONING"],
+                "calls": [
+                    {
+                        "call_id": "call_1",
+                        "name": "calculator",
+                        "arguments": '{"expression":"2+2"}',
+                        "state": "completed",
+                        "result": "4",
+                    }
+                ],
+            }
+        ]
+    else:
+        rounds = [
+            {
+                "assistant_content": content,
+                "reasoning_blocks": ["PRIVATE-FAMILY-REASONING"],
+                "calls": [],
+            }
+        ]
     return {
         "schema_version": 1,
         "checkpoint_revision": 1,
@@ -163,13 +190,7 @@ def _kimi_family_checkpoint(content: str, *, model: str = "kimi-k2.6") -> dict:
         "model": model,
         "api_base_url": "https://api.moonshot.ai/v1",
         "state": "complete",
-        "rounds": [
-            {
-                "assistant_content": content,
-                "reasoning_blocks": ["PRIVATE-FAMILY-REASONING"],
-                "calls": [],
-            }
-        ],
+        "rounds": rounds,
     }
 
 
@@ -195,6 +216,16 @@ def test_exported_json_import_family_owner_rule_covers_versioned_kimi() -> None:
                     _kimi_family_checkpoint("does not match owner")
                 ),
             },
+            # Pre-19170 durable shape: complete, ends with a tool round --
+            # exempt from the exact-owner rule (its final round's content is
+            # never the visible answer).
+            {
+                "role": "assistant",
+                "content": "tool visible answer",
+                "provider_continuation_json": json.dumps(
+                    _kimi_family_checkpoint("ignored", post_tool_only=True)
+                ),
+            },
         ]
         payload_json, _ = generate_chat_history_content(history, None, None)
 
@@ -207,6 +238,7 @@ def test_exported_json_import_family_owner_rule_covers_versioned_kimi() -> None:
             "Think",
             "visible answer",
             "other visible answer",
+            "tool visible answer",
         ]
         restored = parse_provider_continuation_json(
             rows[1]["provider_continuation_json"]
@@ -214,6 +246,10 @@ def test_exported_json_import_family_owner_rule_covers_versioned_kimi() -> None:
         assert restored.model == "kimi-k2.6"
         assert restored.rounds[-1].reasoning_blocks == ("PRIVATE-FAMILY-REASONING",)
         assert rows[2]["provider_continuation_json"] is None
+        tool_shape = parse_provider_continuation_json(
+            rows[3]["provider_continuation_json"]
+        )
+        assert tool_shape.rounds[-1].calls[0].state == "completed"
     finally:
         database.close_connection()
 
