@@ -68,7 +68,8 @@ class ConsoleEditMessageModal(
 
     #console-edit-message-body {
         width: 100%;
-        height: 16;
+        height: 1fr;
+        min-height: 8;
     }
 
     #console-edit-message-error {
