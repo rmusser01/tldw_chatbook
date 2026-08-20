@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.containers import Container
-from textual.widgets import Button, Static, Tree
+from textual.widgets import Button, Static
 
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_study_dashboard import (
@@ -761,15 +763,105 @@ async def test_structured_learning_pane_composes_no_orphaned_add_topic_controls(
         assert "no way to" in _text(empty_state).lower()
 
 
+# task-19041: the ids below were removed from the four placeholder Study panes
+# (Mindmaps, Course Creation, Study Guide, Learning Map) after the 16845 census
+# established their backing is placeholder-grade -- every button undispatched
+# (whole-tree grep per id hit only compose + tests), schema either write-only
+# (mindmaps, learning paths/topics) or nonexistent (courses, modules, guides,
+# concepts, milestones, SCORM), and every tree/list/progress display static
+# with no population code. The tuple also covers the controls that existed
+# solely to feed those buttons (16195 pattern). `export-md-btn` composed TWICE
+# (Mindmaps + Course panes) -- a duplicate id -- so the source-level pin also
+# forbids that duplicate from returning.
+REMOVED_STUDY_PANE_IDS = (
+    # Mindmaps pane
+    "add-child-btn",  # removed by task-16845
+    "add-sibling-btn",
+    "delete-node-btn",
+    "edit-node-btn",
+    "import-notes-btn",
+    "export-md-btn",
+    "generate-mindmap-btn",
+    "node-text",
+    "mindmap-tree",
+    # Course Creation pane
+    "create-course-btn",  # removed by task-16845 (with the course-* form)
+    "course-title",
+    "course-description",
+    "course-level",
+    "course-prerequisites",
+    "add-module-btn",
+    "module-name",
+    "module-list",
+    "export-pdf-btn",
+    "export-scorm-btn",
+    # Study Guide pane
+    "generate-guide-btn",  # removed by task-16845
+    "guide-topic-select",
+    "guide-title",
+    "guide-content",
+    "concept-input",
+    "add-concept-btn",
+    "key-concepts-list",
+    "practice-questions-list",
+    "generate-questions-btn",
+    "save-guide-btn",
+    # Learning Map pane
+    "add-milestone-btn",  # removed by task-16845
+    "learning-map-tree",
+    "overall-progress",
+    "current-topic",
+    "mark-complete-btn",
+    "set-dependencies-btn",
+    "import-course-btn",
+    "export-path-btn",
+    "generate-suggestions-btn",
+)
+
+
+def test_removed_study_pane_affordances_do_not_return_in_source():
+    """task-19041 source-level pin: none of the removed pane affordances may
+    compose again in `UI/Study_Window.py`. Matching `id=` assignments (not
+    bare substrings) keeps the removal-site comments, which cite the ids in
+    `#id` form, out of the match. Zero occurrences of `export-md-btn` also
+    pins away its old duplicate composition (Mindmaps :451 + Course :512)."""
+    import tldw_chatbook.UI.Study_Window as study_window_module
+
+    source = Path(study_window_module.__file__).read_text(encoding="utf-8")
+    offenders = [
+        removed_id
+        for removed_id in REMOVED_STUDY_PANE_IDS
+        if re.search(rf'id=["\']{re.escape(removed_id)}["\']', source)
+    ]
+    assert not offenders, (
+        f"removed Study pane affordances compose again in Study_Window.py: {offenders}"
+    )
+
+
+async def _pane_assertions(pilot, app, nav_button_id, removed_ids, empty_state_id):
+    app.screen.query_one(nav_button_id, Button).press()
+    await pilot.pause()
+
+    study_window = app.screen.query_one(StudyWindow)
+    for removed in removed_ids:
+        assert not study_window.query(f"#{removed}"), (
+            f"removed affordance #{removed} composes again"
+        )
+    empty_state = study_window.query_one(f"#{empty_state_id}", Static)
+    assert "no way to" in _text(empty_state).lower()
+
+
 @pytest.mark.asyncio
-async def test_mindmaps_pane_composes_no_orphaned_add_child_button():
-    """task-16845: `#add-child-btn` (task-16196's per-symbol sweep confirmed
-    `handle_add_mindmap_child` was dead) has no dispatcher anywhere, and
+async def test_mindmaps_pane_composes_only_the_honest_empty_state():
+    """task-16845 removed `#add-child-btn`; task-19041 finished the pane.
+    Every remaining control was equally undispatched (add-sibling /
+    delete-node / edit-node / import-notes / export-md / generate-mindmap),
     ChaChaNotes_DB's `create_mindmap`/`add_mindmap_node` are write-only with
-    no read/list method -- the mindmap tree can never show what the button
-    would write. `#add-sibling-btn` is a separate, equally-undispatched
-    button out of this task's scope, and shares `#node-text` with the
-    removed button, so that input must survive the removal."""
+    no read/list method, and `#mindmap-tree` was a static "Root Topic"
+    skeleton nothing populates -- so `#node-text` (which fed only the dead
+    add buttons) and the tree went with the buttons, replaced by an honest
+    empty-state notice. (The mindmap SUBSYSTEM -- Tools/Mind_Map,
+    MindmapViewer -- is task-19042's scope; this pane never composed it.)"""
     StudyScopeContext, StudyScopeType = _load_study_scope_models()
     app_instance = SimpleNamespace(
         scope_context=StudyScopeContext(scope_type=StudyScopeType.GLOBAL),
@@ -783,27 +875,35 @@ async def test_mindmaps_pane_composes_no_orphaned_add_child_button():
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        app.screen.query_one("#view-mindmaps-btn", Button).press()
-        await pilot.pause()
-
-        study_window = app.screen.query_one(StudyWindow)
-        assert not study_window.query("#add-child-btn")
-        # Out-of-scope siblings, and the input they share, still compose.
-        study_window.query_one("#mindmap-tree", Tree)
-        study_window.query_one("#node-text")
-        study_window.query_one("#add-sibling-btn", Button)
+        await _pane_assertions(
+            pilot,
+            app,
+            "#view-mindmaps-btn",
+            (
+                "add-child-btn",
+                "add-sibling-btn",
+                "delete-node-btn",
+                "edit-node-btn",
+                "import-notes-btn",
+                "export-md-btn",
+                "generate-mindmap-btn",
+                "node-text",
+                "mindmap-tree",
+            ),
+            "mindmaps-empty-state",
+        )
 
 
 @pytest.mark.asyncio
-async def test_course_creation_pane_composes_no_orphaned_create_course_form():
-    """task-16845: `#create-course-btn` has no dispatcher anywhere, and no
-    `course`/`courses` table exists in ChaChaNotes_DB at all (zero schema
-    support, unlike the other three buttons which at least have a
-    write-only sink) -- so the "Course Details" form (title/description/
-    level/prerequisites) that existed solely to feed this one dead button
-    is removed with it. Course Modules and Export Options are separate,
-    equally-undispatched sections out of this task's scope and still
-    compose."""
+async def test_course_creation_pane_composes_only_the_honest_empty_state():
+    """task-16845 removed `#create-course-btn` and the course-* form (no
+    `course`/`courses` table exists in ChaChaNotes_DB at all); task-19041
+    finished the pane: `#add-module-btn` (no module concept in any schema,
+    `#module-list` never populated), and the three export buttons
+    (`export-pdf-btn`/`export-md-btn`/`export-scorm-btn` -- no exportable
+    course exists, and no SCORM code exists anywhere in the tree) were all
+    equally undispatched. `#module-name` fed only the dead add button. The
+    pane now presents an honest empty-state notice."""
     StudyScopeContext, StudyScopeType = _load_study_scope_models()
     app_instance = SimpleNamespace(
         scope_context=StudyScopeContext(scope_type=StudyScopeType.GLOBAL),
@@ -817,29 +917,37 @@ async def test_course_creation_pane_composes_no_orphaned_create_course_form():
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        app.screen.query_one("#view-course-btn", Button).press()
-        await pilot.pause()
-
-        study_window = app.screen.query_one(StudyWindow)
-        assert not study_window.query("#create-course-btn")
-        assert not study_window.query("#course-title")
-        assert not study_window.query("#course-description")
-        assert not study_window.query("#course-level")
-        assert not study_window.query("#course-prerequisites")
-        # Out-of-scope sections still compose.
-        study_window.query_one("#module-list")
-        study_window.query_one("#add-module-btn", Button)
-        study_window.query_one("#export-pdf-btn", Button)
+        await _pane_assertions(
+            pilot,
+            app,
+            "#view-course-btn",
+            (
+                "create-course-btn",
+                "course-title",
+                "course-description",
+                "course-level",
+                "course-prerequisites",
+                "add-module-btn",
+                "module-name",
+                "module-list",
+                "export-pdf-btn",
+                "export-md-btn",
+                "export-scorm-btn",
+            ),
+            "course-creation-empty-state",
+        )
 
 
 @pytest.mark.asyncio
-async def test_study_guide_pane_composes_no_orphaned_generate_guide_button():
-    """task-16845: `#generate-guide-btn` ("Generate from Topic") has no
-    dispatcher anywhere, and `#guide-topic-select` is hard-coded to a
-    single static "New Topic" option with no code populating it from the
-    (write-only, unreadable) topics table -- there is no topic it could
-    ever generate from. `#generate-questions-btn`/`#save-guide-btn` are
-    separate, equally-undispatched buttons out of this task's scope."""
+async def test_study_guide_pane_composes_only_the_honest_empty_state():
+    """task-16845 removed `#generate-guide-btn`; task-19041 finished the
+    pane: no guide/concept schema exists anywhere, `#guide-topic-select` was
+    hard-coded to one static option (its `.value` had no consumer -- the
+    TASK-16841 sweep's finding), `#add-concept-btn` could only feed an
+    in-session list nothing persists, and `#save-guide-btn` had no table to
+    save to -- so the whole dead-end form (title/content/concepts/practice
+    questions) went with its buttons, replaced by an honest empty-state
+    notice."""
     StudyScopeContext, StudyScopeType = _load_study_scope_models()
     app_instance = SimpleNamespace(
         scope_context=StudyScopeContext(scope_type=StudyScopeType.GLOBAL),
@@ -853,25 +961,35 @@ async def test_study_guide_pane_composes_no_orphaned_generate_guide_button():
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        app.screen.query_one("#view-study-guide-btn", Button).press()
-        await pilot.pause()
-
-        study_window = app.screen.query_one(StudyWindow)
-        assert not study_window.query("#generate-guide-btn")
-        # Out-of-scope siblings still compose.
-        study_window.query_one("#guide-topic-select")
-        study_window.query_one("#generate-questions-btn", Button)
-        study_window.query_one("#save-guide-btn", Button)
+        await _pane_assertions(
+            pilot,
+            app,
+            "#view-study-guide-btn",
+            (
+                "generate-guide-btn",
+                "guide-topic-select",
+                "guide-title",
+                "guide-content",
+                "concept-input",
+                "add-concept-btn",
+                "key-concepts-list",
+                "practice-questions-list",
+                "generate-questions-btn",
+                "save-guide-btn",
+            ),
+            "study-guide-empty-state",
+        )
 
 
 @pytest.mark.asyncio
-async def test_learning_map_pane_composes_no_orphaned_add_milestone_button():
-    """task-16845: `#add-milestone-btn` has no dispatcher anywhere, no
-    `milestone` concept exists in ChaChaNotes_DB's schema at all, and the
-    learning-map tree has no population code (same shape as the topic
-    tree) -- so there is no path to add or ever display a milestone.
-    `#mark-complete-btn`/`#set-dependencies-btn` are separate,
-    equally-undispatched buttons out of this task's scope."""
+async def test_learning_map_pane_composes_only_the_honest_empty_state():
+    """task-16845 removed `#add-milestone-btn`; task-19041 finished the
+    pane: `#mark-complete-btn` had only the write-only
+    `update_topic_progress` sink, no dependency/suggestion/import/export
+    concept exists in any schema or service, `#learning-map-tree` was a
+    static skeleton nothing populates, and `#overall-progress`/
+    `#current-topic` were hard-coded statics nothing updates. All replaced
+    by an honest empty-state notice."""
     StudyScopeContext, StudyScopeType = _load_study_scope_models()
     app_instance = SimpleNamespace(
         scope_context=StudyScopeContext(scope_type=StudyScopeType.GLOBAL),
@@ -885,12 +1003,20 @@ async def test_learning_map_pane_composes_no_orphaned_add_milestone_button():
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        app.screen.query_one("#view-learning-map-btn", Button).press()
-        await pilot.pause()
-
-        study_window = app.screen.query_one(StudyWindow)
-        assert not study_window.query("#add-milestone-btn")
-        # Out-of-scope siblings still compose.
-        study_window.query_one("#learning-map-tree", Tree)
-        study_window.query_one("#mark-complete-btn", Button)
-        study_window.query_one("#set-dependencies-btn", Button)
+        await _pane_assertions(
+            pilot,
+            app,
+            "#view-learning-map-btn",
+            (
+                "add-milestone-btn",
+                "learning-map-tree",
+                "overall-progress",
+                "current-topic",
+                "mark-complete-btn",
+                "set-dependencies-btn",
+                "import-course-btn",
+                "export-path-btn",
+                "generate-suggestions-btn",
+            ),
+            "learning-map-empty-state",
+        )
