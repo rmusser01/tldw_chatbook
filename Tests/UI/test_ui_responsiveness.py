@@ -290,8 +290,8 @@ def test_console_transcript_sync_timer_updates_responsiveness_monitor():
     assert stopped == [True]
 
 
-def _console_controller_slots() -> set[str]:
-    """The controller attributes `MagicMock(spec=ChatScreen)` cannot see.
+def _console_controller_slots() -> dict[str, type]:
+    """The controller attributes and types `spec=ChatScreen` cannot see.
 
     The decomposition wires each controller onto the screen at construction
     time, so they are *instance* attributes; `spec=` reads the CLASS and
@@ -310,7 +310,7 @@ def _console_controller_slots() -> set[str]:
     silent.
 
     Returns:
-        set[str]: Attribute names assigned a `Console*Controller(...)`.
+        dict[str, type]: Attribute names and controller types assigned by wiring.
 
     Raises:
         AssertionError: If the pattern matches nothing — that means the wiring
@@ -325,7 +325,7 @@ def _console_controller_slots() -> set[str]:
     tree = ast.parse(textwrap.dedent(inspect.getsource(build_console_controllers)))
     bound = build_console_controllers.__code__.co_varnames[0]
     slots = {
-        target.attr
+        target.attr: build_console_controllers.__globals__[node.value.func.id]
         for node in ast.walk(tree)
         if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
         and isinstance(node.value.func, ast.Name)
@@ -360,19 +360,11 @@ def _make_sync_probe_screen(monitor):
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     screen = MagicMock(spec=ChatScreen)
-    for slot in _console_controller_slots():
-        setattr(screen, slot, MagicMock())
+    for slot, controller_type in _console_controller_slots().items():
+        setattr(screen, slot, MagicMock(spec=controller_type))
     screen._console_chat_store = None
     screen._console_sync_in_progress = False
     screen._console_sync_requested = False
-    screen._console_chat_store = None
-    # Console decomposition wave 2 (PR #1381) moved stages onto instance-held
-    # delegate objects created in __init__ (`_session`, `_workspace`).
-    # `spec=ChatScreen` auto-stubs only CLASS attributes, so these fall
-    # outside the spec treadmill this factory exists to avoid and must be
-    # stubbed by hand; every delegate call in the sync path is synchronous.
-    screen._session = MagicMock()
-    screen._workspace = MagicMock()
     screen.app_instance = SimpleNamespace(ui_responsiveness_monitor=monitor)
     screen._ui_responsiveness_monitor = partial(
         ChatScreen._ui_responsiveness_monitor, screen

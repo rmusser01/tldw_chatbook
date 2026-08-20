@@ -1796,6 +1796,13 @@ async def test_console_workspace_sync_while_scrolled_keeps_scroll_range_stable()
     async with host.run_test(size=(120, 34)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-conversations")
+        # This contract needs the scrollable Context body; current Console
+        # startup may leave Context collapsed while Inspector owns the band.
+        console._set_console_rail_preference(
+            left_open=True,
+            notify_on_failure=False,
+        )
+        await pilot.pause()
 
         workspace_context = console.query_one(
             "#console-workspace-context",
