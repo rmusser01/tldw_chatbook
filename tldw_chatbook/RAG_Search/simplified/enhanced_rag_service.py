@@ -106,16 +106,11 @@ class EnhancedRAGService(RAGService):
         log_histogram("enhanced_rag_document_size_chars", len(content))
 
         try:
-            # Clean text if enabled
-            if self.clean_pdf_artifacts:
-                content, corrections = (
-                    self.enhanced_chunking.structure_parser.clean_text(content)
-                )
-                if corrections:
-                    logger.info(
-                        f"Cleaned {len(corrections)} PDF artifacts from document {doc_id}"
-                    )
-                    metadata["pdf_artifacts_cleaned"] = len(corrections)
+            # Note (chunking-engine-parity task 8): the bespoke PDF-artifact
+            # cleaning that used to run here via
+            # ``EnhancedChunkingService.structure_parser.clean_text`` was
+            # deleted with the retired home-grown structure parser (Q5
+            # ruling). Input sanitization now happens inside the engine.
 
             # Use enhanced chunking with parent retrieval
             if use_structural_chunking:
