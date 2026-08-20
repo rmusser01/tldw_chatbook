@@ -106,10 +106,14 @@ schema coordinator while preserving the public receipt API.
 
 ### 1. Shared schema coordinator
 
-A small Notes-private schema module is the only code allowed to create or
-upgrade the `notes.sync_state` database. It imports neither receipt-domain nor
-sync-domain models. Both repositories call it after opening their connection
-through `connect_private_sqlite`.
+A small Notes-private schema module,
+`tldw_chatbook/Notes/notes_sync_state_schema.py`, is the registered owner and
+only production caller of `connect_private_sqlite` for `notes.sync_state`. It
+imports neither receipt-domain nor sync-domain models. Both repositories use
+its `notes_sync_state_transaction(...)` context manager; neither repository
+opens this SQLite owner directly. The private-owner registry and inventory move
+the existing owner seam from `note_import_receipts` to this shared module rather
+than widening one owner to several connection callers.
 
 Initialization must:
 
@@ -122,7 +126,9 @@ Initialization must:
    repair;
 6. set `user_version = 2` only after every required table, index, and constraint
    exists; and
-7. commit atomically or roll back completely.
+7. commit atomically or roll back completely; and
+8. only after schema initialization commits, begin the repository operation's
+   requested deferred or immediate transaction and yield the connection.
 
 The lock-and-reread sequence is required. Checking the version before acquiring
 the writer lock would allow two real connections to both choose a migration
@@ -134,7 +140,209 @@ receipt projections, transitions, retry behavior, and data remain unchanged.
 Whole-database byte identity is not promised because SQLite may legitimately
 change pages while adding schema objects.
 
-### 2. Lasting-sync repository
+### 2. Canonical v2 schema
+
+Version 2 is the exact v1 receipt schema plus the four tables and seven indexes
+below. Every v1 table, column, constraint, and index remains byte-for-byte the
+canonical SQL already defined by `note_import_receipts`; the shared coordinator
+moves those constants without changing them. No verified path identity,
+filesystem capability, serialization profile, observation, conflict, recovery,
+or journal column is reserved in v2. The later slice that first owns those
+contracts must add a new schema version rather than repurpose a nullable field.
+
+The canonical new-table DDL is:
+
+```sql
+CREATE TABLE sync_migration_runs (
+    migration_id TEXT PRIMARY KEY
+        CHECK (length(migration_id) = 36),
+    source_kind TEXT NOT NULL
+        CHECK (source_kind = 'legacy_notes_sync_v1'),
+    source_revision_before TEXT NOT NULL
+        CHECK (
+            length(source_revision_before) = 64
+            AND source_revision_before NOT GLOB '*[^0-9a-f]*'
+        ),
+    source_revision_after TEXT
+        CHECK (
+            source_revision_after IS NULL OR (
+                length(source_revision_after) = 64
+                AND source_revision_after NOT GLOB '*[^0-9a-f]*'
+            )
+        ),
+    state TEXT NOT NULL DEFAULT 'pending_recheck'
+        CHECK (state IN ('pending_recheck', 'matched_recheck', 'drifted')),
+    root_count INTEGER NOT NULL CHECK (root_count >= 0),
+    binding_count INTEGER NOT NULL CHECK (binding_count >= 0),
+    failure_count INTEGER NOT NULL CHECK (failure_count >= 0),
+    created_at INTEGER NOT NULL CHECK (created_at > 0),
+    updated_at INTEGER NOT NULL CHECK (updated_at > 0),
+    UNIQUE (source_kind, source_revision_before),
+    CHECK (
+        (state = 'pending_recheck' AND source_revision_after IS NULL)
+        OR (state = 'matched_recheck'
+            AND source_revision_after IS NOT NULL
+            AND source_revision_after = source_revision_before)
+        OR (state = 'drifted'
+            AND source_revision_after IS NOT NULL
+            AND source_revision_after <> source_revision_before)
+    )
+);
+
+CREATE TABLE sync_roots (
+    root_id TEXT PRIMARY KEY
+        CHECK (length(root_id) BETWEEN 1 AND 256),
+    lexical_root_path TEXT NOT NULL
+        CHECK (
+            length(lexical_root_path) BETWEEN 1 AND 32768
+            AND instr(lexical_root_path, char(0)) = 0
+        ),
+    display_name TEXT NOT NULL
+        CHECK (length(display_name) BETWEEN 1 AND 255),
+    direction TEXT NOT NULL
+        CHECK (direction IN ('folder_to_notes', 'notes_to_folder', 'bidirectional')),
+    state TEXT NOT NULL DEFAULT 'candidate'
+        CHECK (state IN ('candidate', 'paused', 'disconnected')),
+    row_version INTEGER NOT NULL DEFAULT 1 CHECK (row_version > 0),
+    needs_rescan INTEGER NOT NULL DEFAULT 1 CHECK (needs_rescan IN (0, 1)),
+    reason_code TEXT CHECK (
+        reason_code IS NULL OR (
+            length(reason_code) BETWEEN 1 AND 64
+            AND reason_code NOT GLOB '*[^a-z0-9_]*'
+            AND substr(reason_code, 1, 1) GLOB '[a-z]'
+        )
+    ),
+    source_kind TEXT CHECK (
+        source_kind IS NULL OR source_kind = 'legacy_notes_sync_v1'
+    ),
+    source_locator_digest TEXT CHECK (
+        source_locator_digest IS NULL OR (
+            length(source_locator_digest) = 64
+            AND source_locator_digest NOT GLOB '*[^0-9a-f]*'
+        )
+    ),
+    source_migration_id TEXT
+        REFERENCES sync_migration_runs(migration_id) ON DELETE RESTRICT,
+    created_at INTEGER NOT NULL CHECK (created_at > 0),
+    updated_at INTEGER NOT NULL CHECK (updated_at > 0),
+    CHECK (
+        (source_kind IS NULL
+         AND source_locator_digest IS NULL
+         AND source_migration_id IS NULL)
+        OR (source_kind IS NOT NULL
+            AND source_locator_digest IS NOT NULL
+            AND source_migration_id IS NOT NULL)
+    )
+);
+
+CREATE TABLE sync_bindings (
+    binding_id TEXT PRIMARY KEY
+        CHECK (length(binding_id) BETWEEN 1 AND 256),
+    root_id TEXT NOT NULL
+        REFERENCES sync_roots(root_id) ON DELETE RESTRICT,
+    note_id TEXT NOT NULL
+        CHECK (length(note_id) BETWEEN 1 AND 256),
+    lexical_relative_path TEXT NOT NULL
+        CHECK (
+            length(lexical_relative_path) BETWEEN 1 AND 32768
+            AND instr(lexical_relative_path, char(0)) = 0
+        ),
+    path_key TEXT CHECK (
+        path_key IS NULL OR (
+            length(path_key) BETWEEN 1 AND 32768
+            AND instr(path_key, char(0)) = 0
+        )
+    ),
+    state TEXT NOT NULL DEFAULT 'candidate'
+        CHECK (state IN ('candidate', 'needs_attention', 'disconnected')),
+    row_version INTEGER NOT NULL DEFAULT 1 CHECK (row_version > 0),
+    needs_rescan INTEGER NOT NULL DEFAULT 1 CHECK (needs_rescan IN (0, 1)),
+    reason_code TEXT CHECK (
+        reason_code IS NULL OR (
+            length(reason_code) BETWEEN 1 AND 64
+            AND reason_code NOT GLOB '*[^a-z0-9_]*'
+            AND substr(reason_code, 1, 1) GLOB '[a-z]'
+        )
+    ),
+    source_kind TEXT CHECK (
+        source_kind IS NULL OR source_kind = 'legacy_notes_sync_v1'
+    ),
+    source_locator_digest TEXT CHECK (
+        source_locator_digest IS NULL OR (
+            length(source_locator_digest) = 64
+            AND source_locator_digest NOT GLOB '*[^0-9a-f]*'
+        )
+    ),
+    source_migration_id TEXT
+        REFERENCES sync_migration_runs(migration_id) ON DELETE RESTRICT,
+    created_at INTEGER NOT NULL CHECK (created_at > 0),
+    updated_at INTEGER NOT NULL CHECK (updated_at > 0),
+    CHECK (
+        (source_kind IS NULL
+         AND source_locator_digest IS NULL
+         AND source_migration_id IS NULL)
+        OR (source_kind IS NOT NULL
+            AND source_locator_digest IS NOT NULL
+            AND source_migration_id IS NOT NULL)
+    )
+);
+
+CREATE TABLE sync_migration_items (
+    migration_id TEXT NOT NULL
+        REFERENCES sync_migration_runs(migration_id) ON DELETE RESTRICT,
+    item_kind TEXT NOT NULL
+        CHECK (item_kind IN ('root', 'binding', 'legacy_conflict')),
+    source_locator_digest TEXT NOT NULL
+        CHECK (
+            length(source_locator_digest) = 64
+            AND source_locator_digest NOT GLOB '*[^0-9a-f]*'
+        ),
+    outcome TEXT NOT NULL
+        CHECK (outcome IN ('created', 'matched', 'rejected', 'needs_rescan')),
+    root_id TEXT REFERENCES sync_roots(root_id) ON DELETE RESTRICT,
+    binding_id TEXT REFERENCES sync_bindings(binding_id) ON DELETE RESTRICT,
+    reason_code TEXT CHECK (
+        reason_code IS NULL OR (
+            length(reason_code) BETWEEN 1 AND 64
+            AND reason_code NOT GLOB '*[^a-z0-9_]*'
+            AND substr(reason_code, 1, 1) GLOB '[a-z]'
+        )
+    ),
+    created_at INTEGER NOT NULL CHECK (created_at > 0),
+    PRIMARY KEY (migration_id, item_kind, source_locator_digest)
+);
+```
+
+The canonical new indexes, including their exact partial predicates, are:
+
+```sql
+CREATE INDEX idx_sync_migration_runs_state
+    ON sync_migration_runs(state, updated_at);
+CREATE INDEX idx_sync_roots_state
+    ON sync_roots(state, updated_at);
+CREATE UNIQUE INDEX idx_sync_roots_legacy_source
+    ON sync_roots(source_kind, source_locator_digest)
+    WHERE source_kind IS NOT NULL AND state <> 'disconnected';
+CREATE INDEX idx_sync_bindings_root_state
+    ON sync_bindings(root_id, state, updated_at);
+CREATE UNIQUE INDEX idx_sync_bindings_live_note
+    ON sync_bindings(note_id)
+    WHERE state <> 'disconnected';
+CREATE UNIQUE INDEX idx_sync_bindings_live_path_key
+    ON sync_bindings(root_id, path_key)
+    WHERE state <> 'disconnected' AND path_key IS NOT NULL;
+CREATE INDEX idx_sync_migration_items_outcome
+    ON sync_migration_items(migration_id, outcome, item_kind);
+```
+
+The coordinator owns an exact schema census covering table names, ordered
+columns, declared types, nullability, defaults, primary keys, foreign keys,
+canonical table SQL, index columns, uniqueness, and partial-index SQL. A
+database claiming v2 but differing from that census fails closed. Tests compare
+a hand-authored fresh-v2 fixture with an actual v1 repository database upgraded
+through the coordinator; init-order equality alone is not the oracle.
+
+### 3. Lasting-sync repository
 
 `NotesSyncStateRepository` is the sole application API for roots, bindings, and
 legacy-migration receipts in this slice. It returns immutable, slotted typed
@@ -154,52 +362,35 @@ The repository is deliberately narrow:
 It exposes no activation, watcher, reconciliation, conflict, resolution,
 journal, or content API.
 
-### 3. Paused candidate roots
+### 4. Paused candidate roots
 
-A root record contains at least:
+A root projection maps exactly the `sync_roots` columns above. The v2 lifecycle
+contains only `candidate`, `paused`, and `disconnected`; active/running is not a
+representable value. Its source fields are all-null for a future user-created
+candidate or all-present for a legacy migration generation.
 
-- opaque root ID;
-- private lexical root path as supplied by the legacy source;
-- bounded display name;
-- requested direction;
-- lifecycle state, initially `candidate` or `paused`;
-- optimistic row version;
-- nullable verified canonical path identity;
-- nullable verified filesystem identity/capability fields;
-- bounded reason code and `needs_rescan` marker where applicable; and
-- created/updated timestamps.
-
-TASK-97 never fills verified identity fields. They remain null until the later
-setup task performs the approved guarded dry-run. A lexical path is migration
-input, not proof of containment, existence, equivalence, writability, or safe
-ownership.
+Verified canonical identity and filesystem capability do not exist in v2. The
+later setup slice adds them in a new schema version after it defines their exact
+cross-platform contract. A lexical path is migration input, not proof of
+containment, existence, equivalence, writability, or safe ownership.
 
 No root created by this slice can enter an active/running state. The repository
 must reject such a transition because there is no coordinator or admission
 proof yet.
 
-### 4. Provisional bindings
+### 5. Provisional bindings
 
-A binding record contains at least:
+A binding projection maps exactly the `sync_bindings` columns above. The v2
+lifecycle contains only `candidate`, `needs_attention`, and `disconnected`;
+admitted/bound is not representable. `path_key` remains null until the later
+dry-run defines portability normalization.
 
-- opaque binding ID;
-- owning root ID;
-- private Database Note ID;
-- private lexical root-relative path;
-- nullable portability-normalized `path_key`;
-- lifecycle state such as `candidate`, `bound`, `needs_attention`, or
-  `disconnected`;
-- optimistic row version;
-- nullable verified file identity;
-- nullable representation profile;
-- nullable last observations; and
-- bounded reason code / provisional marker.
+Verified file identity, representation profile, and last observations do not
+exist in v2. Legacy values are inputs to the private source-revision digest only;
+they are not copied into authoritative observation fields. Later reconciliation
+must observe them anew.
 
-Verified identity, representation, and observations remain null in TASK-97.
-Legacy values may be retained as explicitly provisional source observations,
-but they never satisfy activation or mutation preconditions.
-
-### 5. Ownership and uniqueness
+### 6. Ownership and uniqueness
 
 The private owner enforces transactionally:
 
@@ -218,8 +409,9 @@ filesystem portability rules and populate a normalized key before a binding can
 become admitted. A plain case-fold or host-only normalization here would create
 false authority.
 
-Partial unique indexes should express these invariants in SQLite rather than
-relying only on preflight queries.
+The exact partial unique indexes above express these invariants in SQLite.
+Repository preflight still provides deterministic batch behavior; indexes are
+the final race guard, not a mechanism for choosing an arbitrary winner.
 
 ## Legacy Metadata Migration Seam
 
@@ -237,24 +429,43 @@ engines must never run in parallel.
 ### Read-only source capture
 
 Migration reads legacy configuration and per-note metadata using their normal
-read boundaries. It performs no source-path resolution, filesystem I/O, note
-write, configuration write, or legacy-row cleanup.
+read boundaries. Reading the config file and opening the two SQLite owners are
+necessary I/O. The no-filesystem authority guarantee is narrower and exact:
+migration performs no access through a migrated candidate/root path, reads no
+candidate file content, and performs no note write, configuration write, or
+legacy-row cleanup.
 
-Because ChaChaNotes and `notes.sync_state` are separate SQLite owners, their
-work cannot be one transaction. The migration therefore:
+Configuration, ChaChaNotes, and `notes.sync_state` cannot share a transaction.
+No protocol can prove a globally atomic source snapshot, so every migrated root
+and binding remains provisional even when two reads match. The bounded protocol
+is:
 
-1. opens a stable read transaction on the main Notes authority;
-2. reads a bounded source projection containing only the fields required to
-   group lexical roots and candidate bindings;
-3. derives a private source-revision digest from that projection;
-4. writes candidates and a migration receipt atomically in `notes.sync_state`;
-5. records whether the source revision stayed stable through capture; and
-6. treats drift as a provisional revision requiring rescan, never as authority.
+1. read config snapshot A through the real config boundary;
+2. open a fresh ChaChaNotes read transaction and read Notes snapshot A;
+3. form a canonically ordered source projection from config fields
+   `sync_directory`, `sync_direction`, and `sync_conflict_resolution`, plus each
+   relevant note's `id`, `file_path_on_disk`,
+   `relative_file_path_on_disk`, `sync_root_folder`,
+   `last_synced_disk_file_hash`, `last_synced_disk_file_mtime`,
+   `is_externally_synced`, `sync_strategy`, `sync_excluded`, `file_extension`,
+   `version`, and `deleted`; derive private digest A;
+4. under one `notes.sync_state` immediate transaction, insert or reopen a
+   `pending_recheck` migration run keyed by `(source_kind, digest A)`, preflight
+   the complete batch, and write its provisional candidates/items atomically;
+5. after that destination commit, read fresh config snapshot B and a fresh
+   ChaChaNotes transaction B, canonicalize the same projection, and derive
+   digest B; a second read from transaction A is explicitly invalid evidence;
+6. in a new destination transaction, set `matched_recheck` only when A equals B
+   or `drifted` otherwise, recording digest B; and
+7. on crash after step 4, leave `pending_recheck`; replay of digest A performs
+   the missing fresh recheck without duplicating candidates.
 
-Migration replay with the same source revision is a no-op. A new revision may
-add or update only the corresponding provisional migration generation; it
-cannot silently activate, delete, or steal an existing non-disconnected
-binding.
+Matching digests mean only that this bounded protocol did not observe drift.
+They never make candidates authoritative or remove the later dry-run and
+revalidation requirement. A new digest creates a new migration run and may
+update only migration-owned `candidate` rows through their stable private
+source-locator digests. It cannot overwrite a paused/reviewed row, activate,
+delete, or steal an existing non-disconnected binding.
 
 ### Grouping and malformed inputs
 
@@ -263,10 +474,14 @@ candidate roots and provisional bindings. They are not described as canonical
 or safe. A missing, nonexistent, relative, adversarial, or platform-foreign path
 may still be recorded as bounded private lexical text for later review.
 
-One malformed root or binding does not block independent siblings. The item
-records a bounded reason code, such as malformed metadata, duplicate note
-ownership, out-of-contract relative path, or capacity exceeded. Raw exception
-text and physical paths are never persisted as error messages or logged.
+One malformed or out-of-contract root/binding does not block independent
+siblings. Duplicate ownership is preflighted as an equivalence class: every
+incoming member that claims the same note is recorded as rejected/review-only,
+and no binding for that note is inserted. An incoming claim against an existing
+non-disconnected binding is likewise rejected while the existing owner remains
+unchanged. Input ordering can never choose a winner. The partial unique index is
+retained as the final invariant guard. Raw exception text and physical paths are
+never persisted as error messages or logged.
 
 Legacy conflict rows are not converted into actionable new conflict records.
 Their content and observations cannot satisfy the new exact-side and recovery
@@ -275,11 +490,14 @@ rediscover and capture both current sides through the new boundary.
 
 ### No-filesystem guarantee
 
-The migration layer treats stored paths as data. It must not call `resolve`,
-`absolute`, `stat`, `lstat`, `open`, directory iteration, or an equivalent
-filesystem seam. A focused test will use nonexistent and adversarial stored
-paths while patching those operations to raise immediately; candidate migration
-must still complete using lexical text alone.
+The migration layer treats stored candidate paths as data. It must not call
+`resolve`, `absolute`, `stat`, `lstat`, `open`, directory iteration, or an
+equivalent operation **on a migrated root or relative file candidate**. A
+focused test uses nonexistent/adversarial stored candidates and operand-aware
+spies or injected source collaborators that fail only when such a candidate is
+used for filesystem access. Normal config reads and private database artifact
+opens remain allowed and observable; the test must not globally patch `open`,
+`lstat`, or `Path.resolve`.
 
 ## Capacity and Bounds
 
@@ -290,8 +508,11 @@ configuration:
 - `MAX_IMPORT_ENTRIES = 100_000` total live non-disconnected lasting-sync
   bindings per profile, reusing the established Notes import discovery ceiling.
 
-Capacity validation occurs before writes. A rejected batch is atomic: it creates
-no partial roots, bindings, or completion receipt. Error objects and messages
+Capacity is a global preflight after malformed and duplicate equivalence classes
+have been classified but before any destination write. If the remaining valid
+request would exceed either ceiling, the entire request aborts: it creates no
+roots, bindings, migration items, or migration-run receipt. Capacity is never an
+item-local outcome and no sibling is committed. Error objects and messages
 report only bounded counts and reason codes, not identifiers or paths.
 
 These are storage safety ceilings, not product pagination sizes. Later UI and
@@ -321,7 +542,9 @@ construction.
 - Unknown schema versions fail closed before any schema mutation.
 - A v1-to-v2 migration is all-or-nothing under the writer transaction.
 - Concurrent initializers converge on one valid v2 schema.
-- A capacity or uniqueness failure rolls back the whole requested operation.
+- A capacity failure or unexpected final-index race rolls back the whole
+  requested operation; known duplicate classes follow the deterministic
+  preflight rule and choose no winner.
 - Source drift records a provisional generation and `needs_rescan`; it does not
   discard prior candidates or claim freshness.
 - A malformed source item records a bounded failure independently of valid
@@ -362,12 +585,14 @@ construction.
 
 - Use a real ChaChaNotes fixture with recognizable legacy configuration and
   per-note metadata; do not handwrite a partial schema and call it current.
-- Cover multiple lexical roots, duplicate note ownership, malformed siblings,
+- Cover multiple lexical roots, duplicate equivalence classes with no arbitrary
+  winner, malformed siblings,
   legacy conflict markers, idempotent replay, and a changed source revision.
 - Simulate cross-owner drift and prove the resulting generation remains
   provisional and marked for rescan.
-- Patch filesystem operations to fail and use nonexistent/adversarial stored
-  paths; prove migration still succeeds lexically.
+- Use operand-aware filesystem spies and nonexistent/adversarial stored paths;
+  prove no candidate path is accessed while required config/database I/O still
+  occurs.
 - Assert no file, note, config, or legacy metadata mutation and no new active
   root/watcher/coordinator path.
 
@@ -388,10 +613,11 @@ construction.
    bindings persist privately with optimistic versions, redacted projections,
    global live-note uniqueness, and conditional admitted-path uniqueness.
 3. **Safe migration seam:** legacy metadata can be captured idempotently into
-   paused candidates without filesystem, file, note, config, or legacy-row
-   mutation; drift, conflicts, and malformed items remain provisional and
-   require rescan.
-4. **Bounds and privacy:** exact root/binding ceilings reject atomically, and
+   paused candidates without accessing migrated candidate paths or mutating
+   files, notes, config, or legacy rows; fresh A/B snapshots bound drift claims,
+   and conflicts/malformed items remain provisional and require rescan.
+4. **Bounds and privacy:** the exact 64-root and 100,000-binding ceilings reject
+   the whole request atomically, and
    physical identifiers remain confined to the backup-excluded
    `notes.sync_state` owner and absent from diagnostics.
 5. **No premature authority:** this slice provides no activation, watcher,
@@ -402,7 +628,10 @@ construction.
 
 ADR required: no
 
-ADR path: N/A (existing ADR-059 and ADR-060 govern this design)
+ADR paths:
+
+- `backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md`
+- `backlog/decisions/060-notes-sync-round-trip-and-interoperability-constraints.md`
 
 Reason: TASK-97 directly implements the already accepted device-private owner,
 binding uniqueness, migration, backup, and legacy-engine boundaries. It makes no

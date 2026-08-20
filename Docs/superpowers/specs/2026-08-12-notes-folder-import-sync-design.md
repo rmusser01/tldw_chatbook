@@ -688,11 +688,14 @@ not an inferred extension of `notes.note`.
 The local schema migration creates folder storage without assigning invented
 folders. Existing active Database Notes appear under **Unfiled**.
 
-Legacy sync migration examines both configuration and per-note metadata. It
-creates one paused candidate root per distinct canonical safe root. It preserves
-recognizable bindings without touching files or notes. Missing, overlapping,
-out-of-root, duplicate, or invalid metadata is attached to a migration review
-report rather than silently repaired.
+Legacy sync migration examines both configuration and per-note metadata in two
+stages. The private foundation first groups exact stored lexical root locators
+into paused provisional candidates without touching candidate paths, files, or
+notes. Lexical grouping grants no canonical identity or mutation authority. The
+later guarded dry-run resolves and validates those candidates, coalescing or
+rejecting aliases so admission produces at most one root per distinct canonical
+safe root. Missing, overlapping, out-of-root, duplicate, or invalid metadata is
+attached to a migration review report rather than silently repaired.
 
 No candidate watches or synchronizes until the user opens it, reviews the
 dry-run, chooses direction and collision outcomes, and explicitly activates it.

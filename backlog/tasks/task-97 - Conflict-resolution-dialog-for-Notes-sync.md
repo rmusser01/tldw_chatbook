@@ -28,8 +28,8 @@ conflict UI or active sync behavior.
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 Existing v1 Notes import-receipt databases upgrade atomically to a shared v2 private schema, and receipt behavior remains compatible when import and sync repositories initialize in either order or concurrently through separate SQLite connections.
-- [ ] #2 The private owner persists paused local Database Notes candidate roots and provisional bindings with optimistic versions, redacted typed projections, one non-disconnected binding per note, and conditional per-root uniqueness for admitted non-null path keys.
-- [ ] #3 Legacy configuration and per-note metadata can be captured idempotently as paused provisional candidates without filesystem access or mutation of files, notes, configuration, or legacy rows; source drift, legacy conflicts, and malformed items remain marked for rescan/review.
-- [ ] #4 Fixed root and binding ceilings reject atomically, and paths, note IDs, identities, digests, and raw exception text remain confined to the backup-excluded `notes.sync_state` owner and absent from diagnostic representations.
+- [ ] #2 The private owner persists paused local Database Notes candidate roots and provisional bindings with optimistic versions, redacted typed projections, one non-disconnected binding per note, and conditional per-root uniqueness for non-null path keys.
+- [ ] #3 Legacy configuration and per-note metadata can be captured idempotently as paused provisional candidates without accessing migrated candidate paths or mutating files, notes, configuration, or legacy rows; fresh pre/post source snapshots bound drift claims, duplicate-note classes choose no winner, and drift/conflicts/malformed items remain marked for rescan/review.
+- [ ] #4 The exact ceilings of 64 live roots and 100,000 live bindings reject the whole request atomically, and paths, note IDs, identities, digests, and raw exception text remain confined to the backup-excluded `notes.sync_state` owner and absent from diagnostic representations.
 - [ ] #5 This slice exposes no activation, watcher, reconciliation, conflict-content, resolver, journal, UI, or server-backed lasting-sync behavior, and the legacy engine remains the only active sync owner.
 <!-- AC:END -->
