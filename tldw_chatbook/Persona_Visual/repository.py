@@ -5,14 +5,24 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import sqlite3
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import PurePosixPath
 from typing import Any
+from uuid import uuid4
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 
-from .contracts import PersonaVisualManifest, PersonaVisualManifestError
+from .contracts import (
+    ALLOWED_ASSET_MIME_TYPES,
+    MAX_ASSET_DIMENSION,
+    MAX_FRAME_DURATION_MS,
+    MAX_FRAMES_PER_ANIMATION,
+    PersonaVisualManifest,
+    PersonaVisualManifestError,
+)
 from .validation import validate_persona_visual_manifest
 
 
@@ -21,6 +31,11 @@ _SOURCE_CONTEXT_KEYS = frozenset(
 )
 _MAX_SOURCE_CONTEXT_VALUE_LENGTH = 256
 _ASSET_KEY_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
+_PERSONA_ID_PATTERN = _ASSET_KEY_PATTERN
+_SOURCE_KIND_PATTERN = re.compile(r"[a-z][a-z0-9_.:-]{0,63}\Z")
+_SHA256_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
+_GRAPH_STATUSES = frozenset({"active", "archived", "deleted"})
+_ASSET_ROLES = frozenset({"sprite"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +153,8 @@ class PersonaVisualRepository:
         try:
             with self.db.transaction():
                 return self._get_active_persona_pack(persona_id)
+        except (sqlite3.Error, UnicodeError, RecursionError, TypeError, OverflowError):
+            raise ValueError("persona_visual_graph_invalid") from None
         except CharactersRAGDBError:
             raise ValueError("persona_visual_repository_read_failed") from None
 
@@ -159,9 +176,13 @@ class PersonaVisualRepository:
 
         _validate_persona_id(persona_id)
         _validate_revision(expected_persona_revision)
-        if not isinstance(title, str) or not title or not isinstance(description, str):
+        try:
+            _input_text(title, 256)
+            _input_text(description, 4096, allow_empty=True)
+            source_kind = _input_text(source_kind, 64)
+        except (TypeError, ValueError, UnicodeError):
             raise ValueError("persona_visual_pack_invalid")
-        if not isinstance(source_kind, str) or not source_kind:
+        if _SOURCE_KIND_PATTERN.fullmatch(source_kind) is None:
             raise ValueError("persona_visual_pack_invalid")
         context_json = _source_context_json(
             {} if source_context is None else source_context
@@ -177,7 +198,7 @@ class PersonaVisualRepository:
         try:
             with self.db.transaction(immediate=True):
                 transaction_connection = self.db.get_connection()
-                if self._active_binding_row(persona_id) is not None:
+                if self._active_binding_record(persona_id) is not None:
                     raise ValueError("persona_visual_binding_changed")
                 _run_authority_guard(authority_guard, self.db, transaction_connection)
                 pack_id = int(
@@ -223,6 +244,8 @@ class PersonaVisualRepository:
                 if graph is None:
                     raise ValueError("persona_visual_activation_failed")
                 return graph
+        except (sqlite3.Error, UnicodeError, RecursionError, TypeError, OverflowError):
+            raise ValueError("persona_visual_graph_invalid") from None
         except CharactersRAGDBError:
             raise ValueError("persona_visual_repository_write_failed") from None
 
@@ -263,7 +286,7 @@ class PersonaVisualRepository:
                     raise ValueError("persona_visual_identity_changed")
 
                 source_manifest_json = self._read_identity_snapshot(current.identity)
-                next_number = int(
+                next_number = _db_positive_int(
                     self.db.execute_query(
                         """
                         SELECT COALESCE(MAX(version_number), 0) + 1
@@ -345,6 +368,8 @@ class PersonaVisualRepository:
                 if graph is None:
                     raise ValueError("persona_visual_activation_failed")
                 return graph
+        except (sqlite3.Error, UnicodeError, RecursionError, TypeError, OverflowError):
+            raise ValueError("persona_visual_graph_invalid") from None
         except CharactersRAGDBError:
             raise ValueError("persona_visual_repository_write_failed") from None
 
@@ -383,48 +408,29 @@ class PersonaVisualRepository:
                 )
                 if changed.rowcount != 1:
                     raise ValueError("persona_visual_identity_changed")
+        except (sqlite3.Error, UnicodeError, RecursionError, TypeError, OverflowError):
+            raise ValueError("persona_visual_graph_invalid") from None
         except CharactersRAGDBError:
             raise ValueError("persona_visual_repository_write_failed") from None
 
     def _get_active_persona_pack(self, persona_id: str) -> PersonaVisualGraph | None:
-        binding_row = self._active_binding_row(persona_id)
-        if binding_row is None:
+        binding = self._active_binding_record(persona_id)
+        if binding is None:
             return None
-        binding = dict(binding_row)
-        for field in (
-            "id",
-            "persona_revision",
-            "pack_id",
-            "active_version_id",
-            "version",
-        ):
-            binding[field] = _db_int(binding[field])
         pack_row = self.db.execute_query(
             "SELECT * FROM persona_visual_packs WHERE id = ?",
-            (binding["pack_id"],),
+            (binding.pack_id,),
         ).fetchone()
         if pack_row is None:
             raise ValueError("persona_visual_pack_relationship_invalid")
-        pack = dict(pack_row)
-        for field in ("id", "active_version_id", "version"):
-            pack[field] = _db_int(pack[field])
-        if pack["status"] != "active":
+        pack, pack_active_version_id = _decode_pack(pack_row)
+        if pack.status != "active":
             return None
         version_row = self.db.execute_query(
             "SELECT * FROM persona_visual_pack_versions WHERE id = ?",
-            (binding["active_version_id"],),
+            (binding.active_version_id,),
         ).fetchone()
         if version_row is None:
-            raise ValueError("persona_visual_pack_relationship_invalid")
-        version = dict(version_row)
-        for field in ("id", "pack_id", "version_number", "manifest_version"):
-            version[field] = _db_int(version[field])
-        if not (
-            binding["pack_id"] == pack["id"] == version["pack_id"]
-            and binding["active_version_id"]
-            == pack["active_version_id"]
-            == version["id"]
-        ):
             raise ValueError("persona_visual_pack_relationship_invalid")
 
         asset_rows = self.db.execute_query(
@@ -434,88 +440,57 @@ class PersonaVisualRepository:
              WHERE pack_version_id = ?
              ORDER BY asset_key, id
             """,
-            (version["id"],),
+            (binding.active_version_id,),
         ).fetchall()
-        assets = tuple(_asset_record(row) for row in asset_rows)
+        assets = tuple(_decode_asset(row) for row in asset_rows)
+        version = _decode_version(version_row, assets)
+        if not (
+            binding.pack_id == pack.id == version.pack_id
+            and binding.active_version_id == pack_active_version_id == version.id
+        ):
+            raise ValueError("persona_visual_pack_relationship_invalid")
         if any(
-            asset.pack_id != pack["id"] or asset.pack_version_id != version["id"]
+            asset.pack_id != pack.id or asset.pack_version_id != version.id
             for asset in assets
         ):
             raise ValueError("persona_visual_pack_relationship_invalid")
-        known_assets = {
-            asset.asset_key: (asset.width, asset.height) for asset in assets
-        }
-        manifest_json = str(version["manifest_json"])
-        try:
-            if hashlib.sha256(manifest_json.encode("utf-8")).hexdigest() != str(
-                version["manifest_sha256"]
-            ):
-                raise PersonaVisualManifestError()
-            manifest = validate_persona_visual_manifest(manifest_json, known_assets)
-            if (
-                manifest.renderer_type != version["renderer_type"]
-                or manifest.manifest_version != version["manifest_version"]
-            ):
-                raise PersonaVisualManifestError()
-        except (PersonaVisualManifestError, RecursionError):
-            raise ValueError("persona_visual_manifest_invalid") from None
-        _validate_stored_source_context(pack["source_context_json"])
 
         identity = PersonaVisualIdentity(
-            persona_id=str(binding["persona_id"]),
-            persona_revision=binding["persona_revision"],
-            binding_id=binding["id"],
-            binding_version=binding["version"],
-            pack_id=pack["id"],
-            pack_revision=pack["version"],
-            pack_version_id=version["id"],
-            version_number=version["version_number"],
-            manifest_sha256=str(version["manifest_sha256"]),
+            persona_id=binding.persona_id,
+            persona_revision=binding.persona_revision,
+            binding_id=binding.id,
+            binding_version=binding.revision,
+            pack_id=pack.id,
+            pack_revision=pack.revision,
+            pack_version_id=version.id,
+            version_number=version.version_number,
+            manifest_sha256=version.manifest_sha256,
         )
         return PersonaVisualGraph(
             identity=identity,
-            pack=PersonaVisualPackRecord(
-                id=pack["id"],
-                title=str(pack["title"]),
-                description=str(pack["description"]),
-                status=str(pack["status"]),
-                source_kind=str(pack["source_kind"]),
-                created_at=str(pack["created_at"]),
-                updated_at=str(pack["updated_at"]),
-                revision=pack["version"],
-            ),
-            version=PersonaVisualVersionRecord(
-                id=version["id"],
-                pack_id=version["pack_id"],
-                version_number=version["version_number"],
-                renderer_type=str(version["renderer_type"]),
-                manifest_version=version["manifest_version"],
-                manifest=manifest,
-                manifest_sha256=str(version["manifest_sha256"]),
-                created_at=str(version["created_at"]),
-            ),
-            binding=PersonaVisualBindingRecord(
-                id=binding["id"],
-                persona_id=str(binding["persona_id"]),
-                persona_revision=binding["persona_revision"],
-                pack_id=binding["pack_id"],
-                active_version_id=binding["active_version_id"],
-                status=str(binding["status"]),
-                created_at=str(binding["created_at"]),
-                updated_at=str(binding["updated_at"]),
-                revision=binding["version"],
-            ),
+            pack=pack,
+            version=version,
+            binding=binding,
             assets=assets,
         )
 
-    def _active_binding_row(self, persona_id: str):
-        return self.db.execute_query(
+    def _active_binding_record(
+        self, persona_id: str
+    ) -> PersonaVisualBindingRecord | None:
+        rows = self.db.execute_query(
             """
-            SELECT * FROM persona_visual_bindings
-             WHERE persona_id = ? AND status = 'active'
+            SELECT * FROM persona_visual_bindings WHERE persona_id = ?
             """,
             (persona_id,),
-        ).fetchone()
+        ).fetchall()
+        active = [
+            record
+            for row in rows
+            if (record := _decode_binding(row)).status == "active"
+        ]
+        if len(active) > 1:
+            raise ValueError("persona_visual_pack_relationship_invalid")
+        return active[0] if active else None
 
     def _require_owned_write_transaction(self) -> None:
         managed_depth = getattr(self.db._local, "transaction_depth", 0)
@@ -683,7 +658,7 @@ def _asset_writes(assets: object) -> tuple[_AssetWrite, ...]:
             height = candidate["height"]
             frame_count = candidate.get("frame_count")
             duration_ms = candidate.get("duration_ms")
-            if not all(isinstance(value, str) and value for value in (role, mime_type)):
+            if role not in _ASSET_ROLES or mime_type not in ALLOWED_ASSET_MIME_TYPES:
                 raise ValueError
             asset_key = _asset_key(asset_key)
             if not _is_sha256(sha256):
@@ -692,9 +667,16 @@ def _asset_writes(assets: object) -> tuple[_AssetWrite, ...]:
                 _is_positive_int(value) for value in (byte_count, width, height)
             ):
                 raise ValueError
-            if frame_count is not None and not _is_positive_int(frame_count):
+            if width > MAX_ASSET_DIMENSION or height > MAX_ASSET_DIMENSION:
                 raise ValueError
-            if duration_ms is not None and not _is_positive_int(duration_ms):
+            if frame_count is not None and (
+                not _is_positive_int(frame_count)
+                or frame_count > MAX_FRAMES_PER_ANIMATION
+            ):
+                raise ValueError
+            if duration_ms is not None and (
+                not _is_positive_int(duration_ms) or duration_ms > MAX_FRAME_DURATION_MS
+            ):
                 raise ValueError
             result.append(
                 _AssetWrite(
@@ -715,30 +697,157 @@ def _asset_writes(assets: object) -> tuple[_AssetWrite, ...]:
     return tuple(result)
 
 
-def _asset_record(row: Mapping[str, Any]) -> PersonaVisualAssetRecord:
+def _decode_pack(
+    row: Mapping[str, Any],
+) -> tuple[PersonaVisualPackRecord, int]:
+    """Decode an active-graph pack row without coercing corrupt values."""
+
+    try:
+        source_kind = _db_text(row["source_kind"], 64)
+        if _SOURCE_KIND_PATTERN.fullmatch(source_kind) is None:
+            raise ValueError
+        _validate_stored_source_context(row["source_context_json"])
+        active_version_id = _db_positive_int(row["active_version_id"])
+        return (
+            PersonaVisualPackRecord(
+                id=_db_positive_int(row["id"]),
+                title=_db_text(row["title"], 256),
+                description=_db_text(row["description"], 4096, allow_empty=True),
+                status=_db_enum(row["status"], _GRAPH_STATUSES),
+                source_kind=source_kind,
+                created_at=_db_timestamp(row["created_at"]),
+                updated_at=_db_timestamp(row["updated_at"]),
+                revision=_db_positive_int(row["version"]),
+            ),
+            active_version_id,
+        )
+    except ValueError as exc:
+        if str(exc) == "persona_visual_source_context_invalid":
+            raise
+        raise ValueError("persona_visual_graph_invalid") from None
+    except (KeyError, TypeError, UnicodeError, OverflowError):
+        raise ValueError("persona_visual_graph_invalid") from None
+
+
+def _decode_version(
+    row: Mapping[str, Any],
+    assets: tuple[PersonaVisualAssetRecord, ...],
+) -> PersonaVisualVersionRecord:
+    """Decode and attest one immutable manifest row and its asset set."""
+
+    try:
+        renderer_type = _db_enum(row["renderer_type"], frozenset({"sprite_frames"}))
+        manifest_version = _db_positive_int(row["manifest_version"])
+        if manifest_version != 1:
+            raise ValueError
+        manifest_json = _db_text(row["manifest_json"], 2 * 1024 * 1024)
+        manifest_sha256 = _db_digest(row["manifest_sha256"])
+        _decode_storage_relpath(row["storage_relpath"])
+        record = PersonaVisualVersionRecord(
+            id=_db_positive_int(row["id"]),
+            pack_id=_db_positive_int(row["pack_id"]),
+            version_number=_db_positive_int(row["version_number"]),
+            renderer_type=renderer_type,
+            manifest_version=manifest_version,
+            manifest=_validate_stored_manifest(
+                manifest_json,
+                manifest_sha256,
+                renderer_type,
+                manifest_version,
+                assets,
+            ),
+            manifest_sha256=manifest_sha256,
+            created_at=_db_timestamp(row["created_at"]),
+        )
+    except ValueError as exc:
+        if str(exc) == "persona_visual_manifest_invalid":
+            raise
+        raise ValueError("persona_visual_graph_invalid") from None
+    except (KeyError, TypeError, UnicodeError, OverflowError, RecursionError):
+        raise ValueError("persona_visual_graph_invalid") from None
+    return record
+
+
+def _decode_asset(row: Mapping[str, Any]) -> PersonaVisualAssetRecord:
+    """Decode one public asset record using the persisted domain limits."""
+
     try:
         asset_key = _asset_key(row["asset_key"])
-    except (KeyError, TypeError, ValueError):
+        _decode_storage_relpath(row["storage_relpath"])
+        return PersonaVisualAssetRecord(
+            id=_db_positive_int(row["id"]),
+            pack_id=_db_positive_int(row["pack_id"]),
+            pack_version_id=_db_positive_int(row["pack_version_id"]),
+            asset_key=asset_key,
+            role=_db_enum(row["role"], _ASSET_ROLES),
+            mime_type=_db_enum(row["mime_type"], frozenset(ALLOWED_ASSET_MIME_TYPES)),
+            byte_count=_db_positive_int(row["bytes"]),
+            sha256=_db_digest(row["sha256"]),
+            width=_db_positive_int(row["width"], MAX_ASSET_DIMENSION),
+            height=_db_positive_int(row["height"], MAX_ASSET_DIMENSION),
+            frame_count=_db_optional_positive_int(
+                row["frame_count"], MAX_FRAMES_PER_ANIMATION
+            ),
+            duration_ms=_db_optional_positive_int(
+                row["duration_ms"], MAX_FRAME_DURATION_MS
+            ),
+            created_at=_db_timestamp(row["created_at"]),
+        )
+    except (KeyError, TypeError, ValueError, UnicodeError, OverflowError):
         raise ValueError("persona_visual_graph_invalid") from None
-    return PersonaVisualAssetRecord(
-        id=_db_int(row["id"]),
-        pack_id=_db_int(row["pack_id"]),
-        pack_version_id=_db_int(row["pack_version_id"]),
-        asset_key=asset_key,
-        role=str(row["role"]),
-        mime_type=str(row["mime_type"]),
-        byte_count=_db_int(row["bytes"]),
-        sha256=str(row["sha256"]),
-        width=_db_int(row["width"]),
-        height=_db_int(row["height"]),
-        frame_count=(
-            _db_int(row["frame_count"]) if row["frame_count"] is not None else None
-        ),
-        duration_ms=(
-            _db_int(row["duration_ms"]) if row["duration_ms"] is not None else None
-        ),
-        created_at=str(row["created_at"]),
-    )
+
+
+def _decode_binding(row: Mapping[str, Any]) -> PersonaVisualBindingRecord:
+    """Decode one binding before selecting its active graph."""
+
+    try:
+        persona_id = _db_text(row["persona_id"], 128)
+        if _PERSONA_ID_PATTERN.fullmatch(persona_id) is None:
+            raise ValueError
+        return PersonaVisualBindingRecord(
+            id=_db_positive_int(row["id"]),
+            persona_id=persona_id,
+            persona_revision=_db_nonnegative_int(row["persona_revision"]),
+            pack_id=_db_positive_int(row["pack_id"]),
+            active_version_id=_db_positive_int(row["active_version_id"]),
+            status=_db_enum(row["status"], _GRAPH_STATUSES),
+            created_at=_db_timestamp(row["created_at"]),
+            updated_at=_db_timestamp(row["updated_at"]),
+            revision=_db_positive_int(row["version"]),
+        )
+    except (KeyError, TypeError, ValueError, UnicodeError, OverflowError):
+        raise ValueError("persona_visual_graph_invalid") from None
+
+
+def _validate_stored_manifest(
+    manifest_json: str,
+    manifest_sha256: str,
+    renderer_type: str,
+    manifest_version: int,
+    assets: tuple[PersonaVisualAssetRecord, ...],
+) -> PersonaVisualManifest:
+    try:
+        if hashlib.sha256(manifest_json.encode("utf-8")).hexdigest() != manifest_sha256:
+            raise PersonaVisualManifestError()
+        manifest = validate_persona_visual_manifest(
+            manifest_json,
+            {asset.asset_key: (asset.width, asset.height) for asset in assets},
+        )
+        if (
+            manifest.renderer_type != renderer_type
+            or manifest.manifest_version != manifest_version
+        ):
+            raise PersonaVisualManifestError()
+        return manifest
+    except (PersonaVisualManifestError, RecursionError, UnicodeError):
+        raise ValueError("persona_visual_manifest_invalid") from None
+
+
+def _decode_storage_relpath(value: object) -> str:
+    try:
+        return _storage_relpath(value)
+    except (TypeError, ValueError, UnicodeError):
+        raise ValueError("persona_visual_graph_invalid") from None
 
 
 def _storage_relpath(value: object) -> str:
@@ -763,7 +872,11 @@ def _asset_key(value: object) -> str:
 
 
 def _validate_persona_id(value: object) -> None:
-    if not isinstance(value, str) or not value:
+    try:
+        value = _input_text(value, 128)
+    except (TypeError, ValueError, UnicodeError):
+        raise ValueError("persona_visual_persona_id_invalid") from None
+    if _PERSONA_ID_PATTERN.fullmatch(value) is None:
         raise ValueError("persona_visual_persona_id_invalid")
 
 
@@ -782,14 +895,68 @@ def _run_authority_guard(
     db: CharactersRAGDB,
     transaction_connection: object,
 ) -> None:
+    if not isinstance(transaction_connection, sqlite3.Connection):
+        raise ValueError("persona_visual_authority_changed")
+    connection = transaction_connection
+    savepoint = f"persona_visual_guard_{uuid4().hex}"
+    allowed_actions = {
+        sqlite3.SQLITE_SELECT,
+        sqlite3.SQLITE_READ,
+        sqlite3.SQLITE_FUNCTION,
+        sqlite3.SQLITE_RECURSIVE,
+    }
+    denied = False
+
+    def read_only_authorizer(
+        action: int,
+        _arg1: str | None,
+        _arg2: str | None,
+        _database: str | None,
+        _trigger: str | None,
+    ) -> int:
+        nonlocal denied
+        if action in allowed_actions:
+            return sqlite3.SQLITE_OK
+        denied = True
+        return sqlite3.SQLITE_DENY
+
+    valid = False
+    released = False
+    authorizer_installed = False
     try:
-        valid = guard()
-    except Exception:
+        connection.execute(f"SAVEPOINT {savepoint}")
+        changes_before = connection.total_changes
+        connection.set_authorizer(read_only_authorizer)
+        authorizer_installed = True
+        try:
+            valid = guard() is True
+        except Exception:
+            valid = False
+        finally:
+            connection.set_authorizer(None)
+            authorizer_installed = False
+        ownership_preserved = (
+            db.get_connection() is connection
+            and connection.in_transaction
+            and getattr(db._local, "transaction_depth", 0) == 1
+            and connection.total_changes == changes_before
+        )
+        if ownership_preserved:
+            connection.execute(f"RELEASE SAVEPOINT {savepoint}")
+            released = True
+    except (sqlite3.Error, TypeError, ValueError, OverflowError):
         valid = False
-    connection = db.get_connection()
+    finally:
+        if authorizer_installed:
+            try:
+                connection.set_authorizer(None)
+            except sqlite3.Error:
+                pass
     if (
-        valid is not True
-        or connection is not transaction_connection
+        not valid
+        or denied
+        or not released
+        or db.get_connection() is not connection
         or not connection.in_transaction
         or getattr(db._local, "transaction_depth", 0) != 1
     ):
@@ -844,6 +1011,15 @@ def _is_positive_int(value: object) -> bool:
     return type(value) is int and value > 0
 
 
+def _input_text(value: object, maximum: int, *, allow_empty: bool = False) -> str:
+    if not isinstance(value, str):
+        raise TypeError
+    value.encode("utf-8")
+    if (not allow_empty and not value) or len(value) > maximum:
+        raise ValueError
+    return value
+
+
 def _db_int(value: object) -> int:
     try:
         if type(value) is not int:
@@ -851,6 +1027,59 @@ def _db_int(value: object) -> int:
         return int(value)
     except (TypeError, ValueError, OverflowError):
         raise ValueError("persona_visual_graph_invalid") from None
+
+
+def _db_positive_int(value: object, maximum: int | None = None) -> int:
+    result = _db_int(value)
+    if result <= 0 or (maximum is not None and result > maximum):
+        raise ValueError("persona_visual_graph_invalid")
+    return result
+
+
+def _db_nonnegative_int(value: object) -> int:
+    result = _db_int(value)
+    if result < 0:
+        raise ValueError("persona_visual_graph_invalid")
+    return result
+
+
+def _db_optional_positive_int(value: object, maximum: int) -> int | None:
+    return None if value is None else _db_positive_int(value, maximum)
+
+
+def _db_text(value: object, maximum: int, *, allow_empty: bool = False) -> str:
+    try:
+        if not isinstance(value, str):
+            raise TypeError
+        value.encode("utf-8")
+        if (not allow_empty and not value) or len(value) > maximum:
+            raise ValueError
+        return value
+    except (TypeError, ValueError, UnicodeError, OverflowError):
+        raise ValueError("persona_visual_graph_invalid") from None
+
+
+def _db_enum(value: object, allowed: frozenset[str]) -> str:
+    result = _db_text(value, 64)
+    if result not in allowed:
+        raise ValueError("persona_visual_graph_invalid")
+    return result
+
+
+def _db_digest(value: object) -> str:
+    result = _db_text(value, 64)
+    if _SHA256_PATTERN.fullmatch(result) is None:
+        raise ValueError("persona_visual_graph_invalid")
+    return result
+
+
+def _db_timestamp(value: object) -> str:
+    result = _db_text(value, 19)
+    try:
+        datetime.strptime(result, "%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError("persona_visual_graph_invalid") from None
+    return result
 
 
 def _is_sha256(value: object) -> bool:

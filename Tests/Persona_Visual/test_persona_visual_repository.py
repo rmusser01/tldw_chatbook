@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from collections.abc import Callable
 from dataclasses import asdict, fields, replace
 from pathlib import Path
 from typing import Any
@@ -420,8 +421,10 @@ def test_guard_runs_under_write_reservation_immediately_before_activation(
         "raise",
         "commit_false",
         "commit_raise",
+        "commit_true",
         "rollback_false",
         "rollback_raise",
+        "rollback_true",
     ),
 )
 def test_activate_guard_cannot_escape_repository_transaction(
@@ -438,7 +441,7 @@ def test_activate_guard_cannot_escape_repository_transaction(
             connection.rollback()
         if guard_behavior.endswith("raise"):
             raise RuntimeError("private guard detail")
-        return False
+        return guard_behavior.endswith("true")
 
     with pytest.raises(ValueError, match="^persona_visual_authority_changed$"):
         repository.activate_new_pack(
@@ -469,8 +472,10 @@ def test_activate_guard_cannot_escape_repository_transaction(
         "raise",
         "commit_false",
         "commit_raise",
+        "commit_true",
         "rollback_false",
         "rollback_raise",
+        "rollback_true",
     ),
 )
 def test_publish_guard_cannot_escape_repository_transaction(
@@ -488,7 +493,7 @@ def test_publish_guard_cannot_escape_repository_transaction(
             connection.rollback()
         if guard_behavior.endswith("raise"):
             raise RuntimeError("private guard detail")
-        return False
+        return guard_behavior.endswith("true")
 
     with pytest.raises(ValueError, match="^persona_visual_authority_changed$"):
         repository.publish_version(
@@ -516,6 +521,130 @@ def test_publish_guard_cannot_escape_repository_transaction(
         == 1
     )
     assert repository.get_active_persona_pack("persona-local-1") == active
+
+
+@pytest.mark.parametrize("transaction_sql", ("COMMIT", "ROLLBACK"))
+def test_guard_cannot_catch_transaction_denial_and_rebegin(
+    repository: PersonaVisualRepository,
+    db: CharactersRAGDB,
+    transaction_sql: str,
+) -> None:
+    active = _activate(repository)
+    connection = db.get_connection()
+
+    def guard() -> bool:
+        for statement in (transaction_sql, "BEGIN IMMEDIATE"):
+            try:
+                connection.execute(statement)
+            except sqlite3.DatabaseError:
+                pass
+        return True
+
+    with pytest.raises(ValueError, match="^persona_visual_authority_changed$"):
+        repository.publish_version(
+            persona_id="persona-local-1",
+            manifest=_valid_manifest(frame_rate=2),
+            manifest_storage_relpath="persona_visual/guard/v2/manifest.json",
+            assets=[_asset(storage_relpath="persona_visual/guard/v2/idle.png")],
+            expected_identity=active.identity,
+            expected_persona_revision=7,
+            authority_guard=guard,
+        )
+
+    assert repository.get_active_persona_pack("persona-local-1") == active
+
+
+@pytest.mark.parametrize(
+    ("statement", "params"),
+    (
+        (
+            "DELETE FROM persona_visual_assets WHERE id = ?",
+            lambda graph: (graph.assets[0].id,),
+        ),
+        (
+            "UPDATE persona_visual_assets SET sha256 = ? WHERE id = ?",
+            lambda graph: ("d" * 64, graph.assets[0].id),
+        ),
+        (
+            "UPDATE persona_visual_packs SET title = 'changed' WHERE id = ?",
+            lambda graph: (graph.pack.id,),
+        ),
+        (
+            "UPDATE persona_visual_packs SET status = 'archived' WHERE id = ?",
+            lambda graph: (graph.pack.id,),
+        ),
+        (
+            "UPDATE persona_visual_packs SET source_context_json = '{}' WHERE id = ?",
+            lambda graph: (graph.pack.id,),
+        ),
+    ),
+)
+def test_guard_is_read_only_even_when_it_catches_denial(
+    repository: PersonaVisualRepository,
+    db: CharactersRAGDB,
+    statement: str,
+    params: Callable[[PersonaVisualGraph], tuple[object, ...]],
+) -> None:
+    active = _activate(repository)
+    connection = db.get_connection()
+    before = {
+        table: tuple(connection.execute(f"SELECT * FROM {table}").fetchall())
+        for table in (
+            "persona_visual_packs",
+            "persona_visual_pack_versions",
+            "persona_visual_assets",
+            "persona_visual_bindings",
+        )
+    }
+
+    def guard() -> bool:
+        try:
+            connection.execute(statement, params(active))
+        except sqlite3.DatabaseError:
+            pass
+        return True
+
+    with pytest.raises(ValueError, match="^persona_visual_authority_changed$"):
+        repository.publish_version(
+            persona_id="persona-local-1",
+            manifest=_valid_manifest(frame_rate=2),
+            manifest_storage_relpath="persona_visual/guard/v2/manifest.json",
+            assets=[_asset(storage_relpath="persona_visual/guard/v2/idle.png")],
+            expected_identity=active.identity,
+            expected_persona_revision=7,
+            authority_guard=guard,
+        )
+
+    assert {
+        table: tuple(connection.execute(f"SELECT * FROM {table}").fetchall())
+        for table in before
+    } == before
+
+
+def test_read_only_guard_can_select_and_use_sql_functions(
+    repository: PersonaVisualRepository,
+    db: CharactersRAGDB,
+) -> None:
+    active = _activate(repository)
+    connection = db.get_connection()
+
+    def guard() -> bool:
+        row = connection.execute(
+            "SELECT COUNT(*), LENGTH(title) FROM persona_visual_packs WHERE id = ?",
+            (active.pack.id,),
+        ).fetchone()
+        return tuple(row) == (1, len(active.pack.title))
+
+    published = repository.publish_version(
+        persona_id="persona-local-1",
+        manifest=_valid_manifest(frame_rate=2),
+        manifest_storage_relpath="persona_visual/guard/v2/manifest.json",
+        assets=[_asset(storage_relpath="persona_visual/guard/v2/idle.png")],
+        expected_identity=active.identity,
+        expected_persona_revision=7,
+        authority_guard=guard,
+    )
+    assert published.version.version_number == 2
 
 
 @pytest.mark.parametrize("guard_behavior", ["false", "raise"])
@@ -600,7 +729,7 @@ def test_guard_cannot_mutate_the_source_identity_before_activation(
         )
         return True
 
-    with pytest.raises(ValueError, match="^persona_visual_identity_changed$"):
+    with pytest.raises(ValueError, match="^persona_visual_authority_changed$"):
         repository.publish_version(
             persona_id="persona-local-1",
             manifest=_valid_manifest(frame_rate=2),
@@ -914,6 +1043,68 @@ def test_corrupt_stored_numeric_fields_use_fixed_graph_category(
         (record.id,),
     )
     connection.commit()
+
+    with pytest.raises(ValueError, match="^persona_visual_graph_invalid$"):
+        repository.get_active_persona_pack("persona-local-1")
+
+
+@pytest.mark.parametrize(
+    ("table", "column", "value", "record_name"),
+    (
+        ("persona_visual_packs", "title", "", "pack"),
+        ("persona_visual_packs", "status", "invalid", "pack"),
+        ("persona_visual_packs", "source_kind", "", "pack"),
+        ("persona_visual_packs", "created_at", "not-a-timestamp", "pack"),
+        ("persona_visual_pack_versions", "renderer_type", "live2d", "version"),
+        ("persona_visual_pack_versions", "manifest_version", 2, "version"),
+        ("persona_visual_pack_versions", "manifest_sha256", "A" * 64, "version"),
+        ("persona_visual_assets", "role", "", "asset"),
+        ("persona_visual_assets", "role", "unknown", "asset"),
+        ("persona_visual_assets", "mime_type", "text/plain", "asset"),
+        ("persona_visual_assets", "sha256", "A" * 64, "asset"),
+        ("persona_visual_assets", "bytes", 0, "asset"),
+        ("persona_visual_assets", "width", 4_097, "asset"),
+        ("persona_visual_assets", "frame_count", 241, "asset"),
+        ("persona_visual_assets", "duration_ms", 30_001, "asset"),
+        ("persona_visual_assets", "created_at", "invalid", "asset"),
+        ("persona_visual_bindings", "status", "invalid", "binding"),
+        ("persona_visual_bindings", "created_at", "invalid", "binding"),
+    ),
+)
+def test_corrupt_stored_domain_fields_use_fixed_graph_category(
+    repository: PersonaVisualRepository,
+    db: CharactersRAGDB,
+    table: str,
+    column: str,
+    value: object,
+    record_name: str,
+) -> None:
+    active = _activate(repository)
+    record = (
+        active.assets[0] if record_name == "asset" else getattr(active, record_name)
+    )
+    connection = db.get_connection()
+    connection.execute("PRAGMA ignore_check_constraints = ON")
+    connection.execute(
+        f"UPDATE {table} SET {column} = ? WHERE id = ?",
+        (value, record.id),
+    )
+    connection.commit()
+
+    with pytest.raises(ValueError, match="^persona_visual_graph_invalid$"):
+        repository.get_active_persona_pack("persona-local-1")
+
+
+def test_invalid_utf8_text_fetch_uses_fixed_graph_category(
+    repository: PersonaVisualRepository,
+    db: CharactersRAGDB,
+) -> None:
+    active = _activate(repository)
+    db.get_connection().execute(
+        "UPDATE persona_visual_packs SET title = CAST(x'80' AS TEXT) WHERE id = ?",
+        (active.pack.id,),
+    )
+    db.get_connection().commit()
 
     with pytest.raises(ValueError, match="^persona_visual_graph_invalid$"):
         repository.get_active_persona_pack("persona-local-1")
