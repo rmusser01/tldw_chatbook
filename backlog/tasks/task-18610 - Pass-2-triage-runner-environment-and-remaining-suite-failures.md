@@ -1,7 +1,7 @@
 ---
 id: TASK-18610
 title: Pass-2 triage — runner-environment failures and remaining suite red
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-19 11:30'
 labels:
