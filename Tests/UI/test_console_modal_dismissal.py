@@ -20,7 +20,10 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, Input, Select, Static
 
-from Tests.UI.background_signals import wait_for_background_signal
+from Tests.UI.background_signals import (
+    await_background_task,
+    wait_for_background_signal,
+)
 from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
 from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostRowTotals
 from tldw_chatbook.Chat.console_prompt_queue import ConsolePromptQueueRegistry
@@ -1936,7 +1939,14 @@ async def test_confirmation_cancel_callback_is_once_across_repeated_and_nested_i
         assert app.screen is modal
 
         release.set()
-        await asyncio.gather(first_request, repeated_escape)
+        await await_background_task(
+            first_request,
+            what="the confirmation cancel callback to finish",
+        )
+        await await_background_task(
+            repeated_escape,
+            what="the repeated confirmation cancel request to finish",
+        )
         await pilot.pause()
         assert app.screen is nested
         assert app.results == []
@@ -2571,11 +2581,17 @@ async def test_single_shot_consumes_repeated_escape_and_backdrop_while_pending()
             assert backdrop._no_default_action
         finally:
             release.set()
-            await asyncio.gather(
+            await await_background_task(
                 first_escape,
+                what="the single-shot cancel effect to finish",
+            )
+            await await_background_task(
                 second_escape,
+                what="the repeated single-shot cancel request to finish",
+            )
+            await await_background_task(
                 backdrop_request,
-                return_exceptions=True,
+                what="the pending backdrop request to finish",
             )
         await pilot.pause()
 
@@ -2904,7 +2920,10 @@ async def test_pending_escape_records_backdrop_before_terminal_dismissal():
         assert app.screen is modal
 
         release.set()
-        await pending_escape
+        await await_background_task(
+            pending_escape,
+            what="the pending escape effect to finish",
+        )
         await pilot.pause()
         assert app.screen is app.host
 
@@ -3039,7 +3058,10 @@ async def test_old_request_generation_cannot_dismiss_repushed_presentation():
         )
 
         first_release.set()
-        await old_request
+        await await_background_task(
+            old_request,
+            what="the retired modal generation effect to finish",
+        )
         await pilot.pause()
 
         try:
@@ -3050,7 +3072,10 @@ async def test_old_request_generation_cannot_dismiss_repushed_presentation():
             assert effect_calls == 2
         finally:
             second_release.set()
-            await new_request
+            await await_background_task(
+                new_request,
+                what="the replacement modal generation effect to finish",
+            )
         await pilot.pause()
 
         assert app.screen is app.host

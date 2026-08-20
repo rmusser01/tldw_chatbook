@@ -27,7 +27,10 @@ from types import SimpleNamespace
 import pytest
 from textual.widgets import Input
 
-from Tests.UI.background_signals import wait_for_background_signal
+from Tests.UI.background_signals import (
+    await_background_task,
+    wait_for_background_signal,
+)
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -452,7 +455,10 @@ async def test_workspace_controller_refresh_stages_local_then_merges_persisted_r
     assert controller._console_conversation_browser_total is None
 
     release.set()
-    await refresh
+    await await_background_task(
+        refresh,
+        what="the persisted conversation refresh to finish",
+    )
 
     assert [row.title for row in controller._console_conversation_browser_rows] == [
         "Shared local",
