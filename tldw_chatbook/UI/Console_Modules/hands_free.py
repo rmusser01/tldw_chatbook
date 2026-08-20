@@ -370,6 +370,24 @@ class ConsoleHandsFreeController:
         #: blocker`, the realtime engine's own loud-fallback check.
         self._console_hands_free_vad_degraded = False
 
+    def _sync_hands_free_switch(self, active: bool) -> None:
+        """Mirror hands-free session state onto the control bar's Switch.
+
+        task-18911 (fix 2): the Switch is the soft-keyboard-only user's
+        entry/exit for the mode; every session lifecycle change repaints it
+        so it never disagrees with reality. No-op when the control bar is
+        not mounted (pre-mount, mid-teardown).
+        """
+        try:
+            from ..Widgets.Console.console_control_bar import ConsoleControlBar
+
+            control_bar = self._screen.query_one(
+                "#console-control-bar", ConsoleControlBar
+            )
+        except Exception:
+            return
+        control_bar.sync_hands_free_state(active)
+
     @property
     def is_mounted(self) -> bool:
         """Whether the Console screen is currently mounted.
@@ -563,6 +581,7 @@ class ConsoleHandsFreeController:
         session = ConsoleHandsFreeSession(controller=controller, sequencer=sequencer)
         sequencer.on_drained = self._on_console_hands_free_sequencer_drained
         self._console_hands_free = session
+        self._sync_hands_free_switch(True)
         self._install_console_hands_free_store_tap()
         session.tick_timer = self.set_interval(0.1, self._tick_console_hands_free)
         controller.enter(capture_live=capture_live)
@@ -581,6 +600,7 @@ class ConsoleHandsFreeController:
         if session.tick_timer is not None:
             session.tick_timer.stop()
         self._console_hands_free = None
+        self._sync_hands_free_switch(False)
         composer = self._console_composer_or_none()
         if composer is not None:
             # Repaints over whatever hands-free's own `set_voice_status`

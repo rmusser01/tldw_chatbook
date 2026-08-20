@@ -442,6 +442,7 @@ from ...Widgets.Console import (
     ConsoleWorkspaceContextTray,
 )
 from ...Widgets.Console.console_control_bar import (
+    ConsoleHandsFreeToggleRequested,
     ConsoleAutoSpeakChanged,
     ConsoleAutoSpeakRetryRequested,
     ConsoleAutoSpeakResumeRequested,
@@ -6731,6 +6732,17 @@ class ChatScreen(BaseAppScreen):
     # screen instance). See `hands_free.py`'s module docstring for the full
     # map of what moved and the two-engine boundary it draws.
     # ------------------------------------------------------------------
+
+    @on(ConsoleHandsFreeToggleRequested)
+    def on_console_hands_free_toggle_requested(
+        self, event: "ConsoleHandsFreeToggleRequested"
+    ) -> None:
+        """The visible Switch flipped (task-18911 fix 2): same path as the
+        keybinding. The switch is repainted by the session lifecycle sync,
+        not here -- entering can fail (e.g. mic unavailable), and the
+        control must reflect the session, not the wish."""
+        event.stop()
+        self._hands_free.action_toggle_console_hands_free()
 
     def action_toggle_console_hands_free(self) -> None:
         """`ctrl+shift+h`: enter the hands-free loop, or exit it if already
