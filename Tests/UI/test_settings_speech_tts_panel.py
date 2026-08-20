@@ -3246,13 +3246,16 @@ async def test_details_and_scope_start_collapsed_on_every_mount() -> None:
         assert "revision" not in visible_copy
         assert "effective source" not in visible_copy
 
-        model = panel.query_one("#settings-speech-model-value", Input)
-        model.value = "task-2-6-unsaved-model"
+        default_provider = panel.query_one("#settings-speech-default-provider", Select)
+        assert default_provider.value == "openai"
+        default_provider.value = "audio_cpp"
         await pilot.pause()
         assert "Unsaved" in str(
             panel.query_one("#settings-speech-default-status", Static).render()
         )
 
+        details = panel.query_one("#settings-speech-details", Collapsible)
+        scope = panel.query_one("#settings-speech-scope-inspector", Collapsible)
         details.collapsed = False
         scope.collapsed = False
         await pilot.pause()

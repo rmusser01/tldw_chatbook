@@ -12,6 +12,7 @@ import pytest
 
 from tldw_chatbook.UI.Speech.speech_playback_mixin import SpeechPlaybackMixin
 from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
+
 HOSTS = (SpeechPlaygroundPane,)
 
 
@@ -26,15 +27,16 @@ def test_both_playgrounds_can_receive_a_delivered_artifact(host):
 
 @pytest.mark.unit
 def test_delivery_comes_from_the_shared_mixin():
-    """The completion path is inherited, not redefined on the pane.
+    """The pane's provenance hook still delegates delivery to the mixin.
 
-    A pane-local copy would drift from the mixin the moment either changed,
-    and the mixin is what the remaining Speech surfaces will inherit.
+    The pane now retains profile-test provenance before the shared mixin
+    sanitizes the artifact, but playback/result delivery remains shared.
     """
-    assert (
-        SpeechPlaygroundPane._generation_complete
-        is SpeechPlaybackMixin._generation_complete
-    )
+    import inspect
+
+    assert SpeechPlaybackMixin in SpeechPlaygroundPane.__mro__
+    source = inspect.getsource(SpeechPlaygroundPane._generation_complete)
+    assert "super()._generation_complete(artifact)" in source
 
 
 @pytest.mark.unit

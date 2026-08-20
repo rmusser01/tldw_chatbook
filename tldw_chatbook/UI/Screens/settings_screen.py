@@ -12058,7 +12058,7 @@ class SettingsScreen(BaseAppScreen):
         if not getattr(self, "is_mounted", False):
             return
         self._set_static_text(
-            "#settings-overview-sync-summary",
+            "#settings-overview-sync",
             f"Sync: {_fold_long_tokens(self._overview_sync_summary())}",
         )
         presentation = self._settings_overview_presentation()

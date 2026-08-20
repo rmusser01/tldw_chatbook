@@ -253,6 +253,7 @@ async def test_provider_save_uses_one_atomic_writer_for_all_owned_values(monkeyp
     assert sections["chat_defaults"] == {"provider": "llama_cpp", "model": "qwen"}
     assert sections["api_settings.llama_cpp"] == {
         "api_url": "http://127.0.0.1:8080",
+        "credential_source": "none",
         "model": "qwen",
     }
     assert sections["provider_setup.confirmed"] == {"llama_cpp": True}
