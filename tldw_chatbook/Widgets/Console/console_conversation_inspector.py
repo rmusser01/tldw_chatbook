@@ -438,10 +438,19 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         load_failed = False
         try:
             pairs = await self._exchanges_loader(turn.native_message_id)
-        except Exception:
-            logger.opt(exception=True).warning(
-                "console_inspector: exchanges_loader failed for turn {}",
-                turn.native_message_id,
+        except Exception as exc:
+            # No traceback: a failure inside ``_exchanges_loader`` can leave
+            # a DECODED ``ExchangeCapture`` (full request/response payload)
+            # sitting in one of that call's own frames -- e.g. mid-loop in
+            # the DB-fallback path's row decoder -- and loguru's diagnose
+            # formatter would annotate the failing source line's names with
+            # their values across the WHOLE frame chain, not just this one.
+            # type(exc).__name__ plus the turn's own identifiers is enough
+            # to diagnose and retry (see the "expand again to retry" UX
+            # below); capture content is not needed for that.
+            logger.error(
+                f"console_inspector: exchanges_loader failed for turn "
+                f"{turn.index} ({turn.native_message_id}): {type(exc).__name__}"
             )
             pairs = []
             load_failed = True
@@ -632,7 +641,14 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         section / message) -- every id outside this tab's four namespaces
         (e.g. a Costs-tab row, handled by ``_on_row_toggled`` above) falls
         through untouched. Each level mounts exactly once per node id,
-        tracked in its own dedup set.
+        tracked in its own dedup set -- and, symmetric with the turn
+        level's own retry contract (``_load_exchange_turn`` discards its
+        index on failure), the three inner (synchronous) levels only ADD to
+        their dedup set once ``_mount_exchange_*_body`` reports success,
+        rather than marking-then-maybe-failing: a node whose capture was
+        not yet cached or whose Collapsible left the DOM mid-toggle is left
+        un-loaded, so collapsing/re-expanding it tries again instead of
+        staying permanently empty.
         """
         collapsible = event.collapsible
         collapsible_id = collapsible.id or ""
@@ -659,24 +675,24 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             call_key = collapsible_id[len(_EXCHANGE_CALL_ID_PREFIX) :]
             if call_key in self._loaded_exchange_call_keys:
                 return
-            self._loaded_exchange_call_keys.add(call_key)
-            self._mount_exchange_call_body(collapsible, call_key)
+            if self._mount_exchange_call_body(collapsible, call_key):
+                self._loaded_exchange_call_keys.add(call_key)
             return
 
         if collapsible_id.startswith(_EXCHANGE_SECTION_ID_PREFIX):
             if collapsible_id in self._loaded_exchange_section_ids:
                 return
-            self._loaded_exchange_section_ids.add(collapsible_id)
             remainder = collapsible_id[len(_EXCHANGE_SECTION_ID_PREFIX) :]
             call_key, _, section = remainder.rpartition("-")
-            self._mount_exchange_section_body(collapsible, call_key, section)
+            if self._mount_exchange_section_body(collapsible, call_key, section):
+                self._loaded_exchange_section_ids.add(collapsible_id)
             return
 
         if collapsible_id.startswith(_EXCHANGE_MESSAGE_ID_PREFIX):
             if collapsible_id in self._loaded_exchange_message_ids:
                 return
-            self._loaded_exchange_message_ids.add(collapsible_id)
-            self._mount_exchange_message_body(collapsible)
+            if self._mount_exchange_message_body(collapsible):
+                self._loaded_exchange_message_ids.add(collapsible_id)
             return
 
     async def _load_exchange_turn(
@@ -693,10 +709,16 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         load_failed = False
         try:
             pairs = await self._exchanges_loader(turn.native_message_id)
-        except Exception:
-            logger.opt(exception=True).warning(
-                "console_inspector: exchanges_loader failed for exchange turn {}",
-                turn.native_message_id,
+        except Exception as exc:
+            # No traceback -- same rationale as ``_load_turn_captures``'s
+            # twin handler above: a failure inside ``_exchanges_loader`` can
+            # leave a decoded ``ExchangeCapture`` payload in one of that
+            # call's own frames, and diagnose would dump it. Turn identity
+            # (not capture content) is enough to diagnose and retry.
+            logger.error(
+                f"console_inspector: exchanges_loader failed for exchange "
+                f"turn {turn.index} ({turn.native_message_id}): "
+                f"{type(exc).__name__}"
             )
             pairs = []
             load_failed = True
@@ -739,19 +761,25 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
 
     def _mount_exchange_call_body(
         self, collapsible: Collapsible, call_key: str
-    ) -> None:
+    ) -> bool:
         """Populate one call's Collapsible: the omitted-keys/reported-usage
         lines and the Copy/Save row mount immediately (cheap, always
         useful); the six section Collapsibles mount with EMPTY bodies --
         each one's own TextArea (or, for Messages, its per-message
-        Collapsibles) waits for that section's own first expand."""
+        Collapsibles) waits for that section's own first expand.
+
+        Returns whether it actually mounted anything -- ``False`` (capture
+        not yet cached, or the Collapsible already left the DOM) tells the
+        caller NOT to mark this call as loaded, so a later re-expand
+        retries instead of leaving a permanently empty node (review
+        finding 5)."""
         capture = self._exchange_capture_by_call_key.get(call_key)
         if capture is None:
-            return
+            return False
         try:
             contents = collapsible.query_one(Collapsible.Contents)
         except NoMatches:
-            return
+            return False
 
         if capture.omitted_keys:
             contents.mount(
@@ -788,22 +816,27 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         if tool_calls_section is not None:
             contents.mount(tool_calls_section)
         contents.mount(self._build_sampling_section(capture, call_key))
+        return True
 
     def _mount_exchange_section_body(
         self, collapsible: Collapsible, call_key: str, section: str
-    ) -> None:
+    ) -> bool:
+        """Returns whether it actually mounted the section's body --
+        ``False`` leaves the section un-loaded so a later re-expand
+        retries (review finding 5), same contract as
+        ``_mount_exchange_call_body``."""
         capture = self._exchange_capture_by_call_key.get(call_key)
         if capture is None:
-            return
+            return False
         try:
             contents = collapsible.query_one(Collapsible.Contents)
         except NoMatches:
-            return
+            return False
 
         if section == _SECTION_SYSTEM:
             text = str(capture.request.get("system_message") or "")
             contents.mount(TextArea(text, read_only=True))
-            return
+            return True
 
         if section == _SECTION_MESSAGES:
             messages = capture.request.get("messages_payload")
@@ -827,18 +860,18 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                         classes="console-inspector-exchange-message",
                     )
                 )
-            return
+            return True
 
         if section == _SECTION_TOOLS:
             tools = capture.request.get("tools") or []
             contents.mount(TextArea(self._json_block(tools), read_only=True))
-            return
+            return True
 
         if section == _SECTION_RESPONSE:
             contents.mount(
                 TextArea(self._response_text(capture), read_only=True)
             )
-            return
+            return True
 
         if section == _SECTION_TOOL_CALLS:
             tool_calls = (
@@ -847,7 +880,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             contents.mount(
                 TextArea(self._json_block(tool_calls or []), read_only=True)
             )
-            return
+            return True
 
         if section == _SECTION_SAMPLING:
             sampling = {
@@ -856,17 +889,25 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                 if key not in _SAMPLING_EXCLUDED_REQUEST_KEYS
             }
             contents.mount(TextArea(self._json_block(sampling), read_only=True))
-            return
+            return True
 
-    def _mount_exchange_message_body(self, collapsible: Collapsible) -> None:
+        # Unreachable in practice -- every section id this widget itself
+        # generates is one of the six keys above -- but an unrecognized
+        # section must still not be marked loaded.
+        return False
+
+    def _mount_exchange_message_body(self, collapsible: Collapsible) -> bool:
+        """Same success/failure contract as the call/section levels above
+        (review finding 5)."""
         message = self._exchange_message_by_id.get(collapsible.id or "")
         if message is None:
-            return
+            return False
         try:
             contents = collapsible.query_one(Collapsible.Contents)
         except NoMatches:
-            return
+            return False
         contents.mount(TextArea(self._json_block(message), read_only=True))
+        return True
 
     @on(Button.Pressed)
     def _on_exchange_call_button(self, event: Button.Pressed) -> None:
@@ -881,8 +922,15 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             self._save_exchange_capture(call_key)
 
     def _copy_exchange_capture(self, call_key: str) -> None:
-        """Verbatim idiom from ``ConsoleContextModal._copy_json``, applied
-        to one call's ``ExchangeCapture`` instead of the whole snapshot."""
+        """Verbatim idiom from ``ConsoleContextModal._copy_json`` (that
+        sibling interpolates ``exc``'s own message text into its log line;
+        this copy does NOT -- ``pyperclip.copy(text)`` failing (e.g. a
+        codec error while encoding ``text``) can embed a fragment of the
+        very payload ``text`` was built from inside ``str(exc)``, and this
+        is the one call in this file review finding 1's "no capture
+        content, no exception message body" rule would otherwise miss),
+        applied to one call's ``ExchangeCapture`` instead of the whole
+        snapshot."""
         capture = self._exchange_capture_by_call_key.get(call_key)
         if capture is None:
             return
@@ -894,16 +942,18 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             self.notify("JSON copied to clipboard.")
         except Exception as exc:
             logger.warning(
-                "Failed to copy exchange capture JSON to clipboard: {}", exc
+                f"Failed to copy exchange capture JSON to clipboard: "
+                f"{type(exc).__name__}"
             )
             self.notify("Copy failed: pyperclip unavailable.", severity="warning")
 
     def _save_exchange_capture(self, call_key: str) -> None:
         """Verbatim idiom from ``ConsoleContextModal._save_json``, applied
-        to one call's ``ExchangeCapture``. Callers gate this behind
-        ``self._save_blocked_reason`` (the button is disabled while
-        ephemeral), but a stray call here degrades the same way -- the
-        writes below simply never happen in practice."""
+        to one call's ``ExchangeCapture``. This method writes UNCONDITIONALLY
+        -- the only enforcement of ``self._save_blocked_reason`` is the
+        Save button's own ``disabled=`` state (set in
+        ``_mount_exchange_call_body``); a direct call here (e.g. a future
+        caller that bypasses the button) still writes to disk."""
         capture = self._exchange_capture_by_call_key.get(call_key)
         if capture is None:
             return
@@ -915,10 +965,25 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             path.write_text(text, encoding="utf-8")
             self.notify(f"Saved to {path}")
         except OSError as exc:
-            logger.warning("Failed to save exchange capture to {}: {}", path, exc)
+            # No exception text, no traceback: this frame's locals include
+            # `text` -- the FULL capture payload (system prompt, messages,
+            # tool schemas, response) -- and loguru's diagnose formatter
+            # would otherwise annotate the failing source line's names
+            # (including `text`) with their values. type(exc).__name__ is
+            # enough to diagnose an OSError (permissions, disk full, path
+            # too long) without echoing content; an OSError's own str() can
+            # also embed the offending path/filename, which is fine, but we
+            # skip it here for the same reason app.py's own file-write
+            # error handlers do (see app.py's three "No traceback" comments).
+            logger.error(
+                f"Failed to save exchange capture to {path}: {type(exc).__name__}"
+            )
             self.notify(f"Save failed: {exc}", severity="error")
         except Exception as exc:
-            logger.exception("Unexpected error saving exchange capture to {}", path)
+            logger.error(
+                f"Unexpected error saving exchange capture to {path}: "
+                f"{type(exc).__name__}"
+            )
             self.notify(f"Save failed: {exc}", severity="error")
 
     def action_refresh(self) -> None:

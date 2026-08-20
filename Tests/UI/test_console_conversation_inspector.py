@@ -11,13 +11,14 @@ handed in at construction, same shape as ``ConsoleCostModal``/
 
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
 
 import pytest
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
-from textual.widgets import Collapsible, Static, TabPane, TextArea
+from textual.widgets import Button, Collapsible, Static, TabPane, TextArea
 from textual.widgets._collapsible import CollapsibleTitle
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
@@ -26,12 +27,16 @@ from tldw_chatbook.Chat.console_cost_tracker import (
     ConsoleCostRowTotals,
     build_cost_rows,
 )
-from tldw_chatbook.Chat.console_exchange_capture import ExchangeCapture
+from tldw_chatbook.Chat.console_exchange_capture import (
+    CAPTURE_REQUEST_ALLOWLIST,
+    ExchangeCapture,
+)
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Widgets.Console.console_conversation_inspector import (
     TAB_EXCHANGE,
     ConsoleConversationInspector,
     InspectorTurn,
+    _SAMPLING_EXCLUDED_REQUEST_KEYS,
 )
 
 
@@ -508,7 +513,10 @@ async def test_exchange_call_sections_render() -> None:
 
         call = turn.query_one("#console-inspector-exchange-call-0-0", Collapsible)
         call.collapsed = False
-        await pilot.pause()
+        # Multi-widget synchronous mount (omitted line, actions row, 5
+        # section headers) can take more than one pump tick to fully
+        # realize under load -- poll rather than trust a single pause.
+        await _wait_until(pilot, lambda: len(call.query(Collapsible)) >= 5)
 
         # "Omitted by capture policy" mounts immediately with the call --
         # it is not gated behind any further expansion.
@@ -533,7 +541,9 @@ async def test_exchange_call_sections_render() -> None:
 
         for section_id in section_ids.values():
             call.query_one(f"#{section_id}", Collapsible).collapsed = False
-        await pilot.pause()
+        # system/tools/response/sampling each mount one TextArea; messages
+        # mounts per-message Collapsibles instead (not counted here).
+        await _wait_until(pilot, lambda: len(call.query(TextArea)) >= 4)
 
         all_text = "\n".join(ta.text for ta in call.query(TextArea))
         assert "SYS PROMPT" in all_text
@@ -584,7 +594,14 @@ async def test_estimates_labeled_and_reported_authoritative() -> None:
 
         call = turn.query_one("#console-inspector-exchange-call-0-0", Collapsible)
         call.collapsed = False
-        await pilot.pause()
+        await _wait_until(
+            pilot,
+            lambda: bool(call.query(Collapsible))
+            and any(
+                str(s.renderable).startswith("Reported usage")
+                for s in call.query(Static)
+            ),
+        )
 
         reported_lines = [
             str(s.renderable)
@@ -671,7 +688,7 @@ async def test_collapsible_bodies_mount_lazily() -> None:
 
         call = turn.query_one("#console-inspector-exchange-call-0-0", Collapsible)
         call.collapsed = False
-        await pilot.pause()
+        await _wait_until(pilot, lambda: bool(call.query(Collapsible)))
 
         # Section headers exist (still collapsed)...
         section = call.query_one(
@@ -682,6 +699,269 @@ async def test_collapsible_bodies_mount_lazily() -> None:
         assert not call.query(TextArea)
 
         section.collapsed = False
-        await pilot.pause()
+        await _wait_until(pilot, lambda: bool(call.query(TextArea)))
 
         assert len(call.query(TextArea)) == 1
+
+
+# --- Exchange tab review fixes (task-9 review round) -----------------------
+
+
+# Finding 2's hardcoded half of the pin -- see the test below for why this
+# must NOT be computed from the live import.
+_TODAY_CAPTURE_ALLOWLIST_SNAPSHOT = frozenset({
+    "api_endpoint", "api_base_url", "system_message", "messages_payload",
+    "tools", "model", "streaming", "temp", "topp", "maxp", "topk", "minp",
+    "max_tokens", "seed", "presence_penalty", "frequency_penalty",
+    "reasoning_effort", "reasoning_summary", "verbosity", "thinking_effort",
+    "thinking_budget_tokens", "prompt_caching", "response_format",
+    "api_mode", "request_timeout", "request_retries", "request_retry_delay",
+    "provider_continuations",
+})
+
+
+@pytest.mark.asyncio
+async def test_sampling_section_key_set_is_pinned_to_the_capture_allowlist() -> None:
+    """Finding 2 (task-9 review): the Sampling section is built by
+    EXCLUDING ``_SAMPLING_EXCLUDED_REQUEST_KEYS`` from ``capture.request``
+    rather than allowlisting -- accepted as safe TODAY only because
+    ``build_request_capture`` (console_exchange_capture.py) already
+    allowlists everything that can land in ``request`` to
+    ``CAPTURE_REQUEST_ALLOWLIST``. Nothing enforced that relationship
+    before this test: a future key added to that allowlist would silently
+    start rendering under "Sampling & routing" with zero changes to this
+    file.
+
+    Two-part pin:
+      (a) A HARDCODED snapshot of today's allowlist (not derived from the
+          live import -- that would make part (b) tautological and never
+          fail) must still equal the live ``CAPTURE_REQUEST_ALLOWLIST``.
+          If it drifts, THIS assertion fails first, forcing whoever
+          touched the allowlist to look at this test and consciously
+          decide whether the new/removed key belongs under Sampling.
+      (b) Given a capture whose request carries every allowlisted key
+          (from the live import, so this half tracks real behavior), the
+          Sampling section's rendered key set is exactly the allowlist
+          minus the four keys this widget already surfaces elsewhere
+          (system prompt, messages, tools, model).
+    """
+    assert _TODAY_CAPTURE_ALLOWLIST_SNAPSHOT == CAPTURE_REQUEST_ALLOWLIST, (
+        "CAPTURE_REQUEST_ALLOWLIST changed -- decide whether the new/removed "
+        "key(s) belong under the Exchange tab's 'Sampling & routing' section "
+        "(console_conversation_inspector.py's _SAMPLING_EXCLUDED_REQUEST_KEYS), "
+        "then update _TODAY_CAPTURE_ALLOWLIST_SNAPSHOT above."
+    )
+
+    request = {key: f"value-for-{key}" for key in CAPTURE_REQUEST_ALLOWLIST}
+    cap = _capture(
+        "r1", 0, "t", "m", request=request,
+        response={"content": "x", "tool_calls": []},
+    )
+
+    async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
+        return [(cap, False)]
+
+    app = InspectorHarness(
+        **_default_kwargs(exchanges_loader=loader, initial_tab=TAB_EXCHANGE)
+    )
+
+    async with app.run_test(size=(120, 44)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+
+        turn = modal.query_one("#console-inspector-exchange-turn-0", Collapsible)
+        turn.collapsed = False
+        await _wait_until(pilot, lambda: bool(turn.query(Collapsible)))
+
+        call = turn.query_one("#console-inspector-exchange-call-0-0", Collapsible)
+        call.collapsed = False
+        await _wait_until(pilot, lambda: bool(call.query(Collapsible)))
+
+        sampling_section = call.query_one(
+            "#console-inspector-exchange-section-0-0-sampling", Collapsible
+        )
+        sampling_section.collapsed = False
+        await _wait_until(pilot, lambda: bool(call.query(TextArea)))
+
+        [text_area] = call.query(TextArea)
+        rendered_keys = set(json.loads(text_area.text).keys())
+
+        assert rendered_keys == (
+            CAPTURE_REQUEST_ALLOWLIST - _SAMPLING_EXCLUDED_REQUEST_KEYS
+        )
+
+
+@pytest.mark.asyncio
+async def test_save_button_disabled_and_tooltip_when_ephemeral() -> None:
+    """Finding 3 (task-9 review): pins the per-call Save-to-File gate.
+    This repo has a documented history of gates discovered inert -- an
+    ephemeral inspector's Save button must be disabled AND carry the
+    blocked-reason tooltip; Copy JSON (never writes to disk) stays
+    enabled."""
+    cap = _capture("r1", 0, "t", "m")
+
+    async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
+        return [(cap, False)]
+
+    app = InspectorHarness(
+        **_default_kwargs(
+            exchanges_loader=loader, initial_tab=TAB_EXCHANGE, ephemeral=True
+        )
+    )
+
+    async with app.run_test(size=(120, 44)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+
+        turn = modal.query_one("#console-inspector-exchange-turn-0", Collapsible)
+        turn.collapsed = False
+        await _wait_until(pilot, lambda: bool(turn.query(Collapsible)))
+
+        call = turn.query_one("#console-inspector-exchange-call-0-0", Collapsible)
+        call.collapsed = False
+        await _wait_until(pilot, lambda: bool(call.query(Button)))
+
+        save_button = call.query_one("#console-inspector-exchange-save-0-0", Button)
+        assert save_button.disabled is True
+        assert save_button.tooltip is not None
+        assert "temporary chat" in str(save_button.tooltip)
+
+        copy_button = call.query_one("#console-inspector-exchange-copy-0-0", Button)
+        assert copy_button.disabled is False
+
+
+@pytest.mark.asyncio
+async def test_per_message_collapsible_mounts_its_json_body() -> None:
+    """Finding 4 (task-9 review): the fourth lazy level (per-message,
+    nested inside the Messages section) was never exercised by any test --
+    ``_mount_exchange_message_body`` and its dispatch branch were dead
+    coverage. Expand it and assert the message's own content actually
+    renders (and, before that, that it genuinely was not mounted yet)."""
+    cap = _capture(
+        "r1", 0, "t", "m",
+        request={"messages_payload": [{"role": "user", "content": "hello"}]},
+    )
+
+    async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
+        return [(cap, False)]
+
+    app = InspectorHarness(
+        **_default_kwargs(exchanges_loader=loader, initial_tab=TAB_EXCHANGE)
+    )
+
+    async with app.run_test(size=(120, 44)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+
+        turn = modal.query_one("#console-inspector-exchange-turn-0", Collapsible)
+        turn.collapsed = False
+        await _wait_until(pilot, lambda: bool(turn.query(Collapsible)))
+
+        call = turn.query_one("#console-inspector-exchange-call-0-0", Collapsible)
+        call.collapsed = False
+        await _wait_until(pilot, lambda: bool(call.query(Collapsible)))
+
+        messages_section = call.query_one(
+            "#console-inspector-exchange-section-0-0-messages", Collapsible
+        )
+        messages_section.collapsed = False
+        await _wait_until(pilot, lambda: bool(messages_section.query(Collapsible)))
+
+        message_collapsible = messages_section.query_one(
+            "#console-inspector-exchange-message-0-0-0", Collapsible
+        )
+        assert not messages_section.query(TextArea)  # still lazy pre-expand
+
+        message_collapsible.collapsed = False
+        await _wait_until(pilot, lambda: bool(messages_section.query(TextArea)))
+
+        [text_area] = messages_section.query(TextArea)
+        assert "hello" in text_area.text
+
+
+@pytest.mark.asyncio
+async def test_call_level_mount_failure_does_not_mark_it_loaded_and_retries() -> None:
+    """Finding 5 (task-9 review): before the fix, a call's id was added to
+    ``_loaded_exchange_call_keys`` BEFORE ``_mount_exchange_call_body`` ran
+    -- a failed mount (e.g. the capture not yet cached) permanently
+    blocked any retry, unlike the turn level's own discard-on-failure
+    contract. Simulates that failure by emptying the capture cache right
+    before the call first expands, then restoring it and re-expanding --
+    the call must mount successfully on the second attempt."""
+    cap = _capture("r1", 0, "t", "m")
+
+    async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
+        return [(cap, False)]
+
+    app = InspectorHarness(
+        **_default_kwargs(exchanges_loader=loader, initial_tab=TAB_EXCHANGE)
+    )
+
+    async with app.run_test(size=(120, 44)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+
+        turn = modal.query_one("#console-inspector-exchange-turn-0", Collapsible)
+        turn.collapsed = False
+        await _wait_until(pilot, lambda: bool(turn.query(Collapsible)))
+
+        call = turn.query_one("#console-inspector-exchange-call-0-0", Collapsible)
+
+        # Simulate a mount failure: the capture cache is empty at the
+        # moment the call first expands.
+        saved_capture = modal._exchange_capture_by_call_key.pop("0-0")
+        call.collapsed = False
+        await pilot.pause()
+
+        assert "0-0" not in modal._loaded_exchange_call_keys
+        assert not call.query(Collapsible)  # nothing mounted -- no sections
+
+        # Restore the capture and retry via collapse/re-expand.
+        modal._exchange_capture_by_call_key["0-0"] = saved_capture
+        call.collapsed = True
+        await pilot.pause()
+        call.collapsed = False
+        await pilot.pause()
+
+        assert "0-0" in modal._loaded_exchange_call_keys
+        assert call.query(Collapsible)  # sections mounted this time
+
+
+@pytest.mark.asyncio
+async def test_exchange_calls_ordered_by_created_at_not_arrival_or_run_tag() -> None:
+    """Finding 6 (task-9 review): nothing pinned the Exchange tab's OWN
+    ``(created_at, seq)`` re-sort in ``_load_exchange_turn`` --
+    ``test_status_badges`` feeds already-chronological ``created_at``
+    values, so it cannot discriminate a missing sort. Three captures whose
+    run_tag ordering, loader arrival order, AND model-name alphabetical
+    order are all inverted against their ``created_at`` order -- only a
+    genuine chronological sort produces the right rendered order."""
+    early = _capture("run-c", 0, "2026-08-17T09:00:00Z", "model-early")
+    middle = _capture("run-b", 0, "2026-08-17T10:00:00Z", "model-middle")
+    late = _capture("run-a", 0, "2026-08-17T11:00:00Z", "model-late")
+
+    async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
+        # Handed back in REVERSE chronological order; run_tag ("run-a" <
+        # "run-b" < "run-c") and model name also both sort the OPPOSITE of
+        # created_at -- only (created_at, seq) can produce the right order.
+        return [(late, False), (middle, False), (early, False)]
+
+    app = InspectorHarness(
+        **_default_kwargs(exchanges_loader=loader, initial_tab=TAB_EXCHANGE)
+    )
+
+    async with app.run_test(size=(120, 44)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+
+        turn = modal.query_one("#console-inspector-exchange-turn-0", Collapsible)
+        turn.collapsed = False
+        await _wait_until(pilot, lambda: len(turn.query(Collapsible)) == 3)
+
+        titles = [_rendered_title(c) for c in turn.query(Collapsible)]
+        early_index = next(i for i, t in enumerate(titles) if "model-early" in t)
+        middle_index = next(i for i, t in enumerate(titles) if "model-middle" in t)
+        late_index = next(i for i, t in enumerate(titles) if "model-late" in t)
+        assert early_index < middle_index < late_index, (
+            f"expected chronological order (early, middle, late), got {titles!r}"
+        )
