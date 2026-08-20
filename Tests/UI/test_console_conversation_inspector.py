@@ -17,7 +17,7 @@ from types import SimpleNamespace
 import pytest
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
-from textual.widgets import Collapsible, Static, TabPane
+from textual.widgets import Collapsible, Static, TabPane, TextArea
 from textual.widgets._collapsible import CollapsibleTitle
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
@@ -29,6 +29,7 @@ from tldw_chatbook.Chat.console_cost_tracker import (
 from tldw_chatbook.Chat.console_exchange_capture import ExchangeCapture
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Widgets.Console.console_conversation_inspector import (
+    TAB_EXCHANGE,
     ConsoleConversationInspector,
     InspectorTurn,
 )
@@ -326,6 +327,11 @@ def _capture(
     created_at: str,
     model: str,
     usage_json: str | None = None,
+    *,
+    status: str = "complete",
+    request: dict | None = None,
+    response: dict | None = None,
+    omitted_keys: tuple[str, ...] = (),
 ) -> ExchangeCapture:
     return ExchangeCapture(
         run_tag=run_tag,
@@ -334,11 +340,11 @@ def _capture(
         provider="anthropic",
         model=model,
         endpoint=None,
-        request={},
-        response={},
-        status="complete",
+        request={} if request is None else request,
+        response={} if response is None else response,
+        status=status,
         usage_json=usage_json,
-        omitted_keys=(),
+        omitted_keys=omitted_keys,
     )
 
 
@@ -457,3 +463,225 @@ async def test_escape_dismisses_with_none() -> None:
         await pilot.press("escape")
         await pilot.pause()
         assert not isinstance(app.screen, ConsoleConversationInspector)
+
+
+# --- Exchange tab (task-9) -------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_exchange_call_sections_render() -> None:
+    """One capture with every optional section populated -- expanding the
+    turn, the call, and each individual section must surface every value
+    the brief calls out: the system prompt text, a tool's name, the
+    response text, and a sampling kwarg -- plus the "omitted by capture
+    policy" line for a dropped credential key, which is NOT behind a lazy
+    section (it renders as soon as the call itself expands)."""
+    cap = _capture(
+        "r1",
+        0,
+        "t",
+        "m",
+        request={
+            "system_message": "SYS PROMPT",
+            "messages_payload": [{"role": "user", "content": "hello"}],
+            "tools": [{"function": {"name": "get_time"}}],
+            "temp": 0.7,
+        },
+        response={"content": "world", "tool_calls": []},
+        omitted_keys=("api_key",),
+    )
+
+    async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
+        return [(cap, False)]
+
+    app = InspectorHarness(
+        **_default_kwargs(exchanges_loader=loader, initial_tab=TAB_EXCHANGE)
+    )
+
+    async with app.run_test(size=(120, 44)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+
+        turn = modal.query_one("#console-inspector-exchange-turn-0", Collapsible)
+        turn.collapsed = False
+        await _wait_until(pilot, lambda: bool(turn.query(Collapsible)))
+
+        call = turn.query_one("#console-inspector-exchange-call-0-0", Collapsible)
+        call.collapsed = False
+        await pilot.pause()
+
+        # "Omitted by capture policy" mounts immediately with the call --
+        # it is not gated behind any further expansion.
+        call_statics = [str(s.renderable) for s in call.query(Static)]
+        assert any("Omitted by capture policy: api_key" in t for t in call_statics)
+
+        section_ids = {
+            "system": "console-inspector-exchange-section-0-0-system",
+            "messages": "console-inspector-exchange-section-0-0-messages",
+            "tools": "console-inspector-exchange-section-0-0-tools",
+            "response": "console-inspector-exchange-section-0-0-response",
+            "sampling": "console-inspector-exchange-section-0-0-sampling",
+        }
+        titles = {
+            name: _rendered_title(call.query_one(f"#{section_id}", Collapsible))
+            for name, section_id in section_ids.items()
+        }
+        assert "System prompt" in titles["system"]
+        assert "Tools" in titles["tools"]
+        assert "Response" in titles["response"]
+        assert "Sampling" in titles["sampling"]
+
+        for section_id in section_ids.values():
+            call.query_one(f"#{section_id}", Collapsible).collapsed = False
+        await pilot.pause()
+
+        all_text = "\n".join(ta.text for ta in call.query(TextArea))
+        assert "SYS PROMPT" in all_text
+        assert "get_time" in all_text
+        assert "world" in all_text
+        assert "temp" in all_text
+
+        # "Tool calls" is omitted entirely -- this capture's response
+        # carries an empty tool_calls list.
+        assert not call.query("#console-inspector-exchange-section-0-0-toolcalls")
+
+
+@pytest.mark.asyncio
+async def test_estimates_labeled_and_reported_authoritative() -> None:
+    """A capture WITH ``usage_json`` -- the estimated per-piece figure (the
+    Response section's own title) must carry the "~"/"est." labels, while
+    the reported figure (both the call-level summary line and the
+    unprefixed half of the Response title) must NOT -- it is the
+    authoritative, provider-reported number."""
+    usage = ProviderUsage(
+        uncached_input=100, cache_read=0, cache_write=0, output=5,
+        provider="anthropic", model="m",
+    )
+    cap = _capture(
+        "r1",
+        0,
+        "t",
+        "m",
+        usage.to_json(),
+        request={"system_message": "hi", "messages_payload": [], "tools": []},
+        response={"content": "hello world", "tool_calls": []},
+    )
+
+    async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
+        return [(cap, False)]
+
+    app = InspectorHarness(
+        **_default_kwargs(exchanges_loader=loader, initial_tab=TAB_EXCHANGE)
+    )
+
+    async with app.run_test(size=(120, 44)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+
+        turn = modal.query_one("#console-inspector-exchange-turn-0", Collapsible)
+        turn.collapsed = False
+        await _wait_until(pilot, lambda: bool(turn.query(Collapsible)))
+
+        call = turn.query_one("#console-inspector-exchange-call-0-0", Collapsible)
+        call.collapsed = False
+        await pilot.pause()
+
+        reported_lines = [
+            str(s.renderable)
+            for s in call.query(Static)
+            if str(s.renderable).startswith("Reported usage")
+        ]
+        assert len(reported_lines) == 1
+        reported_line = reported_lines[0]
+        assert "~" not in reported_line
+        assert "est." not in reported_line
+        assert "out:5" in reported_line
+
+        response_title = _rendered_title(
+            call.query_one("#console-inspector-exchange-section-0-0-response", Collapsible)
+        )
+        assert "~" in response_title
+        assert "tokens est." in response_title
+        assert "reported out:5" in response_title
+
+
+@pytest.mark.asyncio
+async def test_status_badges() -> None:
+    """"stopped"/"error" statuses and an ``abandoned=True`` pair each render
+    their own distinct badge in the call's title -- all three coexisting on
+    one turn's three calls."""
+    stopped_cap = _capture("r1", 0, "t0", "m", status="stopped")
+    error_cap = _capture("r1", 1, "t1", "m", status="error")
+    abandoned_cap = _capture("r1", 2, "t2", "m", status="complete")
+
+    async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
+        return [(stopped_cap, False), (error_cap, False), (abandoned_cap, True)]
+
+    app = InspectorHarness(
+        **_default_kwargs(exchanges_loader=loader, initial_tab=TAB_EXCHANGE)
+    )
+
+    async with app.run_test(size=(120, 44)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+
+        turn = modal.query_one("#console-inspector-exchange-turn-0", Collapsible)
+        turn.collapsed = False
+        await _wait_until(pilot, lambda: len(turn.query(Collapsible)) == 3)
+
+        titles = [_rendered_title(c) for c in turn.query(Collapsible)]
+        assert any("[stopped]" in t for t in titles)
+        assert any("[error]" in t for t in titles)
+        assert any("[abandoned regeneration]" in t for t in titles)
+        # The abandoned regeneration must NOT also read "stopped"/"error" --
+        # it completed normally, just against a superseded generation.
+        abandoned_title = next(t for t in titles if "[abandoned regeneration]" in t)
+        assert "[complete]" in abandoned_title
+
+
+@pytest.mark.asyncio
+async def test_collapsible_bodies_mount_lazily() -> None:
+    """Expanding the call mounts the section headers (cheap Collapsibles)
+    but NOT their TextArea bodies -- a section's TextArea only exists once
+    THAT section is itself expanded. Proves the three-level lazy chain
+    (turn -> call -> section) never front-loads content."""
+    cap = _capture(
+        "r1",
+        0,
+        "t",
+        "m",
+        request={"system_message": "hi", "messages_payload": [], "tools": []},
+        response={"content": "hello", "tool_calls": []},
+    )
+
+    async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
+        return [(cap, False)]
+
+    app = InspectorHarness(
+        **_default_kwargs(exchanges_loader=loader, initial_tab=TAB_EXCHANGE)
+    )
+
+    async with app.run_test(size=(120, 44)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+
+        turn = modal.query_one("#console-inspector-exchange-turn-0", Collapsible)
+        turn.collapsed = False
+        await _wait_until(pilot, lambda: bool(turn.query(Collapsible)))
+
+        call = turn.query_one("#console-inspector-exchange-call-0-0", Collapsible)
+        call.collapsed = False
+        await pilot.pause()
+
+        # Section headers exist (still collapsed)...
+        section = call.query_one(
+            "#console-inspector-exchange-section-0-0-system", Collapsible
+        )
+        assert section.collapsed is True
+        # ...but nothing has mounted a TextArea yet, anywhere under this call.
+        assert not call.query(TextArea)
+
+        section.collapsed = False
+        await pilot.pause()
+
+        assert len(call.query(TextArea)) == 1

@@ -4945,6 +4945,19 @@ class ConsoleChatStore:
         if message.status not in {"pending", "streaming"}:
             self._persist_exchanges_only(message)
 
+    def abandoned_exchange_run_tags(self, message_id: str) -> frozenset[str]:
+        """Public read of ``_abandoned_exchange_run_tags`` for one message.
+
+        task-9: the Conversation Inspector's Exchange tab needs to render
+        the "abandoned regeneration" badge for a NATIVE (in-memory, not-yet
+        -persisted) capture too, not just a DB-sourced one -- this closes
+        the "known gap" ``_build_console_inspector_exchanges_loader``'s
+        docstring used to describe (a native capture always reporting
+        ``abandoned=False``). Returns an immutable snapshot -- the caller
+        gets no handle on the private mutable set.
+        """
+        return frozenset(self._abandoned_exchange_run_tags.get(message_id, ()))
+
     def set_message_metadata(
         self, message_id: str, metadata: MessageMetadata
     ) -> ConsoleChatMessage:

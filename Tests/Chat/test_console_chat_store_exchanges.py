@@ -212,6 +212,30 @@ def test_variant_restored_message_keeps_captures_marked_abandoned(
     assert row["abandoned"] is True
 
 
+def test_abandoned_exchange_run_tags_reads_the_native_bookkeeping(
+        store_after_variant_restore):
+    """task-9: the public accessor the Conversation Inspector's Exchange
+    tab uses to resolve a NATIVE (not-yet-persisted) capture's ``abandoned``
+    flag -- must reflect the same run_tags ``attach_message_exchanges``
+    marks internally, without exposing the private mutable set itself."""
+    store, mid = store_after_variant_restore  # mid in _variant_restored_message_ids
+    store.attach_message_exchanges(mid, [_cap(run_tag="r2")])
+
+    tags = store.abandoned_exchange_run_tags(mid)
+
+    assert tags == frozenset({"r2"})
+    # An immutable snapshot -- mutating the return value must not reach
+    # back into the store's own bookkeeping.
+    assert isinstance(tags, frozenset)
+
+
+def test_abandoned_exchange_run_tags_empty_for_an_unknown_message():
+    """A message the store has never seen (or one with no abandoned runs
+    at all) returns an empty set rather than raising."""
+    store = ConsoleChatStore()
+    assert store.abandoned_exchange_run_tags("nonexistent") == frozenset()
+
+
 def test_ephemeral_session_never_persists(ephemeral_store):
     store, mid = ephemeral_store
     store.attach_message_exchanges(mid, [_cap()])

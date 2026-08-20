@@ -1,6 +1,7 @@
 """Chat screen implementation with comprehensive state management."""
 
 from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Set as AbstractSet
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 import asyncio
@@ -1630,9 +1631,10 @@ def _console_inspector_turn_preview(content: Any) -> str:
 def _build_console_inspector_exchanges_loader(
     messages_by_native_id: Mapping[str, Any],
     db_accessor: Callable[[], Any],
+    abandoned_run_tags_for: Callable[[str], AbstractSet[str]] | None = None,
 ) -> Callable[[str], Awaitable[list[tuple[ExchangeCapture, bool]]]]:
     """Build the Costs-tab ``exchanges_loader`` for
-    ``ConsoleConversationInspector`` (task-8).
+    ``ConsoleConversationInspector`` (task-8, extended task-9).
 
     A standalone function rather than a method-local closure specifically
     so it is unit-testable without mounting a ``ChatScreen`` (review
@@ -1646,15 +1648,26 @@ def _build_console_inspector_exchanges_loader(
             (or ``None``). Called lazily -- only on the DB-fallback path,
             never for a message resolved natively or with no persisted id
             -- so an ephemeral session never touches the DB at all.
+        abandoned_run_tags_for: Optional ``native_message_id ->
+            {run_tag, ...}`` lookup (task-9; ``ConsoleChatStore.
+            abandoned_exchange_run_tags`` in production) used ONLY on the
+            native-capture path to resolve each capture's real
+            ``abandoned`` flag. Defaults to ``None``, which preserves the
+            task-8 behavior of reporting ``abandoned=False`` for every
+            native capture -- kept optional (rather than required) so the
+            existing unit tests in
+            ``Tests/UI/test_chat_screen_console_inspector_loader.py``,
+            which construct this loader with just the first two
+            positional args, are unaffected.
 
     Returns:
         An async ``native_message_id -> [(capture, abandoned), ...]``
         callable (see ``console_conversation_inspector``'s module
         docstring for the pair contract and the ordering caveat -- callers
         must NOT trust the returned order, only ``(created_at, seq)``).
-        Prefers ``message.exchanges`` (native, in-memory captures always
-        report ``abandoned=False`` here -- see that module docstring's
-        known gap) and only falls back to a threaded
+        Prefers ``message.exchanges`` (native, in-memory captures resolve
+        ``abandoned`` via ``abandoned_run_tags_for`` when supplied, else
+        always ``False``) and only falls back to a threaded
         ``get_message_exchanges`` + ``capture_from_blob`` read when there
         is no native capture AND the message has a
         ``persisted_message_id`` (an ephemeral session has neither, so it
@@ -1670,7 +1683,15 @@ def _build_console_inspector_exchanges_loader(
         if message is not None and message.exchanges:
             # Native captures win when present -- they are fresher than
             # whatever was last flushed to the DB.
-            return [(capture, False) for capture in message.exchanges]
+            abandoned_tags: AbstractSet[str] = (
+                abandoned_run_tags_for(native_message_id)
+                if abandoned_run_tags_for is not None
+                else frozenset()
+            )
+            return [
+                (capture, capture.run_tag in abandoned_tags)
+                for capture in message.exchanges
+            ]
         persisted_id = (
             message.persisted_message_id if message is not None else None
         )
@@ -9621,7 +9642,8 @@ class ChatScreen(BaseAppScreen):
         list[InspectorTurn],
         Callable[[str], Awaitable[list[tuple[ExchangeCapture, bool]]]],
     ]:
-        """Shared Costs-tab inputs for ``ConsoleConversationInspector`` (task-8).
+        """Shared Costs-tab inputs for ``ConsoleConversationInspector``
+        (task-8, extended task-9 for the Exchange tab).
 
         Returns:
             ``(rows, totals, turns, exchanges_loader)`` -- ``rows``/
@@ -9640,13 +9662,12 @@ class ChatScreen(BaseAppScreen):
             EPHEMERAL session (no ``persisted_message_id``, no DB row at
             all) still resolves its captures; a native capture wins over a
             DB one when both exist (the native copy is fresher -- see
-            ``ConsoleChatStore.attach_message_exchanges``). Known gap: a
-            native (never-persisted) capture always reports
-            ``abandoned=False`` here -- ``ConsoleChatMessage`` carries no
-            per-capture abandoned flag of its own, and the store's
-            equivalent bookkeeping (``_abandoned_exchange_run_tags``) is
-            private with no public accessor. Only DB-sourced rows (which
-            DO carry the real ``abandoned`` column) get the accurate value.
+            ``ConsoleChatStore.attach_message_exchanges``). task-9 closed
+            the former "known gap" here: a native capture's ``abandoned``
+            flag is now resolved through ``store.abandoned_exchange_run_
+            tags`` (the store's new public accessor over its private
+            ``_abandoned_exchange_run_tags`` bookkeeping) rather than
+            always reporting ``False``.
         """
         store = self._console_chat_store
         messages: list[Any] = []
@@ -9681,6 +9702,7 @@ class ChatScreen(BaseAppScreen):
         exchanges_loader = _build_console_inspector_exchanges_loader(
             messages_by_native_id,
             lambda: getattr(self.app_instance, "chachanotes_db", None),
+            store.abandoned_exchange_run_tags if store is not None else None,
         )
 
         return rows, totals, turns, exchanges_loader

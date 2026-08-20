@@ -1,11 +1,12 @@
-"""Console Conversation Inspector modal (task-8: scaffold + Costs tab).
+"""Console Conversation Inspector modal (task-8: scaffold + Costs tab;
+task-9: the Exchange tab).
 
 Replaces the two standalone modals (``ConsoleCostModal``, opened from the
 cost chip; ``ConsoleContextModal``, opened via Ctrl+Shift+P / the command
-palette) with ONE modal that gains a tab per surface: Costs (this task),
-Exchange (task-9: per-call request/response detail with status badges),
+palette) with ONE modal that gains a tab per surface: Costs (task-8),
+Exchange (this task: per-call request/response detail with status badges),
 Next Send (task-10: the assembled next-send payload -- a placeholder Static
-in THIS task). Both entry points in ``chat_screen.py`` now push the SAME
+until then). Both entry points in ``chat_screen.py`` now push the SAME
 instance, differing only by which tab starts active (``initial_tab``).
 
 The two legacy modal files are left untouched until task-10 retires them --
@@ -27,19 +28,31 @@ badge without a second read of the same rows. Two notes for callers:
       chronological across multiple runs on one message. This widget
       re-sorts every loader result by ``(created_at, seq)`` before
       rendering rather than trusting incoming order.
-    - For an in-memory (not-yet-persisted / ephemeral-session) capture
-      there is currently no reliable per-capture ``abandoned`` signal on
-      ``ConsoleChatMessage`` itself (the store's own bookkeeping for this
-      -- ``_abandoned_exchange_run_tags`` -- is a private, attach-time-only
-      set with no public accessor); callers built against the native store
-      path should pass ``False`` until that plumbing exists, matching
-      ``chat_screen.py``'s own loader in this task.
+    - For an in-memory (not-yet-persisted / ephemeral-session) capture,
+      whether its ``abandoned`` flag is accurate depends entirely on the
+      caller's ``exchanges_loader`` -- this widget only ever renders
+      whatever the loader hands it. ``chat_screen.py``'s own loader
+      resolves it through ``ConsoleChatStore.abandoned_exchange_run_tags``
+      (task-9); a caller with no equivalent bookkeeping should pass
+      ``False`` for every native capture, same as before.
+
+Exchange tab (task-9) lazy-mount chain: turn -> call -> section -> (for the
+"Messages" section only) one more level, per-message. Each level's
+Collapsible header is cheap and built eagerly the moment its PARENT
+expands; only the deepest, potentially-large payload (a ``TextArea``) waits
+for that specific node's own first expand. A 50-call agent turn therefore
+mounts 50 call headers on turn-expand, but zero ``TextArea`` widgets until
+a caller actually drills into one.
 """
 
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Any
 
 from loguru import logger
 from textual import on
@@ -49,13 +62,22 @@ from textual.content import Content
 from textual.css.query import NoMatches
 from textual.screen import ModalScreen
 from textual.widget import Widget
-from textual.widgets import Button, Collapsible, Static, TabbedContent, TabPane
+from textual.widgets import (
+    Button,
+    Collapsible,
+    Static,
+    TabbedContent,
+    TabPane,
+    TextArea,
+)
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
 from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostRow, ConsoleCostRowTotals
+from tldw_chatbook.Chat.console_ephemeral import blocked_reason
 from tldw_chatbook.Chat.console_exchange_capture import ExchangeCapture
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.LLM_Calls.pricing_catalog import get_pricing_catalog
+from tldw_chatbook.Utils.token_counter import estimate_tokens
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 MODAL_ID = "console-inspector-modal"
@@ -64,6 +86,49 @@ TAB_COSTS = "inspector-costs"
 TAB_EXCHANGE = "inspector-exchange"
 TAB_NEXT_SEND = "inspector-next-send"
 _COST_ROW_ID_PREFIX = "console-inspector-cost-row-"
+
+# Shared between the Costs tab's per-turn drill-in and the Exchange tab's
+# turn-level load (task-9) -- identical wording for identical situations,
+# defined once so the two never drift apart.
+_NO_CAPTURES_MESSAGE = (
+    "No capture recorded for this turn (recorded before capture existed, "
+    "capture disabled, or capture failed)."
+)
+_LOAD_FAILURE_MESSAGE = (
+    "Could not load captures for this turn -- expand again to retry."
+)
+
+# Exchange tab (task-9) DOM id prefixes -- the four-level lazy chain (turn
+# -> call -> section -> message) is dispatched by a single
+# ``@on(Collapsible.Toggled)`` handler that switches on which prefix an
+# expanding Collapsible's id starts with (mirrors the Costs tab's own
+# ``_COST_ROW_ID_PREFIX`` filtering, just one handler per level instead of
+# one flat namespace).
+_EXCHANGE_TURN_ID_PREFIX = "console-inspector-exchange-turn-"
+_EXCHANGE_CALL_ID_PREFIX = "console-inspector-exchange-call-"
+_EXCHANGE_SECTION_ID_PREFIX = "console-inspector-exchange-section-"
+_EXCHANGE_MESSAGE_ID_PREFIX = "console-inspector-exchange-message-"
+_EXCHANGE_COPY_BUTTON_PREFIX = "console-inspector-exchange-copy-"
+_EXCHANGE_SAVE_BUTTON_PREFIX = "console-inspector-exchange-save-"
+
+# Section keys, in render order. "toolcalls" (the response's own tool
+# calls) is built separately -- and OMITTED entirely when empty -- rather
+# than living in this tuple, since every other section always renders.
+_SECTION_SYSTEM = "system"
+_SECTION_MESSAGES = "messages"
+_SECTION_TOOLS = "tools"
+_SECTION_RESPONSE = "response"
+_SECTION_TOOL_CALLS = "toolcalls"
+_SECTION_SAMPLING = "sampling"
+
+# Request keys already surfaced elsewhere in the call's UI (system prompt,
+# messages, tools sections, and the call title's model) -- excluded from
+# the "Sampling & routing" section so it shows only the remaining scalar
+# kwargs (temperature, max_tokens, seed, ...) without repeating the bulk
+# content.
+_SAMPLING_EXCLUDED_REQUEST_KEYS = frozenset(
+    {"system_message", "messages_payload", "tools", "model"}
+)
 
 
 @dataclass(frozen=True)
@@ -122,6 +187,12 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
     #console-inspector-costs-rows { height: 1fr; }
     .console-inspector-cost-row { height: auto; }
     #console-inspector-costs-totals { height: auto; margin-top: 1; text-style: bold; }
+    #console-inspector-exchange-turns { height: 1fr; }
+    .console-inspector-exchange-turn { height: auto; }
+    .console-inspector-exchange-call { height: auto; }
+    .console-inspector-exchange-section { height: auto; }
+    .console-inspector-exchange-message { height: auto; }
+    .console-inspector-exchange-call-actions { height: auto; margin-bottom: 1; }
     #console-inspector-actions { height: auto; margin-top: 1; }
     """
 
@@ -193,6 +264,23 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         self._initial_tab = initial_tab or TAB_COSTS
         self._loaded_row_indices: set[int] = set()
 
+        # Exchange tab (task-9) lazy-mount bookkeeping. Each level's
+        # dedup set is independent of the Costs tab's ``_loaded_row_
+        # indices`` -- expanding a turn in one tab must not be conflated
+        # with the other, even though both ultimately call the same
+        # ``exchanges_loader``.
+        self._loaded_exchange_turn_indices: set[int] = set()
+        self._loaded_exchange_call_keys: set[str] = set()
+        self._loaded_exchange_section_ids: set[str] = set()
+        self._loaded_exchange_message_ids: set[str] = set()
+        # "{turn_index}-{call_ordinal}" -> that call's capture, populated
+        # once its turn's async load resolves; every deeper level (section
+        # bodies, per-message bodies, Copy/Save) reads from here rather
+        # than re-fetching.
+        self._exchange_capture_by_call_key: dict[str, ExchangeCapture] = {}
+        self._exchange_message_by_id: dict[str, Any] = {}
+        self._save_blocked_reason = blocked_reason("save-context", ephemeral=ephemeral)
+
     def compose(self) -> ComposeResult:
         """Build the header, tabbed body, and shared Close action."""
         with Vertical(id=MODAL_ID):
@@ -209,11 +297,8 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                         markup=False,
                     )
                 with TabPane("Exchange", id=TAB_EXCHANGE):
-                    yield Static(
-                        "Exchange detail view is not available yet.",
-                        id="console-inspector-exchange-placeholder",
-                        markup=False,
-                    )
+                    with VerticalScroll(id="console-inspector-exchange-turns"):
+                        yield from self._build_exchange_turn_widgets()
                 with TabPane("Next Send", id=TAB_NEXT_SEND):
                     yield Static(
                         "Next Send preview is not available yet.",
@@ -376,23 +461,11 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
 
         if load_failed:
             self._loaded_row_indices.discard(turn.index)
-            await contents.mount(
-                Static(
-                    "Could not load captures for this turn -- expand again "
-                    "to retry.",
-                    markup=False,
-                )
-            )
+            await contents.mount(Static(_LOAD_FAILURE_MESSAGE, markup=False))
             return
 
         if not pairs:
-            await contents.mount(
-                Static(
-                    "No capture recorded for this turn (recorded before "
-                    "capture existed, capture disabled, or capture failed).",
-                    markup=False,
-                )
-            )
+            await contents.mount(Static(_NO_CAPTURES_MESSAGE, markup=False))
             return
 
         ordered = sorted(pairs, key=lambda pair: (pair[0].created_at, pair[0].seq))
@@ -404,6 +477,449 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                     markup=False,
                 )
             )
+
+    # -- Exchange tab (task-9) -----------------------------------------
+
+    def _build_exchange_turn_widgets(self) -> list[Widget]:
+        """Exchange-tab turn widgets: one lazily-drillable Collapsible per
+        turn, transcript-ordered. Mirrors ``_build_costs_widgets``'s
+        empty-body-until-first-expand shape, but for the Exchange tab's own
+        set of DOM ids (kept fully separate from the Costs tab's rows so
+        the two tabs never share loaded/mounted state)."""
+        turns = sorted(self._turns_by_index.values(), key=lambda turn: turn.index)
+        if not turns:
+            return [Static("No turns to inspect yet.", markup=False)]
+        return [
+            Collapsible(
+                title=Content.from_text(
+                    self._exchange_turn_title(turn, call_count=None), markup=False
+                ),
+                collapsed=True,
+                id=f"{_EXCHANGE_TURN_ID_PREFIX}{turn.index}",
+                classes="console-inspector-exchange-turn",
+            )
+            for turn in turns
+        ]
+
+    @staticmethod
+    def _exchange_turn_title(turn: InspectorTurn, call_count: int | None) -> str:
+        text = f"[{turn.index}] {turn.role}"
+        if call_count is not None:
+            noun = "call" if call_count == 1 else "calls"
+            text += f" -- {call_count} {noun}"
+        return text
+
+    def _exchange_call_title(self, capture: ExchangeCapture, abandoned: bool) -> str:
+        text = (
+            f"call {capture.seq} [{capture.status}] {capture.model} -- "
+            f"{self._call_cost_line(capture)}"
+        )
+        if abandoned:
+            text += " [abandoned regeneration]"
+        return text
+
+    @staticmethod
+    def _reported_usage_line(usage: ProviderUsage) -> str:
+        """The call's actual, provider-reported buckets -- deliberately NOT
+        prefixed with "~"/"est." anywhere in this string (hard constraint
+        4): unlike every per-piece estimate below it, these numbers are
+        authoritative."""
+        return (
+            f"Reported usage -- in:{usage.uncached_input} "
+            f"cache_r:{usage.cache_read} cache_w:{usage.cache_write} "
+            f"out:{usage.output}"
+        )
+
+    @staticmethod
+    def _response_text(capture: ExchangeCapture) -> str:
+        content = capture.response.get("content") if capture.response else None
+        return "" if content is None else str(content)
+
+    @staticmethod
+    def _json_block(obj: Any) -> str:
+        """Same idiom as ``ConsoleContextModal._json_block``."""
+        return json.dumps(obj, indent=2, default=str)
+
+    @staticmethod
+    def _exchange_section_id(call_key: str, section: str) -> str:
+        return f"{_EXCHANGE_SECTION_ID_PREFIX}{call_key}-{section}"
+
+    def _build_system_prompt_section(
+        self, capture: ExchangeCapture, call_key: str
+    ) -> Collapsible:
+        text = str(capture.request.get("system_message") or "")
+        est = estimate_tokens(text, "", "")
+        title = f"System prompt (~{est} tokens est.)"
+        return Collapsible(
+            title=Content.from_text(title, markup=False),
+            collapsed=True,
+            id=self._exchange_section_id(call_key, _SECTION_SYSTEM),
+            classes="console-inspector-exchange-section",
+        )
+
+    def _build_messages_section(
+        self, capture: ExchangeCapture, call_key: str
+    ) -> Collapsible:
+        messages = capture.request.get("messages_payload")
+        count = len(messages) if isinstance(messages, list) else 0
+        title = f"Messages ({count})"
+        return Collapsible(
+            title=Content.from_text(title, markup=False),
+            collapsed=True,
+            id=self._exchange_section_id(call_key, _SECTION_MESSAGES),
+            classes="console-inspector-exchange-section",
+        )
+
+    def _build_tools_section(
+        self, capture: ExchangeCapture, call_key: str
+    ) -> Collapsible:
+        tools = capture.request.get("tools")
+        count = len(tools) if isinstance(tools, list) else 0
+        title = f"Tools ({count})"
+        return Collapsible(
+            title=Content.from_text(title, markup=False),
+            collapsed=True,
+            id=self._exchange_section_id(call_key, _SECTION_TOOLS),
+            classes="console-inspector-exchange-section",
+        )
+
+    def _build_response_section(
+        self, capture: ExchangeCapture, call_key: str
+    ) -> Collapsible:
+        text = self._response_text(capture)
+        est = estimate_tokens(text, "", "")
+        title = f"Response (~{est} tokens est."
+        usage = ProviderUsage.from_json(capture.usage_json)
+        if usage is not None:
+            title += f" / reported out:{usage.output}"
+        title += ")"
+        return Collapsible(
+            title=Content.from_text(title, markup=False),
+            collapsed=True,
+            id=self._exchange_section_id(call_key, _SECTION_RESPONSE),
+            classes="console-inspector-exchange-section",
+        )
+
+    def _build_tool_calls_section(
+        self, capture: ExchangeCapture, call_key: str
+    ) -> Collapsible | None:
+        tool_calls = capture.response.get("tool_calls") if capture.response else None
+        if not isinstance(tool_calls, list) or not tool_calls:
+            return None
+        title = f"Tool calls ({len(tool_calls)})"
+        return Collapsible(
+            title=Content.from_text(title, markup=False),
+            collapsed=True,
+            id=self._exchange_section_id(call_key, _SECTION_TOOL_CALLS),
+            classes="console-inspector-exchange-section",
+        )
+
+    def _build_sampling_section(
+        self, capture: ExchangeCapture, call_key: str
+    ) -> Collapsible:
+        return Collapsible(
+            title=Content.from_text("Sampling & routing", markup=False),
+            collapsed=True,
+            id=self._exchange_section_id(call_key, _SECTION_SAMPLING),
+            classes="console-inspector-exchange-section",
+        )
+
+    @on(Collapsible.Toggled)
+    def _on_exchange_toggled(self, event: Collapsible.Toggled) -> None:
+        """Single dispatch point for all four Exchange-tab lazy levels.
+
+        Filters on the expanding Collapsible's id PREFIX (turn / call /
+        section / message) -- every id outside this tab's four namespaces
+        (e.g. a Costs-tab row, handled by ``_on_row_toggled`` above) falls
+        through untouched. Each level mounts exactly once per node id,
+        tracked in its own dedup set.
+        """
+        collapsible = event.collapsible
+        collapsible_id = collapsible.id or ""
+        if collapsible.collapsed:
+            return
+
+        if collapsible_id.startswith(_EXCHANGE_TURN_ID_PREFIX):
+            try:
+                turn_index = int(collapsible_id[len(_EXCHANGE_TURN_ID_PREFIX) :])
+            except ValueError:
+                return
+            if turn_index in self._loaded_exchange_turn_indices:
+                return
+            turn = self._turns_by_index.get(turn_index)
+            if turn is None:
+                return
+            self._loaded_exchange_turn_indices.add(turn_index)
+            self.run_worker(
+                self._load_exchange_turn(collapsible, turn), exclusive=False
+            )
+            return
+
+        if collapsible_id.startswith(_EXCHANGE_CALL_ID_PREFIX):
+            call_key = collapsible_id[len(_EXCHANGE_CALL_ID_PREFIX) :]
+            if call_key in self._loaded_exchange_call_keys:
+                return
+            self._loaded_exchange_call_keys.add(call_key)
+            self._mount_exchange_call_body(collapsible, call_key)
+            return
+
+        if collapsible_id.startswith(_EXCHANGE_SECTION_ID_PREFIX):
+            if collapsible_id in self._loaded_exchange_section_ids:
+                return
+            self._loaded_exchange_section_ids.add(collapsible_id)
+            remainder = collapsible_id[len(_EXCHANGE_SECTION_ID_PREFIX) :]
+            call_key, _, section = remainder.rpartition("-")
+            self._mount_exchange_section_body(collapsible, call_key, section)
+            return
+
+        if collapsible_id.startswith(_EXCHANGE_MESSAGE_ID_PREFIX):
+            if collapsible_id in self._loaded_exchange_message_ids:
+                return
+            self._loaded_exchange_message_ids.add(collapsible_id)
+            self._mount_exchange_message_body(collapsible)
+            return
+
+    async def _load_exchange_turn(
+        self, collapsible: Collapsible, turn: InspectorTurn
+    ) -> None:
+        """Fetch one turn's captures and mount one Collapsible per call.
+
+        Twin of ``_load_turn_captures`` (same re-sort, same failure/empty
+        handling and messages) but building CALL-level Collapsibles instead
+        of flat Static lines, and caching each capture by its call key so
+        every deeper level (sections, messages, Copy/Save) can build
+        synchronously off already-fetched data.
+        """
+        load_failed = False
+        try:
+            pairs = await self._exchanges_loader(turn.native_message_id)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "console_inspector: exchanges_loader failed for exchange turn {}",
+                turn.native_message_id,
+            )
+            pairs = []
+            load_failed = True
+
+        if not collapsible.is_mounted:
+            return
+        try:
+            contents = collapsible.query_one(Collapsible.Contents)
+        except NoMatches:
+            return
+        if not contents.is_mounted:
+            return
+
+        if load_failed:
+            self._loaded_exchange_turn_indices.discard(turn.index)
+            await contents.mount(Static(_LOAD_FAILURE_MESSAGE, markup=False))
+            return
+
+        if not pairs:
+            await contents.mount(Static(_NO_CAPTURES_MESSAGE, markup=False))
+            return
+
+        ordered = sorted(pairs, key=lambda pair: (pair[0].created_at, pair[0].seq))
+        collapsible.title = Content.from_text(
+            self._exchange_turn_title(turn, call_count=len(ordered)), markup=False
+        )
+        for call_ordinal, (capture, abandoned) in enumerate(ordered):
+            call_key = f"{turn.index}-{call_ordinal}"
+            self._exchange_capture_by_call_key[call_key] = capture
+            await contents.mount(
+                Collapsible(
+                    title=Content.from_text(
+                        self._exchange_call_title(capture, abandoned), markup=False
+                    ),
+                    collapsed=True,
+                    id=f"{_EXCHANGE_CALL_ID_PREFIX}{call_key}",
+                    classes="console-inspector-exchange-call",
+                )
+            )
+
+    def _mount_exchange_call_body(
+        self, collapsible: Collapsible, call_key: str
+    ) -> None:
+        """Populate one call's Collapsible: the omitted-keys/reported-usage
+        lines and the Copy/Save row mount immediately (cheap, always
+        useful); the six section Collapsibles mount with EMPTY bodies --
+        each one's own TextArea (or, for Messages, its per-message
+        Collapsibles) waits for that section's own first expand."""
+        capture = self._exchange_capture_by_call_key.get(call_key)
+        if capture is None:
+            return
+        try:
+            contents = collapsible.query_one(Collapsible.Contents)
+        except NoMatches:
+            return
+
+        if capture.omitted_keys:
+            contents.mount(
+                Static(
+                    f"Omitted by capture policy: {', '.join(capture.omitted_keys)}",
+                    markup=False,
+                )
+            )
+
+        usage = ProviderUsage.from_json(capture.usage_json)
+        if usage is not None:
+            contents.mount(Static(self._reported_usage_line(usage), markup=False))
+
+        save_button = Button(
+            "Save to File",
+            id=f"{_EXCHANGE_SAVE_BUTTON_PREFIX}{call_key}",
+            disabled=self._save_blocked_reason is not None,
+        )
+        if self._save_blocked_reason is not None:
+            save_button.tooltip = self._save_blocked_reason
+        contents.mount(
+            Horizontal(
+                Button("Copy JSON", id=f"{_EXCHANGE_COPY_BUTTON_PREFIX}{call_key}"),
+                save_button,
+                classes="console-inspector-exchange-call-actions",
+            )
+        )
+
+        contents.mount(self._build_system_prompt_section(capture, call_key))
+        contents.mount(self._build_messages_section(capture, call_key))
+        contents.mount(self._build_tools_section(capture, call_key))
+        contents.mount(self._build_response_section(capture, call_key))
+        tool_calls_section = self._build_tool_calls_section(capture, call_key)
+        if tool_calls_section is not None:
+            contents.mount(tool_calls_section)
+        contents.mount(self._build_sampling_section(capture, call_key))
+
+    def _mount_exchange_section_body(
+        self, collapsible: Collapsible, call_key: str, section: str
+    ) -> None:
+        capture = self._exchange_capture_by_call_key.get(call_key)
+        if capture is None:
+            return
+        try:
+            contents = collapsible.query_one(Collapsible.Contents)
+        except NoMatches:
+            return
+
+        if section == _SECTION_SYSTEM:
+            text = str(capture.request.get("system_message") or "")
+            contents.mount(TextArea(text, read_only=True))
+            return
+
+        if section == _SECTION_MESSAGES:
+            messages = capture.request.get("messages_payload")
+            if not isinstance(messages, list):
+                messages = []
+            for message_ordinal, message in enumerate(messages):
+                role = (
+                    message.get("role", "?") if isinstance(message, dict) else "?"
+                )
+                message_id = (
+                    f"{_EXCHANGE_MESSAGE_ID_PREFIX}{call_key}-{message_ordinal}"
+                )
+                self._exchange_message_by_id[message_id] = message
+                contents.mount(
+                    Collapsible(
+                        title=Content.from_text(
+                            f"[{message_ordinal}] {role}", markup=False
+                        ),
+                        collapsed=True,
+                        id=message_id,
+                        classes="console-inspector-exchange-message",
+                    )
+                )
+            return
+
+        if section == _SECTION_TOOLS:
+            tools = capture.request.get("tools") or []
+            contents.mount(TextArea(self._json_block(tools), read_only=True))
+            return
+
+        if section == _SECTION_RESPONSE:
+            contents.mount(
+                TextArea(self._response_text(capture), read_only=True)
+            )
+            return
+
+        if section == _SECTION_TOOL_CALLS:
+            tool_calls = (
+                capture.response.get("tool_calls") if capture.response else None
+            )
+            contents.mount(
+                TextArea(self._json_block(tool_calls or []), read_only=True)
+            )
+            return
+
+        if section == _SECTION_SAMPLING:
+            sampling = {
+                key: value
+                for key, value in capture.request.items()
+                if key not in _SAMPLING_EXCLUDED_REQUEST_KEYS
+            }
+            contents.mount(TextArea(self._json_block(sampling), read_only=True))
+            return
+
+    def _mount_exchange_message_body(self, collapsible: Collapsible) -> None:
+        message = self._exchange_message_by_id.get(collapsible.id or "")
+        if message is None:
+            return
+        try:
+            contents = collapsible.query_one(Collapsible.Contents)
+        except NoMatches:
+            return
+        contents.mount(TextArea(self._json_block(message), read_only=True))
+
+    @on(Button.Pressed)
+    def _on_exchange_call_button(self, event: Button.Pressed) -> None:
+        button_id = event.button.id or ""
+        if button_id.startswith(_EXCHANGE_COPY_BUTTON_PREFIX):
+            event.stop()
+            call_key = button_id[len(_EXCHANGE_COPY_BUTTON_PREFIX) :]
+            self._copy_exchange_capture(call_key)
+        elif button_id.startswith(_EXCHANGE_SAVE_BUTTON_PREFIX):
+            event.stop()
+            call_key = button_id[len(_EXCHANGE_SAVE_BUTTON_PREFIX) :]
+            self._save_exchange_capture(call_key)
+
+    def _copy_exchange_capture(self, call_key: str) -> None:
+        """Verbatim idiom from ``ConsoleContextModal._copy_json``, applied
+        to one call's ``ExchangeCapture`` instead of the whole snapshot."""
+        capture = self._exchange_capture_by_call_key.get(call_key)
+        if capture is None:
+            return
+        text = json.dumps(asdict(capture), indent=2, default=str)
+        try:
+            import pyperclip
+
+            pyperclip.copy(text)
+            self.notify("JSON copied to clipboard.")
+        except Exception as exc:
+            logger.warning(
+                "Failed to copy exchange capture JSON to clipboard: {}", exc
+            )
+            self.notify("Copy failed: pyperclip unavailable.", severity="warning")
+
+    def _save_exchange_capture(self, call_key: str) -> None:
+        """Verbatim idiom from ``ConsoleContextModal._save_json``, applied
+        to one call's ``ExchangeCapture``. Callers gate this behind
+        ``self._save_blocked_reason`` (the button is disabled while
+        ephemeral), but a stray call here degrades the same way -- the
+        writes below simply never happen in practice."""
+        capture = self._exchange_capture_by_call_key.get(call_key)
+        if capture is None:
+            return
+        text = json.dumps(asdict(capture), indent=2, default=str)
+        filename = f"chatbook_exchange_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        path = Path.home() / "Downloads" / filename
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+            self.notify(f"Saved to {path}")
+        except OSError as exc:
+            logger.warning("Failed to save exchange capture to {}: {}", path, exc)
+            self.notify(f"Save failed: {exc}", severity="error")
+        except Exception as exc:
+            logger.exception("Unexpected error saving exchange capture to {}", path)
+            self.notify(f"Save failed: {exc}", severity="error")
 
     def action_refresh(self) -> None:
         """"r" binding, wired for parity with ``ConsoleContextModal``.

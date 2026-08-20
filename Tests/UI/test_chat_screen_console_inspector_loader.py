@@ -89,6 +89,45 @@ async def test_native_captures_win_without_touching_the_db() -> None:
 
 
 @pytest.mark.asyncio
+async def test_native_captures_resolve_abandoned_via_the_optional_accessor() -> None:
+    """task-9: when ``abandoned_run_tags_for`` IS supplied, a native
+    capture's ``abandoned`` flag comes from it (keyed by ``run_tag``)
+    rather than always ``False``."""
+    abandoned_capture = _capture(model="native-model", run_tag="r-abandoned")
+    kept_capture = _capture(model="native-model-2", run_tag="r-kept", seq=2)
+    message = _message(
+        native_id="n1", exchanges=(abandoned_capture, kept_capture)
+    )
+    loader = _build_console_inspector_exchanges_loader(
+        {"n1": message},
+        _raising_db_accessor,
+        lambda _native_message_id: frozenset({"r-abandoned"}),
+    )
+
+    result = await loader("n1")
+
+    # ExchangeCapture is unhashable (its request/response fields are
+    # dicts) -- key off run_tag rather than using captures as dict keys.
+    abandoned_by_run_tag = {capture.run_tag: abandoned for capture, abandoned in result}
+    assert abandoned_by_run_tag == {"r-abandoned": True, "r-kept": False}
+
+
+@pytest.mark.asyncio
+async def test_native_captures_default_to_not_abandoned_without_an_accessor() -> None:
+    """Omitting ``abandoned_run_tags_for`` (the default) preserves task-8's
+    original behavior -- every native capture reports ``abandoned=False``."""
+    native_capture = _capture(model="native-model")
+    message = _message(native_id="n1", exchanges=(native_capture,))
+    loader = _build_console_inspector_exchanges_loader(
+        {"n1": message}, _raising_db_accessor
+    )
+
+    result = await loader("n1")
+
+    assert result == [(native_capture, False)]
+
+
+@pytest.mark.asyncio
 async def test_db_fallback_decodes_captures_via_capture_from_blob() -> None:
     """(b) No native captures, but a persisted id -- falls back to the DB,
     decoding each row's ``capture_blob`` through ``capture_from_blob`` and
