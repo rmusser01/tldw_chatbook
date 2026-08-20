@@ -658,14 +658,20 @@ class LibraryFileNotesWorkspace(Vertical):
         min-width: 32;
         height: 100%;
         padding-left: 1;
+        overflow-x: hidden;
+        overflow-y: auto;
     }
 
     #file-notes-search-row,
-    #file-notes-path-row,
     #file-notes-search,
     #file-notes-path {
         height: 3;
         min-height: 3;
+    }
+
+    #file-notes-path-row {
+        height: 4;
+        min-height: 4;
     }
 
     .file-notes-field-label {
@@ -684,8 +690,11 @@ class LibraryFileNotesWorkspace(Vertical):
     }
 
     #file-notes-path-label {
-        width: 17;
-        min-width: 17;
+        width: 100%;
+        height: 1;
+        min-height: 1;
+        padding-right: 0;
+        content-align: left top;
     }
 
     #file-notes-search,
@@ -1127,13 +1136,7 @@ class LibraryFileNotesWorkspace(Vertical):
 
     def _path_field_label_copy(self) -> str:
         """Describe the action context currently represented by the path field."""
-        if self._conflict_resolution_active:
-            return "New note path"
-        if self._selected_deleted_path:
-            return "Restore path"
-        if self._opened is not None:
-            return "New / move path"
-        return "New path"
+        return "Target path · New / Move / Save copy"
 
     @staticmethod
     def _large_file_preview_copy(opened: OpenedFileNote) -> str:
@@ -1236,7 +1239,7 @@ class LibraryFileNotesWorkspace(Vertical):
                 )
                 preview_status.display = False
                 yield preview_status
-                with Horizontal(id="file-notes-path-row"):
+                with Vertical(id="file-notes-path-row"):
                     yield Static(
                         self._path_field_label_copy(),
                         id="file-notes-path-label",
@@ -1254,6 +1257,7 @@ class LibraryFileNotesWorkspace(Vertical):
                     classes="file-notes-toolbar",
                 ):
                     yield Button("New", id="file-notes-new", compact=True)
+                    yield Button("Move", id="file-notes-move", compact=True)
                     yield Button("Restore", id="file-notes-restore", compact=True)
                     yield Button(
                         "Compare",
@@ -1266,22 +1270,21 @@ class LibraryFileNotesWorkspace(Vertical):
                         compact=True,
                     )
                     yield Button(
-                        "Save draft as copy",
+                        "Save copy",
                         id="file-notes-save-copy",
                         compact=True,
                     )
+                    yield Static("", id="file-notes-delete-spacer")
+                    yield Button("Delete", id="file-notes-delete", compact=True)
                     yield Button(
                         "More file actions",
                         id="file-notes-maintenance-toggle",
                         compact=True,
                     )
-                    yield Static("", id="file-notes-delete-spacer")
-                    yield Button("Delete", id="file-notes-delete", compact=True)
                 with Horizontal(
                     id="file-notes-maintenance-actions",
                     classes="file-notes-toolbar",
                 ):
-                    yield Button("Move", id="file-notes-move", compact=True)
                     yield Button("Protect", id="file-notes-protect", compact=True)
                     yield Button("Reload", id="file-notes-reload", compact=True)
                     yield Button("Refresh", id="file-notes-refresh", compact=True)
@@ -4221,7 +4224,7 @@ class LibraryFileNotesWorkspace(Vertical):
             )
         copy_button = self.query_one("#file-notes-save-copy", Button)
         exact_export = self._opened is not None and self._opened.is_excerpt
-        copy_label = "Export exact copy" if exact_export else "Save draft as copy"
+        copy_label = "Export exact copy" if exact_export else "Save copy"
         disabled_prefix = f"{LIBRARY_DISABLED_ACTION_MARKER} "
         if str(copy_button.label).removeprefix(disabled_prefix) != copy_label:
             copy_button.label = copy_label
@@ -4258,9 +4261,13 @@ class LibraryFileNotesWorkspace(Vertical):
                 protect.parent.refresh(layout=True)
         reload_button = self.query_one("#file-notes-reload", Button)
         reload_label = (
-            "Discard draft and reload"
-            if self._save_state in {"conflict", "error"}
-            else "Reload"
+            "Reload from disk"
+            if self._save_state == "conflict"
+            else (
+                "Discard draft and reload"
+                if self._save_state == "error"
+                else "Reload"
+            )
         )
         if str(reload_button.label) != reload_label:
             reload_button.label = reload_label
@@ -4348,13 +4355,12 @@ class LibraryFileNotesWorkspace(Vertical):
                 has_document
                 and (
                     (self._opened is not None and self._opened.is_excerpt)
-                    or self._save_state in {"dirty", "error"}
+                    or self._save_state in {"dirty", "conflict", "error"}
                 )
             ),
             "file-notes-refresh": has_service,
         }
         maintenance_ids = {
-            "file-notes-move",
             "file-notes-protect",
             "file-notes-reload",
             "file-notes-refresh",
@@ -4368,7 +4374,13 @@ class LibraryFileNotesWorkspace(Vertical):
         focused = self.app.focused
         for action_id, displayed in visibility.items():
             if action_id in maintenance_ids:
-                displayed = displayed and self._maintenance_expanded
+                displayed = displayed and (
+                    self._maintenance_expanded
+                    or (
+                        action_id == "file-notes-reload"
+                        and self._save_state == "conflict"
+                    )
+                )
             displayed = displayed and not confirming_reload
             button = self.query_one(f"#{action_id}", Button)
             if button is focused and not displayed:
@@ -4390,7 +4402,10 @@ class LibraryFileNotesWorkspace(Vertical):
         maintenance = self.query_one("#file-notes-maintenance-actions")
         maintenance.display = (
             maintenance_available
-            and self._maintenance_expanded
+            and (
+                self._maintenance_expanded
+                or self._save_state == "conflict"
+            )
             and not resolving_conflict
             and not confirming_reload
         )

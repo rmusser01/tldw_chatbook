@@ -48,9 +48,9 @@ you're leaving.
 - **Editor pane** (right) — a breadcrumb ("No file selected" until you open
   one; "Recently deleted: \<path\>" right after a delete), a save-status
   label (Idle / Dirty / Saving / Saved / Conflict / Error, sometimes with a
-  detail after a dash), a path input with placeholder "relative/path.md",
-  two toolbars (a primary row beginning with **New** and ending with
-  **Delete**, plus the disclosed secondary actions), the text editor itself,
+  detail after a dash), a path input labeled **Target path · New / Move / Save
+  copy** with placeholder "relative/path.md", two toolbars (the primary
+  actions plus the disclosed secondary actions), the text editor itself,
   and an action-status line where results like "Deleted. Restore remains
   available." appear.
 - **Session Git panel** — pressing **Session Git (N)** swaps the whole
@@ -70,26 +70,28 @@ you're leaving.
 
 ### Editor toolbar
 
-The path input ("relative/path.md") is the target for **New**, **Move**, and
-**Save draft as copy** or **Export exact copy**: type where you want the file
-to go, then press the relevant button.
+The persistently labeled path input ("relative/path.md") is the target for
+**New**, **Move**, and **Save copy** or **Export exact copy**: type where you
+want the file to go, then press the relevant button.
 
-On a wide editor, **New** stays at the far left and **Delete** is separated
-from the routine actions at the far right. On a compact editor, **Delete** is
-the final full-width row. Its two-activation confirmation is unchanged.
+The normal primary order is **New**, **Move**, **Delete**, then **More file
+actions**. **Delete** remains separated from **New**; compact actions use
+full-width rows and the editor pane scrolls to keep each focused action
+reachable. **More file actions** reveals the currently applicable secondary
+Protect/Unprotect, Reload, and Refresh actions.
 
 | Control | What it does |
 |---|---|
 | **New** | Creates an empty file at the typed path and opens it — there is no file picker for creating content |
 | **Move** | Moves the open file to the typed path |
-| **Delete** | Two-press: first press shows "Click Delete again to confirm.", second deletes ("Deleted. Restore remains available.") |
+| **Delete** | Two-press: first activation shows "Activate Delete again to confirm.", second deletes ("Deleted. Restore remains available.") |
 | **Restore** | Brings back the most recently deleted file |
 | **Protect** / **Unprotect** | Toggles protection on the open file ("Protected." / "Unprotected."); every save to a protected file first stores a checkpoint of its previous contents in the local recovery database |
-| **Reload** / **Discard draft and reload** | Re-reads the open file from disk. In Error, the destructive label is shown and the first activation opens a confirmation with **Cancel** focused; only **Discard draft and load disk** replaces the editor contents |
+| **Reload** / **Reload from disk** / **Discard draft and reload** | Re-reads the open file from disk. **Reload from disk** becomes immediately visible in Conflict; in Error, the destructive label is shown. The first activation opens a confirmation with **Cancel** focused; only **Discard draft and load disk** replaces the editor contents |
 | **Compare** | Appears only for a Conflict and opens a read-only Base / Draft / Disk comparison without resolving the conflict or changing the editor |
 | **Resolve conflict** | Appears only for a Conflict and discloses the three bounded choices described below; none overwrites the changed disk file |
-| **Save draft as copy** | Writes the complete editor draft to the typed path; enabled while the save status is Dirty or Error. In Conflict, use **Resolve conflict** and **Save draft as new note** instead |
-| **Export exact copy** | Replaces **Save draft as copy** for a large read-only file and streams the complete current disk bytes, not the visible excerpt, to an absent typed path |
+| **Save copy** | Writes the complete editor draft to the typed path; enabled while the save status is Dirty, Conflict, or Error |
+| **Export exact copy** | Replaces **Save copy** for a large read-only file and streams the complete current disk bytes, not the visible excerpt, to an absent typed path |
 | **Refresh** | Re-scans the folder and rebuilds the **Files** tree |
 
 Saving is automatic: edit and the status walks Dirty → Saving → Saved. If the
@@ -107,9 +109,9 @@ choices:
 
 - **Keep editing** closes the resolution choices and returns focus to
   **Resolve conflict**. The Base, Draft, Disk, and Conflict state are unchanged.
-- **Save draft as new note** uses the path input, labeled "New note path" while
-  the choices are open. It writes the exact draft only when that destination
-  does not already exist, then opens the new note after the write succeeds.
+- **Save draft as new note** uses the same persistently labeled target-path
+  input. It writes the exact draft only when that destination does not already
+  exist, then opens the new note after the write succeeds.
 - **Discard draft and load disk** opens the same Cancel-first, freshness-checked
   confirmation described below. It is the only resolution choice that can
   replace the editor draft.
@@ -117,7 +119,8 @@ choices:
 There is no overwrite choice. If the proposed new-note destination already
 exists, File Notes leaves both that file and the conflict draft unchanged.
 
-**Discard draft and reload** first reads the current disk
+**Reload from disk** (Conflict) or **Discard draft and reload** (Error) first
+reads the current disk
 version and asks for confirmation. **Cancel** or **Escape** preserves the exact
 draft and conflict; confirming rechecks the root, file, editing session, and
 disk version before it replaces the draft. If any of those changed, reload
