@@ -37,3 +37,27 @@ opened-and-cancelled while browsing. Observed live on dev @ ff435772c
       prompt text (existing behavior preserved).
 - [ ] The User Guide quirk note is updated/removed to match.
 <!-- AC:END -->
+
+## Implementation Plan
+
+ADR required: no
+
+ADR path: N/A
+
+Reason: this is a localized command-draft cleanup bug fix within the existing
+Console/composer contracts; it changes no storage, service boundary,
+dependency, security policy, or long-lived architecture.
+
+1. Add mounted RED tests for keyboard and visible-Send cancellation, Restore,
+   no-row refusal, non-empty arguments, launch failure, and stale composers.
+2. Add the narrow argument-free `/rewind` branch at the existing command-send
+   boundary and return an opened/refused result from the rewind handler.
+3. Guard visible-Send cleanup by composer identity, edit serial, generation,
+   and dispatched text; restore keyboard stashes on refusal or exception.
+4. Remove the resolved User Guide workaround and run the bounded rewind/send/
+   safe-dismissal test and static-analysis matrix.
+5. Complete independent review, task evidence, acceptance criteria, and Done
+   status before branch integration.
+
+Detailed executable plan:
+`Docs/superpowers/plans/2026-08-19-task-2705-rewind-cancel-draft.md`

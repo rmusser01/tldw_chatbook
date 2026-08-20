@@ -86,9 +86,11 @@ command grammar or add argument validation.
 The modal callback remains unchanged:
 
 - `None` makes the existing immediate composer-focus request; the shared safe
-  dismissal policy then restores the actual opener. A keyboard invocation's
-  opener remains the composer, while a visible-Send invocation's opener is the
-  Send button. This task does not change that focus policy.
+  dismissal policy then evaluates the actual opener. A keyboard invocation's
+  opener remains the composer. A visible-Send invocation's Send opener becomes
+  ineligible when the consumed command leaves the composer empty and disables
+  Send, so the existing Console fallback also focuses the composer. This task
+  does not change the shared focus policy.
 - `restore` deliberately replaces the current draft (including any post-Enter
   text) with the selected prompt's full text, preserving the existing
   `replace=True` contract.
@@ -122,9 +124,9 @@ consumed.
   assert Escape and **Never mind** preserve that text exactly.
 - Exercise both terminal negative paths: Escape and visible **Never mind**.
   Each must close only the modal, leave no command invocation in the draft,
-  and preserve any post-Enter text. Assert the existing opener-specific focus:
-  keyboard dispatch returns to the composer; visible-Send dispatch returns to
-  the Send button.
+  and preserve any post-Enter text. Assert focus returns to the composer for
+  both routes: directly for keyboard, and through the existing ineligible-
+  opener Console fallback for visible Send.
 - Exercise **Restore to here** through the mounted modal and assert the selected
   full prompt replaces the current draft.
 - Assert a no-prompts refusal restores `/rewind` ahead of any post-Enter text
