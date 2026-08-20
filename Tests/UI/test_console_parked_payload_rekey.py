@@ -264,3 +264,41 @@ def test_script_second_same_session_round_does_not_evict_the_first(
 
     ctrl.resolve_pending_skill_script(True, False, round_2)
     second.join(timeout=5)
+
+
+def test_bridges_do_not_share_a_head(controller):
+    """Each bridge keeps its own FIFO head for the same session.
+
+    An approval round and a skill-install round armed for one session are
+    independent surfaces -- neither may evict or promote the other.
+    """
+    ctrl = controller
+    approvals_mounted = ctrl.mounted
+    install_mounted = []
+    ctrl.set_pending_skill_install = install_mounted.append
+    ctrl.skill_install_confirm_timeout_seconds = lambda: 30.0
+
+    results = {}
+    approval = _arm(ctrl, "alpha", ctrl.session_a, results, "alpha")
+    assert _wait_until(lambda: len(_round_ids(ctrl)) == 1)
+    approval_round = _round_ids(ctrl)[0]
+
+    install = _arm_install(ctrl, "https://x/one", ctrl.session_a, results, "one")
+    assert _wait_until(lambda: len(ctrl.pending_skill_install_ids()) == 1)
+    install_round = ctrl.pending_skill_install_ids()[0]
+
+    # The approvals payload names its id `round_id`; the install payload
+    # names its own `request_id`. Neither bridge renames the other's.
+    assert approvals_mounted[-1]["round_id"] == approval_round
+    assert install_mounted[-1]["request_id"] == install_round
+
+    ctrl.resolve_pending_approval({"alpha": "approve_once"}, round_id=approval_round)
+    approval.join(timeout=5)
+
+    assert _wait_until(lambda: approvals_mounted[-1] is None)
+    assert install_mounted[-1] is not None, (
+        "resolving an approval round must not clear the install card"
+    )
+
+    ctrl.resolve_pending_skill_install(True, request_id=install_round)
+    install.join(timeout=5)

@@ -1741,11 +1741,6 @@ class ConsoleChatController:
         #: `request_id`. The mounted card is the session's FIFO head, so a
         #: second same-session confirm no longer evicts an older sibling.
         self._parked_skill_script_payloads: dict[str, dict[str, Any]] = {}
-        #: The currently-armed round's unique id (see `request_skill_script_
-        #: confirm` / `resolve_pending_skill_script`). A resolve carrying any
-        #: other id (including None) is dropped -- this is what stops a
-        #: late button press from a torn-down round 1 from authorizing
-        #: round 2's script. `None` whenever no round is armed.
 
     @property
     def run_state(self) -> ConsoleRunState:
@@ -5141,8 +5136,9 @@ class ConsoleChatController:
         rather than at its auto-deny deadline, (e) discarded from
         ``_pending_approvals`` so the session's NEEDS_APPROVAL badge
         clears once its last round is gone, and (f) taken off screen
-        through the SAME round-identity-guarded clear that round's own
-        teardown uses, so a sibling round's card is never clobbered.
+        through the SAME FIFO-head re-derive (``_remount_head``) that the
+        round's own teardown uses, so a sibling round's card is never
+        clobbered.
 
         Thread-safe. Each registry is swept under its own lock, and the
         two locks are taken SEQUENTIALLY, never nested. ``discard_pending_
