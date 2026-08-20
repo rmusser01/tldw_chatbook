@@ -6,10 +6,12 @@ keyboard focus cues, and Enter activation.
 """
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from rich.segment import Segment
 from textual.app import App
+from textual.geometry import Region
 from textual.widgets import Button, Static, TextArea
 
 from tldw_chatbook.Widgets.Console.console_edit_message_modal import (
@@ -20,6 +22,8 @@ from tldw_chatbook.Widgets.Console.console_edit_message_modal import (
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 _BUNDLED_CSS = _REPOSITORY_ROOT / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"
+_REAL_BUNDLE_SIZES = ((200, 50), (235, 52))
+_MIN_ACTION_CONTRAST = 3.0
 
 
 def test_edit_result_dataclass_shape():
@@ -61,6 +65,11 @@ def _cropped_compositor_region(
 ) -> tuple[tuple[Segment, ...], ...]:
     """Return exact compositor segments cropped to ``widget.region``."""
     render_strips = list(app.screen._compositor.render_strips())
+    assert 0 <= widget.region.y and widget.region.bottom <= len(render_strips), (
+        f"{widget.id!r} compositor crop must be vertically contained; "
+        f"widget_region={widget.region!r}, screen_region={app.screen.region!r}, "
+        f"strip_count={len(render_strips)}"
+    )
     cropped_rows: list[tuple[Segment, ...]] = []
     for y in range(widget.region.y, widget.region.bottom):
         row: list[Segment] = []
@@ -76,6 +85,27 @@ def _cropped_compositor_region(
             cursor = next_cursor
         cropped_rows.append(tuple(row))
     return tuple(cropped_rows)
+
+
+def test_cropped_compositor_region_rejects_an_offscreen_widget() -> None:
+    screen_region = Region(0, 0, 10, 1)
+    app = SimpleNamespace(
+        screen=SimpleNamespace(
+            region=screen_region,
+            _compositor=SimpleNamespace(render_strips=lambda: ((),)),
+        )
+    )
+    widget_region = Region(0, 1, 4, 1)
+    widget = SimpleNamespace(id="offscreen-action", region=widget_region)
+
+    with pytest.raises(AssertionError) as exc_info:
+        _cropped_compositor_region(app, widget)  # type: ignore[arg-type]
+
+    message = str(exc_info.value)
+    assert "offscreen-action" in message
+    assert repr(widget_region) in message
+    assert repr(screen_region) in message
+    assert "strip_count=1" in message
 
 
 def _joined_segment_text(rows: tuple[tuple[Segment, ...], ...]) -> str:
@@ -181,7 +211,7 @@ _REAL_BUNDLE_ACTIONS = [
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("size", [(200, 50), (235, 52)])
+@pytest.mark.parametrize("size", _REAL_BUNDLE_SIZES)
 @pytest.mark.parametrize(
     ("can_resend", "selector", "expected_label"), _REAL_BUNDLE_ACTIONS
 )
@@ -224,7 +254,7 @@ async def test_real_bundle_action_containment(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("size", [(200, 50), (235, 52)])
+@pytest.mark.parametrize("size", _REAL_BUNDLE_SIZES)
 @pytest.mark.parametrize(
     ("can_resend", "selector", "expected_label"), _REAL_BUNDLE_ACTIONS
 )
@@ -255,7 +285,7 @@ async def test_real_bundle_action_hit_test(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("size", [(200, 50), (235, 52)])
+@pytest.mark.parametrize("size", _REAL_BUNDLE_SIZES)
 @pytest.mark.parametrize(
     ("can_resend", "selector", "expected_label"), _REAL_BUNDLE_ACTIONS
 )
@@ -292,7 +322,7 @@ async def test_real_bundle_action_painted_label(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("size", [(200, 50), (235, 52)])
+@pytest.mark.parametrize("size", _REAL_BUNDLE_SIZES)
 @pytest.mark.parametrize(
     ("can_resend", "selector", "expected_label"), _REAL_BUNDLE_ACTIONS
 )
@@ -321,7 +351,7 @@ async def test_real_bundle_action_ordinary_contrast(
             if segment.style is not None
         )
 
-        assert contrasts and min(contrasts) >= 3.0, (
+        assert contrasts and min(contrasts) >= _MIN_ACTION_CONTRAST, (
             f"ordinary {expected_label!r} must paint at >=3:1 at size={size}; "
             f"region={button.region!r}, contrasts={contrasts!r}, "
             f"label_segments={label_segments!r}"
@@ -329,15 +359,11 @@ async def test_real_bundle_action_ordinary_contrast(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("size", [(200, 50), (235, 52)])
-@pytest.mark.parametrize(
-    ("can_resend", "selector", "expected_label"), _REAL_BUNDLE_ACTIONS
-)
+@pytest.mark.parametrize("size", _REAL_BUNDLE_SIZES)
+@pytest.mark.parametrize("can_resend", [False, True], ids=["save", "resend"])
 async def test_real_bundle_focus(
     size: tuple[int, int],
     can_resend: bool,
-    selector: str,
-    expected_label: str,
 ) -> None:
     """Tab focus must preserve each exact label and add a non-colour cue."""
     app = _RealBundleModalHost()
@@ -382,12 +408,7 @@ async def test_real_bundle_focus(
                 ),
             )
 
-        button = buttons[selector]
-        ordinary_rows = ordinary_rows_by_action[selector]
-        ordinary_label_segments = _painted_label_segments(ordinary_rows, expected_label)
-        ordinary_styles = tuple(segment.style for segment in ordinary_label_segments)
-        target_index = [item[0] for item in focus_order].index(selector)
-        for expected_selector, _ in focus_order[: target_index + 1]:
+        for expected_selector, expected_label in focus_order:
             await pilot.press("tab")
             await pilot.pause()
             await pilot.pause()
@@ -444,31 +465,42 @@ async def test_real_bundle_focus(
                         f"{ordinary_cue_signatures[action_selector]!r}, "
                         f"current_signature={cue_signature!r}"
                     )
-        await pilot.pause()
 
-        focused_rows = _cropped_compositor_region(app, button)
-        focused_text = _joined_segment_text(focused_rows)
-        focused_label_segments = _painted_label_segments(focused_rows, expected_label)
-        focused_styles = tuple(segment.style for segment in focused_label_segments)
-        focused_contrasts = tuple(
-            _contrast(segment.style.color, segment.style.bgcolor)
-            for segment in focused_label_segments
-            if segment.style is not None
-        )
+            button = buttons[expected_selector]
+            ordinary_label_segments = _painted_label_segments(
+                ordinary_rows_by_action[expected_selector], expected_label
+            )
+            ordinary_styles = tuple(
+                segment.style for segment in ordinary_label_segments
+            )
+            focused_rows = _cropped_compositor_region(app, button)
+            focused_text = _joined_segment_text(focused_rows)
+            focused_label_segments = _painted_label_segments(
+                focused_rows, expected_label
+            )
+            focused_styles = tuple(segment.style for segment in focused_label_segments)
+            focused_contrasts = tuple(
+                _contrast(segment.style.color, segment.style.bgcolor)
+                for segment in focused_label_segments
+                if segment.style is not None
+            )
 
-        assert modal.focused is button
-        assert expected_label in focused_text, (
-            f"focused {expected_label!r} must survive in its exact region at "
-            f"size={size}; focused_text={focused_text!r}, rows={focused_rows!r}"
-        )
-        assert focused_contrasts and min(focused_contrasts) >= 3.0, (
-            f"focused {expected_label!r} must paint at >=3:1 at size={size}; "
-            f"contrasts={focused_contrasts!r}, segments={focused_label_segments!r}"
-        )
-        assert focused_styles != ordinary_styles, (
-            f"focused {expected_label!r} styles must differ from ordinary styles; "
-            f"ordinary={ordinary_styles!r}, focused={focused_styles!r}"
-        )
+            assert modal.focused is button
+            assert expected_label in focused_text, (
+                f"focused {expected_label!r} must survive in its exact region at "
+                f"size={size}; focused_text={focused_text!r}, rows={focused_rows!r}"
+            )
+            assert (
+                focused_contrasts and min(focused_contrasts) >= _MIN_ACTION_CONTRAST
+            ), (
+                f"focused {expected_label!r} must paint at >=3:1 at size={size}; "
+                f"contrasts={focused_contrasts!r}, "
+                f"segments={focused_label_segments!r}"
+            )
+            assert focused_styles != ordinary_styles, (
+                f"focused {expected_label!r} styles must differ from ordinary styles; "
+                f"ordinary={ordinary_styles!r}, focused={focused_styles!r}"
+            )
 
 
 @pytest.mark.asyncio
@@ -522,7 +554,7 @@ async def test_enter_activates_focused_action():
     app = _RealBundleModalHost()
     result: list[ConsoleEditResult | None] = []
 
-    async with app.run_test(size=(200, 50)) as pilot:
+    async with app.run_test(size=_REAL_BUNDLE_SIZES[0]) as pilot:
         modal = ConsoleEditMessageModal(content="orig")
         await app.push_screen(modal, callback=result.append)
         await pilot.pause()
