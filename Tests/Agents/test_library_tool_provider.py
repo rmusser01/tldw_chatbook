@@ -936,3 +936,77 @@ def test_sealed_payload_survives_fallbacks():
     assert [row.get("doc_id") for row in payload["results"]] == (
         [None] * 5 + [f"note_n{index}" for index in range(5, 10)]
     )
+
+
+# --------------------------------------------------------------------------
+# TASK-18903 (PR #1823 review finding 3): partial seam failures must reach
+# the agent. The panel tells the user which seams failed; the tool used to
+# serialize only the surviving rows and report success, so the agent could
+# not distinguish an incomplete corpus search from a complete one.
+# --------------------------------------------------------------------------
+
+
+def _seam_failure_diagnostics(*seams: str) -> dict:
+    from tldw_chatbook.Library.library_local_rag_search_service import (
+        KEYWORD_SEAM_DIAGNOSTICS_KEY,
+        SEAM_STATUS_FAILED,
+    )
+
+    return {
+        KEYWORD_SEAM_DIAGNOSTICS_KEY: [
+            {
+                "status": SEAM_STATUS_FAILED,
+                "seam": seam,
+                "message": f"The {seam} seam failed and returned no rows.",
+            }
+            for seam in seams
+        ]
+    }
+
+
+def test_rag_invoke_partial_seam_failure_names_the_failed_seams():
+    service = FakeRagService(
+        result={
+            "results": [_rag_row(1)],
+            "diagnostics": _seam_failure_diagnostics("prompts", "conversations"),
+        }
+    )
+    provider = LibraryRagToolProvider(service)
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q"})
+
+    assert result.ok is True
+    payload = json.loads(result.content)
+    assert payload["returned"] == 1, "surviving rows must still be returned"
+    assert payload["failed_seams"] == ["conversations", "prompts"]
+    assert "Incomplete search" in payload["note"]
+    assert "conversations, prompts" in payload["note"]
+
+
+def test_rag_invoke_healthy_search_has_no_failure_fields():
+    service = FakeRagService(result={"results": [_rag_row(1)]})
+    provider = LibraryRagToolProvider(service)
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q"})
+
+    payload = json.loads(result.content)
+    assert "failed_seams" not in payload
+    assert "note" not in payload
+
+
+def test_rag_invoke_zero_survivors_with_failures_is_still_marked_incomplete():
+    """`empty` + failed seams is the most dangerous shape: without the field
+    the agent reads it as 'the corpus has nothing'."""
+    service = FakeRagService(
+        result={
+            "results": [],
+            "diagnostics": _seam_failure_diagnostics("notes"),
+        }
+    )
+    provider = LibraryRagToolProvider(service)
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q"})
+
+    payload = json.loads(result.content)
+    assert payload["status"] == "empty"
+    assert payload["failed_seams"] == ["notes"]

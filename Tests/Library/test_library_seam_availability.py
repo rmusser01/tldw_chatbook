@@ -26,7 +26,7 @@ from tldw_chatbook.Library.library_local_rag_search_service import (
 ALL_TYPES = ("notes", "media", "conversations", "prompts")
 
 
-class _Exploding:
+class ExplodingBackend:
     """Any awaited method raises -- a configured backend that is broken."""
 
     def __init__(self, label: str) -> None:
@@ -39,7 +39,7 @@ class _Exploding:
         return boom
 
 
-class _ExplodingSync:
+class ExplodingSyncBackend:
     """Sync-method backend (chachanotes_db) that raises."""
 
     def __init__(self, label: str) -> None:
@@ -54,24 +54,24 @@ class _ExplodingSync:
 
 def _all_broken_app() -> SimpleNamespace:
     return SimpleNamespace(
-        notes_scope_service=_Exploding("notes"),
-        media_reading_scope_service=_Exploding("media"),
-        chachanotes_db=_ExplodingSync("chachanotes"),
-        prompt_scope_service=_Exploding("prompts"),
+        notes_scope_service=ExplodingBackend("notes"),
+        media_reading_scope_service=ExplodingBackend("media"),
+        chachanotes_db=ExplodingSyncBackend("chachanotes"),
+        prompt_scope_service=ExplodingBackend("prompts"),
         notes_user_id="u",
     )
 
 
 class TestSeamStates:
     @pytest.mark.asyncio
-    async def test_unconfigured_seam_is_UNAVAILABLE(self):
+    async def test_unconfigured_seam_is_unavailable(self):
         service = LibraryLocalRagSearchService(SimpleNamespace())
         state, rows = await service._search_prompts("q", 5)
         assert state is SeamState.UNAVAILABLE
         assert rows == []
 
     @pytest.mark.asyncio
-    async def test_throwing_seam_is_FAILED_not_available(self):
+    async def test_throwing_seam_is_failed_not_available(self):
         """THE BUG. A configured backend that raises used to return
         `(True, [])` -- claiming health while broken."""
         service = LibraryLocalRagSearchService(_all_broken_app())
@@ -99,7 +99,7 @@ class TestTotalFailure:
         assert outcome.status == "failed"
 
     @pytest.mark.asyncio
-    async def test_total_failure_is_NOT_answerable(self):
+    async def test_total_failure_is_not_answerable(self):
         """R1: `empty` is in LIBRARY_RAG_ANSWERABLE_RETRIEVAL_STATUSES, so the
         old behaviour let a total outage reach the answer path and generate an
         answer from no context at all."""
@@ -137,7 +137,7 @@ class TestPartialFailure:
         """Silence must not read as absence: the caller gets what worked AND
         is told what did not run."""
 
-        class _Notes:
+        class FakeNotesBackend:
             async def search_notes(self, **_k):
                 return [
                     {
@@ -149,8 +149,8 @@ class TestPartialFailure:
                 ]
 
         app = SimpleNamespace(
-            notes_scope_service=_Notes(),
-            prompt_scope_service=_Exploding("prompts"),
+            notes_scope_service=FakeNotesBackend(),
+            prompt_scope_service=ExplodingBackend("prompts"),
             notes_user_id="u",
         )
         outcome = await LibraryLocalRagSearchService(app).search(
@@ -170,11 +170,11 @@ class TestPartialFailure:
 
     @pytest.mark.asyncio
     async def test_healthy_search_records_no_failure_entries(self):
-        class _Notes:
+        class FakeNotesBackend:
             async def search_notes(self, **_k):
                 return []
 
-        app = SimpleNamespace(notes_scope_service=_Notes(), notes_user_id="u")
+        app = SimpleNamespace(notes_scope_service=FakeNotesBackend(), notes_user_id="u")
         outcome = await LibraryLocalRagSearchService(app).search(
             "q", ("notes",), "search", top_k=5
         )
@@ -194,7 +194,7 @@ class TestUserVisibleNotice:
             LIBRARY_RAG_ROUTE_NOTES_KEY,
         )
 
-        class _Notes:
+        class FakeNotesBackend:
             async def search_notes(self, **_k):
                 return [
                     {"id": 1, "title": "t", "content": "c",
@@ -202,8 +202,8 @@ class TestUserVisibleNotice:
                 ]
 
         app = SimpleNamespace(
-            notes_scope_service=_Notes(),
-            prompt_scope_service=_Exploding("prompts"),
+            notes_scope_service=FakeNotesBackend(),
+            prompt_scope_service=ExplodingBackend("prompts"),
             notes_user_id="u",
         )
         outcome = await LibraryLocalRagSearchService(app).search(
@@ -223,11 +223,11 @@ class TestUserVisibleNotice:
             LIBRARY_RAG_ROUTE_NOTES_KEY,
         )
 
-        class _Notes:
+        class FakeNotesBackend:
             async def search_notes(self, **_k):
                 return []
 
-        app = SimpleNamespace(notes_scope_service=_Notes(), notes_user_id="u")
+        app = SimpleNamespace(notes_scope_service=FakeNotesBackend(), notes_user_id="u")
         outcome = await LibraryLocalRagSearchService(app).search(
             "q", ("notes",), "search", top_k=5
         )
