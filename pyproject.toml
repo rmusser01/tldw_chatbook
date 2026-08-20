@@ -512,6 +512,7 @@ exclude = [
     "migrations/chachanotes_v36_to_v37_provider_continuation.sql",
     "migrations/chachanotes_v37_to_v38_message_trajectory_metadata.sql",
     "migrations/chachanotes_v38_to_v39_visual_identity.sql",
+    "migrations/chachanotes_v39_to_v40_transcript_annotations.sql",
 ]
 # Preserve the licenses for vendored packages
 "tldw_chatbook.Third_Party.aider" = ["LICENSE.txt"]

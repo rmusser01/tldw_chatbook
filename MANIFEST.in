@@ -22,6 +22,7 @@ include tldw_chatbook/DB/migrations/chachanotes_v33_to_v34_visual_compaction_pol
 include tldw_chatbook/DB/migrations/chachanotes_v34_to_v35_conversation_dictionary_attachments.sql
 include tldw_chatbook/DB/migrations/chachanotes_v35_to_v36_note_folders.sql
 include tldw_chatbook/DB/migrations/chachanotes_v36_to_v37_provider_continuation.sql
+include tldw_chatbook/DB/migrations/chachanotes_v39_to_v40_transcript_annotations.sql
 include tldw_chatbook/Third_Party/aider/LICENSE.txt
 include tldw_chatbook/Third_Party/textual_fspicker/LICENSE
 
