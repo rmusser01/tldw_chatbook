@@ -5,6 +5,7 @@ Date: 2026-08-20
 Related Task: [TASK-19060](../tasks/task-19060%20-%20Match-server-streaming-emotes-and-persistence.md)
 Related Spec: [Actor Pack, Persona Buddy, and Streaming Emote Programme Design](../../Docs/superpowers/specs/2026-08-20-actor-pack-persona-buddy-and-emote-programme-design.md)
 Amends: [ADR-067](067-bundled-samira-visual-identity-pack.md)
+Supersedes: N/A
 
 ## Decision
 

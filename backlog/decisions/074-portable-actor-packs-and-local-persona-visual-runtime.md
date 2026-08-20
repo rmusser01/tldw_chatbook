@@ -2,8 +2,17 @@
 
 Status: Proposed
 Date: 2026-08-20
+Related Tasks:
+[TASK-19053](../tasks/task-19053%20-%20Add-local-Persona-Visual-pack-foundation.md)
+[TASK-19054](../tasks/task-19054%20-%20Author-and-import-Persona-Visual-packs.md)
+[TASK-19055](../tasks/task-19055%20-%20Add-opt-in-app-wide-floating-Persona-Buddy.md)
+[TASK-19056](../tasks/task-19056%20-%20Enable-Shared-Visual-Identity-for-Persona-actors.md)
+[TASK-19057](../tasks/task-19057%20-%20Define-and-create-portable-Actor-Packs.md)
+[TASK-19058](../tasks/task-19058%20-%20Export-self-contained-Actor-Packs.md)
+[TASK-19059](../tasks/task-19059%20-%20Import-review-and-activate-Actor-Packs.md)
 Related Spec: [Actor Pack, Persona Buddy, and Streaming Emote Programme Design](../../Docs/superpowers/specs/2026-08-20-actor-pack-persona-buddy-and-emote-programme-design.md)
 Related Decision: [ADR-067](067-bundled-samira-visual-identity-pack.md)
+Supersedes: N/A
 
 ## Decision
 

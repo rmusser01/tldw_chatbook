@@ -65,6 +65,8 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-067](067-library-top-level-pagination-contracts.md) | Accepted | Keep top-level Library paging source-owned while standardizing exact bounded pages, stable-ID owning-page reads, complete facets/trust aggregates, and truthful recovery. |
 | [ADR-069](069-project-skills-folder-convention.md) | Accepted | Discover project-local `.SKILLS/` folders at startup and workspace creation, offering prompt-driven, fingerprint-gated import that copies content into the ADR-009 trust boundary quarantined rather than live-loading it. |
 | [ADR-072](072-checkpoint-harness-process-ownership.md) | Accepted | Bound the suite-health checkpoint harness to retained cooperative process signals with PID-version-safe Darwin cleanup. |
+| [ADR-074](074-portable-actor-packs-and-local-persona-visual-runtime.md) | Proposed | Keep Shared Visual Identity and Persona Visual as separate local runtimes inside one self-contained portable Actor Pack envelope. |
+| [ADR-075](075-durable-character-emote-metadata.md) | Proposed | Match the pinned server emote grammar while persisting bounded final-expression metadata and immutable visual references. |
 
 ## Historical Decision Material
 
