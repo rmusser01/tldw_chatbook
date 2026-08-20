@@ -1242,6 +1242,51 @@ class AgentService:
             ),
         )
 
+    def build_project_instruction_request(
+        self,
+        *,
+        candidate: StartupInstructionCandidate,
+        config: AgentConfig,
+        api_endpoint: str,
+        runtime_schemas: list,
+        messages: list[dict],
+        active_schemas: tuple,
+        log_active: bool = False,
+    ) -> tuple[ModelRequest, InstructionSnapshot]:
+        """Build the admitted exact request on disposable service state."""
+        base_request = self._build_model_request(
+            config,
+            api_endpoint,
+            runtime_schemas,
+            messages,
+            active_schemas,
+            log_active,
+        )
+        snapshot = self._freeze_startup_snapshot(
+            candidate,
+            config,
+            api_endpoint,
+            base_request,
+        )
+        request_messages = messages
+        source = snapshot.startup_source
+        if (
+            source is not None
+            and source.digest in snapshot.primary_delivery.source_digests
+        ):
+            request_messages = append_project_instruction_rows(
+                messages, [build_project_instruction_row(source)]
+            )
+        request = self._build_model_request(
+            config,
+            api_endpoint,
+            runtime_schemas,
+            request_messages,
+            active_schemas,
+            log_active,
+        )
+        return request, snapshot
+
     def _make_call_model(
         self,
         config: AgentConfig,
@@ -2062,19 +2107,14 @@ class AgentService:
             and self.startup_instruction_candidate is not None
             and self._startup_instruction_snapshot is None
         ):
-            first_request = self._build_model_request(
-                config,
-                api_endpoint,
-                runtime_schemas,
-                messages,
-                tuple(active),
-                log_active,
-            )
-            snapshot = self._freeze_startup_snapshot(
-                self.startup_instruction_candidate,
-                config,
-                api_endpoint,
-                first_request,
+            _request, snapshot = self.build_project_instruction_request(
+                candidate=self.startup_instruction_candidate,
+                config=config,
+                api_endpoint=api_endpoint,
+                runtime_schemas=runtime_schemas,
+                messages=messages,
+                active_schemas=tuple(active),
+                log_active=log_active,
             )
             try:
                 decision = (

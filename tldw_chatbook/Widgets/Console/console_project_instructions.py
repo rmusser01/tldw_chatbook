@@ -68,10 +68,17 @@ class ConsoleProjectInstructionStatusRow(Widget):
 
     def compose(self) -> ComposeResult:
         yield Button(
-            f"Project instructions · {self._state.status}",
+            f"{self._state.status} · Project",
             id="console-project-instruction-status-button",
             compact=True,
         )
+
+    def sync_state(self, state: ConsoleProjectInstructionState) -> None:
+        """Refresh controlled status copy without recomposing the rail."""
+        self._state = state
+        self.query_one(
+            "#console-project-instruction-status-button", Button
+        ).label = f"{state.status} · Project"
 
     @on(Button.Pressed, "#console-project-instruction-status-button")
     def _open_context(self, event: Button.Pressed) -> None:

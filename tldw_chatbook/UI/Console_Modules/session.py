@@ -123,11 +123,13 @@ from typing import Any, Optional, TYPE_CHECKING
 import asyncio
 import re
 import threading
+import time
 import uuid
 import weakref
 
 from loguru import logger
 from loguru import logger as loguru_logger
+from textual.css.query import QueryError
 from textual.widgets import Select
 
 from ...Agents.session_todo_store import SessionTodoStore, TodoStoreError
@@ -139,6 +141,10 @@ from ...Chat.console_chat_models import (
     ConsoleMessageRole,
 )
 from ...Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
+from ...Chat.console_chat_controller import (
+    ProjectInstructionBindingRecovery,
+    resolve_project_instruction_binding,
+)
 from ...Chat.console_context_policy import (
     ConsoleContextPolicyOverrides,
     ContextPolicyError,
@@ -178,6 +184,7 @@ from ...DB.VisualIdentity_DB import VisualIdentityRepository
 from ...config import coerce_bool_setting
 from ...Widgets.Console import (
     ConsoleComposerUndoHistory,
+    ConsoleProjectInstructionStatusRow,
     ConsoleRenameSessionModal,
     ProjectInstructionBindingOption,
     ProjectInstructionNoticeModal,
@@ -200,6 +207,9 @@ if TYPE_CHECKING:
     from ..Screens.chat_screen import ChatScreen
 
 logger = logger.bind(module="ChatScreen")
+
+_DEFAULT_PROJECT_INSTRUCTION_NOTICE_TIMEOUT_SECONDS = 120.0
+_PROJECT_INSTRUCTION_NOTICE_POLL_SECONDS = 0.1
 
 
 @dataclass(frozen=True, slots=True)
@@ -2639,7 +2649,9 @@ class ConsoleSessionController:
         native_rows.sort(key=lambda row: 0 if row.selected else 1)
         return replace(
             state,
-            conversation_rows=tuple(self._merge_workspace_rows(native_rows, rows)),
+            conversation_rows=tuple(
+                self._merge_workspace_rows(native_rows, rows)
+            ),
         )
 
     # -- Screen-state (de)serialization for one session ----------------------
@@ -2848,32 +2860,67 @@ class ConsoleSessionController:
         )
         sources: tuple[ConsoleProjectInstructionSourceRow, ...] = ()
         warning_codes: tuple[str, ...] = ()
-        if session is not None:
+        binding_label = control.working_folder_binding_id or ""
+        locator_matches: bool | None = None
+        if (
+            session is not None
+            and control.project_instructions_enabled
+            and control.working_folder_binding_id is not None
+        ):
             controller = self._ensure_console_chat_controller()
-            metadata = controller.project_instruction_display_metadata(session.id)
+            registry = getattr(self.app_instance, "workspace_registry_service", None)
+            try:
+                binding = registry.get_runtime_binding(
+                    control.working_folder_binding_id
+                )
+                if binding is not None:
+                    binding_label = str(getattr(binding, "label", "") or binding_label)
+                resolve_project_instruction_binding(session, registry)
+                locator_matches = True
+            except (AttributeError, ProjectInstructionBindingRecovery) as exc:
+                locator_matches = False
+                warning_codes = (str(exc) or "binding_unavailable",)
+                clear = getattr(controller, "_clear_project_instruction_delivery", None)
+                if callable(clear):
+                    clear(session.id)
+                metadata = None
+            else:
+                metadata = controller.project_instruction_display_metadata(session.id)
             if metadata is not None:
-                outcomes = tuple(metadata.get("outcomes") or ())
-                warning_codes = outcomes
-                relative_source = metadata.get("relative_source")
+                warning_codes = metadata.warning_codes
+                relative_source = metadata.relative_source
                 if relative_source:
                     sources = (
                         ConsoleProjectInstructionSourceRow(
                             relative_source=str(relative_source),
-                            scope=str(metadata.get("scope") or "."),
-                            byte_count=int(metadata.get("byte_count") or 0),
-                            outcome="active" if not outcomes else str(outcomes[0]),
-                            warning_code=str(outcomes[0]) if outcomes else "",
+                            scope=metadata.scope,
+                            byte_count=metadata.byte_count,
+                            outcome=metadata.outcome,
+                            warning_code=(
+                                metadata.warning_codes[0]
+                                if metadata.warning_codes
+                                else ""
+                            ),
                         ),
                     )
         return build_console_project_instruction_state(
             control,
-            binding_label=control.working_folder_binding_id or "",
-            locator_matches=(
-                True if control.working_folder_locator_fingerprint else None
-            ),
+            binding_label=binding_label,
+            locator_matches=locator_matches,
             sources=sources,
             warning_codes=warning_codes,
         )
+
+    def _sync_console_project_instruction_status_row(self) -> None:
+        """Refresh the mounted Inspector row from current session authority."""
+        try:
+            row = self._screen.query_one(
+                "#console-project-instruction-status",
+                ConsoleProjectInstructionStatusRow,
+            )
+        except QueryError:
+            return
+        row.sync_state(self._build_console_project_instruction_display_state())
 
     async def _select_project_instruction_binding(
         self,
@@ -2925,24 +2972,35 @@ class ConsoleSessionController:
         """Marshal a worker-thread notice to Textual and wait fail-closed."""
         decided = threading.Event()
         result = {"decision": "cancel"}
+        mounted_modal: list[ProjectInstructionNoticeModal] = []
 
-        def finish(decision: str | None) -> None:
+        def owning_session_exists() -> bool:
             sessions = (
                 self._console_chat_store.sessions() if self._console_chat_store else ()
             )
-            if any(session.id == notice.session_id for session in sessions):
+            return any(session.id == notice.session_id for session in sessions)
+
+        def finish(decision: str | None) -> None:
+            if owning_session_exists():
                 if decision in {"proceed", "cancel", "disable"}:
                     result["decision"] = decision
             decided.set()
 
         def mount() -> None:
-            sessions = (
-                self._console_chat_store.sessions() if self._console_chat_store else ()
-            )
-            if not any(session.id == notice.session_id for session in sessions):
+            if not owning_session_exists():
                 decided.set()
                 return
-            self.push_screen(ProjectInstructionNoticeModal(notice), callback=finish)
+            modal = ProjectInstructionNoticeModal(notice)
+            mounted_modal.append(modal)
+            self.push_screen(modal, callback=finish)
+
+        def dismiss_owning_modal() -> None:
+            if decided.is_set() or not mounted_modal:
+                return
+            try:
+                mounted_modal[0].dismiss("cancel")
+            except Exception:  # noqa: BLE001 - shutdown remains fail closed
+                decided.set()
 
         call_from_thread = getattr(self.app_instance, "call_from_thread", None)
         if not callable(call_from_thread):
@@ -2951,7 +3009,27 @@ class ConsoleSessionController:
             call_from_thread(mount)
         except RuntimeError:
             return "cancel"
-        decided.wait(120.0)
+        timeout = max(
+            0.0,
+            float(
+                getattr(
+                    self,
+                    "_project_instruction_notice_timeout_seconds",
+                    _DEFAULT_PROJECT_INSTRUCTION_NOTICE_TIMEOUT_SECONDS,
+                )
+            ),
+        )
+        deadline = time.monotonic() + timeout
+        while not decided.is_set() and owning_session_exists():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            decided.wait(min(_PROJECT_INSTRUCTION_NOTICE_POLL_SECONDS, remaining))
+        if not decided.is_set():
+            try:
+                call_from_thread(dismiss_owning_modal)
+            except RuntimeError:
+                pass
         return result["decision"]
 
     @staticmethod

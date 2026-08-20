@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 from collections.abc import Awaitable, Callable
 from datetime import datetime
@@ -31,6 +32,7 @@ from textual.worker import Worker, WorkerState
 from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
 from tldw_chatbook.Chat.console_display_state import ConsoleProjectInstructionState
 from tldw_chatbook.Chat.console_ephemeral import blocked_reason
+from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 from tldw_chatbook.Widgets.Console.console_project_instructions import (
     ConsoleProjectInstructionContextPanel,
@@ -45,7 +47,13 @@ class ConsoleContextModal(SafeModalDismissMixin, ModalScreen[None]):
 
     DEFAULT_CSS = """
     ConsoleContextModal { align: center middle; }
-    #console-context-modal { width: 95; height: 40; border: tall gray; }
+    #console-context-modal {
+        width: 95%;
+        max-width: 95;
+        height: 90%;
+        max-height: 40;
+        border: tall gray;
+    }
     /* LY-13 (TASK-2154.23): with no messages the modal would otherwise render
        its full 95x40 frame around one line of copy; compact it to content. */
     #console-context-modal.context-empty { height: 20; }
@@ -55,6 +63,12 @@ class ConsoleContextModal(SafeModalDismissMixin, ModalScreen[None]):
     #console-context-loading.loading { display: block; }
     #console-context-tabs { height: 1fr; }
     #console-context-actions { height: auto; }
+    #console-context-actions > Checkbox { width: auto; }
+    #console-context-actions > Button {
+        width: 1fr;
+        min-width: 0;
+        padding: 0;
+    }
     """
 
     BINDINGS = [
@@ -290,6 +304,24 @@ class ConsoleContextModal(SafeModalDismissMixin, ModalScreen[None]):
     def _format_next_send_text(self) -> str:
         return self._json_block(self.snapshot.next_send_payload)
 
+    def _format_export_text(self) -> str:
+        """Serialize a body-free payload for clipboard and filesystem export."""
+        payload = copy.deepcopy(self.snapshot.next_send_payload)
+        messages = payload.get("messages")
+        if isinstance(messages, list):
+            retained = [
+                message
+                for message in messages
+                if not (
+                    isinstance(message, dict)
+                    and message.get(EPHEMERAL_ORIGIN_KEY) == "project_instructions"
+                )
+            ]
+            if len(retained) != len(messages):
+                payload["messages"] = retained
+                payload["project_instructions_export"] = "automatic body omitted"
+        return self._json_block(payload)
+
     @staticmethod
     def _json_block(obj: Any) -> str:
         return json.dumps(obj, indent=2, default=str)
@@ -326,7 +358,7 @@ class ConsoleContextModal(SafeModalDismissMixin, ModalScreen[None]):
     @on(Button.Pressed, "#console-context-copy")
     def _copy_json(self, event: Button.Pressed) -> None:
         event.stop()
-        text = self._format_next_send_text()
+        text = self._format_export_text()
         try:
             import pyperclip
 
@@ -339,7 +371,7 @@ class ConsoleContextModal(SafeModalDismissMixin, ModalScreen[None]):
     @on(Button.Pressed, "#console-context-save")
     def _save_json(self, event: Button.Pressed) -> None:
         event.stop()
-        text = self._format_next_send_text()
+        text = self._format_export_text()
         filename = f"chatbook_context_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         path = Path.home() / "Downloads" / filename
         try:

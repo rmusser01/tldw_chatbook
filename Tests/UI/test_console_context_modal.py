@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Collapsible, Label, Static, TextArea
 
 from tldw_chatbook.Chat.console_chat_models import (
@@ -20,6 +20,7 @@ from tldw_chatbook.Chat.console_display_state import (
     build_console_project_instruction_state,
 )
 from tldw_chatbook.Chat.console_project_instructions import (
+    EPHEMERAL_ORIGIN_KEY,
     ProjectInstructionControlState,
 )
 from tldw_chatbook.Widgets.Console import console_context_modal
@@ -164,6 +165,24 @@ class ActionHarness(App):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(80, 24), (100, 30), (140, 40)])
+async def test_context_modal_stays_within_supported_viewports(size):
+    app = ActionHarness()
+    async with app.run_test(size=size) as pilot:
+        app.push_screen(ConsoleContextModal(_snapshot_factory))
+        await pilot.pause()
+        modal = app.screen.query_one("#console-context-modal", Vertical)
+        actions = app.screen.query_one("#console-context-actions", Horizontal)
+        assert modal.region.x >= 0
+        assert modal.region.y >= 0
+        assert modal.region.right <= size[0]
+        assert modal.region.bottom <= size[1]
+        assert actions.region.width > 0
+        assert actions.region.bottom <= modal.region.bottom
+        assert all(control.region.right <= modal.region.right for control in actions.children)
+
+
+@pytest.mark.asyncio
 async def test_context_modal_toggle_raw_json():
     app = ActionHarness()
     expected_raw = json.dumps(SNAPSHOT.next_send_payload, indent=2, default=str)
@@ -288,6 +307,43 @@ async def test_context_modal_copy_json(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_context_modal_copy_omits_automatic_project_instruction_body(
+    monkeypatch,
+):
+    sentinel = "AUTOMATIC_BODY_MUST_NOT_EXPORT"
+    snapshot = ConsoleContextSnapshot(
+        current_messages=[],
+        next_send_payload={
+            "messages": [
+                {"role": "user", "content": "ordinary"},
+                {
+                    "role": "user",
+                    "content": sentinel,
+                    EPHEMERAL_ORIGIN_KEY: "project_instructions",
+                },
+            ]
+        },
+    )
+
+    async def factory() -> ConsoleContextSnapshot:
+        return snapshot
+
+    fake_copy = types.SimpleNamespace(copy=Mock())
+    monkeypatch.setitem(sys.modules, "pyperclip", fake_copy)
+    app = ActionHarness()
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.push_screen(ConsoleContextModal(factory))
+        await pilot.pause()
+        assert sentinel in app.screen._format_next_send_text()
+        await pilot.click("#console-context-copy")
+        await pilot.pause()
+
+    exported = fake_copy.copy.call_args.args[0]
+    assert sentinel not in exported
+    assert "ordinary" in exported
+
+
+@pytest.mark.asyncio
 async def test_context_modal_save_to_file(tmp_path, monkeypatch):
     app = ActionHarness()
     expected_text = json.dumps(SNAPSHOT.next_send_payload, indent=2, default=str)
@@ -324,6 +380,56 @@ async def test_context_modal_save_to_file(tmp_path, monkeypatch):
         saved_files = list((tmp_path / "Downloads").glob("*.json"))
         assert len(saved_files) == 1
         assert saved_files[0].read_text(encoding="utf-8") == expected_text
+
+
+@pytest.mark.asyncio
+async def test_context_modal_save_omits_automatic_project_instruction_body(
+    tmp_path, monkeypatch
+):
+    sentinel = "AUTOMATIC_BODY_MUST_NOT_SAVE"
+    snapshot = ConsoleContextSnapshot(
+        current_messages=[],
+        next_send_payload={
+            "messages": [
+                {"role": "user", "content": "ordinary"},
+                {
+                    "role": "user",
+                    "content": sentinel,
+                    EPHEMERAL_ORIGIN_KEY: "project_instructions",
+                },
+            ]
+        },
+    )
+
+    async def factory() -> ConsoleContextSnapshot:
+        return snapshot
+
+    class FakePath:
+        def __init__(self, *parts: str | Path) -> None:
+            self._path = tmp_path.joinpath(*parts)
+
+        @classmethod
+        def home(cls):
+            return cls(tmp_path)
+
+        def __truediv__(self, other: str) -> "FakePath":
+            return FakePath(self._path, other)
+
+        def __getattr__(self, name: str):
+            return getattr(self._path, name)
+
+    monkeypatch.setattr(console_context_modal, "Path", FakePath)
+    app = ActionHarness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.push_screen(ConsoleContextModal(factory))
+        await pilot.pause()
+        assert sentinel in app.screen._format_next_send_text()
+        await pilot.click("#console-context-save")
+        await pilot.pause()
+
+    saved = next((tmp_path / "Downloads").glob("*.json")).read_text(encoding="utf-8")
+    assert sentinel not in saved
+    assert "ordinary" in saved
 
 
 @pytest.mark.asyncio

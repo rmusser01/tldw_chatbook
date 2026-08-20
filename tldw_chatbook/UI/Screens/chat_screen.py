@@ -3262,17 +3262,23 @@ class ChatScreen(BaseAppScreen):
             self.notify("No active conversation.", severity="warning")
             return
 
-        async def _factory() -> ConsoleContextSnapshot:
-            try:
-                composer = self.query_one(
-                    "#console-native-composer", ConsoleComposerBar
-                )
-            except (NoMatches, QueryError):
-                composer = None
-            current_draft = composer.draft_text() if composer else ""
+        def _captured_draft() -> str:
+            if controller.store.active_session_id == session_id:
+                try:
+                    return self.query_one(
+                        "#console-native-composer", ConsoleComposerBar
+                    ).draft_text()
+                except (NoMatches, QueryError):
+                    pass
+            session = next(
+                (item for item in controller.store.sessions() if item.id == session_id),
+                None,
+            )
+            return session.draft if session is not None else ""
 
-            current_session_id = controller.store.active_session_id
-            pending = controller.store.pending_attachments(current_session_id)
+        async def _factory() -> ConsoleContextSnapshot:
+            current_draft = _captured_draft()
+            pending = controller.store.pending_attachments(session_id)
             current_attachments = tuple(
                 MessageAttachment(
                     data=pending_attachment.data,
@@ -3288,17 +3294,11 @@ class ChatScreen(BaseAppScreen):
                 draft=current_draft,
                 attachments=current_attachments,
                 staged_sources=current_staged_sources,
+                session_id=session_id,
             )
 
         def _estimate_factory() -> int | None:
-            try:
-                composer = self.query_one(
-                    "#console-native-composer", ConsoleComposerBar
-                )
-            except (NoMatches, QueryError):
-                composer = None
-            current_draft = composer.draft_text() if composer else ""
-            return self._estimate_tokens({"draft": current_draft})
+            return self._estimate_tokens({"draft": _captured_draft()})
 
         token_estimate = _estimate_factory()
         in_progress = controller.run_state.status in CONSOLE_ACTIVE_RUN_STATUSES
@@ -15250,6 +15250,7 @@ class ChatScreen(BaseAppScreen):
             await self._sync_console_native_session_tabs()
             self._dispatch_active_console_roleplay_refresh()
             self._sync_console_workspace_context()
+            self._session._sync_console_project_instruction_status_row()
             await self._sync_native_console_transcript()
             self._sync_console_rail_visibility_if_changed(
                 self._current_console_rail_state()

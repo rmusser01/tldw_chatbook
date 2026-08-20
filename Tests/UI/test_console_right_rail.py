@@ -29,6 +29,7 @@ import pytest
 from textual.containers import Horizontal
 from textual.widgets import Button
 
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Widgets.Console.console_context_modal import ConsoleContextModal
 
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
@@ -219,3 +220,53 @@ async def test_clicking_the_collapse_button_clears_focus():
         await pilot.pause(0.2)
 
         assert pilot.app.focused is None
+
+
+@pytest.mark.asyncio
+async def test_context_modal_refresh_factory_keeps_opening_session_after_switch():
+    async with make_console_pilot() as pilot:
+        console = pilot.app.screen
+        store = console._ensure_console_chat_store()
+        captured = store.ensure_session(title="Captured")
+        store.append_message(
+            captured.id,
+            role=ConsoleMessageRole.USER,
+            content="captured transcript",
+        )
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause()
+        await pilot.click("#console-project-instruction-status-button")
+        await pilot.pause()
+        modal = pilot.app.screen
+        assert isinstance(modal, ConsoleContextModal)
+
+        active = store.create_session(title="Active")
+        store.append_message(
+            active.id,
+            role=ConsoleMessageRole.USER,
+            content="wrong active transcript",
+        )
+        snapshot = await modal._snapshot_factory()
+
+        assert [message.content for message in snapshot.current_messages] == [
+            "captured transcript"
+        ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(100, 30), (140, 40)])
+async def test_project_status_remains_visible_in_real_thirty_column_rail(size):
+    async with make_console_pilot(size=size) as pilot:
+        if not _right_rail_open(pilot):
+            await pilot.click("#console-inspector-rail-open")
+            await pilot.pause()
+        rail = pilot.app.screen.query_one("#console-right-rail")
+        rail.styles.width = 30
+        rail.styles.min_width = 30
+        rail.styles.max_width = 30
+        await pilot.pause()
+        button = pilot.app.screen.query_one(
+            "#console-project-instruction-status-button", Button
+        )
+        assert button.region.width <= 30
+        assert str(button.label).endswith(" · Project")

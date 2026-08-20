@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import importlib
+import inspect
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -12,11 +13,18 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Footer, Static
 
+from tldw_chatbook.Agents import agent_service
+from tldw_chatbook.Agents.agent_models import AgentConfig, RunBudget
 from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.project_instruction_resolver import (
     InstructionOutcome,
     InstructionSource,
     StartupInstructionCandidate,
+)
+from tldw_chatbook.Agents.tool_catalog import (
+    BuiltinToolProvider,
+    ToolCatalogRegistry,
+    initial_disclosure,
 )
 from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleChatController,
@@ -26,10 +34,12 @@ from tldw_chatbook.Chat.console_chat_controller import (
 import tldw_chatbook.Chat.console_chat_controller as controller_module
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
 )
+from tldw_chatbook.Workspaces.models import WorkspaceRuntimeBinding
 
 
 def _ui_module():
@@ -110,6 +120,60 @@ def test_display_states_are_metadata_only():
         assert all("body" not in item.__dataclass_fields__ for item in state.sources)
 
 
+def test_display_revalidates_binding_and_drops_stale_loaded_metadata(tmp_path):
+    original = tmp_path / "original"
+    retargeted = tmp_path / "retargeted"
+    original.mkdir()
+    retargeted.mkdir()
+    binding = WorkspaceRuntimeBinding(
+        workspace_id="workspace-1",
+        binding_id="binding-1",
+        binding_kind="local-filesystem",
+        label="Repo [literal]",
+        locator=str(retargeted),
+        status="ready",
+        metadata={"access": "rw"},
+    )
+    registry = SimpleNamespace(
+        get_runtime_binding=lambda _binding_id: binding,
+        list_runtime_bindings=lambda _workspace_id: (binding,),
+    )
+    control = ProjectInstructionControlState(
+        True,
+        binding.binding_id,
+        controller_module.fingerprint_canonical_locator(str(original)),
+        None,
+    )
+    session = SimpleNamespace(
+        id="session-1",
+        workspace_id="workspace-1",
+        project_instruction_state=control,
+    )
+    store = SimpleNamespace(active_session_id=session.id, sessions=lambda: (session,))
+    stale_metadata = SimpleNamespace(
+        warning_codes=(),
+        relative_source="AGENTS.md",
+        scope=".",
+        byte_count=99,
+        outcome="active",
+    )
+    backend = SimpleNamespace(
+        project_instruction_display_metadata=lambda _session_id: stale_metadata
+    )
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+    controller._current_chat_store_accessor = lambda: store
+    controller._ensure_console_chat_controller_fn = lambda: backend
+    controller.app_instance = SimpleNamespace(workspace_registry_service=registry)
+
+    state = controller._build_console_project_instruction_display_state()
+
+    assert state.status == "Warning"
+    assert state.binding_label == "Repo [literal]"
+    assert state.locator_match == "mismatch"
+    assert state.sources == ()
+    assert state.warning_codes
+
+
 def test_preview_uses_copies_and_is_repeatable_without_live_side_effects(tmp_path):
     candidate = _candidate(tmp_path)
     base = [{"role": "user", "content": "question"}]
@@ -130,6 +194,168 @@ def test_preview_uses_copies_and_is_repeatable_without_live_side_effects(tmp_pat
     assert "AUTOMATIC_BODY_ONLY_IN_EXPLICIT_PREVIEW" in str(first.next_send_payload)
     assert first.relative_source == "AGENTS.md"
     assert not hasattr(first, "ledger")
+
+
+def test_disposable_preview_matches_live_exact_request_when_source_is_omitted(
+    tmp_path, monkeypatch
+):
+    candidate = _candidate(tmp_path)
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    config = AgentConfig(
+        model="gpt-4o-mini",
+        system_prompt="system",
+        allowed_tools=(),
+        budget=RunBudget(max_subagents=0),
+        native_tools=False,
+        response_reserve_tokens=10,
+    )
+    active, _offer_find_load = initial_disclosure(registry, config.budget)
+    active = tuple(schema for schema in active if schema.name in config.allowed_tools)
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a, **_k: 100)
+    monkeypatch.setattr(agent_service, "count_tokens_messages", lambda *_a, **_k: 20)
+    monkeypatch.setattr(agent_service, "estimate_tokens", lambda *_a, **_k: 0)
+    monkeypatch.setattr(agent_service, "_count_model_messages", lambda *_a, **_k: 95)
+    preview_consent = Mock(side_effect=AssertionError("preview requested consent"))
+    preview_service = AgentService(
+        AgentRunsDB(tmp_path / "preview.db", client_id="test"),
+        registry,
+        chat_call=Mock(side_effect=AssertionError("preview called provider")),
+        confirm_project_instruction_dispatch=preview_consent,
+    )
+    build_exact = getattr(preview_service, "build_project_instruction_request", None)
+
+    assert callable(build_exact)
+    preview_request, preview_snapshot = build_exact(
+        candidate=candidate,
+        config=config,
+        api_endpoint="openai",
+        runtime_schemas=[],
+        messages=[{"role": "user", "content": "question"}],
+        active_schemas=active,
+    )
+
+    calls = []
+
+    def chat_call(**kwargs):
+        calls.append(kwargs)
+        return {"choices": [{"message": {"content": "done"}}]}
+
+    live_service = AgentService(
+        AgentRunsDB(tmp_path / "live.db", client_id="test"),
+        registry,
+        chat_call=chat_call,
+        startup_instruction_candidate=candidate,
+        confirm_project_instruction_dispatch=lambda _snapshot: "proceed",
+    )
+    live_service.run_turn(
+        conversation_id="conversation",
+        messages=[{"role": "user", "content": "question"}],
+        config=config,
+        api_endpoint="openai",
+    )
+
+    assert [item.code for item in preview_snapshot.primary_delivery.outcomes] == [
+        "omitted_token_budget"
+    ]
+    assert "AUTOMATIC_BODY_ONLY_IN_EXPLICIT_PREVIEW" not in str(
+        preview_request.messages
+    )
+    assert list(preview_request.messages) == calls[0]["messages_payload"]
+    assert list(preview_request.tools) == calls[0].get("tools", [])
+    preview_consent.assert_not_called()
+
+
+def test_controller_has_no_candidate_or_body_cache():
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(),
+        provider_gateway=Mock(),
+    )
+    assert "_project_instruction_candidates" not in vars(controller)
+    assert all(
+        "body" not in name and "candidate" not in name
+        for name in vars(controller)
+        if name.startswith("_project_instruction")
+    )
+
+
+@pytest.mark.parametrize("race", ["disable", "remove", "retarget"])
+def test_setup_choice_cancels_if_state_or_binding_changes_while_modal_is_open(
+    tmp_path, race
+):
+    root = tmp_path / "root"
+    other = tmp_path / "other"
+    root.mkdir()
+    other.mkdir()
+    initial_binding = WorkspaceRuntimeBinding(
+        workspace_id="workspace-1",
+        binding_id="binding-1",
+        binding_kind="local-filesystem",
+        label="Repo",
+        locator=str(root),
+        status="ready",
+        metadata={"access": "rw"},
+    )
+
+    class Registry:
+        bindings = {initial_binding.binding_id: initial_binding}
+
+        def list_runtime_bindings(self, workspace_id):
+            return tuple(
+                binding
+                for binding in self.bindings.values()
+                if binding.workspace_id == workspace_id
+            )
+
+        def get_runtime_binding(self, binding_id):
+            return self.bindings.get(binding_id)
+
+    registry = Registry()
+    store = ConsoleChatStore()
+    session = store.create_session(
+        workspace_id="workspace-1",
+        project_instruction_state=ProjectInstructionControlState.new_session(),
+    )
+    expected_state = copy.deepcopy(session.project_instruction_state)
+    options = controller_module.list_project_instruction_bindings(session, registry)
+    expected_selection = options[0]
+    if race == "disable":
+        session.project_instruction_state = (
+            ProjectInstructionControlState.legacy_disabled()
+        )
+    elif race == "remove":
+        registry.bindings.clear()
+    else:
+        registry.bindings[initial_binding.binding_id] = WorkspaceRuntimeBinding(
+            workspace_id="workspace-1",
+            binding_id="binding-1",
+            binding_kind="local-filesystem",
+            label="Repo",
+            locator=str(other),
+            status="ready",
+            metadata={"access": "rw"},
+        )
+    original_setter = store.set_session_project_instruction_state
+    setter = Mock(wraps=original_setter)
+    store.set_session_project_instruction_state = setter
+    commit = getattr(
+        controller_module, "commit_project_instruction_setup_decision", None
+    )
+
+    assert callable(commit)
+    action, selection = commit(
+        store=store,
+        session_id=session.id,
+        registry=registry,
+        expected_state=expected_state,
+        expected_options=options,
+        action="select",
+        binding_id=expected_selection.binding.binding_id,
+    )
+
+    assert action == "cancel"
+    assert selection is None
+    setter.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -158,14 +384,30 @@ async def test_controller_preview_does_not_advance_live_session_state(
         content="question",
     )
     consent = Mock(side_effect=AssertionError("preview acknowledged notice"))
+    exact_builder = Mock(
+        return_value=(
+            {
+                "model": "gpt-test",
+                "messages": [{"role": "user", "content": "question"}],
+            },
+            SimpleNamespace(
+                startup_source_metadata=None,
+                startup_source=None,
+                primary_delivery=SimpleNamespace(outcomes=candidate.outcomes),
+                warning_codes=("omitted_token_budget",),
+            ),
+        )
+    )
     controller = ConsoleChatController(
         store=store,
         provider_gateway=Mock(),
+        agent_bridge=SimpleNamespace(
+            build_project_instruction_preview_request=exact_builder
+        ),
         agent_runtime_enabled=True,
         confirm_project_instruction_dispatch=consent,
     )
     controller.app = SimpleNamespace(workspace_registry_service=object())
-    controller._project_instruction_candidates[session.id] = _candidate(tmp_path)
     controller._run_state_histories[session.id] = []
     selection = SimpleNamespace(
         binding=SimpleNamespace(binding_id="binding-1"),
@@ -184,16 +426,10 @@ async def test_controller_preview_does_not_advance_live_session_state(
     )
     state_setter = Mock(side_effect=AssertionError("preview changed controls"))
     monkeypatch.setattr(store, "set_session_project_instruction_state", state_setter)
-    token_admission = Mock(side_effect=AssertionError("preview spent token budget"))
-    ledger_snapshot = Mock(side_effect=AssertionError("preview activated a source"))
-    monkeypatch.setattr(
-        AgentService, "safe_project_instruction_tokens", token_admission
-    )
-    monkeypatch.setattr(AgentService, "_freeze_startup_snapshot", ledger_snapshot)
 
     before_messages = copy.deepcopy(store.messages_for_session(session.id))
     before_control = copy.deepcopy(session.project_instruction_state)
-    before_candidates = dict(controller._project_instruction_candidates)
+    before_display = dict(controller._project_instruction_display)
     before_run_states = dict(controller._run_states)
     before_run_history = copy.deepcopy(controller._run_state_histories)
     payload = {
@@ -208,16 +444,15 @@ async def test_controller_preview_does_not_advance_live_session_state(
     assert preview is not None
     assert preview.outcomes == ("omitted_token_budget",)
     assert preview.warning_codes == ("omitted_token_budget",)
-    assert preview.next_send_payload == payload
+    assert preview.next_send_payload == {**payload, "system": []}
     assert store.messages_for_session(session.id) == before_messages
     assert session.project_instruction_state == before_control
-    assert controller._project_instruction_candidates == before_candidates
+    assert controller._project_instruction_display == before_display
     assert controller._run_states == before_run_states
     assert controller._run_state_histories == before_run_history
     consent.assert_not_called()
     state_setter.assert_not_called()
-    token_admission.assert_not_called()
-    ledger_snapshot.assert_not_called()
+    exact_builder.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -237,6 +472,43 @@ async def test_context_preview_without_bound_textual_app_degrades_only_preview()
 
     assert "error" not in snapshot.next_send_payload
     assert snapshot.project_instruction_preview is None
+
+
+@pytest.mark.asyncio
+async def test_context_snapshot_stays_on_captured_session_after_active_switch():
+    store = ConsoleChatStore()
+    captured = store.create_session(
+        title="Captured",
+        project_instruction_state=ProjectInstructionControlState.legacy_disabled(),
+    )
+    store.append_message(
+        captured.id,
+        role=ConsoleMessageRole.USER,
+        content="captured transcript",
+    )
+    active = store.create_session(
+        title="Active",
+        project_instruction_state=ProjectInstructionControlState.legacy_disabled(),
+    )
+    store.append_message(
+        active.id,
+        role=ConsoleMessageRole.USER,
+        content="wrong active transcript",
+    )
+    controller = ConsoleChatController(store=store, provider_gateway=Mock())
+    kwargs = (
+        {"session_id": captured.id}
+        if "session_id"
+        in inspect.signature(controller.build_context_snapshot).parameters
+        else {}
+    )
+
+    snapshot = await controller.build_context_snapshot(draft="captured draft", **kwargs)
+
+    assert [message.content for message in snapshot.current_messages] == [
+        "captured transcript"
+    ]
+    assert snapshot.next_send_payload["messages"][-1]["content"] == "captured draft"
 
 
 @pytest.mark.asyncio
@@ -276,9 +548,63 @@ def test_notice_callback_fails_closed_when_main_loop_is_unavailable():
     assert decision == "cancel"
 
 
+def test_notice_timeout_fails_closed_and_dismisses_owning_modal():
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+    controller._current_chat_store_accessor = lambda: SimpleNamespace(
+        sessions=lambda: [SimpleNamespace(id="session-a")]
+    )
+    mounted = []
+
+    def push_screen(modal, callback):
+        modal.dismiss = Mock()
+        mounted.append((modal, callback))
+
+    controller._screen = SimpleNamespace(app=SimpleNamespace(push_screen=push_screen))
+    controller.app_instance = SimpleNamespace(
+        call_from_thread=lambda callback: callback()
+    )
+    controller._project_instruction_notice_timeout_seconds = 0.0
+
+    decision = controller._confirm_project_instruction_dispatch(
+        SimpleNamespace(session_id="session-a")
+    )
+
+    assert decision == "cancel"
+    assert len(mounted) == 1
+    mounted[0][0].dismiss.assert_called_once_with("cancel")
+
+
 class _ModalHarness(App):
     def compose(self) -> ComposeResult:
         yield Static("background")
+
+
+@pytest.mark.asyncio
+async def test_status_row_sync_uses_short_status_first_copy():
+    display = importlib.import_module("tldw_chatbook.Chat.console_display_state")
+    ui = _ui_module()
+    initial = display.build_console_project_instruction_state(
+        ProjectInstructionControlState.legacy_disabled()
+    )
+    warning = display.build_console_project_instruction_state(
+        ProjectInstructionControlState(True, "binding", "f" * 64, None),
+        binding_label="Repo",
+        locator_matches=False,
+        warning_codes=("binding_retargeted",),
+    )
+
+    class RowHarness(App):
+        def compose(self) -> ComposeResult:
+            yield ui.ConsoleProjectInstructionStatusRow(initial)
+
+    app = RowHarness()
+    async with app.run_test(size=(30, 5)) as pilot:
+        row = app.query_one(ui.ConsoleProjectInstructionStatusRow)
+        row.sync_state(warning)
+        await pilot.pause()
+        button = row.query_one(Button)
+        assert str(button.label) == "Warning · Project"
+        assert button.region.width <= 30
 
 
 @pytest.mark.asyncio

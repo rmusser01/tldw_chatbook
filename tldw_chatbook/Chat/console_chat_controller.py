@@ -343,6 +343,19 @@ class ProjectInstructionDispatchNotice:
     warning_codes: tuple[str, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class ProjectInstructionDisplayMetadata:
+    """Immutable content-free result of one final primary delivery decision."""
+
+    binding_id: str
+    locator_fingerprint: str
+    relative_source: str | None
+    scope: str
+    byte_count: int
+    outcome: str
+    warning_codes: tuple[str, ...]
+
+
 def build_project_instruction_preview(
     base_messages: list[dict[str, Any]],
     startup_candidate: StartupInstructionCandidate,
@@ -388,7 +401,9 @@ def build_project_instruction_dispatch_notice(
         relative_source=source.relative_path if source else None,
         scope=source.scope if source else ".",
         byte_count=source.byte_count if source else 0,
-        outcomes=tuple(outcome.code for outcome in snapshot.primary_delivery.outcomes),
+        outcomes=tuple(
+            outcome.code for outcome in snapshot.primary_delivery.outcomes
+        ),
         warning_codes=snapshot.warning_codes,
     )
 
@@ -544,7 +559,8 @@ def project_instruction_authority_is_current(
     state = session.project_instruction_state
     if (
         not state.project_instructions_enabled
-        or state.working_folder_binding_id != expected_selection.binding.binding_id
+        or state.working_folder_binding_id
+        != expected_selection.binding.binding_id
         or state.working_folder_locator_fingerprint
         != expected_selection.locator_fingerprint
     ):
@@ -556,6 +572,68 @@ def project_instruction_authority_is_current(
     return current_selection is not None and _same_project_instruction_authority(
         current_selection, expected_selection
     )
+
+
+def commit_project_instruction_setup_decision(
+    *,
+    store: Any,
+    session_id: str,
+    registry: Any,
+    expected_state: ProjectInstructionControlState,
+    expected_options: tuple[ProjectInstructionBindingSelection, ...],
+    action: str,
+    binding_id: str | None,
+) -> tuple[
+    Literal["select", "disable", "cancel"],
+    ProjectInstructionBindingSelection | None,
+]:
+    """Commit one chooser result only while state and authority stay exact."""
+    session = next((item for item in store.sessions() if item.id == session_id), None)
+    if session is None or session.project_instruction_state != expected_state:
+        return "cancel", None
+    if action == "cancel":
+        return "cancel", None
+    if action == "disable":
+        store.set_session_project_instruction_state(
+            session_id, ProjectInstructionControlState.legacy_disabled()
+        )
+        return "disable", None
+    if action != "select" or binding_id is None:
+        return "cancel", None
+    expected = next(
+        (
+            option
+            for option in expected_options
+            if str(option.binding.binding_id) == str(binding_id)
+        ),
+        None,
+    )
+    if expected is None:
+        return "cancel", None
+    try:
+        fresh_options = list_project_instruction_bindings(session, registry)
+    except ProjectInstructionBindingRecovery:
+        return "cancel", None
+    current = next(
+        (
+            option
+            for option in fresh_options
+            if str(option.binding.binding_id) == str(binding_id)
+        ),
+        None,
+    )
+    if current is None or not _same_project_instruction_authority(current, expected):
+        return "cancel", None
+    store.set_session_project_instruction_state(
+        session_id,
+        ProjectInstructionControlState(
+            project_instructions_enabled=True,
+            working_folder_binding_id=current.binding.binding_id,
+            working_folder_locator_fingerprint=current.locator_fingerprint,
+            project_instruction_notice_key=None,
+        ),
+    )
+    return "select", current
 
 
 def commit_project_instruction_dispatch_decision(
@@ -1622,8 +1700,8 @@ class ConsoleChatController:
             confirm_project_instruction_dispatch
         )
         self._select_project_instruction_binding = select_project_instruction_binding
-        self._project_instruction_candidates: dict[
-            str, StartupInstructionCandidate
+        self._project_instruction_display: dict[
+            str, ProjectInstructionDisplayMetadata
         ] = {}
         # Parallel-agents spec §2: run state is a PER-SESSION map, not a
         # single global slot -- two sessions can each have their own
@@ -3943,6 +4021,7 @@ class ConsoleChatController:
         previous_active_id = self.store.active_session_id
         closed = self.store.close_session(session_id)
         self.prompt_queue_coordinator.remove_session(session_id)
+        self._clear_project_instruction_delivery(session_id)
         new_active_id = self.store.active_session_id
         if (
             owns_active_stream
@@ -5346,11 +5425,11 @@ class ConsoleChatController:
                 project_root_guard
                 if project_root_guard is not None
                 else (
-                    lambda: (
-                        _project_root_identity_matches(root, project_root_identity)
-                        if project_root_identity is not None
-                        else True
+                    lambda: _project_root_identity_matches(
+                        root, project_root_identity
                     )
+                    if project_root_identity is not None
+                    else True
                 )
             ),
             resolve_state=service.gate_tool_test,
@@ -5377,7 +5456,9 @@ class ConsoleChatController:
         bridge = self._agent_bridge
         if bridge is None:
             return {}
-        session = next((s for s in self.store.sessions() if s.id == session_id), None)
+        session = next(
+            (s for s in self.store.sessions() if s.id == session_id), None
+        )
         if session is None:
             return {}
 
@@ -5736,10 +5817,8 @@ class ConsoleChatController:
         event = threading.Event()
         decision: dict[str, bool] = {}
         request_id = str(uuid4())
-        owning_session_id = (
-            session_id
-            if session_id is not None
-            else (self.store.active_session_id or "")
+        owning_session_id = session_id if session_id is not None else (
+            self.store.active_session_id or ""
         )
         # PR3a-1 Task 6b (audit F4): arm-time cancel binding, identical to
         # `request_mcp_approvals`' -- see `_bind_round_cancel_signal`.
@@ -5783,8 +5862,9 @@ class ConsoleChatController:
         # DIFFERENT, background session -- mirrors `request_mcp_approvals`'
         # identical `is_parked` gate. `session_id is None` (a legacy caller
         # with no session context) always mounts.
-        is_parked = session_id is not None and session_id != (
-            self.store.active_session_id or ""
+        is_parked = (
+            session_id is not None
+            and session_id != (self.store.active_session_id or "")
         )
         # PR0: legacy `session_id is None` callers never park and never
         # queue -- they keep the unconditional mount below.
@@ -5992,10 +6072,8 @@ class ConsoleChatController:
         event = threading.Event()
         decision: dict[str, bool] = {}
         request_id = str(uuid4())
-        owning_session_id = (
-            session_id
-            if session_id is not None
-            else (self.store.active_session_id or "")
+        owning_session_id = session_id if session_id is not None else (
+            self.store.active_session_id or ""
         )
         # PR3a-1 Task 6b (audit F4): arm-time cancel binding, identical to
         # `request_mcp_approvals`' -- see `_bind_round_cancel_signal`.
@@ -7142,7 +7220,9 @@ class ConsoleChatController:
             body = assemble(rows)
         return body
 
-    async def impersonate_user_reply(self, session_id: str) -> "ImpersonateResult":
+    async def impersonate_user_reply(
+        self, session_id: str
+    ) -> "ImpersonateResult":
         """Draft the USER's next message with the session's current model.
 
         task-1683: "Impersonate" writes a candidate reply *as the user*,
@@ -7173,7 +7253,9 @@ class ConsoleChatController:
             return ImpersonateResult(
                 "",
                 "provider-not-ready",
-                self._blocked_visible_copy(getattr(resolution, "visible_copy", "")),
+                self._blocked_visible_copy(
+                    getattr(resolution, "visible_copy", "")
+                ),
             )
         session_messages = self.store.messages_for_session(session_id)
         # Mirror _provider_message_payloads' rules exactly (cubic PR #1160):
@@ -7518,6 +7600,8 @@ class ConsoleChatController:
         draft: str,
         attachments: Iterable[MessageAttachment] | None = None,
         staged_sources: Iterable[ConsoleStagedSource] | None = None,
+        *,
+        session_id: str | None = None,
     ) -> ConsoleContextSnapshot:
         """Return a read-only snapshot of the current transcript and the assembled next-send payload.
 
@@ -7533,7 +7617,7 @@ class ConsoleChatController:
             redacted next-send provider payload. If assembly fails, the payload may
             contain an ``"error"`` key with a human-readable message.
         """
-        session_id = self.store.active_session_id
+        session_id = session_id or self.store.active_session_id
         if not session_id:
             return ConsoleContextSnapshot(current_messages=[], next_send_payload={})
 
@@ -7756,27 +7840,97 @@ class ConsoleChatController:
             )
         except Exception:  # noqa: BLE001 - preview failure stays content-free
             return None
-        base_messages = list(base_payload.get("messages") or ())
-        return build_project_instruction_preview(
-            base_messages,
-            candidate,
-            lambda messages: {**base_payload, "messages": messages},
+        bridge = self._agent_bridge
+        if bridge is None:
+            return None
+        agent_messages = copy.deepcopy(list(base_payload.get("messages") or ()))
+        session_system_prompt = ""
+        if (
+            agent_messages
+            and agent_messages[0].get("role") == ConsoleMessageRole.SYSTEM.value
+        ):
+            session_system_prompt = str(agent_messages[0].get("content", ""))
+            agent_messages = agent_messages[1:]
+        try:
+            exact_payload, snapshot = await asyncio.to_thread(
+                bridge.build_project_instruction_preview_request,
+                candidate=candidate,
+                model=str(base_payload.get("model") or ""),
+                session_system_prompt=session_system_prompt,
+                agent_messages=agent_messages,
+                api_endpoint=self.provider or "agent",
+                response_reserve_tokens=self.max_tokens
+                or DEFAULT_RESPONSE_RESERVATION,
+            )
+        except Exception:  # noqa: BLE001 - preview failure stays content-free
+            return None
+        payload = copy.deepcopy(base_payload)
+        payload.pop("tools", None)
+        payload.update(copy.deepcopy(exact_payload))
+        messages = list(payload.get("messages") or ())
+        payload["system"] = (
+            [copy.deepcopy(messages[0])]
+            if messages
+            and messages[0].get("role") == ConsoleMessageRole.SYSTEM.value
+            else []
         )
+        source = snapshot.startup_source_metadata or snapshot.startup_source
+        outcomes = tuple(
+            outcome.code for outcome in snapshot.primary_delivery.outcomes
+        )
+        return ProjectInstructionPreview(
+            relative_source=source.relative_path if source else None,
+            scope=source.scope if source else ".",
+            byte_count=source.byte_count if source else 0,
+            outcomes=outcomes,
+            warning_codes=tuple(snapshot.warning_codes),
+            next_send_payload=payload,
+        )
+
+    def _remember_project_instruction_delivery(
+        self, session_id: str, snapshot: InstructionSnapshot
+    ) -> None:
+        """Retain only content-free metadata from a final primary delivery."""
+        source = snapshot.startup_source_metadata
+        outcomes = tuple(outcome.code for outcome in snapshot.primary_delivery.outcomes)
+        delivered = bool(
+            snapshot.startup_source is not None
+            and snapshot.startup_source.digest
+            in snapshot.primary_delivery.source_digests
+        )
+        self._project_instruction_display[session_id] = (
+            ProjectInstructionDisplayMetadata(
+                binding_id=snapshot.binding_id,
+                locator_fingerprint=snapshot.locator_fingerprint,
+                relative_source=source.relative_path if source else None,
+                scope=source.scope if source else ".",
+                byte_count=source.byte_count if source else 0,
+                outcome="active" if delivered else (outcomes[0] if outcomes else "none"),
+                warning_codes=tuple(snapshot.warning_codes),
+            )
+        )
+
+    def _clear_project_instruction_delivery(self, session_id: str) -> None:
+        self._project_instruction_display.pop(session_id, None)
 
     def project_instruction_display_metadata(
         self, session_id: str
-    ) -> dict[str, Any] | None:
-        """Return content-free metadata for the last captured root candidate."""
-        candidate = self._project_instruction_candidates.get(session_id)
-        if candidate is None:
+    ) -> ProjectInstructionDisplayMetadata | None:
+        """Return current content-free final-delivery metadata for one session."""
+        metadata = self._project_instruction_display.get(session_id)
+        if metadata is None:
             return None
-        source = candidate.source
-        return {
-            "relative_source": source.relative_path if source else None,
-            "scope": source.scope if source else ".",
-            "byte_count": source.byte_count if source else 0,
-            "outcomes": tuple(outcome.code for outcome in candidate.outcomes),
-        }
+        session = next((item for item in self.store.sessions() if item.id == session_id), None)
+        state = session.project_instruction_state if session is not None else None
+        if (
+            state is None
+            or not state.project_instructions_enabled
+            or state.working_folder_binding_id != metadata.binding_id
+            or state.working_folder_locator_fingerprint != metadata.locator_fingerprint
+        ):
+            self._clear_project_instruction_delivery(session_id)
+            return None
+        return metadata
 
     @staticmethod
     def _replace_image_data_with_placeholders(
@@ -10456,9 +10610,9 @@ class ConsoleChatController:
             # "never fail a send" contract this method promises. Swallow and
             # log instead; a dropped usage attach is a missing cost figure,
             # not a broken turn.
-            logger.bind(message_id=assistant_message_id, error=repr(exc)).warning(
-                "usage_attach_failed"
-            )
+            logger.bind(
+                message_id=assistant_message_id, error=repr(exc)
+            ).warning("usage_attach_failed")
         if not attached:
             return
         # Cost-ticker PR3: cache-TTL ground truth, Anthropic prompt-caching
@@ -10467,8 +10621,9 @@ class ConsoleChatController:
         # stamp. Same never-fail posture as the attach above: this is
         # read by the chip, never by send control flow.
         try:
-            if provider_config_key(provider) == "anthropic" and getattr(
-                resolution, "prompt_caching", None
+            if (
+                provider_config_key(provider) == "anthropic"
+                and getattr(resolution, "prompt_caching", None)
             ):
                 sid = self.store.session_id_for_message(assistant_message_id)
                 had_cache_activity = (total.cache_read + total.cache_write) > 0
@@ -10476,9 +10631,9 @@ class ConsoleChatController:
                 if had_cache_activity:
                     self._cache_warm_until[sid] = time.monotonic() + 300.0
         except Exception as exc:
-            logger.bind(message_id=assistant_message_id, error=repr(exc)).warning(
-                "cost_cache_ttl_record_failed"
-            )
+            logger.bind(
+                message_id=assistant_message_id, error=repr(exc)
+            ).warning("cost_cache_ttl_record_failed")
 
     async def _run_direct_provider_reply(
         self,
@@ -11081,10 +11236,7 @@ class ConsoleChatController:
         project_selection: ProjectInstructionBindingSelection | None = None
         confirm_project_dispatch = None
         project_authority_guard = None
-        if (
-            session is not None
-            and session.project_instruction_state.project_instructions_enabled
-        ):
+        if session is not None and session.project_instruction_state.project_instructions_enabled:
             try:
                 registry = getattr(self.app, "workspace_registry_service", None)
             except Exception:
@@ -11097,43 +11249,31 @@ class ConsoleChatController:
                 callback = self._select_project_instruction_binding
                 if callback is None:
                     return ConsoleSubmitResult(False, False, str(exc))
+                expected_setup_state = session.project_instruction_state
                 try:
                     options = list_project_instruction_bindings(session, registry)
                 except ProjectInstructionBindingRecovery:
                     options = ()
                 action, binding_id = await callback(session_id, options, str(exc))
-                if action == "disable":
-                    self.store.set_session_project_instruction_state(
-                        session_id, ProjectInstructionControlState.legacy_disabled()
+                action, project_selection = (
+                    commit_project_instruction_setup_decision(
+                        store=self.store,
+                        session_id=session_id,
+                        registry=registry,
+                        expected_state=expected_setup_state,
+                        expected_options=options,
+                        action=action,
+                        binding_id=binding_id,
                     )
+                )
+                if action == "disable":
+                    self._clear_project_instruction_delivery(session_id)
                     return ConsoleSubmitResult(
                         False, False, "project_instructions_disabled"
                     )
-                if action != "select" or binding_id is None:
+                if action != "select" or project_selection is None:
+                    self._clear_project_instruction_delivery(session_id)
                     return ConsoleSubmitResult(False, False, str(exc))
-                project_selection = next(
-                    (
-                        option
-                        for option in options
-                        if str(option.binding.binding_id) == str(binding_id)
-                    ),
-                    None,
-                )
-                if project_selection is None:
-                    return ConsoleSubmitResult(False, False, str(exc))
-                self.store.set_session_project_instruction_state(
-                    session_id,
-                    ProjectInstructionControlState(
-                        project_instructions_enabled=True,
-                        working_folder_binding_id=(
-                            project_selection.binding.binding_id
-                        ),
-                        working_folder_locator_fingerprint=(
-                            project_selection.locator_fingerprint
-                        ),
-                        project_instruction_notice_key=None,
-                    ),
-                )
             if project_selection is not None:
                 state = session.project_instruction_state
                 if state.working_folder_binding_id is None:
@@ -11147,7 +11287,9 @@ class ConsoleChatController:
                         ),
                         project_instruction_notice_key=None,
                     )
-                    self.store.set_session_project_instruction_state(session_id, state)
+                    self.store.set_session_project_instruction_state(
+                        session_id, state
+                    )
                 startup_candidate = ProjectInstructionResolver().resolve_startup(
                     binding_id=project_selection.binding.binding_id,
                     binding_root=project_selection.root,
@@ -11164,7 +11306,6 @@ class ConsoleChatController:
                     ),
                     dispatch_started_wall_ns=time.time_ns(),
                 )
-                self._project_instruction_candidates[session_id] = startup_candidate
                 destination_provider = str(
                     getattr(resolution, "execution_key", "")
                     or getattr(resolution, "provider", "")
@@ -11197,16 +11338,27 @@ class ConsoleChatController:
                     )
 
                 def confirm_project_dispatch(snapshot):
-                    initial = on_owning_loop(
-                        lambda: commit_project_instruction_dispatch_decision(
+                    def commit_and_record(decision):
+                        committed = commit_project_instruction_dispatch_decision(
                             store=self.store,
                             session_id=session_id,
                             registry=registry,
                             expected_state=expected_project_state,
                             expected_selection=project_selection,
                             notice_key=notice_key,
-                            decision=None,
+                            decision=decision,
                         )
+                        if committed != "prompt":
+                            if committed == "proceed":
+                                self._remember_project_instruction_delivery(
+                                    session_id, snapshot
+                                )
+                            else:
+                                self._clear_project_instruction_delivery(session_id)
+                        return committed
+
+                    initial = on_owning_loop(
+                        lambda: commit_and_record(None)
                     )
                     if initial != "prompt":
                         return initial
@@ -11219,17 +11371,7 @@ class ConsoleChatController:
                     decision = callback(notice) if callback is not None else "cancel"
                     if decision not in {"proceed", "cancel", "disable"}:
                         decision = "cancel"
-                    return on_owning_loop(
-                        lambda: commit_project_instruction_dispatch_decision(
-                            store=self.store,
-                            session_id=session_id,
-                            registry=registry,
-                            expected_state=expected_project_state,
-                            expected_selection=project_selection,
-                            notice_key=notice_key,
-                            decision=decision,
-                        )
-                    )
+                    return on_owning_loop(lambda: commit_and_record(decision))
 
         self._active_assistant_message_ids[session_id] = assistant_message_id
         self._active_stream_tasks[session_id] = asyncio.current_task()
@@ -11303,7 +11445,9 @@ class ConsoleChatController:
         # outside this task's file scope, so keeping that function
         # byte-identical and building the run-level hook separately here
         # is the lower-blast-radius choice.
-        mcp_provider = await self._compose_mcp_provider(session_id)
+        mcp_provider = await self._compose_mcp_provider(
+            session_id
+        )
         self._mcp_provider = mcp_provider
 
         # task-545/T6: build THIS run's built-in permission gate and hand
@@ -11371,7 +11515,9 @@ class ConsoleChatController:
             project_root_guard=project_authority_guard,
         )
         if local_review_hook is not None:
-            review_hook = build_combined_review_hook([review_hook, local_review_hook])
+            review_hook = build_combined_review_hook(
+                [review_hook, local_review_hook]
+            )
 
         # task-1337: THIS run's Library retrieval provider (direct tools or
         # the bounded RAG fallback), resolved ONCE here on the main loop via

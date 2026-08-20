@@ -65,8 +65,12 @@ from tldw_chatbook.Agents.agent_stream import StreamGate
 from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator, FleetHandle
 from tldw_chatbook.Agents.tool_catalog import (
     BuiltinToolProvider,
+    FIND_TOOLS_SCHEMA,
+    LOAD_TOOLS_SCHEMA,
+    SPAWN_TOOL_SCHEMA,
     SkillToolProvider,
     ToolCatalogRegistry,
+    initial_disclosure,
     intersect_skill_tools,
 )
 from tldw_chatbook.Tools.workspace_file_roots import workspace_context_note
@@ -2761,6 +2765,66 @@ class ConsoleAgentBridge:
                 }
             )
         return schemas
+
+    def build_project_instruction_preview_request(
+        self,
+        *,
+        candidate: StartupInstructionCandidate,
+        model: str,
+        session_system_prompt: str,
+        agent_messages: list[dict],
+        api_endpoint: str,
+        response_reserve_tokens: int = DEFAULT_RESPONSE_RESERVATION,
+    ) -> tuple[dict[str, Any], InstructionSnapshot]:
+        """Build a disposable exact first request without a run or consent."""
+        registry = self._registry
+        allowed_tools = self._allowed_tools
+        active, offer_find_load = initial_disclosure(registry, CONSOLE_RUN_BUDGET)
+        active = [schema for schema in active if schema.name in allowed_tools]
+        runtime_schemas = []
+        if CONSOLE_RUN_BUDGET.max_subagents > 0:
+            runtime_schemas.append(SPAWN_TOOL_SCHEMA)
+        if offer_find_load:
+            runtime_schemas.extend([FIND_TOOLS_SCHEMA, LOAD_TOOLS_SCHEMA])
+        native_tools = (
+            True
+            if self._native_tools_enabled is None
+            else bool(self._native_tools_enabled())
+        )
+        config = AgentConfig(
+            model=model,
+            system_prompt=compose_agent_system_prompt(
+                session_system_prompt,
+                offer_find_load=offer_find_load,
+            ),
+            allowed_tools=allowed_tools,
+            budget=CONSOLE_RUN_BUDGET,
+            native_tools=native_tools,
+            response_reserve_tokens=response_reserve_tokens,
+        )
+        def no_provider_call(**_kwargs):
+            raise RuntimeError("preview must not call the provider")
+
+        service = AgentService(
+            self._db,
+            registry,
+            chat_call=no_provider_call,
+        )
+        request, snapshot = service.build_project_instruction_request(
+            candidate=candidate,
+            config=config,
+            api_endpoint=api_endpoint,
+            runtime_schemas=runtime_schemas,
+            messages=agent_messages,
+            active_schemas=tuple(active),
+        )
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": [dict(message) for message in request.messages],
+        }
+        if request.tools:
+            payload["tools"] = [dict(tool) for tool in request.tools]
+        return payload, snapshot
 
     # -- run ------------------------------------------------------------
 
