@@ -1,19 +1,21 @@
 """Console Conversation Inspector modal (task-8: scaffold + Costs tab;
-task-9: the Exchange tab).
+task-9: the Exchange tab; task-10: the Next Send tab, and retirement of
+the two modals it replaces).
 
-Replaces the two standalone modals (``ConsoleCostModal``, opened from the
-cost chip; ``ConsoleContextModal``, opened via Ctrl+Shift+P / the command
+Replaced the two standalone modals that used to live in this directory
+(one opened from the cost chip, the other via Ctrl+Shift+P / the command
 palette) with ONE modal that gains a tab per surface: Costs (task-8),
-Exchange (this task: per-call request/response detail with status badges),
-Next Send (task-10: the assembled next-send payload -- a placeholder Static
-until then). Both entry points in ``chat_screen.py`` now push the SAME
-instance, differing only by which tab starts active (``initial_tab``).
+Exchange (per-call request/response detail with status badges, task-9),
+Next Send (the assembled next-send payload, task-10). Both entry points in
+``chat_screen.py`` push the SAME instance, differing only by which tab
+starts active (``initial_tab``).
 
-The two legacy modal files are left untouched until task-10 retires them --
-``_format_row``/``_format_totals`` are copied here VERBATIM from
-``ConsoleCostModal`` (still pure ``@staticmethod`` formatters over an
-already-computed ``ConsoleCostRow``/``ConsoleCostRowTotals``, per that
-module's own "already computed, just render it" house pattern).
+``_format_row``/``_format_totals`` (Costs tab) and the Next Send tab's
+worker/reactive/render methods (``_load_snapshot``, ``watch_snapshot``,
+``_build_current_context_widgets``, ``_build_next_send_widgets``, ...) are
+ported VERBATIM from the two retired modals -- still pure formatters and
+"already computed, just render it" rendering over caller-supplied data,
+same house pattern the rest of this widget already follows.
 
 Loader contract (task-8, carried forward for task-9): ``exchanges_loader``
 takes ONE turn's ``InspectorTurn.native_message_id`` and returns
@@ -60,16 +62,21 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.content import Content
 from textual.css.query import NoMatches
+from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.widget import Widget
 from textual.widgets import (
     Button,
+    Checkbox,
     Collapsible,
+    Label,
+    LoadingIndicator,
     Static,
     TabbedContent,
     TabPane,
     TextArea,
 )
+from textual.worker import Worker, WorkerState
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
 from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostRow, ConsoleCostRowTotals
@@ -86,6 +93,13 @@ TAB_COSTS = "inspector-costs"
 TAB_EXCHANGE = "inspector-exchange"
 TAB_NEXT_SEND = "inspector-next-send"
 _COST_ROW_ID_PREFIX = "console-inspector-cost-row-"
+
+# Next Send tab (task-10, ported from the retired standalone context
+# modal): the same 1 MiB raw-JSON size guard that modal used before
+# rendering the assembled next-send payload as a giant ``TextArea`` --
+# past this size Save to File is offered instead of trying to render it
+# inline.
+SIZE_THRESHOLD_BYTES = 1 * 1024 * 1024
 
 # Shared between the Costs tab's per-turn drill-in and the Exchange tab's
 # turn-level load (task-9) -- identical wording for identical situations,
@@ -171,9 +185,9 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
     Every input is precomputed by the caller (``chat_screen.py``) and
     handed in at construction -- this widget never reaches into the
     Console store or DB directly except through the injected
-    ``exchanges_loader``/``snapshot_factory`` callables, mirroring
-    ``ConsoleCostModal``'s "already computed, just render it" shape for
-    the Costs tab's rows/totals.
+    ``exchanges_loader``/``snapshot_factory`` callables, mirroring the
+    retired standalone cost modal's "already computed, just render it"
+    shape for the Costs tab's rows/totals.
     """
 
     DEFAULT_CSS = """
@@ -194,6 +208,21 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
     .console-inspector-exchange-message { height: auto; }
     .console-inspector-exchange-call-actions { height: auto; margin-bottom: 1; }
     #console-inspector-actions { height: auto; margin-top: 1; }
+    /* Next Send tab (task-10, ported from the retired context modal). The pane
+       normally fills the tab's available space; LY-13 (TASK-2154.23)
+       compacted the OLD modal's own top-level frame to content when there
+       was nothing to show yet -- here the outer modal frame is shared
+       with the Costs/Exchange tabs and stays a fixed size, so this same
+       idea is scoped to the pane's own container instead (see
+       ``_update_view``'s docstring). */
+    #console-inspector-next-send-pane { height: 1fr; }
+    #console-inspector-next-send-pane.context-empty { height: auto; }
+    #console-inspector-next-send-header { height: auto; }
+    #console-inspector-next-send-warning { height: auto; color: yellow; }
+    #console-inspector-next-send-loading { display: none; }
+    #console-inspector-next-send-loading.loading { display: block; }
+    #console-inspector-next-send-tabs { height: 1fr; }
+    #console-inspector-next-send-actions { height: auto; }
     """
 
     # Deliberate divergence from a literal "dismiss" action name (this
@@ -208,6 +237,29 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         ("r", "refresh", "Refresh"),
     ]
     SAFE_MODAL_CONTENT = f"#{MODAL_ID}"
+
+    # Next Send tab (task-10) reactives, ported from the retired standalone
+    # context modal.
+    # task-16843: a bare instance default (`reactive(ConsoleContextSnapshot(...))`)
+    # installs the SAME snapshot object on every modal instance until
+    # `_load_snapshot` reassigns it -- `frozen=True` on the dataclass only
+    # blocks reassigning its `current_messages`/`next_send_payload` fields, not
+    # mutating the list/dict those fields point to in place. A callable
+    # default gives each instance its own snapshot (and its own empty
+    # list/dict) instead.
+    snapshot = reactive(
+        lambda: ConsoleContextSnapshot(current_messages=[], next_send_payload={})
+    )
+    raw_json = reactive(False)
+    # Named ``next_send_loading``, not ``loading`` -- ``Widget`` (this
+    # class's own base, via ``ModalScreen``) already declares a built-in
+    # ``loading`` reactive with unrelated semantics (a whole-widget loading
+    # OVERLAY). Shadowing it with this pane's own bool collided with
+    # Textual's internal ``loading`` reads (e.g. ``Screen.update_pointer_
+    # shape``) walking the ancestor chain and invoking THIS reactive's
+    # ``init=True`` watcher before/after this pane's own DOM subtree was
+    # around to query -- a real ``NoMatches`` observed while porting this.
+    next_send_loading = reactive(False)
 
     def __init__(
         self,
@@ -238,16 +290,17 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                 row; returns ``(capture, abandoned)`` pairs (see the module
                 docstring's loader-contract note).
             snapshot_factory: Async, builds the Next Send tab's context
-                snapshot. Accepted now (task-10 wires the Next Send tab to
-                it) but not yet called by this scaffold.
+                snapshot. Called once on mount (and again on Refresh/"r"
+                while that tab is active) via ``_load_snapshot``.
             token_estimate: Precomputed token estimate for the Next Send
                 tab's header, or ``None``.
             estimate_factory: Re-estimate callback for a Next Send refresh,
                 or ``None``.
-            in_progress: Whether a response is currently in flight (Next
-                Send tab warning, task-10).
+            in_progress: Whether a response is currently in flight (shows
+                the Next Send tab's in-progress warning line and disables
+                its Refresh button).
             ephemeral: Whether the active session is temporary (blocks
-                Next Send's Save-to-file affordance, task-10).
+                Next Send's Save-to-file affordance via ``blocked_reason``).
             initial_tab: Which tab id starts active -- ``"inspector-costs"``
                 from the cost chip, ``"inspector-next-send"`` from Ctrl+Shift+P.
         """
@@ -300,13 +353,69 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                     with VerticalScroll(id="console-inspector-exchange-turns"):
                         yield from self._build_exchange_turn_widgets()
                 with TabPane("Next Send", id=TAB_NEXT_SEND):
-                    yield Static(
-                        "Next Send preview is not available yet.",
-                        id="console-inspector-next-send-placeholder",
-                        markup=False,
-                    )
+                    with Vertical(id="console-inspector-next-send-pane"):
+                        yield Static(
+                            "Chat Context",
+                            id="console-inspector-next-send-header",
+                            markup=False,
+                        )
+                        yield Static(
+                            "",
+                            id="console-inspector-next-send-warning",
+                            markup=False,
+                        )
+                        yield LoadingIndicator(id="console-inspector-next-send-loading")
+
+                        with TabbedContent(id="console-inspector-next-send-tabs"):
+                            with TabPane(
+                                "Current", id="console-inspector-next-send-current"
+                            ):
+                                yield Vertical(
+                                    id="console-inspector-next-send-current-body"
+                                )
+                            with TabPane(
+                                "Next Send", id="console-inspector-next-send-payload"
+                            ):
+                                yield Vertical(
+                                    id="console-inspector-next-send-payload-body"
+                                )
+
+                        with Horizontal(id="console-inspector-next-send-actions"):
+                            yield Checkbox(
+                                "Raw JSON", id="console-inspector-next-send-raw"
+                            )
+                            yield Button(
+                                "Refresh",
+                                id="console-inspector-next-send-refresh",
+                                disabled=self._in_progress,
+                            )
+                            yield Button(
+                                "Copy JSON", id="console-inspector-next-send-copy"
+                            )
+                            next_send_save_button = Button(
+                                "Save to File",
+                                id="console-inspector-next-send-save",
+                                disabled=self._save_blocked_reason is not None,
+                            )
+                            if self._save_blocked_reason is not None:
+                                next_send_save_button.tooltip = self._save_blocked_reason
+                            yield next_send_save_button
             with Horizontal(id="console-inspector-actions"):
                 yield Button("Close", id=CLOSE_BUTTON_ID, variant="primary")
+
+    def on_mount(self) -> None:
+        """Kick off the Next Send tab's first snapshot load (ported from
+        the retired standalone context modal's own ``on_mount``).
+
+        Runs regardless of ``initial_tab`` -- ``TabbedContent`` mounts all
+        three panes' widgets up front (the Costs/Exchange tabs already rely
+        on this: their own lazy-loading is implemented on top of it, via
+        empty Collapsible bodies populated on first expand), so the Next
+        Send pane's widgets exist for ``_load_snapshot`` to query/update
+        the moment this fires, whether or not the user ever switches to
+        that tab.
+        """
+        self.run_worker(self._load_snapshot, exclusive=True)
 
     def _build_costs_widgets(self) -> list[Widget]:
         """Costs-tab row widgets: one lazily-drillable Collapsible per row.
@@ -339,9 +448,9 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
 
     @staticmethod
     def _format_row(row: ConsoleCostRow) -> str:
-        """Pure ``str`` render for one breakdown row (verbatim from
-        ``ConsoleCostModal._format_row`` -- task-8 moves it here; the old
-        modal keeps its own copy until task-10 retires it).
+        """Pure ``str`` render for one breakdown row (verbatim from the
+        retired standalone cost modal's own ``_format_row`` -- task-8
+        moved it here; task-10 retired that modal and its now-unused copy).
 
         task-2390: ``row.cost_usd`` already folds in any audio/
         transcription dollar contribution (see ``ConsoleCostRow``'s own
@@ -367,7 +476,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
     @staticmethod
     def _format_totals(totals: ConsoleCostRowTotals) -> str:
         """Pure ``str`` render for the aggregate totals row (verbatim from
-        ``ConsoleCostModal._format_totals``)."""
+        the retired standalone cost modal's own ``_format_totals``)."""
         if totals.total_cost_usd is None:
             cost_text = "unpriced"
         else:
@@ -546,7 +655,9 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
 
     @staticmethod
     def _json_block(obj: Any) -> str:
-        """Same idiom as ``ConsoleContextModal._json_block``."""
+        """Same idiom as the retired standalone context modal's own
+        ``_json_block``; task-10 also reuses this one @staticmethod for
+        the Next Send tab's rendering rather than duplicating it."""
         return json.dumps(obj, indent=2, default=str)
 
     @staticmethod
@@ -922,15 +1033,15 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             self._save_exchange_capture(call_key)
 
     def _copy_exchange_capture(self, call_key: str) -> None:
-        """Verbatim idiom from ``ConsoleContextModal._copy_json`` (that
-        sibling interpolates ``exc``'s own message text into its log line;
-        this copy does NOT -- ``pyperclip.copy(text)`` failing (e.g. a
-        codec error while encoding ``text``) can embed a fragment of the
-        very payload ``text`` was built from inside ``str(exc)``, and this
-        is the one call in this file review finding 1's "no capture
-        content, no exception message body" rule would otherwise miss),
-        applied to one call's ``ExchangeCapture`` instead of the whole
-        snapshot."""
+        """Verbatim idiom from the retired standalone context modal's own
+        ``_copy_json`` (that sibling interpolated ``exc``'s own message
+        text into its log line; this copy does NOT -- ``pyperclip.copy(text)``
+        failing (e.g. a codec error while encoding ``text``) can embed a
+        fragment of the very payload ``text`` was built from inside
+        ``str(exc)``, and this is the one call in this file review
+        finding 1's "no capture content, no exception message body" rule
+        would otherwise miss), applied to one call's ``ExchangeCapture``
+        instead of the whole snapshot."""
         capture = self._exchange_capture_by_call_key.get(call_key)
         if capture is None:
             return
@@ -948,12 +1059,13 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             self.notify("Copy failed: pyperclip unavailable.", severity="warning")
 
     def _save_exchange_capture(self, call_key: str) -> None:
-        """Verbatim idiom from ``ConsoleContextModal._save_json``, applied
-        to one call's ``ExchangeCapture``. This method writes UNCONDITIONALLY
-        -- the only enforcement of ``self._save_blocked_reason`` is the
-        Save button's own ``disabled=`` state (set in
-        ``_mount_exchange_call_body``); a direct call here (e.g. a future
-        caller that bypasses the button) still writes to disk."""
+        """Verbatim idiom from the retired standalone context modal's own
+        ``_save_json``, applied to one call's ``ExchangeCapture``. This
+        method writes UNCONDITIONALLY -- the only enforcement of
+        ``self._save_blocked_reason`` is the Save button's own
+        ``disabled=`` state (set in ``_mount_exchange_call_body``); a
+        direct call here (e.g. a future caller that bypasses the button)
+        still writes to disk."""
         capture = self._exchange_capture_by_call_key.get(call_key)
         if capture is None:
             return
@@ -986,16 +1098,289 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             )
             self.notify(f"Save failed: {exc}", severity="error")
 
-    def action_refresh(self) -> None:
-        """"r" binding, wired for parity with ``ConsoleContextModal``.
+    # -- Next Send tab (task-10, ported from the retired context modal) -
 
-        Nothing to refresh yet in this scaffold: the Costs tab's rows are
-        precomputed by the caller (no live-recompute entry point exists
-        here, matching ``ConsoleCostModal``'s own shape) and the Next Send
-        tab is a placeholder until task-10 wires ``snapshot_factory`` to
-        an actual reload.
+    def watch_snapshot(self) -> None:
+        self._update_view()
+
+    def watch_raw_json(self) -> None:
+        self._update_view()
+
+    def watch_next_send_loading(self) -> None:
+        loading = self.query_one(
+            "#console-inspector-next-send-loading", LoadingIndicator
+        )
+        if self.next_send_loading:
+            loading.add_class("loading")
+        else:
+            loading.remove_class("loading")
+
+    def _update_view(self) -> None:
+        # LY-13 (TASK-2154.23): compact the PANE (not the modal frame --
+        # see this class's DEFAULT_CSS comment) when there is nothing to
+        # show yet; the pane only earns its full 1fr of the tab's space
+        # once there is actual content.
+        pane = self.query_one("#console-inspector-next-send-pane", Vertical)
+        pane.set_class(not self.snapshot.current_messages, "context-empty")
+
+        warning = self.query_one("#console-inspector-next-send-warning", Static)
+        if self._in_progress:
+            warning.update("A response is in progress; snapshot may change.")
+        else:
+            warning.update("")
+
+        header = self.query_one("#console-inspector-next-send-header", Static)
+        header_text = "Chat Context"
+        if self._token_estimate is not None:
+            header_text += f" (~{self._token_estimate} tokens)"
+        header.update(header_text)
+
+        current_container = self.query_one(
+            "#console-inspector-next-send-current-body", Vertical
+        )
+        current_container.remove_children()
+        for widget in self._build_current_context_widgets():
+            current_container.mount(widget)
+
+        next_container = self.query_one(
+            "#console-inspector-next-send-payload-body", Vertical
+        )
+        next_container.remove_children()
+        for widget in self._build_next_send_widgets():
+            next_container.mount(widget)
+
+    def _build_current_context_widgets(self) -> list[Widget]:
+        if not self.snapshot.current_messages:
+            # LY-13 (TASK-2154.23): guidance, not a void. Prefix kept so the
+            # existing "No conversation context" pins still match.
+            return [
+                Label(
+                    "No conversation context yet.\n"
+                    "Messages you send and receive will appear here.\n"
+                    "The Next Send tab shows the exact payload — model, "
+                    "system prompt, staged sources — your next message ships with.",
+                    markup=False,
+                )
+            ]
+        return [
+            Collapsible(
+                TextArea(msg.content, read_only=True),
+                # Content.from_text(..., markup=False): same guard as every
+                # other Collapsible title in this file (hard constraint 1)
+                # -- msg.role/msg.status are enum-derived today, but a
+                # Collapsible title IS markup-parsed by default and this
+                # file does not leave that to chance anywhere else.
+                title=Content.from_text(
+                    f"[{msg.role}] {msg.status}", markup=False
+                ),
+                collapsed=True,
+            )
+            for msg in self.snapshot.current_messages
+        ]
+
+    def _build_next_send_widgets(self) -> list[Widget]:
+        widgets: list[Widget] = []
+        payload = self.snapshot.next_send_payload
+        text = self._format_next_send_text()
+
+        if len(text.encode("utf-8")) > SIZE_THRESHOLD_BYTES:
+            widgets.append(
+                Label(
+                    "Context exceeds 1 MiB. Use Save to File to view the "
+                    "full payload.",
+                    markup=False,
+                )
+            )
+            return widgets
+
+        if self.raw_json:
+            widgets.append(TextArea(text, read_only=True))
+            return widgets
+
+        widgets.append(
+            Collapsible(
+                Label(str(payload.get("model", "unknown")), markup=False),
+                title=Content.from_text("Model", markup=False),
+                collapsed=False,
+            )
+        )
+
+        widgets.append(
+            Collapsible(
+                TextArea(self._json_block(payload.get("system")), read_only=True),
+                title=Content.from_text("System", markup=False),
+                collapsed=True,
+            )
+        )
+
+        message_widgets = []
+        for i, msg in enumerate(payload.get("messages", [])):
+            message_widgets.append(
+                Collapsible(
+                    TextArea(self._json_block(msg), read_only=True),
+                    title=Content.from_text(f"Message {i}", markup=False),
+                    collapsed=True,
+                )
+            )
+        widgets.append(
+            Collapsible(
+                *message_widgets,
+                title=Content.from_text("Messages", markup=False),
+                collapsed=False,
+            )
+        )
+
+        response_prefill = payload.get("response_prefill")
+        if response_prefill:
+            widgets.append(
+                Collapsible(
+                    Label(
+                        "The reply will continue from this prefill; the agent "
+                        "loop (tools/MCP) is skipped for this send.",
+                        markup=False,
+                    ),
+                    TextArea(self._json_block(response_prefill), read_only=True),
+                    title=Content.from_text("Response Prefill", markup=False),
+                    collapsed=False,
+                )
+            )
+
+        tools = payload.get("tools")
+        if tools:
+            widgets.append(
+                Collapsible(
+                    TextArea(self._json_block(tools), read_only=True),
+                    title=Content.from_text("Tools", markup=False),
+                    collapsed=True,
+                )
+            )
+
+        staged = payload.get("staged_sources")
+        if staged:
+            widgets.append(
+                Collapsible(
+                    TextArea(self._json_block(staged), read_only=True),
+                    title=Content.from_text("Staged Sources", markup=False),
+                    collapsed=True,
+                )
+            )
+
+        return widgets
+
+    def _format_next_send_text(self) -> str:
+        return self._json_block(self.snapshot.next_send_payload)
+
+    # ``_json_block`` itself is not redefined here -- the Exchange tab
+    # above already carries the identical idiom (``json.dumps(obj,
+    # indent=2, default=str)``, its own docstring notes it mirrors the
+    # retired standalone context modal's own ``_json_block``); this tab
+    # reuses that one @staticmethod rather than duplicating it a second
+    # time.
+
+    async def _load_snapshot(self) -> None:
+        self.next_send_loading = True
+        try:
+            self.snapshot = await self._snapshot_factory()
+            if self._estimate_factory is not None:
+                self._token_estimate = self._estimate_factory()
+        finally:
+            self.next_send_loading = False
+
+    def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        if event.state == WorkerState.ERROR:
+            self.next_send_loading = False
+            self.notify("Failed to refresh context.", severity="error")
+
+    @on(Checkbox.Changed, "#console-inspector-next-send-raw")
+    def _toggle_raw(self, event: Checkbox.Changed) -> None:
+        event.stop()
+        self.raw_json = event.value
+
+    @on(Button.Pressed, "#console-inspector-next-send-refresh")
+    def _refresh_next_send(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.run_worker(self._load_snapshot, exclusive=True)
+
+    @on(Button.Pressed, "#console-inspector-next-send-copy")
+    def _copy_json(self, event: Button.Pressed) -> None:
+        event.stop()
+        text = self._format_next_send_text()
+        try:
+            import pyperclip
+
+            pyperclip.copy(text)
+            self.notify("JSON copied to clipboard.")
+        except Exception as exc:
+            # No exception text: ``text`` in this frame's locals is the
+            # FULL next-send payload (system prompt, messages, staged
+            # sources), and loguru's diagnose formatter would otherwise
+            # annotate the failing source line's names (including
+            # ``text``) with their values. type(exc).__name__ is enough to
+            # diagnose a clipboard failure without echoing payload content
+            # (hard constraint 2/3 -- the retired standalone context
+            # modal's own ``_copy_json`` interpolated ``exc`` itself into
+            # the log line; this is the same fix already applied to this
+            # file's own ``_copy_exchange_capture``, carried to its
+            # sibling).
+            logger.warning(
+                f"Failed to copy context JSON to clipboard: {type(exc).__name__}"
+            )
+            self.notify("Copy failed: pyperclip unavailable.", severity="warning")
+
+    @on(Button.Pressed, "#console-inspector-next-send-save")
+    def _save_json(self, event: Button.Pressed) -> None:
+        event.stop()
+        text = self._format_next_send_text()
+        filename = f"chatbook_context_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        path = Path.home() / "Downloads" / filename
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+            self.notify(f"Saved to {path}")
+        except OSError as exc:
+            # No exception text, no traceback -- same rationale as this
+            # file's ``_save_exchange_capture``: ``text`` in this frame is
+            # the full next-send payload, and an OSError's own str() can
+            # also embed the offending path. type(exc).__name__ plus the
+            # path we attempted is enough to diagnose (permissions, disk
+            # full, path too long) without echoing content into the log OR
+            # the user-facing toast -- the retired standalone context
+            # modal's own ``_save_json`` put the raw exception text in a
+            # USER-VISIBLE notify() (hard constraint 3); this names the
+            # failure class and path instead.
+            logger.error(
+                f"Failed to save context snapshot to {path}: {type(exc).__name__}"
+            )
+            self.notify(
+                f"Save failed ({type(exc).__name__}): {path}", severity="error"
+            )
+        except Exception as exc:
+            logger.error(
+                f"Unexpected error saving context snapshot to {path}: "
+                f"{type(exc).__name__}"
+            )
+            self.notify(
+                f"Save failed ({type(exc).__name__}): {path}", severity="error"
+            )
+
+    def action_refresh(self) -> None:
+        """"r" binding: refresh the ACTIVE tab, when it has a live-reload
+        entry point.
+
+        Only the Next Send tab does (``_load_snapshot``, ported from the
+        retired standalone context modal's own "r" binding) -- the Costs
+        tab's rows are precomputed by the caller (no live-recompute entry
+        point exists here, matching the retired standalone cost modal's
+        own shape) and the Exchange tab's captures are fetched once per
+        turn on first expand, so there is nothing to refresh on either of
+        those tabs.
         """
-        return
+        try:
+            tabs = self.query_one("#console-inspector-tabs", TabbedContent)
+        except NoMatches:
+            return
+        if tabs.active == TAB_NEXT_SEND:
+            self.run_worker(self._load_snapshot, exclusive=True)
 
     async def action_dismiss(self) -> None:
         """Defensive fallback for the built-in "dismiss" action name."""

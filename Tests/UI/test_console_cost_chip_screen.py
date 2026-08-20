@@ -684,9 +684,9 @@ async def test_fingerprint_recompute_is_skipped_while_streaming():
 @pytest.mark.asyncio
 async def test_cost_chip_press_opens_the_breakdown_modal():
     """task-8: the cost chip now opens the shared Conversation Inspector
-    (not the retired standalone ``ConsoleCostModal``), starting on its
-    Costs tab -- copies this file's existing chip-press driver verbatim,
-    only the pushed-modal assertion changes."""
+    (not the retired standalone cost modal, deleted in task-10), starting
+    on its Costs tab -- copies this file's existing chip-press driver
+    verbatim, only the pushed-modal assertion changes."""
     gateway = _AnthropicCostGateway(PRICED_USAGE, reply="the priced answer")
     app = _build_test_app()
     _configure_anthropic_ready_console(app)

@@ -462,9 +462,7 @@ from ...Widgets.Console.console_selection_menu import (
     ConsoleSideChatRequested,
 )
 from ...Widgets.Console.console_side_chat_modal import ConsoleSideChatModal
-from ...Widgets.Console.console_context_modal import ConsoleContextModal
 from ...Widgets.Console import console_project_instructions as project_instruction_ui
-from ...Widgets.Console.console_cost_modal import ConsoleCostModal
 from ...Widgets.Console.console_conversation_inspector import (
     TAB_COSTS,
     TAB_NEXT_SEND,
@@ -3385,15 +3383,13 @@ class ChatScreen(BaseAppScreen):
     def action_view_chat_context(self) -> None:
         """Open the Conversation Inspector's Next Send tab (Ctrl+Shift+P).
 
-        task-8: this used to push the standalone ``ConsoleContextModal``;
+        task-8: this used to push a standalone modal (retired in task-10);
         it now pushes the shared ``ConsoleConversationInspector`` instead
         (same modal the cost chip opens, just starting on a different
         tab) -- the command-palette "view context" entry
         (``UI/console_command_provider.py``) follows automatically since
-        it calls this same action. The Next Send tab itself is a
-        placeholder Static until task-10 ports this modal's real content
-        into it; the factories built below are threaded through now so
-        task-10 has nothing left to wire at the call site.
+        it calls this same action. task-10 wired the Next Send tab to the
+        factories built below, so opening from here renders real content.
         """
         if self._console_setup_modal_blocking():
             return
@@ -3428,10 +3424,13 @@ class ChatScreen(BaseAppScreen):
         """Build the Next Send tab's snapshot/estimate factories (task-18300).
 
         Shared by BOTH ``ConsoleConversationInspector`` entry points (the
-        cost chip and Ctrl+Shift+P): the two push the SAME modal instance
-        and the user can switch tabs freely, so a caller that skipped this
-        would leave Next Send showing nothing. Building the closures is
-        cheap -- no I/O happens until one is actually CALLED.
+        cost chip and Ctrl+Shift+P) -- the two push the SAME modal
+        instance, and the user can switch to the Next Send tab regardless
+        of which tab it opened on, so a caller that skipped this would
+        leave the tab showing nothing. Building the closures themselves is
+        cheap (no I/O happens until one is actually CALLED); the Next Send
+        pane calls ``snapshot_factory`` once on mount regardless of
+        ``initial_tab`` (see ``ConsoleConversationInspector.on_mount``).
 
         ``session_id`` is threaded in rather than re-read from the store
         because the composer only reflects the ACTIVE session; see
@@ -9581,12 +9580,12 @@ class ChatScreen(BaseAppScreen):
         """Push the Conversation Inspector on the Costs tab for the active
         native session (task-5/8).
 
-        task-8: this used to push the standalone ``ConsoleCostModal``; it
-        now pushes the shared ``ConsoleConversationInspector`` (same modal
-        Ctrl+Shift+P opens, just starting on a different tab). The Next
-        Send factories are built too (via ``_console_inspector_next_send_
-        factories``) so switching to that tab after opening from the chip
-        doesn't land on stale/empty data once task-10 wires it to render.
+        task-8: this used to push a standalone modal (retired in task-10);
+        it now pushes the shared ``ConsoleConversationInspector`` (same
+        modal Ctrl+Shift+P opens, just starting on a different tab). The
+        Next Send factories are built too (via ``_console_inspector_next_
+        send_factories``) so switching to that tab after opening from the
+        chip renders real content, not stale/empty data.
         """
         controller = self._ensure_console_chat_controller()
         factory, estimate_factory, token_estimate, in_progress = (
@@ -9614,9 +9613,9 @@ class ChatScreen(BaseAppScreen):
         Rows/totals are computed once here (``build_cost_rows``/
         ``build_cost_rows_totals`` are already best-effort and never raise
         on their own) and handed to the modal at construction -- the modal
-        itself never queries the store directly, matching
-        ``ConsoleCostModal``'s pre-task-8 "already computed, just render
-        it" shape.
+        itself never queries the store directly, the same "already
+        computed, just render it" shape the standalone modal it replaced
+        (pre-task-8) used.
         """
         rows, totals, turns, exchanges_loader = self._build_console_inspector_cost_data()
         self.app.push_screen(

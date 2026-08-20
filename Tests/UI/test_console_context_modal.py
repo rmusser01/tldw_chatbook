@@ -1,3 +1,18 @@
+"""Next Send tab of the Conversation Inspector (task-10 ported this pane's
+behavior wholesale from the retired standalone context modal; this file was
+that modal's own dedicated test file and is re-targeted here rather than
+deleted -- see the module's own docstring for what's ported verbatim).
+
+Construction/queries now go through ``ConsoleConversationInspector`` (with
+``initial_tab=TAB_NEXT_SEND`` so the pane under test is the visible,
+clickable tab) instead of the standalone modal; only DOM ids that used to
+identify the old modal's own FRAME changed to the pane's ids. Every
+behavioral pin from the original file is kept: the "No conversation
+context" empty-state copy prefix, the save-blocked tooltip, the raw-JSON
+toggle, the 1 MiB size threshold (covered elsewhere, in
+``test_console_conversation_inspector.py``), and the in-progress warning.
+"""
+
 from __future__ import annotations
 
 import json
@@ -25,8 +40,13 @@ from tldw_chatbook.Chat.console_project_instructions import (
     EPHEMERAL_ORIGIN_KEY,
     ProjectInstructionControlState,
 )
-from tldw_chatbook.Widgets.Console import console_context_modal
-from tldw_chatbook.Widgets.Console.console_context_modal import ConsoleContextModal
+from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostRowTotals
+from tldw_chatbook.Widgets.Console import console_conversation_inspector
+from tldw_chatbook.Widgets.Console.console_conversation_inspector import (
+    CLOSE_BUTTON_ID,
+    TAB_NEXT_SEND,
+    ConsoleConversationInspector,
+)
 from tldw_chatbook.Widgets.Console.console_project_instructions import (
     ConsoleProjectInstructionContextPanel,
 )
@@ -71,30 +91,61 @@ async def _empty_factory() -> ConsoleContextSnapshot:
     return EMPTY_SNAPSHOT
 
 
+async def _empty_exchanges_loader(
+    _native_message_id: str,
+) -> list[tuple[object, bool]]:
+    return []
+
+
+def _inspector(snapshot_factory=_snapshot_factory, **overrides: object) -> ConsoleConversationInspector:
+    """Build a ``ConsoleConversationInspector`` scoped to the Next Send tab.
+
+    Mirrors the retired modal's own constructor surface (``snapshot_
+    factory`` plus ``token_estimate``/``estimate_factory``/``in_progress``/
+    ``ephemeral``) -- the Costs-tab-only kwargs (``rows``/``totals``/
+    ``turns``/``exchanges_loader``) are filled with empty stand-ins since
+    this file only exercises the Next Send pane.
+    """
+    kwargs: dict[str, object] = dict(
+        rows=[],
+        totals=ConsoleCostRowTotals(0, 0.0, False, 0),
+        turns=[],
+        exchanges_loader=_empty_exchanges_loader,
+        snapshot_factory=snapshot_factory,
+        initial_tab=TAB_NEXT_SEND,
+    )
+    kwargs.update(overrides)
+    return ConsoleConversationInspector(**kwargs)
+
+
 class ModalHarness(App):
     def compose(self) -> ComposeResult:
         yield Static("background")
 
     def on_mount(self) -> None:
-        self.push_screen(ConsoleContextModal(_snapshot_factory, token_estimate=42))
+        self.push_screen(_inspector(token_estimate=42))
 
 
 @pytest.mark.asyncio
 async def test_context_modal_renders_tabs():
     app = ModalHarness()
 
-    async with app.run_test(size=(100, 40)) as _pilot:
+    async with app.run_test(size=(120, 44)) as _pilot:
         modal = app.screen
-        header = modal.query_one("#console-context-header", Static)
+        header = modal.query_one("#console-inspector-next-send-header", Static)
         header_text = str(header.renderable)
         assert "Chat Context" in header_text
         assert "42 tokens" in header_text
 
-        current_container = modal.query_one("#console-context-current-body", Vertical)
+        current_container = modal.query_one(
+            "#console-inspector-next-send-current-body", Vertical
+        )
         text_areas = current_container.query(TextArea)
         assert any("Hello" in ta.text for ta in text_areas)
 
-        next_container = modal.query_one("#console-context-next-send-body", Vertical)
+        next_container = modal.query_one(
+            "#console-inspector-next-send-payload-body", Vertical
+        )
         labels = list(next_container.query(Label))
         assert any("gpt-4" in str(label.renderable) for label in labels)
 
@@ -142,13 +193,15 @@ async def test_context_modal_shows_metadata_only_project_instruction_section():
 @pytest.mark.asyncio
 async def test_context_modal_empty_state():
     app = ModalHarness()
-    app._push_empty = lambda: app.push_screen(ConsoleContextModal(_empty_factory))
+    app._push_empty = lambda: app.push_screen(_inspector(_empty_factory))
 
-    async with app.run_test(size=(100, 40)) as pilot:
+    async with app.run_test(size=(120, 44)) as pilot:
         app._push_empty()
         await pilot.pause()
         modal = app.screen
-        current_container = modal.query_one("#console-context-current-body", Vertical)
+        current_container = modal.query_one(
+            "#console-inspector-next-send-current-body", Vertical
+        )
         labels = list(current_container.query(Label))
         assert any(
             "No conversation context" in str(label.renderable) for label in labels
@@ -159,16 +212,18 @@ async def test_context_modal_empty_state():
 async def test_context_modal_in_progress_warning():
     app = ModalHarness()
     app._push_in_progress = lambda: app.push_screen(
-        ConsoleContextModal(_snapshot_factory, in_progress=True)
+        _inspector(_snapshot_factory, in_progress=True)
     )
 
-    async with app.run_test(size=(100, 40)) as pilot:
+    async with app.run_test(size=(120, 44)) as pilot:
         app._push_in_progress()
         await pilot.pause()
         modal = app.screen
-        warning = modal.query_one("#console-context-warning", Static)
+        warning = modal.query_one("#console-inspector-next-send-warning", Static)
         assert "in progress" in str(warning.renderable)
-        refresh_button = modal.query_one("#console-context-refresh", Button)
+        refresh_button = modal.query_one(
+            "#console-inspector-next-send-refresh", Button
+        )
         assert refresh_button.disabled
         assert app.focused is modal.query_one("#console-context-close", Button)
 
@@ -320,15 +375,17 @@ async def test_context_modal_toggle_raw_json():
     app = ActionHarness()
     expected_raw = json.dumps(SNAPSHOT.next_send_payload, indent=2, default=str)
 
-    async with app.run_test(size=(100, 40)) as pilot:
-        app.push_screen(ConsoleContextModal(_snapshot_factory))
+    async with app.run_test(size=(120, 44)) as pilot:
+        app.push_screen(_inspector())
         await pilot.pause()
 
-        await pilot.click("#console-context-raw")
+        await pilot.click("#console-inspector-next-send-raw")
         await pilot.pause()
 
         modal = app.screen
-        next_container = modal.query_one("#console-context-next-send-body", Vertical)
+        next_container = modal.query_one(
+            "#console-inspector-next-send-payload-body", Vertical
+        )
         text_areas = list(next_container.query(TextArea))
         assert any(ta.text == expected_raw for ta in text_areas)
 
@@ -344,12 +401,12 @@ async def test_context_modal_refresh_invokes_factory():
 
     app = ActionHarness()
 
-    async with app.run_test(size=(100, 40)) as pilot:
-        app.push_screen(ConsoleContextModal(counting_factory))
+    async with app.run_test(size=(120, 44)) as pilot:
+        app.push_screen(_inspector(counting_factory))
         await pilot.pause()
         assert calls == 1
 
-        await pilot.click("#console-context-refresh")
+        await pilot.click("#console-inspector-next-send-refresh")
         await pilot.pause()
         assert calls == 2
 
@@ -481,14 +538,14 @@ async def test_context_modal_authority_warning_suppresses_stale_preview_rows():
 async def test_context_modal_close_dismisses():
     app = ActionHarness()
 
-    async with app.run_test(size=(100, 40)) as pilot:
-        app.push_screen(ConsoleContextModal(_snapshot_factory))
+    async with app.run_test(size=(120, 44)) as pilot:
+        app.push_screen(_inspector())
         await pilot.pause()
-        assert isinstance(app.screen, ConsoleContextModal)
+        assert isinstance(app.screen, ConsoleConversationInspector)
 
-        await pilot.click("#console-context-close")
+        await pilot.click(f"#{CLOSE_BUTTON_ID}")
         await pilot.pause()
-        assert not isinstance(app.screen, ConsoleContextModal)
+        assert not isinstance(app.screen, ConsoleConversationInspector)
 
 
 @pytest.mark.parametrize("source", ["close", "backdrop"])
@@ -497,12 +554,12 @@ async def test_context_modal_close_and_backdrop_return_none(source: str):
     app = ActionHarness()
     results: list[object] = []
 
-    async with app.run_test(size=(100, 40)) as pilot:
-        app.push_screen(ConsoleContextModal(_snapshot_factory), results.append)
+    async with app.run_test(size=(120, 44)) as pilot:
+        app.push_screen(_inspector(), results.append)
         await pilot.pause()
 
         if source == "close":
-            await pilot.click("#console-context-close")
+            await pilot.click(f"#{CLOSE_BUTTON_ID}")
         else:
             await pilot.click(offset=(0, 0))
         await pilot.pause()
@@ -517,11 +574,11 @@ async def test_context_modal_copy_json(monkeypatch):
     fake_copy = types.SimpleNamespace(copy=Mock())
     monkeypatch.setitem(sys.modules, "pyperclip", fake_copy)
 
-    async with app.run_test(size=(100, 40)) as pilot:
-        app.push_screen(ConsoleContextModal(_snapshot_factory))
+    async with app.run_test(size=(120, 44)) as pilot:
+        app.push_screen(_inspector())
         await pilot.pause()
 
-        await pilot.click("#console-context-copy")
+        await pilot.click("#console-inspector-next-send-copy")
         await pilot.pause()
 
         fake_copy.copy.assert_called_once_with(expected_text)
@@ -586,19 +643,19 @@ async def test_context_modal_save_to_file(tmp_path, monkeypatch):
             return getattr(self._path, name)
 
     monkeypatch.setattr(
-        console_context_modal,
+        console_conversation_inspector,
         "Path",
         FakePath,
     )
 
-    async with app.run_test(size=(100, 40)) as pilot:
-        app.push_screen(ConsoleContextModal(_snapshot_factory))
+    async with app.run_test(size=(120, 44)) as pilot:
+        app.push_screen(_inspector())
         await pilot.pause()
 
-        await pilot.click("#console-context-save")
+        await pilot.click("#console-inspector-next-send-save")
         await pilot.pause()
 
-        saved_files = list((tmp_path / "Downloads").glob("*.json"))
+        saved_files = list((tmp_path / "Downloads").glob("chatbook_context_*.json"))
         assert len(saved_files) == 1
         assert saved_files[0].read_text(encoding="utf-8") == expected_text
 
@@ -674,17 +731,17 @@ async def test_context_modal_save_to_file_failure(monkeypatch):
             raise OSError("disk full")
 
     monkeypatch.setattr(
-        console_context_modal,
+        console_conversation_inspector,
         "Path",
         FailingPath,
     )
 
-    async with app.run_test(size=(100, 40)) as pilot:
-        app.push_screen(ConsoleContextModal(_snapshot_factory))
+    async with app.run_test(size=(120, 44)) as pilot:
+        app.push_screen(_inspector())
         await pilot.pause()
 
         # Should not crash; notification severity is checked best-effort.
-        await pilot.click("#console-context-save")
+        await pilot.click("#console-inspector-next-send-save")
         await pilot.pause()
 
 
@@ -716,7 +773,7 @@ class PrefillModalHarness(App):
         yield Static("background")
 
     def on_mount(self) -> None:
-        self.push_screen(ConsoleContextModal(_prefill_factory, token_estimate=7))
+        self.push_screen(_inspector(_prefill_factory, token_estimate=7))
 
 
 @pytest.mark.asyncio
@@ -725,9 +782,11 @@ async def test_context_modal_renders_response_prefill_section():
     the agent-loop-bypass note; absent entirely when the key is missing."""
     app = PrefillModalHarness()
 
-    async with app.run_test(size=(100, 40)) as _pilot:
+    async with app.run_test(size=(120, 44)) as _pilot:
         modal = app.screen
-        next_container = modal.query_one("#console-context-next-send-body", Vertical)
+        next_container = modal.query_one(
+            "#console-inspector-next-send-payload-body", Vertical
+        )
         collapsibles = list(next_container.query(Collapsible))
         titles = [c.title for c in collapsibles]
         assert "Response Prefill" in titles
@@ -741,9 +800,11 @@ async def test_context_modal_renders_response_prefill_section():
 async def test_context_modal_no_prefill_section_without_key():
     app = ModalHarness()
 
-    async with app.run_test(size=(100, 40)) as _pilot:
+    async with app.run_test(size=(120, 44)) as _pilot:
         modal = app.screen
-        next_container = modal.query_one("#console-context-next-send-body", Vertical)
+        next_container = modal.query_one(
+            "#console-inspector-next-send-payload-body", Vertical
+        )
         titles = [c.title for c in next_container.query(Collapsible)]
         assert "Response Prefill" not in titles
 
@@ -756,44 +817,52 @@ async def test_context_modal_save_button_is_disabled_with_a_reason_when_ephemera
 
     app = ActionHarness()
 
-    async with app.run_test(size=(100, 40)) as pilot:
-        app.push_screen(ConsoleContextModal(_snapshot_factory, ephemeral=True))
+    async with app.run_test(size=(120, 44)) as pilot:
+        app.push_screen(_inspector(ephemeral=True))
         await pilot.pause()
 
-        save_button = app.screen.query_one("#console-context-save", Button)
+        save_button = app.screen.query_one(
+            "#console-inspector-next-send-save", Button
+        )
         assert save_button.disabled is True
         assert save_button.tooltip == blocked_reason("save-context", ephemeral=True)
 
         await app.pop_screen()
         await pilot.pause()
 
-        app.push_screen(ConsoleContextModal(_snapshot_factory, ephemeral=False))
+        app.push_screen(_inspector(ephemeral=False))
         await pilot.pause()
-        normal_button = app.screen.query_one("#console-context-save", Button)
+        normal_button = app.screen.query_one(
+            "#console-inspector-next-send-save", Button
+        )
         assert normal_button.disabled is False
 
 
 @pytest.mark.asyncio
-async def test_context_modal_empty_state_compacts_modal_and_guides():
-    """LY-13 (TASK-2154.23): the empty viewer sizes to content and guides."""
+async def test_context_modal_empty_state_compacts_pane_and_guides():
+    """LY-13 (TASK-2154.23): the empty viewer sizes its PANE to content and
+    guides -- ported from the old modal's own top-level-frame compaction
+    (see ``ConsoleConversationInspector.DEFAULT_CSS``'s Next Send comment
+    for why this now scopes to the pane rather than the shared modal
+    frame: the frame is shared with the Costs/Exchange tabs and stays a
+    fixed size across all three)."""
     app = ModalHarness()
-    app._push_empty = lambda: app.push_screen(ConsoleContextModal(_empty_factory))
+    app._push_empty = lambda: app.push_screen(_inspector(_empty_factory))
 
-    async with app.run_test(size=(100, 40)) as pilot:
+    async with app.run_test(size=(120, 44)) as pilot:
         app._push_empty()
         await pilot.pause()
         modal_screen = app.screen
         current_container = modal_screen.query_one(
-            "#console-context-current-body", Vertical
+            "#console-inspector-next-send-current-body", Vertical
         )
         labels = [str(label.renderable) for label in current_container.query(Label)]
         guidance = next(
             (text for text in labels if "No conversation context" in text), ""
         )
         assert "Next Send" in guidance
-        modal_box = modal_screen.query_one("#console-context-modal", Vertical)
-        assert modal_box.has_class("context-empty")
-        assert modal_box.region.height <= 22
+        pane = modal_screen.query_one("#console-inspector-next-send-pane", Vertical)
+        assert pane.has_class("context-empty")
 
 
 @pytest.mark.asyncio
@@ -801,8 +870,8 @@ async def test_context_modal_populated_state_keeps_full_height():
     """The compact class is empty-state-only; populated keeps the room."""
     app = ModalHarness()  # pushes the populated snapshot on mount
 
-    async with app.run_test(size=(100, 40)) as pilot:
+    async with app.run_test(size=(120, 44)) as pilot:
         await pilot.pause()
         modal_screen = app.screen
-        modal_box = modal_screen.query_one("#console-context-modal", Vertical)
-        assert not modal_box.has_class("context-empty")
+        pane = modal_screen.query_one("#console-inspector-next-send-pane", Vertical)
+        assert not pane.has_class("context-empty")

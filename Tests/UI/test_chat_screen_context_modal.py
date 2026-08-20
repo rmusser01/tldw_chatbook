@@ -46,8 +46,8 @@ def app_instance():
 @pytest.mark.asyncio
 async def test_chat_screen_keybinding_opens_context_modal(app_instance):
     """task-8: Ctrl+Shift+P now opens the shared Conversation Inspector
-    (not the retired standalone ``ConsoleContextModal``), starting on its
-    Next Send tab."""
+    (not the retired standalone context modal, deleted in task-10),
+    starting on its Next Send tab."""
     app = ChatScreenHarness(app_instance)
 
     async with app.run_test(size=(120, 40)) as pilot:

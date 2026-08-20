@@ -463,8 +463,9 @@ def test_build_cost_rows_carries_audio_and_transcription_fields():
     assert row.audio_output == 90
     assert row.transcription_seconds == 2.5
     # cost_usd is the row's full total -- audio/transcription costs are
-    # already folded in (see console_cost_modal.py for the breakdown that
-    # keeps them visible rather than an undecomposable single figure).
+    # already folded in (see console_conversation_inspector.py's Costs tab
+    # for the breakdown that keeps them visible rather than an
+    # undecomposable single figure).
     assert row.cost_usd is not None and row.cost_usd > 0
 
 

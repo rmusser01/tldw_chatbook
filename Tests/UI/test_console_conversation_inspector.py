@@ -5,8 +5,8 @@ Mirrors ``Tests/UI/test_console_context_modal.py``'s harness idiom -- a bare
 ``App`` that pushes the modal directly on mount, driven with ``run_test``/
 ``pilot`` -- rather than the full ``ConsoleHarness`` app (this widget never
 touches the Console screen/store itself; every input is precomputed and
-handed in at construction, same shape as ``ConsoleCostModal``/
-``ConsoleContextModal``).
+handed in at construction, same shape as the two standalone modals this
+one replaced -- both retired outright in task-10).
 """
 
 from __future__ import annotations
@@ -18,7 +18,14 @@ from types import SimpleNamespace
 import pytest
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
-from textual.widgets import Button, Collapsible, Static, TabPane, TextArea
+from textual.widgets import (
+    Button,
+    Collapsible,
+    ContentSwitcher,
+    Static,
+    TabPane,
+    TextArea,
+)
 from textual.widgets._collapsible import CollapsibleTitle
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
@@ -143,7 +150,16 @@ async def test_three_tabs_render() -> None:
     async with app.run_test(size=(120, 44)) as pilot:
         await pilot.pause()
         modal = app.screen
-        tab_pane_ids = {pane.id for pane in modal.query(TabPane)}
+        # Scoped to the OUTER TabbedContent's own direct panes: task-10's
+        # Next Send tab nests its own inner TabbedContent (Current / Next
+        # Send sub-tabs, ported from the retired standalone context modal),
+        # so an unscoped ``modal.query(TabPane)`` now also picks up those
+        # two nested TabPanes -- not what this test is pinning. Reading the
+        # switcher's direct ``.children`` (not a recursive query) keeps
+        # this scoped to one level.
+        outer_tabs = modal.query_one("#console-inspector-tabs")
+        switcher = outer_tabs.query_one(ContentSwitcher)
+        tab_pane_ids = {pane.id for pane in switcher.children}
         assert tab_pane_ids == {
             "inspector-costs",
             "inspector-exchange",
@@ -164,8 +180,9 @@ async def test_costs_rows_render_and_totals() -> None:
         )
         collapsibles = list(rows_container.query(Collapsible))
         assert len(collapsibles) == 1
-        # Reuses ConsoleCostModal._format_row's exact format (Step 3 moves
-        # it here verbatim). Asserts on the RENDERED label, not the raw
+        # Reuses the retired standalone cost modal's own
+        # ``_format_row``'s exact format (Step 3 moved it here verbatim).
+        # Asserts on the RENDERED label, not the raw
         # ``.title`` attribute -- see ``_rendered_title``'s docstring.
         assert "in:10" in _rendered_title(collapsibles[0])
 
@@ -180,9 +197,10 @@ async def test_collapsible_title_is_not_markup_parsed() -> None:
     markup=False)``. Proven against installed Textual: a model id
     containing ``"[test]"`` was silently eaten to an empty label, and one
     containing ``"[/]"`` raised ``MarkupError`` inside ``compose()``,
-    taking the whole modal down with it (``ConsoleCostModal`` avoided this
-    by rendering the same string through ``Static(..., markup=False)``;
-    the move to a ``Collapsible`` title dropped that guard).
+    taking the whole modal down with it (the retired standalone cost modal
+    avoided this by rendering the same string through
+    ``Static(..., markup=False)``; the move to a ``Collapsible`` title
+    dropped that guard).
 
     Two rows: one whose model contains ``"[test]"`` (must survive intact
     in the rendered label, not be eaten), one whose model contains
@@ -468,6 +486,53 @@ async def test_escape_dismisses_with_none() -> None:
         await pilot.press("escape")
         await pilot.pause()
         assert not isinstance(app.screen, ConsoleConversationInspector)
+
+
+# --- Merged from test_console_cost_modal.py (task-10 retired that ---------
+# --- standalone modal; ``_format_row`` lives here now, task-8's port) -----
+
+
+def test_format_row_shows_audio_and_transcription_when_present() -> None:
+    """task-2390: ``_format_row`` surfaces realtime audio-token and
+    transcription-duration costs -- ``ConsoleCostRow`` already folds them
+    into ``cost_usd`` (a single dollar figure), and this pin requires the
+    breakdown not silently hide them inside that undecomposable total."""
+    row = ConsoleCostRow(
+        index=0,
+        role="assistant",
+        model="gpt-realtime",
+        uncached_input=15,
+        cache_read=0,
+        cache_write=0,
+        output=28,
+        cost_usd=0.006844,
+        estimated=False,
+        audio_input=18,
+        audio_output=90,
+        transcription_seconds=2.5,
+    )
+    text = ConsoleConversationInspector._format_row(row)
+    assert "audio_in:18" in text
+    assert "audio_out:90" in text
+    assert "transcribe:2.5s" in text
+
+
+def test_format_row_omits_audio_fields_for_a_non_realtime_row() -> None:
+    row = ConsoleCostRow(
+        index=0,
+        role="user",
+        model="claude-sonnet-4-6",
+        uncached_input=100,
+        cache_read=0,
+        cache_write=0,
+        output=0,
+        cost_usd=0.10,
+        estimated=False,
+    )
+    text = ConsoleConversationInspector._format_row(row)
+    assert "audio_in" not in text
+    assert "audio_out" not in text
+    assert "transcribe" not in text
 
 
 # --- Exchange tab (task-9) -------------------------------------------------
