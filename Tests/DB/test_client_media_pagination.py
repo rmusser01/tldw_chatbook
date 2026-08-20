@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import sqlite3
 import threading
 
@@ -270,6 +271,26 @@ def test_distinct_types_are_complete_for_active_media_only(media_db):
     connection.commit()
 
     assert database.get_distinct_media_types() == ["article", "audio", "video"]
+
+
+def test_library_media_page_and_facets_use_shared_transaction(media_db, monkeypatch):
+    database, _path = media_db
+    _seed_media(database, 3)
+    transaction_calls = []
+    original_transaction = database.transaction
+
+    @contextmanager
+    def recording_transaction():
+        transaction_calls.append(True)
+        with original_transaction() as connection:
+            yield connection
+
+    monkeypatch.setattr(database, "transaction", recording_transaction)
+
+    database.search_media_db(None, library_summary=True)
+    database.get_distinct_media_types()
+
+    assert transaction_calls == [True, True]
 
 
 def test_distinct_types_exclude_whitespace_only_and_preserve_nonblank_verbatim(

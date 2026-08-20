@@ -8006,6 +8006,32 @@ UPDATE db_schema_version
         limit: int = 20,
         **_: Any,
     ) -> Optional[Dict[str, Any]]:
+        """Return the exact page containing one conversation in a filtered scope.
+
+        Args:
+            conversation_id: Stable conversation identifier to locate.
+            query: Optional text search applied before locating the row.
+            client_id: Optional client ownership filter.
+            include_deleted: Include soft-deleted conversations when true.
+            deleted_only: Restrict the scope to soft-deleted conversations.
+            character_id: Optional character identifier filter.
+            character_scope: Optional character scope filter.
+            state: Optional conversation state filter.
+            topic_label: Optional topic label filter.
+            scope_type: Optional global or workspace scope filter.
+            workspace_id: Optional workspace identifier filter.
+            limit: Page size; the Library contract requires exactly 20.
+            **_: Additional compatibility keywords, which are ignored.
+
+        Returns:
+            A mapping containing the exact page rows, page offset, target index,
+            and total count, or ``None`` when the conversation is outside the
+            filtered scope.
+
+        Raises:
+            InputError: If ``conversation_id`` is blank or ``limit`` is not 20.
+            CharactersRAGDBError: If SQLite fails or returns invalid coordinates.
+        """
         normalized_id = self._normalize_nullable_text(conversation_id)
         if normalized_id is None or not isinstance(conversation_id, str):
             raise InputError("conversation_id must be a non-empty string.")

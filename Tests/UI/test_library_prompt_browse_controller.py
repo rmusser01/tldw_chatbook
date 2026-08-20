@@ -311,9 +311,12 @@ async def test_controller_classifies_each_prompt_scope_failure(
 
 
 @pytest.mark.asyncio
-async def test_controller_applies_coherent_prompt_clamp_once() -> None:
+async def test_controller_applies_clamped_scope_and_retry_uses_applied_page() -> None:
     screen = _WorkerScreen()
-    service = _ScriptedBrowseService(_page_record(page=3, total=45))
+    service = _ScriptedBrowseService(
+        _page_record(page=3, total=45),
+        _page_record(page=3, total=45),
+    )
     controller = _controller(
         screen=screen,
         service=lambda: service,
@@ -325,12 +328,18 @@ async def test_controller_applies_coherent_prompt_clamp_once() -> None:
     await screen.pending.pop()
 
     assert len(service.calls) == 1
-    assert controller.scope == requested
+    assert controller.scope == PromptBrowseScope(page=3)
     assert controller.result.page == 3
+    assert controller.result.requested_page == 99
     assert controller.applied_result is controller.result
     assert controller.scope_for_page(2) == PromptBrowseScope(page=2)
     assert controller.mutation_refresh_scope == PromptBrowseScope(page=3)
     assert controller.pager.page_copy == "Page 3 of 3"
+
+    controller.retry(focus_identity=None)
+    await screen.pending.pop()
+
+    assert [call["page"] for call in service.calls] == [99, 3]
 
 
 @pytest.mark.asyncio

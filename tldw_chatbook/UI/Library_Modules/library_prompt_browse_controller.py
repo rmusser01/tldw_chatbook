@@ -188,7 +188,7 @@ class LibraryPromptBrowseController:
         )
 
     def retry(self, *, focus_identity: str | None) -> Any | None:
-        """Request the current scope with a fresh monotonic token."""
+        """Request the last settled or failed scope with a fresh token."""
         return self.request(self.scope, focus_identity=focus_identity)
 
     async def _load(
@@ -255,6 +255,7 @@ class LibraryPromptBrowseController:
             if self.freshness != "stale":
                 self.error_copy = self._failure_copy(applied.scope)
         else:
+            self.scope = applied.scope
             self.applied_result = applied
             self.retained_items = applied.items
             self.freshness = "fresh"

@@ -926,15 +926,18 @@ class MediaDatabase:
         except Exception as e:
             if not in_outer:
                 logging.error(
-                    f"Transaction failed, rolling back: {type(e).__name__} - {e}",
-                    exc_info=False,
+                    "Transaction failed; rolling back (error_type=%s).",
+                    type(e).__name__,
                 )
                 try:
                     conn.rollback()
                     logging.debug("Rollback successful.")
                 except sqlite3.Error as rb_err:
-                    logging.error(f"Rollback FAILED: {rb_err}", exc_info=True)
-            raise e
+                    logging.error(
+                        "Rollback failed (error_type=%s).",
+                        type(rb_err).__name__,
+                    )
+            raise
 
     @staticmethod
     def _execute_transactional_script(
@@ -2220,27 +2223,18 @@ class MediaDatabase:
             f"{final_select_stmt} {base_from} {join_clause} {where_clause} "
             f"{order_by_clause_str} LIMIT ? OFFSET ?"
         )
-        connection = None
-        owns_transaction = False
         try:
-            connection = self.get_connection()
-            owns_transaction = not connection.in_transaction
-            if owns_transaction:
-                connection.execute("BEGIN")
-            count_row = connection.execute(count_sql, tuple(params)).fetchone()
-            total_matches = count_row[0] if count_row else 0
-            results_list = []
-            if total_matches > 0 and resolved_offset < total_matches:
-                page_params = tuple(params + [results_per_page, resolved_offset])
-                results_list = [
-                    dict(row)
-                    for row in connection.execute(results_sql, page_params).fetchall()
-                ]
-            if owns_transaction:
-                connection.commit()
+            with self.transaction() as connection:
+                count_row = connection.execute(count_sql, tuple(params)).fetchone()
+                total_matches = count_row[0] if count_row else 0
+                results_list = []
+                if total_matches > 0 and resolved_offset < total_matches:
+                    page_params = tuple(params + [results_per_page, resolved_offset])
+                    results_list = [
+                        dict(row)
+                        for row in connection.execute(results_sql, page_params).fetchall()
+                    ]
         except Exception as error:
-            if connection is not None and owns_transaction:
-                connection.rollback()
             logger.error(
                 "Media search failed (error_type={}).", type(error).__name__
             )
@@ -6661,8 +6655,11 @@ class MediaDatabase:
             f"SELECT DISTINCT type FROM Media WHERE {where_clause} ORDER BY type ASC"
         )
         try:
-            cursor = self.get_connection().execute(query)
-            results = [row["type"] for row in cursor.fetchall() if row["type"].strip()]
+            with self.transaction() as connection:
+                cursor = connection.execute(query)
+                results = [
+                    row["type"] for row in cursor.fetchall() if row["type"].strip()
+                ]
             logger.info(
                 "Distinct media types loaded (result_count={}, include_deleted={}, include_trash={}).",
                 len(results),
