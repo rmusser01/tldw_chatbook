@@ -605,7 +605,7 @@ def test_console_rail_state_single_pane_below_84_columns():
     """TASK-2154.1 (LY-09): below 84 cols the workspace drops to one pane.
 
     TASK-2154.2 originally honored an explicitly opened rail even in
-    single-pane mode. task-18909 (2026-08-19 mobile audit) narrowed that:
+    single-pane mode. task-18911 (2026-08-19 mobile audit) narrowed that:
     below the width budget (single-pane floor + rail min-width) the collapse
     is a rendering override the explicit marker cannot buy past -- at 60
     cols an honored 30-col rail left a 14-col transcript. Above the budget
@@ -916,7 +916,7 @@ def test_build_console_rail_state_carries_section_flags():
     assert state.model_open is True
 
 
-# --- task-18909: width-budget rule (explicit toggles vs usable transcript) ---
+# --- task-18911: width-budget rule (explicit toggles vs usable transcript) ---
 
 
 def test_explicit_left_open_honored_when_width_affords_it():
@@ -933,7 +933,7 @@ def test_explicit_left_open_honored_when_width_affords_it():
 
 def test_explicit_left_open_collapsed_below_width_budget():
     """69 cols (inside the compact-collapse zone) with the explicit marker:
-    ADR-043 honored the open; task-18909 collapses it because 69 < 30+40 --
+    ADR-043 honored the open; task-18911 collapses it because 69 < 30+40 --
     rail + usable transcript does not fit. At 70+ the marker is honored
     again (the honored-at-budget test above pins that side)."""
     key = build_console_rail_preference_key(workspace_id="w", session_id="s")

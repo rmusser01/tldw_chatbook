@@ -40,7 +40,7 @@ CONSOLE_RAIL_LEFT_COMPACT_COLLAPSE_COLUMNS = 100
 # hide and the main column's min-width is waived so the transcript always
 # renders (covers the 80x24 and 60x18 review captures).
 CONSOLE_SINGLE_PANE_COLUMNS = 84
-#: task-18909: rail min-widths mirrored from ChatScreen's compose-time
+#: task-18911: rail min-widths mirrored from ChatScreen's compose-time
 #: styles (left 30, right 34), plus the floor a transcript needs to stay
 #: usable. An explicitly-toggled-open rail is honored only while the
 #: viewport can afford rail + this floor; below that budget the rendering
@@ -690,7 +690,7 @@ def build_console_rail_state(
     #   ``ChatScreen._set_console_rail_preference``) records it. Legacy
     #   payloads lack the marker and keep the force-collapse default.
     explicit_left_open = console_rail_left_open_explicit(stored_preferences)
-    # task-18909: an explicit toggle is honored only while the viewport can
+    # task-18911: an explicit toggle is honored only while the viewport can
     # afford rail + a usable transcript (rail min + main floor). Below that
     # budget the collapse is a rendering override the explicit marker
     # cannot buy its way past -- the stored preference is untouched, so

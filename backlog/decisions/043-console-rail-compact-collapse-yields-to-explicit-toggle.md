@@ -61,7 +61,7 @@ The rails detect "explicit" differently because their defaults differ. The right
 - [Persistent rails design spec](../../Docs/superpowers/specs/2026-05-24-console-persistent-rails-design.md)
 - Parent epic: backlog/tasks/task-2154; sibling: task-2154.1 (responsive fallback below ~100 cols)
 
-## Amendment (2026-08-19, task-18909 — width budget for honored explicit toggles)
+## Amendment (2026-08-19, task-18911 — width budget for honored explicit toggles)
 
 The 2026-08-19 mobile tappability audit found the explicit-toggle yield has
 no floor: with `left_open_explicit` stored, a 48-column phone viewport
