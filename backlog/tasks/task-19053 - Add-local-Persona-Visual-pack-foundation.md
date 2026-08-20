@@ -30,5 +30,5 @@ Add a profile-local Persona Visual runtime compatible with the pinned server's s
 - [ ] #5 Repository and publication paths enforce optimistic binding/version authority, rollback, and pinned orphan cleanup, and return stable old/new full identities for later targeted consumer invalidation.
 - [ ] #6 Frozen fixtures derived from server commit `385afa...` pin supported and unsupported renderer/manifest behavior.
 - [ ] #7 No Workbench authoring UI, floating Buddy, provider generation, or server write path is introduced.
-- [ ] #8 Focused migration/repository/validator/asset/resolver/publication tests plus scoped static and diagnostic-governance checks pass in an isolated profile.
+- [ ] #8 Focused migration/repository/validator/asset/resolver/publication coverage runs born-RED then GREEN; mutation proof covers authority, validation, fallback, rollback, orphan cleanup, full-identity/cache, and privacy guards; assigned-worktree import provenance is asserted; real SQLite migration/repository tests run in an isolated HOME/XDG/config/data profile; and scoped Ruff, format, compile, `git diff --check`, diagnostic, privacy, architecture, and governance checks pass.
 <!-- AC:END -->
