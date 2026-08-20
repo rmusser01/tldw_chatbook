@@ -754,6 +754,10 @@ async def _publish_settings(
     return await _wait_bounded(ticket.completion)
 
 
+async def _fail_managed_stage(*_args: Any, **_kwargs: Any) -> None:
+    raise RuntimeError("staging failed")
+
+
 @pytest.mark.asyncio
 async def test_invalid_initial_provider_is_unconfigured_and_publication_recovers() -> (
     None
@@ -3482,33 +3486,67 @@ async def test_failed_newer_managed_save_cannot_reopen_with_mixed_preferences(
 ) -> None:
     service, adapters, _supervisor = _managed_promotion_service()
     registry = service.registry
-    await _publish_settings(
+    older = await _publish_settings(
         service,
         _snapshot(model_id="Model/B"),
         {"audio_cpp": _managed_config(6.0)},
     )
-
-    async def fail_stage(*_args: Any, **_kwargs: Any) -> None:
-        raise RuntimeError("staging failed")
-
-    monkeypatch.setattr(service, "_stage_managed_boundary", fail_stage)
+    monkeypatch.setattr(service, "_stage_managed_boundary", _fail_managed_stage)
     failed = await _publish_settings(
         service,
         _snapshot(model_id="Model/C"),
         {"audio_cpp": _managed_config(7.0)},
     )
     assert failed.provider_statuses == {"audio_cpp": "unavailable"}
+    assert service.preferences_snapshot().model_id == "Model/C"
     with pytest.raises(TTSProviderUnavailableError):
         await registry.acquire("audio_cpp")
 
     await service.shutdown_audio_cpp()
-    response = await service.synthesize_default(text="Coherent retry")
+    assert registry.configuration_generation("audio_cpp") == older.generation
+    with pytest.raises(TTSProviderUnavailableError):
+        await registry.acquire("audio_cpp")
+
+    await registry.stage_provider_configuration(
+        "audio_cpp",
+        _managed_config(7.0),
+        generation=failed.generation,
+    )
+    await service.shutdown_audio_cpp()
+    response = await service.synthesize_default(text="Latest retry")
 
     assert (adapters[0].generation, adapters[0].requests[-1].model_id) == (
-        "6.0",
-        "Model/B",
+        "7.0",
+        "Model/C",
     )
     await response.aclose()
+    await service.close()
+    await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_failed_first_managed_save_stays_unavailable_after_lifecycle_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, adapters, _supervisor = _managed_promotion_service()
+    registry = service.registry
+    initial = await service.synthesize_default(text="Materialize A")
+    await initial.aclose()
+    monkeypatch.setattr(service, "_stage_managed_boundary", _fail_managed_stage)
+
+    failed = await _publish_settings(
+        service,
+        _snapshot(model_id="Model/C"),
+        {"audio_cpp": _managed_config(7.0)},
+    )
+    assert failed.provider_statuses == {"audio_cpp": "unavailable"}
+    assert service.preferences_snapshot().model_id == "Model/C"
+
+    await service.shutdown_audio_cpp()
+
+    with pytest.raises(TTSProviderUnavailableError):
+        await registry.acquire("audio_cpp")
+    assert [request.model_id for request in adapters[0].requests] == ["Model/A"]
     await service.close()
     await service.wait_closed()
 

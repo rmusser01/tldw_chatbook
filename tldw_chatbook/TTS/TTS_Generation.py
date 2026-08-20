@@ -3000,12 +3000,14 @@ class TTSService:
             if pending is not None:
                 applied_generation = self.registry.configuration_generation("audio_cpp")
                 pending_generation, pending_preferences = pending
-                if applied_generation == pending_generation:
-                    self._request_admission._publish_preferences(
-                        pending_preferences,
-                        pending_generation,
-                    )
-                if applied_generation >= pending_generation:
+                if applied_generation < pending_generation:
+                    await self.registry.seal_provider_unavailable("audio_cpp")
+                else:
+                    if applied_generation == pending_generation:
+                        self._request_admission._publish_preferences(
+                            pending_preferences,
+                            pending_generation,
+                        )
                     self._settings_staged_preferences = None
             return result
 
@@ -3267,14 +3269,16 @@ class TTSService:
                     )
 
                 if publish_preferences:
-                    if preferences.provider_id in staged_provider_ids:
+                    if preferences.provider_id in staged_provider_ids or (
+                        preferences.provider_id == "audio_cpp"
+                        and staging_failed_provider_id == preferences.provider_id
+                    ):
                         self._settings_staged_preferences = (
                             generation,
                             preferences,
                         )
                     if (
                         staging_failed_provider_id == preferences.provider_id
-                        and self._settings_staged_preferences is None
                     ) or self._preferences_can_activate(
                         preferences,
                         generation,
@@ -3285,7 +3289,10 @@ class TTSService:
                             preferences,
                             generation,
                         )
-                        if preferences.provider_id == "audio_cpp":
+                        if (
+                            preferences.provider_id == "audio_cpp"
+                            and staging_failed_provider_id != preferences.provider_id
+                        ):
                             self._settings_staged_preferences = None
                 provider_revisions.update(
                     self._safe_provider_revisions(provider_configs)
