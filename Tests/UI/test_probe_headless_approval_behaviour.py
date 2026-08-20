@@ -162,10 +162,10 @@ async def test_probe_headless_approval_round_wall_time(tmp_path):
             "registry: round still registered after the verdict = "
             f"{controller.has_pending_approval_round(session_id)}"
         )
-        findings.append(
-            "registry: parked payload retained = "
-            f"{controller._parked_approval_payloads.get(session_id) is not None}"
+        head = controller._head_round_payload(
+            controller._parked_approval_payloads, session_id
         )
+        findings.append(f"registry: parked payload retained = {head is not None}")
 
         gateway.release.set()
         await pilot.pause()

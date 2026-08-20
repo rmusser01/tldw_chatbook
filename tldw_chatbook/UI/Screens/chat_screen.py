@@ -20665,21 +20665,24 @@ class ChatScreen(BaseAppScreen):
             ``session_id``.
         """
         ids: set[str] = set()
-        mcp_payload = controller._parked_approval_payloads.get(session_id)
-        if mcp_payload is not None:
-            round_id = mcp_payload.get("round_id")
-            if round_id:
-                ids.add(f"mcp:{round_id}")
-        install_payload = controller._parked_skill_install_payloads.get(session_id)
-        if install_payload is not None:
-            request_id = install_payload.get("request_id")
-            if request_id:
-                ids.add(f"install:{request_id}")
-        script_payload = controller._parked_skill_script_payloads.get(session_id)
-        if script_payload is not None:
-            request_id = script_payload.get("request_id")
-            if request_id:
-                ids.add(f"script:{request_id}")
+        for prefix, store, id_key in (
+            ("mcp", controller._parked_approval_payloads, "round_id"),
+            ("install", controller._parked_skill_install_payloads, "request_id"),
+            ("script", controller._parked_skill_script_payloads, "request_id"),
+        ):
+            # PR0 (task-15661): `_parked_approval_payloads` is keyed by
+            # ROUND now, so a session can retain SEVERAL payloads at once
+            # and a `.get(session_id)` would find none of them. Scanning by
+            # the payload's own `session_id` reads either key shape, which
+            # also means the two skill maps need no change here when they
+            # are re-keyed in turn. Returning EVERY live id (not just the
+            # session's mounted head) is what this method already promises
+            # and what the caller's dedupe needs: a genuinely new sibling
+            # round must still toast.
+            for payload in controller._session_round_payloads(store, session_id):
+                round_id = payload.get(id_key)
+                if round_id:
+                    ids.add(f"{prefix}:{round_id}")
         return frozenset(ids)
 
     def _notify_console_run_outcome(

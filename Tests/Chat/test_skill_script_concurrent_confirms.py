@@ -158,10 +158,10 @@ def test_two_rounds_for_the_same_session_keep_badge_and_payload_until_both_resol
     Fix round 2 (review, Qodo PR #1041) note on symmetry: the same
     applies to the mounted-card CLEAR itself -- `request_skill_script_
     confirm`'s teardown now calls `_clear_pending_skill_script_if_round_
-    is_current` (byte-for-byte the same shape as `request_mcp_approvals`'
-    `_clear_pending_approval_if_round_is_current` and `request_skill_
-    install_confirm`'s `_clear_pending_skill_install_if_round_is_
-    current`), so the deterministic race proof (a newer same-session
+    is_current` (byte-for-byte the same shape as `request_skill_install_
+    confirm`'s `_clear_pending_skill_install_if_round_is_current`; the
+    MCP bridge's equivalent was retired by PR0's FIFO-head re-derive),
+    so the deterministic race proof (a newer same-session
     round arming while an older round's clear is still enqueued must not
     get wiped) is exercised directly for the MCP bridge
     (`test_console_mcp_approval.py::

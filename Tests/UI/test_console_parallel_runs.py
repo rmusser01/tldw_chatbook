@@ -472,7 +472,12 @@ async def test_background_approval_parks_with_badge_and_single_toast() -> None:
         # Seed the retained round payload `request_mcp_approvals` would
         # have stored before parking, then drive the UI-thread park seam
         # directly.
-        controller._parked_approval_payloads[background] = {
+        controller._parked_approval_payloads["seeded-round"] = {
+            # PR0: the map is keyed by ROUND, and every payload carries its
+            # own `round_id`/`session_id` -- the invariant `_park_round_
+            # payload` maintains in production.
+            "round_id": "seeded-round",
+            "session_id": background,
             "calls": [
                 {
                     "llm_name": "mcp__srv__tool",
@@ -581,7 +586,9 @@ async def test_park_toast_survives_a_viewed_run_completion_re_invocation() -> No
 
         approval_toasts = [n for n in notifications if "needs approval" in n]
         assert len(approval_toasts) == 1
-        round_id = controller._parked_approval_payloads[background]["round_id"]
+        round_id = controller._head_round_payload(
+            controller._parked_approval_payloads, background
+        )["round_id"]
 
         # A's own real terminal transition -- A stays active/viewed
         # throughout, so `_set_run_state`'s non-active toast branch never
@@ -601,7 +608,12 @@ async def test_park_toast_survives_a_viewed_run_completion_re_invocation() -> No
         # SAME, still-outstanding round (round_id unchanged) -- the
         # hazard TASK-1141 guards against regardless of which real
         # trigger UAT actually hit.
-        assert controller._parked_approval_payloads[background]["round_id"] == round_id
+        assert (
+            controller._head_round_payload(
+                controller._parked_approval_payloads, background
+            )["round_id"]
+            == round_id
+        )
         console._park_console_approval(background)
         await pilot.pause(0.1)
 
@@ -641,7 +653,7 @@ async def test_park_toast_fires_again_for_a_genuinely_new_round_same_session() -
         app.notify = lambda message, **kwargs: notifications.append(str(message))
 
         controller.add_pending_round(background, "round-1")
-        controller._parked_approval_payloads[background] = {
+        controller._parked_approval_payloads["round-1"] = {
             "round_id": "round-1",
             "session_id": background,
             "calls": [],
@@ -653,11 +665,11 @@ async def test_park_toast_fires_again_for_a_genuinely_new_round_same_session() -
 
         # Round 1 resolves and clears completely.
         controller.discard_pending_round(background, "round-1")
-        controller._parked_approval_payloads.pop(background, None)
+        controller._parked_approval_payloads.pop("round-1", None)
 
         # A genuinely new round (different id) parks for the same session.
         controller.add_pending_round(background, "round-2")
-        controller._parked_approval_payloads[background] = {
+        controller._parked_approval_payloads["round-2"] = {
             "round_id": "round-2",
             "session_id": background,
             "calls": [],
@@ -703,7 +715,7 @@ async def test_park_toast_survives_a_post_teardown_re_invocation_for_the_same_ro
         app.notify = lambda message, **kwargs: notifications.append(str(message))
 
         controller.add_pending_round(background, "round-1")
-        controller._parked_approval_payloads[background] = {
+        controller._parked_approval_payloads["round-1"] = {
             "round_id": "round-1",
             "session_id": background,
             "calls": [],
@@ -718,8 +730,8 @@ async def test_park_toast_survives_a_post_teardown_re_invocation_for_the_same_ro
         # the retained payload (no sibling round left, so the pop fires
         # -- mirrors the real "not still_armed_same_session" branch).
         controller.discard_pending_round(background, "round-1")
-        controller._parked_approval_payloads.pop(background, None)
-        assert background not in controller._parked_approval_payloads
+        controller._parked_approval_payloads.pop("round-1", None)
+        assert "round-1" not in controller._parked_approval_payloads
 
         # A stray re-invocation of the shared park seam landing AFTER
         # teardown -- the exact hazard the reviewer reproduced live.
@@ -755,7 +767,7 @@ async def test_park_toast_fires_once_for_a_new_round_arriving_after_teardown() -
         app.notify = lambda message, **kwargs: notifications.append(str(message))
 
         controller.add_pending_round(background, "round-1")
-        controller._parked_approval_payloads[background] = {
+        controller._parked_approval_payloads["round-1"] = {
             "round_id": "round-1",
             "session_id": background,
             "calls": [],
@@ -766,12 +778,12 @@ async def test_park_toast_fires_once_for_a_new_round_arriving_after_teardown() -
         assert len([n for n in notifications if "needs approval" in n]) == 1
 
         controller.discard_pending_round(background, "round-1")
-        controller._parked_approval_payloads.pop(background, None)
+        controller._parked_approval_payloads.pop("round-1", None)
 
         # A genuinely NEW round (different id) parks for the same session
         # AFTER the previous one's full teardown.
         controller.add_pending_round(background, "round-2")
-        controller._parked_approval_payloads[background] = {
+        controller._parked_approval_payloads["round-2"] = {
             "round_id": "round-2",
             "session_id": background,
             "calls": [],
@@ -1525,7 +1537,9 @@ async def test_mounted_round_survives_switch_away_and_switch_back() -> None:
         # retained payload to re-derive from).
         assert console.query_one("#chat-approval-card").display
 
-        round_id = controller._parked_approval_payloads[session_a]["round_id"]
+        round_id = controller._head_round_payload(
+            controller._parked_approval_payloads, session_a
+        )["round_id"]
         controller.resolve_pending_approval(
             {"mcp__srv__tool": "approve_once"}, round_id=round_id
         )
@@ -1578,7 +1592,9 @@ async def test_new_session_clears_a_mounted_card_from_the_session_being_left() -
         await pilot.pause(0.2)
         assert console.query_one("#chat-approval-card").display
 
-        round_id = controller._parked_approval_payloads[session_a]["round_id"]
+        round_id = controller._head_round_payload(
+            controller._parked_approval_payloads, session_a
+        )["round_id"]
         controller.resolve_pending_approval(
             {"mcp__srv__tool": "deny"}, round_id=round_id
         )
