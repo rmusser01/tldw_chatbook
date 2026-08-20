@@ -21,6 +21,7 @@
 - **Locate code by SYMBOL, never by line number.** This file changes fast; every `:NNNN` anchor in an earlier draft of this plan was stale within a day. Each step below names the enclosing method and quotes the code block to replace. Use `grep -n` on the quoted text.
 - This work is **task-15661**, already filed. It is cited in `remount_pending_approval_for_active_session`'s docstring and in the test that pins the defect. Do not open a new backlog task.
 - Branch from `origin/dev`. `origin/main` is over 10,000 commits behind and is not the trunk.
+- **Never read `tldw_chatbook/Chat/console_chat_controller.py` whole.** It is 12,482 lines / 608KB, and a single full read is large enough to kill an agent — it already killed one attempt at Task 2. Read it only in bounded windows (~120 lines) with explicit offset/limit, and locate sites with `grep -n` on the quoted code rather than by browsing.
 
 ---
 
