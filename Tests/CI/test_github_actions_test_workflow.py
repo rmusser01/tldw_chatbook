@@ -335,7 +335,7 @@ def test_nightly_deep_runs_the_tiers_the_pr_gate_does_not() -> None:
 def test_every_json_report_invocation_omits_log_capture() -> None:
     """Every ``--json-report`` MUST carry ``--json-report-omit log``.
 
-    Incident (2026-08-20, TASK-19003): pytest-json-report captures RAW
+    Incident (2026-08-20, TASK-19160): pytest-json-report captures RAW
     ``logging.LogRecord`` objects per test and attaches them to the report
     (``report._json_report_extra``). The websockets library logs through a
     ``LoggerAdapter`` whose extra carries the LIVE connection object, so when
@@ -350,20 +350,27 @@ def test_every_json_report_invocation_omits_log_capture() -> None:
     consumes the log section: ``generate_test_summary.py`` reads only
     ``tests[].outcome`` and ``call.longrepr``.
     """
-    text = _workflow_text()
+    # Join shell continuation lines into logical commands first, so the
+    # activation flag and its omit argument may legally sit on different
+    # physical lines; then accept every valid spelling of the omit
+    # ("--json-report-omit log", "--json-report-omit=log", comma lists).
+    logical = _workflow_text().replace("\\\n", " ")
     activations = 0
-    for line_number, line in enumerate(text.splitlines(), start=1):
-        # The ACTIVATION flag is the standalone token "--json-report";
-        # "--json-report-file"/"--json-report-omit" are its arguments and
-        # appear as distinct tokens.
-        tokens = line.replace("\\", " ").split()
+    for command in logical.splitlines():
+        tokens = command.split()
         if "--json-report" not in tokens:
             continue
         activations += 1
-        assert "--json-report-omit" in tokens and "log" in tokens, (
-            f"test.yml line {line_number}: '--json-report' without "
-            f"'--json-report-omit log' — raw LogRecords in reports crash "
-            f"xdist workers (see docstring): {line.strip()!r}"
+        omits: list[str] = []
+        for index, token in enumerate(tokens):
+            if token == "--json-report-omit" and index + 1 < len(tokens):
+                omits.extend(tokens[index + 1].split(","))
+            elif token.startswith("--json-report-omit="):
+                omits.extend(token.split("=", 1)[1].split(","))
+        assert "log" in omits, (
+            f"test.yml: '--json-report' without log in '--json-report-omit' "
+            f"— raw LogRecords in reports crash xdist workers (see "
+            f"docstring): {command.strip()[:120]!r}"
         )
     assert activations >= 4, (
         f"expected at least 4 json-report activations (core, UI, full, "
