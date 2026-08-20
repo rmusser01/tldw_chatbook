@@ -13191,9 +13191,9 @@ class ChatScreen(BaseAppScreen):
                 # visibility. Below 100, default Context force-collapses
                 # without rewriting preference; eligible explicit opens
                 # instead receive the same layout-only waiver.
-                # TASK-2154.3 (LY-01/LY-07): 30 is the Context content minimum
-                # (13-cell label with gutter + 10-cell value + 7-cell chrome). A 3-column
-                # handle applies only when stacked rail labels are configured.
+                # TASK-2154.3 (LY-01/LY-07): 30 is the Context outer minimum
+                # (13-cell label with gutter + 10-cell value + 7-cell chrome).
+                # A 3-column handle applies only with stacked rail labels.
                 left_rail.styles.min_width = 30
                 if not rail_state.left_open:
                     left_rail.styles.display = "none"
