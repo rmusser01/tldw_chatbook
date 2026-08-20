@@ -290,6 +290,7 @@ def test_bridges_do_not_share_a_head(controller):
     # The approvals payload names its id `round_id`; the install payload
     # names its own `request_id`. Neither bridge renames the other's.
     assert approvals_mounted[-1]["round_id"] == approval_round
+    assert _wait_until(lambda: len(install_mounted) == 1)
     assert install_mounted[-1]["request_id"] == install_round
 
     ctrl.resolve_pending_approval({"alpha": "approve_once"}, round_id=approval_round)

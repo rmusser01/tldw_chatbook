@@ -303,14 +303,14 @@ def test_two_rounds_for_the_same_session_resolving_the_newer_one_first_leaves_th
 
 
 class _DeferredClearApp:
-    """`call_from_thread` stand-in that BLOCKS the round-identity-guarded
-    clear closures until a test explicitly releases them, while every
+    """`call_from_thread` stand-in that BLOCKS the `_remount_head` re-derive
+    closures until a test explicitly releases them, while every
     OTHER `call_from_thread` use (mount, park) still runs immediately.
 
     Mirrors `test_console_mcp_approval.py`'s identical fake -- see
-    `_clear_pending_skill_install_if_round_is_current`'s docstring for
-    why the clear closures are always invoked with zero args/kwargs,
-    which is what identifies them here without any bridge-specific hook.
+    `_remount_head`'s docstring for why the re-derive closures are
+    always invoked with zero args/kwargs, which is what identifies them
+    here without any bridge-specific hook.
     """
 
     def __init__(self) -> None:
@@ -325,12 +325,12 @@ class _DeferredClearApp:
         return fn(*args, **kwargs)
 
 
-def test_teardown_clear_is_round_identity_guarded_against_a_newer_same_session_round_arming_mid_teardown():
+def test_teardown_clear_does_not_clobber_a_newer_same_session_round_arming_mid_teardown():
     """TASK-1050 fix round 2 (review, Qodo PR #1041): mirrors `test_
     console_mcp_approval.py`'s identical MCP-bridge test -- `request_
     skill_install_confirm`'s teardown has the exact same shape (a
     snapshot-guarded clear enqueued via `call_from_thread`), so it needs
-    the exact same round-identity-guarded fix and the exact same
+    the exact same FIFO-head re-derive fix and the exact same
     deterministic (event/gate-controlled, never sleep-timed) proof: round
     1 resolves and its teardown's clear call BLOCKS mid-flight; round 2
     arms and mounts for the SAME session while round 1's clear is still

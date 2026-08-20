@@ -728,7 +728,8 @@ async def test_park_toast_survives_a_post_teardown_re_invocation_for_the_same_ro
         # Tear down round-1 exactly like `request_mcp_approvals`'s own
         # `finally` does once it resolves: discard the round id, then pop
         # the retained payload (no sibling round left, so the pop fires
-        # -- mirrors the real "not still_armed_same_session" branch).
+        # -- mirrors the real teardown, where `_remount_head`'s FIFO-head
+        # re-derive finds no sibling payload left to re-mount).
         controller.discard_pending_round(background, "round-1")
         controller._parked_approval_payloads.pop("round-1", None)
         assert "round-1" not in controller._parked_approval_payloads

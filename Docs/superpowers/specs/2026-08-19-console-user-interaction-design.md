@@ -98,7 +98,7 @@ the same-session concurrency tests to mirror, along with a reusable
 
 | # | Sub-project | Delivers |
 |---|---|---|
-| **PR0** | Parked-payload re-key | Round-keyed retained payloads with per-session FIFO across all three bridges and their re-derive paths. Pure defect fix, no user-visible change. |
+| **PR0** | Parked-payload re-key | Round-keyed retained payloads with per-session FIFO across all three bridges and their re-derive paths. Pure defect fix; no change to the single-round path. Concurrent same-session rounds now queue FIFO instead of clobbering. |
 
 **PR0 is three parallel edits, not one abstraction.** Each bridge owns an
 independent lock — `_approval_state_lock` (`:1331`),
@@ -366,3 +366,14 @@ mount, sync, park, and visibility plumbing.
 - **C needs its own design cycle** before implementation, now that it precedes A.
 - Backlog tasks are not yet filed. IDs must be assigned after a fresh sweep of
   all worktrees and branches — this repo has had six ID collisions.
+- **Known gap carried into C.** PR0's FIFO queue only orders cards for one
+  session; it does nothing for a non-head round on a session that isn't the
+  active one. A non-head round on the ACTIVE session is fully silent — no
+  card (gated by `is_head`) and no toast (it isn't parked). A non-head round
+  on a BACKGROUND session still toasts. Meanwhile the `Approvals: N pending`
+  chip (`ChatScreen._console_pending_approval_count`) is a single boolean
+  slot — "is a card mounted" — not a count of armed rounds, so it reads "1
+  pending" identically whether one round is queued or three; queue depth is
+  invisible today. This is strictly better than pre-PR0 (where the older
+  round was undecidable, full stop), but surfacing every queued round — not
+  just the head — is the natural job for C's unified interrupt surface.

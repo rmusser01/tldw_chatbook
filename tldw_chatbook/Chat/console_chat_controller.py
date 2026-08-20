@@ -4455,7 +4455,7 @@ class ConsoleChatController:
 
     @staticmethod
     def _head_round_payload_locked(
-        store: dict[str, dict[str, Any]], session_id: str
+        store: dict[str, dict[str, Any]], session_id: str | None
     ) -> dict[str, Any] | None:
         """The session's oldest-armed payload. Caller holds the lock."""
         for payload in store.values():
@@ -5233,7 +5233,7 @@ class ConsoleChatController:
         # round for the session" test existed only because the slot was
         # shared. Runs outside the critical section above because
         # `_unpark_round_payload` takes the (non-reentrant) same lock.
-        for round_id_to_drop, session_id in revoked:
+        for round_id_to_drop, _session_id in revoked:
             self._unpark_round_payload(
                 self._parked_approval_payloads, round_id_to_drop
             )
@@ -5276,7 +5276,7 @@ class ConsoleChatController:
         # last armed round for the session" test existed only because the
         # slot was shared. Runs outside the critical section above because
         # `_unpark_round_payload` takes the (non-reentrant) same lock.
-        for round_id_to_drop, session_id in revoked:
+        for round_id_to_drop, _session_id in revoked:
             self._unpark_round_payload(
                 self._parked_skill_script_payloads, round_id_to_drop
             )

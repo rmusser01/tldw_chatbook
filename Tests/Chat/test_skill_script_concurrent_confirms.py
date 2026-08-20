@@ -140,10 +140,9 @@ def test_two_rounds_for_the_same_session_keep_badge_and_payload_until_both_resol
     guard.
 
     PR0 (task-15661) removes the shared slot entirely: the map is keyed by
-    ROUND, so each teardown drops exactly its own key and the guard --
-    along with `_clear_pending_skill_script_if_round_is_current`, which
-    this docstring used to reference through three review rounds of
-    symmetry notes -- is gone. The CONTRACT this test pins is unchanged
+    ROUND, so each teardown drops exactly its own key, and the
+    order-dependent guard is replaced by `_remount_head`'s FIFO-head
+    re-derive. The CONTRACT this test pins is unchanged
     and now holds by construction: the earlier round resolving first
     leaves the later round's payload intact, and the session's card
     re-derives to it. See the install bridge's identical update

@@ -1948,7 +1948,7 @@ class _DeferredClearApp:
         return fn(*args, **kwargs)
 
 
-def test_teardown_clear_is_round_identity_guarded_against_a_newer_same_session_round_arming_mid_teardown():
+def test_teardown_clear_does_not_clobber_a_newer_same_session_round_arming_mid_teardown():
     """TASK-1050 fix round 2 (review, Qodo PR #1041, CRITICAL): `request_
     mcp_approvals`'s teardown used to decide whether to clear the mounted
     card via a boolean snapshot (`still_active`/`still_armed_same_
@@ -2030,9 +2030,9 @@ def test_teardown_clear_is_round_identity_guarded_against_a_newer_same_session_r
     assert controller.run_marker_for(session_a) is ConsoleRunMarker.NEEDS_APPROVAL
 
     # NOW release round 1's blocked clear. A snapshot-guarded clear would
-    # unconditionally wipe round 2's just-mounted card here; the
-    # round-identity guard must instead see round 2 has since claimed the
-    # slot and no-op.
+    # unconditionally wipe round 2's just-mounted card here; `_remount_head`'s
+    # FIFO head re-derive must instead see round 2 is now the session's head
+    # and leave its card mounted.
     app.release_clear.set()
     worker_1.join(timeout=2.0)
     assert result_1["decisions"] == {"mcp__one__tool": "deny"}

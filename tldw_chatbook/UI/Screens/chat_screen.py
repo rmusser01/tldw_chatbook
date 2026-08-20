@@ -20674,8 +20674,8 @@ class ChatScreen(BaseAppScreen):
             # ROUND now, so a session can retain SEVERAL payloads at once
             # and a `.get(session_id)` would find none of them. Scanning by
             # the payload's own `session_id` reads either key shape, which
-            # also means the two skill maps need no change here when they
-            # are re-keyed in turn. Returning EVERY live id (not just the
+            # also means the two skill maps needed no change here when they
+            # were re-keyed. Returning EVERY live id (not just the
             # session's mounted head) is what this method already promises
             # and what the caller's dedupe needs: a genuinely new sibling
             # round must still toast.
