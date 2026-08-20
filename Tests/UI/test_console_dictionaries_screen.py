@@ -126,7 +126,7 @@ async def test_refresh_caches_summary_and_build_projects_dictionary_rows():
         await _wait_for_selector(screen, pilot, "#console-native-composer")
         _active_native_session(screen).persisted_conversation_id = "conv-1"
 
-        await screen.refresh_active_dictionaries_summary()
+        await screen._retrieval.refresh_active_dictionaries_summary()
 
         assert screen._active_dictionaries_summary == summary
         assert service.calls == [("conv-1", None, "local")]
@@ -160,7 +160,7 @@ async def test_build_console_inspector_state_never_re_queries_the_summarize_serv
         await _wait_for_selector(screen, pilot, "#console-native-composer")
         _active_native_session(screen).persisted_conversation_id = "conv-1"
 
-        await screen.refresh_active_dictionaries_summary()
+        await screen._retrieval.refresh_active_dictionaries_summary()
         assert len(service.calls) == 1
 
         # A bare, recompose-equivalent build must read only the cache -- no
@@ -186,10 +186,10 @@ async def test_refresh_with_no_service_and_no_chat_caches_empty():
         # Fresh default native session has no persisted conversation yet.
         assert _active_native_session(screen).persisted_conversation_id is None
 
-        await screen.refresh_active_dictionaries_summary()
+        await screen._retrieval.refresh_active_dictionaries_summary()
 
         assert screen._active_dictionaries_summary == {"dictionaries": []}
-        rows = screen._console_dictionary_inspector_rows()
+        rows = screen._retrieval._console_dictionary_inspector_rows()
         assert rows == (ConsoleDisplayRow("No active chat", ""),)
 
 
@@ -204,7 +204,7 @@ async def test_refresh_with_service_but_no_active_chat_caches_empty_without_call
         await _wait_for_selector(screen, pilot, "#console-native-composer")
         assert _active_native_session(screen).persisted_conversation_id is None
 
-        await screen.refresh_active_dictionaries_summary()
+        await screen._retrieval.refresh_active_dictionaries_summary()
 
         assert service.calls == []
         assert screen._active_dictionaries_summary == {"dictionaries": []}
@@ -221,9 +221,9 @@ async def test_empty_dictionaries_summary_renders_empty_row():
         await _wait_for_selector(screen, pilot, "#console-native-composer")
         _active_native_session(screen).persisted_conversation_id = "conv-1"
 
-        await screen.refresh_active_dictionaries_summary()
+        await screen._retrieval.refresh_active_dictionaries_summary()
 
-        rows = screen._console_dictionary_inspector_rows()
+        rows = screen._retrieval._console_dictionary_inspector_rows()
         assert rows == (ConsoleDisplayRow("No dictionaries in play", ""),)
 
 
@@ -264,7 +264,7 @@ async def test_shadowed_and_disabled_suffixes_render_on_the_row_value():
         await _wait_for_selector(screen, pilot, "#console-native-composer")
         _active_native_session(screen).persisted_conversation_id = "conv-1"
 
-        await screen.refresh_active_dictionaries_summary()
+        await screen._retrieval.refresh_active_dictionaries_summary()
 
         # Native Console sessions do not yet track a numeric character id
         # (Roleplay P1e Attachments is net-new work) -- character_id is
@@ -273,7 +273,7 @@ async def test_shadowed_and_disabled_suffixes_render_on_the_row_value():
         # unconditionally; this proves row *rendering* of shadowed/disabled
         # character entries is unaffected by that).
         assert service.calls == [("conv-1", None, "local")]
-        rows = screen._console_dictionary_inspector_rows()
+        rows = screen._retrieval._console_dictionary_inspector_rows()
         assert rows == (
             ConsoleDisplayRow("Slang", "from conversation"),
             ConsoleDisplayRow("Slang", "from character (shadowed)"),
@@ -295,9 +295,9 @@ async def test_actions_reflect_conversation_and_attach_state():
         # disabled (with the recovery copy) and detach has no
         # conversation-source dict to detach either.
         assert _active_native_session(screen).persisted_conversation_id is None
-        await screen.refresh_active_dictionaries_summary()
+        await screen._retrieval.refresh_active_dictionaries_summary()
 
-        actions = screen._console_dictionary_inspector_actions()
+        actions = screen._retrieval._console_dictionary_inspector_actions()
         attach = next(
             a for a in actions if a.widget_id == "console-inspector-dictionaries-attach"
         )
@@ -323,9 +323,9 @@ async def test_actions_reflect_conversation_and_attach_state():
             ],
             "source": "local",
         }
-        await screen.refresh_active_dictionaries_summary()
+        await screen._retrieval.refresh_active_dictionaries_summary()
 
-        actions2 = screen._console_dictionary_inspector_actions()
+        actions2 = screen._retrieval._console_dictionary_inspector_actions()
         attach2 = next(
             a
             for a in actions2

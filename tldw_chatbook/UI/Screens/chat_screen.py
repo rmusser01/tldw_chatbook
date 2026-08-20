@@ -5,7 +5,6 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 import asyncio
 from functools import partial
-import inspect
 import logging
 import os
 from pathlib import Path
@@ -99,6 +98,10 @@ from ..Console_Modules.right_rail import ConsoleInspectorRail
 from ..Console_Modules.provider_continuation_recovery import (
     ProviderContinuationTranscriptRegion as ConsoleTranscriptRegion,
 )
+from ..Console_Modules.retrieval import (
+    sanitize_console_library_rag_query as _sanitize_console_library_rag_query,
+    source_mentions_rag as _source_mentions_rag,
+)
 from ..Console_Modules.transcript import _ConsoleTranscriptReadingState
 from ..Console_Modules.wiring import build_console_controllers
 from ..Console_Modules.session import (
@@ -151,24 +154,8 @@ from ...Event_Handlers.Chat_Events.chat_events_console_dictionaries import (
 # resolution the native-Console chat entry point uses (task-5) -- session
 # identity via `persisted_conversation_id`, `SessionScopeHolder` for
 # unpersisted sessions, `EffectiveScope` state.
-from ...Event_Handlers.Chat_Events.chat_rag_events import (
-    capture_console_staged_evidence_for_chat,
-    resolve_effective_scope_for_chat,
-    resolve_scope_for_session,
-)
-from ...Chat.rag_scope import (
-    RagScope,
-    SCOPE_EMPTY_NOTICE_TEMPLATE,
-    read_conversation_scope,
-    write_conversation_scope,
-)
-from ...Chat.scope_picker_listers import (
-    build_keyword_tag_lister,
-    build_media_source_lister,
-    build_notes_source_lister,
-)
+from ...Chat.rag_scope import RagScope
 from ...Chat.console_command_grammar import (
-    COMMAND_PREFIX,
     GENERATE_IMAGE_COMMAND_HANDLER_ID,
     GENERATE_IMAGE_COMMAND_NAME,
     GENERATE_VIDEO_COMMAND_HANDLER_ID,
@@ -207,7 +194,6 @@ from ...Chat.console_prefill import (
 from ...Chat.console_generate_image import insert_style_token_into_draft
 from ...Chat.console_side_chat import ConsoleSideChatService, render_prompt
 from ...Chat.console_skill_resolver import (
-    MENTION_SIGIL,
     SKILL_UNTRUSTED_REFUSE,
     SkillCommandCandidate,
     cap_skill_args,
@@ -309,7 +295,6 @@ from ...Chat.console_display_state import (
     CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,
     ConsoleControlState,
     ConsoleDisplayRow,
-    ConsoleInspectorAction,
     ConsoleInspectorState,
     ConsoleRetrievalScopeState,
     ConsoleStagedContextState,
@@ -392,17 +377,10 @@ from ...config import (
     save_setting_to_cli_config,
     save_settings_to_cli_config,
 )
-from ...Library.library_rag_service import (
-    LibraryRagSearchOutcome,
-    LibraryRagSearchRequest,
-    RETRIEVAL_FAILED_WHY,
-    run_library_rag_search,
-    scope_empty_recovery_state,
-)
+from ...Library.library_rag_service import LibraryRagSearchRequest
 from ...Library.library_rag_state import (
     LIBRARY_RAG_FALLBACK_TOP_K,
     library_rag_profile_top_k,
-    library_rag_source_scope_summary,
 )
 from ...Constants import (
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
@@ -413,7 +391,6 @@ from ...Utils.console_background_effects import (
     ConsoleBackgroundEffectSettings,
     normalize_console_background_effects,
 )
-from ...Utils.input_validation import sanitize_string, validate_text_input
 from ...Utils.persistent_diagnostics import persist_event, safe_metadata_token
 from ...Utils.token_counter import estimate_tokens
 from ...UI.Workbench import (
@@ -500,9 +477,7 @@ from ...Widgets.Console.console_generation_card import generation_card_signature
 from ...Widgets.Console.console_video_card import video_card_signature
 from ...Widgets.Console.console_rag_settings_modal import (
     CONSOLE_RAG_DEFAULT_SOURCE_TYPES,
-    CONSOLE_RAG_SOURCE_SUMMARY_PREFIX,
     ConsoleRagSettingsModal,
-    ConsoleRagSettingsResult,
     normalize_console_rag_source_types,
 )
 from ...Widgets.Console.console_status_chips import (
@@ -570,10 +545,6 @@ from ...Workspaces.display_state import (
 )
 from ...Widgets.compact_model_bar import CompactModelBar
 from ...Widgets.Persona_Widgets.dictionary_picker import DictionaryPicker
-from ..Views.RAGSearch.search_handoff import (
-    build_library_rag_console_live_work_payload,
-    build_library_rag_evidence_bundle,
-)
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -588,8 +559,8 @@ Changed = Input.Changed
 #: retrieval item scope (`EffectiveScope`, conversation ∩ workspace) that
 #: `_resolve_console_library_rag_scope` resolves separately.
 CONSOLE_LIBRARY_RAG_SOURCE_SCOPE = CONSOLE_RAG_DEFAULT_SOURCE_TYPES
-CONSOLE_LIBRARY_RAG_RECOVERY_COPY = "Review citations before sending."
 CONSOLE_LIBRARY_RAG_QUERY_MAX_LENGTH = 2_000
+CONSOLE_LIBRARY_RAG_FALLBACK_TOP_K = LIBRARY_RAG_FALLBACK_TOP_K
 # TASK-346: below this terminal height the composer row was clipped out of
 # existence at 97x30 (no input box, no warning). The visible header banner
 # (title + purpose + Ready, ~5 rows) is pure chrome; dropping it below the
@@ -1510,37 +1481,6 @@ def _is_personas_preview_handoff(payload: ChatHandoffPayload) -> bool:
     )
 
 
-def _source_mentions_rag(source: Any) -> bool:
-    """Return whether a source label explicitly includes a RAG token.
-
-    Args:
-        source: Source label or source-like seam value.
-
-    Returns:
-        True when the normalized source tokens include `rag`.
-    """
-    tokens = re.split(r"[^a-z0-9]+", str(source or "").lower())
-    return "rag" in tokens
-
-
-def _sanitize_console_library_rag_query(value: Any) -> str:
-    """Return a centralized-validation-safe Console Library RAG query."""
-    sanitized = sanitize_string(
-        str(value or ""),
-        max_length=CONSOLE_LIBRARY_RAG_QUERY_MAX_LENGTH,
-    )
-    query = " ".join(sanitized.strip().split())
-    if not query:
-        return ""
-    if not validate_text_input(
-        query,
-        max_length=CONSOLE_LIBRARY_RAG_QUERY_MAX_LENGTH,
-        allow_html=False,
-    ):
-        return ""
-    return query
-
-
 def _console_library_rag_source_scope(screen: Any) -> tuple[str, ...]:
     """Return a Console screen's stored Library RAG source kinds (RAG-44).
 
@@ -1561,73 +1501,11 @@ def _console_library_rag_source_scope(screen: Any) -> tuple[str, ...]:
     )
 
 
-#: TASK-406: hard cap on how much of a composer draft is turned into an
-#: auto-retrieve query. Aliased to the explicitly-typed-query ceiling rather
-#: than re-declared as a second `2000`, so the implicit and explicit paths
-#: can never drift to different limits.
-AUTO_RAG_QUERY_MAX_CHARS = CONSOLE_LIBRARY_RAG_QUERY_MAX_LENGTH
-#: TASK-406: how long an accepted send will wait for auto-retrieval before
-#: giving up and going out WITHOUT evidence. Deliberately short: this await
-#: sits inside the send worker, between "Send pressed" and the first provider
-#: byte, so every second here is dead time the user is staring at.
-AUTO_RAG_TIMEOUT_SECONDS = 5.0
-#: TASK-406: result count used when the active RAG profile's own `default_
-#: top_k` cannot be resolved. Matches the Console chip's historical literal.
-#: TASK-15020/B3 made the Library window read the same profile through the
-#: same seam, so this is now an alias of that seam's fallback rather than a
-#: second literal 5 -- two surfaces degrading to different depths would be a
-#: silent disagreement about how deep "a search" goes.
-CONSOLE_LIBRARY_RAG_FALLBACK_TOP_K = LIBRARY_RAG_FALLBACK_TOP_K
-#: TASK-406: the two auto-retrieve degradation notices. Both are toasts on an
-#: otherwise-successful send, so they say what the user LOSES (evidence), not
-#: what to click -- the send is already gone by the time either fires.
-CONSOLE_AUTO_RAG_INITIALIZING_NOTICE = (
-    "Auto-retrieve skipped: the RAG service is still initializing. "
-    "Message sent without Library evidence."
-)
-CONSOLE_AUTO_RAG_FAILED_NOTICE = (
-    f"Auto-retrieve skipped: {RETRIEVAL_FAILED_WHY}. "
-    "Message sent without Library evidence."
-)
-#: TASK-406: recovery copy on the in-flight ("Retrieving...") auto-retrieve
-#: card, distinct from the manual run's so a user can tell which one is
-#: spending time on their behalf.
-CONSOLE_AUTO_RAG_SEARCHING_COPY = "Auto-retrieving Library evidence for this message."
-
 #: RAG-43: above this length a composer draft reads as a paste/attachment,
 #: not a retrieval question -- well under ``CONSOLE_LIBRARY_RAG_QUERY_MAX_
 #: LENGTH`` (2000, a safety ceiling for an explicitly-typed query, not a
 #: "does this look like a question" heuristic for an implicit prefill).
 CONSOLE_LIBRARY_RAG_DRAFT_PREFILL_MAX_LENGTH = 200
-
-
-def _is_plain_text_send(draft_text: Any) -> bool:
-    """Return whether ``draft_text`` is an ordinary user question (TASK-406).
-
-    The Console has exactly two sigils that make a draft something other
-    than prose, and both are owned elsewhere: ``COMMAND_PREFIX`` (``/``, the
-    slash-command grammar) and ``MENTION_SIGIL`` (``$``, the skill
-    resolver). They are imported rather than re-spelled here so registering
-    a new command or changing a sigil cannot leave this gate behind.
-
-    Two send kinds reach the controller carrying one of those sigils
-    verbatim: a resolved ``$name`` skill invocation
-    (``_run_resolved_console_skill``) and the deliberate second-Enter
-    literal send of an unrecognized ``/word``. Neither is a retrieval
-    question, so neither auto-retrieves. Tool approvals and regenerations
-    never reach this classification at all -- they do not go through
-    ``submit_draft``/``_capture_rag_context``, which is the only caller.
-
-    Args:
-        draft_text: The validated draft about to be submitted.
-
-    Returns:
-        True when the draft is plain prose worth retrieving evidence for.
-    """
-    draft = str(draft_text or "").lstrip()
-    if not draft:
-        return False
-    return not draft.startswith((COMMAND_PREFIX, MENTION_SIGIL))
 
 
 def _console_library_rag_profile_top_k() -> int:
@@ -1650,7 +1528,7 @@ def _console_library_rag_profile_top_k() -> int:
 
     Returns:
         The profile's ``search.default_top_k`` when it resolves to a
-        positive integer, else ``CONSOLE_LIBRARY_RAG_FALLBACK_TOP_K`` -- a
+        positive integer, else the shared Library RAG fallback -- a
         broken/absent profile must degrade to retrieving, not to raising
         inside a send.
     """
@@ -1732,28 +1610,6 @@ def _console_screen_is_torn_down(screen: Any) -> bool:
     """
     return bool(
         getattr(screen, "_closing", False) or getattr(screen, "_closed", False)
-    )
-
-
-def _run_dictionary_summary_off_thread(
-    service: Any,
-    conversation_id: Any,
-    character_id: Any,
-) -> Any:
-    """Drive the async scope-service ``summarize_active_dictionaries`` call
-    to completion on a *private* event loop.
-
-    Called via ``asyncio.to_thread`` from
-    ``ChatScreen.refresh_active_dictionaries_summary`` -- this function body
-    runs in a worker thread, so ``asyncio.run`` here spins up a fresh loop on
-    that thread rather than reentering the UI's event loop. That keeps the
-    underlying (synchronous) DB read the local chat-dictionary service
-    performs entirely off the UI thread.
-    """
-    return asyncio.run(
-        service.summarize_active_dictionaries(
-            conversation_id, character_id, mode="local"
-        )
     )
 
 
@@ -1840,6 +1696,24 @@ class ChatScreen(BaseAppScreen):
     )
     _console_conversation_browser_error = _ControllerState(
         "_workspace", "_console_conversation_browser_error"
+    )
+    _console_retrieval_scope_cache = _ControllerState(
+        "_retrieval", "_console_retrieval_scope_cache"
+    )
+    _console_effective_scope_cache = _ControllerState(
+        "_retrieval", "_console_effective_scope_cache"
+    )
+    _active_dictionaries_summary = _ControllerState(
+        "_retrieval", "_active_dictionaries_summary"
+    )
+    _last_console_dictionary_scope_ids = _ControllerState(
+        "_retrieval", "_last_console_dictionary_scope_ids"
+    )
+    _active_world_books_summary = _ControllerState(
+        "_retrieval", "_active_world_books_summary"
+    )
+    _last_console_world_book_scope_ids = _ControllerState(
+        "_retrieval", "_last_console_world_book_scope_ids"
     )
     _active_character_avatar = _ControllerState(
         "_character", "_active_character_avatar"
@@ -3608,21 +3482,6 @@ class ChatScreen(BaseAppScreen):
         ) = None
         self._console_identity_refresh_generation = 0
         self._console_appearance_refresh_generation = 0
-        # task-9: cache of persisted-conversation RAG retrieval scopes,
-        # keyed by conversation id -- populated off-loop at resume time and
-        # by the scope picker's modal-open/after-save reads (never during
-        # compose/recompose), so the Inspector's retrieval-scope row and
-        # run-recipe line render from pure session state.
-        self._console_retrieval_scope_cache: Dict[str, Optional[RagScope]] = {}
-        # task-13: cache of resolved EFFECTIVE (conversation ∩ workspace)
-        # retrieval-scope display state, keyed the same way as the cache
-        # above (persisted conversation id, or the session id while
-        # unpersisted) -- populated off-loop at the same three trigger
-        # points (scope-picker save on either target, resume, and the
-        # first-persist flush hook), never during compose/recompose, so
-        # the Inspector row and header chip can render the intersection
-        # with zero DB work.
-        self._console_effective_scope_cache: Dict[str, ConsoleRetrievalScopeState] = {}
         # TASK-340: keyboard-send draft stashes — keypress->handler handoff,
         # then the queued submit's accept/refuse consumption slot.
         # `_console_pending_send_stash` stays a single slot: it is consumed
@@ -3839,38 +3698,6 @@ class ChatScreen(BaseAppScreen):
         self._console_fleet_coachmark_seen_cached: bool | None = None
         self._console_detected_local_server: DiscoveredLocalServer | None = None
         self._console_local_discovery_started = False
-        # P1g: cached "what's in play" chat-dictionary summary for the
-        # active native Console session's conversation/character scope,
-        # recomputed only by `refresh_active_dictionaries_summary()`.
-        # Fix-wave (Critical, Task 4 review): the old recompute trigger
-        # watched root-owned conversation and character mirrors that native
-        # Console never wrote, so the summary was permanently stuck at
-        # "No active chat" in the real app. `_sync_native_console_chat_ui()`
-        # recomputes whenever the active native session's
-        # (conversation_id, character_id) scope changes -- see
-        # `_active_console_dictionary_scope_ids()` and
-        # `_refresh_active_dictionaries_summary_if_scope_changed()`.
-        # `_build_console_inspector_state` and the inspector compose path
-        # read ONLY this cache -- never a DB query on recompose.
-        self._active_dictionaries_summary: dict | None = None
-        # Last (conversation_id, character_id) scope a refresh was run
-        # for. `_sync_native_console_chat_ui()` also runs on a 0.2s
-        # transcript-poll timer while a run is streaming
-        # (`_start_console_transcript_sync_timer`), so this guard is what
-        # keeps the recompute from hitting the DB (via the scope service)
-        # several times a second instead of only on a real scope change.
-        self._last_console_dictionary_scope_ids: (
-            tuple[str | None, int | None] | None
-        ) = None
-        # P2g-2: cached "what's in play" world-book summary for the active
-        # native Console session's conversation scope, recomputed only by
-        # `refresh_active_world_books_summary()`. Mirrors the dictionary
-        # cache above -- `_build_console_inspector_state` reads only this
-        # cache, never a DB query on recompose.
-        self._active_world_books_summary: dict | None = None
-        # Sentinel distinct from any real `(conversation_id,)` tuple so the
-        # first scope check always refreshes.
-        self._last_console_world_book_scope_ids: tuple | None = None
         # TASK-18060 Task 5 (review-rail spec §2): cached cross-turn
         # "Changed files" summary for the active native Console session's
         # conversation. Mirrors the dictionary/world-book caches above --
@@ -4195,7 +4022,9 @@ class ChatScreen(BaseAppScreen):
         self._pending_console_launch_auto_open_inspector = True
         store.acknowledge(claim)
         try:
-            self._stage_console_library_rag_launch(launch, allow_recompose=False)
+            self._retrieval._stage_console_library_rag_launch(
+                launch, allow_recompose=False
+            )
         except Exception as exc:
             # Includes the never-composed screen shell, where the staging
             # seam's surface sync has no DOM to query.
@@ -5657,7 +5486,7 @@ class ChatScreen(BaseAppScreen):
                 skills_service=getattr(self.app_instance, "skills_scope_service", None),
                 chat_dictionary_applier=self._console_chat_dictionary_applier,
                 world_info_applier=self._console_world_info_applier,
-                rag_capture_provider=self._capture_console_staged_rag,
+                rag_capture_provider=self._retrieval._capture_console_staged_rag,
                 default_session_settings=self._session._default_console_session_settings,
                 library_provider_factory=self._console_library_provider_factory,
                 global_user_display_name=self._global_chat_display_name,
@@ -5712,7 +5541,7 @@ class ChatScreen(BaseAppScreen):
             # constructor-supplied callables
             "_chat_dictionary_applier": self._console_chat_dictionary_applier,
             "_world_info_applier": self._console_world_info_applier,
-            "_rag_capture_provider": self._capture_console_staged_rag,
+            "_rag_capture_provider": self._retrieval._capture_console_staged_rag,
             "_default_session_settings": getattr(
                 session, "_default_console_session_settings", None
             ),
@@ -5760,64 +5589,6 @@ class ChatScreen(BaseAppScreen):
             # 4+ minute mid-delivery freeze, PR3a-2 Task 7 finding 1).
             "delivery_ui_hook": self._on_console_wake_delivery_started,
         }
-
-    async def _capture_console_staged_rag(
-        self,
-        draft: str,
-        turn_context: ConsoleTurnExecutionContext | None = None,
-    ):
-        """Resolve the current staged Library-RAG bundle for one Console send.
-
-        This is the ONLY consume-on-send seam. The controller calls it once
-        per accepted send, AFTER every block gate (provider readiness, skill
-        substitution refusal), so a blocked send never reaches this method
-        and keeps its staging -- which is why the release below needs no
-        block check of its own.
-
-        Capture-boundary ruling: the launch is released only when the
-        capture returned a non-empty ``context`` string -- exactly the
-        predicate ``ConsoleChatController._capture_rag_context`` uses to
-        decide whether the evidence is prepended to the provider messages.
-        ``capture_console_staged_evidence_for_chat`` has several honest
-        no-op returns (invalid bundle, no canonical-local references, prompt
-        authority incomplete, empty formatted context) that all yield
-        ``context=None``; releasing on those would silently discard evidence
-        that never reached the model.
-        """
-
-        # Whatever the previous send consumed is no longer "this message".
-        self._clear_console_evidence_sent_notice()
-        # TASK-406: opt-in auto-retrieve runs HERE, immediately before the
-        # consume, so anything it stages is picked up by this same send. It
-        # is a no-op unless the toggle is on and nothing is already staged.
-        # Contained: this method sits on the provider's capture path, where
-        # `ConsoleChatController._capture_rag_context` turns ANY exception
-        # into `context=None` -- so an auto-retrieve failure escaping here
-        # would also discard whatever the consume below was about to hand
-        # the model. An optional convenience must never be able to do that.
-        try:
-            await self._maybe_auto_retrieve_for_send(draft, turn_context=turn_context)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.warning(
-                "Console auto-retrieve raised; the send proceeds "
-                "(exception_category={})",
-                type(exc).__name__,
-            )
-        launch = self._consume_pending_console_launch()
-        result = await capture_console_staged_evidence_for_chat(
-            self.app_instance,
-            launch,
-            user_message=draft,
-        )
-        context = getattr(result, "context", None)
-        if launch is not None and isinstance(context, str) and context.strip():
-            self._release_consumed_console_launch(launch, result)
-        # The captured result is returned unconditionally: nothing in the
-        # release above may change what this send transmits (see the
-        # containment note there).
-        return result
 
     def _release_consumed_console_launch(
         self,
@@ -9430,50 +9201,6 @@ class ChatScreen(BaseAppScreen):
             return ConsoleStagedContextState.empty()
         return ConsoleStagedContextState.from_live_work(pending_launch)
 
-    def _build_console_retrieval_scope_state(self) -> ConsoleRetrievalScopeState:
-        """Pure display state for the Inspector's "Retrieval scope" row.
-
-        Reads only in-memory session state -- the EFFECTIVE
-        (conversation ∩ workspace, task-13) scope cache
-        (``self._console_effective_scope_cache``), populated off-loop by
-        ``_resolve_console_effective_scope_state`` at the scope-picker
-        save/resume/first-persist-flush trigger points -- never the DB
-        directly. Safe to call on every compose/recompose (task-9's
-        zero-DB-on-recompose contract).
-
-        Falls back to the conversation-only ``SessionScopeHolder`` (still
-        zero-DB, purely in-memory) for an UNPERSISTED session whose
-        effective state has not been resolved yet, so a scope narrowed via
-        the picker still reflects immediately even before the off-loop
-        workspace-intersection resolve lands.
-
-        Returns:
-            "Everything" (unscoped) when there is no active session, an
-            unpersisted session with no held scope and no resolved
-            effective state yet, or a persisted session whose conversation
-            id has not yet been resolved into the cache.
-        """
-        session = self._session._active_native_console_session()
-        if session is None:
-            return ConsoleRetrievalScopeState.unscoped()
-        cache_key = session.persisted_conversation_id or session.id
-        cached = self._console_effective_scope_cache.get(cache_key)
-        if cached is not None:
-            return cached
-        if session.persisted_conversation_id is None:
-            return ConsoleRetrievalScopeState.from_scope(session.rag_scope_holder.scope)
-        return ConsoleRetrievalScopeState.unscoped()
-
-    def _console_retrieval_scope_run_recipe_count(self) -> Optional[int]:
-        """Item count for the Inspector run-recipe's "/ scope N items" suffix.
-
-        ``None`` when unscoped (the run-recipe line stays unchanged); the
-        same pure, zero-DB session-state read
-        ``_build_console_retrieval_scope_state`` uses.
-        """
-        state = self._build_console_retrieval_scope_state()
-        return state.item_count if state.is_scoped else None
-
     def _sync_console_retrieval_scope_row(self) -> None:
         """Refresh the mounted retrieval-scope row AND status-strip chips.
 
@@ -9493,7 +9220,7 @@ class ChatScreen(BaseAppScreen):
         ``sync_temporary_chip`` for why it is kept off the general
         control-bar sync tick, same as the scope chip.
         """
-        state = self._build_console_retrieval_scope_state()
+        state = self._retrieval._build_console_retrieval_scope_state()
         try:
             row = self.query_one(
                 f"#{CONSOLE_RETRIEVAL_SCOPE_ROW_ID}", ConsoleRetrievalScopeRow
@@ -9508,159 +9235,6 @@ class ChatScreen(BaseAppScreen):
             return
         status_chips.sync_scope_chip(state)
         status_chips.sync_temporary_chip(self._console_active_session_is_ephemeral())
-
-    async def _resolve_console_effective_scope_state(
-        self, session: "ConsoleChatSession"
-    ) -> ConsoleRetrievalScopeState:
-        """Resolve+cache the EFFECTIVE (conversation ∩ workspace) scope
-        display state for ``session``, off-loop (task-13).
-
-        Delegates to ``chat_rag_events.resolve_scope_for_session`` -- the
-        SAME resolution core ``resolve_effective_scope_for_chat`` uses to
-        enforce retrieval -- so the Inspector row/header chip and actual
-        enforcement never diverge. The returned ``ScopeResolution`` also
-        carries the raw conversation/workspace scopes, used here only for
-        the chip's intersection-breakdown tooltip counts.
-
-        Refreshes ``self._console_retrieval_scope_cache`` (the
-        conversation-only cache the picker's ``initial`` seed reads) from
-        the SAME resolved conversation scope -- one DB read serves both
-        caches -- and caches the built ``ConsoleRetrievalScopeState`` in
-        ``self._console_effective_scope_cache``, keyed by the persisted
-        conversation id or the session id while unpersisted, so
-        ``_build_console_retrieval_scope_state`` can read it back with
-        zero DB work on compose/recompose.
-
-        Call sites: the scope-picker save handlers (either the
-        conversation or the workspace target), resume
-        (``_resume_console_workspace_conversation``), and the first-persist
-        flush hook (``_on_console_scope_flushed``) -- never
-        compose/recompose.
-
-        Args:
-            session: The Console session to resolve scope for.
-
-        Returns:
-            The resolved, cached ``ConsoleRetrievalScopeState``.
-        """
-        resolution = await resolve_scope_for_session(self.app_instance, session)
-        if session.persisted_conversation_id is not None:
-            self._console_retrieval_scope_cache[session.persisted_conversation_id] = (
-                resolution.conv_scope
-            )
-        conv_item_count = (
-            len(resolution.conv_scope.items)
-            if resolution.conv_scope is not None
-            else None
-        )
-        ws_item_count = (
-            len(resolution.ws_scope.items) if resolution.ws_scope is not None else None
-        )
-        state = ConsoleRetrievalScopeState.from_effective(
-            resolution.effective,
-            conv_item_count=conv_item_count,
-            ws_item_count=ws_item_count,
-        )
-        cache_key = session.persisted_conversation_id or session.id
-        self._console_effective_scope_cache[cache_key] = state
-        return state
-
-    async def _refresh_console_effective_scope_and_sync(
-        self, session: "ConsoleChatSession"
-    ) -> None:
-        """Resolve the effective scope for ``session`` and refresh the row/chip.
-
-        Thin convenience wrapper around ``_resolve_console_effective_scope_
-        state`` for the (common) case where the caller wants the resolved
-        state pushed straight into the mounted Inspector row and header
-        chip afterward. A no-op refresh when the screen is not mounted
-        (mirrors every other post-save sync call site in this file).
-
-        Args:
-            session: The Console session to resolve scope for.
-        """
-        await self._resolve_console_effective_scope_state(session)
-        if self.is_mounted:
-            self._sync_console_retrieval_scope_row()
-            self._sync_console_control_bar()
-
-    async def _warm_console_effective_scope_cache_if_stale(self) -> None:
-        """Warm the effective-scope cache for an already-active persisted session.
-
-        Covers a gap the picker-save/resume/first-persist-flush warmers
-        (``_resolve_console_effective_scope_state``'s three call sites)
-        never reach: ``restore_state`` (screen restore on app start, or
-        switching back to the Console screen) can reactivate a native
-        session whose ``persisted_conversation_id`` is already set BEFORE
-        this screen ever mounts, so ``_console_effective_scope_cache`` has
-        no entry for it yet. Left alone, ``_build_console_retrieval_scope_
-        state`` falls through to its cache-miss branch for a persisted
-        session and renders "Everything" for a conversation that is
-        actually scoped, until the user happens to resume/switch/save.
-
-        Called at the start of every ``_sync_native_console_chat_ui`` tick
-        (the initial-mount sync path included), but the cache-key presence
-        check below makes it a no-op once the session has been warmed --
-        the same one-time guard every other warmer relies on -- so this
-        adds no repeated DB work.
-        """
-        session = self._session._active_native_console_session()
-        if session is None or session.persisted_conversation_id is None:
-            return
-        cache_key = session.persisted_conversation_id
-        if cache_key in self._console_effective_scope_cache:
-            return
-        try:
-            await self._refresh_console_effective_scope_and_sync(session)
-        except Exception:
-            logger.opt(exception=True).warning(
-                "Failed to warm retrieval scope cache for conversation {}",
-                cache_key,
-            )
-
-    @staticmethod
-    async def _read_console_retrieval_scope(
-        db: Any, conversation_id: str
-    ) -> Optional[RagScope]:
-        """Read a conversation's stored scope, off-loop for file-backed DBs.
-
-        In-memory SQLite connections are thread-local -- the same trap
-        ``library_local_rag_search_service._search_conversations`` already
-        documents and guards: offloading to a worker thread via
-        ``asyncio.to_thread`` would open a FRESH, blank in-memory
-        connection with no migrated schema, since only the thread that
-        created the DB has one. Real app usage is always file-backed
-        (``asyncio.to_thread`` applies normally); the guard only matters
-        for the in-memory DBs the test suite uses per repo convention.
-        """
-        if getattr(db, "is_memory_db", False):
-            return read_conversation_scope(db, conversation_id)
-        return await asyncio.to_thread(read_conversation_scope, db, conversation_id)
-
-    @staticmethod
-    async def _write_console_retrieval_scope(
-        db: Any, conversation_id: str, scope: Optional[RagScope]
-    ) -> None:
-        """Write (or clear) a conversation's stored scope; see the read twin's
-        in-memory-DB guard docstring for why this isn't unconditionally
-        ``asyncio.to_thread``."""
-        if getattr(db, "is_memory_db", False):
-            write_conversation_scope(db, conversation_id, scope)
-        else:
-            await asyncio.to_thread(
-                write_conversation_scope, db, conversation_id, scope
-            )
-
-    def _console_scope_picker_listers(
-        self,
-    ) -> tuple[Any, Any, Any]:
-        """Build the real (media, notes, tag) listers for the scope picker."""
-        user_id = getattr(self.app_instance, "notes_user_id", None) or "default_user"
-        return (
-            build_media_source_lister(self.app_instance),
-            build_notes_source_lister(self.app_instance, user_id=user_id),
-            build_keyword_tag_lister(self.app_instance),
-        )
 
     async def _open_console_retrieval_scope_picker(self) -> None:
         """Open the RAG retrieval-scope picker for the active Console session.
@@ -9686,7 +9260,7 @@ class ChatScreen(BaseAppScreen):
         if conversation_id is not None:
             db = getattr(self.app_instance, "chachanotes_db", None)
             initial = (
-                await self._read_console_retrieval_scope(db, conversation_id)
+                await self._retrieval._read_console_retrieval_scope(db, conversation_id)
                 if db is not None
                 else None
             )
@@ -9721,11 +9295,13 @@ class ChatScreen(BaseAppScreen):
             max_characters=500,
         )
         target_label = title or "this conversation"
-        media_lister, notes_lister, tag_lister = self._console_scope_picker_listers()
+        media_lister, notes_lister, tag_lister = (
+            self._retrieval._console_scope_picker_listers()
+        )
 
         def _on_save(scope: Optional[RagScope]) -> None:
             self.run_worker(
-                self._apply_console_retrieval_scope_save(session, scope),
+                self._retrieval._apply_console_retrieval_scope_save(session, scope),
                 exclusive=True,
                 group="console-retrieval-scope-save",
             )
@@ -9747,99 +9323,7 @@ class ChatScreen(BaseAppScreen):
         session = self._session._active_native_console_session()
         if session is None:
             return
-        await self._apply_console_retrieval_scope_save(session, None)
-
-    async def _apply_console_retrieval_scope_save(
-        self,
-        session: ConsoleChatSession,
-        scope: Optional[RagScope],
-    ) -> None:
-        """Persist (or session-hold) a scope chosen in the picker modal.
-
-        A persisted conversation writes through ``write_conversation_scope``
-        off-loop; ``write_conversation_scope`` fails SOFT on corrupt
-        existing metadata (silently skips the write rather than raising or
-        erasing sibling metadata keys) -- this is detected here by
-        re-reading afterward: a non-``None`` target scope that reads back
-        as ``None`` means the write was refused, and an honest notify is
-        surfaced rather than a false "saved". A not-yet-persisted session
-        holds the scope in ``session.rag_scope_holder`` instead --
-        ``ConsoleChatStore.persist_session_if_needed`` flushes it through
-        exactly once, at first persistence. Either branch ends by
-        refreshing the Inspector row and the run-recipe line.
-
-        ``write_conversation_scope`` can also raise (task-9 review finding
-        4): a ``ConflictError`` (optimistic-lock version race -- a
-        concurrent write, e.g. a dictionary attach/detach, landed on the
-        same conversation row between read and write; real per PR #734's
-        docs) and a ``ValueError`` (the conversation no longer exists) are
-        both genuine, distinct failure modes -- neither is "corrupted
-        metadata", so each gets its own honest notify instead of the
-        generic corrupt-metadata wording.
-
-        Args:
-            session: The Console session the scope applies to.
-            scope: The new scope, or ``None`` to clear it.
-        """
-        if session.persisted_conversation_id is not None:
-            conversation_id = session.persisted_conversation_id
-            db = getattr(self.app_instance, "chachanotes_db", None)
-            if db is None:
-                self.app_instance.notify(
-                    "Couldn't save scope: no database is available.",
-                    severity="error",
-                )
-                return
-            from ...DB.ChaChaNotes_DB import ConflictError
-
-            try:
-                await self._write_console_retrieval_scope(db, conversation_id, scope)
-            except ConflictError:
-                logger.opt(exception=True).warning(
-                    "Retrieval scope write conflict for conversation {}",
-                    conversation_id,
-                )
-                self.app_instance.notify(
-                    "Couldn't save scope: the conversation was modified "
-                    "concurrently — try again.",
-                    severity="error",
-                )
-                return
-            except ValueError:
-                logger.opt(exception=True).warning(
-                    "Retrieval scope write target missing for conversation {}",
-                    conversation_id,
-                )
-                self.app_instance.notify(
-                    "Couldn't save scope: this conversation no longer exists.",
-                    severity="error",
-                )
-                return
-            except Exception:
-                logger.opt(exception=True).warning(
-                    "Failed to write retrieval scope for conversation {}",
-                    conversation_id,
-                )
-                self.app_instance.notify(
-                    "Couldn't save scope: conversation metadata is corrupted.",
-                    severity="error",
-                )
-                return
-            after = await self._read_console_retrieval_scope(db, conversation_id)
-            if scope is not None and after is None:
-                self.app_instance.notify(
-                    "Couldn't save scope: conversation metadata is corrupted.",
-                    severity="error",
-                )
-                return
-            self._console_retrieval_scope_cache[conversation_id] = after
-        else:
-            session.rag_scope_holder.set(scope)
-        # task-13: resolve the EFFECTIVE (conversation ∩ workspace) state
-        # for the row/chip, not just the conversation-only scope just
-        # saved -- a workspace scope may already be narrowing this
-        # conversation's retrieval too.
-        await self._refresh_console_effective_scope_and_sync(session)
+        await self._retrieval._apply_console_retrieval_scope_save(session, None)
 
     @on(Button.Pressed, ".console-retrieval-scope-open-btn")
     async def _console_retrieval_scope_open_pressed(
@@ -9999,7 +9483,7 @@ class ChatScreen(BaseAppScreen):
                 ),
                 on_auto_retrieve_changed=self._persist_console_rag_auto_retrieve_on_send,
             ),
-            callback=self._apply_console_rag_settings_choice,
+            callback=self._retrieval._apply_console_rag_settings_choice,
         )
 
     def _set_console_library_rag_query(self, query: str) -> None:
@@ -10045,54 +9529,11 @@ class ChatScreen(BaseAppScreen):
             scope_label = self.query_one("#console-library-rag-scope", Static)
         except QueryError:
             return
-        scope_label.update(self._console_library_rag_scope_label())
-
-    def _apply_console_rag_settings_choice(
-        self, result: ConsoleRagSettingsResult | None
-    ) -> None:
-        """Store the modal's query and sources, then optionally run now.
-
-        The "Auto-retrieve on send" toggle (TASK-3170 / RAG-port P0 task 7)
-        is NOT handled here -- it is a standing preference, not part of
-        this draft, so it already persisted the instant it flipped inside
-        the modal (see ``_open_console_rag_settings``'s
-        ``on_auto_retrieve_changed=self._persist_console_rag_auto_retrieve_
-        on_send`` and that method below). Gating it on this dismiss
-        callback the way the query/source-type edits are gated would have
-        silently lost the toggle on Escape/Cancel/a backdrop click, and
-        given a blank-query user no way to save it without running a
-        throwaway retrieval.
-        """
-        if result is None:
-            return
-        self._set_console_library_rag_source_scope(result.source_types)
-        self._set_console_library_rag_query(
-            _sanitize_console_library_rag_query(result.query)
-        )
-        if result.run:
-            self._run_console_library_rag_from_visible_action()
+        scope_label.update(self._retrieval._console_library_rag_scope_label())
 
     @work(thread=True)
     def _persist_console_rag_auto_retrieve_on_send(self, value: bool) -> None:
-        """Persist the "Auto-retrieve on send" toggle without blocking the UI thread.
-
-        TASK-3170 (RAG-port P0 task 7, re-critique fix): fired the instant
-        the RAG settings modal's switch flips (via its
-        ``on_auto_retrieve_changed`` callback), independent of how -- or
-        whether -- the modal is later dismissed. Mirrors the sibling
-        Console preference writers (``_save_console_rail_preferences``,
-        ``_save_console_onboarding_flag``, ``_save_console_fleet_coachmark_
-        flag``): a small best-effort ``save_setting_to_cli_config`` write
-        on a thread worker, not the UI thread.
-        """
-        try:
-            save_setting_to_cli_config(
-                "chat_defaults", "rag_auto_retrieve_on_send", bool(value)
-            )
-        except Exception as exc:
-            logger.warning(
-                "Failed to persist Console auto-retrieve-on-send setting: {}", exc
-            )
+        self._retrieval._persist_console_rag_auto_retrieve_on_send(value)
 
     async def _open_console_character_picker(self) -> None:
         """Load characters off-thread and open the picker modal (task-1672)."""
@@ -10657,7 +10098,7 @@ class ChatScreen(BaseAppScreen):
         session = self._session._active_native_console_session()
         if session is not None and session.persisted_conversation_id == conversation_id:
             self.run_worker(
-                self._refresh_console_effective_scope_and_sync(session),
+                self._retrieval._refresh_console_effective_scope_and_sync(session),
                 exclusive=True,
                 group="console-effective-scope-refresh",
             )
@@ -11623,20 +11064,6 @@ class ChatScreen(BaseAppScreen):
         target_id = str(pending_launch.payload.get("target_id") or "").strip()
         return source in {"artifacts", "chatbooks"} and ":chatbook:" in target_id
 
-    @staticmethod
-    def _launch_has_rag_source_payload(pending_launch: ConsoleLiveWorkLaunch) -> bool:
-        source_keys = (
-            "source_id",
-            "source_count",
-            "citation_count",
-            "chunk_id",
-            "query",
-            "result_id",
-        )
-        return any(
-            str(pending_launch.payload.get(key) or "").strip() for key in source_keys
-        )
-
     def _console_pending_approval_count(self) -> int:
         explicit_count = getattr(
             self.app_instance, "console_pending_approval_count", None
@@ -11671,47 +11098,6 @@ class ChatScreen(BaseAppScreen):
         return coerce_non_negative_int(
             getattr(self.app_instance, "console_mcp_not_connected_count", 0)
         )
-
-    def _console_rag_source_status(
-        self,
-        pending_launch: Optional[ConsoleLiveWorkLaunch],
-        sent_source_count: Optional[int] = None,
-    ) -> str:
-        """Return the Inspector's "Sources" row text (D1b).
-
-        Args:
-            pending_launch: Currently staged live-work launch, if any.
-            sent_source_count: The one-send "evidence sent" memory
-                (``ChatScreen._console_evidence_sent_notice``) -- the SAME
-                count the staged-evidence strip reads for its "Evidence
-                sent with this message" line. Only consulted when nothing
-                is staged: live staging always wins, exactly like the
-                strip (``build_console_staged_evidence_strip_state``).
-
-        Returns:
-            The existing staged/blocked/not-requested vocabulary when a
-            launch is pending; the last-send memory sentence when nothing
-            is staged but a send just consumed evidence; else the
-            genuinely-empty ``"not staged"``.
-        """
-        if pending_launch is None:
-            if sent_source_count:
-                count = int(sent_source_count)
-                noun = "source" if count == 1 else "sources"
-                return f"sent with the last message · {count} {noun}"
-            return "not staged"
-        if _source_mentions_rag(pending_launch.source):
-            launch_status = str(pending_launch.status or "").strip().lower()
-            if launch_status in {"blocked", "failed", "unavailable"}:
-                return "unavailable"
-            if launch_status == "empty":
-                return "no results"
-            if launch_status == "searching":
-                return "retrieving from Library Search/RAG"
-            if self._launch_has_rag_source_payload(pending_launch):
-                return "staged from Library Search/RAG"
-            return "missing source"
-        return "not requested"
 
     def _console_artifact_status(
         self,
@@ -11784,7 +11170,7 @@ class ChatScreen(BaseAppScreen):
             model_label=model,
             provider_ready=provider_ready,
             provider_recovery=provider_recovery,
-            rag_status=self._console_rag_source_status(
+            rag_status=self._retrieval._console_rag_source_status(
                 pending_launch,
                 sent_source_count=self._console_evidence_sent_notice,
             ),
@@ -11801,7 +11187,7 @@ class ChatScreen(BaseAppScreen):
             mcp_tool_count=self._console_mcp_tool_count(),
             mcp_not_connected_count=self._console_mcp_not_connected_count(),
             can_save_chatbook=can_save_chatbook,
-            scope_item_count=self._console_retrieval_scope_run_recipe_count(),
+            scope_item_count=self._retrieval._console_retrieval_scope_run_recipe_count(),
             change_review_available=(
                 getattr(self._console_agent_bridge, "change_tracking_enabled", False)
                 if self._console_agent_bridge is not None
@@ -11851,10 +11237,10 @@ class ChatScreen(BaseAppScreen):
         # current by `refresh_active_dictionaries_summary()`).
         inspector_state = replace(
             inspector_state,
-            dictionary_rows=self._console_dictionary_inspector_rows(),
-            dictionary_actions=self._console_dictionary_inspector_actions(),
-            world_book_rows=self._console_world_book_inspector_rows(),
-            world_book_actions=self._console_world_book_inspector_actions(),
+            dictionary_rows=self._retrieval._console_dictionary_inspector_rows(),
+            dictionary_actions=self._retrieval._console_dictionary_inspector_actions(),
+            world_book_rows=self._retrieval._console_world_book_inspector_rows(),
+            world_book_actions=self._retrieval._console_world_book_inspector_actions(),
         )
         return inspector_state
 
@@ -11910,177 +11296,6 @@ class ChatScreen(BaseAppScreen):
         return apply_world_info_to_message(
             db, conversation_id, None, message_text, history or []
         )
-
-    def _active_console_dictionary_scope_ids(self) -> tuple[str | None, int | None]:
-        """Return (conversation_id, character_id) for the active native
-        Console session's chat-dictionary scope.
-
-        `conversation_id` comes from `_current_console_rail_conversation_id()`
-        -- the existing accessor that already resolves the active native
-        session's `persisted_conversation_id` (falling back to the native
-        Console conversation accessor when no active session exists).
-        `character_id` is always `None`: native
-        Console sessions do not yet track a numeric character id --
-        `ConsoleSessionSettings.character_label` is only a free-text display
-        string, never a DB id. Character-scoped dictionary attachment for the
-        native Console is net-new work (tracked separately as Roleplay P1e
-        Attachments); once it lands, this is the one place to source a real
-        character id from.
-        """
-        return self._current_console_rail_conversation_id(), None
-
-    async def refresh_active_dictionaries_summary(self) -> None:
-        """Recompute and cache the "what's in play" chat-dictionary summary
-        for the active native Console session's conversation/character, then
-        refresh the Console inspector.
-
-        This is the ONLY place that performs the (DB-backed) dictionary
-        summarize call -- `_build_console_inspector_state` (and therefore
-        every Console recompose/refresh) reads only the cache set here. The
-        scope-service call is marshalled onto a worker thread via
-        `asyncio.to_thread` so this never performs a synchronous DB read on
-        the UI event loop.
-        """
-        conversation_id, character_id = self._active_console_dictionary_scope_ids()
-        service = self._dictionary_scope_service()
-        if service is None or (conversation_id is None and character_id is None):
-            self._active_dictionaries_summary = {"dictionaries": []}
-        else:
-            try:
-                summary = await asyncio.to_thread(
-                    _run_dictionary_summary_off_thread,
-                    service,
-                    conversation_id,
-                    character_id,
-                )
-            except Exception:
-                logger.opt(exception=True).warning(
-                    "Could not summarize active chat dictionaries for the Console inspector."
-                )
-                summary = {"dictionaries": []}
-            self._active_dictionaries_summary = (
-                summary if isinstance(summary, dict) else {"dictionaries": []}
-            )
-        self._request_console_control_bar_sync()
-
-    async def _refresh_active_dictionaries_summary_if_scope_changed(self) -> None:
-        """Recompute the "what's in play" summary only when the active
-        native Console session's dictionary scope actually changed.
-
-        Called from `_sync_native_console_chat_ui()`, the central Console
-        UI-sync entrypoint -- which also runs on a 0.2s transcript-poll timer
-        while a run is streaming (`_start_console_transcript_sync_timer`).
-        Without this guard, every one of those polls would re-run the
-        DB-backed summarize call. The guard is driven by the actual
-        native-session change signal.
-        """
-        scope_ids = self._active_console_dictionary_scope_ids()
-        if scope_ids == self._last_console_dictionary_scope_ids:
-            return
-        self._last_console_dictionary_scope_ids = scope_ids
-        await self.refresh_active_dictionaries_summary()
-
-    def _console_dictionary_inspector_rows(self) -> tuple[ConsoleDisplayRow, ...]:
-        """Project the cached dictionary summary into inspector rows.
-
-        Reads ONLY `self._active_dictionaries_summary` (and the active native
-        Console session's conversation/character ids, to distinguish "no
-        active chat" from "no dictionaries attached yet") -- never touches
-        the DB.
-        """
-        conversation_id, character_id = self._active_console_dictionary_scope_ids()
-        if conversation_id is None and character_id is None:
-            return (ConsoleDisplayRow("No active chat", ""),)
-
-        summary = self._active_dictionaries_summary or {}
-        dictionaries = summary.get("dictionaries") or []
-        if not dictionaries:
-            return (ConsoleDisplayRow("No dictionaries in play", ""),)
-
-        rows = []
-        for entry in dictionaries:
-            if not isinstance(entry, dict):
-                continue
-            name = str(entry.get("name") or "Unnamed")
-            value = (
-                "from conversation"
-                if entry.get("source") == "conversation"
-                else "from character"
-            )
-            if entry.get("shadowed"):
-                value += " (shadowed)"
-            if not entry.get("enabled", True):
-                value += " (disabled)"
-            rows.append(ConsoleDisplayRow(name, value))
-        return tuple(rows)
-
-    def _active_console_world_book_scope_ids(self) -> tuple[str | None]:
-        """(conversation_id,) for the active native Console world-book scope.
-
-        Conversation-only: native Console has no character (see
-        `_active_console_dictionary_scope_ids`).
-        """
-        return (self._current_console_rail_conversation_id(),)
-
-    async def refresh_active_world_books_summary(self) -> None:
-        """The ONLY place that performs the DB-backed world-book summarize.
-
-        `_build_console_inspector_state` reads only the cache set here. The
-        sync summarize is marshalled onto a worker thread via `asyncio.to_thread`
-        so it never blocks the UI loop.
-        """
-        conversation_id = self._current_console_rail_conversation_id()
-        db = getattr(self.app_instance, "chachanotes_db", None)
-        if not conversation_id or db is None:
-            self._active_world_books_summary = {"world_books": []}
-            self._request_console_control_bar_sync()
-            return
-        try:
-            from ...Character_Chat.world_info_resolver import (
-                summarize_active_world_books,
-            )
-
-            summary = await asyncio.to_thread(
-                summarize_active_world_books, db, conversation_id, None
-            )
-        except Exception:
-            logger.opt(exception=True).warning(
-                "Could not summarize active world books for the Console inspector."
-            )
-            summary = {"world_books": []}
-        self._active_world_books_summary = (
-            summary if isinstance(summary, dict) else {"world_books": []}
-        )
-        self._request_console_control_bar_sync()
-
-    async def _refresh_active_world_books_summary_if_scope_changed(self) -> None:
-        """Recompute the world-book summary only when the scope changed."""
-        scope_ids = self._active_console_world_book_scope_ids()
-        if scope_ids == self._last_console_world_book_scope_ids:
-            return
-        self._last_console_world_book_scope_ids = scope_ids
-        await self.refresh_active_world_books_summary()
-
-    def _console_world_book_inspector_rows(self) -> tuple[ConsoleDisplayRow, ...]:
-        """Project the cached world-book summary into inspector rows (no DB)."""
-        conversation_id = self._current_console_rail_conversation_id()
-        if conversation_id is None:
-            return (ConsoleDisplayRow("No active chat", ""),)
-        summary = self._active_world_books_summary or {}
-        books = summary.get("world_books") or []
-        if not books:
-            return (ConsoleDisplayRow("No world books in play", ""),)
-        rows = []
-        for entry in books:
-            if not isinstance(entry, dict):
-                continue
-            name = str(entry.get("name") or "Unnamed")
-            count = entry.get("entry_count")
-            value = f"{count} entries" if isinstance(count, int) else "0 entries"
-            if not entry.get("enabled", True):
-                value += " (disabled)"
-            rows.append(ConsoleDisplayRow(name, value))
-        return tuple(rows)
 
     # -- Changed-files rail section (TASK-18060 Task 5, review-rail spec §2) -
 
@@ -12332,36 +11547,6 @@ class ChatScreen(BaseAppScreen):
             self._console_changed_files_row_cache = {}
             self._sync_console_changed_files_section()
         self._dispatch_console_changed_files_worker(scope[0])
-
-    def _console_dictionary_inspector_actions(
-        self,
-    ) -> tuple[ConsoleInspectorAction, ...]:
-        """Attach/Detach actions for the Console dictionary inspector block.
-
-        Reads ONLY the cache + the active native Console session's
-        conversation id -- never the DB.
-        """
-        conversation_id, _character_id = self._active_console_dictionary_scope_ids()
-        summary = self._active_dictionaries_summary or {}
-        dictionaries = summary.get("dictionaries") or []
-        has_conversation_dictionary = any(
-            isinstance(entry, dict) and entry.get("source") == "conversation"
-            for entry in dictionaries
-        )
-        return (
-            ConsoleInspectorAction(
-                "console-inspector-dictionaries-attach",
-                "Attach dictionary…",
-                enabled=bool(conversation_id),
-                disabled_reason="Start or load a conversation first",
-            ),
-            ConsoleInspectorAction(
-                "console-inspector-dictionaries-detach",
-                "Detach dictionary…",
-                enabled=has_conversation_dictionary,
-            ),
-        )
-
     async def _console_dictionary_attach_worker(self) -> None:
         """Pick and attach a chat dictionary to the active Console conversation.
 
@@ -12411,30 +11596,9 @@ class ChatScreen(BaseAppScreen):
             # -> notify + refresh): on success the summary gains the dict; on a
             # ConflictError the DB changed under us and the cache must re-read
             # the current truth rather than stay stale until the next switch.
-            await self.refresh_active_dictionaries_summary()
+            await self._retrieval.refresh_active_dictionaries_summary()
         finally:
             self._console_dictionary_dialog_active = False
-
-    def _console_world_book_inspector_actions(
-        self,
-    ) -> tuple[ConsoleInspectorAction, ...]:
-        """Attach/Detach actions for the Console world-book block (cache + conv id only)."""
-        conversation_id = self._current_console_rail_conversation_id()
-        summary = self._active_world_books_summary or {}
-        has_attached = bool(summary.get("world_books"))
-        return (
-            ConsoleInspectorAction(
-                "console-inspector-worldbooks-attach",
-                "Attach world book…",
-                enabled=bool(conversation_id),
-                disabled_reason="Start or load a conversation first",
-            ),
-            ConsoleInspectorAction(
-                "console-inspector-worldbooks-detach",
-                "Detach world book…",
-                enabled=has_attached,
-            ),
-        )
 
     async def _console_worldbook_attach_worker(self) -> None:
         """Pick and attach a world book to the active Console conversation.
@@ -12502,7 +11666,7 @@ class ChatScreen(BaseAppScreen):
                 logger.opt(exception=True).warning("Could not attach the world book.")
                 self.app_instance.notify(f"Attach failed: {exc}", severity="error")
                 return
-            await self.refresh_active_world_books_summary()
+            await self._retrieval.refresh_active_world_books_summary()
         finally:
             self._console_worldbook_dialog_active = False
 
@@ -12569,7 +11733,7 @@ class ChatScreen(BaseAppScreen):
                 logger.opt(exception=True).warning("Could not detach the world book.")
                 self.app_instance.notify(f"Detach failed: {exc}", severity="error")
                 return
-            await self.refresh_active_world_books_summary()
+            await self._retrieval.refresh_active_world_books_summary()
         finally:
             self._console_worldbook_dialog_active = False
 
@@ -12620,7 +11784,7 @@ class ChatScreen(BaseAppScreen):
             )
             # Always resync after an attempted detach (spec AC5: ConflictError
             # -> notify + refresh); see _console_dictionary_attach_worker.
-            await self.refresh_active_dictionaries_summary()
+            await self._retrieval.refresh_active_dictionaries_summary()
         finally:
             self._console_dictionary_dialog_active = False
 
@@ -12814,21 +11978,6 @@ class ChatScreen(BaseAppScreen):
             *children,
             id=card_state.container_id,
             classes=card_state.container_classes,
-        )
-
-    def _console_library_rag_scope_label(self) -> str:
-        """Return the readiness card's Library RAG source line (RAG-44).
-
-        Library's scope-summary grammar (`library_rag_source_scope_summary`
-        -- selected sources in canonical order, the deselected ones named
-        as off) under the Console's own noun: "Sources", never "Scope",
-        which this screen already spends on the retrieval ITEM scope
-        ("Scope: 2 items"). The settings modal's own summary line is the
-        same builder on the same state -- two seams, one builder.
-        """
-        return library_rag_source_scope_summary(
-            _console_library_rag_source_scope(self),
-            prefix=CONSOLE_RAG_SOURCE_SUMMARY_PREFIX,
         )
 
     @staticmethod
@@ -13500,7 +12649,7 @@ class ChatScreen(BaseAppScreen):
                 classes=readiness.title_classes,
             ),
             Static(
-                self._console_library_rag_scope_label(),
+                self._retrieval._console_library_rag_scope_label(),
                 id="console-library-rag-scope",
                 classes="destination-section",
             ),
@@ -13608,7 +12757,7 @@ class ChatScreen(BaseAppScreen):
             top_k=_console_library_rag_profile_top_k(),
             include_citations=True,
         )
-        self._stage_console_library_rag_launch(
+        self._retrieval._stage_console_library_rag_launch(
             ConsoleLiveWorkLaunch.from_values(
                 source="Library Search/RAG",
                 title="Library Search/RAG retrieval",
@@ -13622,37 +12771,6 @@ class ChatScreen(BaseAppScreen):
             )
         )
         self._execute_console_library_rag_search(request)
-
-    def _stage_console_library_rag_launch(
-        self,
-        launch: ConsoleLiveWorkLaunch,
-        *,
-        allow_recompose: bool = True,
-    ) -> None:
-        """Stage live-work launch context and refresh Console surfaces in place.
-
-        TASK-259: previously this recomposed the ENTIRE ChatScreen to show
-        one pending launch card. Now every mounted reader of
-        ``_pending_console_launch_context`` is refreshed with a targeted
-        update instead; the full recompose survives only as a fallback for
-        the never-composed case (Console shell not mounted yet).
-
-        Args:
-            launch: Live-work launch metadata to stage for Console.
-            allow_recompose: Whether the never-composed case may fall back
-                to a full recompose. Only ``_supersede_resident_console_
-                launch_from_store`` passes ``False``: its unmounted case is
-                ``compose_content`` itself calling
-                ``_consume_pending_console_launch`` on its first line, so
-                the compose in progress already renders this exact launch
-                and scheduling a second one mid-compose would tear the
-                just-built DOM back down for no change.
-        """
-        self._pending_console_launch_context = launch
-        # New staging supersedes the previous send's "evidence sent" line.
-        self._console_evidence_sent_notice = None
-        if not self._sync_console_pending_launch_surfaces() and allow_recompose:
-            self.refresh(recompose=True)
 
     def _sync_console_pending_launch_surfaces(self) -> bool:
         """Refresh every mounted reader of the pending launch context in place.
@@ -13823,107 +12941,11 @@ class ChatScreen(BaseAppScreen):
         tray.styles.max_height = 6 if state.is_empty else 10
         tray.sync_state(state)
 
-    async def _resolve_console_library_rag_scope(
-        self, request: LibraryRagSearchRequest
-    ) -> tuple[LibraryRagSearchRequest, Optional[LibraryRagSearchOutcome]]:
-        """Resolve the active conversation's RAG retrieval scope for `request`.
-
-        Plain `async def` (not `@work`-decorated) so it is directly
-        awaitable in tests without the Textual worker machinery -- only
-        `_execute_console_library_rag_search` itself needs to run as a
-        worker.
-
-        Args:
-            request: The unscoped Library RAG search request as built by the
-                run-action call site.
-
-        Returns:
-            A `(request, outcome)` tuple. When the resolved scope is EMPTY
-            (a configured scope with nothing left to search), `outcome`
-            carries the short-circuit recovery state and `request` is
-            returned unchanged -- the caller must not proceed to
-            `run_library_rag_search`. Otherwise `outcome` is `None` and
-            `request` carries `scope=effective_scope` when scoped, or is
-            returned unchanged when unscoped (byte-identical to before this
-            resolution step existed).
-        """
-        effective_scope = await resolve_effective_scope_for_chat(self.app_instance)
-        if effective_scope.state == "empty":
-            return request, LibraryRagSearchOutcome(
-                status="empty",
-                recovery_state=scope_empty_recovery_state(effective_scope.cause),
-            )
-        if effective_scope.state == "scoped":
-            return replace(request, scope=effective_scope), None
-        return request, None
-
     @work(exclusive=True, group="console-library-rag-search")
     async def _execute_console_library_rag_search(
         self, request: LibraryRagSearchRequest
     ) -> None:
-        (
-            scoped_request,
-            short_circuit_outcome,
-        ) = await self._resolve_console_library_rag_scope(request)
-        outcome = short_circuit_outcome or await run_library_rag_search(
-            self.app_instance, scoped_request
-        )
-        await self._apply_console_library_rag_search_outcome(scoped_request, outcome)
-
-    async def _apply_console_library_rag_search_outcome(
-        self,
-        request: LibraryRagSearchRequest,
-        outcome: Any,
-    ) -> None:
-        if not self.is_mounted:
-            return
-        if outcome.results:
-            result = outcome.results[0]
-            launch_payload = build_library_rag_console_live_work_payload(
-                result,
-                query=request.query,
-            )
-            launch_payload["evidence_bundle"] = build_library_rag_evidence_bundle(
-                outcome.results,
-                query=request.query,
-            ).to_payload()
-            launch_payload["requested_top_k"] = request.top_k
-            launch_payload["search_mode"] = request.mode
-            self._stage_console_library_rag_launch(
-                ConsoleLiveWorkLaunch.from_values(
-                    source="Library Search/RAG",
-                    title=result.title,
-                    payload=launch_payload,
-                    status="staged",
-                    recovery=CONSOLE_LIBRARY_RAG_RECOVERY_COPY,
-                    action_label="Review evidence in Console",
-                )
-            )
-            return
-
-        recovery_state = outcome.recovery_state
-        recovery_copy = (
-            recovery_state.visible_copy
-            if recovery_state is not None
-            else "Library Search/RAG did not return usable evidence."
-        )
-        # TASK-259: set the auto-open flag BEFORE staging. Staging now syncs
-        # the rail state synchronously (no deferred screen recompose), so a
-        # flag set after the stage call would miss the rail-visibility pass.
-        self._pending_console_launch_auto_open_inspector = True
-        self._stage_console_library_rag_launch(
-            ConsoleLiveWorkLaunch.from_values(
-                source="Library Search/RAG",
-                title="Library Search/RAG retrieval",
-                payload={
-                    "query": request.query,
-                    "source_scope": ", ".join(request.source_types),
-                },
-                status=outcome.status or "blocked",
-                recovery=recovery_copy,
-                action_label="Resolve Library search setup",
-            )
-        )
+        await self._retrieval._execute_console_library_rag_search(request)
 
     def _has_staged_console_evidence(self) -> bool:
         """Whether this send already has evidence the user staged themselves.
@@ -13949,228 +12971,6 @@ class ChatScreen(BaseAppScreen):
             # failure here (worst case a claim supersedes the result).
             return False
 
-    def _rag_service_still_initializing(self) -> bool:
-        """Whether a timed-out retrieval was most likely first-run warm-up.
-
-        The distinction is real, not cosmetic: the shared RAG runtime's
-        FIRST construction loads an embedding model and can take seconds
-        (``library_local_rag_search_service._resolve_rag_runtime``), which
-        is precisely what blows :data:`AUTO_RAG_TIMEOUT_SECONDS`. A cached
-        runtime on the app means that cost was already paid, so the same
-        timeout is an honest retrieval failure instead.
-
-        Returns:
-            True when no usable, current runtime is cached on the app.
-        """
-        try:
-            from ...RAG_Search.semantic_availability import current_app_rag_service
-
-            return current_app_rag_service(self.app_instance) is None
-        except Exception:
-            return False
-
-    def _notify_console_auto_rag_scope_empty(self, outcome: Any) -> None:
-        """Surface the SHARED empty-scope copy for a skipped auto-retrieve.
-
-        Reuses ``scope_empty_recovery_state``'s ``why`` -- i.e.
-        ``SCOPE_EMPTY_NOTICE_TEMPLATE`` -- rather than writing a third
-        version of this sentence, so the Console's implicit path says
-        exactly what its explicit path and the chat entry point already say.
-
-        Args:
-            outcome: The short-circuit outcome from
-                ``_resolve_console_library_rag_scope``.
-        """
-        recovery = getattr(outcome, "recovery_state", None)
-        message = str(getattr(recovery, "why", "") or "").strip()
-        if not message:
-            message = SCOPE_EMPTY_NOTICE_TEMPLATE.format(cause="unknown")
-        self._notify_console_auto_rag(message)
-
-    def _notify_auto_rag_degraded(self, *, initializing: bool) -> None:
-        """Tell the user this send went out without the evidence it wanted.
-
-        Args:
-            initializing: True when the RAG runtime had not finished
-                building (see ``_rag_service_still_initializing``) -- a
-                "try again in a moment" situation, which reads very
-                differently from a retrieval that genuinely failed.
-        """
-        self._notify_console_auto_rag(
-            CONSOLE_AUTO_RAG_INITIALIZING_NOTICE
-            if initializing
-            else CONSOLE_AUTO_RAG_FAILED_NOTICE
-        )
-
-    def _notify_console_auto_rag(self, message: str) -> None:
-        """Toast one auto-retrieve notice, never at the cost of the send.
-
-        This runs from inside the send worker's capture seam, where an
-        escaping exception costs the message its evidence (see
-        ``_release_consumed_console_launch``) -- so a failing notify is
-        logged and swallowed, exactly as the sibling RAG notice sites do.
-        """
-        try:
-            self.app_instance.notify(message, severity="warning")
-        except Exception:
-            logger.debug(
-                "Console auto-retrieve notification unavailable; "
-                "reason=auto_rag_notification_failure"
-            )
-
-    def _clear_console_auto_rag_placeholder(
-        self, placeholder: ConsoleLiveWorkLaunch
-    ) -> None:
-        """Drop the in-flight "Retrieving..." card when nothing came back.
-
-        Identity-guarded like ``_release_consumed_console_launch``: if
-        anything staged over the placeholder while retrieval was awaited,
-        that newer context is left alone rather than silently dropped.
-
-        Leaving the placeholder behind would be worse than cosmetic --
-        ``_console_send_blocked_reason`` BLOCKS every send while a
-        RAG-sourced launch with zero available evidence is staged, so a
-        single failed auto-retrieve would lock the composer until the user
-        found the un-stage button.
-
-        Args:
-            placeholder: The launch this retrieval staged before awaiting.
-        """
-        if self._pending_console_launch_context is not placeholder:
-            return
-        self._pending_console_launch_context = None
-        self._pending_console_launch_auto_open_inspector = False
-        try:
-            self._sync_console_pending_launch_surfaces()
-        except Exception as exc:
-            logger.warning(
-                "Console surfaces did not refresh after clearing an "
-                "auto-retrieve placeholder (exception_category={})",
-                type(exc).__name__,
-            )
-
-    async def _maybe_auto_retrieve_for_send(
-        self,
-        draft_text: str,
-        turn_context: ConsoleTurnExecutionContext | None = None,
-    ) -> None:
-        """Auto-retrieve library evidence for a plain text send (TASK-406).
-
-        Fires only when ALL hold: the config toggle is on; the send is plain
-        user text (not a slash command, tool approval, or regeneration); and
-        nothing is already staged (manual staging always wins -- no double
-        spend). Retrieval failure or timeout NEVER blocks the send.
-
-        Called from ``_capture_console_staged_rag``, the one consume-on-send
-        seam, so anything staged here is picked up by the SAME send and
-        renders in the staged-evidence strip exactly like a manual chip run.
-        That seam runs inside the per-session exclusive send worker, past
-        every block gate, which is why this needs no worker of its own: a
-        double-send cannot double-retrieve, and a refused send never
-        retrieves at all.
-
-        Args:
-            draft_text: The validated draft this send is about to transmit.
-        """
-        auto_retrieve_enabled = (
-            coerce_bool_setting(
-                turn_context.rag_defaults.get("auto_retrieve_on_send", False),
-                False,
-            )
-            if turn_context is not None
-            else coerce_bool_setting(
-                get_cli_setting("chat_defaults", "rag_auto_retrieve_on_send", False),
-                False,
-            )
-        )
-        if not auto_retrieve_enabled:
-            return
-        if not _is_plain_text_send(draft_text):
-            return
-        if self._has_staged_console_evidence():
-            return
-        query = _sanitize_console_library_rag_query(
-            str(draft_text or "")[:AUTO_RAG_QUERY_MAX_CHARS]
-        )
-        if not query:
-            # Nothing survived centralized validation -- there is no query to
-            # run, and no user action to recommend. Stay silent.
-            return
-        source_types = (
-            turn_context.rag_defaults.get("source_types", ())
-            if turn_context is not None
-            else _console_library_rag_source_scope(self)
-        )
-        top_k = (
-            int(turn_context.rag_defaults.get("top_k", 0) or 0)
-            if turn_context is not None
-            else _console_library_rag_profile_top_k()
-        )
-        request = LibraryRagSearchRequest(
-            query=query,
-            source_types=source_types,
-            mode="rag",
-            top_k=top_k,
-            include_citations=True,
-        )
-        (
-            scoped_request,
-            scope_empty_outcome,
-        ) = await self._resolve_console_library_rag_scope(request)
-        if scope_empty_outcome is not None:
-            self._notify_console_auto_rag_scope_empty(scope_empty_outcome)
-            return
-        placeholder = ConsoleLiveWorkLaunch.from_values(
-            source="Library Search/RAG",
-            title="Library Search/RAG retrieval",
-            payload={
-                "query": scoped_request.query,
-                "source_scope": ", ".join(scoped_request.source_types),
-            },
-            status="searching",
-            recovery=CONSOLE_AUTO_RAG_SEARCHING_COPY,
-            action_label="Review evidence in Console",
-        )
-        self._stage_console_library_rag_launch(placeholder)
-        try:
-            async with asyncio.timeout(AUTO_RAG_TIMEOUT_SECONDS):
-                outcome = await run_library_rag_search(
-                    self.app_instance, scoped_request
-                )
-        except asyncio.CancelledError:
-            # An interrupted send must not leave its placeholder behind.
-            self._clear_console_auto_rag_placeholder(placeholder)
-            raise
-        except TimeoutError:
-            self._clear_console_auto_rag_placeholder(placeholder)
-            self._notify_auto_rag_degraded(
-                initializing=self._rag_service_still_initializing()
-            )
-            return
-        except Exception as exc:
-            logger.warning(
-                "Console auto-retrieve failed; the send proceeds without "
-                "evidence (exception_category={})",
-                type(exc).__name__,
-            )
-            self._clear_console_auto_rag_placeholder(placeholder)
-            self._notify_auto_rag_degraded(initializing=False)
-            return
-        if not getattr(outcome, "results", ()):
-            # Deliberately NOT `_apply_console_library_rag_search_outcome`'s
-            # zero-result branch: that stages a recovery card, and a staged
-            # RAG launch with no available evidence blocks the NEXT send
-            # (`_console_send_blocked_reason`). One empty implicit retrieval
-            # must never lock the composer.
-            self._clear_console_auto_rag_placeholder(placeholder)
-            if str(getattr(outcome, "status", "") or "") in ("failed", "blocked"):
-                # An empty result set is an ordinary "nothing matched" and
-                # stays silent; a failed/blocked retrieval is a capability
-                # the user turned on not working, and must say so.
-                self._notify_auto_rag_degraded(initializing=False)
-            return
-        await self._apply_console_library_rag_search_outcome(scoped_request, outcome)
-
     def compose_content(self) -> ComposeResult:
         """Compose the chat content."""
         pending_launch = self._consume_pending_console_launch()
@@ -14183,7 +12983,7 @@ class ChatScreen(BaseAppScreen):
         # task-10: built once, shared verbatim by the header's "Scope" chip
         # and the Inspector's retrieval-scope row below -- one zero-DB
         # state, two renderers.
-        retrieval_scope_state = self._build_console_retrieval_scope_state()
+        retrieval_scope_state = self._retrieval._build_console_retrieval_scope_state()
         available_columns = self._console_rail_available_columns()
         rail_state = self._build_console_rail_state(
             staged_context_state=staged_context_state,
@@ -15597,7 +14397,7 @@ class ChatScreen(BaseAppScreen):
         # Library-RAG failure path does: staging syncs the rail state
         # synchronously, so a flag set afterwards misses that pass.
         self._pending_console_launch_auto_open_inspector = True
-        self._stage_console_library_rag_launch(
+        self._retrieval._stage_console_library_rag_launch(
             ConsoleLiveWorkLaunch.from_values(
                 source=payload.source,
                 title=payload.title,
@@ -16425,7 +15225,7 @@ class ChatScreen(BaseAppScreen):
             # reads it -- see `_warm_console_effective_scope_cache_if_stale`
             # docstring for why the picker/resume/flush warmers alone leave
             # a restore_state-reactivated session uncovered.
-            await self._warm_console_effective_scope_cache_if_stale()
+            await self._retrieval._warm_console_effective_scope_cache_if_stale()
             # Fix-wave (Critical, Task 4 review): this is the trigger for the
             # "what's in play" chat-dictionary summary now -- it replaces the
             # removed app-level `watch_current_chat_conversation_id`/
@@ -16437,8 +15237,10 @@ class ChatScreen(BaseAppScreen):
             # `_sync_console_control_bar()` below so that call's inspector
             # build already sees the freshly recomputed cache instead of one
             # stale frame behind.
-            await self._refresh_active_dictionaries_summary_if_scope_changed()
-            await self._refresh_active_world_books_summary_if_scope_changed()
+            await (
+                self._retrieval._refresh_active_dictionaries_summary_if_scope_changed()
+            )
+            await self._retrieval._refresh_active_world_books_summary_if_scope_changed()
             # P3c Task 4: mirrors the dictionary/world-book scope-guarded
             # refresh pattern immediately above -- safe to call unconditionally
             # on every sync tick because the refresh is itself scope-guarded

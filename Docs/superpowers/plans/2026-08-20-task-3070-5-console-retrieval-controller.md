@@ -41,62 +41,62 @@
 
 ### Task 1: Lock retrieval ownership and no-mount behavior with RED tests
 
-- [ ] Add `Tests/UI/test_console_retrieval_controller.py` with a small constructor fixture using plain call recorders and no Textual mount.
-- [ ] Assert controller defaults for `_console_retrieval_scope_cache`, `_console_effective_scope_cache`, `_active_dictionaries_summary`, `_last_console_dictionary_scope_ids`, `_active_world_books_summary`, and `_last_console_world_book_scope_ids`.
-- [ ] Characterize the four high-risk policy families before moving code:
+- [x] Add `Tests/UI/test_console_retrieval_controller.py` with a small constructor fixture using plain call recorders and no Textual mount.
+- [x] Assert controller defaults for `_console_retrieval_scope_cache`, `_console_effective_scope_cache`, `_active_dictionaries_summary`, `_last_console_dictionary_scope_ids`, `_active_world_books_summary`, and `_last_console_world_book_scope_ids`.
+- [x] Characterize the four high-risk policy families before moving code:
   - effective-scope cache build/read and persisted-vs-unpersisted save;
   - dictionary/world-book summary refresh guards and cached row/action projection;
   - Library RAG scoped/empty/results/blocked outcomes and stage ordering;
   - auto-retrieve gates, placeholder identity, timeout/failure containment, cancellation, and same-send capture.
-- [ ] Extend the architecture test so the retrieval family must be complete: all 32 M names only on `ConsoleRetrievalController`; the two D names remain on `ChatScreen` with their exact decorators/groups and at-most-five-line definition spans; all six descriptors target `_retrieval`; moved methods contain no DOM calls or sibling-controller reach-through.
-- [ ] Add a structural assertion that ordinary production callers use `_retrieval` directly and that no moved default is assigned in `ChatScreen.__init__`.
-- [ ] Run the new controller and architecture nodes. Confirm RED is caused by the absent controller/current screen ownership, not the known line-ceiling failure alone.
+- [x] Extend the architecture test so the retrieval family must be complete: all 32 M names only on `ConsoleRetrievalController`; the two D names remain on `ChatScreen` with their exact decorators/groups and at-most-five-line definition spans; all six descriptors target `_retrieval`; moved methods contain no DOM calls or sibling-controller reach-through.
+- [x] Add a structural assertion that ordinary production callers use `_retrieval` directly and that no moved default is assigned in `ChatScreen.__init__`.
+- [x] Run the new controller and architecture nodes. Confirm RED is caused by the absent controller/current screen ownership, not the known line-ceiling failure alone.
 
 ### Task 2: Create the controller and move scope/cache ownership
 
-- [ ] Create `ConsoleRetrievalController` with `app_instance` plus explicit keyword-only late-bound callables for active session/conversation, pending-launch state transitions, source/query setters, screen sync/refresh, scope-row/control-bar sync, visible-run dispatch, launch payload inspection, and evidence consume/release.
-- [ ] Initialize all six compatibility defaults in the controller constructor.
-- [ ] Move the scope/cache methods verbatim in behavior: staged capture, pure display-state build, recipe count, effective resolution/warm, DB read/write, lister construction, and scope save.
-- [ ] Add six `_ControllerState("_retrieval", ...)` assignments to `ChatScreen` and remove the corresponding `__init__` assignments.
-- [ ] Repoint Workspace and Session late-bound scope dependencies in `wiring.py` to `screen._retrieval` at call time.
-- [ ] Run the focused controller/scope/architecture tests. Expect defaults, descriptors, cache, and save cases green while later inspector/RAG ownership remains RED.
+- [x] Create `ConsoleRetrievalController` with `app_instance` plus explicit keyword-only late-bound callables for active session/conversation, pending-launch state transitions, source/query setters, screen sync/refresh, scope-row/control-bar sync, visible-run dispatch, launch payload inspection, and evidence consume/release.
+- [x] Initialize all six compatibility defaults in the controller constructor.
+- [x] Move the scope/cache methods verbatim in behavior: staged capture, pure display-state build, recipe count, effective resolution/warm, DB read/write, lister construction, and scope save.
+- [x] Add six `_ControllerState("_retrieval", ...)` assignments to `ChatScreen` and remove the corresponding `__init__` assignments.
+- [x] Repoint Workspace and Session late-bound scope dependencies in `wiring.py` to `screen._retrieval` at call time.
+- [x] Run the focused controller/scope/architecture tests. Expect defaults, descriptors, cache, and save cases green while later inspector/RAG ownership remains RED.
 
 ### Task 3: Move inspector and Library RAG policy
 
-- [ ] Move cached dictionary/world-book scope IDs, refresh guards, summaries, rows, and action projections. Keep attach/detach pickers and workers on `ChatScreen`; route their refresh calls to `_retrieval`.
-- [ ] Move source-status and source-scope-label builders. Keep screen-owned inspector composition and widget label updates, but source their plain values from `_retrieval`.
-- [ ] Move stage, settings-choice, scope resolution, outcome application, service-initialization detection, notification, placeholder clearing, and auto-retrieve orchestration.
-- [ ] Preserve the pending-launch screen state through explicit getter/setter callbacks and keep all DOM refresh/recompose operations behind named screen callbacks.
-- [ ] Move the body of `_capture_console_staged_rag` and rewire both provider registration sites directly to `_retrieval`.
-- [ ] Run the no-mount controller tests plus existing auto-RAG, dictionary, world-book, RAG-settings, and Library-scope tests to GREEN.
+- [x] Move cached dictionary/world-book scope IDs, refresh guards, summaries, rows, and action projections. Keep attach/detach pickers and workers on `ChatScreen`; route their refresh calls to `_retrieval`.
+- [x] Move source-status and source-scope-label builders. Keep screen-owned inspector composition and widget label updates, but source their plain values from `_retrieval`.
+- [x] Move stage, settings-choice, scope resolution, outcome application, service-initialization detection, notification, placeholder clearing, and auto-retrieve orchestration.
+- [x] Preserve the pending-launch screen state through explicit getter/setter callbacks and keep all DOM refresh/recompose operations behind named screen callbacks.
+- [x] Move the body of `_capture_console_staged_rag` and rewire both provider registration sites directly to `_retrieval`.
+- [x] Run the no-mount controller tests plus existing auto-RAG, dictionary, world-book, RAG-settings, and Library-scope tests to GREEN.
 
 ### Task 4: Finish worker delegates, wiring, and call-site migration
 
-- [ ] Add `_retrieval = ConsoleRetrievalController(...)` to `build_console_controllers`; update its documented build order/count and wiring tests.
-- [ ] Keep `_persist_console_rag_auto_retrieve_on_send` on `ChatScreen` with `@work(thread=True)` and a one-statement controller delegation.
-- [ ] Keep `_execute_console_library_rag_search` on `ChatScreen` with `@work(exclusive=True, group="console-library-rag-search")` and an awaited controller delegation.
-- [ ] Repoint all ordinary production callers to `_retrieval`, including compose/inspector/sync, explicit RAG run, scope flush/resume, staged handoff, attach/detach refresh, and the Session/Workspace seams.
-- [ ] Mechanically retarget direct private-method tests to the controller owner. Do not alter assertions or mounted user flows.
-- [ ] Register `ConsoleRetrievalController` in the moved-seam AST guard and prove the guard reports a synthetic stale `screen.<moved method>()` call.
-- [ ] Remove imports from `chat_screen.py` only when `rg` and Ruff prove they are no longer screen-owned; import them in `retrieval.py` from their defining modules.
-- [ ] Run the controller, architecture, wiring, moved-seam, and exact mounted retrieval files to GREEN.
+- [x] Add `_retrieval = ConsoleRetrievalController(...)` to `build_console_controllers`; update its documented build order/count and wiring tests.
+- [x] Keep `_persist_console_rag_auto_retrieve_on_send` on `ChatScreen` with `@work(thread=True)` and a one-statement controller delegation.
+- [x] Keep `_execute_console_library_rag_search` on `ChatScreen` with `@work(exclusive=True, group="console-library-rag-search")` and an awaited controller delegation.
+- [x] Repoint all ordinary production callers to `_retrieval`, including compose/inspector/sync, explicit RAG run, scope flush/resume, staged handoff, attach/detach refresh, and the Session/Workspace seams.
+- [x] Mechanically retarget direct private-method tests to the controller owner. Do not alter assertions or mounted user flows.
+- [x] Register `ConsoleRetrievalController` in the moved-seam AST guard and prove the guard reports a synthetic stale `screen.<moved method>()` call.
+- [x] Remove imports from `chat_screen.py` only when `rg` and Ruff prove they are no longer screen-owned; import them in `retrieval.py` from their defining modules.
+- [x] Run the controller, architecture, wiring, moved-seam, and exact mounted retrieval files to GREEN.
 
 ### Task 5: Mutation and focused regression evidence
 
-- [ ] Remove one `_retrieval` descriptor setter/retarget it to screen shadow state; confirm the descriptor test fails, then restore.
-- [ ] Put one moved method back on `ChatScreen` or add a DOM call inside the controller; confirm the ownership/DOM AST test fails, then restore.
-- [ ] Bypass the effective-scope empty short-circuit; confirm the scoped retrieval test fails, then restore.
-- [ ] Remove placeholder identity guarding or failure cleanup; confirm the auto-RAG test fails, then restore.
-- [ ] Remove the dictionary/world-book unchanged-scope guard; confirm the zero-repeat summary test fails, then restore.
-- [ ] Remove each worker delegation in turn; confirm the exact delegate/behavior test fails for the intended reason, then restore.
-- [ ] Run only touched-functionality groups: retrieval controller/architecture/wiring, scope/modal/Library RAG, auto-send/capture/staging, dictionary/world-book inspector, and any mechanically retargeted seam tests.
+- [x] Remove one `_retrieval` descriptor setter/retarget it to screen shadow state; confirm the descriptor test fails, then restore.
+- [x] Put one moved method back on `ChatScreen` or add a DOM call inside the controller; confirm the ownership/DOM AST test fails, then restore.
+- [x] Bypass the effective-scope empty short-circuit; confirm the scoped retrieval test fails, then restore.
+- [x] Remove placeholder identity guarding or failure cleanup; confirm the auto-RAG test fails, then restore.
+- [x] Remove the dictionary/world-book unchanged-scope guard; confirm the zero-repeat summary test fails, then restore.
+- [x] Remove each worker delegation in turn; confirm the exact delegate/behavior test fails for the intended reason, then restore.
+- [x] Run only touched-functionality groups: retrieval controller/architecture/wiring, scope/modal/Library RAG, auto-send/capture/staging, dictionary/world-book inspector, and any mechanically retargeted seam tests.
 
 ### Task 6: Static checks, diagnostics, review, and closeout
 
-- [ ] Run Ruff format/check on every changed Python file only. Do not bulk-format unrelated files.
-- [ ] Run `py_compile` for `retrieval.py`, `wiring.py`, and `chat_screen.py` under one validated temporary pycache root; remove only that exact root and prove it absent.
-- [ ] Run `git diff --check`, inspect the cumulative diff for the one-controller/YAGNI boundary, and verify no CSS, DOM IDs, storage schema, dependency, or user-visible copy changed.
-- [ ] Run the persistent-diagnostic checker and its two focused architecture tests. Regenerate the manifest only for proven moved-owner metadata with unchanged sink topology.
-- [ ] Obtain an independent correctness/spec review if the active collaboration policy permits it; otherwise perform and record a separate self-review pass without changing scope.
+- [x] Run Ruff format/check on every changed Python file only. Do not bulk-format unrelated files.
+- [x] Run `py_compile` for `retrieval.py`, `wiring.py`, and `chat_screen.py` under one validated temporary pycache root; remove only that exact root and prove it absent.
+- [x] Run `git diff --check`, inspect the cumulative diff for the one-controller/YAGNI boundary, and verify no CSS, DOM IDs, storage schema, dependency, or user-visible copy changed.
+- [x] Run the persistent-diagnostic checker and its two focused architecture tests. Regenerate the manifest only for proven moved-owner metadata with unchanged sink topology.
+- [x] Obtain an independent correctness/spec review if the active collaboration policy permits it; otherwise perform and record a separate self-review pass without changing scope.
 - [ ] Update the task ACs and concise Implementation Notes with exact RED/GREEN/mutation/static evidence, ADR decision, modified files, inherited baseline classification, and the explicit no-full-suite user constraint.
 - [ ] Commit the implementation, rebase onto latest `origin/dev`, rerun the same focused gates on the rebased head, then push and open one atomic PR against `dev`.

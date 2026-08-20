@@ -741,7 +741,10 @@ async def test_console_scope_resolution_scopes_request_for_scoped_conversation(
         query="q", source_types=("notes", "media", "conversations")
     )
 
-    scoped_request, outcome = await screen._resolve_console_library_rag_scope(request)
+    (
+        scoped_request,
+        outcome,
+    ) = await screen._retrieval._resolve_console_library_rag_scope(request)
 
     assert outcome is None
     assert scoped_request.scope is not None
@@ -774,7 +777,10 @@ async def test_console_scope_resolution_short_circuits_on_empty_scope(tmp_path):
     app._screen_stacks[app._current_mode] = [screen]
     request = LibraryRagSearchRequest(query="q", source_types=("notes",))
 
-    scoped_request, outcome = await screen._resolve_console_library_rag_scope(request)
+    (
+        scoped_request,
+        outcome,
+    ) = await screen._retrieval._resolve_console_library_rag_scope(request)
 
     assert outcome is not None
     assert outcome.status == "empty"
@@ -795,7 +801,10 @@ async def test_console_scope_resolution_unscoped_when_no_active_session():
     app._screen_stacks[app._current_mode] = [screen]
     request = LibraryRagSearchRequest(query="q", source_types=("notes",))
 
-    scoped_request, outcome = await screen._resolve_console_library_rag_scope(request)
+    (
+        scoped_request,
+        outcome,
+    ) = await screen._retrieval._resolve_console_library_rag_scope(request)
 
     assert outcome is None
     assert scoped_request is request

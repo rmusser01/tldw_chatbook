@@ -1176,6 +1176,77 @@ def test_browser_family_has_completed_workspace_ownership() -> None:
 
 
 @pytest.mark.unit
+def test_retrieval_family_has_completed_controller_ownership() -> None:
+    """Require every reviewed retrieval method to have its final owner."""
+    group = WAVE6_GROUPS["retrieval"]
+    target_path = _REPO_ROOT / group.target_path
+    screen_methods = _methods(_SCREEN_PATH, "ChatScreen")
+
+    assert target_path.exists(), "ConsoleRetrievalController module is missing"
+    target_methods = _methods(target_path, group.target_class)
+    assert not (group.moved & screen_methods.keys()), (
+        "retrieval methods still owned by ChatScreen: "
+        f"{sorted(group.moved & screen_methods.keys())}"
+    )
+    assert group.moved <= target_methods.keys(), (
+        "retrieval methods missing from ConsoleRetrievalController: "
+        f"{sorted(group.moved - target_methods.keys())}"
+    )
+    assert group.delegates <= screen_methods.keys()
+    assert group.delegates <= target_methods.keys()
+    owned_methods = [target_methods[name] for name in group.moved | group.delegates]
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in {"query", "query_one", "push_screen"}
+        for method in owned_methods
+        for node in ast.walk(method)
+    )
+    assert "_screen" not in _self_assignments(target_methods["__init__"])
+
+
+@pytest.mark.unit
+def test_retrieval_compatibility_descriptors_all_target_retrieval() -> None:
+    """Require all six assignable retrieval names to proxy to one owner."""
+    _, screen_class = _class_node(_SCREEN_PATH, "ChatScreen")
+    names = COMPATIBILITY_TARGETS["_retrieval"]
+
+    assert _controller_state_assignments(screen_class, names) == {
+        name: "_retrieval" for name in names
+    }
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("method_name", "awaited"),
+    [
+        ("_persist_console_rag_auto_retrieve_on_send", False),
+        ("_execute_console_library_rag_search", True),
+    ],
+)
+def test_retrieval_worker_delegates_call_exact_controller_methods(
+    method_name: str, awaited: bool
+) -> None:
+    """Both decorated screen names contain one exact controller call."""
+    method = _methods(_SCREEN_PATH, "ChatScreen")[method_name]
+    assert len(method.body) == 1
+    statement = method.body[0]
+    assert isinstance(statement, ast.Expr)
+    value = statement.value
+    if awaited:
+        assert isinstance(value, ast.Await)
+        value = value.value
+    assert isinstance(value, ast.Call)
+    assert isinstance(value.func, ast.Attribute)
+    assert value.func.attr == method_name
+    owner = value.func.value
+    assert isinstance(owner, ast.Attribute)
+    assert isinstance(owner.value, ast.Name)
+    assert owner.value.id == "self"
+    assert owner.attr == "_retrieval"
+
+
+@pytest.mark.unit
 def test_browser_search_handler_is_exact_bounded_textual_delegate() -> None:
     """Keep the framework handler bound and within its five-line residue."""
     group = WAVE6_GROUPS["browser"]

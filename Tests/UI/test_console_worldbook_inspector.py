@@ -65,9 +65,9 @@ async def test_refresh_caches_summary_and_build_projects_world_book_rows(wb_db):
         await _wait_for_selector(screen, pilot, "#console-native-composer")
         _active_native_session(screen).persisted_conversation_id = "conv-wb"
 
-        await screen.refresh_active_world_books_summary()
+        await screen._retrieval.refresh_active_world_books_summary()
 
-        rows = screen._console_world_book_inspector_rows()
+        rows = screen._retrieval._console_world_book_inspector_rows()
         row_texts = [row.text for row in rows]
         assert any("Alpha" in text for text in row_texts)
         assert any("Beta" in text for text in row_texts)
@@ -80,7 +80,9 @@ async def test_refresh_caches_summary_and_build_projects_world_book_rows(wb_db):
 
 
 @pytest.mark.asyncio
-async def test_build_console_inspector_state_never_re_queries_the_db(wb_db, monkeypatch):
+async def test_build_console_inspector_state_never_re_queries_the_db(
+    wb_db, monkeypatch
+):
     wb_db.add_conversation({"id": "conv-wb", "title": "C"})
     manager = WorldBookManager(wb_db)
     book_a = manager.create_world_book("Alpha")
@@ -109,7 +111,7 @@ async def test_build_console_inspector_state_never_re_queries_the_db(wb_db, monk
         await _wait_for_selector(screen, pilot, "#console-native-composer")
         _active_native_session(screen).persisted_conversation_id = "conv-wb"
 
-        await screen.refresh_active_world_books_summary()
+        await screen._retrieval.refresh_active_world_books_summary()
         assert len(calls) == 1
 
         # A bare, recompose-equivalent build must read only the cache -- no
@@ -132,9 +134,9 @@ async def test_no_active_chat_renders_no_active_chat_row(wb_db):
         # Fresh default native session has no persisted conversation yet.
         assert _active_native_session(screen).persisted_conversation_id is None
 
-        await screen.refresh_active_world_books_summary()
+        await screen._retrieval.refresh_active_world_books_summary()
 
-        rows = screen._console_world_book_inspector_rows()
+        rows = screen._retrieval._console_world_book_inspector_rows()
         assert rows == (ConsoleDisplayRow("No active chat", ""),)
 
 
@@ -150,9 +152,9 @@ async def test_conversation_with_no_books_renders_no_world_books_in_play_row(wb_
         await _wait_for_selector(screen, pilot, "#console-native-composer")
         _active_native_session(screen).persisted_conversation_id = "conv-empty"
 
-        await screen.refresh_active_world_books_summary()
+        await screen._retrieval.refresh_active_world_books_summary()
 
-        rows = screen._console_world_book_inspector_rows()
+        rows = screen._retrieval._console_world_book_inspector_rows()
         assert rows == (ConsoleDisplayRow("No world books in play", ""),)
 
 
@@ -174,7 +176,7 @@ async def test_sync_native_console_chat_ui_refreshes_world_books_on_scope_change
 
         await screen._sync_native_console_chat_ui()
 
-        rows = screen._console_world_book_inspector_rows()
+        rows = screen._retrieval._console_world_book_inspector_rows()
         assert any("Alpha" in row.text for row in rows)
 
 
@@ -212,8 +214,10 @@ async def test_console_worldbook_attach_then_detach_round_trips_through_real_db(
             raising=False,
         )
 
-        await screen.refresh_active_world_books_summary()
-        assert manager.get_world_books_for_conversation(conv_id, enabled_only=False) == []
+        await screen._retrieval.refresh_active_world_books_summary()
+        assert (
+            manager.get_world_books_for_conversation(conv_id, enabled_only=False) == []
+        )
 
         # --- Attach ---
         await screen._console_worldbook_attach_worker()
@@ -221,7 +225,7 @@ async def test_console_worldbook_attach_then_detach_round_trips_through_real_db(
 
         attached = manager.get_world_books_for_conversation(conv_id, enabled_only=False)
         assert [b["id"] for b in attached] == [book_id]
-        rows = screen._console_world_book_inspector_rows()
+        rows = screen._retrieval._console_world_book_inspector_rows()
         assert any("Standalone Lore" in row.text for row in rows)
         assert screen._console_worldbook_dialog_active is False
 
@@ -229,8 +233,10 @@ async def test_console_worldbook_attach_then_detach_round_trips_through_real_db(
         await screen._console_worldbook_detach_worker()
         await pilot.pause()
 
-        assert manager.get_world_books_for_conversation(conv_id, enabled_only=False) == []
-        rows_after = screen._console_world_book_inspector_rows()
+        assert (
+            manager.get_world_books_for_conversation(conv_id, enabled_only=False) == []
+        )
+        rows_after = screen._retrieval._console_world_book_inspector_rows()
         assert rows_after == (ConsoleDisplayRow("No world books in play", ""),)
         assert screen._console_worldbook_dialog_active is False
 
@@ -297,7 +303,7 @@ async def test_console_world_book_inspector_actions_gate_on_conversation_and_att
         await _wait_for_selector(screen, pilot, "#console-native-composer")
 
         # No conversation yet: Attach disabled, Detach disabled (no summary).
-        actions = screen._console_world_book_inspector_actions()
+        actions = screen._retrieval._console_world_book_inspector_actions()
         attach = next(
             a for a in actions if a.widget_id == "console-inspector-worldbooks-attach"
         )
@@ -310,8 +316,8 @@ async def test_console_world_book_inspector_actions_gate_on_conversation_and_att
         # Conversation active, but nothing attached yet: Attach enabled,
         # Detach still disabled.
         _active_native_session(screen).persisted_conversation_id = conv_id
-        await screen.refresh_active_world_books_summary()
-        actions = screen._console_world_book_inspector_actions()
+        await screen._retrieval.refresh_active_world_books_summary()
+        actions = screen._retrieval._console_world_book_inspector_actions()
         attach = next(
             a for a in actions if a.widget_id == "console-inspector-worldbooks-attach"
         )
@@ -323,8 +329,8 @@ async def test_console_world_book_inspector_actions_gate_on_conversation_and_att
 
         # After attaching: Detach becomes enabled too.
         manager.associate_world_book_with_conversation(conv_id, book_id)
-        await screen.refresh_active_world_books_summary()
-        actions = screen._console_world_book_inspector_actions()
+        await screen._retrieval.refresh_active_world_books_summary()
+        actions = screen._retrieval._console_world_book_inspector_actions()
         detach = next(
             a for a in actions if a.widget_id == "console-inspector-worldbooks-detach"
         )

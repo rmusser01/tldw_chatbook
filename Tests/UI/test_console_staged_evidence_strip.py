@@ -36,7 +36,7 @@ from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
     LocalRagContextResult,
 )
 from tldw_chatbook.UI.Console_Modules import workspace as workspace_module
-from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
+from tldw_chatbook.UI.Console_Modules import retrieval as retrieval_module
 from tldw_chatbook.Widgets.Console.console_staged_context import (
     ConsoleStagedContextTray,
 )
@@ -392,7 +392,7 @@ async def test_console_run_staging_fans_out_to_strip_and_truthful_chip() -> None
         await _wait_for_selector(screen, pilot, STRIP_ID)
         assert screen.query_one(STRIP_ID, ConsoleStagedEvidenceStrip).display is False
 
-        screen._stage_console_library_rag_launch(_launch(4))
+        screen._retrieval._stage_console_library_rag_launch(_launch(4))
         await pilot.pause()
 
         strip = screen.query_one(STRIP_ID, ConsoleStagedEvidenceStrip)
@@ -414,7 +414,7 @@ async def test_console_unstage_clears_context_strip_chip_and_tray() -> None:
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
         await _wait_for_selector(screen, pilot, STRIP_ID)
-        screen._stage_console_library_rag_launch(_launch(3))
+        screen._retrieval._stage_console_library_rag_launch(_launch(3))
         await pilot.pause()
 
         screen.query_one(UNSTAGE_ID, Button).press()
@@ -446,7 +446,7 @@ async def test_console_unstage_click_heals_a_stale_strip_when_context_already_no
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
         await _wait_for_selector(screen, pilot, STRIP_ID)
-        screen._stage_console_library_rag_launch(_launch(3))
+        screen._retrieval._stage_console_library_rag_launch(_launch(3))
         await pilot.pause()
         strip = screen.query_one(STRIP_ID, ConsoleStagedEvidenceStrip)
         assert strip.display is True
@@ -503,13 +503,13 @@ async def test_console_send_consumes_staging_and_shows_the_sent_transient(
         )
     )
     monkeypatch.setattr(
-        chat_screen_module, "capture_console_staged_evidence_for_chat", capture
+        retrieval_module, "capture_console_staged_evidence_for_chat", capture
     )
 
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
         await _wait_for_selector(screen, pilot, "#console-native-composer")
-        screen._stage_console_library_rag_launch(launch)
+        screen._retrieval._stage_console_library_rag_launch(launch)
         await pilot.pause()
 
         result = await _submit(screen, "question")
@@ -547,13 +547,13 @@ async def test_console_sent_notice_counts_only_what_reached_the_model(
         )
     )
     monkeypatch.setattr(
-        chat_screen_module, "capture_console_staged_evidence_for_chat", capture
+        retrieval_module, "capture_console_staged_evidence_for_chat", capture
     )
 
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
         await _wait_for_selector(screen, pilot, "#console-native-composer")
-        screen._stage_console_library_rag_launch(launch)
+        screen._retrieval._stage_console_library_rag_launch(launch)
         await pilot.pause()
         sources_chip = screen.query_one("#console-sources-label", Static)
         assert "Sources: 4" in str(sources_chip.renderable)
@@ -589,13 +589,13 @@ async def test_console_sent_notice_prefers_the_exact_prompted_entry_count(
         )
     )
     monkeypatch.setattr(
-        chat_screen_module, "capture_console_staged_evidence_for_chat", capture
+        retrieval_module, "capture_console_staged_evidence_for_chat", capture
     )
 
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
         await _wait_for_selector(screen, pilot, "#console-native-composer")
-        screen._stage_console_library_rag_launch(launch)
+        screen._retrieval._stage_console_library_rag_launch(launch)
         await pilot.pause()
 
         await _submit(screen, "question")
@@ -621,13 +621,13 @@ async def test_console_surface_refresh_failure_never_costs_the_send_its_evidence
         return_value=LocalRagContextResult(context=context, citation_builder=None)
     )
     monkeypatch.setattr(
-        chat_screen_module, "capture_console_staged_evidence_for_chat", capture
+        retrieval_module, "capture_console_staged_evidence_for_chat", capture
     )
 
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
         await _wait_for_selector(screen, pilot, "#console-native-composer")
-        screen._stage_console_library_rag_launch(launch)
+        screen._retrieval._stage_console_library_rag_launch(launch)
         await pilot.pause()
 
         def _explode() -> bool:
@@ -692,7 +692,7 @@ async def test_console_rail_badge_and_chip_report_the_same_staged_count() -> Non
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
         await _wait_for_selector(screen, pilot, STRIP_ID)
-        screen._stage_console_library_rag_launch(_launch(4))
+        screen._retrieval._stage_console_library_rag_launch(_launch(4))
         await pilot.pause()
 
         workspace_context = screen._workspace._current_console_workspace_context()
@@ -767,7 +767,7 @@ async def test_context_estimate_counts_staged_evidence_before_send() -> None:
             payload={"query": "question", "evidence_bundle": bundle.to_payload()},
             status="staged",
         )
-        screen._stage_console_library_rag_launch(launch)
+        screen._retrieval._stage_console_library_rag_launch(launch)
         await pilot.pause()
 
         staged = screen._active_console_settings_context_estimate()
@@ -785,13 +785,13 @@ async def test_console_capture_without_prompt_context_keeps_staging(
     launch = _launch(2)
     capture = AsyncMock(return_value=LocalRagContextResult(None, None))
     monkeypatch.setattr(
-        chat_screen_module, "capture_console_staged_evidence_for_chat", capture
+        retrieval_module, "capture_console_staged_evidence_for_chat", capture
     )
 
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
         await _wait_for_selector(screen, pilot, "#console-native-composer")
-        screen._stage_console_library_rag_launch(launch)
+        screen._retrieval._stage_console_library_rag_launch(launch)
         await pilot.pause()
 
         await _submit(screen, "question")
@@ -809,7 +809,7 @@ async def test_console_blocked_send_keeps_staged_evidence(monkeypatch) -> None:
         return_value=LocalRagContextResult(context="ctx", citation_builder=None)
     )
     monkeypatch.setattr(
-        chat_screen_module, "capture_console_staged_evidence_for_chat", capture
+        retrieval_module, "capture_console_staged_evidence_for_chat", capture
     )
 
     class _BlockedGateway:
@@ -823,7 +823,7 @@ async def test_console_blocked_send_keeps_staged_evidence(monkeypatch) -> None:
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
         await _wait_for_selector(screen, pilot, "#console-native-composer")
-        screen._stage_console_library_rag_launch(launch)
+        screen._retrieval._stage_console_library_rag_launch(launch)
         await pilot.pause()
 
         controller = screen._ensure_console_chat_controller()
@@ -869,7 +869,7 @@ async def test_console_send_blocked_reason_sendable_for_library_staged_one_ref()
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
         await _wait_for_selector(screen, pilot, "#console-native-composer")
-        screen._stage_console_library_rag_launch(launch)
+        screen._retrieval._stage_console_library_rag_launch(launch)
         await pilot.pause()
 
         assert screen._console_send_blocked_reason() == ""
@@ -899,7 +899,7 @@ async def test_console_send_blocked_reason_blocks_for_library_staged_zero_availa
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
         await _wait_for_selector(screen, pilot, "#console-native-composer")
-        screen._stage_console_library_rag_launch(launch)
+        screen._retrieval._stage_console_library_rag_launch(launch)
         await pilot.pause()
 
         reason = screen._console_send_blocked_reason()

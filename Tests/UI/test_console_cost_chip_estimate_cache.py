@@ -186,7 +186,7 @@ async def test_staged_evidence_row_is_not_retokenized_every_tick(monkeypatch):
         # Spy BEFORE staging: staging itself drives a sync pass, so the
         # pseudo-row's one legitimate estimate may be spent there.
         spy = _spy_on_estimator(monkeypatch)
-        console._stage_console_library_rag_launch(
+        console._retrieval._stage_console_library_rag_launch(
             ConsoleLiveWorkLaunch.from_values(
                 source="Library Search/RAG",
                 title="Library Search/RAG retrieval",

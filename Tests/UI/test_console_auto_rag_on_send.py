@@ -1,6 +1,6 @@
 """Console opt-in RAG auto-retrieve on send (TASK-406 / TASK-3170 task 8).
 
-The send path grows ONE new hook, ``ChatScreen._maybe_auto_retrieve_for_send``,
+The send path grows ONE new hook, ``ConsoleRetrievalController._maybe_auto_retrieve_for_send``,
 called from the consume-on-send seam (``_capture_console_staged_rag``) so an
 auto-retrieved bundle is staged and consumed by the SAME send and renders in
 the staged-evidence strip exactly like a manual chip run.
@@ -13,12 +13,10 @@ tests are deliberately split so a dropped clause reds exactly one of them.
 from __future__ import annotations
 
 import asyncio
-from types import MethodType, SimpleNamespace
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from textual.widgets import Static
-
 from Tests.fixtures.required_doubles import exploding_double
 from Tests.UI.test_console_dictionary_send_integration import (
     _CapturingGateway,
@@ -42,25 +40,10 @@ from tldw_chatbook.Library.library_rag_service import (
 )
 from tldw_chatbook.Library.library_rag_state import LibraryRagResultRow
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
-from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Console_Modules import retrieval as retrieval_module
+from tldw_chatbook.UI.Console_Modules.retrieval import ConsoleRetrievalController
 
 STRIP_ID = "#console-staged-evidence-strip"
-
-#: Real ChatScreen methods bound onto the lightweight stand-in below. Every
-#: one is production code -- the stand-in supplies only state and the two
-#: surface-refresh seams a mounted screen would provide.
-_REAL_METHODS = (
-    "_maybe_auto_retrieve_for_send",
-    "_has_staged_console_evidence",
-    "_rag_service_still_initializing",
-    "_notify_console_auto_rag_scope_empty",
-    "_notify_auto_rag_degraded",
-    "_notify_console_auto_rag",
-    "_clear_console_auto_rag_placeholder",
-    "_stage_console_library_rag_launch",
-    "_apply_console_library_rag_search_outcome",
-    "_resolve_console_library_rag_scope",
-)
 
 
 @pytest.fixture(autouse=True)
@@ -150,7 +133,7 @@ def _staged_launch() -> ConsoleLiveWorkLaunch:
 
 
 def _auto_rag_screen(*, service=None, staged=None, has_pending: bool = False):
-    """A ChatScreen stand-in carrying the REAL auto-retrieve methods."""
+    """A screen-state stand-in wired to the real retrieval controller."""
     notices: list[tuple[str, str]] = []
 
     def _notify(message, severity="information", **_kwargs):
@@ -172,18 +155,57 @@ def _auto_rag_screen(*, service=None, staged=None, has_pending: bool = False):
         _console_library_rag_source_types=("media",),
         _sync_console_pending_launch_surfaces=lambda: True,
     )
-    for name in _REAL_METHODS:
-        setattr(screen, name, MethodType(getattr(ChatScreen, name), screen))
+    screen._has_staged_console_evidence = lambda: bool(
+        screen._pending_console_launch_context is not None
+        or app.pending_handoffs.has_pending(None)
+    )
+    screen._retrieval = ConsoleRetrievalController(
+        app_instance=app,
+        active_native_session=lambda: None,
+        current_conversation_id=lambda: None,
+        clear_evidence_sent_notice=lambda: setattr(
+            screen, "_console_evidence_sent_notice", None
+        ),
+        consume_pending_launch=lambda: screen._pending_console_launch_context,
+        release_consumed_launch=lambda *_args: None,
+        is_mounted=lambda: screen.is_mounted,
+        sync_retrieval_scope_row=lambda: None,
+        sync_control_bar=lambda: None,
+        request_control_bar_sync=lambda: None,
+        dictionary_scope_service=lambda: None,
+        set_library_rag_source_scope=lambda value: setattr(
+            screen, "_console_library_rag_source_types", tuple(value)
+        ),
+        set_library_rag_query=lambda _value: None,
+        run_library_rag_action=lambda: None,
+        library_rag_source_scope=(
+            lambda: tuple(screen._console_library_rag_source_types)
+        ),
+        library_rag_top_k=lambda: (
+            chat_screen_module._console_library_rag_profile_top_k()
+        ),
+        pending_launch=lambda: screen._pending_console_launch_context,
+        set_pending_launch=lambda launch: setattr(
+            screen, "_pending_console_launch_context", launch
+        ),
+        set_pending_auto_open=lambda value: setattr(
+            screen, "_pending_console_launch_auto_open_inspector", value
+        ),
+        set_evidence_sent_notice=lambda value: setattr(
+            screen, "_console_evidence_sent_notice", value
+        ),
+        sync_pending_launch_surfaces=screen._sync_console_pending_launch_surfaces,
+        refresh_screen=lambda: None,
+        has_staged_evidence=screen._has_staged_console_evidence,
+    )
     return screen
 
 
 def _patch_scope(monkeypatch, state: str = "unscoped", cause=None) -> None:
     monkeypatch.setattr(
-        chat_screen_module,
+        retrieval_module,
         "resolve_effective_scope_for_chat",
-        AsyncMock(
-            return_value=EffectiveScope(state=state, allowlist={}, cause=cause)
-        ),
+        AsyncMock(return_value=EffectiveScope(state=state, allowlist={}, cause=cause)),
     )
 
 
@@ -199,7 +221,7 @@ async def test_toggle_off_means_no_retrieval_call(monkeypatch):
     service = _RecordingRagService(_rows(2))
     screen = _auto_rag_screen(service=service)
 
-    await screen._maybe_auto_retrieve_for_send("what changed in the notes")
+    await screen._retrieval._maybe_auto_retrieve_for_send("what changed in the notes")
 
     assert service.calls == []
     assert screen._pending_console_launch_context is None
@@ -222,14 +244,12 @@ async def test_toggle_default_is_off_at_the_read_site(monkeypatch):
         seen[(section, key)] = default
         return default
 
-    monkeypatch.setattr(
-        chat_screen_module, "get_cli_setting", _recording_get_cli_setting
-    )
+    monkeypatch.setattr(retrieval_module, "get_cli_setting", _recording_get_cli_setting)
     _patch_scope(monkeypatch)
     service = _RecordingRagService(_rows(2))
     screen = _auto_rag_screen(service=service)
 
-    await screen._maybe_auto_retrieve_for_send("what changed in the notes")
+    await screen._retrieval._maybe_auto_retrieve_for_send("what changed in the notes")
 
     assert seen[("chat_defaults", "rag_auto_retrieve_on_send")] is False
     assert service.calls == []
@@ -249,7 +269,7 @@ async def test_slash_command_send_never_retrieves(monkeypatch, draft):
     service = _RecordingRagService(_rows(2))
     screen = _auto_rag_screen(service=service)
 
-    await screen._maybe_auto_retrieve_for_send(draft)
+    await screen._retrieval._maybe_auto_retrieve_for_send(draft)
 
     assert service.calls == []
     assert screen._pending_console_launch_context is None
@@ -263,7 +283,7 @@ async def test_plain_text_send_does_retrieve(monkeypatch):
     service = _RecordingRagService(_rows(2))
     screen = _auto_rag_screen(service=service)
 
-    await screen._maybe_auto_retrieve_for_send("what changed in the notes")
+    await screen._retrieval._maybe_auto_retrieve_for_send("what changed in the notes")
 
     assert len(service.calls) == 1
     assert service.calls[0]["query"] == "what changed in the notes"
@@ -284,7 +304,7 @@ async def test_already_staged_evidence_skips_auto_retrieve(monkeypatch):
     staged = _staged_launch()
     screen = _auto_rag_screen(service=service, staged=staged)
 
-    await screen._maybe_auto_retrieve_for_send("what changed in the notes")
+    await screen._retrieval._maybe_auto_retrieve_for_send("what changed in the notes")
 
     assert service.calls == []
     assert screen._pending_console_launch_context is staged
@@ -303,7 +323,7 @@ async def test_unclaimed_handoff_also_counts_as_already_staged(monkeypatch):
     service = _RecordingRagService(_rows(2))
     screen = _auto_rag_screen(service=service, has_pending=True)
 
-    await screen._maybe_auto_retrieve_for_send("what changed in the notes")
+    await screen._retrieval._maybe_auto_retrieve_for_send("what changed in the notes")
 
     assert service.calls == []
     assert screen._pending_console_launch_context is None
@@ -322,7 +342,7 @@ async def test_empty_scope_short_circuits_with_shared_copy(monkeypatch):
     service = _RecordingRagService(_rows(2))
     screen = _auto_rag_screen(service=service)
 
-    await screen._maybe_auto_retrieve_for_send("what changed in the notes")
+    await screen._retrieval._maybe_auto_retrieve_for_send("what changed in the notes")
 
     assert service.calls == []
     assert screen._pending_console_launch_context is None
@@ -346,10 +366,10 @@ async def test_query_is_length_capped_before_it_reaches_retrieval(monkeypatch):
     service = _RecordingRagService(_rows(1))
     screen = _auto_rag_screen(service=service)
 
-    await screen._maybe_auto_retrieve_for_send("a" * 9_000)
+    await screen._retrieval._maybe_auto_retrieve_for_send("a" * 9_000)
 
     assert len(service.calls) == 1
-    assert len(service.calls[0]["query"]) == chat_screen_module.AUTO_RAG_QUERY_MAX_CHARS
+    assert len(service.calls[0]["query"]) == retrieval_module.AUTO_RAG_QUERY_MAX_CHARS
 
 
 @pytest.mark.asyncio
@@ -363,7 +383,7 @@ async def test_retrieval_requests_the_active_profile_top_k(monkeypatch):
     service = _RecordingRagService(_rows(1))
     screen = _auto_rag_screen(service=service)
 
-    await screen._maybe_auto_retrieve_for_send("what changed in the notes")
+    await screen._retrieval._maybe_auto_retrieve_for_send("what changed in the notes")
 
     assert service.calls[0]["top_k"] == 7
 
@@ -413,7 +433,7 @@ async def test_in_flight_placeholder_is_staged_while_retrieval_runs(monkeypatch)
 
     screen.app_instance.library_rag_search_service = _StagingObservingRagService()
 
-    await screen._maybe_auto_retrieve_for_send("what changed in the notes")
+    await screen._retrieval._maybe_auto_retrieve_for_send("what changed in the notes")
 
     assert len(observed) == 1
     in_flight, was_staged = observed[0]
@@ -421,7 +441,7 @@ async def test_in_flight_placeholder_is_staged_while_retrieval_runs(monkeypatch)
     assert was_staged is True
     assert in_flight.status == "searching"
     assert in_flight.payload["query"] == "what changed in the notes"
-    assert in_flight.recovery == chat_screen_module.CONSOLE_AUTO_RAG_SEARCHING_COPY
+    assert in_flight.recovery == retrieval_module.CONSOLE_AUTO_RAG_SEARCHING_COPY
     # ...and the results replaced it rather than piling up a second card.
     settled = screen._pending_console_launch_context
     assert settled is not in_flight
@@ -442,7 +462,7 @@ async def test_zero_results_never_leaves_a_blocking_launch_staged(monkeypatch):
     service = _RecordingRagService(())
     screen = _auto_rag_screen(service=service)
 
-    await screen._maybe_auto_retrieve_for_send("what changed in the notes")
+    await screen._retrieval._maybe_auto_retrieve_for_send("what changed in the notes")
 
     assert len(service.calls) == 1
     assert screen._pending_console_launch_context is None
@@ -453,11 +473,11 @@ async def test_timeout_sends_without_evidence_and_notifies(monkeypatch):
     """A slow backend never holds the send: quiet notice, nothing staged."""
     _enable_auto_retrieve()
     _patch_scope(monkeypatch)
-    monkeypatch.setattr(chat_screen_module, "AUTO_RAG_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(retrieval_module, "AUTO_RAG_TIMEOUT_SECONDS", 0.01)
     service = _RecordingRagService(_rows(2), delay=5.0)
     screen = _auto_rag_screen(service=service)
 
-    await screen._maybe_auto_retrieve_for_send("what changed in the notes")
+    await screen._retrieval._maybe_auto_retrieve_for_send("what changed in the notes")
 
     assert screen._pending_console_launch_context is None
     assert len(screen.notices) == 1
@@ -465,7 +485,7 @@ async def test_timeout_sends_without_evidence_and_notifies(monkeypatch):
     assert severity == "warning"
     # No cached runtime on the app -> the timeout is first-run model load,
     # and the copy must say so rather than blaming retrieval.
-    assert message == chat_screen_module.CONSOLE_AUTO_RAG_INITIALIZING_NOTICE
+    assert message == retrieval_module.CONSOLE_AUTO_RAG_INITIALIZING_NOTICE
 
 
 @pytest.mark.asyncio
@@ -475,17 +495,17 @@ async def test_timeout_with_a_live_runtime_reports_failure_not_initializing(
     """With a warm runtime the same timeout is an honest retrieval failure."""
     _enable_auto_retrieve()
     _patch_scope(monkeypatch)
-    monkeypatch.setattr(chat_screen_module, "AUTO_RAG_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(retrieval_module, "AUTO_RAG_TIMEOUT_SECONDS", 0.01)
     service = _RecordingRagService(_rows(2), delay=5.0)
     screen = _auto_rag_screen(service=service)
     screen.app_instance._rag_service = SimpleNamespace(search=lambda *a, **k: None)
 
-    await screen._maybe_auto_retrieve_for_send("what changed in the notes")
+    await screen._retrieval._maybe_auto_retrieve_for_send("what changed in the notes")
 
     assert screen.notices == [
-        (chat_screen_module.CONSOLE_AUTO_RAG_FAILED_NOTICE, "warning")
+        (retrieval_module.CONSOLE_AUTO_RAG_FAILED_NOTICE, "warning")
     ]
-    assert RETRIEVAL_FAILED_WHY in chat_screen_module.CONSOLE_AUTO_RAG_FAILED_NOTICE
+    assert RETRIEVAL_FAILED_WHY in retrieval_module.CONSOLE_AUTO_RAG_FAILED_NOTICE
 
 
 @pytest.mark.asyncio
@@ -494,7 +514,7 @@ async def test_retrieval_exception_sends_without_evidence(monkeypatch):
     _enable_auto_retrieve()
     _patch_scope(monkeypatch)
     monkeypatch.setattr(
-        chat_screen_module,
+        retrieval_module,
         "run_library_rag_search",
         exploding_double(
             RuntimeError("backend exploded"),
@@ -503,11 +523,11 @@ async def test_retrieval_exception_sends_without_evidence(monkeypatch):
     )
     screen = _auto_rag_screen(service=_RecordingRagService(_rows(2)))
 
-    await screen._maybe_auto_retrieve_for_send("what changed in the notes")
+    await screen._retrieval._maybe_auto_retrieve_for_send("what changed in the notes")
 
     assert screen._pending_console_launch_context is None
     assert screen.notices == [
-        (chat_screen_module.CONSOLE_AUTO_RAG_FAILED_NOTICE, "warning")
+        (retrieval_module.CONSOLE_AUTO_RAG_FAILED_NOTICE, "warning")
     ]
 
 
@@ -517,17 +537,17 @@ async def test_failed_outcome_is_reported_not_silently_swallowed(monkeypatch):
     _enable_auto_retrieve()
     _patch_scope(monkeypatch)
     monkeypatch.setattr(
-        chat_screen_module,
+        retrieval_module,
         "run_library_rag_search",
         AsyncMock(return_value=LibraryRagSearchOutcome(status="failed")),
     )
     screen = _auto_rag_screen(service=_RecordingRagService(()))
 
-    await screen._maybe_auto_retrieve_for_send("what changed in the notes")
+    await screen._retrieval._maybe_auto_retrieve_for_send("what changed in the notes")
 
     assert screen._pending_console_launch_context is None
     assert screen.notices == [
-        (chat_screen_module.CONSOLE_AUTO_RAG_FAILED_NOTICE, "warning")
+        (retrieval_module.CONSOLE_AUTO_RAG_FAILED_NOTICE, "warning")
     ]
 
 
@@ -549,7 +569,7 @@ async def test_happy_path_stages_then_send_consumes(monkeypatch):
         return_value=LocalRagContextResult(context=context, citation_builder=None)
     )
     monkeypatch.setattr(
-        chat_screen_module, "capture_console_staged_evidence_for_chat", capture
+        retrieval_module, "capture_console_staged_evidence_for_chat", capture
     )
 
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
@@ -608,9 +628,7 @@ async def test_send_proceeds_when_auto_retrieve_fails(monkeypatch):
         RuntimeError("backend exploded"),
         reason="the send must be shown surviving a retrieval failure",
     )
-    monkeypatch.setattr(
-        chat_screen_module, "run_library_rag_search", exploding_search
-    )
+    monkeypatch.setattr(retrieval_module, "run_library_rag_search", exploding_search)
 
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
@@ -638,11 +656,11 @@ def test_send_kind_classification_is_shared_not_duplicated():
     from tldw_chatbook.Chat.console_command_grammar import COMMAND_PREFIX
     from tldw_chatbook.Chat.console_skill_resolver import MENTION_SIGIL
 
-    assert chat_screen_module._is_plain_text_send("a plain question") is True
-    assert chat_screen_module._is_plain_text_send(f"{COMMAND_PREFIX}prompt x") is False
-    assert chat_screen_module._is_plain_text_send(f"{MENTION_SIGIL}skill x") is False
-    assert chat_screen_module._is_plain_text_send("   ") is False
-    assert chat_screen_module._is_plain_text_send(None) is False
+    assert retrieval_module.is_plain_text_send("a plain question") is True
+    assert retrieval_module.is_plain_text_send(f"{COMMAND_PREFIX}prompt x") is False
+    assert retrieval_module.is_plain_text_send(f"{MENTION_SIGIL}skill x") is False
+    assert retrieval_module.is_plain_text_send("   ") is False
+    assert retrieval_module.is_plain_text_send(None) is False
 
 
 @pytest.mark.asyncio
@@ -672,22 +690,19 @@ async def test_capture_seam_calls_the_hook_before_consuming(monkeypatch):
         order.append("consume")
         return None
 
-    screen = SimpleNamespace(
-        app_instance=SimpleNamespace(),
-        _clear_console_evidence_sent_notice=lambda: order.append("clear-notice"),
-        _maybe_auto_retrieve_for_send=_hook,
-        _consume_pending_console_launch=_consume,
-        _release_consumed_console_launch=lambda *a: None,
-    )
+    screen = _auto_rag_screen()
+    screen._retrieval._clear_evidence_sent_notice = lambda: order.append("clear-notice")
+    screen._retrieval._maybe_auto_retrieve_for_send = _hook
+    screen._retrieval._consume_pending_launch = _consume
     monkeypatch.setattr(
-        chat_screen_module,
+        retrieval_module,
         "capture_console_staged_evidence_for_chat",
         AsyncMock(
             return_value=LocalRagContextResult(context=None, citation_builder=None)
         ),
     )
 
-    await ChatScreen._capture_console_staged_rag(screen, "question", turn_context)
+    await screen._retrieval._capture_console_staged_rag("question", turn_context)
 
     assert order == ["clear-notice", "auto-retrieve", "consume"]
     # ...and the hook retrieves for THIS turn's captured configuration, not
@@ -708,27 +723,22 @@ async def test_capture_seam_contains_an_exploding_auto_retrieve(monkeypatch):
     released: list[tuple] = []
     context = "[S1] MEDIA — Source 1\nBody 1"
 
-    async def _explode(_draft):
+    async def _explode(_draft, turn_context=None):
         raise RuntimeError("auto-retrieve exploded")
 
-    screen = SimpleNamespace(
-        app_instance=SimpleNamespace(),
-        _clear_console_evidence_sent_notice=lambda: None,
-        _maybe_auto_retrieve_for_send=_explode,
-        _consume_pending_console_launch=lambda: launch,
-        _release_consumed_console_launch=lambda *args: released.append(args),
-    )
+    screen = _auto_rag_screen()
+    screen._retrieval._maybe_auto_retrieve_for_send = _explode
+    screen._retrieval._consume_pending_launch = lambda: launch
+    screen._retrieval._release_consumed_launch = lambda *args: released.append(args)
     monkeypatch.setattr(
-        chat_screen_module,
+        retrieval_module,
         "capture_console_staged_evidence_for_chat",
         AsyncMock(
-            return_value=LocalRagContextResult(
-                context=context, citation_builder=None
-            )
+            return_value=LocalRagContextResult(context=context, citation_builder=None)
         ),
     )
 
-    result = await ChatScreen._capture_console_staged_rag(screen, "question")
+    result = await screen._retrieval._capture_console_staged_rag("question")
 
     assert result.context == context
     assert len(released) == 1
