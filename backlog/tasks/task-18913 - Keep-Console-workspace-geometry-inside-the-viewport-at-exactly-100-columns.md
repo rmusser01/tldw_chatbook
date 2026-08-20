@@ -21,7 +21,7 @@ Prevent the reproduced exact-100-column Console rail state from expanding the gr
 ## Acceptance Criteria
 
 <!-- AC:BEGIN -->
-- [ ] #1 At exactly 100x30, the default Context-only state and every explicitly supported rail state keep every displayed Console workspace child within the viewport; the transcript remains visible and usable.
+- [ ] #1 At exactly 100x30, all four stored Context/Inspector open-state combinations keep every displayed Console workspace child within the viewport and preserve a transcript at least 40 columns wide; the default Context-only state preserves at least 55 transcript columns.
 - [ ] #2 Effective rail priority, compact overrides, stored preferences, and the 70/74-column usable-transcript floors remain consistent with ADR-043.
 - [ ] #3 Existing geometry and access behavior at 80x24, 120x30, 160x45, and 235x52 do not regress.
 - [ ] #4 A production-CSS Textual compositor regression proves the 100-column failure and is mutation-checked against the geometry correction.

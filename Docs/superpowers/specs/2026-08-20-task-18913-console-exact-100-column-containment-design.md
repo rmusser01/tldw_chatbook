@@ -124,10 +124,25 @@ Follow test-driven development:
 
 1. Add a production-hierarchy, exact-production-CSS compositor regression at
    100x30. It must fail on current `origin/dev` because displayed grid children
-   escape the grid and viewport.
-2. Assert the displayed set is Context, transcript, and collapsed Inspector
-   handle; every child has positive geometry, remains within both grid content
-   and screen bounds, and the transcript is present in the compositor.
+   escape the grid and viewport. Exercise all four stored rail-preference
+   combinations and assert these effective states:
+
+   | Stored Context | Stored Inspector | Displayed left | Displayed right | Compact override |
+   | --- | --- | --- | --- | --- |
+   | open | closed | Context rail | Inspector handle | left / aggregate |
+   | closed | closed | Context handle | Inspector handle | none |
+   | closed | open | Context handle | Inspector rail | right / aggregate |
+   | open | open | Context handle | Inspector rail | right / aggregate |
+
+   The final row preserves ADR-043's Inspector priority from 100 through 149
+   columns; no stored preference is rewritten.
+2. For every matrix row, assert that each expected displayed child has positive
+   geometry and remains within both grid-content and screen bounds. The
+   transcript must remain in the compositor and measure at least ADR-043's
+   40-column usable-transcript floor. In the default Context-open,
+   Inspector-closed row, also assert the expected approximately 55-column
+   allocation (at minimum 55 columns) so a merely positive but practically
+   unusable sliver cannot pass.
 3. Add pure state coverage proving Context remains open at 100, its stored
    preference is untouched, and the compact override is active only as needed.
 4. Pin adjacent 99/101-column controls plus 80x24, 120x30, 160x45, and 235x52
