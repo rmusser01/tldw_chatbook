@@ -856,7 +856,7 @@ async def test_library_onboarding_new_profile_waits_for_all_fresh_empty_evidence
     monkeypatch.setattr(
         library_screen_module,
         "save_setting_to_cli_config",
-        lambda *args: saved.append(args),
+        lambda *args: (saved.append(args), True)[1],
     )
     gates = _LibraryEvidenceGates()
     app = _new_library_onboarding_app(gates)
@@ -986,6 +986,7 @@ async def test_library_onboarding_fresh_usable_content_graduates_and_persists(
         if len(saved) == 1:
             first_write_entered.set()
             first_write_release.wait(_GATED_RELEASE_TIMEOUT_SECONDS)
+        return True
 
     monkeypatch.setattr(
         library_screen_module,
@@ -1035,15 +1036,14 @@ async def test_library_onboarding_fresh_usable_content_graduates_and_persists(
 
 
 @pytest.mark.asyncio
-async def test_library_onboarding_failed_persistence_retries_same_lifecycle(
+async def test_library_onboarding_false_persistence_retries_same_lifecycle(
     monkeypatch,
 ) -> None:
     attempts = []
 
     def fail_once(*args):
         attempts.append(args)
-        if len(attempts) == 1:
-            raise OSError("read only once")
+        return len(attempts) > 1
 
     monkeypatch.setattr(
         library_screen_module,
@@ -1085,7 +1085,7 @@ async def test_library_onboarding_note_create_refreshes_evidence_once_after_comm
     monkeypatch.setattr(
         library_screen_module,
         "save_setting_to_cli_config",
-        lambda *_args: None,
+        lambda *_args: True,
     )
     gates = _LibraryEvidenceGates(
         rounds=2,
@@ -1139,6 +1139,145 @@ async def test_library_onboarding_note_create_refreshes_evidence_once_after_comm
                 message="created Note evidence did not graduate Library",
             )
     finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+async def test_library_onboarding_unmount_flushes_latest_lifecycle(
+    monkeypatch,
+) -> None:
+    writes = []
+    persisted = {"lifecycle": None}
+    first_write_entered = threading.Event()
+    first_write_release = threading.Event()
+
+    def gated_save(_section, _key, lifecycle):
+        writes.append(lifecycle)
+        if len(writes) == 1:
+            first_write_entered.set()
+            first_write_release.wait(_GATED_RELEASE_TIMEOUT_SECONDS)
+        persisted["lifecycle"] = lifecycle
+        return True
+
+    monkeypatch.setattr(
+        library_screen_module,
+        "save_setting_to_cli_config",
+        gated_save,
+    )
+    gates = _LibraryEvidenceGates(
+        outcomes={"notes": [LibraryContentEvidence.HAS_USER_CONTENT]}
+    )
+    app = _new_library_onboarding_app(gates)
+    host = LibraryHarness(app)
+    replacement = None
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = host.screen_stack[-1]
+            await _wait_for_evidence_round(pilot, gates)
+            await _wait_for_condition(
+                pilot,
+                first_write_entered.is_set,
+                message="initial lifecycle write never reached its gate",
+            )
+            gates.release_round(0, "notes")
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_lifecycle is LibraryLifecycle.GRADUATED,
+                message="positive evidence did not queue graduation",
+            )
+            mounted_generation = screen._library_onboarding_generation
+
+            async def replace_screen():
+                await host.switch_screen(_DummyReplacementScreen())
+
+            replacement = asyncio.create_task(replace_screen())
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_onboarding_generation > mounted_generation,
+                message="unmount did not revoke onboarding authority",
+            )
+            assert replacement.done() is False
+
+            first_write_release.set()
+            await replacement
+            await _wait_for_condition(
+                pilot,
+                lambda: writes == ["unknown", "graduated"],
+                timeout=1.0,
+                message="unmount did not flush the latest lifecycle",
+            )
+            assert persisted["lifecycle"] == "graduated"
+
+            restarted_app = _build_test_app()
+            restarted_app.app_config["_first_run"] = False
+            restarted_app.app_config.setdefault("library", {}).setdefault(
+                "rail_state", {}
+            )["lifecycle"] = persisted["lifecycle"]
+            restarted = LibraryScreen(restarted_app)
+            assert restarted._library_lifecycle is LibraryLifecycle.GRADUATED
+            assert (
+                restarted._library_lifecycle_last_persisted
+                is LibraryLifecycle.GRADUATED
+            )
+    finally:
+        first_write_release.set()
+        gates.release_all()
+        if replacement is not None:
+            await replacement
+
+
+@pytest.mark.asyncio
+async def test_library_onboarding_positive_retrieves_concurrent_loser_exceptions(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        library_screen_module,
+        "save_setting_to_cli_config",
+        lambda *_args: True,
+    )
+    owners = (*_LibraryEvidenceGates.ASYNC_OWNERS, "collections")
+    gates = _LibraryEvidenceGates(
+        rounds=len(owners),
+        outcomes={
+            owner: [
+                RuntimeError(f"{loser} evidence loser")
+                if owner == loser
+                else LibraryContentEvidence.HAS_USER_CONTENT
+                for loser in owners
+            ]
+            for owner in owners
+        },
+    )
+    app = _new_library_onboarding_app(gates)
+    host = LibraryHarness(app)
+    loop = asyncio.get_running_loop()
+    previous_handler = loop.get_exception_handler()
+    unhandled = []
+
+    def capture_unhandled(_loop, context):
+        unhandled.append(context)
+
+    loop.set_exception_handler(capture_unhandled)
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = host.screen_stack[-1]
+            for index in range(len(owners)):
+                if index:
+                    screen._refresh_library_onboarding_evidence()
+                await _wait_for_evidence_round(pilot, gates, index)
+                gates.release_round(index)
+                await _wait_for_worker_group_to_drain(
+                    host,
+                    pilot,
+                    screen,
+                    "library_onboarding_evidence",
+                )
+                await pilot.pause()
+            assert screen._library_lifecycle is LibraryLifecycle.GRADUATED
+            assert unhandled == []
+    finally:
+        loop.set_exception_handler(previous_handler)
         gates.release_all()
 
 

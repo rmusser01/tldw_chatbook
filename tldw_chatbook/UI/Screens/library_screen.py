@@ -5754,6 +5754,16 @@ class LibraryScreen(BaseAppScreen):
         self._invalidate_library_prompts_browse()
         self._library_media_lifecycle_generation += 1
         self._library_media_browse_controller.invalidate()
+        lifecycle_worker = self._library_lifecycle_persist_worker
+        if lifecycle_worker is not None and not lifecycle_worker.is_finished:
+            try:
+                await lifecycle_worker.wait()
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Pending Library lifecycle write failed during unmount."
+                )
+        if self._library_lifecycle_pending_persist is not None:
+            await self._drain_library_lifecycle_persistence()
         workspace = self._library_file_notes_workspace
         if workspace is not None:
             await workspace.shutdown()
@@ -15201,6 +15211,7 @@ class LibraryScreen(BaseAppScreen):
             for task in tasks:
                 if not task.done():
                     task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     def _apply_library_onboarding_evidence(
         self,
@@ -15275,7 +15286,7 @@ class LibraryScreen(BaseAppScreen):
             lifecycle = self._library_lifecycle_pending_persist
             self._library_lifecycle_pending_persist = None
             try:
-                await asyncio.to_thread(
+                persisted = await asyncio.to_thread(
                     save_setting_to_cli_config,
                     "library.rail_state",
                     "lifecycle",
@@ -15284,8 +15295,11 @@ class LibraryScreen(BaseAppScreen):
             except Exception:
                 self._library_onboarding_persistence_warning = "Library view is updated for this session, but the choice may not be remembered."
             else:
-                self._library_lifecycle_last_persisted = lifecycle
-                self._library_onboarding_persistence_warning = ""
+                if persisted is True:
+                    self._library_lifecycle_last_persisted = lifecycle
+                    self._library_onboarding_persistence_warning = ""
+                else:
+                    self._library_onboarding_persistence_warning = "Library view is updated for this session, but the choice may not be remembered."
 
     def _library_rail_preferences(self):
         """Read persisted Library rail section preferences, defensively.
