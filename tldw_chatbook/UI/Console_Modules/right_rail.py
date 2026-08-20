@@ -246,9 +246,10 @@ class ConsoleInspectorRail(Vertical):
             # own fixed `console-changed-files-section` class is untouched,
             # this is additive, matching how `frame_console_region` below
             # also adds a class rather than replacing the widget's own.
+            # Width/min-width live in `_agentic_terminal.tcss`'s
+            # `#console-changed-files-section` rule (TASK-19192), matching
+            # the sibling id-rule convention -- not inline here.
             changed_files_section.add_class("console-inspector-context-section")
-            changed_files_section.styles.width = "100%"
-            changed_files_section.styles.min_width = 0
             yield frame_console_region(changed_files_section, variant="quiet")
 
             with Vertical(id="console-run-inspector"):
