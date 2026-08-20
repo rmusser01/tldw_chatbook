@@ -147,20 +147,23 @@ Task 5 adds one purpose-built Actor Pack mutation coordinator for the operations
 must span those stores; it is not a general transaction framework. Character
 mutations stay within the existing SQLite transaction. Persona mutations use a SQLite
 write-ahead intent containing bounded canonical old/new Persona snapshots and
-authority digests, followed by the existing atomic Persona JSON replace, then one
-SQLite commit for the registry and visual rows. The same SQLite transaction marks the
-intent committed. Before the Personas or Actor Pack surfaces become available,
-startup recovery handles any prepared intent idempotently:
+authority digests. The intent is durably written before the existing atomic Persona
+JSON replace. One SQLite transaction then atomically writes the new registry and
+visual rows and changes the intent from `prepared` to `committed`. Before affected
+Personas or Actor Pack surfaces become available, startup recovery applies the full
+matrix idempotently:
 
-- if only the JSON replace occurred and its digest still equals the prepared new
-  value, restore the old record (or remove the newly created record) atomically;
-- if the SQLite commit occurred, retain the new JSON record and finish cleanup;
-- if either store has an unexpected third digest/revision, make no destructive guess,
-  quarantine that Actor Pack operation, and require explicit recovery.
+- `prepared` + old JSON + old SQLite is a no-op; clean up the intent;
+- `prepared` + new JSON + old SQLite compensates to the old record, or atomically
+  removes a newly created record, then cleans up;
+- `committed` + new JSON + new SQLite retains the new authority and cleans up; and
+- old JSON + new SQLite, `prepared` + new SQLite, contradictory `committed` states,
+  or any other unexpected digest or revision is quarantined without a destructive
+  guess and requires explicit recovery.
 
 The UI reports success only after the full coordinator completes. Ordinary errors
 compensate before returning; crashes converge during startup recovery. Journal
-payloads are profile-private, never logged/exported, bounded to one actor mutation,
+payloads are bounded to one actor mutation, profile-private, never logged/exported,
 and deleted after successful completion/recovery. Task 7 consumes this coordinator for
 Persona Create New, Create Copy, and Update Existing rather than inventing another
 cross-store protocol.

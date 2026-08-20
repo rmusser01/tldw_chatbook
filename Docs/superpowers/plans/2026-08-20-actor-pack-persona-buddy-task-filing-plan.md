@@ -25,7 +25,8 @@ Create or update only these planning artifacts:
 - Create: `backlog/tasks/task-19059 - Import-review-and-activate-Actor-Packs.md`
 - Create: `backlog/tasks/task-19060 - Match-server-streaming-emotes-and-persistence.md`
 - Modify: `Docs/superpowers/specs/2026-08-20-actor-pack-persona-buddy-and-emote-programme-design.md`
-- Modify: this plan only to replace the allocation table placeholders after the final collision sweep.
+- Modify: this plan for final allocation, reviewed execution/checklist status, exact
+  filed-task acceptance-criteria reconciliation, and the final validation record.
 
 Do not create production, migration, UI, CSS, fixture, or test files. Do not add an `## Implementation Plan` or `## Implementation Notes` section to a Backlog task while it remains To Do; AGENTS.md requires the task to move In Progress first.
 
@@ -130,7 +131,7 @@ Run:
 
 ```bash
 git diff --check
-rg -n "unresolved allocation marker" backlog/decisions/074-portable-actor-packs-and-local-persona-visual-runtime.md
+rg -n "TBD|TODO|PLACEHOLDER|<ADR_|<TASK_" backlog/decisions/074-portable-actor-packs-and-local-persona-visual-runtime.md
 ```
 
 Expected: diff check passes; placeholder search returns no matches.
@@ -205,7 +206,7 @@ Add these as separate criteria:
 5. Repository and publication paths enforce optimistic binding/version authority, rollback, and pinned orphan cleanup, and return stable old/new full identities for later targeted consumer invalidation.
 6. Frozen fixtures derived from server commit `385afa...` pin supported and unsupported renderer/manifest behavior.
 7. No Workbench authoring UI, floating Buddy, provider generation, or server write path is introduced.
-8. Focused migration/repository/validator/asset/resolver/publication tests plus scoped static and diagnostic-governance checks pass in an isolated profile.
+8. Focused migration/repository/validator/asset/resolver/publication coverage runs born-RED then GREEN; mutation proof covers authority, validation, fallback, rollback, orphan cleanup, full-identity/cache, and privacy guards; assigned-worktree import provenance is asserted; real SQLite migration/repository tests run in an isolated HOME/XDG/config/data profile; and scoped Ruff, format, compile, `git diff --check`, diagnostic, privacy, architecture, and governance checks pass.
 
 - [x] **Step 4: Verify and commit**
 
@@ -233,7 +234,7 @@ Status `To Do`, priority `high`, dependency `TASK-19053`, references to the spec
 5. Server-backed Personas show Save Local Copy first; legacy expression-set and Actor Pack import remain separate, honestly labelled actions.
 6. Preview inventory/resolve/decode work is screen-owned, serialized across navigation, drained on cancellation, weak-targeted, and fenced after every await.
 7. No image-generation provider, recipe workflow, Shared Visual Identity merge, or Buddy window is added.
-8. Labelled actions are keyboard-operable, preserve focus, and add no forbidden bindings; compact and normal layouts paint usable controls; untrusted archive text renders as plain text; user-facing errors, logs, and diagnostics remain path-free; focused widget/screen/race/import/publication tests pass, followed by Impeccable review after the final visible change and scoped static/governance gates.
+8. Labelled actions are keyboard-operable, preserve focus, and add no forbidden bindings; compact and normal layouts paint usable controls; untrusted archive text renders as plain text; user-facing errors, logs, and diagnostics remain path-free. Evidence includes born-RED→GREEN tests and mutation proof for draft, Save, Cancel, authority, archive, cancellation, and invalidation guards; assigned-worktree provenance; real SQLite publication/repository tests where touched; isolated HOME/XDG/config/data roots; focused widget/screen/race/import/publication tests; Ruff, format, compile, and diff checks; diagnostic, privacy, architecture, and governance gates; and Impeccable review after the final visible change.
 
 - [x] **Step 4: Verify and commit**
 
@@ -262,7 +263,7 @@ to the programme spec and portable-pack ADR.
 5. `sprite_frames` animation pauses while hidden/collapsed, respects reduced motion, and falls back through state, idle, and portrait without blanking the UI; frame and availability failures report stable path-free categories.
 6. Same-owner Buddy work is serialized across replacement screens; DB, resolve, decode, and frame-preparation work runs off the event loop, uncancellable work is shielded and drained before releasing serialization, view targets are weak or identity-fenced, and authority is revalidated after every await. Stale work and replaced views cannot repaint or remove the current view.
 7. No third-party window dependency, taskbar, snapping desktop, maximize system, model-directed state, or default Persona is introduced.
-8. Production-shaped Pilot tests cover normal, wide, and 80x24 layouts, compositor output, and zero flow/`fr` budget; isolated real-terminal verification covers mouse drag/resize, keyboard controls, focus, modal hit testing, navigation, viewport resize, and geometry restore. Impeccable review follows the final visible change; scoped Ruff, format, compile, diff, and static checks pass with mutation evidence for authority, lease, and cancellation guards.
+8. Production-shaped Pilot tests cover normal, wide, and 80x24 layouts, compositor output, and zero flow/`fr` budget; isolated real-terminal verification covers mouse drag/resize, keyboard controls, focus, modal hit testing, navigation, viewport resize, and geometry restore. Evidence includes born-RED→GREEN tests at the actual seams, assigned-worktree import provenance, isolated HOME/XDG/config/data roots set before app import, and mutation proof for authority, lease, cancellation, geometry, and modal-input guards; real SQLite repository coverage is required only if persistence storage changes. Impeccable review follows the final visible change; scoped Ruff, format, compile, diff, and static checks plus diagnostic, privacy, architecture, and governance gates pass.
 
 - [x] **Step 4: Verify and commit**
 
@@ -290,7 +291,7 @@ Status `To Do`, priority `high`, dependency `TASK-16319`, references to ADR-067,
 5. Server-backed Personas require Save Local Copy first; source, session, actor, binding, version, and profile-revision authority is revalidated after every await, and any stale change fails closed without publication or repaint.
 6. Existing Character creation, authoring, Console rendering, publication, cache, and four-state operational behavior remain unchanged.
 7. No schema/runtime merge with Persona Visual, Actor Pack archive workflow, or server write path is introduced.
-8. Labelled actions are keyboard-operable and compact and normal layouts paint usable controls; user-facing errors, logs, and diagnostics remain path-free; focused real SQLite repository/resolver/Workbench/Console/race/invalidation/lifecycle tests pass in an isolated profile, with mutation proof for authority, cancellation, and invalidation guards plus scoped static and ADR-067 architecture/privacy/governance checks.
+8. Labelled actions are keyboard-operable and compact and normal layouts paint usable controls; user-facing errors, logs, and diagnostics remain path-free. Focused real SQLite repository/resolver/Workbench/Console/race/invalidation/lifecycle tests pass in an isolated profile with born-RED → GREEN evidence and mutation proof for authority, cancellation, and invalidation guards. Evidence records assigned-worktree provenance and establishes isolated `HOME`, XDG, config, and data roots before imports; scoped Ruff, format, compile, diff, diagnostic, privacy, architecture, and governance checks, including ADR-067 gates, pass.
 
 - [x] **Step 4: Verify and commit**
 
@@ -316,7 +317,7 @@ Status `To Do`, priority `high`, no dependency on programme Tasks 1–4. Referen
 3. The profile-local registry is keyed by `(actor_kind, local_actor_id)`, stores a globally unique canonical lowercase RFC 4122 UUIDv4 as portable identity independent of names, content, and local IDs, enforces UUID uniqueness across both actor kinds without claiming cross-install coordination, survives soft deletion/restoration, and records copy provenance without reusing the source UUID.
 4. New Actor Pack uses the canonical local Character/Persona editors, admits only one operation at a time and rejects duplicate submits, requires a portrait, and fences source, editor, and portrait authority. Cancellation or declined navigation during portrait or commit work signals and drains owned work and leaves no actor, registry row, intent, or staged portrait; success creates only the actor plus portable identity, without writing an archive or requiring visual sections.
 5. Server-backed Personas cannot receive portable registry rows and expose Save Local Copy first.
-6. Persona actor/registry changes use a bounded profile-private intent, durably written before the atomic Persona JSON replace and one SQLite registry commit; ordinary errors compensate, including atomically removing a newly created Persona. Before affected Personas or Actor Pack surfaces become available, startup recovery idempotently cleans up old-JSON/old-SQLite no-ops, compensates new-JSON/old-SQLite state, retains committed new JSON and finishes cleanup, and quarantines any unexpected authority—including old-JSON/new-SQLite as third authority—until explicit recovery. Intents are never logged or exported; Character changes remain one SQLite transaction.
+6. Persona actor/registry changes use a bounded profile-private intent durably written before the atomic Persona JSON replace; one SQLite transaction atomically writes registry/visual rows and committed intent status. Startup recovery runs before affected Persona or Actor Pack surfaces and is idempotent: prepared+old JSON+old SQLite cleans up; prepared+new JSON+old SQLite compensates to the old record or removes a newly created record; committed+new JSON+new SQLite retains the new record and cleans up. Old JSON+new SQLite, prepared+new SQLite, committed contradictory states, or any other unexpected digest/revision are quarantined without a destructive guess and require explicit recovery. Ordinary errors compensate; intents are never logged or exported; Character changes remain one SQLite transaction.
 7. Unknown required features, malformed/colliding paths, invalid actor kinds/payloads/portraits, concurrent registry assignment or UUID collision, and stale profile, editor, or portrait authority fail closed with no partial actor, registry row, intent, staged portrait, or other residue.
 8. This task is scoped to Actor Pack format, schema, canonicalization, digest, and pure-validator contracts plus actor creation and the Persona cross-store coordinator; export writer, import reader, extraction, staging, review, and activation implementation are absent and reserved for TASK-19058 and TASK-19059. Verification includes born-RED→GREEN tests, mutation proof for authority, safety, cancellation, and recovery guards, assigned-worktree provenance, real SQLite migration and crash-recovery tests in an isolated profile, and scoped Ruff, format, compile, diff, diagnostic, privacy, architecture, and governance checks.
 
@@ -429,8 +430,10 @@ Because the current Backlog CLI cannot reliably address five-digit IDs, use dire
 
 Re-fetch and repeat the bounded, path-aware all-reachable-ref and registered-worktree
 ID scan. Run whole-repo searches for all ten IDs, duplicate titles, and unresolved
-allocation markers. If another ref or worktree claimed an allocated path, stop and
-report the collision; do not renumber independently.
+allocation markers. The restored ADR validation command above is the sole expected
+programme-file self-hit for the placeholder-token pattern; exclude that exact command
+line and require zero remaining matches. If another ref or worktree claimed an
+allocated path, stop and report the collision; do not renumber independently.
 
 - [x] **Step 4: Run Markdown and Backlog integrity checks**
 
