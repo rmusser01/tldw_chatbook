@@ -179,3 +179,33 @@ tests collected, 0 collection errors, exit 0. `ruff check` + `format
 AREA_VISUALIZATION|create_mindmap|add_mindmap_node|anytree|MINDMAP_AVAILABLE`
 across code/config: zero production references (only the boundary-owned
 Study comment/docstring and this task's own removal notes).
+
+**Fix round (controller-verified finding):** the deletions left
+`Docs/security/production-diagnostic-inventory.json` stale — and contrary
+to the review's note B, that JSON has a live test consumer
+(`Tests/Architecture/test_persistent_diagnostic_inventory.py` runs
+`scripts/check_persistent_diagnostic_inventory.py`, which rebuilds the
+inventory from live code and byte-compares). Applied the established
+surgical hand-edit playbook (16196/16835 precedent; 16846/19046 used it
+too) rather than `--write`, which would have absorbed dev's pre-existing
+unrelated drift: removed the 7 committed rows for deleted files (six
+`Tools/Mind_Map/*.py` rows, all TASK-492, call_counts 4+1+1+2+9+2 = 19;
+`UI/Widgets/MindmapViewer.py`, TASK-494, 2), updated the
+`Utils/optional_deps.py` row to the rebuild's own values (call_count
+66→64, digest `200520a8c1cc673d5653`→`0f7e2c6195b8b3b6c373`, recomputed
+via the script's `_scan_file`/`diagnostic_digest` on live code — two
+diagnostic calls died with `check_mindmap_available`), and adjusted the
+summary: `owner_files` 503→496, `task_492_calls` 1228→1209 (−19),
+`task_494_calls` 6991→6987 (−2 row, −2 count change). Sink topology
+untouched (no deleted file had sinks). Invariants verified by a printing
+probe reading the edited file: len(owners)=496=summary.owner_files;
+sum(492)=1209, sum(494)=6987, len(topology)=6 — all matching their
+summary fields; the committed file was confirmed to be in the script's
+canonical encoding before editing, and the edit re-encoded identically.
+Acceptance bar (19046 standard) met: the post-edit rebuild comparison
+shows the branch's residual drift is EXACTLY dev's pre-existing drift —
+missing `library_media_browse_controller.py` row (+2),
+`Client_Media_DB_v2.py` 354→338, `library_screen.py` 110→109 (residual
+494 delta −15 closes: −16−1+2), TASK-492 bucket now byte-exact
+(1209==1209), every other top-level key SAME. The pin test stays red from
+that pre-existing dev drift only; not this task's to fix.
