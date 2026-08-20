@@ -760,10 +760,6 @@ class LibraryFileNotesWorkspace(Vertical):
         display: none;
     }
 
-    LibraryFileNotesWorkspace.-reload-confirming #file-notes-path-row {
-        display: none;
-    }
-
     #file-notes-reload-confirm {
         color: $error;
         text-style: bold;
@@ -1269,6 +1265,7 @@ class LibraryFileNotesWorkspace(Vertical):
                         id="file-notes-resolve-conflict",
                         compact=True,
                     )
+                    yield Button("Reload", id="file-notes-reload", compact=True)
                     yield Button(
                         "Save copy",
                         id="file-notes-save-copy",
@@ -1286,7 +1283,6 @@ class LibraryFileNotesWorkspace(Vertical):
                     classes="file-notes-toolbar",
                 ):
                     yield Button("Protect", id="file-notes-protect", compact=True)
-                    yield Button("Reload", id="file-notes-reload", compact=True)
                     yield Button("Refresh", id="file-notes-refresh", compact=True)
                 yield Static(
                     (
@@ -4378,10 +4374,11 @@ class LibraryFileNotesWorkspace(Vertical):
                     self._maintenance_expanded
                     or (
                         action_id == "file-notes-reload"
-                        and self._save_state == "conflict"
+                        and self._save_state in {"conflict", "error"}
                     )
                 )
-            displayed = displayed and not confirming_reload
+            if confirming_reload:
+                displayed = action_id == "file-notes-save-copy" and displayed
             button = self.query_one(f"#{action_id}", Button)
             if button is focused and not displayed:
                 self._editor_action_focus_target = action_id
@@ -4402,10 +4399,7 @@ class LibraryFileNotesWorkspace(Vertical):
         maintenance = self.query_one("#file-notes-maintenance-actions")
         maintenance.display = (
             maintenance_available
-            and (
-                self._maintenance_expanded
-                or self._save_state == "conflict"
-            )
+            and self._maintenance_expanded
             and not resolving_conflict
             and not confirming_reload
         )
@@ -6451,8 +6445,8 @@ class LibraryFileNotesWorkspace(Vertical):
             return
         if self._conflict_resolution_active:
             keep = self.query_one("#file-notes-resolution-keep", Button)
-            self.screen.set_focus(keep)
-            self.call_after_refresh(partial(self.screen.set_focus, keep))
+            keep.focus()
+            self.call_after_refresh(keep.focus)
         elif focus_opener:
             opener = self.query_one("#file-notes-resolve-conflict", Button)
             if opener.display and not opener.disabled:

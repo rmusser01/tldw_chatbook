@@ -2561,9 +2561,9 @@ async def test_maintenance_disclosure_keeps_secondary_file_actions_reachable(
             if button.display
         } == {
             "file-notes-protect",
-            "file-notes-reload",
             "file-notes-refresh",
         }
+        assert workspace.query_one("#file-notes-reload", Button).display
         _assert_visible_editor_actions_fit(workspace)
 
         protect = workspace.query_one("#file-notes-protect", Button)
@@ -4953,6 +4953,7 @@ async def test_file_notes_focus_is_content_safe_under_production_css(
                 "Move",
                 "Compare",
                 "Resolve conflict",
+                "Reload from disk",
                 "Save copy",
                 "Delete",
                 "More file actions",
@@ -4960,7 +4961,14 @@ async def test_file_notes_focus_is_content_safe_under_production_css(
         ),
         (
             "error",
-            ("New", "Move", "Save copy", "Delete", "More file actions"),
+            (
+                "New",
+                "Move",
+                "Discard draft and reload",
+                "Save copy",
+                "Delete",
+                "More file actions",
+            ),
         ),
         ("deleted", ("New", "Restore", "More file actions")),
         ("protected", ("New", "Move", "Delete", "More file actions")),
@@ -5019,14 +5027,118 @@ async def test_file_notes_primary_actions_follow_editor_state(
             "Target path · New / Move / Save copy"
         )
         assert _visible_primary_action_labels(workspace) == expected_primary
-        maintenance = workspace.query_one("#file-notes-maintenance-actions")
-        assert maintenance.display is (editor_state == "conflict")
-        if editor_state == "conflict":
-            reload_from_disk = workspace.query_one("#file-notes-reload", Button)
-            assert reload_from_disk.display
-            assert str(reload_from_disk.label) == "Reload from disk"
+        assert not workspace.query_one("#file-notes-maintenance-actions").display
+        reload_button = workspace.query_one("#file-notes-reload", Button)
+        assert reload_button.parent is workspace.query_one(
+            "#file-notes-file-actions"
+        )
         if editor_state in {"dirty", "conflict", "error"}:
             assert workspace.query_one("#file-notes-save-copy", Button).display
+
+    await workspace.shutdown()
+    replica.close()
+
+
+@pytest.mark.parametrize("size", ((120, 40), (40, 20)))
+@pytest.mark.parametrize("save_state", ("conflict", "error"))
+@pytest.mark.asyncio
+async def test_reload_confirmation_keeps_target_and_save_copy_reachable(
+    tmp_path: Path,
+    size: tuple[int, int],
+    save_state: str,
+) -> None:
+    """A destructive reload decision must not hide the safe copy escape hatch."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    source = root / "state.md"
+    source.write_text("disk\n", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        autosave_delay=10,
+        poll_interval=10,
+    )
+
+    async with _production_workspace_context(workspace, size=size) as pilot:
+        assert await workspace.open_path("state.md")
+        editor = workspace.query_one("#file-notes-editor", TextArea)
+        _replace_editor_text(editor, "draft to preserve")
+        workspace._set_save_state(save_state)
+        path = workspace.query_one("#file-notes-path", Input)
+        path.value = "saved-copy.md"
+        reload_button = workspace.query_one("#file-notes-reload", Button)
+
+        await workspace._reload_file(Button.Pressed(reload_button))
+        await _wait_until(
+            pilot,
+            lambda: workspace.reload_confirmation_active,
+            "reload confirmation did not open",
+        )
+        cancel = workspace.query_one("#file-notes-reload-cancel", Button)
+        confirm = workspace.query_one("#file-notes-reload-confirm", Button)
+        await _wait_until(
+            pilot,
+            lambda: cancel.has_focus,
+            "reload confirmation did not focus safe Cancel",
+        )
+        assert str(confirm.label) == "Discard draft and load disk"
+        assert confirm.display and not confirm.disabled
+        assert source.read_text(encoding="utf-8") == "disk\n"
+        assert editor.text == "draft to preserve"
+
+        path_label = workspace.query_one("#file-notes-path-label", Static)
+        save_copy = workspace.query_one("#file-notes-save-copy", Button)
+        assert path_label.display and path.display
+        assert _static_text(workspace, "#file-notes-path-label") == (
+            "Target path · New / Move / Save copy"
+        )
+        assert save_copy.display and not save_copy.disabled
+        workspace.query_one("#file-notes-save-status").scroll_visible(
+            animate=False,
+            top=True,
+        )
+        await pilot.pause()
+        path.focus(scroll_visible=False)
+        await pilot.pause()
+        assert path.has_focus
+        assert (
+            workspace.query_one("#file-notes-save-status").region.bottom
+            <= path_label.region.y
+        )
+        for control, copy in (
+            (path_label, "Target path · New / Move / Save copy"),
+            (path, "saved-copy.md"),
+        ):
+            assert workspace.region.contains_region(control.region)
+            assert copy in _painted_text_in_region(pilot.app, control.region)
+
+        save_copy.focus()
+        save_copy.scroll_visible(animate=False)
+        await pilot.pause()
+        assert save_copy.has_focus
+        assert workspace.region.contains_region(save_copy.region)
+        assert "Save copy" in _painted_text_in_region(
+            pilot.app,
+            save_copy.region,
+        )
+
+        save_copy.press()
+        await _wait_until(
+            pilot,
+            lambda: (root / "saved-copy.md").exists(),
+            "Save copy did not preserve the draft during reload confirmation",
+        )
+        await _wait_until(
+            pilot,
+            lambda: not workspace.reload_confirmation_active,
+            "Save copy did not dismiss the reload confirmation",
+        )
+        assert (root / "saved-copy.md").read_text(encoding="utf-8") == (
+            "draft to preserve\n"
+        )
+        assert source.read_text(encoding="utf-8") == "disk\n"
+        assert not workspace.reload_confirmation_active
 
     await workspace.shutdown()
     replica.close()
@@ -5494,8 +5606,9 @@ async def test_production_folder_files_path_and_recovery_actions_are_painted(
         ):
             button = workspace.query_one(selector, Button)
             assert button.display and not button.disabled
-            button.focus()
             button.scroll_visible(animate=False)
+            await pilot.pause()
+            button.focus()
             await pilot.pause()
             assert button.has_focus
             assert workspace.region.contains_region(button.region)
@@ -5503,6 +5616,121 @@ async def test_production_folder_files_path_and_recovery_actions_are_painted(
                 pilot.app,
                 button.region,
             )
+
+    await workspace.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_production_compact_folder_files_disclosure_and_states_are_painted(
+    tmp_path: Path,
+) -> None:
+    """The 40-column product path paints disclosed and contextual actions."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "states.md").write_text("states\n", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        autosave_delay=10,
+        poll_interval=10,
+    )
+
+    async with _production_workspace_context(workspace, size=(40, 20)) as pilot:
+        assert await workspace.open_path("states.md")
+        opened = workspace.current_document
+        assert opened is not None
+
+        toggle = workspace.query_one("#file-notes-maintenance-toggle", Button)
+        toggle.press()
+        await _wait_until(
+            pilot,
+            lambda: workspace.query_one(
+                "#file-notes-maintenance-actions"
+            ).display,
+            "More file actions did not disclose compact maintenance actions",
+        )
+        for selector, label in (
+            ("#file-notes-protect", "Protect"),
+            ("#file-notes-reload", "Reload"),
+            ("#file-notes-refresh", "Refresh"),
+        ):
+            action = workspace.query_one(selector, Button)
+            assert action.display and not action.disabled
+            action.scroll_visible(animate=False)
+            await pilot.pause()
+            action.focus()
+            await pilot.pause()
+            assert action.has_focus
+            assert workspace.region.contains_region(action.region)
+            assert label in _painted_text_in_region(pilot.app, action.region)
+
+        workspace._opened = replace(opened, protected=True)
+        workspace._update_controls()
+        unprotect = workspace.query_one("#file-notes-protect", Button)
+        unprotect.scroll_visible(animate=False)
+        await pilot.pause()
+        unprotect.focus()
+        await pilot.pause()
+        assert "Unprotect" in _painted_text_in_region(
+            pilot.app,
+            unprotect.region,
+        )
+
+        workspace._maintenance_expanded = False
+        workspace._opened = replace(
+            opened,
+            editable=False,
+            is_excerpt=True,
+            read_only_reason="large_file",
+        )
+        workspace._update_controls()
+        export = workspace.query_one("#file-notes-save-copy", Button)
+        export.scroll_visible(animate=False)
+        await pilot.pause()
+        export.focus()
+        await pilot.pause()
+        assert export.display and not export.disabled and export.has_focus
+        assert "Export exact copy" in _painted_text_in_region(
+            pilot.app,
+            export.region,
+        )
+
+        workspace._opened = opened
+        workspace._set_save_state("conflict")
+        resolve = workspace.query_one("#file-notes-resolve-conflict", Button)
+        resolve.press()
+        await _wait_until(
+            pilot,
+            lambda: workspace.conflict_resolution_active,
+            "compact conflict resolution did not open",
+        )
+        for selector, label in (
+            ("#file-notes-resolution-keep", "Keep editing"),
+            ("#file-notes-resolution-save-new", "Save draft as new note"),
+            ("#file-notes-resolution-discard", "Discard draft and load disk"),
+        ):
+            action = workspace.query_one(selector, Button)
+            action.scroll_visible(animate=False)
+            await pilot.pause()
+            action.focus()
+            await pilot.pause()
+            assert action.has_focus
+            assert workspace.region.contains_region(action.region)
+            assert label in _painted_text_in_region(pilot.app, action.region)
+
+        workspace._set_conflict_resolution(False)
+        workspace._deleted_paths = ("states.md",)
+        assert workspace.select_deleted("states.md")
+        restore = workspace.query_one("#file-notes-restore", Button)
+        restore.scroll_visible(animate=False)
+        await pilot.pause()
+        restore.focus()
+        await pilot.pause()
+        assert restore.display and not restore.disabled and restore.has_focus
+        assert workspace.region.contains_region(restore.region)
+        assert "Restore" in _painted_text_in_region(pilot.app, restore.region)
 
     await workspace.shutdown()
     replica.close()

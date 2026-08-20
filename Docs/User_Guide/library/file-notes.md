@@ -122,9 +122,12 @@ exists, File Notes leaves both that file and the conflict draft unchanged.
 **Reload from disk** (Conflict) or **Discard draft and reload** (Error) first
 reads the current disk
 version and asks for confirmation. **Cancel** or **Escape** preserves the exact
-draft and conflict; confirming rechecks the root, file, editing session, and
-disk version before it replaces the draft. If any of those changed, reload
-stops with recovery guidance and leaves the draft untouched.
+draft and conflict. The target path and **Save copy** stay available while the
+confirmation is open, so saving a copy remains a safe exit and dismisses the
+reload decision without changing the original file. Confirming rechecks the
+root, file, editing session, and disk version before it replaces the draft. If
+any of those changed, reload stops with recovery guidance and leaves the draft
+untouched.
 
 ### Session Git — stage and commit session edits, then push the exact commit
 
