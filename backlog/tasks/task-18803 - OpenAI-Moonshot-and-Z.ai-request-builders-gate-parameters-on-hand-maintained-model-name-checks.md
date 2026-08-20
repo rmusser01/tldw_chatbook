@@ -3,10 +3,11 @@ id: TASK-18803
 title: >-
   OpenAI, Moonshot and Z.ai request builders gate parameters on hand-maintained
   model-name checks
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-18 23:56'
-updated_date: '2026-08-20 15:16'
+updated_date: '2026-08-20 16:24'
 labels:
   - llm
 dependencies: []
@@ -38,6 +39,12 @@ model_capabilities.py now has the right shape to extend -- a prefix/suffix-toler
 - [ ] #3 A new model release in a covered family does not require editing a marker list to avoid a 400
 - [ ] #4 Models currently working are unchanged, pinned by regression tests
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce builder-side claims locally (payload capture at the HTTP seam): OpenAI gpt-5/o3/o4-mini emit max_tokens with no reasoning effort (:695-698); family-miss characterization for _OPENAI_REASONING_MODEL_FAMILIES; Moonshot reasoning_effort ChatBadRequestError off kimi-k3 and silent sampling drop off moonshot-v1-*; Z.ai reasoning_effort pin off glm-5.2 and unconditional thinking.\n2. Wire evidence: dump the exact built gpt-5 payload and curl it (known 400 expected); Moonshot model-list + param-acceptance probes with the real key; Z.ai recorded unprobeable (no key).\n3. Fixes: chat_with_openai consults openai_model_rejects_sampling_params / openai_model_requires_max_completion_tokens (18802 predicates); new family-tolerant Moonshot/Z.ai reasoning-effort + Moonshot sampling predicates in model_capabilities.py; builders consult them.\n4. Red-first pins, controls (gpt-4o/gpt-4.1, moonshot-v1, kimi-k3, glm-5.2 unchanged), mutation tests with Edit-based restores.\n5. Live: chat_api_call seam with real keys (gpt-5 no effort, gpt-5 with effort, gpt-4o, one Moonshot turn) + clean origin/dev control showing the gpt-5-no-effort 400.\n6. Hygiene: report, notes, PR against dev.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
