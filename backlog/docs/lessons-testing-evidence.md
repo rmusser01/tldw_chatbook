@@ -4403,19 +4403,31 @@ the independent review (the implementer's 16.2 s / "99.8%" figure on a 160 KB La
 page pair did NOT reproduce -- Latin text at that size hits `autojunk`'s fast path,
 20-40 ms across four content shapes, and autojunk incidentally returns a
 meaningless `pct` for it, a separate pre-existing oddity): character-level
-`ratio()` goes quadratic only when the character repertoire is large enough that
-autojunk junks nothing (CJK / unicode-heavy pages) -- measured clean 4x per
+`ratio()` went quadratic only when the character repertoire was large enough that
+autojunk junked nothing (CJK / unicode-heavy pages) -- measured clean 4x per
 doubling, extrapolating to ~1 s at 160 K chars and **~7 minutes at the 10 MB
-fetch cap**. The off-loop move is thus MORE justified than the original numbers
-suggested, and the review's own stall probe corroborated the shape independently
-(164.7 ms -> 18.4 ms max stall on the same seam). Keep both halves of this
-incident: measure the whole operation, and expect your headline number to be
-re-run by a skeptic. The lesson: before implementing a perf task scoped by a list of
-call sites, run one measurement that would catch an omission -- a wall/stall probe
-around the whole operation, not around the listed calls. If the numbers do not drop
-when the listed sites move, the list was wrong, and the AC's own wording ("the
-difflib work") almost always licenses fixing the omission in the same change --
-record the addition explicitly rather than silently widening scope.
+fetch cap**. (The two regimes were not even cleanly separated: task-16839's
+born-red pin found a 128 KB Latin shape -- common letters junked, digits/capitals
+rare enough to survive as anchors -- that was degenerate AND quadratic at once,
+pct=0.47 for a 5%-edited page after ~39 s.) The off-loop move was thus MORE
+justified than the original numbers suggested, and the review's own stall probe
+corroborated the shape independently (164.7 ms -> 18.4 ms max stall on the same
+seam). Both regimes are historical as of task-16839: `calculate_change_percentage`
+now computes an O(n) order-insensitive multiset ratio over `_segment_for_diff`
+segments (the same basis as the stored diff) at every size -- measured ~6 ms at
+160 KB Latin, ~430 ms worst shape at the 10 MB cap. (A first revision kept an
+order-sensitive `SequenceMatcher` tier below a 4,000-segment bound with the
+multiset ratio as fallback; the independent review reproduced a pure-reorder
+cliff at that boundary -- 99.25% vs 0.00% across one added sentence -- and the
+fix round retired the tier. See the boundary-probe lesson below.) Keep both
+halves of this incident: measure the whole operation,
+and expect your headline number to be re-run by a skeptic. The lesson: before
+implementing a perf task scoped by a list of call sites, run one measurement that
+would catch an omission -- a wall/stall probe around the whole operation, not
+around the listed calls. If the numbers do not drop when the listed sites move,
+the list was wrong, and the AC's own wording ("the difflib work") almost always
+licenses fixing the omission in the same change -- record the addition explicitly
+rather than silently widening scope.
 
 ## A version-stamp rollback fixture is a promise every future migration must keep — centralize it or it breaks serially (task-15765/task-16197, 2026-08-15)
 
@@ -5302,3 +5314,24 @@ not None`, `not button.disabled`, label != "Checking"), never a mounted-state
 or pause proxy; settle `not disabled` before any programmatic `press()`. After
 the class fix: 10/10 full-file runs green (4 under the same 14-burner load)
 plus 5/5 standalone runs of the old reproducer.
+
+## A tiered design's boundary must be probed with a shape the tiers disagree on (task-16839 fix round, 2026-08-20)
+
+Task-16839's first revision computed its change ratio with an order-sensitive
+`SequenceMatcher` alignment up to 4,000 total segments and an order-insensitive
+multiset ratio past that bound. The implementer's boundary checking used
+scattered-edit shapes and saw a smooth 0.0500 -> 0.049975 step, which looked
+like continuity. The independent review probed the same boundary with a **pure
+reorder** -- the one shape on which the two mechanisms measure opposite things
+-- and got 0.9925 -> 0.0000: one added sentence per side flipped "99% changed"
+to "0% changed" for a page whose content had not changed at all. The smooth
+ordinary-shape probe had proven nothing, because on ordinary shapes the two
+tiers compute (nearly) the same number by construction; the boundary's real
+behaviour lives exactly where they disagree. Rule: when a function switches
+mechanisms on a size/cost threshold, first name the semantic axis on which the
+mechanisms differ (here: order-sensitivity), then build the boundary probe to
+maximise disagreement on that axis -- and if such a shape exists at all, the
+design has a cliff no threshold placement can fix; the durable resolution is
+one semantic at every size (the fix round retired the alignment tier and made
+the order-insensitive ratio the sole mechanism, with "a moved segment is not a
+change" as the documented decision), not a relocated boundary.

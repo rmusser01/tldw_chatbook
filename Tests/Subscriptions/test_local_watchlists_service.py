@@ -286,15 +286,17 @@ async def test_url_list_offloads_cpu_work_for_every_url_in_order(tmp_path, monke
         calls.append(("extract", marker, threading.get_ident()))
         return real_extract(html, ignore_selectors)
 
-    def recording_percentage(old_content, new_content):
+    # Both spies forward the pre-built segment lists `check_url` now passes
+    # (TASK-16839 fix round: one segmentation per side, shared across hops).
+    def recording_percentage(old_content, new_content, **kwargs):
         marker = f"{text_markers[old_content]}->{text_markers[new_content]}"
         calls.append(("percentage", marker, threading.get_ident()))
-        return real_percentage(old_content, new_content)
+        return real_percentage(old_content, new_content, **kwargs)
 
-    def recording_details(previous_text, current_text):
+    def recording_details(previous_text, current_text, **kwargs):
         marker = f"{text_markers[previous_text]}->{text_markers[current_text]}"
         calls.append(("details", marker, threading.get_ident()))
-        return real_details(previous_text, current_text)
+        return real_details(previous_text, current_text, **kwargs)
 
     monkeypatch.setattr(monitoring_engine, "guarded_fetch_httpx_async", serve)
     monkeypatch.setattr(

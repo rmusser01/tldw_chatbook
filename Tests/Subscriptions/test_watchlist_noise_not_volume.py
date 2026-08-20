@@ -696,9 +696,9 @@ async def _direct_check(db, source_id: int) -> tuple[dict | None, dict]:
 def _long_page(tail: str) -> str:
     """~40 unchanging sentences plus one line carrying `tail`.
 
-    The point is the ratio: the whole page is ~2.5 kB, so editing `tail`
-    alone moves `SequenceMatcher`'s whole-page similarity by well under 1% --
-    two orders of magnitude below the old 0.1 default.
+    The point is the ratio: editing `tail` alone changes 1 of the page's 41
+    sentence segments (~2.4% on TASK-16839's segment basis; under 1% of
+    characters on the old basis) -- well below the old 0.1 default either way.
     """
     body = "".join(
         f"<p>Section {i} of the release notes is unchanged in this revision.</p>"
@@ -748,10 +748,14 @@ async def test_a_small_edit_to_a_long_page_fires_under_the_default(monkeypatch):
     assert any(line.startswith("+") and "4.5" in line for line in diff_lines)
     assert any(line.startswith("-") and "4.1" in line for line in diff_lines)
 
-    # The precondition that makes this test meaningful: the edit really is far
-    # below the retired 0.1 default, so the pass cannot come from a big change.
-    assert items[0]["change_percentage"] < 1.0, (
-        "the edit must be tiny (well under 1% of the page) or this test would "
+    # The precondition that makes this test meaningful: the edit really is
+    # below the retired 0.1 default, so the pass cannot come from a big
+    # change. TASK-16839 rebased the percentage from characters onto
+    # sentence-sized diff segments, so this one-sentence edit on a 41-segment
+    # page now reports ~2.4% (1 segment of 41) instead of ~0.1% of
+    # characters -- still well under the retired default's 10%.
+    assert items[0]["change_percentage"] < 10.0, (
+        "the edit must stay below the retired 0.1 default or this test would "
         f"pass under the old default too; got {items[0]['change_percentage']!r}"
     )
 
