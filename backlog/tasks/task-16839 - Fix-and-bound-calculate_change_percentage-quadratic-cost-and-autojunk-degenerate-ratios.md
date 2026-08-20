@@ -86,7 +86,9 @@ task changes the story it tells.
 `_segment_for_diff` segments -- the same sentence/line-sized basis the stored
 diff body, `diff_summary` and `added_and_removed_text` already use -- so the
 percentage, the diff and the added/removed haystacks all describe the change at
-one granularity. Two tiers in `_segment_change_ratio`: alignment
+one granularity. Two tiers in `_segment_change_ratio` (**superseded by the
+fix round below -- the alignment tier is retired; the multiset ratio is the
+sole mechanism at every size**): alignment
 (`SequenceMatcher` over segments, `autojunk=False` -- popularity junking IS the
 degeneracy mechanism, so it is off and cost is bounded explicitly instead) for
 pages up to `_ALIGNMENT_MAX_TOTAL_SEGMENTS`=4,000 segments with
@@ -157,3 +159,67 @@ known pre-existing dirt in the untouched FeedMonitor region).
 `test_url_monitor_off_loop.py`, `test_watchlists_db_instance_and_off_loop.py`,
 `test_watchlist_noise_not_volume.py`, `test_watchlist_content_kind_producer.py`
 (pin updates); `backlog/docs/lessons-testing-evidence.md` (AC#4 correction).
+
+### Fix round (2026-08-20, independent review FIX-FIRST verdict)
+
+**Finding 1 (blocking) -- ALIGNMENT/MULTISET tier cliff for reorders, FIXED
+by retiring the alignment tier.** The review reproduced a sign-flip
+discontinuity at the 4,000-total-segment boundary: a purely reordered page
+(same segments, shuffled, zero content change) reported pct=0.9925 at 4,000
+total segments (order-sensitive `SequenceMatcher` tier) and pct=0.0000 at
+4,002 (order-insensitive multiset tier) -- one extra sentence per side
+flipped "99% changed" to "0% changed". Born-red evidence: the new
+`test_pure_reorder_reports_zero_change_with_no_size_cliff` was run against
+6d22de89f and failed with exactly that signature ("a pure reorder reports
+0.9925 at 4,000 total segments but 0.0000 at 4,002"). Resolution: the
+**two-tier design described above is retired**; `_segment_change_ratio` is
+the O(n) order-insensitive multiset ratio at EVERY size, and both alignment
+constants are deleted. This is the only continuous option: any hard boundary
+between an order-sensitive and an order-insensitive mechanism flips on
+reorder-shaped edits wherever it is placed, and order-sensitivity at every
+size is the unaffordable quadratic this task retired. **Semantic decision,
+documented in `_segment_change_ratio`'s docstring: a segment that merely
+moved is not a content change -- a pure reorder reports 0.0 at any size.**
+Rationale: the consumers read the value as "how much content changed"; a
+re-sorted listing page is exactly the noise a raised threshold exists to
+withhold, and near-100% for zero content change is the misleading-percentage
+defect this task exists to eliminate. A pure reorder is still detected (hash
+differs) and at the default threshold 0.0 still produces an item, with the
+moves visible in the (position-aware) diff body. Behavior delta vs the
+reviewed commit: none for non-move edit shapes (multiset equals the
+alignment value there -- the review's own probe: 0.050000/0.049975 across
+the boundary for a scattered 5% edit); moves now consistently count 0
+instead of order-dependently 0-or-~1.
+
+**Finding 2 (non-blocking) -- doubled segmentation across `check_url`'s two
+hops, FIXED by sharing segments.** The percentage hop
+(`_change_percentage_with_segments`, new) segments each side once and
+returns the lists; `check_url` passes them to
+`_build_significant_change_details`, which (like `build_change_diff` and
+`added_and_removed_text` already did) accepts optional pre-built segments.
+`calculate_change_percentage` gained matching optional
+`old_segments`/`new_segments` kwargs; all default to None so every other
+caller is unchanged. Measured at the 10 MB cap: end-to-end changed-path CPU
+947 ms -> 528 ms (one `_segment_for_diff` pass over a 10 MB side is ~200 ms,
+paid 4x before, 2x now), outputs byte-identical across the two shapes.
+
+**Re-measured post-fix** (same M-series laptop): 160 KB Latin 5%-edit
+6.2 ms; at the 10 MB cap: Latin 431 ms, CJK prose 162 ms, spaceless blob
+166 ms -- worst measured shape at the cap is now 431 ms (the multiset-only
+path is faster than the reviewed two-tier's 647 ms; the 5 s in-test loose
+bound is unchanged). Pure-reorder probe: 0.0 at 12/300/2,000/2,001/6,000
+segments per side -- no cliff.
+
+**Test pin updates in this round**, each disclosed in-file: the two off-loop
+`_segment_for_diff` counts go 4 -> 2 (the cross-hop sharing is the fix;
+an extra call now means the sharing broke); the off-loop/service spies on
+`calculate_change_percentage` and `_build_significant_change_details`
+forward the new segment kwargs;
+`test_multiset_regime_above_the_alignment_bound_keeps_sane_values` is now
+`test_very_large_page_keeps_sane_values` (the bound it referenced no longer
+exists). `Tests/Subscriptions/`: 806 passed, 1 pre-existing skip.
+
+**Lessons**: corrected the 15764/16839 entry's mechanism sentence (multiset
+is now the sole tier) and added a new entry: a tiered design's boundary must
+be probed with a shape the tiers DISAGREE on -- the smooth scattered-edit
+step proved nothing because the tiers agree on that shape by construction.

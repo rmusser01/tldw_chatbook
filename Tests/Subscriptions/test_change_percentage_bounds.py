@@ -16,14 +16,17 @@ the two full raw texts, which has two entangled failure regimes:
 The shipped fix computes the ratio over ``_segment_for_diff`` segments -- the
 same sentence/line-sized basis the stored diff body, ``diff_summary`` and
 ``added_and_removed_text`` already use -- so the percentage now means "fraction
-of the page's diff segments that changed" and every consumer (the
-``change_threshold`` comparison, the withheld disposition, the reader's
-"N% changed" headline) reads one coherent story. Cost is bounded by
-construction: an O(n) multiset comparison takes over past explicit size/
-repetition bounds (see ``_segment_change_ratio``).
+of the page's segment content that appeared or disappeared" and every consumer
+(the ``change_threshold`` comparison, the withheld disposition, the reader's
+"N% changed" headline) reads one coherent story. The ratio is an O(n)
+order-insensitive multiset comparison at EVERY size (see
+``_segment_change_ratio``): the fix round retired an initial order-sensitive
+``SequenceMatcher`` tier after the independent review reproduced a sign-flip
+cliff at its 4,000-segment boundary for reorder-shaped edits.
 
-Both born-red pins below were run against the pre-fix implementation and
-failed for the advertised reason (degenerate value; blown wall-clock bound).
+The born-red pins below were each run against the implementation they indict
+and failed for the advertised reason (degenerate value; blown wall-clock
+bound; the reorder tier-cliff).
 """
 
 import random
@@ -31,7 +34,6 @@ import time
 
 import pytest
 
-from tldw_chatbook.Subscriptions import monitoring_engine
 from tldw_chatbook.Subscriptions.monitoring_engine import (
     ContentExtractor,
     _segment_for_diff,
@@ -127,6 +129,50 @@ def test_identical_and_disjoint_and_empty_extremes():
     )
 
 
+def _pure_reorder_pct(n_per_side: int) -> float:
+    """Change percentage for a page whose segments were shuffled, nothing else."""
+    sentences = [
+        f"unique sentence number {i} holding its own distinct words."
+        for i in range(n_per_side)
+    ]
+    old = " ".join(sentences)
+    assert len(_segment_for_diff(old)) == n_per_side, (
+        "the probe is only meaningful if each sentence is its own segment"
+    )
+    shuffled = sentences[:]
+    random.Random(99).shuffle(shuffled)
+    new = " ".join(shuffled)
+    return ContentExtractor.calculate_change_percentage(old, new)
+
+
+def test_pure_reorder_reports_zero_change_with_no_size_cliff():
+    """Born-red fix-round pin (task-16839 review, Finding 1).
+
+    At commit 6d22de89f a purely reordered page -- same segments, shuffled,
+    zero content change -- reported pct=0.9925 at 4,000 total segments (the
+    order-sensitive SequenceMatcher alignment tier) and pct=0.0000 at 4,002
+    (the order-insensitive multiset tier): one extra sentence per side flipped
+    "99% changed" to "0% changed" for functionally the same event. The fix
+    retired the alignment tier; the multiset ratio is the sole mechanism at
+    every size, so a pure reorder reports 0.0 everywhere -- the documented
+    semantic decision (see ``_segment_change_ratio``): a segment that merely
+    moved is not content change, and the diff body still shows the moves.
+    """
+    below = _pure_reorder_pct(2000)  # 4,000 total segments: the retired tier boundary
+    above = _pure_reorder_pct(2001)  # 4,002 total segments: just past it
+    assert abs(below - above) < 0.01, (
+        f"tier cliff: a pure reorder reports {below:.4f} at 4,000 total "
+        f"segments but {above:.4f} at 4,002 -- the two mechanisms disagree "
+        f"at their boundary"
+    )
+    for n_per_side in (12, 300, 2000, 2001, 6000):
+        pct = _pure_reorder_pct(n_per_side)
+        assert pct == 0.0, (
+            f"a purely reordered page must report 0.0 at any size "
+            f"(got {pct!r} at {n_per_side} segments/side)"
+        )
+
+
 def test_small_page_one_sentence_edit_is_one_segments_worth():
     """The percentage is segment-granular: 1 edited sentence of 11 is ~9%."""
     old = " ".join(
@@ -141,15 +187,12 @@ def test_small_page_one_sentence_edit_is_one_segments_worth():
     assert pct == pytest.approx(1 - (2 * 10 / 22), abs=1e-9)
 
 
-def test_multiset_regime_above_the_alignment_bound_keeps_sane_values():
-    """Past the alignment bound the O(n) multiset tier reports the same
-    magnitudes (it is order-insensitive there, by design and documented)."""
-    n = 3 * monitoring_engine._ALIGNMENT_MAX_TOTAL_SEGMENTS
-    old = _latin_page(n)
-    assert (
-        len(_segment_for_diff(old)) * 2
-        > monitoring_engine._ALIGNMENT_MAX_TOTAL_SEGMENTS
-    )
+def test_very_large_page_keeps_sane_values():
+    """A ~640 KB / 12,000-segment page reports the same magnitudes as a small
+    one -- the multiset ratio is one mechanism at every size, so there is no
+    tier boundary for the value to jump at (fix round, review Finding 1)."""
+    old = _latin_page(12_000)
+    assert len(_segment_for_diff(old)) == 12_000
     new = _edit_fraction(old, 0.05)
     pct = ContentExtractor.calculate_change_percentage(old, new)
     assert pct == pytest.approx(0.05, abs=0.02)
@@ -246,9 +289,11 @@ def test_repetitive_page_is_neither_junked_nor_quadratic():
     """A page of few distinct segments must not resurrect either regime.
 
     Segment-level autojunk would junk a segment repeated >1% of a >=200-segment
-    page (the old defect one level up), and an unjunked alignment over heavy
-    repetition is the quadratic shape -- the collision budget routes this to
-    the multiset tier instead: exact small value, bounded time.
+    page (the old defect one level up), and an unjunked SequenceMatcher
+    alignment over heavy repetition is the quadratic shape -- the multiset
+    ratio has neither mechanism: counting multiplicity is immune to
+    repetition, and its cost is O(n) by construction. Exact small value,
+    bounded time.
     """
     old = " ".join(f"entry number {i % 7} is listed here." for i in range(4000))
     new_sentences = old.split(". ")

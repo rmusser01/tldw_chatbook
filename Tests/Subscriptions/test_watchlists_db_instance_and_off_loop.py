@@ -518,10 +518,11 @@ async def test_changed_item_cpu_work_runs_off_the_event_loop_without_changing_se
 
     assert len(calls["percentage"]) == 1
     assert calls["percentage"][0] != loop_thread
-    # 4 = 2 inside the percentage hop (TASK-16839: the percentage is computed
-    # on the same `_segment_for_diff` basis as the diff) + 2 in the details
-    # hop, which still segments once per side and shares (segment-once rule).
-    assert len(calls["segment"]) == 4
+    # 2 = one segmentation per side for the whole changed path: the percentage
+    # hop builds both segment lists and `check_url` passes them through to the
+    # details hop (TASK-16839 fix round, review finding 2 -- previously each
+    # hop segmented independently, 4 calls, paying the dominant cost twice).
+    assert len(calls["segment"]) == 2
     assert len(calls["build"]) == 1
     assert len(calls["added_removed"]) == 1
     assert len(calls["classify"]) == 1
@@ -553,9 +554,11 @@ async def test_below_threshold_cpu_work_stops_before_significant_change_details(
 
     percentage_threads: list[int] = []
 
-    def recording_percentage(old_content, new_content):
+    # The percentage hop passes pre-built segment lists (TASK-16839 fix
+    # round: shared with the details hop), so the spy forwards them.
+    def recording_percentage(old_content, new_content, **kwargs):
         percentage_threads.append(threading.get_ident())
-        return real_percentage(old_content, new_content)
+        return real_percentage(old_content, new_content, **kwargs)
 
     grouped_calls: list[int] = []
 
@@ -650,12 +653,12 @@ async def test_cancelled_change_worker_does_not_resume_check_or_mutate_state(
     worker_finished = threading.Event()
     worker_threads: list[int] = []
 
-    def blocked_details(previous_text, current_text):
+    def blocked_details(previous_text, current_text, **kwargs):
         worker_threads.append(threading.get_ident())
         worker_entered.set()
         try:
             release_worker.wait()
-            return real_details(previous_text, current_text)
+            return real_details(previous_text, current_text, **kwargs)
         finally:
             worker_finished.set()
 
@@ -721,7 +724,7 @@ async def test_failing_change_worker_propagates_and_records_breaker_failure(
 
     worker_threads: list[int] = []
 
-    def failing_details(_previous_text, _current_text):
+    def failing_details(_previous_text, _current_text, **_kwargs):
         worker_threads.append(threading.get_ident())
         raise SignificantDetailsError("significant details failed")
 

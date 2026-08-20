@@ -253,15 +253,23 @@ class ContentExtractor:
         return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
     @staticmethod
-    def calculate_change_percentage(old_content: str, new_content: str) -> float:
+    def calculate_change_percentage(
+        old_content: str,
+        new_content: str,
+        *,
+        old_segments: List[str] | None = None,
+        new_segments: List[str] | None = None,
+    ) -> float:
         """Estimate how much of a page's text changed, as a 0.0-1.0 ratio.
 
         Computed over ``_segment_for_diff`` segments -- the same
         sentence/line-sized units the stored diff body, ``diff_summary`` and
         ``added_and_removed_text`` are built from -- so the ratio means "the
-        fraction of the page's diff segments that changed" and agrees in
-        granularity with everything else the reader sees about the change.
-        See ``_segment_change_ratio`` for the cost bounds.
+        fraction of the page's segment content that appeared or disappeared"
+        and agrees in granularity with everything else the reader sees about
+        the change. The ratio is order-INSENSITIVE: a page that merely
+        reorders its segments reports 0.0 -- see ``_segment_change_ratio``
+        for that semantic decision and its rationale, and for the O(n) cost.
 
         TASK-16839. This was a character-level
         ``SequenceMatcher(None, old, new).ratio()`` with default autojunk,
@@ -279,6 +287,14 @@ class ContentExtractor:
         Args:
             old_content: Previous extracted text.
             new_content: New extracted text.
+            old_segments: ``old_content`` already run through
+                ``_segment_for_diff``. Optional: segmentation is ~95% of this
+                function's cost, so ``check_url`` segments each side once and
+                shares the lists between this ratio and the significant-change
+                details -- the same segment-once rule ``build_change_diff``
+                documents. Segmented here when omitted, so callers passing
+                only the texts are unchanged.
+            new_segments: ``new_content`` likewise.
 
         Returns:
             Change ratio, 0.0 (identical) to 1.0 (nothing in common).
@@ -292,9 +308,11 @@ class ContentExtractor:
         if not old_content or not new_content:
             return 1.0
 
-        return _segment_change_ratio(
-            _segment_for_diff(old_content), _segment_for_diff(new_content)
-        )
+        if old_segments is None:
+            old_segments = _segment_for_diff(old_content)
+        if new_segments is None:
+            new_segments = _segment_for_diff(new_content)
+        return _segment_change_ratio(old_segments, new_segments)
 
 
 ########################################################################################################################
@@ -442,50 +460,52 @@ def _segment_for_diff(text: str) -> List[str]:
     return segments
 
 
-# Cost bounds for `_segment_change_ratio`'s alignment tier (TASK-16839), both
-# chosen from adversarial measurements (worst shapes, M-series laptop):
-#
-# - `_ALIGNMENT_MAX_TOTAL_SEGMENTS`: `SequenceMatcher.get_matching_blocks`
-#   over two segment lists is quadratic-ish when small edits are scattered
-#   densely (an edit every 2nd segment measured 134 ms at 2,000 segments per
-#   side and 4x that at 4,000 per side). 4,000 total segments (~2,000 per
-#   side, roughly 200+ KB of extracted text per side) keeps that worst case
-#   near 100 ms while covering ordinary pages by a wide margin.
-# - `_ALIGNMENT_MAX_SEGMENT_COLLISIONS`: with repeated segments the matcher's
-#   inner loop walks every position of the element in the other side, so its
-#   per-sweep cost is the number of equal-segment pairs (sum over distinct
-#   segments of count_a * count_b) -- e.g. two sides of 2,000 identical
-#   segments are 4M pairs in a single sweep. 200K pairs measured ~40 ms.
-#
-# Past either bound the multiset tier takes over: O(n), order-insensitive.
-_ALIGNMENT_MAX_TOTAL_SEGMENTS = 4_000
-_ALIGNMENT_MAX_SEGMENT_COLLISIONS = 200_000
-
-
 def _segment_change_ratio(old_segments: List[str], new_segments: List[str]) -> float:
-    """Change ratio between two segment lists, with bounded worst-case cost.
+    """Order-insensitive change ratio between two segment lists. O(n), always.
 
-    Two tiers (TASK-16839):
+    The fraction of segment occurrences (counting multiplicity) present on
+    only one side: ``1 - 2*matches/total``, difflib's ``quick_ratio`` formula
+    over segments.
 
-    * **Alignment** (ordinary pages): ``SequenceMatcher`` over the segment
-      lists with ``autojunk=False``. Segments are near-unique in real pages,
-      so this is effectively linear; autojunk is OFF because popularity
-      junking is exactly the mechanism that made the old character-level
-      ratio degenerate, and a repetitive page (few distinct segments) would
-      reproduce it one level up.
-    * **Multiset** (past the bounds above): the fraction of segments present
-      on both sides counting multiplicity -- ``2*matches/total``, the
-      ``quick_ratio`` formula over segments. O(n) and order-INSENSITIVE: a
-      huge page that merely reorders its segments reports ~0 change, which is
-      the honest coarse answer for a noise-threshold consumer.
+    **Semantic decision (TASK-16839 fix round): a segment that merely MOVED
+    is not a change.** A purely reordered page -- same segments, shuffled --
+    reports 0.0 at every size. Rationale: this ratio's consumers (the
+    ``change_threshold`` withhold comparison, the withheld disposition, the
+    reader's "N% changed" headline) all read it as "how much of the page's
+    content changed", and a re-sorted listing page whose content is intact is
+    exactly the noise shape a raised threshold exists to withhold -- reporting
+    near-100% for zero content change is the misleading-percentage defect
+    this task exists to eliminate. Order is not lost to the reader: the
+    stored diff body is position-aware and shows moved blocks as ``-``/``+``
+    pairs, and a pure reorder is still *detected* (the content hash differs),
+    so at the default threshold 0.0 it still produces an item -- headlined
+    "0% changed", with the moves visible in the diff.
+
+    Why one mechanism at every size, rather than an order-sensitive alignment
+    below a cost bound: the reviewed revision ran a ``SequenceMatcher``
+    alignment up to 4,000 total segments with this multiset ratio as the
+    past-the-bound fallback, and the review reproduced the resulting cliff --
+    a pure reorder reported 0.9925 at 4,000 total segments and 0.0000 at
+    4,002, so one added sentence per side flipped "99% changed" to "0%
+    changed". Any hard boundary between an order-sensitive and an
+    order-insensitive tier flips like that on reorder-shaped edits, and
+    order-sensitivity at *every* size is the unaffordable-quadratic shape
+    this task retired -- so the order-insensitive ratio is the sole
+    mechanism, and the reported quantity is continuous in page size for a
+    fixed edit shape. For non-move edit shapes (in-place rewrites,
+    insertions, deletions) this agrees with what the alignment tier
+    reported anyway -- the review measured a scattered 5% edit at
+    0.050000/0.049975 across that boundary -- so ordinary pages are
+    unaffected by the tier's retirement; only moves are now consistently
+    "not a content change" instead of order-dependently either.
 
     Args:
         old_segments: Previous text through ``_segment_for_diff``.
         new_segments: Current text likewise.
 
     Returns:
-        0.0 (identical) .. 1.0 (disjoint). Both sides empty is 0.0; exactly
-        one side empty is 1.0.
+        0.0 (identical multisets) .. 1.0 (disjoint). Both sides empty is
+        0.0; exactly one side empty is 1.0.
     """
     total = len(old_segments) + len(new_segments)
     if not old_segments or not new_segments:
@@ -493,14 +513,6 @@ def _segment_change_ratio(old_segments: List[str], new_segments: List[str]) -> f
 
     old_counts = Counter(old_segments)
     new_counts = Counter(new_segments)
-    if total <= _ALIGNMENT_MAX_TOTAL_SEGMENTS:
-        collisions = sum(
-            count * new_counts.get(segment, 0) for segment, count in old_counts.items()
-        )
-        if collisions <= _ALIGNMENT_MAX_SEGMENT_COLLISIONS:
-            matcher = SequenceMatcher(None, old_segments, new_segments, autojunk=False)
-            return 1.0 - matcher.ratio()
-
     matches = sum(
         min(count, new_counts.get(segment, 0)) for segment, count in old_counts.items()
     )
@@ -692,12 +704,54 @@ def classify_change_type(previous_text: str, current_text: str) -> str:
     return "content"
 
 
-def _build_significant_change_details(
+def _change_percentage_with_segments(
     previous_text: str, current_text: str
-) -> tuple[str, str, str, str, str]:
-    """Build all significant-change diff details from one segmentation pass."""
+) -> tuple[float, List[str], List[str]]:
+    """Segment both sides once and compute the change ratio over the segments.
+
+    ``check_url``'s percentage hop. Segmentation is ~95% of the ratio's cost
+    (measured ~200 ms per side of a ~430 ms total at the 10 MB fetch cap;
+    the multiset ratio itself is cheap), so the segment lists are returned for the
+    details hop to reuse rather than re-segmenting -- extending the
+    segment-once rule ``build_change_diff`` documents across the two
+    ``asyncio.to_thread`` hops as well as within the second (TASK-16839 fix
+    round, review finding 2: a significant change previously paid full
+    segmentation twice end-to-end).
+    """
     old_segments = _segment_for_diff(previous_text)
     new_segments = _segment_for_diff(current_text)
+    percentage = ContentExtractor.calculate_change_percentage(
+        previous_text,
+        current_text,
+        old_segments=old_segments,
+        new_segments=new_segments,
+    )
+    return percentage, old_segments, new_segments
+
+
+def _build_significant_change_details(
+    previous_text: str,
+    current_text: str,
+    *,
+    old_segments: List[str] | None = None,
+    new_segments: List[str] | None = None,
+) -> tuple[str, str, str, str, str]:
+    """Build all significant-change diff details from one segmentation pass.
+
+    Args:
+        previous_text: The previous snapshot's ``extracted_content``.
+        current_text: The freshly fetched extracted text.
+        old_segments: ``previous_text`` already segmented; ``new_segments``
+            likewise. Optional: ``check_url`` passes the lists its percentage
+            hop already built (``_change_percentage_with_segments``), so a
+            significant change segments each side once end-to-end. Segmented
+            here when omitted, so direct callers are unchanged.
+        new_segments: See ``old_segments``.
+    """
+    if old_segments is None:
+        old_segments = _segment_for_diff(previous_text)
+    if new_segments is None:
+        new_segments = _segment_for_diff(current_text)
     diff_body, diff_summary = build_change_diff(
         previous_text,
         current_text,
@@ -1463,10 +1517,21 @@ class URLMonitor:
                 breaker.record_success()
                 return None, _disposition(DISPOSITION_UNCHANGED)
 
-            # Calculate change details
+            # Calculate change details. The percentage hop returns the segment
+            # lists it built alongside the ratio: segmentation dominates the
+            # ratio's cost, and the details hop below consumes the very same
+            # lists, so they are carried across the threshold check instead of
+            # being rebuilt (TASK-16839 fix round, review finding 2). The lists
+            # go out of scope with this call frame either way; holding them
+            # across one cheap comparison does not change peak memory, which
+            # the details hop's own segmentation already reached before.
             previous_text = previous["extracted_content"] or ""
-            change_percentage = await asyncio.to_thread(
-                ContentExtractor.calculate_change_percentage,
+            (
+                change_percentage,
+                old_segments,
+                new_segments,
+            ) = await asyncio.to_thread(
+                _change_percentage_with_segments,
                 previous_text,
                 current_content["text"],
             )
@@ -1516,6 +1581,8 @@ class URLMonitor:
                 _build_significant_change_details,
                 previous_text,
                 current_content["text"],
+                old_segments=old_segments,
+                new_segments=new_segments,
             )
             change_info = {
                 "type": "url_change",
