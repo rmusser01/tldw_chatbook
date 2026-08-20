@@ -341,9 +341,113 @@ def test_kimi_k3_payload_omits_legacy_sampler_fields() -> None:
 
 
 @pytest.mark.parametrize(
+    "model",
+    ["kimi-k3-turbo", "kimi-k4", "kimi-k2.5", "kimi-k2.6", "kimi-latest"],
+)
+def test_kimi_family_accepts_reasoning_effort(model: str) -> None:
+    """TASK-18803: the wire accepts ``reasoning_effort`` across the kimi
+    series (probe-verified 200s on kimi-k2.6, kimi-k2.7-code and
+    kimi-latest), so the builder must not client-side-reject a release-day
+    kimi id the way the old literal ``kimi-k3`` pin did."""
+    payload = build_moonshot_chat_payload(
+        resolution=_resolution(model=model),
+        messages_payload=[{"role": "user", "content": "hello"}],
+        reasoning_effort="high",
+    )
+    assert payload["reasoning_effort"] == "high"
+
+
+def test_kimi_k3_accepts_medium_reasoning_effort() -> None:
+    """``reasoning_effort: "medium"`` answers 200 on kimi-k3
+    (chatcmpl-6a872b62bea2d202c1d3f6fa); the old value set client-side
+    rejected it."""
+    payload = build_moonshot_chat_payload(
+        resolution=_resolution(),
+        messages_payload=[{"role": "user", "content": "hello"}],
+        reasoning_effort="medium",
+    )
+    assert payload["reasoning_effort"] == "medium"
+
+
+def test_moonshot_v1_still_rejects_reasoning_effort() -> None:
+    """Control: the legacy family keeps its historical client-side check."""
+    with pytest.raises(ChatBadRequestError):
+        build_moonshot_chat_payload(
+            resolution=_resolution(model="moonshot-v1-32k"),
+            messages_payload=[{"role": "user", "content": "hello"}],
+            reasoning_effort="high",
+        )
+
+
+def test_versioned_kimi_family_drops_sampling() -> None:
+    """The value-level sampling rejection covers the whole versioned kimi
+    family (probe-verified 400s on kimi-k2.5/k2.6/k3), not just kimi-k3."""
+    payload = build_moonshot_chat_payload(
+        resolution=_resolution(model="kimi-k2.6"),
+        messages_payload=[{"role": "user", "content": "hello"}],
+        streaming=False,
+        temperature=0.4,
+        top_p=0.9,
+        n=1,
+        presence_penalty=0.1,
+        frequency_penalty=0.1,
+    )
+    assert set(payload) == {"model", "messages", "stream"}
+
+
+def test_kimi_latest_passes_sampling_through() -> None:
+    """kimi-latest accepts the full sampling set on the wire
+    (chatcmpl-6a872b9816ceb0c0ae780b1e); the old ``moonshot-v1-`` allowlist
+    silently discarded the user's settings for it."""
+    payload = build_moonshot_chat_payload(
+        resolution=_resolution(model="kimi-latest"),
+        messages_payload=[{"role": "user", "content": "hello"}],
+        streaming=False,
+        temperature=0.4,
+        top_p=0.9,
+        n=1,
+        presence_penalty=0.1,
+        frequency_penalty=0.1,
+    )
+    assert payload["temperature"] == 0.4
+    assert payload["top_p"] == 0.9
+    assert payload["n"] == 1
+    assert payload["presence_penalty"] == 0.1
+    assert payload["frequency_penalty"] == 0.1
+
+
+def test_unrecognized_model_passes_sampling_through() -> None:
+    """A future non-kimi family must not have its settings silently dropped
+    by a frozen allowlist -- the server adjudicates them."""
+    payload = build_moonshot_chat_payload(
+        resolution=_resolution(model="moonshot-v2-8k"),
+        messages_payload=[{"role": "user", "content": "hello"}],
+        streaming=False,
+        temperature=0.4,
+        top_p=0.9,
+    )
+    assert payload["temperature"] == 0.4
+    assert payload["top_p"] == 0.9
+
+
+def test_min_temperature_interplay_scoped_to_v1_family() -> None:
+    """The documented n>1/temperature>=0.3 interplay belongs to the
+    moonshot-v1 family; kimi-latest must not inherit it."""
+    payload = build_moonshot_chat_payload(
+        resolution=_resolution(model="kimi-latest"),
+        messages_payload=[{"role": "user", "content": "hello"}],
+        streaming=False,
+        temperature=0.2,
+        n=2,
+    )
+    assert payload["temperature"] == 0.2
+    assert payload["n"] == 2
+
+
+@pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("reasoning_effort", "medium"),
+        ("reasoning_effort", "extreme"),
         ("reasoning_effort", {}),
         ("max_tokens", True),
         ("temperature", 3),

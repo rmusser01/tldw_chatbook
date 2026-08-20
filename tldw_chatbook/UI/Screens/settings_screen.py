@@ -516,7 +516,9 @@ THINKING_EFFORT_OPTIONS = frozenset(
 # ordered option lists (blank = inherit/not set), so invalid values are
 # impossible by construction instead of rejected at save.
 REASONING_EFFORT_SELECT_OPTIONS = ("none", "minimal", "low", "medium", "high", "xhigh")
-KIMI_K3_REASONING_EFFORT_SELECT_OPTIONS = ("low", "high", "max")
+# "medium" probe-verified accepted on the wire (TASK-18803,
+# chatcmpl-6a872b62bea2d202c1d3f6fa) and allowed by the request builder.
+KIMI_K3_REASONING_EFFORT_SELECT_OPTIONS = ("low", "medium", "high", "max")
 GLM_5_2_REASONING_EFFORT_SELECT_OPTIONS = (
     "none",
     "minimal",
