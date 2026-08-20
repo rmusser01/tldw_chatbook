@@ -2641,6 +2641,7 @@ class LibraryFileNotesWorkspace(Vertical):
                 and result.handle is not None
                 and result.review is not None
                 and result.review.candidate == operation.candidate.candidate
+                and snapshot.push_candidate == operation.candidate
                 and self._repository_identity_is_complete(repository)
             ):
                 assert repository is not None

@@ -1484,6 +1484,86 @@ async def test_workspace_push_review_adopts_operations_and_restores_endpoint_det
 
 
 @pytest.mark.asyncio
+async def test_workspace_preflight_review_rechecks_candidate_after_trust_aba(
+    tmp_path: Path,
+) -> None:
+    """A settled preflight cannot revive a candidate revoked by trust ABA."""
+    owner, binding, replica, service, workspace = _push_workspace_fixture(tmp_path)
+    _publish_candidate_on_owner(
+        owner,
+        binding,
+        service.repository,
+        parent_oid="a" * 40,
+        candidate_oid="d" * 40,
+    )
+    candidate = owner.snapshot(binding).push_candidate
+    assert candidate is not None
+    destination = _push_destination_projection()
+    handle = object.__new__(PushReviewHandle)
+    review = PushReviewProjection(candidate.candidate, destination, "origin")
+    result = PushPreflightResult("review", handle, review)
+    release = asyncio.Event()
+    operation = service.retain_push_operation(
+        binding,
+        "preflight",
+        result,
+        release,
+        candidate=candidate,
+    )
+
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _until(
+            pilot,
+            lambda: workspace.initialized,
+            "workspace initialization did not settle",
+        )
+        workspace._navigator_mode = "git"
+        workspace._sync_navigator_mode()
+        workspace._rehydrate_git_presentation()
+        assert workspace._push_operation is operation
+        assert workspace._git_panel_widget.push_phase == "checking_remote"
+
+        assert owner.clear_trust(binding)
+        assert owner.publish_trust(binding, service.repository)
+        fresh = owner.snapshot(binding)
+        assert fresh.trusted_repository == service.repository
+        assert fresh.push_candidate is None
+        assert fresh.push_candidate_generation > candidate.generation
+
+        release.set()
+        await operation.wait()
+        await _until(
+            pilot,
+            lambda: workspace._push_result is result,
+            "preflight observer did not publish its settlement",
+        )
+
+        assert workspace._push_review_handle is None
+        assert workspace._push_review_projection is None
+        assert workspace._git_panel_widget.push_phase == "result"
+        assert _text(
+            workspace.query_one("#file-notes-git-push-result-title")
+        ) == "Blocked"
+        assert workspace.query_one(
+            "#file-notes-git-push-result-copy",
+            TextArea,
+        ).text == (
+            "The configured destination could not be proved ready for this "
+            "reviewed commit."
+        )
+        review_again = workspace.query_one(
+            "#file-notes-git-push-review-again",
+            Button,
+        )
+        assert review_again.display
+        assert str(review_again.label) == "Review again"
+
+    await workspace.shutdown()
+    owner.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
 async def test_endpoint_details_close_rejects_stale_push_operation_focus(
     tmp_path: Path,
 ) -> None:
