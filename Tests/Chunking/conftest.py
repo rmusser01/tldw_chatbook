@@ -7,7 +7,6 @@ templates, async_chunker, auto_planner, server Metrics) are skipped at module
 level with documented reasons.
 """
 import os
-import pwd
 from pathlib import Path
 
 import pytest
@@ -21,8 +20,15 @@ def _real_home() -> str:
     and Path.home() here both point at the sandbox. The robust source is the
     passwd entry for the current uid (pwd.getpwuid), which never lies. Fall
     back to the env only if pwd is unavailable.
+
+    POSIX-only: `pwd` is imported here, not at module scope, so collection
+    cannot fail on a platform without it (Windows) — the repo's established
+    convention for this trap (see
+    Tests/Library/test_rag_answer_first_query_latency.py).
     """
     try:
+        import pwd
+
         return pwd.getpwuid(os.getuid()).pw_dir
     except (ImportError, KeyError, OSError):
         return os.environ.get("HOME") or str(Path.home())
@@ -71,6 +77,46 @@ def tokenizer_cached(cache_dir: str) -> bool:
         return False
 
 
+# tiktoken resolves gpt2 from two sha1-named blobs in its cache dir
+# (TIKTOKEN_CACHE_DIR / DATA_GYM_CACHE_DIR / <tmp>/data-gym-cache — the
+# tmp default is NOT sandboxed by Tests/conftest.py). Pure filesystem probe.
+_TIKTOKEN_GPT2_BLOB_URLS = (
+    "https://openaipublic.blob.core.windows.net/gpt-2/encodings/main/vocab.bpe",
+    "https://openaipublic.blob.core.windows.net/gpt-2/encodings/main/encoder.json",
+)
+
+
+def tiktoken_gpt2_cached() -> bool:
+    """True if tiktoken's gpt2 blobs are present in its cache dir.
+
+    The engine's tokens strategy prefers tiktoken over transformers, and
+    tiktoken reads $TMPDIR/data-gym-cache — which the pytest HOME sandbox does
+    not redirect — so on a machine with only the tiktoken cache (no HF hub
+    cache at all) the tokens tests still run. This probe keeps such machines
+    from over-skipping.
+    """
+    import hashlib
+
+    cache = (
+        os.environ.get("TIKTOKEN_CACHE_DIR")
+        or os.environ.get("DATA_GYM_CACHE_DIR")
+        or os.path.join(_tempdir(), "data-gym-cache")
+    )
+    if not cache:
+        return False
+    for url in _TIKTOKEN_GPT2_BLOB_URLS:
+        blob = os.path.join(cache, hashlib.sha1(url.encode()).hexdigest())
+        if not os.path.isfile(blob):
+            return False
+    return True
+
+
+def _tempdir() -> str:
+    import tempfile
+
+    return tempfile.gettempdir()
+
+
 def requires_cached_hf_tokenizer() -> bool:
     """Skip-mark helper for ported tests that load the real gpt2 tokenizer.
 
@@ -78,12 +124,14 @@ def requires_cached_hf_tokenizer() -> bool:
     'gpt2' tokenizer. Chatbook's repo-wide network guard (Tests/conftest.py,
     task-15111) blocks the HF-hub download, and the engine surfaces that as
     TokenizerError — so those tests can only run where the tokenizer is
-    already cached on this machine. Probes the REAL cache (outside the pytest
-    HOME sandbox) via `real_hf_hub_cache()`.
+    already cached on this machine. The engine prefers tiktoken (cache in
+    $TMPDIR/data-gym-cache, not sandboxed), falling back to the HF hub cache
+    (probed at the REAL, pre-sandbox location via `real_hf_hub_cache()`), so
+    the skip fires only when BOTH caches lack gpt2.
 
     Apply as: @pytest.mark.skipif(not requires_cached_hf_tokenizer(), reason=...)
     """
-    return tokenizer_cached(real_hf_hub_cache())
+    return tiktoken_gpt2_cached() or tokenizer_cached(real_hf_hub_cache())
 
 
 @pytest.fixture
@@ -108,13 +156,19 @@ def real_hf_cache(monkeypatch):
     init (which snapshots cache paths at import time in some versions) is
     consistent.
 
-    Skips (with a true reason) if the real cache genuinely lacks gpt2.
+    Skips (with a true reason) if gpt2 is unavailable offline — BUT only if
+    tiktoken's own cache can't satisfy it either: the engine prefers tiktoken,
+    which reads $TMPDIR/data-gym-cache (not sandboxed, no HF stack involved),
+    so on a tiktoken-only machine the tokens tests run without this fixture's
+    HF patching at all.
     """
     cache = real_hf_hub_cache()
-    if not tokenizer_cached(cache):
+    if not tokenizer_cached(cache) and not tiktoken_gpt2_cached():
         pytest.skip(
-            f"gpt2 tokenizer not cached at {cache} (network downloads are "
-            "blocked by the repo network guard; pre-cache gpt2 to run this)"
+            f"gpt2 tokenizer not cached (HF: {cache}, tiktoken: "
+            f"{os.environ.get('TIKTOKEN_CACHE_DIR') or '<tmp>/data-gym-cache'}) "
+            "— network downloads are blocked by the repo network guard; "
+            "pre-cache gpt2 to run this"
         )
     import huggingface_hub.constants as hf_constants
 
