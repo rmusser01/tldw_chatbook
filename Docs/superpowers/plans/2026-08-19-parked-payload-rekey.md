@@ -18,6 +18,9 @@
 - FIFO head = oldest-armed round for the session. Python dicts preserve insertion order; do not add a separate ordering structure.
 - Insertion order is arm order only because every write goes through `_park_round_payload`. Never assign into these maps directly.
 - No behavior change is visible to users in this PR. Card content, timeouts, badges, and decisions are all unchanged for the single-round case.
+- **Locate code by SYMBOL, never by line number.** This file changes fast; every `:NNNN` anchor in an earlier draft of this plan was stale within a day. Each step below names the enclosing method and quotes the code block to replace. Use `grep -n` on the quoted text.
+- This work is **task-15661**, already filed. It is cited in `remount_pending_approval_for_active_session`'s docstring and in the test that pins the defect. Do not open a new backlog task.
+- Branch from `origin/dev`. `origin/main` is over 10,000 commits behind and is not the trunk.
 
 ---
 
@@ -208,7 +211,8 @@ git commit -m "test(console): pin same-session interrupt round clobbering (PR0)"
 ### Task 2: Shared park/head/unpark helpers and the approvals bridge
 
 **Files:**
-- Modify: `tldw_chatbook/Chat/console_chat_controller.py` — `_parked_approval_payloads` declaration (`:1594`), arming (`:4019`), teardown `finally` (`:4126-4137`), `_clear_pending_approval_if_round_is_current` (`:4187-4260`, deleted), re-derive call sites (`:3259`, `:3429`, `:3503`)
+- Modify: `tldw_chatbook/Chat/console_chat_controller.py` — the `_parked_approval_payloads` declaration; `request_mcp_approvals` (arming + teardown `finally`); `_clear_pending_approval_if_round_is_current` (deleted whole); `_revoke_tool_approval_rounds` (its pop); and FOUR re-derive sites: the three inline `self._parked_approval_payloads.get(...)` blocks in `new_session`, `switch_session`, and `close_session`, plus the public `remount_pending_approval_for_active_session`
+- Modify: `Tests/UI/test_console_headless_approval.py` — `test_two_headless_rounds_share_one_payload_slot_and_only_one_mounts`
 - Test: `Tests/UI/test_console_parked_payload_rekey.py`
 
 **Interfaces:**
@@ -221,7 +225,7 @@ git commit -m "test(console): pin same-session interrupt round clobbering (PR0)"
 
 - [ ] **Step 1: Add the helpers**
 
-Add these four methods to `ConsoleChatController`, next to `_marshal_pending_approval` (`:4322`):
+Add these four methods to `ConsoleChatController`, immediately after the `_marshal_pending_approval` method:
 
 ```python
     # -- PR0: per-round retained payloads ------------------------------
@@ -305,7 +309,7 @@ Add these four methods to `ConsoleChatController`, next to `_marshal_pending_app
 
 - [ ] **Step 2: Re-key the declaration**
 
-Replace the `_parked_approval_payloads` declaration and its docstring (`:1585-1594`) with:
+Find the `self._parked_approval_payloads: dict[str, dict[str, Any]] = {}` assignment in `__init__` and replace it and its preceding `#:` comment block with:
 
 ```python
         #: PR0: retained payload per ROUND (was per session), keyed by
@@ -318,7 +322,7 @@ Replace the `_parked_approval_payloads` declaration and its docstring (`:1585-15
 
 - [ ] **Step 3: Re-key arming**
 
-In `request_mcp_approvals`, replace the retained-payload write (`:4017-4019`) and make the mount conditional on being the head. The `with self._approval_state_lock: self._parked_approval_payloads[session_id] = payload` block becomes:
+In `request_mcp_approvals`, find the retained-payload write — a `with self._approval_state_lock:` block whose body is `self._parked_approval_payloads[session_id] = payload` — and replace the whole block with:
 
 ```python
             is_head = self._park_round_payload(
@@ -326,7 +330,7 @@ In `request_mcp_approvals`, replace the retained-payload write (`:4017-4019`) an
             )
 ```
 
-Then change the mount branch (`:4022-4027`) from `self._marshal_pending_approval(payload)` to:
+Then, in the `try:` immediately below, change the `else:` arm that calls `self._marshal_pending_approval(payload)` to an `elif is_head:` arm:
 
 ```python
         try:
@@ -341,7 +345,7 @@ Then change the mount branch (`:4022-4027`) from `self._marshal_pending_approval
 
 - [ ] **Step 4: Re-key teardown**
 
-Replace the entire `finally` payload-pop block (`:4126-4137`, the `still_armed_same_session` computation and conditional pop) plus the `_clear_pending_approval_if_round_is_current` call with:
+In `request_mcp_approvals`' `finally`, replace everything from the `with self._approval_state_lock:` that pops `_pending_approval_rounds` through the `self._clear_pending_approval_if_round_is_current(round_id, session_id)` call — including the `still_armed_same_session` computation and its conditional `self._parked_approval_payloads.pop(session_id, None)` — with:
 
 ```python
             with self._approval_state_lock:
@@ -361,13 +365,24 @@ Replace the entire `finally` payload-pop block (`:4126-4137`, the `still_armed_s
                 )
 ```
 
-- [ ] **Step 5: Delete the superseded guard**
+- [ ] **Step 5: Delete the superseded guard and fix the revocation pop**
 
-Delete `_clear_pending_approval_if_round_is_current` entirely (`:4187` through the end of its body). Its two-part identity-plus-sibling check is subsumed by `_remount_head`.
+Delete the whole `_clear_pending_approval_if_round_is_current` method. Its two-part identity-plus-sibling check is subsumed by `_remount_head`.
+
+Then in `_revoke_tool_approval_rounds`, replace the loop that pops the payload map — the `for _round_id, session_id in revoked:` block containing `self._parked_approval_payloads.pop(session_id, None)` guarded by a `not any(... state.get("session_id") == session_id ...)` test — with a straight per-round unpark:
+
+```python
+            for round_id_to_drop, session_id in revoked:
+                self._unpark_round_payload(
+                    self._parked_approval_payloads, round_id_to_drop
+                )
+```
+
+The "is this the last armed round for the session" test existed only because the slot was shared. With per-round storage each revoked round drops exactly its own payload, so a still-armed sibling keeps its own.
 
 - [ ] **Step 6: Re-key the three re-derive call sites**
 
-At `:3259`, `:3429`, and `:3503`, replace each
+There are THREE inline sites, one each in `new_session`, `switch_session`, and `close_session`. Replace each
 
 ```python
             with self._approval_state_lock:
@@ -375,7 +390,7 @@ At `:3259`, `:3429`, and `:3503`, replace each
             self.set_pending_approval(parked_payload)
 ```
 
-with (adjusting the variable name to the local one at each site — `session.id` at `:3259`, `session_id` at `:3429`, `new_active_id` at `:3503`):
+with (the local variable differs per site: `session.id` in `new_session`, `session_id` in `switch_session`, `new_active_id` in `close_session`):
 
 ```python
             self.set_pending_approval(
@@ -385,21 +400,48 @@ with (adjusting the variable name to the local one at each site — `session.id`
 
 These three sites already run on the UI thread, so they call `_head_round_payload` directly rather than `_remount_head`.
 
+There is a FOURTH, public re-derive site: `remount_pending_approval_for_active_session`. Replace its `with self._approval_state_lock:` block (the one computing `still_armed` and then `payload`) with a head lookup, and delete the now-false "Known limitation" paragraph from its docstring:
+
+```python
+        payload = self._head_round_payload(
+            self._parked_approval_payloads, session_id
+        )
+        if payload is None:
+            return False
+        self.set_pending_approval(payload)
+        return True
+```
+
+The `still_armed` test is redundant now: a round's payload is unparked in its own teardown, so a payload present in the map belongs to a live round.
+
 - [ ] **Step 7: Run the new tests**
 
 Run: `.venv/bin/python -m pytest Tests/UI/test_console_parked_payload_rekey.py -v`
 Expected: all three PASS.
 
-- [ ] **Step 8: Run the existing approval suites for regressions**
+- [ ] **Step 8: Rewrite the test that pins the defect**
 
-Run: `.venv/bin/python -m pytest Tests/UI/test_console_mcp_approval.py Tests/UI/test_chat_task_cards_sync.py Tests/UI/test_console_parallel_runs.py -v`
-Expected: all PASS. Any failure here is a real regression — the pre-PR0 behavior these pin is what PR0 must preserve for the single-round case.
+`Tests/UI/test_console_headless_approval.py::test_two_headless_rounds_share_one_payload_slot_and_only_one_mounts` deliberately asserts the BROKEN behaviour. Its own docstring says it is "pinned here so the limitation is a measured fact with a failing test the day someone fixes it, rather than folklore in a comment." Today is that day — this test MUST fail after Steps 2-6, and that failure is success.
 
-- [ ] **Step 9: Commit**
+Do not delete it: its `_detached_rig()` / `_leave()` harness covers the headless detached-attach path nothing else exercises. Rewrite it in place:
+
+- Rename it to `test_two_headless_rounds_each_mount_in_turn`.
+- Replace the docstring with a statement of the fixed contract, citing task-15661 as fixed rather than pinned.
+- Keep the setup verbatim through the `assert len(app.notifications) == 2` line — both rounds arming and both announcing is unchanged behaviour.
+- Replace the assertions that only one card can mount with: `remount_pending_approval_for_active_session()` mounts round A (the FIFO head, armed first); after round A resolves, a second call mounts round B.
+
+Also update `remount_pending_approval_for_active_session`'s docstring reference to this test name if it names it.
+
+- [ ] **Step 9: Run the existing approval suites for regressions**
+
+Run: `.venv/bin/python -m pytest Tests/UI/test_console_mcp_approval.py Tests/UI/test_chat_task_cards_sync.py Tests/UI/test_console_parallel_runs.py Tests/UI/test_console_headless_approval.py -v`
+Expected: all PASS, including the rewritten headless test. Any OTHER failure is a real regression — the pre-PR0 behaviour those pin is what PR0 must preserve for the single-round case.
+
+- [ ] **Step 10: Commit**
 
 ```bash
 git add tldw_chatbook/Chat/console_chat_controller.py Tests/UI/test_console_parked_payload_rekey.py
-git commit -m "fix(console): re-key approval retained payloads by round with FIFO head"
+git commit -m "fix(console): re-key approval retained payloads by round with FIFO head (task-15661)"
 ```
 
 ---
@@ -407,12 +449,12 @@ git commit -m "fix(console): re-key approval retained payloads by round with FIF
 ### Task 3: Skill-install bridge
 
 **Files:**
-- Modify: `tldw_chatbook/Chat/console_chat_controller.py` — `_parked_skill_install_payloads` (`:1620`), `request_skill_install_confirm` arming (`:5060`) and teardown (`:5077` onward), `_remount_parked_skill_install` (`:5187-5203`)
+- Modify: `tldw_chatbook/Chat/console_chat_controller.py` — the `_parked_skill_install_payloads` declaration; `request_skill_install_confirm` (arming + teardown `finally`); `_clear_pending_skill_install_if_round_is_current` (deleted whole); `_remount_parked_skill_install`
 - Test: `Tests/UI/test_console_parked_payload_rekey.py`
 
 **Interfaces:**
 - Consumes: `_park_round_payload`, `_head_round_payload`, `_unpark_round_payload`, `_remount_head` from Task 2.
-- Note: the skill-install payload built at `:5036-5041` already carries both `"request_id"` and `"session_id"`. The helpers key the STORE by round id (passed as an argument) and look up the head by the payload's `"session_id"`, so no production payload needs a new field.
+- Note: the skill-install payload built inside `request_skill_install_confirm` already carries both `"request_id"` and `"session_id"`. The helpers key the STORE by round id (passed as an argument) and look up the head by the payload's `"session_id"`, so no production payload needs a new field.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -475,7 +517,7 @@ Expected: FAIL — the second arm overwrites `_parked_skill_install_payloads[ses
 
 - [ ] **Step 3: Re-key declaration, arming, teardown, and re-derive**
 
-Replace the `_parked_skill_install_payloads` declaration comment at `:1616-1620` with:
+Find the `self._parked_skill_install_payloads: dict[str, dict[str, Any]] = {}` assignment in `__init__` and replace it and its preceding `#:` comment block with:
 
 ```python
         #: PR0: retained payload per ROUND (was per session), keyed by
@@ -484,7 +526,7 @@ Replace the `_parked_skill_install_payloads` declaration comment at `:1616-1620`
         self._parked_skill_install_payloads: dict[str, dict[str, Any]] = {}
 ```
 
-Replace the arming write at `:5058-5060`:
+In `request_skill_install_confirm`, replace the `with self._approval_state_lock:` block whose body is `self._parked_skill_install_payloads[session_id] = payload` with:
 
 ```python
             is_head = self._park_round_payload(
@@ -527,7 +569,9 @@ In the `finally`, delete the `still_armed_same_session` computation and its cond
 
 Note the round registry keeps its own `_pending_skill_install_lock`; only the payload map moves to the shared helpers under `_approval_state_lock`.
 
-Finally, rewrite `_remount_parked_skill_install` (`:5199-5203`) to use the head:
+Delete the whole `_clear_pending_skill_install_if_round_is_current` method — this bridge has its own copy of the same order-dependent guard, subsumed by `_remount_head` exactly as the approvals one was.
+
+Finally, rewrite `_remount_parked_skill_install`'s body to use the head:
 
 ```python
         if self.set_pending_skill_install is None:
@@ -554,7 +598,7 @@ git commit -m "fix(console): re-key skill-install retained payloads by round"
 ### Task 4: Skill-script bridge
 
 **Files:**
-- Modify: `tldw_chatbook/Chat/console_chat_controller.py` — `_parked_skill_script_payloads` (`:1645`), `request_skill_script_confirm` arming (`:5346-5366`) and its teardown `finally`, `_remount_parked_skill_script` (`:5480-5496`)
+- Modify: `tldw_chatbook/Chat/console_chat_controller.py` — the `_parked_skill_script_payloads` declaration; `request_skill_script_confirm` (arming + teardown `finally`); `_clear_pending_skill_script_if_round_is_current` (deleted whole); `_revoke_skill_script_rounds` (its pop); `_remount_parked_skill_script`
 - Test: `Tests/UI/test_console_parked_payload_rekey.py`
 
 **Interfaces:**
@@ -563,7 +607,7 @@ git commit -m "fix(console): re-key skill-install retained payloads by round"
   - `request_skill_script_confirm(self, payload: dict[str, Any], *, session_id: str | None = None) -> dict[str, bool]` — the first argument is a **dict**, not a string.
   - `resolve_pending_skill_script(self, allow: bool, remember: bool, request_id: str | None = None) -> None` — **three** parameters, and `request_id` is positional-or-keyword, not keyword-only.
   - `pending_skill_script_ids() -> list[str]` returns armed ids in insertion order.
-- The card payload is `card_payload` (a copy of the caller's dict plus `timeout_seconds`, `request_id`, `session_id`), built at `:5346-5349`. It already carries both ids the helpers need.
+- The card payload is `card_payload` (a copy of the caller's dict plus `timeout_seconds`, `request_id`, `session_id`). It already carries the ids the helpers need.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -632,7 +676,7 @@ Expected: FAIL — the second arm overwrites `_parked_skill_script_payloads[sess
 
 - [ ] **Step 3: Re-key the declaration**
 
-Replace the `_parked_skill_script_payloads` declaration comment at `:1642-1645` with:
+Find the `self._parked_skill_script_payloads: dict[str, dict[str, Any]] = {}` assignment in `__init__` and replace it and its preceding `#:` comment block with:
 
 ```python
         #: PR0: retained payload per ROUND (was per session), keyed by
@@ -643,7 +687,7 @@ Replace the `_parked_skill_script_payloads` declaration comment at `:1642-1645` 
 
 - [ ] **Step 4: Re-key arming**
 
-In `request_skill_script_confirm`, replace the retained-payload write (`:5359-5360`, the `with self._approval_state_lock: self._parked_skill_script_payloads[session_id] = card_payload` block) with:
+In `request_skill_script_confirm`, replace the `with self._approval_state_lock:` block whose body is `self._parked_skill_script_payloads[session_id] = card_payload` with:
 
 ```python
             is_head = self._park_round_payload(
@@ -688,9 +732,20 @@ In the same method's `finally`, delete the `still_armed_same_session` computatio
 
 The round registry keeps its own `_pending_skill_script_lock`; only the payload map moves to the shared helpers under `_approval_state_lock`.
 
-- [ ] **Step 6: Re-key the re-derive helper**
+- [ ] **Step 6: Delete the guard, fix the revocation pop, and re-key the re-derive helper**
 
-Replace the body of `_remount_parked_skill_script` (`:5492-5496`) with:
+Delete the whole `_clear_pending_skill_script_if_round_is_current` method — the third copy of the same order-dependent guard.
+
+In `_revoke_skill_script_rounds`, replace the conditional `self._parked_skill_script_payloads.pop(session_id, None)` and its "last armed for this session" guard with a per-round unpark, exactly as Task 2 Step 5 did for `_revoke_tool_approval_rounds`:
+
+```python
+            for round_id_to_drop, session_id in revoked:
+                self._unpark_round_payload(
+                    self._parked_skill_script_payloads, round_id_to_drop
+                )
+```
+
+Then replace the body of `_remount_parked_skill_script` with:
 
 ```python
         if self.set_pending_skill_script is None:
@@ -719,7 +774,7 @@ git commit -m "fix(console): re-key skill-script retained payloads by round"
 ### Task 5: Cross-bridge coverage and cleanup
 
 **Files:**
-- Modify: `tldw_chatbook/Chat/console_chat_controller.py:1646-1650` (orphaned comment)
+- Modify: `tldw_chatbook/Chat/console_chat_controller.py` (orphaned `#:` comment before the `run_state` property)
 - Test: `Tests/UI/test_console_parked_payload_rekey.py`
 
 **Interfaces:**
@@ -775,7 +830,7 @@ Expected: all PASS. If this one fails, a bridge is reading another bridge's map 
 
 - [ ] **Step 3: Delete the orphaned comment**
 
-`console_chat_controller.py:1646-1650` is a `#:` comment block describing "the currently-armed round's unique id" — a field that no longer exists; the next statement is the `run_state` property. Delete the comment block.
+In `__init__`, immediately before the `run_state` property, there is a dangling `#:` comment block describing "The currently-armed round's unique id" — it documents a field that no longer exists (the next statement is the `run_state` property, not an assignment). Locate it with `grep -n "currently-armed round's unique id"` and delete the comment block.
 
 - [ ] **Step 4: Run the full Console suite**
 
@@ -793,7 +848,10 @@ git commit -m "test(console): cross-bridge head independence; drop orphaned comm
 
 ## Done criteria
 
-- All three bridges key retained payloads by round id; no `_parked_*_payloads[session_id] = ...` write remains.
-- `_clear_pending_approval_if_round_is_current` is deleted.
+- All three bridges key retained payloads by round id. `grep -n "_parked_.*_payloads\[session_id\]"` returns nothing, and no `.pop(session_id` remains against any of the three maps.
+- All THREE order-dependent guards are deleted: `_clear_pending_approval_if_round_is_current`, `_clear_pending_skill_install_if_round_is_current`, `_clear_pending_skill_script_if_round_is_current`.
+- All FOUR approvals re-derive sites use the head, including the public `remount_pending_approval_for_active_session`, whose "Known limitation" docstring paragraph is gone.
+- Both revocation paths (`_revoke_tool_approval_rounds`, `_revoke_skill_script_rounds`) unpark per round.
+- `test_two_headless_rounds_share_one_payload_slot_and_only_one_mounts` is rewritten to assert per-round mounting.
 - `Tests/UI/test_console_parked_payload_rekey.py` passes, and every pre-existing suite named in Tasks 2-4 still passes.
 - No user-visible change for the single-round case.
