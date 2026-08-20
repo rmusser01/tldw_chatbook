@@ -2620,6 +2620,11 @@ class LibraryFileNotesWorkspace(Vertical):
         if not self._push_operation_is_current(operation, key, operation_id):
             return
         if isinstance(result, PushDestinationPolicyResult):
+            if snapshot.push_candidate != operation.candidate:
+                self._set_push_result_projection(
+                    self._expired_push_review_projection()
+                )
+                return
             if result.state == "ready" and result.authorization is not None:
                 self._push_authorization_projection = result.authorization
                 self._push_view_phase = "checking_candidate"
@@ -2667,15 +2672,7 @@ class LibraryFileNotesWorkspace(Vertical):
                 and result.outcome is None
             ):
                 self._set_push_result_projection(
-                    PushPanelResultProjection(
-                        title="Push review expired",
-                        message=(
-                            "The reviewed push candidate changed or expired. "
-                            "Return to the current Session Git list and review "
-                            "it again."
-                        ),
-                        action="back_to_session",
-                    )
+                    self._expired_push_review_projection()
                 )
                 return
             if result.outcome is not None:
@@ -2813,6 +2810,17 @@ class LibraryFileNotesWorkspace(Vertical):
         return (
             "Owned push descendants are still settling; checking becomes "
             "available after every owned process ends."
+        )
+
+    @staticmethod
+    def _expired_push_review_projection() -> PushPanelResultProjection:
+        return PushPanelResultProjection(
+            title="Push review expired",
+            message=(
+                "The reviewed push candidate changed or expired. Return to "
+                "the current Session Git list and review it again."
+            ),
+            action="back_to_session",
         )
 
     def _set_push_result_projection(

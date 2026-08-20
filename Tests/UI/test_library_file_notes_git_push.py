@@ -1483,6 +1483,99 @@ async def test_workspace_push_review_adopts_operations_and_restores_endpoint_det
     replica.close()
 
 
+@pytest.mark.parametrize("state", ("blocked", "ready"))
+@pytest.mark.asyncio
+async def test_workspace_local_proof_rechecks_candidate_after_trust_aba(
+    tmp_path: Path,
+    state: str,
+) -> None:
+    """Local proof cannot authorize or retry a candidate revoked by trust ABA."""
+    owner, binding, replica, service, workspace = _push_workspace_fixture(tmp_path)
+    _publish_candidate_on_owner(
+        owner,
+        binding,
+        service.repository,
+        parent_oid="a" * 40,
+        candidate_oid="d" * 40,
+    )
+    candidate = owner.snapshot(binding).push_candidate
+    assert candidate is not None
+    result = (
+        _push_destination_policy_result("ready", _push_destination_projection())
+        if state == "ready"
+        else _push_destination_policy_result("blocked")
+    )
+    release = asyncio.Event()
+    operation = service.retain_push_operation(
+        binding,
+        "local_proof",
+        result,
+        release,
+        candidate=candidate,
+    )
+
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _until(
+            pilot,
+            lambda: workspace.initialized,
+            "workspace initialization did not settle",
+        )
+        workspace._navigator_mode = "git"
+        workspace._sync_navigator_mode()
+        workspace._rehydrate_git_presentation()
+        assert workspace._push_operation is operation
+        assert workspace._git_panel_widget.push_phase == "checking_candidate"
+
+        assert owner.clear_trust(binding)
+        assert owner.publish_trust(binding, service.repository)
+        fresh = owner.snapshot(binding)
+        assert fresh.trusted_repository == service.repository
+        assert fresh.push_candidate is None
+        assert fresh.push_candidate_generation > candidate.generation
+
+        release.set()
+        await operation.wait()
+        await _until(
+            pilot,
+            lambda: workspace._push_result is result,
+            "local-proof observer did not publish its settlement",
+        )
+
+        assert not isinstance(
+            workspace.app.screen,
+            git_panel_module.PushDestinationAuthorizationDialog,
+        )
+        assert workspace._push_authorization_projection is None
+        assert workspace._git_panel_widget.push_phase == "result"
+        assert _text(
+            workspace.query_one("#file-notes-git-push-result-title")
+        ) == "Push review expired"
+        assert workspace.query_one(
+            "#file-notes-git-push-result-copy",
+            TextArea,
+        ).text == (
+            "The reviewed push candidate changed or expired. Return to the "
+            "current Session Git list and review it again."
+        )
+        back_to_session = workspace.query_one(
+            "#file-notes-git-push-back-session",
+            Button,
+        )
+        assert back_to_session.display
+        back_to_session.press()
+        await _until(
+            pilot,
+            lambda: workspace._git_panel_widget.push_phase == "list",
+            "expired local-proof recovery did not return to Session Git",
+        )
+        assert workspace.query_one("#file-notes-git-list-surface").display
+        assert workspace.query_one("#file-notes-git-back", Button).has_focus
+
+    await workspace.shutdown()
+    owner.shutdown()
+    replica.close()
+
+
 @pytest.mark.asyncio
 async def test_workspace_preflight_review_rechecks_candidate_after_trust_aba(
     tmp_path: Path,
