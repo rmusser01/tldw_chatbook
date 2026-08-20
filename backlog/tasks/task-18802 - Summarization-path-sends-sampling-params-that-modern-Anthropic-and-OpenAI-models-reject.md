@@ -3,9 +3,11 @@ id: TASK-18802
 title: >-
   Summarization path sends sampling params that modern Anthropic and OpenAI
   models reject
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-18 23:55'
+updated_date: '2026-08-20 14:58'
 labels:
   - llm
   - bug
@@ -36,3 +38,9 @@ Found by a deliberate sweep for the same pattern while fixing TASK-18414, which 
 - [ ] #3 The summarization path reuses the model_capabilities predicates rather than adding its own model-name checks
 - [ ] #4 Models that still accept these parameters are unchanged, pinned by a regression test
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Probe api.openai.com with the exact summarize_with_openai payload shape (temperature+max_tokens) against modern reasoning-family models (gpt-5, gpt-5.6, o4-mini) and a legacy control (gpt-4o); capture verbatim 400 bodies; establish which params are rejected and the correct token-cap name\n2. Add immutable OpenAI predicates to model_capabilities.py (outside config-driven tables), family-matched per 18414 design\n3. Write RED payload pins for summarize_with_anthropic and summarize_with_openai (rejecting models omit params, legacy models unchanged)\n4. Rewire summarize_with_anthropic to consult anthropic_model_rejects_sampling_params; rewire summarize_with_openai to consult the new predicates\n5. Mutation-test predicate consultation; targeted suites\n6. Live-verify AC#1/#2 through the production payload builder with real keys + dev control on clean origin/dev\n7. Sweep other summarize_with_* functions, file follow-up; update 18803 with probe evidence
+<!-- SECTION:PLAN:END -->

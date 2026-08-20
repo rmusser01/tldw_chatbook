@@ -46,6 +46,11 @@ from tldw_chatbook.Logging_Config import logging
 from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
 from tldw_chatbook.Utils.persistent_diagnostics import safe_metadata_token
+from tldw_chatbook.model_capabilities import (
+    anthropic_model_rejects_sampling_params,
+    openai_model_rejects_sampling_params,
+    openai_model_requires_max_completion_tokens,
+)
 
 try:
     from tldw_chatbook.Chunking.Chunk_Lib import improved_chunking_process
@@ -873,11 +878,21 @@ def summarize_with_openai(
                 {"role": "system", "content": system_message},
                 {"role": "user", "content": openai_prompt},
             ],
-            # FIXME - Set a Max tokens value in config file for each API
-            "max_tokens": 4096,
-            "temperature": temp,
             "stream": streaming,
         }
+        # TASK-18802: per-model request capabilities. Reasoning-family models
+        # (o-series, gpt-5) reject the classic `max_tokens` cap with
+        # 400 unsupported_parameter ("Use 'max_completion_tokens' instead")
+        # and reject non-default `temperature` with 400 unsupported_value, so
+        # both are gated on the model_capabilities predicates instead of being
+        # sent unconditionally.
+        # FIXME - Set a Max tokens value in config file for each API
+        if openai_model_requires_max_completion_tokens(openai_model):
+            payload["max_completion_tokens"] = 4096
+        else:
+            payload["max_tokens"] = 4096
+        if not openai_model_rejects_sampling_params(openai_model):
+            payload["temperature"] = temp
 
         # --- Retry Logic --- (Copied from original, seems reasonable)
         session = requests.Session()
@@ -1050,15 +1065,22 @@ def summarize_with_anthropic(
             "max_tokens": 4096,  # max possible tokens to return
             "messages": [user_message],
             "stop_sequences": ["\n\nHuman:"],
-            "temperature": temp,
-            "top_k": 0,
-            "top_p": 1.0,
             "metadata": {
                 "user_id": "example_user_id",
             },
             "stream": streaming,
             "system": system_message,
         }
+        # TASK-18802: the Fable 5 / Mythos 5 / Opus 5 / Opus 4.8 / Opus 4.7 /
+        # Sonnet 5 families reject temperature/top_p/top_k with HTTP 400
+        # ("`temperature` is deprecated for this model."), so sampling params
+        # are gated on the same model_capabilities predicate the chat path
+        # consults (TASK-18414). This function sends no thinking config, so
+        # the fixed-thinking-budget predicate has nothing to gate here.
+        if not anthropic_model_rejects_sampling_params(model):
+            data["temperature"] = temp
+            data["top_k"] = 0
+            data["top_p"] = 1.0
 
         for attempt in range(max_retries):
             try:
