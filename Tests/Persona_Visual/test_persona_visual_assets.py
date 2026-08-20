@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+import tldw_chatbook.Persona_Visual.assets as assets_module
 from tldw_chatbook.Persona_Visual.assets import (
     ASSET_INVALID_REASON,
     PersonaVisualAssetError,
@@ -20,6 +21,7 @@ from tldw_chatbook.Persona_Visual.assets import (
     validate_persona_visual_asset_set,
 )
 from tldw_chatbook.Persona_Visual.contracts import (
+    ALLOWED_ASSET_ROLES,
     MAX_ASSET_COUNT,
     MAX_ASSET_DIMENSION,
     MAX_ASSET_TOTAL_BYTES,
@@ -55,6 +57,7 @@ def _metadata(
     data: bytes,
     *,
     asset_key: str = "idle",
+    role: str = "frame",
     mime_type: str = "image/png",
     width: int = 2,
     height: int = 3,
@@ -63,7 +66,7 @@ def _metadata(
 ) -> PersonaVisualAssetMetadata:
     return PersonaVisualAssetMetadata(
         asset_key=asset_key,
-        role="sprite",
+        role=role,
         mime_type=mime_type,
         byte_count=len(data),
         sha256=hashlib.sha256(data).hexdigest(),
@@ -151,6 +154,19 @@ def test_metadata_set_enforces_file_and_total_byte_budgets() -> None:
         )
 
 
+@pytest.mark.parametrize("role", ALLOWED_ASSET_ROLES)
+def test_metadata_accepts_each_pinned_server_asset_role(role: str) -> None:
+    item = _metadata(_image_bytes(), role=role)
+
+    assert validate_persona_visual_asset_set([item])[0].role == role
+
+
+@pytest.mark.parametrize("role", ["sprite", "unknown"])
+def test_metadata_rejects_unpinned_asset_roles(role: str) -> None:
+    with pytest.raises(PersonaVisualAssetError):
+        validate_persona_visual_asset_set([_metadata(_image_bytes(), role=role)])
+
+
 def test_metadata_set_bounds_a_sequence_that_lies_about_its_length() -> None:
     item = _metadata(_image_bytes())
 
@@ -210,6 +226,38 @@ def test_metadata_and_loaded_asset_are_deeply_immutable(tmp_path: Path) -> None:
     assert type(asset.data) is bytes
 
 
+def test_metadata_subclasses_are_rejected_before_stateful_field_access() -> None:
+    data = _image_bytes()
+
+    class StatefulMetadata(PersonaVisualAssetMetadata):
+        reads = 0
+
+        def __getattribute__(self, name: str) -> object:
+            if name == "byte_count":
+                type(self).reads += 1
+                reads = type(self).reads
+                if reads > 2:
+                    return -1
+            return super().__getattribute__(name)
+
+    base = _metadata(data)
+    hostile = StatefulMetadata(
+        base.asset_key,
+        base.role,
+        base.mime_type,
+        base.byte_count,
+        base.sha256,
+        base.width,
+        base.height,
+        base.frame_count,
+        base.duration_ms,
+    )
+
+    with pytest.raises(PersonaVisualAssetError):
+        validate_persona_visual_asset_set([hostile])
+    assert StatefulMetadata.reads == 0
+
+
 @pytest.mark.parametrize(
     "storage_key",
     [
@@ -236,6 +284,24 @@ def test_load_rejects_unsafe_relative_storage_keys(
     with pytest.raises(PersonaVisualAssetError, match=f"^{ASSET_INVALID_REASON}$"):
         load_persona_visual_asset(
             tmp_path, storage_key=storage_key, metadata=_metadata(data)
+        )
+
+
+def test_load_rejects_str_subclasses_before_stateful_path_parsing(
+    tmp_path: Path,
+) -> None:
+    data = _image_bytes()
+    (tmp_path / "idle.png").write_bytes(data)
+
+    class StatefulStorageKey(str):
+        def split(self, *_args: object, **_kwargs: object) -> list[str]:
+            return ["idle.png"]
+
+    with pytest.raises(PersonaVisualAssetError):
+        load_persona_visual_asset(
+            tmp_path,
+            storage_key=StatefulStorageKey("idle.png"),
+            metadata=_metadata(data),
         )
 
 
@@ -289,6 +355,74 @@ def test_load_rejects_a_symlink_in_the_profile_root_ancestor_chain(
         )
 
 
+def test_capability_fallback_loads_a_regular_file_without_nofollow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data = _image_bytes()
+    (tmp_path / "idle.png").write_bytes(data)
+    monkeypatch.setattr(assets_module.os, "O_NOFOLLOW", 0)
+
+    asset = load_persona_visual_asset(
+        tmp_path, storage_key="idle.png", metadata=_metadata(data)
+    )
+
+    assert asset.data == data
+
+
+def test_capability_fallback_rejects_an_ancestor_alias(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data = _image_bytes()
+    real_parent = tmp_path / "real-parent"
+    profile_root = real_parent / "profile"
+    profile_root.mkdir(parents=True)
+    (profile_root / "idle.png").write_bytes(data)
+    alias_parent = tmp_path / "alias-parent"
+    alias_parent.symlink_to(real_parent, target_is_directory=True)
+    monkeypatch.setattr(assets_module.os, "O_NOFOLLOW", 0)
+
+    with pytest.raises(PersonaVisualAssetError):
+        load_persona_visual_asset(
+            alias_parent / "profile",
+            storage_key="idle.png",
+            metadata=_metadata(data),
+        )
+
+
+@pytest.mark.parametrize("swap_target", ["directory", "leaf"])
+def test_capability_fallback_rejects_identity_ambiguity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    swap_target: str,
+) -> None:
+    data = _image_bytes()
+    leaf = tmp_path / "idle.png"
+    leaf.write_bytes(data)
+    real_lstat = os.lstat
+    target = tmp_path if swap_target == "directory" else leaf
+    calls = 0
+
+    def changed_lstat(path: os.PathLike[str] | str, *args: object) -> os.stat_result:
+        nonlocal calls
+        result = real_lstat(path, *args)
+        if Path(path) == target:
+            calls += 1
+            if calls > 1:
+                values = list(result)
+                values[1] += 1
+                return os.stat_result(values)
+        return result
+
+    monkeypatch.setattr(assets_module.os, "O_NOFOLLOW", 0)
+    monkeypatch.setattr(assets_module.os, "lstat", changed_lstat)
+
+    with pytest.raises(PersonaVisualAssetError):
+        load_persona_visual_asset(
+            tmp_path, storage_key="idle.png", metadata=_metadata(data)
+        )
+    assert calls > 1
+
+
 def test_load_reads_only_the_declared_bounded_size(tmp_path: Path) -> None:
     data = _image_bytes()
     (tmp_path / "idle.png").write_bytes(data + b"unexpected")
@@ -321,6 +455,7 @@ def test_load_opens_the_target_nonblocking_before_inode_validation(
         return real_open(path, flags, mode, dir_fd=dir_fd)
 
     monkeypatch.setattr(os, "open", checked_open)
+    monkeypatch.setattr(assets_module, "_supports_secure_descriptor_walk", lambda: True)
     asset = load_persona_visual_asset(
         tmp_path, storage_key="idle.png", metadata=_metadata(data)
     )
@@ -412,6 +547,48 @@ def test_load_rejects_more_than_the_manifest_frame_budget(tmp_path: Path) -> Non
         )
 
 
+def test_load_rejects_cumulative_decoded_work_before_frame_traversal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data = b"bounded-fake-gif"
+    (tmp_path / "idle.gif").write_bytes(data)
+    traversed: list[int] = []
+
+    class OverBudgetImage:
+        format = "GIF"
+        width = MAX_ASSET_DIMENSION
+        height = MAX_ASSET_DIMENSION
+        n_frames = MAX_FRAMES_PER_ANIMATION
+        info: dict[str, object] = {}
+
+        def __enter__(self) -> OverBudgetImage:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def seek(self, frame: int) -> None:
+            traversed.append(frame)
+
+        def load(self) -> None:
+            return None
+
+    monkeypatch.setattr(assets_module.Image, "open", lambda _stream: OverBudgetImage())
+    with pytest.raises(PersonaVisualAssetError):
+        load_persona_visual_asset(
+            tmp_path,
+            storage_key="idle.gif",
+            metadata=_metadata(
+                data,
+                mime_type="image/gif",
+                width=MAX_ASSET_DIMENSION,
+                height=MAX_ASSET_DIMENSION,
+                frame_count=MAX_FRAMES_PER_ANIMATION,
+            ),
+        )
+    assert traversed == []
+
+
 def test_load_detects_final_name_to_inode_swap(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -431,6 +608,7 @@ def test_load_detects_final_name_to_inode_swap(
         return result
 
     monkeypatch.setattr(os, "stat", swapped_stat)
+    monkeypatch.setattr(assets_module, "_supports_secure_descriptor_walk", lambda: True)
     with pytest.raises(PersonaVisualAssetError):
         load_persona_visual_asset(
             tmp_path, storage_key="idle.png", metadata=_metadata(data)

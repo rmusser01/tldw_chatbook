@@ -7,6 +7,7 @@ from dataclasses import FrozenInstanceError, replace
 import pytest
 
 import tldw_chatbook.Persona_Visual.validation as validation_module
+from tldw_chatbook.Persona_Visual.contracts import ALLOWED_ASSET_ROLES
 from tldw_chatbook.Persona_Visual import (
     ALLOWED_ASSET_EXTENSIONS,
     ALLOWED_ASSET_MIME_TYPES,
@@ -163,6 +164,17 @@ def test_pinned_capability_and_manifest_resolve_all_reserved_states() -> None:
     assert capability.supported is True
     assert capability.activatable is True
     assert capability.reason is None
+    assert (
+        capability.allowed_asset_roles
+        == ALLOWED_ASSET_ROLES
+        == (
+            "frame",
+            "still_pose",
+            "sprite_sheet",
+            "preview",
+            "generated_candidate",
+        )
+    )
     assert (
         capability.allowed_mime_types
         == ALLOWED_ASSET_MIME_TYPES

@@ -9,12 +9,13 @@ import stat
 from collections.abc import Sequence
 from dataclasses import dataclass
 from io import BytesIO
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 from PIL import Image
 
 from .contracts import (
     ALLOWED_ASSET_MIME_TYPES,
+    ALLOWED_ASSET_ROLES,
     MAX_ASSET_COUNT,
     MAX_ASSET_DIMENSION,
     MAX_ASSET_TOTAL_BYTES,
@@ -40,6 +41,7 @@ _WINDOWS_DEVICES = frozenset(
 )
 _READ_CHUNK_BYTES = 64 * 1024
 _MAX_STORAGE_KEY_BYTES = 1024
+MAX_ASSET_DECODED_PIXELS = MAX_ASSET_DIMENSION**2 * 4
 
 
 class PersonaVisualAssetError(ValueError):
@@ -136,7 +138,7 @@ def load_persona_visual_asset(
 
 
 def _metadata(value: object) -> PersonaVisualAssetMetadata:
-    if not isinstance(value, PersonaVisualAssetMetadata):
+    if type(value) is not PersonaVisualAssetMetadata:
         raise ValueError
     values = (
         value.asset_key,
@@ -144,13 +146,13 @@ def _metadata(value: object) -> PersonaVisualAssetMetadata:
         value.mime_type,
         value.sha256,
     )
-    if any(not isinstance(item, str) for item in values):
+    if any(type(item) is not str for item in values):
         raise ValueError
     for item in values:
         item.encode("utf-8")
     if (
         _ASSET_KEY.fullmatch(value.asset_key) is None
-        or value.role != "sprite"
+        or value.role not in ALLOWED_ASSET_ROLES
         or value.mime_type not in ALLOWED_ASSET_MIME_TYPES
         or value.mime_type not in _FORMATS
         or _SHA256.fullmatch(value.sha256) is None
@@ -194,7 +196,7 @@ def _positive_int(value: object) -> bool:
 
 
 def _storage_parts(storage_key: object, mime_type: str) -> tuple[str, ...]:
-    if not isinstance(storage_key, str) or not storage_key or "\x00" in storage_key:
+    if type(storage_key) is not str or not storage_key or "\x00" in storage_key:
         raise ValueError
     storage_key.encode("utf-8")
     if len(storage_key.encode("utf-8")) > _MAX_STORAGE_KEY_BYTES or "\\" in storage_key:
@@ -225,14 +227,37 @@ def _read_profile_file(
     parts: tuple[str, ...],
     expected_bytes: int,
 ) -> bytes:
-    nofollow = getattr(os, "O_NOFOLLOW", 0)
-    directory = getattr(os, "O_DIRECTORY", 0)
-    nonblock = getattr(os, "O_NONBLOCK", 0)
-    if not nofollow or not directory or not nonblock:
-        raise ValueError
     root = os.fspath(profile_root)
-    if not isinstance(root, str) or "\x00" in root:
+    if type(root) is not str or "\x00" in root:
         raise ValueError
+    root_path = Path(root)
+    if not root_path.is_absolute() or str(root_path) != root:
+        raise ValueError
+    if _supports_secure_descriptor_walk():
+        return _read_profile_file_secure(root, parts, expected_bytes)
+    return _read_profile_file_fallback(root_path, parts, expected_bytes)
+
+
+def _supports_secure_descriptor_walk() -> bool:
+    return (
+        os.name == "posix"
+        and getattr(os, "O_NOFOLLOW", 0) > 0
+        and getattr(os, "O_DIRECTORY", 0) > 0
+        and getattr(os, "O_NONBLOCK", 0) > 0
+        and os.open in getattr(os, "supports_dir_fd", ())
+        and os.stat in getattr(os, "supports_dir_fd", ())
+        and os.stat in getattr(os, "supports_follow_symlinks", ())
+    )
+
+
+def _read_profile_file_secure(
+    root: str,
+    parts: tuple[str, ...],
+    expected_bytes: int,
+) -> bytes:
+    nofollow = os.O_NOFOLLOW
+    directory = os.O_DIRECTORY
+    nonblock = os.O_NONBLOCK
     flags = os.O_RDONLY | nofollow
     directory_flags = flags | directory
     opened: list[int] = []
@@ -248,15 +273,7 @@ def _read_profile_file(
         if not stat.S_ISREG(before.st_mode) or before.st_size != expected_bytes:
             raise ValueError
 
-        chunks: list[bytes] = []
-        remaining = expected_bytes + 1
-        while remaining:
-            chunk = os.read(file_fd, min(_READ_CHUNK_BYTES, remaining))
-            if not chunk:
-                break
-            chunks.append(chunk)
-            remaining -= len(chunk)
-        data = b"".join(chunks)
+        data = _read_fd_bounded(file_fd, expected_bytes)
         after = os.fstat(file_fd)
         final = os.stat(parts[-1], dir_fd=current, follow_symlinks=False)
         identity = (before.st_dev, before.st_ino, before.st_size)
@@ -276,17 +293,100 @@ def _read_profile_file(
                 pass
 
 
-def _open_profile_root(root: str, directory_flags: int) -> int:
-    if not os.path.isabs(root):
+def _read_profile_file_fallback(
+    root: Path,
+    parts: tuple[str, ...],
+    expected_bytes: int,
+) -> bytes:
+    candidate = root.joinpath(*parts)
+    snapshot = _snapshot_directories(_fallback_directories(root, parts))
+    leaf_before = os.lstat(candidate)
+    if not stat.S_ISREG(leaf_before.st_mode) or leaf_before.st_size != expected_bytes:
         raise ValueError
-    if root == os.sep:
-        components: tuple[str, ...] = ()
-    else:
-        components = tuple(root.removeprefix(os.sep).split(os.sep))
-        if root != os.sep + os.sep.join(components) or any(
-            component in {"", ".", ".."} for component in components
-        ):
+    _verify_directory_snapshot(snapshot)
+
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+    nonblock = getattr(os, "O_NONBLOCK", 0)
+    if isinstance(nonblock, int) and nonblock > 0:
+        flags |= nonblock
+    descriptor = os.open(candidate, flags)
+    try:
+        opened = os.fstat(descriptor)
+        _verify_fallback_leaf(candidate, leaf_before, opened)
+        _verify_directory_snapshot(snapshot)
+        data = _read_fd_bounded(descriptor, expected_bytes)
+        after = os.fstat(descriptor)
+        _verify_fallback_leaf(candidate, leaf_before, after)
+        _verify_directory_snapshot(snapshot)
+        return data
+    finally:
+        os.close(descriptor)
+
+
+def _fallback_directories(root: Path, parts: tuple[str, ...]) -> tuple[Path, ...]:
+    directories = [*reversed(root.parents), root]
+    current = root
+    for component in parts[:-1]:
+        current /= component
+        directories.append(current)
+    return tuple(directories)
+
+
+def _snapshot_directories(
+    directories: tuple[Path, ...],
+) -> tuple[tuple[Path, int, int], ...]:
+    snapshot: list[tuple[Path, int, int]] = []
+    for directory in directories:
+        metadata = os.lstat(directory)
+        if not stat.S_ISDIR(metadata.st_mode):
             raise ValueError
+        snapshot.append((directory, metadata.st_dev, metadata.st_ino))
+    return tuple(snapshot)
+
+
+def _verify_directory_snapshot(snapshot: tuple[tuple[Path, int, int], ...]) -> None:
+    for directory, device, inode in snapshot:
+        metadata = os.lstat(directory)
+        if not stat.S_ISDIR(metadata.st_mode) or (
+            metadata.st_dev,
+            metadata.st_ino,
+        ) != (device, inode):
+            raise ValueError
+
+
+def _verify_fallback_leaf(
+    candidate: Path,
+    expected: os.stat_result,
+    opened: os.stat_result,
+) -> None:
+    named = os.lstat(candidate)
+    identity = (expected.st_dev, expected.st_ino, expected.st_size)
+    if (
+        not stat.S_ISREG(opened.st_mode)
+        or not stat.S_ISREG(named.st_mode)
+        or (opened.st_dev, opened.st_ino, opened.st_size) != identity
+        or (named.st_dev, named.st_ino, named.st_size) != identity
+    ):
+        raise ValueError
+
+
+def _read_fd_bounded(descriptor: int, expected_bytes: int) -> bytes:
+    chunks: list[bytes] = []
+    remaining = expected_bytes + 1
+    while remaining:
+        chunk = os.read(descriptor, min(_READ_CHUNK_BYTES, remaining))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    data = b"".join(chunks)
+    if len(data) != expected_bytes:
+        raise ValueError
+    return data
+
+
+def _open_profile_root(root: str, directory_flags: int) -> int:
+    components = Path(root).parts[1:]
 
     current = os.open(os.sep, directory_flags)
     try:
@@ -319,6 +419,8 @@ def _decode_selected_frame(
         if metadata.frame_count is not None and frame_count != metadata.frame_count:
             raise ValueError
         if selected_frame >= frame_count:
+            raise ValueError
+        if image.width * image.height * frame_count > MAX_ASSET_DECODED_PIXELS:
             raise ValueError
 
         duration_ms = 0

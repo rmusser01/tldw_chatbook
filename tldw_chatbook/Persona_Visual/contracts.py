@@ -38,6 +38,13 @@ ALLOWED_ASSET_MIME_TYPES = (
     "image/webp",
     "image/gif",
 )
+ALLOWED_ASSET_ROLES = (
+    "frame",
+    "still_pose",
+    "sprite_sheet",
+    "preview",
+    "generated_candidate",
+)
 ALLOWED_ASSET_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".gif")
 
 MAX_FRAMES_PER_ANIMATION = 240
@@ -75,6 +82,7 @@ class PersonaVisualCapability:
     supported: bool
     activatable: bool
     reason: str | None
+    allowed_asset_roles: tuple[str, ...] = ()
     allowed_mime_types: tuple[str, ...] = ()
     allowed_extensions: tuple[str, ...] = ()
     max_file_count: int | None = None
@@ -185,6 +193,7 @@ _SPRITE_CAPABILITY = PersonaVisualCapability(
     supported=True,
     activatable=True,
     reason=None,
+    allowed_asset_roles=ALLOWED_ASSET_ROLES,
     allowed_mime_types=ALLOWED_ASSET_MIME_TYPES,
     allowed_extensions=ALLOWED_ASSET_EXTENSIONS,
     max_file_count=MAX_ASSET_COUNT,
@@ -309,6 +318,7 @@ def _select_static_frame(
 __all__ = [
     "ALLOWED_ASSET_EXTENSIONS",
     "ALLOWED_ASSET_MIME_TYPES",
+    "ALLOWED_ASSET_ROLES",
     "ALLOWED_STATE_CATALOG_KINDS",
     "ALLOWED_TRIGGER_SOURCES",
     "MAX_ASSET_COUNT",
