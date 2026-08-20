@@ -115,6 +115,32 @@ def _activate(
     )
 
 
+@pytest.mark.parametrize(
+    "persona_id",
+    (
+        "Ada Lovelace / local",
+        "ペルソナ-éclair",
+        "actor?! @local#1",
+        "x" * 200,
+    ),
+)
+def test_persona_id_matches_authoritative_local_profile_boundary(
+    repository: PersonaVisualRepository,
+    persona_id: str,
+) -> None:
+    graph = _activate(repository, persona_id=persona_id)
+
+    assert graph.identity.persona_id == persona_id
+    assert repository.get_active_persona_pack(persona_id) == graph
+
+
+def test_persona_id_rejects_more_than_200_characters(
+    repository: PersonaVisualRepository,
+) -> None:
+    with pytest.raises(ValueError, match="^persona_visual_persona_id_invalid$"):
+        _activate(repository, persona_id="x" * 201)
+
+
 def test_activate_new_pack_returns_immutable_path_safe_graph(
     repository: PersonaVisualRepository,
     db: CharactersRAGDB,
@@ -412,6 +438,57 @@ def test_guard_runs_under_write_reservation_immediately_before_activation(
         "active_version": active.version.id,
     }
     assert published.version.version_number == 2
+
+
+def test_active_lookup_ignores_malformed_inactive_binding_history(
+    repository: PersonaVisualRepository,
+    db: CharactersRAGDB,
+) -> None:
+    active = _activate(repository)
+    connection = db.get_connection()
+    connection.execute("PRAGMA ignore_check_constraints = ON")
+    connection.execute(
+        """
+        INSERT INTO persona_visual_bindings(
+            persona_id, persona_revision, pack_id, active_version_id, status
+        ) VALUES (?, 'malformed', ?, ?, 'archived')
+        """,
+        (active.identity.persona_id, active.pack.id, active.version.id),
+    )
+    connection.commit()
+
+    assert repository.get_active_persona_pack(active.identity.persona_id) == active
+
+
+def test_locked_write_uses_fixed_repository_category(
+    repository: PersonaVisualRepository,
+    db: CharactersRAGDB,
+) -> None:
+    db.get_connection().execute("PRAGMA busy_timeout = 1")
+    locker = sqlite3.connect(db.db_path_str)
+    locker.execute("BEGIN IMMEDIATE")
+    try:
+        with pytest.raises(
+            ValueError, match="^persona_visual_repository_write_failed$"
+        ):
+            _activate(repository, persona_id="locked / actor")
+    finally:
+        locker.rollback()
+        locker.close()
+
+
+def test_read_operational_error_uses_fixed_repository_category(
+    repository: PersonaVisualRepository,
+    db: CharactersRAGDB,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_query(*_args: object, **_kwargs: object) -> None:
+        raise sqlite3.OperationalError("private database path and failure detail")
+
+    monkeypatch.setattr(db, "execute_query", fail_query)
+
+    with pytest.raises(ValueError, match="^persona_visual_repository_read_failed$"):
+        repository.get_active_persona_pack("Ada Lovelace / local")
 
 
 @pytest.mark.parametrize(
@@ -1067,7 +1144,6 @@ def test_corrupt_stored_numeric_fields_use_fixed_graph_category(
         ("persona_visual_assets", "frame_count", 241, "asset"),
         ("persona_visual_assets", "duration_ms", 30_001, "asset"),
         ("persona_visual_assets", "created_at", "invalid", "asset"),
-        ("persona_visual_bindings", "status", "invalid", "binding"),
         ("persona_visual_bindings", "created_at", "invalid", "binding"),
     ),
 )

@@ -31,7 +31,6 @@ _SOURCE_CONTEXT_KEYS = frozenset(
 )
 _MAX_SOURCE_CONTEXT_VALUE_LENGTH = 256
 _ASSET_KEY_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
-_PERSONA_ID_PATTERN = _ASSET_KEY_PATTERN
 _SOURCE_KIND_PATTERN = re.compile(r"[a-z][a-z0-9_.:-]{0,63}\Z")
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 _GRAPH_STATUSES = frozenset({"active", "archived", "deleted"})
@@ -153,9 +152,9 @@ class PersonaVisualRepository:
         try:
             with self.db.transaction():
                 return self._get_active_persona_pack(persona_id)
-        except (sqlite3.Error, UnicodeError, RecursionError, TypeError, OverflowError):
+        except (UnicodeError, RecursionError, TypeError, OverflowError):
             raise ValueError("persona_visual_graph_invalid") from None
-        except CharactersRAGDBError:
+        except (sqlite3.Error, CharactersRAGDBError):
             raise ValueError("persona_visual_repository_read_failed") from None
 
     def activate_new_pack(
@@ -244,9 +243,9 @@ class PersonaVisualRepository:
                 if graph is None:
                     raise ValueError("persona_visual_activation_failed")
                 return graph
-        except (sqlite3.Error, UnicodeError, RecursionError, TypeError, OverflowError):
+        except (UnicodeError, RecursionError, TypeError, OverflowError):
             raise ValueError("persona_visual_graph_invalid") from None
-        except CharactersRAGDBError:
+        except (sqlite3.Error, CharactersRAGDBError):
             raise ValueError("persona_visual_repository_write_failed") from None
 
     def publish_version(
@@ -287,14 +286,16 @@ class PersonaVisualRepository:
 
                 source_manifest_json = self._read_identity_snapshot(current.identity)
                 next_number = _db_positive_int(
-                    self.db.execute_query(
-                        """
+                    _fetchone(
+                        self.db.execute_query(
+                            """
                         SELECT COALESCE(MAX(version_number), 0) + 1
                           FROM persona_visual_pack_versions
                          WHERE pack_id = ?
                         """,
-                        (current.pack.id,),
-                    ).fetchone()[0]
+                            (current.pack.id,),
+                        )
+                    )[0]
                 )
                 _run_authority_guard(authority_guard, self.db, transaction_connection)
                 version_id = self._insert_version(
@@ -368,9 +369,9 @@ class PersonaVisualRepository:
                 if graph is None:
                     raise ValueError("persona_visual_activation_failed")
                 return graph
-        except (sqlite3.Error, UnicodeError, RecursionError, TypeError, OverflowError):
+        except (UnicodeError, RecursionError, TypeError, OverflowError):
             raise ValueError("persona_visual_graph_invalid") from None
-        except CharactersRAGDBError:
+        except (sqlite3.Error, CharactersRAGDBError):
             raise ValueError("persona_visual_repository_write_failed") from None
 
     def archive_binding(
@@ -408,40 +409,46 @@ class PersonaVisualRepository:
                 )
                 if changed.rowcount != 1:
                     raise ValueError("persona_visual_identity_changed")
-        except (sqlite3.Error, UnicodeError, RecursionError, TypeError, OverflowError):
+        except (UnicodeError, RecursionError, TypeError, OverflowError):
             raise ValueError("persona_visual_graph_invalid") from None
-        except CharactersRAGDBError:
+        except (sqlite3.Error, CharactersRAGDBError):
             raise ValueError("persona_visual_repository_write_failed") from None
 
     def _get_active_persona_pack(self, persona_id: str) -> PersonaVisualGraph | None:
         binding = self._active_binding_record(persona_id)
         if binding is None:
             return None
-        pack_row = self.db.execute_query(
-            "SELECT * FROM persona_visual_packs WHERE id = ?",
-            (binding.pack_id,),
-        ).fetchone()
+        pack_row = _fetchone(
+            self.db.execute_query(
+                "SELECT * FROM persona_visual_packs WHERE id = ?",
+                (binding.pack_id,),
+            )
+        )
         if pack_row is None:
             raise ValueError("persona_visual_pack_relationship_invalid")
         pack, pack_active_version_id = _decode_pack(pack_row)
         if pack.status != "active":
             return None
-        version_row = self.db.execute_query(
-            "SELECT * FROM persona_visual_pack_versions WHERE id = ?",
-            (binding.active_version_id,),
-        ).fetchone()
+        version_row = _fetchone(
+            self.db.execute_query(
+                "SELECT * FROM persona_visual_pack_versions WHERE id = ?",
+                (binding.active_version_id,),
+            )
+        )
         if version_row is None:
             raise ValueError("persona_visual_pack_relationship_invalid")
 
-        asset_rows = self.db.execute_query(
-            """
-            SELECT *
-              FROM persona_visual_assets
-             WHERE pack_version_id = ?
-             ORDER BY asset_key, id
-            """,
-            (binding.active_version_id,),
-        ).fetchall()
+        asset_rows = _fetchall(
+            self.db.execute_query(
+                """
+                SELECT *
+                  FROM persona_visual_assets
+                 WHERE pack_version_id = ?
+                 ORDER BY asset_key, id
+                """,
+                (binding.active_version_id,),
+            )
+        )
         assets = tuple(_decode_asset(row) for row in asset_rows)
         version = _decode_version(version_row, assets)
         if not (
@@ -477,20 +484,16 @@ class PersonaVisualRepository:
     def _active_binding_record(
         self, persona_id: str
     ) -> PersonaVisualBindingRecord | None:
-        rows = self.db.execute_query(
-            """
-            SELECT * FROM persona_visual_bindings WHERE persona_id = ?
-            """,
-            (persona_id,),
-        ).fetchall()
-        active = [
-            record
-            for row in rows
-            if (record := _decode_binding(row)).status == "active"
-        ]
-        if len(active) > 1:
-            raise ValueError("persona_visual_pack_relationship_invalid")
-        return active[0] if active else None
+        row = _fetchone(
+            self.db.execute_query(
+                """
+                SELECT * FROM persona_visual_bindings
+                 WHERE persona_id = ? AND status = 'active'
+                """,
+                (persona_id,),
+            )
+        )
+        return None if row is None else _decode_binding(row)
 
     def _require_owned_write_transaction(self) -> None:
         managed_depth = getattr(self.db._local, "transaction_depth", 0)
@@ -561,8 +564,9 @@ class PersonaVisualRepository:
             )
 
     def _read_identity_snapshot(self, identity: PersonaVisualIdentity) -> str:
-        version = self.db.execute_query(
-            """
+        version = _fetchone(
+            self.db.execute_query(
+                """
             SELECT version_row.manifest_json
               FROM persona_visual_bindings AS binding
               JOIN persona_visual_packs AS pack ON pack.id = binding.pack_id
@@ -576,20 +580,21 @@ class PersonaVisualRepository:
                AND pack.status = 'active' AND pack.active_version_id = ?
                AND pack.version = ? AND version_row.version_number = ?
                AND version_row.manifest_sha256 = ?
-            """,
-            (
-                identity.binding_id,
-                identity.persona_id,
-                identity.persona_revision,
-                identity.pack_id,
-                identity.pack_version_id,
-                identity.binding_version,
-                identity.pack_version_id,
-                identity.pack_revision,
-                identity.version_number,
-                identity.manifest_sha256,
-            ),
-        ).fetchone()
+                """,
+                (
+                    identity.binding_id,
+                    identity.persona_id,
+                    identity.persona_revision,
+                    identity.pack_id,
+                    identity.pack_version_id,
+                    identity.binding_version,
+                    identity.pack_version_id,
+                    identity.pack_revision,
+                    identity.version_number,
+                    identity.manifest_sha256,
+                ),
+            )
+        )
         if version is None:
             raise ValueError("persona_visual_identity_changed")
         return str(version["manifest_json"])
@@ -801,9 +806,7 @@ def _decode_binding(row: Mapping[str, Any]) -> PersonaVisualBindingRecord:
     """Decode one binding before selecting its active graph."""
 
     try:
-        persona_id = _db_text(row["persona_id"], 128)
-        if _PERSONA_ID_PATTERN.fullmatch(persona_id) is None:
-            raise ValueError
+        persona_id = _db_text(row["persona_id"], 200)
         return PersonaVisualBindingRecord(
             id=_db_positive_int(row["id"]),
             persona_id=persona_id,
@@ -873,11 +876,9 @@ def _asset_key(value: object) -> str:
 
 def _validate_persona_id(value: object) -> None:
     try:
-        value = _input_text(value, 128)
+        _input_text(value, 200)
     except (TypeError, ValueError, UnicodeError):
         raise ValueError("persona_visual_persona_id_invalid") from None
-    if _PERSONA_ID_PATTERN.fullmatch(value) is None:
-        raise ValueError("persona_visual_persona_id_invalid")
 
 
 def _validate_revision(value: object) -> None:
@@ -1018,6 +1019,20 @@ def _input_text(value: object, maximum: int, *, allow_empty: bool = False) -> st
     if (not allow_empty and not value) or len(value) > maximum:
         raise ValueError
     return value
+
+
+def _fetchone(cursor: sqlite3.Cursor) -> Any:
+    try:
+        return cursor.fetchone()
+    except (sqlite3.Error, UnicodeError, RecursionError, TypeError, OverflowError):
+        raise ValueError("persona_visual_graph_invalid") from None
+
+
+def _fetchall(cursor: sqlite3.Cursor) -> list[Any]:
+    try:
+        return cursor.fetchall()
+    except (sqlite3.Error, UnicodeError, RecursionError, TypeError, OverflowError):
+        raise ValueError("persona_visual_graph_invalid") from None
 
 
 def _db_int(value: object) -> int:
