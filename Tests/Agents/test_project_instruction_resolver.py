@@ -247,6 +247,102 @@ def test_startup_examines_only_the_binding_root_and_two_candidate_names(
     }
 
 
+def test_root_replacement_between_override_and_standard_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "selected"
+    root.mkdir()
+    (root / "AGENTS.md").write_text("original standard")
+    replaced = tmp_path / "replaced"
+    override = root / "AGENTS.override.md"
+    real_lstat = resolver_module.os.lstat
+    raced = False
+
+    def replace_root_on_missing_override(path: os.PathLike[str] | str):
+        nonlocal raced
+        try:
+            return real_lstat(path)
+        except FileNotFoundError:
+            if Path(path) == override and not raced:
+                raced = True
+                root.rename(replaced)
+                root.mkdir()
+                (root / "AGENTS.md").write_text("replacement standard")
+            raise
+
+    monkeypatch.setattr(resolver_module.os, "lstat", replace_root_on_missing_override)
+
+    candidate = _resolve(root, dispatch_started_wall_ns=2**63 - 1)
+
+    assert raced is True
+    assert candidate.source is None
+    assert [(item.relative_path, item.code) for item in candidate.outcomes] == [
+        ("AGENTS.override.md", "resolution_failed")
+    ]
+
+
+def test_override_created_between_candidates_suppresses_standard_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    standard = tmp_path / "AGENTS.md"
+    override = tmp_path / "AGENTS.override.md"
+    standard.write_text("standard")
+    dispatch_started = time.time_ns() + 1_000_000_000
+    real_lstat = resolver_module.os.lstat
+    created = False
+
+    def create_override_before_standard(path: os.PathLike[str] | str):
+        nonlocal created
+        if Path(path) == standard and not created:
+            created = True
+            override.write_text("new override")
+            os.utime(
+                override,
+                ns=(dispatch_started + 1, dispatch_started + 1),
+            )
+        return real_lstat(path)
+
+    monkeypatch.setattr(resolver_module.os, "lstat", create_override_before_standard)
+
+    candidate = _resolve(tmp_path, dispatch_started_wall_ns=dispatch_started)
+
+    assert created is True
+    assert candidate.source is None
+    assert [(item.relative_path, item.code) for item in candidate.outcomes] == [
+        ("AGENTS.override.md", "stale")
+    ]
+
+
+def test_empty_override_mutating_between_candidates_suppresses_standard_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    override = tmp_path / "AGENTS.override.md"
+    standard = tmp_path / "AGENTS.md"
+    override.write_text(" \n")
+    standard.write_text("standard")
+    dispatch_started = time.time_ns() + 1_000_000_000
+    real_lstat = resolver_module.os.lstat
+    mutated = False
+
+    def mutate_override_before_standard(path: os.PathLike[str] | str):
+        nonlocal mutated
+        if Path(path) == standard and not mutated:
+            mutated = True
+            override.write_text("now authoritative")
+            os.utime(override, ns=(dispatch_started - 1, dispatch_started - 1))
+        return real_lstat(path)
+
+    monkeypatch.setattr(resolver_module.os, "lstat", mutate_override_before_standard)
+
+    candidate = _resolve(tmp_path, dispatch_started_wall_ns=dispatch_started)
+
+    assert mutated is True
+    assert candidate.source is None
+    assert [(item.relative_path, item.code) for item in candidate.outcomes] == [
+        ("AGENTS.override.md", "resolution_failed")
+    ]
+
+
 def test_ancestor_disappearing_after_root_validation_is_not_treated_as_absent_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -715,6 +811,37 @@ def test_missing_required_platform_metadata_fails_only_source_closed(
     ]
 
 
+@pytest.mark.parametrize("attributes", [None, "not-a-number", object()])
+def test_unusable_windows_reparse_metadata_fails_source_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, attributes: object
+) -> None:
+    instruction = tmp_path / "AGENTS.md"
+    instruction.write_text("cannot verify")
+    monkeypatch.setattr(resolver_module, "_WINDOWS", True)
+    monkeypatch.setattr(resolver_module, "_REPARSE_POINT", 0x400)
+    real_lstat = resolver_module.os.lstat
+
+    def unusable_attributes(path: os.PathLike[str] | str):
+        value = real_lstat(path)
+        return SimpleNamespace(
+            st_dev=value.st_dev,
+            st_ino=value.st_ino,
+            st_mode=value.st_mode,
+            st_size=value.st_size,
+            st_mtime_ns=value.st_mtime_ns,
+            st_file_attributes=(attributes if Path(path) == instruction else 0),
+        )
+
+    monkeypatch.setattr(resolver_module.os, "lstat", unusable_attributes)
+
+    candidate = _resolve(tmp_path)
+
+    assert candidate.source is None
+    assert [(item.relative_path, item.code) for item in candidate.outcomes] == [
+        ("AGENTS.md", "resolution_failed")
+    ]
+
+
 def test_token_admission_is_whole_source_and_prioritizes_specific_sources() -> None:
     broad = _source(body="123", relative_path="AGENTS.md")
     specific = _source(body="4567", relative_path="src/AGENTS.md")
@@ -740,6 +867,68 @@ def test_token_admission_rejects_non_positive_allowance() -> None:
 
     assert delivery.source_digests == ()
     assert [item.code for item in delivery.outcomes] == ["omitted_token_budget"]
+
+
+@pytest.mark.parametrize("estimate", [0, -1, 1.5, True, None])
+def test_token_admission_omits_invalid_estimates(estimate: object) -> None:
+    source = _source(body="x")
+
+    delivery = admit_sources(
+        (source,), safe_input_tokens=100, count_tokens=lambda _source: estimate
+    )
+
+    assert delivery.source_digests == ()
+    assert [item.code for item in delivery.outcomes] == ["omitted_token_budget"]
+
+
+def test_zero_estimate_is_omitted_even_with_zero_safe_allowance() -> None:
+    source = _source(body="x")
+
+    delivery = admit_sources(
+        (source,), safe_input_tokens=0, count_tokens=lambda _source: 0
+    )
+
+    assert delivery.source_digests == ()
+    assert [item.code for item in delivery.outcomes] == ["omitted_token_budget"]
+
+
+def test_token_estimator_exception_is_sanitized_to_omission() -> None:
+    source = _source(body="x")
+
+    def failed_estimator(_source: InstructionSource) -> int:
+        raise RuntimeError("sensitive estimator detail")
+
+    delivery = admit_sources(
+        (source,), safe_input_tokens=100, count_tokens=failed_estimator
+    )
+
+    assert delivery.source_digests == ()
+    assert [item.code for item in delivery.outcomes] == ["omitted_token_budget"]
+
+
+def test_absolute_path_failure_returns_content_free_resolution_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = Path("relative-root")
+
+    def missing_cwd(_path: Path) -> Path:
+        raise FileNotFoundError("sensitive cwd detail")
+
+    monkeypatch.setattr(Path, "absolute", missing_cwd)
+
+    candidate = ProjectInstructionResolver().resolve_startup(
+        binding_id="binding",
+        binding_root=root,
+        locator_fingerprint="fingerprint",
+        max_bytes=1024,
+        dispatch_started_wall_ns=time.time_ns(),
+    )
+
+    assert candidate.binding_root == root
+    assert candidate.source is None
+    assert [(item.relative_path, item.code) for item in candidate.outcomes] == [
+        (".", "resolution_failed")
+    ]
 
 
 def test_public_value_objects_are_frozen_and_candidate_keeps_handoff_fields(

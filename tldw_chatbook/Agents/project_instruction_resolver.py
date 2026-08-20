@@ -84,10 +84,17 @@ class InstructionSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
+class _FallbackCondition:
+    kind: Literal["absent", "empty"]
+    file_identity: tuple[int, int, int, int, int] | None = None
+    digest: str | None = field(default=None, repr=False)
+
+
+@dataclass(frozen=True, slots=True)
 class _ReadResult:
     source: InstructionSource | None = None
     outcome: InstructionOutcome | None = None
-    absent_or_empty: bool = False
+    fallback_condition: _FallbackCondition | None = None
 
 
 class _UnsafeMetadata(Exception):
@@ -124,11 +131,11 @@ class ProjectInstructionResolver:
         if max_bytes < 0:
             raise ValueError("max_bytes must be non-negative")
 
-        root, root_failure = _canonical_binding_root(binding_root)
-        if root_failure:
+        root, expected_ancestors = _canonical_binding_root(binding_root)
+        if expected_ancestors is None:
             return StartupInstructionCandidate(
                 binding_id=binding_id,
-                binding_root=binding_root.absolute(),
+                binding_root=root,
                 locator_fingerprint=locator_fingerprint,
                 dispatch_started_wall_ns=dispatch_started_wall_ns,
                 source=None,
@@ -141,16 +148,29 @@ class ProjectInstructionResolver:
             kind="override",
             max_bytes=max_bytes,
             dispatch_started_wall_ns=dispatch_started_wall_ns,
+            expected_ancestors=expected_ancestors,
         )
         result = override
-        if override.absent_or_empty:
+        if override.fallback_condition is not None:
             result = _read_candidate(
                 root=root,
                 filename="AGENTS.md",
                 kind="standard",
                 max_bytes=max_bytes,
                 dispatch_started_wall_ns=dispatch_started_wall_ns,
+                expected_ancestors=expected_ancestors,
             )
+            if result.source is not None:
+                rechecked_override = _read_candidate(
+                    root=root,
+                    filename="AGENTS.override.md",
+                    kind="override",
+                    max_bytes=max_bytes,
+                    dispatch_started_wall_ns=dispatch_started_wall_ns,
+                    expected_ancestors=expected_ancestors,
+                )
+                if rechecked_override.fallback_condition != override.fallback_condition:
+                    result = _fallback_changed_result(rechecked_override)
 
         return StartupInstructionCandidate(
             binding_id=binding_id,
@@ -185,7 +205,14 @@ def admit_sources(
     admitted: set[int] = set()
     omitted: set[int] = set()
     for index in range(len(sources) - 1, -1, -1):
-        needed = max(0, count_tokens(sources[index]))
+        try:
+            needed = count_tokens(sources[index])
+        except Exception:
+            omitted.add(index)
+            continue
+        if type(needed) is not int or needed <= 0:
+            omitted.add(index)
+            continue
         if needed <= remaining:
             admitted.add(index)
             remaining -= needed
@@ -205,13 +232,23 @@ def admit_sources(
     )
 
 
-def _canonical_binding_root(binding_root: Path) -> tuple[Path, bool]:
+def _canonical_binding_root(
+    binding_root: Path,
+) -> tuple[Path, tuple[tuple[int, int, int], ...] | None]:
+    lexical = _safe_absolute(binding_root)
+    if lexical is None:
+        return binding_root, None
     try:
-        lexical = binding_root.absolute()
-        _capture_ancestor_identities(lexical)
-        return lexical, False
-    except (OSError, RuntimeError, _UnsafeMetadata):
-        return binding_root.absolute(), True
+        return lexical, _capture_ancestor_identities(lexical)
+    except (OSError, RuntimeError, ValueError, _UnsafeMetadata):
+        return lexical, None
+
+
+def _safe_absolute(path: Path) -> Path | None:
+    try:
+        return path.absolute()
+    except (OSError, RuntimeError, ValueError):
+        return None
 
 
 def _read_candidate(
@@ -221,6 +258,7 @@ def _read_candidate(
     kind: InstructionKind,
     max_bytes: int,
     dispatch_started_wall_ns: int,
+    expected_ancestors: tuple[tuple[int, int, int], ...],
 ) -> _ReadResult:
     path = root / filename
 
@@ -228,18 +266,26 @@ def _read_candidate(
         return InstructionOutcome(filename, ".", code)
 
     try:
-        ancestors_before = _capture_ancestor_identities(root)
+        if _capture_ancestor_identities(root) != expected_ancestors:
+            raise _UnsafeMetadata
     except (OSError, _UnsafeMetadata):
         return _ReadResult(outcome=outcome("resolution_failed"))
     try:
         file_before = os.lstat(path)
     except FileNotFoundError:
-        return _ReadResult(absent_or_empty=True)
+        try:
+            if _capture_ancestor_identities(root) != expected_ancestors:
+                raise _UnsafeMetadata
+        except (OSError, _UnsafeMetadata):
+            return _ReadResult(outcome=outcome("resolution_failed"))
+        return _ReadResult(fallback_condition=_FallbackCondition("absent"))
     except OSError:
         return _ReadResult(outcome=outcome("resolution_failed"))
 
     try:
         file_identity = _verified_state(file_before)
+        if _capture_ancestor_identities(root) != expected_ancestors:
+            raise _UnsafeMetadata
         if not stat.S_ISREG(file_before.st_mode):
             return _ReadResult(outcome=outcome("invalid"))
         if stat.S_ISLNK(file_before.st_mode) or _is_reparse(file_before):
@@ -272,7 +318,7 @@ def _read_candidate(
             or _is_reparse(file_after)
             or _verified_state(finished) != file_identity
             or _verified_state(file_after) != file_identity
-            or ancestors_after != ancestors_before
+            or ancestors_after != expected_ancestors
         ):
             raise _UnsafeMetadata
         if len(raw) > max_bytes:
@@ -284,7 +330,13 @@ def _read_candidate(
         return _ReadResult(outcome=outcome("resolution_failed"))
 
     if not body.strip():
-        return _ReadResult(absent_or_empty=True)
+        return _ReadResult(
+            fallback_condition=_FallbackCondition(
+                "empty",
+                file_identity=file_identity,
+                digest=hashlib.sha256(raw).hexdigest(),
+            )
+        )
     return _ReadResult(
         source=InstructionSource(
             canonical_path=path,
@@ -295,6 +347,14 @@ def _read_candidate(
             byte_count=len(raw),
             digest=hashlib.sha256(raw).hexdigest(),
         )
+    )
+
+
+def _fallback_changed_result(rechecked: _ReadResult) -> _ReadResult:
+    if rechecked.outcome is not None:
+        return rechecked
+    return _ReadResult(
+        outcome=InstructionOutcome("AGENTS.override.md", ".", "resolution_failed")
     )
 
 
@@ -321,8 +381,6 @@ def _verified_state(value: object) -> tuple[int, int, int, int, int]:
         )
     except (AttributeError, TypeError, ValueError) as error:
         raise _UnsafeMetadata from error
-    if _WINDOWS and not hasattr(value, "st_file_attributes"):
-        raise _UnsafeMetadata
     return identity
 
 
@@ -357,6 +415,10 @@ def _directory_identity(value: object) -> tuple[int, int, int]:
 def _is_reparse(value: object) -> bool:
     if not _WINDOWS:
         return False
-    if _REPARSE_POINT is None or not hasattr(value, "st_file_attributes"):
-        raise _UnsafeMetadata
-    return bool(int(getattr(value, "st_file_attributes")) & _REPARSE_POINT)
+    try:
+        attributes = getattr(value, "st_file_attributes")
+        if attributes is None or _REPARSE_POINT is None:
+            raise TypeError
+        return bool(int(attributes) & int(_REPARSE_POINT))
+    except Exception as error:
+        raise _UnsafeMetadata from error
