@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 from rich.cells import cell_len
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -21,7 +21,16 @@ from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.color import Color
 from textual.containers import Vertical, VerticalScroll
 from textual.widget import Widget
-from textual.widgets import Button, Input, Label, ListView, Static, TextArea, Tree
+from textual.widgets import (
+    Button,
+    Collapsible,
+    Input,
+    Label,
+    ListView,
+    Static,
+    TextArea,
+    Tree,
+)
 
 sys.modules.setdefault("parakeet_mlx", types.ModuleType("parakeet_mlx"))
 
@@ -778,6 +787,7 @@ def _commit_review_projection(
     projection_type = _panel_projection_type("CommitPanelReviewProjection")
     return projection_type(
         review=review,
+        repository=_repository(),
         included_notes=tuple(
             note_type(note=note)
             for note, (_change_type, _path) in zip(
@@ -1479,9 +1489,31 @@ async def test_commit_review_is_literal_complete_and_discloses_included_notes(
         await pilot.pause()
 
         assert panel.commit_phase == "review"
+        for section in ("what", "where", "impact", "recovery"):
+            assert _text(
+                panel.query_one(
+                    f"#file-notes-git-commit-review-{section}-heading",
+                    Static,
+                )
+            ) == section.title()
+        technical = panel.query_one(
+            "#file-notes-git-commit-review-technical",
+            Collapsible,
+        )
+        assert technical.title == "Technical details"
+        assert technical.collapsed
+        assert _text(
+            panel.query_one(
+                "#file-notes-git-commit-review-repository",
+                Static,
+            )
+        ) == "Repository: /canonical/repository"
         assert _text(
             panel.query_one("#file-notes-git-commit-review-branch", Static)
-        ) == "Branch: refs/heads/feature/[literal] · Parent: aaaaaaaaaaaa"
+        ) == (
+            "Branch: refs/heads/feature/[literal] · "
+            f"Parent: {'a' * 40}"
+        )
         message = panel.query_one(
             "#file-notes-git-commit-review-message",
             Static,
@@ -1528,6 +1560,41 @@ async def test_commit_review_is_literal_complete_and_discloses_included_notes(
             "Included notes use their complete staged file state, "
             "not only edits made in Chatbook"
         )
+        assert _text(
+            panel.query_one(
+                "#file-notes-git-commit-review-recovery",
+                Static,
+            )
+        ) == (
+            "Edit message or cancel before the commit starts. If the result "
+            "is uncertain, Check again verifies without retrying."
+        )
+        for selector in (
+            "#file-notes-git-commit-review-repository",
+            "#file-notes-git-commit-review-branch",
+            "#file-notes-git-commit-review-policy",
+            "#file-notes-git-commit-review-complete-state",
+            "#file-notes-git-commit-review-recovery",
+        ):
+            assert technical not in panel.query_one(selector).ancestors
+        assert _text(
+            panel.query_one(
+                "#file-notes-git-commit-review-worktree-identity",
+                Static,
+            )
+        ) == "Worktree identity: 1:2"
+        assert _text(
+            panel.query_one(
+                "#file-notes-git-commit-review-git-directory",
+                Static,
+            )
+        ) == "Git directory: /canonical/repository/.git · identity 1:2"
+        assert _text(
+            panel.query_one(
+                "#file-notes-git-commit-review-git-common-directory",
+                Static,
+            )
+        ) == "Git common directory: /canonical/repository/.git · identity 1:2"
 
         disclosure = panel.query_one(
             "#file-notes-git-commit-included-toggle",
@@ -1583,6 +1650,7 @@ def test_commit_review_note_projection_rejects_authority_mismatch(
     with pytest.raises(ValueError, match="exactly match"):
         projection_type(
             review=review,
+            repository=valid.repository,
             included_notes=mismatched_notes,
         )
 
@@ -1607,6 +1675,11 @@ async def test_commit_footer_keeps_disclosure_edit_cancel_confirm_order_and_geom
             "#file-notes-git-commit-included-toggle",
             Button,
         )
+        technical = panel.query_one(
+            "#file-notes-git-commit-review-technical",
+            Collapsible,
+        )
+        technical_title = technical.query_one("CollapsibleTitle", Widget)
         edit = panel.query_one("#file-notes-git-commit-edit", Button)
         cancel = panel.query_one("#file-notes-git-commit-cancel", Button)
         confirm = panel.query_one("#file-notes-git-commit-confirm", Button)
@@ -1615,7 +1688,19 @@ async def test_commit_footer_keeps_disclosure_edit_cancel_confirm_order_and_geom
         assert not confirm.has_focus
 
         await pilot.press("shift+tab")
+        assert technical_title.has_focus
+        assert technical.collapsed
+        await pilot.press("enter")
+        await pilot.pause()
+        assert not technical.collapsed
+        assert technical_title.has_focus
+        await pilot.press("shift+tab")
         assert disclosure.has_focus
+        await pilot.press("tab")
+        assert technical_title.has_focus
+        await pilot.press("enter")
+        await pilot.pause()
+        assert technical.collapsed
         await pilot.press("tab")
         assert edit.has_focus
         await pilot.press("tab")
@@ -1624,6 +1709,27 @@ async def test_commit_footer_keeps_disclosure_edit_cancel_confirm_order_and_geom
         assert confirm.has_focus
 
         if size[0] == 40:
+            body = panel.query_one(
+                "#file-notes-git-commit-body",
+                VerticalScroll,
+            )
+            for section in ("what", "where", "impact", "recovery"):
+                heading = panel.query_one(
+                    f"#file-notes-git-commit-review-{section}-heading",
+                    Static,
+                )
+                heading.scroll_visible(animate=False)
+                await pilot.pause()
+                assert heading in app.screen._compositor.visible_widgets
+                assert heading.region.x >= body.region.x
+                assert heading.region.right <= body.region.right
+                assert section.title() in app.export_screenshot()
+            technical_title.scroll_visible(animate=False)
+            await pilot.pause()
+            assert technical_title in app.screen._compositor.visible_widgets
+            screenshot = app.export_screenshot()
+            assert "Technical" in screenshot
+            assert "details" in screenshot
             assert edit.region.y == cancel.region.y
             assert confirm.region.y > edit.region.y
             assert confirm.region.x == footer.content_region.x

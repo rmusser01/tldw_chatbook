@@ -2635,16 +2635,20 @@ class LibraryFileNotesWorkspace(Vertical):
             )
             return
         if isinstance(result, PushPreflightResult):
+            repository = snapshot.trusted_repository
             if (
                 result.state == "review"
                 and result.handle is not None
                 and result.review is not None
                 and result.review.candidate == operation.candidate.candidate
+                and self._repository_identity_is_complete(repository)
             ):
+                assert repository is not None
                 try:
                     projection = PushPanelReviewProjection(
                         review=result.review,
                         availability=operation.candidate,
+                        repository=repository,
                     )
                 except ValueError:
                     projection = None
@@ -5713,6 +5717,7 @@ class LibraryFileNotesWorkspace(Vertical):
         try:
             return CommitPanelReviewProjection(
                 review,
+                key.repository,
                 tuple(
                     CommitReviewNoteProjection(note)
                     for note in review.included_notes

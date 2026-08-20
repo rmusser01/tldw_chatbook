@@ -171,11 +171,16 @@ With no session edits the panel says "No current-session Git changes."
 behind the gate "Stage at least one session note to commit" until something
 is staged. It then opens the commit form — **Subject** (placeholder
 "Required commit subject") and **Body (optional)** — and **Review commit**
-runs a pre-check ("Checking commit...") before showing the review: the
-"Exact commit message" as Git will record it, a "Show included notes (N)"
-toggle listing every file going in, and branch/identity details. Finish with
-**Confirm commit**, or step back with **Edit message** / **Cancel commit**.
-If a result comes back uncertain, **Check again** re-checks it.
+runs a pre-check ("Checking commit...") before showing a decision-first
+review. **What** contains the exact message as Git will record it. **Where**
+names the local repository, full branch ref, and exact parent commit. **Impact**
+lists the author/committer, included-note counts and complete staged-file scope,
+plus the hook and signing policy. **Recovery** explains when to edit, cancel,
+or use **Check again** without retrying an uncertain commit. **Technical
+details** is collapsed by default and holds filesystem-identity audit evidence;
+**Show included notes (N)** remains a separate disclosure for every file going
+in. Finish with **Confirm commit**, or step back with **Edit message** /
+**Cancel commit**.
 
 The commit review states the exact scope — for example, "2 session notes will
 be committed; unrelated changes untouched". A successful commit is still
@@ -202,11 +207,16 @@ outside Chatbook, or later note edits.
    SSH agent may run after authorization, but terminal prompts remain
    disabled. The panel then reads "Checking remote before push…" and still
    offers **Cancel check**.
-3. Read the immutable review. It identifies the commit and parent transition,
-   configured remote and full ref, expected-parent lease, included session-note
-   provenance, secure-transport policy, and possible remote effects. The
-   included notes are not a new selection: later edits remain local. Local
-   pre-push hooks do not run; remote hooks, branch policy, CI, or mirrors may.
+3. Read the immutable decision-first review. **What** identifies the exact
+   commit, parent transition, and included session-note provenance. **Where**
+   shows the local repository and branch, configured destination, full ref,
+   sanitized endpoint, exact parent lease, transport, and authentication
+   policy. **Endpoint details** remains independently available for the
+   selectable endpoint fields. **Impact** states the publication scope, local
+   hook bypass, later-local edits, and possible remote hooks, branch policy,
+   CI, or mirrors. **Recovery** explains how to leave without pushing and how
+   an uncertain result is checked without another push. Collapsed **Technical
+   details** contains only duplicate/internal audit evidence.
 4. **Back** has initial focus. Choose **Push 1 commit** only after confirming
    the destination. Chatbook freshly re-checks the candidate, configuration,
    authorization, and remote parent before requesting the one reviewed ref

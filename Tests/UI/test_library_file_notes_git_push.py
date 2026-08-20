@@ -26,6 +26,7 @@ from Tests.UI.test_library_file_notes_git import (  # noqa: E402
     _PanelHarness,
     _RemountWorkspaceHarness,
     _WorkspaceHarness,
+    _repository,
     _row,
     _status,
     _text,
@@ -116,6 +117,7 @@ def _push_panel_review_projection():
     return git_panel_module.PushPanelReviewProjection(
         review=review,
         availability=availability,
+        repository=_repository(),
     )
 
 
@@ -794,9 +796,12 @@ async def test_push_review_is_complete_immutable_and_keyboard_safe() -> None:
         assert not panel.query_one("#file-notes-git-list-surface").display
         body = panel.query_one("#file-notes-git-push-body", VerticalScroll)
         assert body.styles.overflow_y == "auto"
-        assert _text(
-            panel.query_one("#file-notes-git-push-review-what-changes-heading")
-        ) == "What changes"
+        for section in ("what", "where", "impact", "recovery"):
+            assert _text(
+                panel.query_one(
+                    f"#file-notes-git-push-review-{section}-heading"
+                )
+            ) == section.title()
         assert _text(panel.query_one("#file-notes-git-push-review-lead")) == (
             "Pushes 1 reviewed commit created from 2 session notes."
         )
@@ -804,23 +809,17 @@ async def test_push_review_is_complete_immutable_and_keyboard_safe() -> None:
             "Commit subject: Publish exact session notes"
         )
         assert _text(
-            panel.query_one("#file-notes-git-push-review-destination-heading")
-        ) == "Where it goes"
-        assert _text(
             panel.query_one("#file-notes-git-push-review-destination")
         ) == "origin/session-notes"
         assert _text(
-            panel.query_one("#file-notes-git-push-review-scope-heading")
-        ) == "Exact scope"
+            panel.query_one("#file-notes-git-push-review-repository")
+        ) == "Local repository: /canonical/repository"
         assert _text(panel.query_one("#file-notes-git-push-review-counts")) == (
             "2 session notes: New 1 · Modified 1"
         )
         notes = panel.query_one("#file-notes-git-push-review-notes", TextArea)
         assert notes.read_only
         assert notes.text == "Modified: folder/one.md\nNew: two.md"
-        assert _text(
-            panel.query_one("#file-notes-git-push-review-effects-heading")
-        ) == "Side effects"
         assert _text(panel.query_one("#file-notes-git-push-review-effects")) == (
             "Remote hooks, branch policy, CI, or mirrors may run."
         )
@@ -871,6 +870,37 @@ async def test_push_review_is_complete_immutable_and_keyboard_safe() -> None:
             "Git publishes the reviewed commit and required Git objects; this "
             "list is provenance, not a separate note-transfer selection"
         )
+        assert _text(
+            panel.query_one("#file-notes-git-push-review-recovery")
+        ) == (
+            "Back leaves this review without pushing. If the result is "
+            "uncertain, Check remote again never pushes."
+        )
+        for selector in (
+            "#file-notes-git-push-review-repository",
+            "#file-notes-git-push-review-candidate",
+            "#file-notes-git-push-review-transition",
+            "#file-notes-git-push-review-local-branch",
+            "#file-notes-git-push-review-ref",
+            "#file-notes-git-push-review-endpoint",
+            "#file-notes-git-push-review-lease",
+            "#file-notes-git-push-review-transport",
+            "#file-notes-git-push-review-authentication",
+            "#file-notes-git-push-review-local-hooks",
+            "#file-notes-git-push-review-objects",
+            "#file-notes-git-push-review-recovery",
+            "#file-notes-git-push-review-details",
+        ):
+            assert technical not in panel.query_one(selector).ancestors
+        assert _text(
+            panel.query_one("#file-notes-git-push-review-refspec-audit")
+        ) == f"Exact refspec: {'d' * 40}:refs/heads/session-notes"
+        assert _text(
+            panel.query_one("#file-notes-git-push-review-git-directory")
+        ) == "Git directory: /canonical/repository/.git · identity 1:2"
+        assert _text(
+            panel.query_one("#file-notes-git-push-review-git-common-directory")
+        ) == "Git common directory: /canonical/repository/.git · identity 1:2"
 
         details = panel.query_one("#file-notes-git-push-review-details", Button)
         back = panel.query_one("#file-notes-git-push-back", Button)
@@ -1152,6 +1182,17 @@ async def test_push_panel_compact_review_and_result_matrix_is_keyboard_safe(
             technical_title = technical.query_one("CollapsibleTitle", Widget)
             assert technical.collapsed
             assert details not in app.screen._compositor.visible_widgets
+            for section in ("what", "where", "impact", "recovery"):
+                heading = panel.query_one(
+                    f"#file-notes-git-push-review-{section}-heading",
+                    Widget,
+                )
+                heading.scroll_visible(animate=False)
+                await pilot.pause()
+                assert heading in app.screen._compositor.visible_widgets
+                assert heading.region.x >= body.region.x
+                assert heading.region.right <= body.region.right
+                assert section.title() in app.export_screenshot()
             body.focus()
             prior_scroll = body.scroll_y
             await pilot.press("pagedown")
@@ -1172,9 +1213,11 @@ async def test_push_panel_compact_review_and_result_matrix_is_keyboard_safe(
             await pilot.pause()
             assert not technical.collapsed
             await pilot.press("shift+tab")
+            assert details.has_focus
+            assert details in app.screen._compositor.visible_widgets
+            await pilot.press("shift+tab")
             assert notes.has_focus
-            technical_title.focus()
-            await pilot.press("tab")
+            details.focus()
             await pilot.pause()
             assert details.has_focus
             assert details in app.screen._compositor.visible_widgets
