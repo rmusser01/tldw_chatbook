@@ -394,6 +394,11 @@ from .Research_Interop import (
     ServerResearchService,
 )
 from .Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
+from .Scheduling.constants import (
+    HANDLER_TIMEOUT_SECONDS,
+    MISSED_FIRE_GRACE_SECONDS,
+    SCHEDULER_POLL_INTERVAL_SECONDS,
+)
 from .Scheduling.services.scheduling_service import SchedulingService
 from .Scheduling.services.server_client import SchedulingServerClient
 from .Scheduling.scheduler.loop import SchedulerLoop, Handler
@@ -6873,7 +6878,9 @@ class TldwCli(
             self.scheduling_service.db,
             handlers=handlers,
             poll_interval=get_cli_setting(
-                "scheduling", "scheduler_poll_interval_seconds", 30
+                "scheduling",
+                "scheduler_poll_interval_seconds",
+                SCHEDULER_POLL_INTERVAL_SECONDS,
             ),
             watchlist_projection=(
                 watchlist_projection if watchlist_handler is not None else None
@@ -6882,10 +6889,10 @@ class TldwCli(
                 briefing_projection if briefing_handler is not None else None
             ),
             missed_fire_grace_seconds=get_cli_setting(
-                "scheduling", "missed_fire_grace_seconds", 60
+                "scheduling", "missed_fire_grace_seconds", MISSED_FIRE_GRACE_SECONDS
             ),
             handler_timeout_seconds=get_cli_setting(
-                "scheduling", "handler_timeout_seconds", 300
+                "scheduling", "handler_timeout_seconds", HANDLER_TIMEOUT_SECONDS
             ),
         )
         self.notifications_scope_service = NotificationsScopeService(

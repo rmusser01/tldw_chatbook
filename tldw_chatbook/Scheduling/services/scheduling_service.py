@@ -87,13 +87,26 @@ class SchedulingService:
         self.on_queue_changed = on_queue_changed
 
     def _notify_queue_changed(self) -> None:
-        """Invoke the queue-changed callback, tolerating a broken one."""
+        """Invoke the queue-changed callback, tolerating a broken one.
+
+        The exception log carries the owner and the callback's qualified
+        name so a wiring failure can be correlated with the scheduler
+        instance it affected (review finding: bare message, no context).
+        """
         if self.on_queue_changed is None:
             return
+        callback = self.on_queue_changed
         try:
-            self.on_queue_changed()
+            callback()
         except Exception:  # noqa: BLE001 - callback failure is not the caller's
-            logger.exception("Scheduling on_queue_changed callback failed")
+            logger.exception(
+                "Scheduling on_queue_changed callback failed for owner "
+                "{owner} (callback {callback}); the mutation itself "
+                "succeeded and the scheduler queue will reload on its "
+                "periodic interval",
+                owner=self.owner_id,
+                callback=getattr(callback, "__qualname__", repr(callback)),
+            )
 
     def set_owner(self, owner_id: str) -> None:
         """Switch the active owner and propagate it to the sync engine."""
@@ -297,9 +310,17 @@ class SchedulingService:
         return deleted
 
     async def sync_now(self, owner_id: str | None = None) -> None:
-        """Trigger a full sync for the given owner (defaults to current owner)."""
+        """Trigger a full sync for the given owner (defaults to current owner).
+
+        A successful sync can insert, update, and delete reminder rows the
+        scheduler has already queued, so it fires ``on_queue_changed`` like
+        every other mutation path (review finding: sync left the live queue
+        stale until the ~30-minute periodic reload -- pulled reminders did
+        not dispatch on time and remotely-deleted ones kept firing).
+        """
         target_owner = owner_id if owner_id is not None else self.owner_id
         await self.sync_engine.sync_now(target_owner)
+        self._notify_queue_changed()
 
     async def run_reminder_now(self, task_id: str, loop: Any = None) -> ReminderTask | None:
         """Dispatch a reminder immediately through the scheduler's own path.

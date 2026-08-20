@@ -1995,6 +1995,12 @@
     TaskDetail .scheduling-detail-value {
         color: $text;
     }
+
+    TaskDetail .scheduling-detail-missed {
+        color: $warning;
+        margin: 0 0 0 11;
+        height: auto;
+    }
     
 
 /* ===== WIDGET: PersonaProfileEditorWidget (Widgets/Persona_Widgets/persona_profile_editor_widget.py) ===== */

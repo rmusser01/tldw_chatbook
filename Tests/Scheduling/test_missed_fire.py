@@ -112,6 +112,44 @@ def test_migration_v1_to_v2_rollback_preserves_rows(tmp_path):
     database.close()
 
 
+_V1_INDEXES = {
+    "idx_reminder_tasks_owner_enabled_next_run",
+    "idx_reminder_tasks_owner_last_status",
+    "idx_reminder_tasks_server_id",
+}
+
+
+def test_rollbacks_preserve_the_v1_indexes(tmp_path):
+    """A rolled-back database keeps its dispatch/sync indexes (review #10).
+
+    Both rollbacks rebuild the table, which drops attached indexes; each
+    must recreate the three v1 indexes so a rolled-back (or rolled back
+    then re-migrated) database does not silently lose its query paths.
+    """
+    for rollback_fn, expected_version in (
+        (v1_to_v2.rollback, 1),
+        (__import__(
+            "tldw_chatbook.Scheduling.db.migrations.v2_to_v3", fromlist=["rollback"]
+        ).rollback, 2),
+    ):
+        database = ScheduledTasksDB(tmp_path / f"idx-{expected_version}.db")
+        _make_hourly(database, next_run_at=NOW)
+        rollback_fn(database)
+        assert database.get_schema_version() == expected_version
+        with database._get_connection() as conn:
+            indexes = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='index' "
+                    "AND tbl_name='reminder_tasks'"
+                )
+            }
+        assert _V1_INDEXES.issubset(indexes), (
+            f"rollback to v{expected_version} dropped indexes; got {indexes}"
+        )
+        database.close()
+
+
 # ---------------------------------------------------------------------------
 # Missed-fire accounting at the dispatch seam
 # ---------------------------------------------------------------------------
@@ -186,7 +224,12 @@ def test_handler_failure_records_missed_status_but_not_fire_state(db):
 
 
 def test_long_absence_is_bounded_not_unbounded(db):
-    """A every-minute cron missed for a long time counts without hanging."""
+    """A every-minute cron missed for a long time counts without hanging.
+
+    Beyond the counting cap the stored value is the explicit overflow
+    sentinel (-1) -- rendered as "more than N" by the UI, never a false
+    exact count (review finding: silent truncation).
+    """
     task_id = db.create_reminder_task(
         owner_id="local",
         title="every-minute",
@@ -198,8 +241,25 @@ def test_long_absence_is_bounded_not_unbounded(db):
     )
     _dispatch_first_due(db, NOW)
     row = db.get_reminder_task(task_id)
-    # 30 days of minutes = 43,200 occurrences; 1 dispatched, 43,199 skipped.
+    # 30 days of minutes = 43,200 occurrences: under the 100,000 cap, so the
+    # exact count is still honest.
     assert row["missed_count"] == 43_199
+
+
+def test_absence_beyond_counting_cap_reports_overflow(db):
+    """Past the cap, missed_count is the -1 sentinel, not a capped exact."""
+    task_id = db.create_reminder_task(
+        owner_id="local",
+        title="every-second",
+        schedule_kind="recurring",
+        cron="* * * * *",
+        timezone="UTC",
+        next_run_at=(NOW - timedelta(days=200)).isoformat(),
+        enabled=True,
+    )
+    _dispatch_first_due(db, NOW)
+    row = db.get_reminder_task(task_id)
+    assert row["missed_count"] == -1  # > 100,000 occurrences elapsed
 
 
 # ---------------------------------------------------------------------------
@@ -281,6 +341,43 @@ def test_service_mutation_fires_on_queue_changed(db):
     )
     rows = db.list_reminder_tasks(owner_id="local")
     assert [r["title"] for r in rows] == ["cb-broken"]
+
+
+def test_sync_now_fires_on_queue_changed(db):
+    """A completed sync reloads the live queue (review: sync left it stale).
+
+    The sync engine itself is exercised by its own suite; what this pins is
+    the service seam: sync_now() fires the callback once it returns, so a
+    pull that inserted/updated/deleted reminders reaches the scheduler on
+    the next tick instead of the periodic reload.
+    """
+    fired = []
+    service = SchedulingService(
+        db=db,
+        server_client=None,
+        runtime_source="local",
+        on_queue_changed=lambda: fired.append(1),
+    )
+    asyncio.run(service.sync_now())
+    assert len(fired) == 1
+
+
+def test_junk_config_values_degrade_to_defaults():
+    """Grace/timeout knobs from editable TOML coerce safely (review #1/#7)."""
+    from tldw_chatbook.Scheduling.constants import (
+        HANDLER_TIMEOUT_SECONDS,
+        MISSED_FIRE_GRACE_SECONDS,
+        coerce_positive_float,
+    )
+
+    assert coerce_positive_float("30", 60.0) == 30.0
+    assert coerce_positive_float(True, 60.0) == 60.0  # bool is not a number here
+    assert coerce_positive_float("junk", 60.0) == 60.0
+    assert coerce_positive_float(-5, 60.0) == 60.0
+    assert coerce_positive_float(0, 60.0) == 60.0
+    assert coerce_positive_float(0, 300.0, allow_zero=True) == 0.0
+    assert MISSED_FIRE_GRACE_SECONDS == 60.0
+    assert HANDLER_TIMEOUT_SECONDS == 300.0
 
 
 # ---------------------------------------------------------------------------

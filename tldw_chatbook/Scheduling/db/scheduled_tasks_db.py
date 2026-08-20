@@ -150,7 +150,20 @@ class ScheduledTasksDB(BaseDB):
         return conn
 
     def _initialize_schema(self) -> None:
-        """Create tables, indexes, and schema version row, migrating forward."""
+        """Create tables, indexes, and schema version row, migrating forward.
+
+        Each migration checks its own applicability on the connection it
+        will migrate. For a ``:memory:`` database every
+        ``_get_connection()`` is a fresh empty database -- a version check
+        done on one connection tells nothing about the next -- so the chain
+        must not consult ``get_schema_version()`` between migrations the
+        way a file-backed database could. The migrations themselves detect
+        their condition structurally (the presence of their column), which
+        is memory-correct: an empty memory database runs v0_to_v1, finds
+        no ``missed_count``, adds it, finds no ``timeout_seconds``, adds
+        it, and every step lands on a consistent v3 schema even though
+        each step sees its own connection.
+        """
         from tldw_chatbook.Scheduling.db.migrations.v0_to_v1 import (
             migrate as migrate_v0_to_v1,
         )
@@ -162,10 +175,8 @@ class ScheduledTasksDB(BaseDB):
         )
 
         migrate_v0_to_v1(self)
-        if self.get_schema_version() < 2:
-            migrate_v1_to_v2(self)
-        if self.get_schema_version() < 3:
-            migrate_v2_to_v3(self)
+        migrate_v1_to_v2(self)
+        migrate_v2_to_v3(self)
 
     def get_schema_version(self) -> int:
         """Return the currently recorded schema version."""
@@ -840,9 +851,17 @@ class ScheduledTasksDB(BaseDB):
             parsed = parsed.replace(tzinfo=timezone.utc)
         return parsed
 
-    @staticmethod
+    #: Cap for skipped-occurrence counting: a hostile or hand-edited cron
+    #: (every second) must not turn a long absence into an unbounded loop.
+    #: The stored value uses the negative sentinel below when the true count
+    #: exceeds the cap, so a capped count is never presented as exact
+    #: (review finding: silent truncation).
+    _MISSED_COUNT_CAP = 100_000
+    _MISSED_COUNT_OVERFLOW = -1
+
+    @classmethod
     def _count_missed_occurrences(
-        row: dict[str, Any], scheduled_at: datetime, now: datetime
+        cls, row: dict[str, Any], scheduled_at: datetime, now: datetime
     ) -> int:
         """Count cron occurrences in ``(scheduled_at, now)`` -- the skipped ones.
 
@@ -853,6 +872,10 @@ class ScheduledTasksDB(BaseDB):
         the owed occurrence and when the dispatch actually fired. Returns 0
         when the cron expression is unusable -- an honest unknown is
         reported as "none skipped" rather than an exception.
+
+        Returns ``_MISSED_COUNT_OVERFLOW`` (-1) when more than
+        ``_MISSED_COUNT_CAP`` occurrences elapsed: the UI renders that as
+        an explicit "more than N" rather than a false exact number.
         """
         cron_expr = row.get("cron")
         if not cron_expr or not isinstance(cron_expr, str):
@@ -867,15 +890,12 @@ class ScheduledTasksDB(BaseDB):
         except (ValueError, KeyError):
             return 0
         skipped = 0
-        # Hard cap: a hostile or hand-edited cron (e.g. every second) must not
-        # turn a long absence into an unbounded counting loop.
-        max_iterations = 100_000
-        while skipped < max_iterations:
+        while skipped <= cls._MISSED_COUNT_CAP:
             occurrence = iterator.get_next(datetime)
             if occurrence is None or occurrence >= now:
-                break
+                return skipped
             skipped += 1
-        return skipped
+        return cls._MISSED_COUNT_OVERFLOW
 
     # ------------------------------------------------------------------
     # Automation definitions

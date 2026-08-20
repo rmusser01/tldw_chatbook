@@ -10,6 +10,12 @@ from loguru import logger
 
 from tldw_chatbook.Metrics.metrics_logger import log_counter
 from tldw_chatbook.Utils.persistent_diagnostics import persist_event
+from tldw_chatbook.Scheduling.constants import (
+    HANDLER_TIMEOUT_SECONDS,
+    MISSED_FIRE_GRACE_SECONDS,
+    SCHEDULER_POLL_INTERVAL_SECONDS,
+    coerce_positive_float,
+)
 from tldw_chatbook.Scheduling.scheduler.queue import PriorityQueue
 from tldw_chatbook.Scheduling.services.briefing_projection import BriefingProjection
 from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProjection
@@ -24,14 +30,14 @@ class SchedulerLoop:
         self,
         db: Any,
         handlers: dict[str, Handler],
-        poll_interval: float = 30,
+        poll_interval: float = SCHEDULER_POLL_INTERVAL_SECONDS,
         clock: Optional[Callable[[], datetime]] = None,
         watchlist_projection: WatchlistProjection | None = None,
         briefing_projection: BriefingProjection | None = None,
         queue_reload_interval_ticks: int = 60,
         expected_unhandled_types: frozenset[str] = frozenset(),
-        missed_fire_grace_seconds: float = 60.0,
-        handler_timeout_seconds: float | None = 300.0,
+        missed_fire_grace_seconds: float = MISSED_FIRE_GRACE_SECONDS,
+        handler_timeout_seconds: float | None = HANDLER_TIMEOUT_SECONDS,
     ) -> None:
         self.db = db
         self.handlers = handlers
@@ -45,13 +51,23 @@ class SchedulerLoop:
         #: A dispatch more than this many seconds after its scheduled time is
         #: "late" and records missed-fire state (task-18937). Default 2x the
         #: default poll interval: a running scheduler lands within one poll.
-        self.missed_fire_grace_seconds = missed_fire_grace_seconds
+        #: Junk values from editable TOML degrade to the documented default
+        #: (review: grace setting bypasses validation).
+        self.missed_fire_grace_seconds = coerce_positive_float(
+            missed_fire_grace_seconds, MISSED_FIRE_GRACE_SECONDS
+        )
         #: Handler execution timeout (task-18939): a handler still running
         #: after this many seconds is cancelled and its dispatch records
         #: ``timed_out`` -- the schedule advances, so a wedged handler cannot
         #: wedge the loop. Zero/negative disables the bound entirely; a task
         #: row's ``timeout_seconds`` overrides per task.
-        self.handler_timeout_seconds = handler_timeout_seconds
+        self.handler_timeout_seconds = coerce_positive_float(
+            handler_timeout_seconds
+            if handler_timeout_seconds is not None
+            else HANDLER_TIMEOUT_SECONDS,
+            HANDLER_TIMEOUT_SECONDS,
+            allow_zero=True,
+        )
         self.running = False
         self._tick_count = 0
         self._reload_requested = False

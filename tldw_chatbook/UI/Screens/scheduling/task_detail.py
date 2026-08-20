@@ -541,7 +541,20 @@ class TaskDetail(Vertical):
             return
         scheduled = missed_at.strftime("%Y-%m-%d %H:%M")
         missed_count = int(getattr(task, "missed_count", 0) or 0)
-        if missed_count > 0:
+        if missed_count < 0:
+            # Sentinel from the counting cap: more occurrences elapsed than
+            # the counter will enumerate. Rendered as an explicit "more than
+            # N", never as a false exact number.
+            from tldw_chatbook.Scheduling.db.scheduled_tasks_db import (
+                ScheduledTasksDB,
+            )
+
+            copy = (
+                f"Missed while away: ran late for the {scheduled} occurrence; "
+                f"more than {ScheduledTasksDB._MISSED_COUNT_CAP:,} earlier "
+                "occurrence(s) were skipped, not replayed."
+            )
+        elif missed_count > 0:
             copy = (
                 f"Missed while away: ran late for the {scheduled} occurrence; "
                 f"{missed_count} earlier occurrence(s) were skipped, not replayed."

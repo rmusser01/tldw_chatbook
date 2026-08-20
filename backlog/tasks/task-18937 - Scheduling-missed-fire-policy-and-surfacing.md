@@ -72,3 +72,20 @@ Implementation steps:
 5. UI: detail-pane Last Run + missed notice; Queue-tab missed indicator
 6. Tests (real DB/queue/loop paths) + `schedules.md` docs
 <!-- SECTION:PLAN:END -->
+
+## Review Round (PR #1832, Qodo — 2026-08-19)
+
+Ten findings; nine fixed, one declined with reasoning:
+
+- **Fixed — sync staleness (the substantive bug):** `SchedulingService.sync_now()` now fires `on_queue_changed`; a pull that inserts/updates/deletes reminders reaches the live queue on the next tick instead of the periodic ~30-minute reload.
+- **Fixed — silent truncation:** `_count_missed_occurrences` past its 100,000 cap now stores the sentinel `-1`, rendered as "more than 100,000 occurrence(s) were skipped" — never a capped exact.
+- **Fixed — rollback drops indexes:** both rollbacks recreate the three v1 indexes after the table rebuild (pinned by `test_rollbacks_preserve_the_v1_indexes`).
+- **Fixed — validation:** new `Scheduling/constants.py` (single source for the 30/60/300 defaults) + `coerce_positive_float`; junk TOML values degrade to documented defaults instead of crashing or classifying every dispatch late.
+- **Fixed — repeated literals:** app wiring and loop defaults now reference the named constants.
+- **Fixed — log context:** the on_queue_changed failure log carries owner + callback qualname.
+- **Fixed — migration type annotations:** `_MigrationCapableDB` Protocol under TYPE_CHECKING (no import cycle).
+- **Fixed — UI integration coverage:** new `Tests/UI/test_schedules_missed_notice.py` (7 tests) mounts the real TaskDetail and pins notice copy, overflow copy, clearing, and retry-label variants.
+- **Fixed (CI, self-found):** the migration chain broke `:memory:` databases (every connection is a fresh empty DB; my `get_schema_version()` between migrations raised). Migrations are now memory-correct: each checks its own applicability structurally and skips on an empty connection. Also rebuilt the CSS bundle — the 18937 TaskDetail CSS was never regenerated into `widget_defaults_scoped.tcss`.
+- **Declined — env-var override for the grace knob:** `get_cli_setting` has no env layer and no `[scheduling]` knob uses one (`scheduler_poll_interval_seconds`, `briefing_schedules_enabled` are TOML-only); adding one for just this key would break the section's convention. The underlying robustness concern is addressed by the coercion fix above.
+
+Verification after the round: Scheduling + pragma suites 316 passed; UI sched + CSS-guard suites 98 passed.
