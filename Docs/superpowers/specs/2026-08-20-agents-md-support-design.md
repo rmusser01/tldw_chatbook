@@ -1,7 +1,7 @@
 # Console AGENTS.md Project Instructions — Design
 
 - **Date:** 2026-08-20
-- **Status:** Owner-approved amendments; pending post-amendment review
+- **Status:** Independently reviewed; pending final owner approval
 - **Scope:** Console agent runs only
 - **Decision record:** Proposed [ADR-069](../../../backlog/decisions/069-console-project-instruction-local-state-and-preflight.md), which will supersede ADR-068 if accepted
 
