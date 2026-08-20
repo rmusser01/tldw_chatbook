@@ -13192,7 +13192,7 @@ class ChatScreen(BaseAppScreen):
                 # without rewriting preference; eligible explicit opens
                 # instead receive the same layout-only waiver.
                 # TASK-2154.3 (LY-01/LY-07): 30 is the Context content minimum
-                # (12-col label + 10-col value + 7 cells of chrome). A 3-column
+                # (13-cell label with gutter + 10-cell value + 7-cell chrome). A 3-column
                 # handle applies only when stacked rail labels are configured.
                 left_rail.styles.min_width = 30
                 if not rail_state.left_open:
