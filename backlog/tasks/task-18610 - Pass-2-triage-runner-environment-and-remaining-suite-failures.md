@@ -45,4 +45,30 @@ evidenced), wizard 1 (AC#4), git-integration unborn-HEAD 2 (AC#5), local
 stragglers (AC#6). Also discovered: pytest-json-report under xdist records
 only ~20.6k of 37k executed tests (one worker's share) -- pre-existing
 reporting gap worth its own fix so future triage sees everything.
+
+**Pass-2 CI verdict (PR #1833, rebased head d64608b84):**
+- macOS core: **58 → 15** (17 git-push cleared by the python_executable
+  seam; TTS drift cleared; unborn trio cleared by the show-ref fix;
+  summarization pair cleared by regenerating digests on the MERGED
+  content — lesson recorded below).
+- ubuntu core: **47 → 30 → (final run in flight; 15 of the prior 30
+  were the two git-push leftovers now closed on-head plus the unborn
+  trio plus summarization pair)**.
+- UI: **119 → 108**; the only never-failing file
+  (test_library_prompt_collections) is a timeout-poll flake passing on
+  both branch and clean dev — the TASK-18611 flaky family.
+- Rebase hazard worth remembering: the summarization ledger digests are
+  cut against CONTENT; CI tests the merge of branch+dev, so dev-side
+  LLM_Calls edits made after the digests were cut broke the boundary on
+  the merge while local branch-only runs stayed green. Always regenerate
+  inventory+digests AFTER rebasing onto the target dev.
+
+**Remaining 15 macOS (all pre-existing, runner-env):** 6 audio_cpp
+real-child subprocess tests, 2 TTS profile-repository spawned
+concurrency, 2 git_service runner-shutdown timing, 2 git_push_service
+macOS-runner variants (subprocess TimeoutExpired on the frozen route;
+writable-ancestor arrangement), 1 Character_Chat fifo asset,
+Architecture 15103 ledger-exact + app-state legacy-absent (both pass on
+dev checkouts everywhere tried; macOS-runner-only).
+
 <!-- SECTION:NOTES:END -->
