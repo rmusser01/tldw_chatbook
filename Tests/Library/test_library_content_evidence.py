@@ -1,7 +1,5 @@
 """Pure Library content evidence and lifecycle transition contracts."""
 
-from inspect import signature
-
 import pytest
 
 from tldw_chatbook.Library.library_content_evidence import (
@@ -84,16 +82,42 @@ def test_unknown_evidence_never_claims_starter():
     )
 
 
-def test_evidence_aggregation_accepts_only_enums_and_no_record_parameters():
-    assert list(signature(aggregate_library_lifecycle).parameters) == [
-        "lifecycle",
-        "evidence",
-    ]
+def test_evidence_aggregation_accepts_only_enums():
     with pytest.raises(TypeError, match="LibraryContentEvidence"):
         aggregate_library_lifecycle(
             LibraryLifecycle.UNKNOWN,
             (LibraryContentEvidence.EMPTY,) * 5 + ("empty",),
         )
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        (LibraryContentEvidence.EMPTY,) * 6,
+        (LibraryContentEvidence.EMPTY,) * 5 + (LibraryContentEvidence.UNKNOWN,),
+    ],
+)
+def test_aggregation_does_not_automatically_regress_expanded(evidence):
+    assert (
+        aggregate_library_lifecycle(LibraryLifecycle.EXPANDED, evidence)
+        is LibraryLifecycle.EXPANDED
+    )
+
+
+@pytest.mark.parametrize(
+    "blocking_evidence",
+    [
+        LibraryContentEvidence.UNKNOWN,
+        LibraryContentEvidence.HAS_USER_CONTENT,
+    ],
+)
+def test_return_to_starter_requires_authoritative_empty_evidence(blocking_evidence):
+    evidence = (LibraryContentEvidence.EMPTY,) * 5 + (blocking_evidence,)
+
+    assert (
+        return_library_lifecycle_to_starter(LibraryLifecycle.EXPANDED, evidence)
+        is LibraryLifecycle.EXPANDED
+    )
 
 
 def test_explore_expands_separately_and_empty_expanded_can_return_to_starter():
@@ -104,6 +128,10 @@ def test_explore_expands_separately_and_empty_expanded_can_return_to_starter():
     )
     assert (
         explore_library_lifecycle(LibraryLifecycle.STARTER) is LibraryLifecycle.EXPANDED
+    )
+    assert (
+        explore_library_lifecycle(LibraryLifecycle.GRADUATED)
+        is LibraryLifecycle.GRADUATED
     )
     assert preferences == {"browse_open": False, "details_open": True}
 

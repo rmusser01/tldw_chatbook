@@ -85,3 +85,8 @@ def test_lifecycle_round_trips_beside_section_preferences():
         is LibraryLifecycle.STARTER
     )
     assert coerce_library_rail_preferences(stored["sections"]) == preferences
+
+    for lifecycle in LibraryLifecycle:
+        serialized = serialize_library_lifecycle(lifecycle)
+        assert serialized == lifecycle.value
+        assert coerce_library_lifecycle(serialized, is_new_profile=False) is lifecycle
