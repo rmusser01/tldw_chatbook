@@ -4265,7 +4265,7 @@ async def test_library_shell_browse_media_renders_canvas_with_rows_and_preview()
         filter_button = screen.query_one("#library-media-type-filter", Button)
         # task-14902: a chooser-opener (press opens the direct-pick strip),
         # so no press-advances "⇄" glyph.
-        assert str(filter_button.label) == "type: All"
+        assert str(filter_button.label) == "type: All types"
 
         rows = list(screen.query(".library-media-row"))
         assert len(rows) == 2

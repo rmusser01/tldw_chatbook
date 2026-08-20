@@ -679,6 +679,7 @@ def test_escape_gate_only_passes_in_trash_view():
     in_trash = SimpleNamespace(
         _library_selected_row_id=LIBRARY_ROW_BROWSE_MEDIA,
         _library_media_view="trash",
+        _library_media_bulk_delete_in_flight=False,
     )
     assert (
         LibraryScreen.check_action(in_trash, "library_media_trash_back", ())
