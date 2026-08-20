@@ -1,5 +1,5 @@
 ---
-id: TASK-16484
+id: TASK-18915
 title: Page Library Skills with source-wide trust recovery
 status: To Do
 assignee: []
@@ -10,7 +10,7 @@ labels:
   - skills
   - trust
 dependencies:
-  - TASK-16481
+  - TASK-18912
 references:
   - >-
     Docs/superpowers/specs/2026-08-14-library-top-level-source-pagination-design.md

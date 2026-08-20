@@ -1,5 +1,5 @@
 ---
-id: TASK-16488
+id: TASK-18919
 title: Add paged viewing to Library Collection members
 status: To Do
 assignee: []
@@ -10,11 +10,11 @@ labels:
   - collection-members
   - follow-up
 dependencies:
-  - TASK-16481
-  - TASK-16482
-  - TASK-16483
-  - TASK-16484
-  - TASK-16485
+  - TASK-18912
+  - TASK-18913
+  - TASK-18914
+  - TASK-18915
+  - TASK-18916
 references:
   - >-
     Docs/superpowers/specs/2026-08-14-library-top-level-source-pagination-design.md

@@ -1,5 +1,5 @@
 ---
-id: TASK-16482
+id: TASK-18913
 title: Align Library Prompt browsing to 20-item pages
 status: Done
 assignee: []
@@ -10,7 +10,7 @@ labels:
   - pagination
   - prompts
 dependencies:
-  - TASK-16481
+  - TASK-18912
 references:
   - >-
     Docs/superpowers/specs/2026-08-14-library-top-level-source-pagination-design.md
@@ -42,7 +42,7 @@ ADR required: no new ADR
 ADR path: backlog/decisions/067-library-top-level-pagination-contracts.md
 Reason: direct implementation of the accepted source-owned Prompt pagination contract; no storage, runtime, or ownership boundary changes.
 
-Detailed plan: Docs/superpowers/plans/2026-08-15-task-16482-library-prompt-pagination.md
+Detailed plan: Docs/superpowers/plans/2026-08-15-task-18913-library-prompt-pagination.md
 
 1. Pin the Library Prompt scope default to 20 and verify its explicit DB/service propagation without changing generic API defaults, coherent transactions, clamp, filter, or stable order.
 2. Preserve and validate normalized current_page/page/per_page, exact totals/cardinality, and stable unique local identities.

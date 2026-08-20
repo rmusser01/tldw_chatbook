@@ -1,5 +1,5 @@
 ---
-id: TASK-16485
+id: TASK-18916
 title: Page Library Collections with deterministic mutation placement
 status: To Do
 assignee: []
@@ -9,7 +9,7 @@ labels:
   - pagination
   - collections
 dependencies:
-  - TASK-16481
+  - TASK-18912
 references:
   - >-
     Docs/superpowers/specs/2026-08-14-library-top-level-source-pagination-design.md

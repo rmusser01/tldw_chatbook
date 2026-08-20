@@ -1168,7 +1168,7 @@ task instead of mutating the payloads your current AC pins.
 
 ---
 
-## A Textual live harness needs screen, event, and paint readiness (TASK-16482, 2026-08-16)
+## A Textual live harness needs screen, event, and paint readiness (TASK-18913, 2026-08-16)
 
 **Incident.** The first Prompt-pagination live attempts failed even though the
 mounted product state was correct. The harness treated app-level `_ui_ready` as

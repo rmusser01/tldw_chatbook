@@ -1,4 +1,4 @@
-# TASK-16482 Library Prompt Pagination Implementation Plan
+# TASK-18913 Library Prompt Pagination Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -355,7 +355,7 @@ git commit -m "fix(library): retain prompt mutation scope"
 **Files:**
 
 - Modify: `Docs/User_Guide/library/media-and-conversations.md`
-- Modify: `backlog/tasks/task-16482 - Align-Library-Prompt-browsing-to-20-item-pages.md`
+- Modify: `backlog/tasks/task-18913 - Align-Library-Prompt-browsing-to-20-item-pages.md`
 
 - [ ] **Step 1: Run task-local and owner gates**
 
@@ -387,7 +387,7 @@ Implement the controlled failure in the isolated scratch harness by temporarily 
 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q --tb=short
 ```
 
-TASK-16482 is blocked by any related Prompt/Library-pagination failure. Per the user's instruction, unrelated failures outside touched functionality are diagnostic only; record exact node names and do not call them baseline without exact-base reproduction.
+TASK-18913 is blocked by any related Prompt/Library-pagination failure. Per the user's instruction, unrelated failures outside touched functionality are diagnostic only; record exact node names and do not call them baseline without exact-base reproduction.
 
 - [ ] **Step 4: Run static/generated checks**
 
@@ -405,11 +405,11 @@ Document the 20-item Prompt pager, exact ranges, full-source scopes, versioned c
 
 Resolve every Critical/Important finding and rerun affected gates. Do not mark Done before both reviewers pass.
 
-- [ ] **Step 7: Close TASK-16482 and commit docs**
+- [ ] **Step 7: Close TASK-18913 and commit docs**
 
 ```bash
-backlog task edit 16482 --check-ac 1 --check-ac 2 --check-ac 3 --check-ac 4 --check-ac 5 --check-ac 6 --check-ac 7
-backlog task edit 16482 -s Done
-git add Docs/User_Guide/library/media-and-conversations.md 'backlog/tasks/task-16482 - Align-Library-Prompt-browsing-to-20-item-pages.md'
+backlog task edit 18913 --check-ac 1 --check-ac 2 --check-ac 3 --check-ac 4 --check-ac 5 --check-ac 6 --check-ac 7
+backlog task edit 18913 -s Done
+git add Docs/User_Guide/library/media-and-conversations.md 'backlog/tasks/task-18913 - Align-Library-Prompt-browsing-to-20-item-pages.md'
 git commit -m "docs(library): close prompt pagination task"
 ```

@@ -1,5 +1,5 @@
 ---
-id: TASK-16481
+id: TASK-18912
 title: Standardize Library pager display and harden Conversation paging
 status: Done
 assignee: []
@@ -39,9 +39,9 @@ Make every top-level Conversation reachable through a consistent 20-item Library
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes
 ADR path: backlog/decisions/067-library-top-level-pagination-contracts.md
-Reason: TASK-16481 changes the Conversation page/locator service contract and establishes the pure shared display contract.
+Reason: TASK-18912 changes the Conversation page/locator service contract and establishes the pure shared display contract.
 
-Detailed plan: Docs/superpowers/plans/2026-08-14-task-16481-library-conversation-pagination.md
+Detailed plan: Docs/superpowers/plans/2026-08-14-task-18912-library-conversation-pagination.md
 
 1. Add the pure immutable pager-display calculation with exhaustive state tests.
 2. Make Conversation count/rows coherent and add a bounded stable-ID owning-page locator.
@@ -106,6 +106,6 @@ malformed envelopes fail closed.
   terminal turn was interrupted after the last captured 95% progress. Per the
   user's explicit closeout direction, unrelated failures were not rerun or
   classified. Stale pre-fix node IDs remaining in pytest's cache do not exist
-  at this HEAD. The authoritative Task-16481 suites above were rerun after that
+  at this HEAD. The authoritative Task-18912 suites above were rerun after that
   event and contain zero related failures.
 <!-- SECTION:NOTES:END -->

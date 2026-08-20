@@ -1,5 +1,5 @@
 ---
-id: TASK-16483
+id: TASK-18914
 title: Add authoritative paging and complete facets to Library Media
 status: Done
 assignee: []
@@ -11,7 +11,7 @@ labels:
   - media
   - privacy
 dependencies:
-  - TASK-16481
+  - TASK-18912
 references:
   - >-
     Docs/superpowers/specs/2026-08-14-library-top-level-source-pagination-design.md
@@ -43,7 +43,7 @@ ADR required: no new ADR
 ADR path: backlog/decisions/067-library-top-level-pagination-contracts.md
 Reason: Direct implementation of ADR-067's approved Media paging, facet, stale-recovery, and privacy contracts.
 
-Detailed plan: Docs/superpowers/plans/2026-08-16-task-16483-library-media-pagination.md
+Detailed plan: Docs/superpowers/plans/2026-08-16-task-18914-library-media-pagination.md
 
 1. Add coherent exact-offset Media DB paging and metadata-only diagnostics.
 2. Propagate true offsets and complete active type facets through existing local/scope services.

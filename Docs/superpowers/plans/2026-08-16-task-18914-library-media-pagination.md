@@ -1,4 +1,4 @@
-# TASK-16483 Library Media Pagination Implementation Plan
+# TASK-18914 Library Media Pagination Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Drive every production slice through focused RED/GREEN tests and preserve unrelated worktree changes.
 
@@ -34,7 +34,7 @@
 - `Tests/Library/test_library_media_state.py` and `Tests/UI/test_library_media_browse_controller.py` (new controller tests).
 - `Tests/UI/test_library_shell.py`, `Tests/UI/test_library_multiselect_media.py`, `Tests/UI/test_library_media_side_by_side.py`, and the existing Media choice/canvas tests that are changed by the `OptionList` contract.
 
-**Out of scope:** Media Trash paging (TASK-16487), Collection member paging, new Media search or sort controls, server API redesign, a generic Library controller/widget, persistent row caches, or unrelated Media Window paging. The pure/service scope still carries the established query/sort fields so existing callers and recovery remain correct; only page and type have mounted top-level controls today.
+**Out of scope:** Media Trash paging (TASK-18918), Collection member paging, new Media search or sort controls, server API redesign, a generic Library controller/widget, persistent row caches, or unrelated Media Window paging. The pure/service scope still carries the established query/sort fields so existing callers and recovery remain correct; only page and type have mounted top-level controls today.
 
 **Verification boundary:** Per explicit user direction, do not run the repository-wide test suite. Final automated evidence is limited to the modified Media DB/service/state/controller/canvas/screen components and their direct owner/regression tests, plus Ruff, bundle parity when touched, diff checks, and isolated live verification.
 
@@ -44,11 +44,11 @@
 
 **Files:**
 
-- Modify: `backlog/tasks/task-16483 - Add-authoritative-paging-and-complete-facets-to-Library-Media.md`
-- Add: `Docs/superpowers/plans/2026-08-16-task-16483-library-media-pagination.md`
+- Modify: `backlog/tasks/task-18914 - Add-authoritative-paging-and-complete-facets-to-Library-Media.md`
+- Add: `Docs/superpowers/plans/2026-08-16-task-18914-library-media-pagination.md`
 
 - [ ] Record the current `origin/dev` base SHA and confirm the worktree contains only the task/plan changes.
-- [ ] Link ADR-067 and this plan from TASK-16483. Record that no new ADR is required.
+- [ ] Link ADR-067 and this plan from TASK-18914. Record that no new ADR is required.
 - [ ] Run only the current direct Media owners to establish a focused baseline; save exact node names for any pre-existing failures.
 
 ```bash
@@ -68,8 +68,8 @@
 - [ ] Commit the approved plan/task metadata before production work.
 
 ```bash
-git add "backlog/tasks/task-16483 - Add-authoritative-paging-and-complete-facets-to-Library-Media.md" \
-  Docs/superpowers/plans/2026-08-16-task-16483-library-media-pagination.md
+git add "backlog/tasks/task-18914 - Add-authoritative-paging-and-complete-facets-to-Library-Media.md" \
+  Docs/superpowers/plans/2026-08-16-task-18914-library-media-pagination.md
 git commit -m "docs(library): plan media pagination"
 ```
 
@@ -357,7 +357,7 @@ git commit -m "fix(library): retain media mutation scope"
 **Files:**
 
 - Modify: `Docs/User_Guide/library/media-and-conversations.md` or the canonical Media Library guide identified during implementation.
-- Modify: `backlog/tasks/task-16483 - Add-authoritative-paging-and-complete-facets-to-Library-Media.md`
+- Modify: `backlog/tasks/task-18914 - Add-authoritative-paging-and-complete-facets-to-Library-Media.md`
 - Modify: `backlog/docs/lessons-testing-evidence.md` or `backlog/docs/lessons-live-verification.md` only if this task produces a reusable incident-backed lesson.
 
 - [ ] **Run the authoritative touched-component automated gate only. Do not run `pytest` without explicit paths/selectors.**
@@ -426,10 +426,10 @@ git diff --check
 - [ ] **Perform isolated live verification** at real `100x30` and `170x48` geometries with fresh `env -i` profiles, real production `TldwCli`, real local Media DB/service, at least 45 items, and at least 60 distinct types. Verify page 1/2/final, row-20 scroll with fixed pager, type chooser final-option keyboard commit/cancel, filter/type exact totals, selection clearing, controlled page failure/Retry, mutation-refresh stale recovery, detail/back, and clean exit.
 - [ ] Capture success and controlled-error logs and assert unique query, title/body, stable ID, DB-path, and credential sentinels never appear. Capture PID/open-handle/profile geometry evidence and prove the real user profile is byte-identical before/after.
 - [ ] Request independent spec and quality/minimality reviews. Resolve every Critical/Important finding with focused RED/GREEN evidence.
-- [ ] Update the Media user guide, check every TASK-16483 acceptance criterion, add concise implementation notes naming automated/mutation/geometry/live evidence and the user-directed no-full-suite deviation, set the task to Done through Backlog CLI, and commit closeout docs.
+- [ ] Update the Media user guide, check every TASK-18914 acceptance criterion, add concise implementation notes naming automated/mutation/geometry/live evidence and the user-directed no-full-suite deviation, set the task to Done through Backlog CLI, and commit closeout docs.
 
 ```bash
-git add "backlog/tasks/task-16483 - Add-authoritative-paging-and-complete-facets-to-Library-Media.md" \
+git add "backlog/tasks/task-18914 - Add-authoritative-paging-and-complete-facets-to-Library-Media.md" \
   Docs/User_Guide/library/media-and-conversations.md
 git commit -m "docs(library): close media pagination task"
 ```
@@ -438,4 +438,4 @@ git commit -m "docs(library): close media pagination task"
 
 ## Completion criteria
 
-TASK-16483 is complete only when all seven acceptance criteria are checked, every required inverse mutation has turned its focused test RED and been restored GREEN, both live geometries pass against isolated real profiles, touched Media diagnostics contain no private sentinels, focused changed-component tests/lint/diff checks are green, independent reviews report no Critical/Important findings, documentation is current, and the Backlog task is Done. A repository-wide pytest run is explicitly excluded by user direction.
+TASK-18914 is complete only when all seven acceptance criteria are checked, every required inverse mutation has turned its focused test RED and been restored GREEN, both live geometries pass against isolated real profiles, touched Media diagnostics contain no private sentinels, focused changed-component tests/lint/diff checks are green, independent reviews report no Critical/Important findings, documentation is current, and the Backlog task is Done. A repository-wide pytest run is explicitly excluded by user direction.

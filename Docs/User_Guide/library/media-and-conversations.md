@@ -424,7 +424,7 @@ evidence at exactly 80x24 before/after, plus a 120x40 pin that an
 inactive search keeps today's in-flow layout with no reserved space.)*
 
 *Verified against codex/library-top-level-pagination — 2026-08-20
-(TASK-16483 / ADR-067: complete-source Media type filtering and exact 20-item
+(TASK-18914 / ADR-067: complete-source Media type filtering and exact 20-item
 database pages, pinned pager at 100x30 and 170x48, bounded complete facet
 chooser with an unambiguous "All types" choice, retained stale recovery,
 selection clearing, and metadata-only diagnostics).*
