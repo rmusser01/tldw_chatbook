@@ -4206,6 +4206,11 @@ class ConsoleChatController:
                 for call in pending
             ],
             "timeout_seconds": timeout_seconds,
+            # Qodo PR #1836 finding 1: the absolute deadline, so a mount
+            # that happens AFTER arm (promotion, switch-back, attach) can
+            # show the remaining window instead of the arm-time total --
+            # see `_head_round_payload`'s snapshot.
+            "deadline_monotonic": deadline,
         }
         # Task 9: park rather than mount when this round's session is a
         # DIFFERENT, background session -- `session_id is None` (a legacy
@@ -4383,10 +4388,15 @@ class ConsoleChatController:
             # the session it mounted over, in which case that sibling's
             # card is (correctly) what stays up.
             try:
+                # Qodo PR #1836 finding 2: a legacy no-session round's card
+                # mounted unconditionally and may sit over ANY session by
+                # now -- pass None so `_remount_head` re-derives for the
+                # session active when the callback runs, not the arm-time
+                # snapshot (whose mismatch would strand the card).
                 self._remount_head(
                     self._parked_approval_payloads,
                     self.set_pending_approval,
-                    owning_session_id,
+                    owning_session_id if session_id is not None else None,
                 )
             except Exception:  # noqa: BLE001 -- suppress teardown-time errors
                 logger.opt(exception=True).debug(
@@ -4480,9 +4490,33 @@ class ConsoleChatController:
     def _head_round_payload(
         self, store: dict[str, dict[str, Any]], session_id: str
     ) -> dict[str, Any] | None:
-        """The payload whose card ``session_id`` should currently show."""
+        """The payload whose card ``session_id`` should currently show.
+
+        Qodo PR #1836 finding 1: a round's auto-deny deadline starts at ARM
+        time, but a queued round can mount much later (promotion at the
+        head's resolve, a switch back to a parked session, a headless
+        attach). Handing the card the arm-time ``timeout_seconds`` then
+        overstates the decision window -- "Auto-denies in 2:00" on a card
+        whose worker denies in seconds. When the payload carries its
+        ``deadline_monotonic``, return a shallow SNAPSHOT whose
+        ``timeout_seconds`` is the remaining time at this call; the
+        retained payload is never mutated, so every later re-derive
+        computes its own fresh snapshot. A payload without a deadline
+        (ADR-067 arms none for ``timeout <= 0`` script confirms) passes
+        through untouched. ``_park_round_payload``'s ``head is payload``
+        identity check goes through ``_head_round_payload_locked`` and is
+        unaffected.
+        """
         with self._approval_state_lock:
-            return self._head_round_payload_locked(store, session_id)
+            payload = self._head_round_payload_locked(store, session_id)
+        if payload is None:
+            return None
+        deadline = payload.get("deadline_monotonic")
+        if not deadline:
+            return payload
+        snapshot = dict(payload)
+        snapshot["timeout_seconds"] = max(0.0, deadline - time.monotonic())
+        return snapshot
 
     def _session_round_payloads(
         self, store: dict[str, dict[str, Any]], session_id: str
@@ -4525,11 +4559,27 @@ class ConsoleChatController:
         unchanged -- the decision still runs inside the callable on the UI
         thread, never from a snapshot -- but the decision itself is now one
         lookup instead of an identity check plus a sibling check.
+
+        ``session_id=None`` means "the session being VIEWED when the
+        callback runs" (Qodo PR #1836 finding 2): a legacy no-session round
+        mounts unconditionally, so its card can be sitting over ANY session
+        by teardown time, and re-deriving for the arm-time snapshot id
+        no-ops on a mismatch -- stranding the card where the deleted
+        pre-PR0 guard cleared it unconditionally. Resolving the active
+        session inside ``_apply`` clears the stale legacy card AND restores
+        that session's own real head if it has one -- strictly better than
+        the old unconditional clear, which could wipe a real sibling's
+        card. Session-attributed rounds keep the exact-match guard so a
+        background teardown can never touch the viewed session's card.
         """
-        if self.app is None or setter is None or session_id is None:
+        if self.app is None or setter is None:
             return
 
         def _apply() -> None:
+            if session_id is None:
+                active = self.store.active_session_id or ""
+                setter(self._head_round_payload(store, active))
+                return
             if session_id != (self.store.active_session_id or ""):
                 return
             setter(self._head_round_payload(store, session_id))
@@ -5374,6 +5424,9 @@ class ConsoleChatController:
             "timeout_seconds": timeout_seconds,
             "request_id": request_id,
             "session_id": owning_session_id,
+            # Qodo PR #1836 finding 1 -- see `_head_round_payload`'s
+            # remaining-time snapshot. None when ADR-067 armed no deadline.
+            "deadline_monotonic": deadline,
         }
         # TASK-910: park rather than mount when this round's session is a
         # DIFFERENT, background session -- mirrors `request_mcp_approvals`'
@@ -5453,10 +5506,12 @@ class ConsoleChatController:
             # (caught live by `test_console_skill_install_confirm.py::
             # test_confirm_round_trip_allow`).
             try:
+                # Qodo PR #1836 finding 2 -- see the approvals teardown's
+                # identical legacy-round note.
                 self._remount_head(
                     self._parked_skill_install_payloads,
                     self.set_pending_skill_install,
-                    owning_session_id,
+                    owning_session_id if session_id is not None else None,
                 )
             except Exception:  # noqa: BLE001 -- suppress teardown-time errors
                 logger.opt(exception=True).debug(
@@ -5634,6 +5689,9 @@ class ConsoleChatController:
         card_payload["timeout_seconds"] = timeout_seconds
         card_payload["request_id"] = request_id
         card_payload["session_id"] = owning_session_id
+        # Qodo PR #1836 finding 1 -- see `_head_round_payload`'s
+        # remaining-time snapshot. None when ADR-067 armed no deadline.
+        card_payload["deadline_monotonic"] = deadline
         is_parked = session_id is not None and session_id != (
             self.store.active_session_id or ""
         )
@@ -5710,16 +5768,17 @@ class ConsoleChatController:
             # guard's two-part TOCTOU check -- see `request_mcp_approvals`'
             # identical `_remount_head` teardown call for the full race
             # analysis.
-            # `owning_session_id`, not `session_id`: a legacy no-session
-            # caller retains no payload, so its head resolves to `None` and
-            # the card clears exactly as the pre-PR0 unconditional clear
-            # did -- `_remount_head` no-ops on a `None` session_id, which
-            # would otherwise leave a legacy caller's card stuck on screen.
+            # Qodo PR #1836 finding 2: a legacy no-session round passes
+            # None, so `_remount_head` re-derives for the session active
+            # WHEN THE CALLBACK RUNS -- the arm-time `owning_session_id`
+            # snapshot could mismatch after a switch and strand the
+            # unconditionally-mounted legacy card. Session-attributed
+            # rounds keep the exact-match owning id.
             try:
                 self._remount_head(
                     self._parked_skill_script_payloads,
                     self.set_pending_skill_script,
-                    owning_session_id,
+                    owning_session_id if session_id is not None else None,
                 )
             except Exception:  # noqa: BLE001 -- suppress teardown-time errors
                 logger.opt(exception=True).debug(

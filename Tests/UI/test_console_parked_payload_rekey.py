@@ -303,3 +303,74 @@ def test_bridges_do_not_share_a_head(controller):
 
     ctrl.resolve_pending_skill_install(True, request_id=install_round)
     install.join(timeout=5)
+
+
+def test_promoted_round_mounts_with_remaining_time_not_original_timeout(controller):
+    """Qodo PR #1836 finding 1: a queued round's worker deadline starts at
+    ARM time, so mounting it at promotion with the arm-time
+    ``timeout_seconds`` overstates the decision window ("Auto-denies in
+    2:00" on a card that denies in seconds). The mounted payload must carry
+    the REMAINING time, derived from the round's monotonic deadline; the
+    retained payload itself stays unmutated (each later re-derive computes
+    its own snapshot).
+    """
+    results = {}
+    first = _arm(controller, "alpha", controller.session_a, results, "alpha")
+    assert _wait_until(lambda: len(_round_ids(controller)) == 1)
+    round_1 = _round_ids(controller)[0]
+    assert _wait_until(lambda: _mounted_round(controller) == round_1)
+
+    second = _arm(controller, "beta", controller.session_a, results, "beta")
+    assert _wait_until(lambda: len(_round_ids(controller)) == 2)
+    round_2 = [r for r in _round_ids(controller) if r != round_1][0]
+
+    controller.resolve_pending_approval({"alpha": "approve_once"}, round_id=round_1)
+    first.join(timeout=5)
+    assert _wait_until(lambda: _mounted_round(controller) == round_2)
+
+    promoted = controller.mounted[-1]
+    # The fixture arms 30.0s rounds; queue time has necessarily elapsed by
+    # promotion, so an accurate snapshot is strictly below the original.
+    assert 0.0 < promoted["timeout_seconds"] < 30.0, (
+        "a promoted round must mount with its REMAINING decision window, "
+        f"not the arm-time timeout (got {promoted['timeout_seconds']!r})"
+    )
+    with controller._approval_state_lock:
+        stored = controller._parked_approval_payloads[round_2]
+    assert stored["timeout_seconds"] == 30.0, (
+        "the retained payload must stay unmutated; only the mounted "
+        "snapshot carries the adjusted remaining time"
+    )
+
+    controller.resolve_pending_approval({"beta": "approve_once"}, round_id=round_2)
+    second.join(timeout=5)
+
+
+def test_legacy_round_teardown_clears_its_card_after_a_session_switch(controller):
+    """Qodo PR #1836 finding 2: a legacy ``session_id=None`` round mounts
+    unconditionally, but its teardown re-derived for the session that was
+    active AT ARM. If the active session changed in between, the re-derive
+    guard rejected the stale id and the legacy card stayed mounted
+    indefinitely -- where the deleted pre-PR0 guard cleared it
+    unconditionally. Teardown of a legacy round must re-derive for
+    whichever session is active WHEN THE CALLBACK RUNS.
+    """
+    results = {}
+    legacy = _arm(controller, "legacy", None, results, "legacy")
+    assert _wait_until(lambda: len(_round_ids(controller)) == 1)
+    round_1 = _round_ids(controller)[0]
+    assert _wait_until(lambda: _mounted_round(controller) == round_1)
+
+    # Direct store switch: the end-state of the documented race, where the
+    # legacy mount's call_from_thread lands AFTER the switch already ran
+    # its own re-derive -- active session B, legacy card still on screen.
+    session_b = controller.store.create_session(title="B").id
+    controller.store.switch_session(session_b)
+
+    controller.resolve_pending_approval({"legacy": "approve_once"}, round_id=round_1)
+    legacy.join(timeout=5)
+
+    assert _wait_until(lambda: controller.mounted[-1] is None), (
+        "a legacy round's teardown must clear its card even after a "
+        "session switch -- the pre-PR0 unconditional clear's job"
+    )
