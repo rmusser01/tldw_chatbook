@@ -19,6 +19,11 @@ from tldw_chatbook.Chatbooks.chatbook_importer import ChatbookImporter, ImportSt
 import tldw_chatbook.Chatbooks.chatbook_importer as importer_module
 from tldw_chatbook.Chatbooks.conflict_resolver import ConflictResolution
 from tldw_chatbook.Chatbooks.chatbook_models import ChatbookManifest, ChatbookVersion
+from tldw_chatbook.Chat.console_project_instructions import (
+    ProjectInstructionControlState,
+    encode_project_context_json,
+)
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 
 
@@ -1004,3 +1009,137 @@ def test_import_media_skip_conflict_leaves_trashed_row_untouched(tmp_path):
     cursor = verify.execute_query("SELECT COUNT(*) FROM Media")
     assert cursor.fetchone()[0] == 1, "no second row must have been created either"
     verify.close_connection()
+
+
+def _write_project_context_conflict_chatbook(path: Path) -> None:
+    """Write one conflicting conversation with a hostile local-state field."""
+    now = datetime.now().isoformat()
+    manifest = {
+        "version": "1.0",
+        "name": "Project context conflict",
+        "description": "Importer local-state preservation fixture",
+        "created_at": now,
+        "updated_at": now,
+        "content_items": [
+            {
+                "id": "incoming-1",
+                "type": "conversation",
+                "title": "Existing conversation",
+                "created_at": now,
+                "file_path": "content/conversations/conversation_incoming-1.json",
+            }
+        ],
+        "relationships": [],
+        "statistics": {"total_conversations": 1},
+    }
+    conversation = {
+        "id": "incoming-1",
+        "name": "Existing conversation",
+        "title": "Existing conversation",
+        "created_at": now,
+        "updated_at": now,
+        "character_id": None,
+        "messages": [{"role": "user", "content": "imported", "timestamp": now}],
+        "console_project_context_json": "must-not-enter-local-state",
+    }
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("manifest.json", json.dumps(manifest))
+        archive.writestr(
+            "content/conversations/conversation_incoming-1.json",
+            json.dumps(conversation),
+        )
+
+
+def _seed_conversation_with_project_context(path: Path) -> tuple[str, str]:
+    db = CharactersRAGDB(path, client_id="import-seed")
+    conversation_id = db.add_conversation({"title": "Existing conversation"})
+    encoded = encode_project_context_json(
+        ProjectInstructionControlState(
+            project_instructions_enabled=True,
+            working_folder_binding_id="existing-binding",
+            working_folder_locator_fingerprint="existing-locator-fingerprint",
+            project_instruction_notice_key="existing-notice-key",
+        )
+    )
+    db.set_conversation_console_project_context(conversation_id, encoded)
+    db.close_connection()
+    return str(conversation_id), encoded
+
+
+def test_import_conflict_skip_preserves_existing_console_project_context(
+    tmp_path, monkeypatch
+) -> None:
+    user_data = tmp_path / "user-data"
+    monkeypatch.setattr(importer_module, "get_user_data_dir", lambda: user_data)
+    db_path = tmp_path / "chachanotes.db"
+    existing_id, encoded = _seed_conversation_with_project_context(db_path)
+    chatbook_path = tmp_path / "conflict.chatbook.zip"
+    _write_project_context_conflict_chatbook(chatbook_path)
+    importer = ChatbookImporter(db_paths={"ChaChaNotes": str(db_path)})
+    status = ImportStatus()
+
+    importer.import_chatbook(
+        chatbook_path=chatbook_path,
+        conflict_resolution=ConflictResolution.SKIP,
+        import_status=status,
+    )
+
+    reopened = CharactersRAGDB(db_path, client_id="import-assert")
+    rows = (
+        reopened.get_connection()
+        .execute(
+            "SELECT id, console_project_context_json FROM conversations "
+            "WHERE title = ? ORDER BY rowid",
+            ("Existing conversation",),
+        )
+        .fetchall()
+    )
+    assert status.skipped_items == 1
+    assert [(row["id"], row["console_project_context_json"]) for row in rows] == [
+        (existing_id, encoded)
+    ]
+    reopened.close_connection()
+
+
+@pytest.mark.parametrize(
+    "resolution",
+    [
+        ConflictResolution.REPLACE,
+        ConflictResolution.RENAME,
+        ConflictResolution.MERGE,
+    ],
+)
+def test_import_non_skip_conflicts_create_null_local_state_and_preserve_existing(
+    tmp_path, monkeypatch, resolution
+) -> None:
+    user_data = tmp_path / "user-data"
+    monkeypatch.setattr(importer_module, "get_user_data_dir", lambda: user_data)
+    db_path = tmp_path / "chachanotes.db"
+    existing_id, encoded = _seed_conversation_with_project_context(db_path)
+    chatbook_path = tmp_path / "conflict.chatbook.zip"
+    _write_project_context_conflict_chatbook(chatbook_path)
+    importer = ChatbookImporter(db_paths={"ChaChaNotes": str(db_path)})
+    status = ImportStatus()
+
+    success, _message = importer.import_chatbook(
+        chatbook_path=chatbook_path,
+        conflict_resolution=resolution,
+        import_status=status,
+    )
+
+    reopened = CharactersRAGDB(db_path, client_id="import-assert")
+    rows = (
+        reopened.get_connection()
+        .execute(
+            "SELECT id, console_project_context_json FROM conversations ORDER BY rowid"
+        )
+        .fetchall()
+    )
+    assert success is True
+    assert status.successful_items == 1
+    assert len(rows) == 2
+    assert rows[0]["id"] == existing_id
+    assert rows[0]["console_project_context_json"] == encoded
+    assert rows[1]["id"] != existing_id
+    assert rows[1]["console_project_context_json"] is None
+    reopened.close_connection()

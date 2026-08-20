@@ -55,6 +55,11 @@ from tldw_chatbook.Chat.console_roleplay_identity import (
 )
 from tldw_chatbook.Chat.console_roleplay_metadata import ConsoleRoleplayContext
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_project_instructions import (
+    ProjectInstructionControlState,
+    decode_project_context_json,
+    encode_project_context_json,
+)
 from tldw_chatbook.Chat.console_speech import (
     ConsoleSpeechSnapshotRejected,
     ConsoleSpeechSnapshotRejectionCode,
@@ -383,6 +388,19 @@ class ConsoleChatPersistence(Protocol):
             optimistic-lock version check failed).
         """
 
+    def get_conversation_console_project_context(
+        self, *, conversation_id: str
+    ) -> str | None:
+        """Return versioned local project-context JSON when available."""
+
+    def set_conversation_console_project_context(
+        self,
+        *,
+        conversation_id: str,
+        project_context_json: str | None,
+    ) -> None:
+        """Write local project-context JSON without synchronized metadata."""
+
     def get_attachments_for_messages(
         self, message_ids: Sequence[str]
     ) -> dict[str, list[dict[str, Any]]]:
@@ -524,6 +542,9 @@ class ConsoleChatSession:
     )
     #: Monotonic identity projection fence for labels and trusted templates.
     identity_revision: int = 0
+    project_instruction_state: ProjectInstructionControlState = field(
+        default_factory=ProjectInstructionControlState.legacy_disabled
+    )
     #: Temporary conversation (spec 2026-07-31): this session is never written
     #: to local storage. Enforced in exactly one place --
     #: ``persist_session_if_needed`` refuses to mint a
@@ -710,6 +731,7 @@ class ConsoleChatStore:
         #: it is untouched by tree mutations (create/delete/sibling). ``(None,
         #: None)`` = no summary. Write-through is ``_persist_context_summary``.
         self._context_summary_by_session: dict[str, tuple[str | None, str | None]] = {}
+        self._deferred_project_instruction_state_session_ids: set[str] = set()
         self._pending_persistence_message_ids: set[str] = set()
         self._terminal_citation_finalizers: dict[str, TerminalCitationFinalizer] = {}
         self._provisional_terminal_selection_ids: set[str] = set()
@@ -860,6 +882,7 @@ class ConsoleChatStore:
         character_name: str | None = None,
         ephemeral: bool = False,
         activate: bool = True,
+        project_instruction_state: ProjectInstructionControlState | None = None,
     ) -> ConsoleChatSession:
         """Create and activate a new native Console session.
 
@@ -906,6 +929,11 @@ class ConsoleChatStore:
             character_id=character_id,
             character_name=character_name,
             ephemeral=ephemeral,
+            project_instruction_state=(
+                project_instruction_state
+                if project_instruction_state is not None
+                else ProjectInstructionControlState.new_session()
+            ),
         )
         self._sessions[session.id] = session
         self._messages_by_session[session.id] = []
@@ -1224,6 +1252,21 @@ class ConsoleChatStore:
                 "Cannot restore a persisted session as temporary: a temporary "
                 "session has no persisted conversation."
             )
+        project_instruction_state = ProjectInstructionControlState.legacy_disabled()
+        getter = getattr(
+            self.persistence, "get_conversation_console_project_context", None
+        )
+        if callable(getter):
+            try:
+                raw_project_context = getter(
+                    conversation_id=str(persisted_conversation_id)
+                )
+            except Exception:
+                logger.warning("project_instruction_state_read_failed")
+            else:
+                project_instruction_state = decode_project_context_json(
+                    raw_project_context
+                )
         session = self.create_session(
             title=title,
             workspace_id=workspace_id,
@@ -1234,6 +1277,7 @@ class ConsoleChatStore:
             assistant_authority_id=assistant_authority_id,
             character_id=character_id,
             character_name=character_name,
+            project_instruction_state=project_instruction_state,
         )
         session.persisted_conversation_id = str(persisted_conversation_id)
         self._restore_speech_preferences(session)
@@ -1964,6 +2008,55 @@ class ConsoleChatStore:
     def set_workspace_context(self, workspace_context: ConsoleWorkspaceContext) -> None:
         """Replace the active workspace context."""
         self.workspace_context = workspace_context
+
+    def set_session_project_instruction_state(
+        self,
+        session_id: str,
+        state: ProjectInstructionControlState,
+    ) -> ConsoleChatSession:
+        """Apply project-instruction controls and best-effort persist them.
+
+        The in-memory state changes first and remains authoritative when the
+        optional local-only write fails. Temporary sessions never write.
+
+        Args:
+            session_id: Native Console session identifier.
+            state: Complete validated control state.
+
+        Returns:
+            The updated live session.
+        """
+        session = self._session_or_raise(session_id)
+        session.project_instruction_state = state
+        self._persist_project_instruction_state(session)
+        return session
+
+    def _persist_project_instruction_state(self, session: ConsoleChatSession) -> None:
+        """Best-effort write one durable session's local control state."""
+        conversation_id = session.persisted_conversation_id
+        if (
+            session.ephemeral
+            or conversation_id is None
+            or session.id in self._deferred_project_instruction_state_session_ids
+        ):
+            return
+        setter = getattr(
+            self.persistence, "set_conversation_console_project_context", None
+        )
+        if not callable(setter):
+            return
+        try:
+            setter(
+                conversation_id=conversation_id,
+                project_context_json=encode_project_context_json(
+                    session.project_instruction_state
+                ),
+            )
+        except Exception:
+            logger.warning(
+                "project_instruction_state_write_failed: the updated choice "
+                "may not survive restart."
+            )
 
     def restore_state(
         self,
@@ -5260,6 +5353,7 @@ class ConsoleChatStore:
                     "Failed to flush Console roleplay context while promoting "
                     "a temporary session."
                 )
+        self._persist_project_instruction_state(session)
         pinned_prefill = (
             session.settings.pinned_prefill if session.settings is not None else None
         )
@@ -5490,26 +5584,28 @@ class ConsoleChatStore:
             return conversation_id
 
         session.ephemeral = False
+        self._deferred_project_instruction_state_session_ids.add(session_id)
         try:
             if callable(transaction):
                 with transaction():
-                    return _write()
-            # No real database seam to wrap in a transaction (e.g. a
-            # narrower persistence fake) -- production wiring always builds
-            # ChatPersistenceService with a real CharactersRAGDB, so this
-            # branch is not reachable there today, but the loss of the
-            # all-or-nothing guarantee it causes must still be observable
-            # rather than silent, matching the RAG-scope-flush warning just
-            # above in persist_session_if_needed.
-            logger.bind(session_id=session_id).warning(
-                "Saving Console session {} without a database transaction "
-                "-- the persistence adapter exposes no `db.transaction()` "
-                "seam. A failure part-way through this save may leave a "
-                "partial conversation in history instead of the "
-                "all-or-nothing guarantee this method normally provides.",
-                session_id,
-            )
-            return _write()
+                    conversation_id = _write()
+            else:
+                # No real database seam to wrap in a transaction (e.g. a
+                # narrower persistence fake) -- production wiring always builds
+                # ChatPersistenceService with a real CharactersRAGDB, so this
+                # branch is not reachable there today, but the loss of the
+                # all-or-nothing guarantee it causes must still be observable
+                # rather than silent, matching the RAG-scope-flush warning just
+                # above in persist_session_if_needed.
+                logger.bind(session_id=session_id).warning(
+                    "Saving Console session {} without a database transaction "
+                    "-- the persistence adapter exposes no `db.transaction()` "
+                    "seam. A failure part-way through this save may leave a "
+                    "partial conversation in history instead of the "
+                    "all-or-nothing guarantee this method normally provides.",
+                    session_id,
+                )
+                conversation_id = _write()
         except Exception:
             # persisted_conversation_id cleared BEFORE ephemeral is set back
             # to True so the two are never simultaneously in the one
@@ -5525,6 +5621,10 @@ class ConsoleChatStore:
                 "Saving a temporary Console conversation failed; it stays temporary."
             )
             raise
+        finally:
+            self._deferred_project_instruction_state_session_ids.discard(session_id)
+        self._persist_project_instruction_state(session)
+        return conversation_id
 
     def set_session_system_prompt(
         self,

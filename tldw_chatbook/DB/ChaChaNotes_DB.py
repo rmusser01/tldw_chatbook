@@ -386,7 +386,8 @@ CREATE TABLE IF NOT EXISTS conversations(
   last_modified DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   deleted      BOOLEAN  NOT NULL DEFAULT 0,
   client_id    TEXT     NOT NULL,
-  version      INTEGER  NOT NULL DEFAULT 1
+  version      INTEGER  NOT NULL DEFAULT 1,
+  console_project_context_json TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_conversations_root   ON conversations(root_id);
 CREATE INDEX IF NOT EXISTS idx_conversations_parent ON conversations(parent_conversation_id);
@@ -2659,6 +2660,15 @@ ALTER TABLE messages ADD COLUMN usage_json TEXT DEFAULT NULL;
     # separately in the runner (not embedded here) with a rowcount check.
     _MIGRATE_V30_TO_V31_SQL = """
 ALTER TABLE messages ADD COLUMN metadata_json TEXT DEFAULT NULL;
+"""
+
+    # Keep this runner SQL aligned with
+    # tldw_chatbook/DB/migrations/chachanotes_v32_to_v33_console_project_context.sql.
+    # NOTE: no trigger DDL. ``console_project_context_json`` is LOCAL-ONLY and
+    # must never reach sync_log. The guarded version bump is owned by the
+    # migration runner so a column-present/version-32 database can recover.
+    _MIGRATE_V32_TO_V33_SQL = """
+ALTER TABLE conversations ADD COLUMN console_project_context_json TEXT;
 """
 
     # Keep this runner SQL aligned with
@@ -8776,6 +8786,49 @@ UPDATE db_schema_version
         if row is None:
             return None, None
         return row["context_summary"], row["summary_boundary_message_id"]
+
+    def set_conversation_console_project_context(
+        self, conversation_id: str, project_context_json: str | None
+    ) -> None:
+        """Set local-only Console project-instruction control state.
+
+        This bare parameterized update deliberately leaves synchronized
+        columns, ``version``, and ``last_modified`` untouched, so current
+        ``conversations_sync_*`` triggers cannot emit a ``sync_log`` row.
+        Any future inbound conversation apply/sync owner must use an explicit
+        synchronized-column allowlist and preserve this column through create,
+        update, delete, undelete, replay, and conflict handling.
+
+        Args:
+            conversation_id: Durable conversation identifier.
+            project_context_json: Versioned control-state JSON, or ``None`` to
+                clear the local state.
+        """
+        with self.transaction() as conn:
+            conn.execute(
+                "UPDATE conversations SET console_project_context_json = ? "
+                "WHERE id = ? AND deleted = 0",
+                (project_context_json, conversation_id),
+            )
+
+    def get_conversation_console_project_context(
+        self, conversation_id: str
+    ) -> str | None:
+        """Return local Console project-context JSON when active and present.
+
+        Args:
+            conversation_id: Durable conversation identifier.
+
+        Returns:
+            Stored JSON, or ``None`` when unset, missing, or deleted.
+        """
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT console_project_context_json FROM conversations "
+                "WHERE id = ? AND deleted = 0",
+                (conversation_id,),
+            ).fetchone()
+        return row["console_project_context_json"] if row else None
 
     def soft_delete_conversation(
         self, conversation_id: str, expected_version: int
