@@ -1409,7 +1409,10 @@ class LibraryFileNotesWorkspace(Vertical):
         if root_state or save_non_ready:
             if root_state or self._save_state in {"saving", "dirty"}:
                 compact_folder = Text(folder_name)
-                compact_folder.truncate(9, overflow="ellipsis")
+                compact_folder.truncate(
+                    6 if self._path_transitioning else 9,
+                    overflow="ellipsis",
+                )
                 first_line = ["Folder files", f"Folder: {compact_folder.plain}"]
                 if root_state:
                     first_line.append(root_state)

@@ -1131,6 +1131,10 @@ async def test_initial_root_scan_projects_checking_authority_while_actions_are_g
     replica.close()
 
 
+@pytest.mark.parametrize(
+    ("save_state", "save_copy"),
+    (("error", "Save failed"), ("conflict", "Conflict")),
+)
 @pytest.mark.asyncio
 async def test_wide_files_task_return_restores_database_browse_receipt() -> None:
     """Files returns to the prior Database row and both independent scroll owners."""
@@ -1231,6 +1235,8 @@ async def test_wide_files_task_return_restores_database_browse_receipt() -> None
 @pytest.mark.asyncio
 async def test_path_transition_authority_names_file_operation_and_settles(
     tmp_path: Path,
+    save_state: str,
+    save_copy: str,
 ) -> None:
     root = tmp_path / "Research notes with a very long private directory name"
     root.mkdir()
@@ -1239,6 +1245,7 @@ async def test_path_transition_authority_names_file_operation_and_settles(
 
     async with _CssTrueWorkspaceHarness(workspace).run_test(size=(60, 20)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        workspace._set_save_state(save_state, "a long private filesystem detail")
 
         with workspace._hold_path_transition() as transition:
             assert transition is not None
@@ -1252,7 +1259,9 @@ async def test_path_transition_authority_names_file_operation_and_settles(
                 cell_len(row) <= authority.region.width
                 for row in authority_copy.splitlines()
             )
+            assert "Folder: Resea…" in painted
             assert "File operation" in painted
+            assert save_copy in painted
             assert "Changing folder" not in painted
             assert "Session Git: 0 changes" in painted
             assert "Next: Wait for file operation." in painted
@@ -1260,7 +1269,7 @@ async def test_path_transition_authority_names_file_operation_and_settles(
         await pilot.pause()
         authority = _static_text(workspace, "#file-notes-authority")
         assert "File operation" not in authority
-        assert "Ready" in authority
+        assert save_copy in authority
 
     replica.close()
 
