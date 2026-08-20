@@ -1495,22 +1495,7 @@ class PromptScopeService:
                 if not items
                 else LibraryContentEvidence.UNKNOWN
             )
-        if not items or not isinstance(items[0], Mapping):
-            return LibraryContentEvidence.UNKNOWN
-        record = items[0]
-        source = str(record.get("source") or "").strip().lower()
-        excluded = bool(record.get("bundled") or record.get("is_sample")) or source in {
-            "bundled",
-            "sample",
-            "system",
-        }
-        if excluded:
-            return (
-                LibraryContentEvidence.EMPTY
-                if total == 1
-                else LibraryContentEvidence.UNKNOWN
-            )
-        return LibraryContentEvidence.HAS_USER_CONTENT
+        return LibraryContentEvidence.UNKNOWN
 
     async def search_prompts(
         self,

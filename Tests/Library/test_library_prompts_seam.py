@@ -16,6 +16,10 @@ from tldw_chatbook.Prompt_Management.prompt_scope_service import (
     PromptScopeService,
 )
 from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
+from tldw_chatbook.tldw_api.prompt_chatbook_schemas import (
+    PaginatedPromptsResponse,
+    PromptBriefResponse,
+)
 
 
 @pytest.mark.asyncio
@@ -101,7 +105,7 @@ async def test_prompts_user_content_evidence_validates_server_provenance_and_tot
     service = PromptScopeService(local_service=None, server_service=user)
     assert (
         await service.get_library_user_content_evidence(mode="server")
-        is LibraryContentEvidence.HAS_USER_CONTENT
+        is LibraryContentEvidence.UNKNOWN
     )
     assert user.calls == [
         {
@@ -113,49 +117,36 @@ async def test_prompts_user_content_evidence_validates_server_provenance_and_tot
         }
     ]
 
-    class PromptEnvelope:
-        def model_dump(self, *, mode):
-            assert mode == "json"
-            return {
-                "items": [{"id": 2, "name": "Server model prompt"}],
-                "total_items": 1,
-            }
-
     service = PromptScopeService(
-        local_service=None, server_service=ServerPrompts(PromptEnvelope())
+        local_service=None,
+        server_service=ServerPrompts(
+            PaginatedPromptsResponse(
+                items=[PromptBriefResponse(id=2, name="Server model prompt")],
+                total_items=1,
+            )
+        ),
     )
     assert (
         await service.get_library_user_content_evidence(mode="server")
-        is LibraryContentEvidence.HAS_USER_CONTENT
+        is LibraryContentEvidence.UNKNOWN
     )
 
-    for payload in (
-        {"items": []},
-        {
-            "items": [{"id": "sample", "name": "Sample", "source": "bundled"}],
-            "total_items": 2,
-        },
-    ):
-        service = PromptScopeService(
-            local_service=None, server_service=ServerPrompts(payload)
-        )
-        assert (
-            await service.get_library_user_content_evidence(mode="server")
-            is LibraryContentEvidence.UNKNOWN
-        )
+    service = PromptScopeService(
+        local_service=None,
+        server_service=ServerPrompts(PaginatedPromptsResponse()),
+    )
+    assert (
+        await service.get_library_user_content_evidence(mode="server")
+        is LibraryContentEvidence.EMPTY
+    )
 
-    for excluded in (
-        {"id": "sample", "name": "Sample", "source": "bundled"},
-        {"id": "fixture", "name": "Fixture", "is_sample": True},
-    ):
-        service = PromptScopeService(
-            local_service=None,
-            server_service=ServerPrompts({"items": [excluded], "total_items": 1}),
-        )
-        assert (
-            await service.get_library_user_content_evidence(mode="server")
-            is LibraryContentEvidence.EMPTY
-        )
+    service = PromptScopeService(
+        local_service=None, server_service=ServerPrompts({"items": []})
+    )
+    assert (
+        await service.get_library_user_content_evidence(mode="server")
+        is LibraryContentEvidence.UNKNOWN
+    )
 
 
 @pytest.mark.asyncio

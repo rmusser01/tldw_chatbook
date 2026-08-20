@@ -3,6 +3,7 @@ import pytest
 from tldw_chatbook.Library.library_content_evidence import LibraryContentEvidence
 from tldw_chatbook.Skills_Interop.skills_scope_service import SkillsScopeService
 from tldw_chatbook.runtime_policy import PolicyDeniedError
+from tldw_chatbook.tldw_api.skills_schemas import SkillContextPayload, SkillSummary
 
 
 class FakeSkillsService:
@@ -209,6 +210,13 @@ async def test_skills_user_content_evidence_uses_only_available_user_skills():
         is LibraryContentEvidence.EMPTY
     )
 
+    user_skill = ContextService({"available_skills": [{"name": "user-skill"}]})
+    service = SkillsScopeService(local_service=user_skill)
+    assert (
+        await service.get_library_user_content_evidence(mode="local")
+        is LibraryContentEvidence.HAS_USER_CONTENT
+    )
+
 
 @pytest.mark.asyncio
 async def test_skills_user_content_evidence_accepts_server_user_skill_and_fails_closed():
@@ -226,7 +234,24 @@ async def test_skills_user_content_evidence_accepts_server_user_skill_and_fails_
     )
     assert (
         await service.get_library_user_content_evidence(mode="server")
-        is LibraryContentEvidence.HAS_USER_CONTENT
+        is LibraryContentEvidence.UNKNOWN
+    )
+
+    production_context = SkillContextPayload(
+        available_skills=[
+            SkillSummary(
+                name="schema-skill",
+                user_invocable=True,
+                disable_model_invocation=False,
+                context="inline",
+            )
+        ],
+        context_text="schema-skill",
+    )
+    service = SkillsScopeService(server_service=ContextService(production_context))
+    assert (
+        await service.get_library_user_content_evidence(mode="server")
+        is LibraryContentEvidence.UNKNOWN
     )
 
     service = SkillsScopeService(server_service=ContextService({"skills": []}))

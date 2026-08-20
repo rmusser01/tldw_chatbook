@@ -186,7 +186,9 @@ class ChatConversationScopeService:
         self, *, mode: str = "local"
     ) -> LibraryContentEvidence:
         """Return tri-state evidence for durably saved conversations."""
-        payload = await self.list_conversations(mode=mode, limit=1, offset=0)
+        payload = await self.list_conversations(
+            mode=mode, scope_type="all", limit=1, offset=0
+        )
         if not isinstance(payload, Mapping):
             return LibraryContentEvidence.UNKNOWN
         items = payload.get("items")

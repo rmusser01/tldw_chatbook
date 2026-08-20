@@ -11,6 +11,7 @@ from tldw_chatbook.Media.media_reading_scope_service import (
 )
 from tldw_chatbook.Media.local_media_reading_service import LocalMediaReadingService
 from tldw_chatbook.Library.library_content_evidence import LibraryContentEvidence
+from tldw_chatbook.Media.server_media_reading_service import ServerMediaReadingService
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 from tldw_chatbook.tldw_api import (
     AddMediaRequest,
@@ -2790,7 +2791,29 @@ async def test_scope_service_library_media_summary_preserves_envelope_and_five_k
 
 @pytest.mark.asyncio
 async def test_media_user_content_evidence_uses_active_complete_local_summary():
-    local = LibrarySummaryLocalService()
+    class LocalEvidenceService:
+        def __init__(self, payload):
+            self.payload = payload
+            self.calls = []
+
+        def search_media(self, **kwargs):
+            self.calls.append(kwargs)
+            return self.payload
+
+    local = LocalEvidenceService(
+        {
+            "items": [
+                {
+                    "id": 41,
+                    "chunking_status": "completed",
+                    "content": "PRIVATE_BODY",
+                }
+            ],
+            "total": 1,
+            "offset": 0,
+            "limit": 1,
+        }
+    )
     scope_service = MediaReadingScopeService(local_service=local, server_service=None)
 
     evidence = await scope_service.get_library_user_content_evidence(mode="local")
@@ -2798,22 +2821,16 @@ async def test_media_user_content_evidence_uses_active_complete_local_summary():
     assert type(evidence) is LibraryContentEvidence
     assert evidence is LibraryContentEvidence.HAS_USER_CONTENT
     assert local.calls == [
-        (
-            "search_media",
-            None,
-            1,
-            0,
-            {
-                "include_deleted": False,
-                "include_trash": False,
-                "library_summary": True,
-            },
-        )
+        {
+            "query": None,
+            "limit": 1,
+            "offset": 0,
+            "include_deleted": False,
+            "include_trash": False,
+        }
     ]
 
-    excluded = LibrarySummaryLocalService(
-        {"items": [], "total": 0, "offset": 0, "limit": 1}
-    )
+    excluded = LocalEvidenceService({"items": [], "total": 0, "offset": 0, "limit": 1})
     scope_service = MediaReadingScopeService(
         local_service=excluded, server_service=None
     )
@@ -2829,15 +2846,17 @@ async def test_media_user_content_evidence_uses_active_complete_local_summary():
     [
         {"id": 1, "deleted": True},
         {"id": 2, "is_trash": True},
-        {"id": 3, "status": "incomplete"},
+        {"id": 3, "chunking_status": "pending"},
     ],
 )
 async def test_media_user_content_evidence_excludes_deleted_trash_and_incomplete(
     excluded_row,
 ):
-    local = LibrarySummaryLocalService(
-        {"items": [excluded_row], "total": 1, "offset": 0, "limit": 1}
-    )
+    class LocalEvidenceService:
+        def search_media(self, **kwargs):
+            return {"items": [excluded_row], "total": 1, "offset": 0, "limit": 1}
+
+    local = LocalEvidenceService()
     scope_service = MediaReadingScopeService(local_service=local, server_service=None)
 
     assert (
@@ -2848,21 +2867,88 @@ async def test_media_user_content_evidence_excludes_deleted_trash_and_incomplete
 
 @pytest.mark.asyncio
 async def test_media_user_content_evidence_accepts_exact_server_summary_only():
-    server = FakeServerMediaService()
+    class StrictReadingClient:
+        def __init__(self, payload):
+            self.payload = payload
+            self.calls = []
+
+        async def list_reading_items(
+            self,
+            *,
+            status=None,
+            tags=None,
+            q=None,
+            domain=None,
+            favorite=None,
+            date_from=None,
+            date_to=None,
+            page=1,
+            size=20,
+            offset=None,
+            limit=None,
+            sort=None,
+        ):
+            self.calls.append({"q": q, "limit": limit, "offset": offset})
+            return self.payload
+
+    client = StrictReadingClient(
+        {
+            "items": [{"id": 41, "processing_status": "completed"}],
+            "total": 1,
+            "offset": 0,
+            "limit": 1,
+        }
+    )
+    server = ServerMediaReadingService(client=client)
     scope_service = MediaReadingScopeService(local_service=None, server_service=server)
     assert (
         await scope_service.get_library_user_content_evidence(mode="server")
         is LibraryContentEvidence.HAS_USER_CONTENT
     )
-    assert server.calls == [
-        (
-            "search_media",
-            None,
-            1,
-            0,
-            {"include_deleted": False, "include_trash": False},
-        )
-    ]
+    assert client.calls == [{"q": None, "limit": 1, "offset": 0}]
+
+    client = StrictReadingClient(
+        {
+            "items": [{"id": 42, "processing_status": "incomplete"}],
+            "total": 1,
+            "offset": 0,
+            "limit": 1,
+        }
+    )
+    scope_service = MediaReadingScopeService(
+        local_service=None, server_service=ServerMediaReadingService(client=client)
+    )
+    assert (
+        await scope_service.get_library_user_content_evidence(mode="server")
+        is LibraryContentEvidence.EMPTY
+    )
+
+    client = StrictReadingClient(
+        {
+            "items": [{"id": 43, "processing_status": "future-state"}],
+            "total": 1,
+            "offset": 0,
+            "limit": 1,
+        }
+    )
+    scope_service = MediaReadingScopeService(
+        local_service=None, server_service=ServerMediaReadingService(client=client)
+    )
+    assert (
+        await scope_service.get_library_user_content_evidence(mode="server")
+        is LibraryContentEvidence.UNKNOWN
+    )
+
+    client = StrictReadingClient(
+        {"items": [{"id": 44}], "total": 1, "offset": 0, "limit": 1}
+    )
+    scope_service = MediaReadingScopeService(
+        local_service=None, server_service=ServerMediaReadingService(client=client)
+    )
+    assert (
+        await scope_service.get_library_user_content_evidence(mode="server")
+        is LibraryContentEvidence.UNKNOWN
+    )
 
     class AmbiguousServer:
         async def search_media(self, **kwargs):

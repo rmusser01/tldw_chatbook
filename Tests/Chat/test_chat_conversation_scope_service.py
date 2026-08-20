@@ -263,7 +263,30 @@ async def test_conversations_user_content_evidence_requires_exact_saved_total():
 
     assert type(result) is LibraryContentEvidence
     assert result is LibraryContentEvidence.HAS_USER_CONTENT
-    assert local.calls == [("list_conversations", (), {"limit": 1, "offset": 0})]
+    assert local.calls == [
+        (
+            "list_conversations",
+            (),
+            {"scope_type": "all", "limit": 1, "offset": 0},
+        )
+    ]
+
+    class WorkspaceOnlyConversation:
+        def list_conversations(self, **kwargs):
+            if kwargs.get("scope_type") != "all":
+                return {"items": [], "pagination": {"total": 0}}
+            return {
+                "items": [{"id": "workspace-conversation"}],
+                "pagination": {"total": 1},
+            }
+
+    service = ChatConversationScopeService(
+        local_service=WorkspaceOnlyConversation(), server_service=None
+    )
+    assert (
+        await service.get_library_user_content_evidence(mode="local")
+        is LibraryContentEvidence.HAS_USER_CONTENT
+    )
 
     class MissingOrFailedSave:
         def list_conversations(self, **kwargs):
@@ -286,7 +309,13 @@ async def test_conversations_user_content_evidence_accepts_server_and_rejects_am
         await service.get_library_user_content_evidence(mode="server")
         is LibraryContentEvidence.HAS_USER_CONTENT
     )
-    assert server.calls == [("list_conversations", (), {"limit": 1, "offset": 0})]
+    assert server.calls == [
+        (
+            "list_conversations",
+            (),
+            {"scope_type": "all", "limit": 1, "offset": 0},
+        )
+    ]
 
     class AmbiguousServer:
         async def list_conversations(self, **kwargs):

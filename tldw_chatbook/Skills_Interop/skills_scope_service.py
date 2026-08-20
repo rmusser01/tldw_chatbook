@@ -186,12 +186,22 @@ class SkillsScopeService:
         self, *, mode: SkillsBackend | str | None = None
     ) -> LibraryContentEvidence:
         """Return tri-state evidence for available user-owned skills."""
-        context = await self.get_context(mode=mode)
+        normalized_mode = self._normalize_mode(mode)
+        context = await self.get_context(mode=normalized_mode)
+        model_dump = getattr(context, "model_dump", None)
+        if callable(model_dump):
+            context = model_dump(mode="json")
         if not isinstance(context, dict) or not isinstance(
             context.get("available_skills"), list
         ):
             return LibraryContentEvidence.UNKNOWN
         available = context["available_skills"]
+        if normalized_mode == SkillsBackend.SERVER:
+            return (
+                LibraryContentEvidence.EMPTY
+                if not available
+                else LibraryContentEvidence.UNKNOWN
+            )
         if not all(isinstance(item, dict) for item in available):
             return LibraryContentEvidence.UNKNOWN
         for item in available:
