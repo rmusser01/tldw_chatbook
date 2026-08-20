@@ -341,6 +341,41 @@ class GatedFailingSecondLibraryMediaScopeService(StaticLibraryMediaScopeService)
         return await super().search_media(**kwargs)
 
 
+class GatedFailingInitialMediaWithCompleteFacets(StaticLibraryMediaScopeService):
+    """Keep the initial page unresolved while complete facets settle."""
+
+    def __init__(self, media_items):
+        super().__init__(media_items)
+        self.page_entered = threading.Event()
+        self.page_release = threading.Event()
+
+    async def search_media(self, **kwargs):
+        self.search_calls.append(dict(kwargs))
+        self.page_entered.set()
+        await asyncio.to_thread(
+            self.page_release.wait, _GATED_RELEASE_TIMEOUT_SECONDS
+        )
+        raise RuntimeError("private-initial-page-failure")
+
+    async def list_library_media_types(self, **kwargs):
+        self.type_calls.append(dict(kwargs))
+        return ["ALL", "All", "all"]
+
+
+class DoubleShrinkLibraryMediaScopeService(StaticLibraryMediaScopeService):
+    """Return two coherent out-of-range pages, then stop at the stale seam."""
+
+    async def search_media(self, **kwargs):
+        self.search_calls.append(dict(kwargs))
+        offset = kwargs["offset"]
+        return {
+            "items": [],
+            "total": 25 if offset == 40 else 5,
+            "offset": offset,
+            "limit": kwargs["limit"],
+        }
+
+
 def _open_source_test_app() -> SimpleNamespace:
     """Return the smallest mutable app seam needed by open-source tests."""
 
@@ -6726,6 +6761,18 @@ async def test_library_media_pager_is_exact_pinned_and_controller_owned(size) ->
             screen.query_one("#library-media-disabled-reason", Static).renderable
         )
 
+        pager_region = pager.region
+        screen.query_one("#library-media-row-19", Button).focus()
+        await _wait_for_condition(
+            pilot,
+            lambda: row_scroll.scroll_y > 0,
+            message="Focusing Media row 20 never moved the independent row viewport.",
+        )
+        assert screen.query_one("#library-media-pager", Vertical) is pager
+        assert pager.region == pager_region
+        assert list_pane.region.contains_region(pager.region)
+        assert pager in host.screen._compositor.visible_widgets
+
         screen.query_one("#library-media-next", Button).focus()
         screen.query_one("#library-media-next", Button).press()
         await _wait_for_condition(
@@ -6812,6 +6859,74 @@ async def test_library_media_initial_error_is_unknown_and_retry_is_unique() -> N
 
 
 @pytest.mark.asyncio
+async def test_library_media_complete_facets_survive_initial_loading_and_error() -> None:
+    app = _build_test_app()
+    _seed_conversations(app, [], media=_two_media_items())
+    service = GatedFailingInitialMediaWithCompleteFacets(_two_media_items())
+    app.media_reading_scope_service = service
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=(100, 30)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            screen.query_one("#library-row-browse-media", Button).press()
+            controller = screen._library_media_browse_controller
+            await _wait_for_condition(
+                pilot,
+                lambda: service.page_entered.is_set()
+                and controller.loading
+                and controller.type_options == ("ALL", "All", "all"),
+                message="Complete Media facets did not settle ahead of page 1.",
+            )
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen.query_one(
+                        "#library-media-canvas", LibraryMediaCanvas
+                    ).type_options
+                    == (None, "ALL", "All", "all")
+                    and not screen.query_one(
+                        "#library-media-canvas", LibraryMediaCanvas
+                    )._recompose_required
+                    and bool(screen.query("#library-media-type-filter"))
+                ),
+                message="Complete facets never reached the settled Media canvas.",
+            )
+
+            requested_before = controller.requested_scope
+            opener = screen.query_one("#library-media-type-filter", Button)
+            opener.press()
+            chooser = await _wait_for_selector(
+                screen, pilot, "#library-media-type-choices"
+            )
+            assert isinstance(chooser, OptionList)
+            assert tuple(
+                getattr(chooser.get_option_at_index(index), "choice_value")
+                for index in range(chooser.option_count)
+            ) == (None, "ALL", "All", "all")
+            assert "✓ All types" in str(chooser.get_option_at_index(0).prompt)
+            chooser.highlighted = 2
+            await pilot.pause()
+            assert controller.requested_scope == requested_before
+            assert len(service.search_calls) == 1
+
+            service.page_release.set()
+            await _wait_for_condition(
+                pilot,
+                lambda: bool(controller.error_copy)
+                and screen.query_one(
+                    "#library-media-type-choices", OptionList
+                ).option_count
+                == 4,
+                message="Complete facets did not survive initial page failure.",
+            )
+            assert "private-initial-page-failure" not in _visible_text(screen)
+    finally:
+        service.page_release.set()
+
+
+@pytest.mark.asyncio
 async def test_library_media_page_error_retains_rows_and_gates_unsafe_controls() -> None:
     media = [
         {
@@ -6866,6 +6981,89 @@ async def test_library_media_page_error_retains_rows_and_gates_unsafe_controls()
             assert "private-page-two-failure" not in _visible_text(screen)
     finally:
         service.page_two_release.set()
+
+
+@pytest.mark.asyncio
+async def test_library_media_stale_page_disables_actions_across_recompose() -> None:
+    media = [
+        {
+            "id": f"media-{index}",
+            "title": f"Media {index:02d}",
+            "type": "document",
+            "last_modified": f"2026-08-{index:02d}T00:00:00Z",
+        }
+        for index in range(1, 46)
+    ]
+    app = _build_test_app()
+    _seed_conversations(app, [], media=media)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-media", Button).press()
+        controller = screen._library_media_browse_controller
+        await _wait_for_condition(
+            pilot,
+            lambda: controller.applied_result is not None
+            and len(screen.query(".library-media-row")) == 20,
+            message="Initial Media page never rendered.",
+        )
+
+        screen._library_media_delete_receipt_ids = ("local:media:1",)
+        app.media_reading_scope_service = DoubleShrinkLibraryMediaScopeService(media)
+        screen._request_library_media_page(3, focus_identity=None)
+        await _wait_for_condition(
+            pilot,
+            lambda: controller.freshness == "stale"
+            and bool(screen.query("#library-media-retry"))
+            and bool(screen.query("#library-media-bulk-delete-undo")),
+            message="External double shrink never rendered stale recovery state.",
+        )
+        stale_reason = "List changed while paging; retry to load a current page."
+        assert controller.stale_copy == stale_reason
+        assert not screen.query_one("#library-media-type-filter", Button).disabled
+        assert not screen.query_one("#library-media-retry", Button).disabled
+
+        for selector in (
+            "#library-media-export",
+            "#library-media-select-toggle",
+            "#library-media-row-0",
+            "#library-media-open-viewer",
+            "#library-media-bulk-delete-undo",
+        ):
+            action = screen.query_one(selector, Button)
+            assert action.disabled, selector
+            assert str(action.label).startswith("○"), selector
+            assert str(action.tooltip) == stale_reason, selector
+
+        screen._sync_library_media_browse_state(None)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.query_one("#library-media-row-0", Button).disabled,
+            message="Stale action gate did not survive canvas recomposition.",
+        )
+
+        screen._library_media_select_mode = True
+        screen._library_media_row_selection.toggle("local:media:45")
+        screen._sync_library_media_browse_state(None)
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(screen.query("#library-media-delete-selected")),
+            message="Stale select-mode controls never recomposed.",
+        )
+        for selector in (
+            "#library-media-select-toggle",
+            "#library-media-select-all",
+            "#library-media-select-clear",
+            "#library-media-export-selected",
+            "#library-media-delete-selected",
+            "#library-media-row-0",
+        ):
+            action = screen.query_one(selector, Button)
+            assert action.disabled, selector
+            assert str(action.label).startswith("○"), selector
+            assert str(action.tooltip) == stale_reason, selector
 
 
 @pytest.mark.asyncio

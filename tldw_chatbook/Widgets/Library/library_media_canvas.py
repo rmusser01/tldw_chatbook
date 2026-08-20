@@ -42,6 +42,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         *,
         pager: LibraryPagerDisplay | None = None,
         type_options: tuple[str | None, ...] | None = None,
+        stale_action_reason: str = "",
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -50,6 +51,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.type_options = (
             canvas.type_options if type_options is None else type_options
         )
+        self.stale_action_reason = stale_action_reason
         # Fill the (already 13fr) canvas host, not an independent 13fr --
         # ``LibraryMediaViewer`` documented this trap first: an `fr` width
         # here resolves against the HOST's content width per fraction, so
@@ -67,6 +69,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         *,
         pager: LibraryPagerDisplay | None = None,
         type_options: tuple[str | None, ...] | None = None,
+        stale_action_reason: str = "",
     ) -> None:
         """Refresh the canvas from new state.
 
@@ -81,7 +84,16 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.type_options = (
             canvas.type_options if type_options is None else type_options
         )
+        self.stale_action_reason = stale_action_reason
         self.refresh(recompose=True)
+
+    def _gate_stale_action(self, button: Button, base_label: str) -> Button:
+        """Apply the controller's stale-page gate to one unsafe action."""
+        if self.stale_action_reason:
+            button.label = library_disabled_action_label(base_label, True)
+            button.disabled = True
+            button.tooltip = self.stale_action_reason
+        return button
 
     def compose(self) -> ComposeResult:
         """Render the header/filter, status line, media rows, and preview.
@@ -142,7 +154,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 compact=True,
             )
             export_btn.display = not select_mode
-            yield export_btn
+            yield self._gate_stale_action(export_btn, "Export…")
             # task-4025: the browsable Trash surface's entry point -- a
             # plain navigation action (never a `type:` cycle value: `type:`
             # cycles CONTENT types derived from the records, and trash is a
@@ -179,7 +191,9 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             select_btn.disabled = select_disabled
             if select_disabled:
                 select_btn.tooltip = LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP
-            yield select_btn
+            yield self._gate_stale_action(
+                select_btn, "Done" if select_mode else "Select"
+            )
         if type_choices_visible:
             options: list[Option] = []
             highlighted = 0
@@ -250,12 +264,13 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     markup=False,
                 )
                 if confirming_bulk_delete:
-                    yield Button(
+                    confirm = Button(
                         "Delete",
                         id="library-media-bulk-delete-confirm",
                         classes="library-canvas-action library-media-action-danger",
                         compact=True,
                     )
+                    yield self._gate_stale_action(confirm, "Delete")
                     yield Button(
                         "Cancel",
                         id="library-media-bulk-delete-cancel",
@@ -263,18 +278,22 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         compact=True,
                     )
                 else:
-                    yield Button(
+                    select_all = Button(
                         f"Select all {rendered_count} shown",
                         id="library-media-select-all",
                         classes="library-canvas-action",
                         compact=True,
                     )
-                    yield Button(
+                    yield self._gate_stale_action(
+                        select_all, f"Select all {rendered_count} shown"
+                    )
+                    clear = Button(
                         "Clear",
                         id="library-media-select-clear",
                         classes="library-canvas-action",
                         compact=True,
                     )
+                    yield self._gate_stale_action(clear, "Clear")
                     export_disabled = self.canvas.selected_count == 0
                     export_selected = Button(
                         # task-4023 AC#1 (RC-07): "○" disabled marker --
@@ -300,7 +319,9 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         if export_selected.disabled
                         else LIBRARY_EXPORT_SELECTED_TOOLTIP
                     )
-                    yield export_selected
+                    yield self._gate_stale_action(
+                        export_selected, "Export selected"
+                    )
                     # task-2853: the second real bulk action -- "Delete
                     # selected" -- pushed to the far end (CSS margin, same
                     # library-media-action-danger idiom the single-item
@@ -324,7 +345,9 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         if delete_selected.disabled
                         else LIBRARY_DELETE_SELECTED_TOOLTIP
                     )
-                    yield delete_selected
+                    yield self._gate_stale_action(
+                        delete_selected, "Delete selected"
+                    )
 
         # task-4022 AC2: a completed bulk delete's receipt, naming the
         # count with an Undo affordance right at the point of action --
@@ -355,12 +378,13 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     classes="library-toolbar-count",
                     markup=False,
                 )
-                yield Button(
+                undo = Button(
                     "Undo",
                     id="library-media-bulk-delete-undo",
                     classes="library-canvas-action",
                     compact=True,
                 )
+                yield self._gate_stale_action(undo, "Undo")
                 yield Button(
                     "Dismiss",
                     id="library-media-bulk-delete-receipt-dismiss",
@@ -436,7 +460,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         button.set_class(row.selected, "library-media-row-selected")
                         button.styles.height = 2
                         button.styles.min_height = 2
-                        yield button
+                        yield self._gate_stale_action(button, label_rest.lstrip())
                 if self.pager is not None:
                     yield from self._compose_pager(self.pager)
 
@@ -456,12 +480,13 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     # own action row (`#library-media-open`, `LibraryMediaViewer`
                     # -- "Open in Library ▸ Media", task-2857), which posts a
                     # fresh ``NavigateToScreen`` for the "media" route.
-                    yield Button(
+                    open_viewer = Button(
                         "Open in viewer",
                         id="library-media-open-viewer",
                         classes="library-canvas-action",
                         compact=True,
                     )
+                    yield self._gate_stale_action(open_viewer, "Open in viewer")
 
             # task-14900: the wide split's detail half never sits blank --
             # when the preview is hidden (Select mode, or an empty list) a

@@ -1556,10 +1556,7 @@ def _sync_library_canvas(
             # item (task-15457 review round 1, Critical 1).
             screen._selected_media_id = media_state.selected_id
             sync_args = (media_state,)
-            sync_kwargs = {
-                "pager": screen._library_media_browse_controller.pager,
-                "type_options": media_state.type_options,
-            }
+            sync_kwargs = screen._library_media_canvas_presentation()
         elif kind == "media-trash":
             # task-4025: the media canvas's Trash view -- same targeted
             # contract, its own mounted widget/state builder.
@@ -9494,8 +9491,7 @@ class LibraryScreen(BaseAppScreen):
                     self._selected_media_id = media_state.selected_id
                     yield LibraryMediaCanvas(
                         media_state,
-                        pager=self._library_media_browse_controller.pager,
-                        type_options=media_state.type_options,
+                        **self._library_media_canvas_presentation(),
                         id="library-media-canvas",
                     )
                 elif (
@@ -10270,7 +10266,7 @@ class LibraryScreen(BaseAppScreen):
         if controller.applied_result is None:
             return build_library_media_state(
                 (),
-                active_type=self._library_media_type_filter or "All",
+                active_type=self._library_media_type_filter,
                 selected_id=self._selected_media_id,
                 select_mode=self._library_media_select_mode,
                 selected_ids=self._library_media_row_selection.ids,
@@ -10292,6 +10288,17 @@ class LibraryScreen(BaseAppScreen):
         if self._library_media_select_mode:
             self._library_media_row_selection.reconcile(r.media_id for r in state.rows)
         return state
+
+    def _library_media_canvas_presentation(self) -> dict[str, Any]:
+        """Return controller-owned inputs shared by every Media canvas path."""
+        controller = self._library_media_browse_controller
+        return {
+            "pager": controller.pager,
+            "type_options": (None, *controller.type_options),
+            "stale_action_reason": (
+                controller.stale_copy if controller.freshness == "stale" else ""
+            ),
+        }
 
     @staticmethod
     def _restore_library_media_scope(state: Mapping[str, Any]) -> MediaBrowseScope:
@@ -15337,8 +15344,7 @@ class LibraryScreen(BaseAppScreen):
                 self._selected_media_id = media_state.selected_id
                 canvas = LibraryMediaCanvas(
                     media_state,
-                    pager=self._library_media_browse_controller.pager,
-                    type_options=media_state.type_options,
+                    **self._library_media_canvas_presentation(),
                     id="library-media-canvas",
                 )
             else:
@@ -29240,8 +29246,7 @@ class LibraryScreen(BaseAppScreen):
             self._selected_media_id = media_state.selected_id
             return LibraryMediaCanvas(
                 media_state,
-                pager=self._library_media_browse_controller.pager,
-                type_options=media_state.type_options,
+                **self._library_media_canvas_presentation(),
                 id="library-media-canvas",
             )
         if self._library_media_detail is None:
