@@ -38,6 +38,11 @@ data. Null, invalid, forward-versioned, or legacy screen state is disabled.
 Temporary sessions remain in live/screen state and write the column only if
 they become durable conversations.
 
+Every inbound `ClientSyncEngine` create/update/delete/undelete/replay and forced
+conflict-resolution path preserves an existing local project-context column.
+Remote apply uses the synchronized-column allowlist and never row replacement;
+only a genuinely new remote conversation starts with local state null.
+
 The notice key is a domain-separated SHA-256 value derived from the locator
 fingerprint plus the resolved provider destination identity (provider adapter
 and canonical endpoint identity, excluding credentials). A provider or custom
@@ -60,6 +65,12 @@ call IDs, ordering, and cardinality retain one owner. The existing string-map
 review hook remains unchanged as the permission and change-review boundary and
 runs only after preparation proceeds. This keeps optional guidance failures
 separate from security verdicts.
+
+Preflight resolves each call through `ToolCatalogRegistry`'s same cached,
+first-registrant-wins owner mapping used by dispatch, then asks only that owner
+for path targets. Preparation exceptions emit a content-free ephemeral UI
+warning and code-only log, never exception text, traceback, `AgentStep`, or
+durable state, before proceeding to unchanged security review.
 
 The parent and subagents share one run-local activation ledger and byte budget,
 while each model conversation tracks what it has received. Automatic
@@ -118,6 +129,10 @@ nonexistent problem.
   use only the binding root under their current schemas.
 - Candidate bodies are never read beyond the configured per-source cap; an
   oversized override is omitted and still suppresses same-directory fallback.
+- POSIX uses no-follow plus descriptor identity checks. Windows rejects
+  symlink/junction/reparse ancestors via `st_file_attributes` and uses the same
+  pre/post descriptor identity checks. Missing platform primitives fail only
+  the source closed with a content-free warning.
 - Both local file-tool families participate: the single-root `fs_*`/`git_*`
   provider uses the selected root, while built-in file tools preserve their
   multi-binding authorization and warn rather than loading a second hierarchy.
@@ -127,6 +142,8 @@ nonexistent problem.
   bypass workspace access metadata.
 - The runtime adds a preparation phase but leaves existing security-review
   call sites and string verdicts unchanged.
+- Inbound sync and conflict application preserve device-local control state;
+  outbound-trigger exclusion alone is not treated as sufficient evidence.
 - Current `/rewind` behavior needs a boundary regression test, not new
   compaction machinery. Any future mid-agent compactor must make a new design
   decision that preserves automatic-context ephemerality.
