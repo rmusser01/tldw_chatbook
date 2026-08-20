@@ -79,6 +79,13 @@ _ANIMATION_FIELDS = {
     "preview_asset_id",
 }
 
+MAX_MANIFEST_JSON_BYTES = 2 * 1024 * 1024
+MAX_MANIFEST_NODES = 20_000
+MAX_MANIFEST_STRING_LENGTH = 4_096
+# One distinct animation for every permitted custom and reserved state.
+MAX_ANIMATIONS = MAX_CUSTOM_STATES + len(RESERVED_STATES)
+MAX_FALLBACK_WIDTH = MAX_CUSTOM_STATES + len(RESERVED_STATES)
+
 
 def validate_persona_visual_manifest(
     payload: object,
@@ -126,10 +133,18 @@ def validate_persona_visual_manifest(
         document.get("authored_triggers", []),
         allowed_states=allowed_states,
     )
+    resolution_memo: dict[str, str | None] = {}
     resolved = {
         state: animation_id
         for state in REQUIRED_STATES
-        if (animation_id := _resolve_animation(state, states, fallbacks))
+        if (
+            animation_id := _resolve_animation(
+                state,
+                states,
+                fallbacks,
+                resolution_memo,
+            )
+        )
     }
     if activate and len(resolved) != len(REQUIRED_STATES):
         raise PersonaVisualManifestError()
@@ -148,10 +163,21 @@ def validate_persona_visual_manifest(
 
 def _load_document(payload: object) -> dict[str, Any]:
     if isinstance(payload, bytes):
+        if len(payload) > MAX_MANIFEST_JSON_BYTES:
+            raise PersonaVisualManifestError()
         try:
             payload = payload.decode("utf-8")
         except UnicodeDecodeError:
             raise PersonaVisualManifestError() from None
+    elif isinstance(payload, str):
+        if len(payload) > MAX_MANIFEST_JSON_BYTES:
+            raise PersonaVisualManifestError()
+        try:
+            encoded_size = len(payload.encode("utf-8"))
+        except UnicodeEncodeError:
+            raise PersonaVisualManifestError() from None
+        if encoded_size > MAX_MANIFEST_JSON_BYTES:
+            raise PersonaVisualManifestError()
     if isinstance(payload, str):
         try:
             payload = json.loads(
@@ -184,23 +210,36 @@ def _reject_constant(_value: str) -> None:
 
 
 def _json_value(value: object) -> None:
-    if value is None or type(value) in {str, int, bool}:
-        return
-    if type(value) is float:
-        if not math.isfinite(value):
+    nodes = 0
+    pending = [value]
+    while pending:
+        current = pending.pop()
+        nodes += 1
+        if nodes > MAX_MANIFEST_NODES:
             raise PersonaVisualManifestError()
-        return
-    if type(value) is list:
-        for item in value:
-            _json_value(item)
-        return
-    if type(value) is dict:
-        for key, item in value.items():
-            if not isinstance(key, str):
+        if current is None or type(current) in {int, bool}:
+            continue
+        if type(current) is str:
+            if len(current) > MAX_MANIFEST_STRING_LENGTH:
                 raise PersonaVisualManifestError()
-            _json_value(item)
-        return
-    raise PersonaVisualManifestError()
+            continue
+        if type(current) is float:
+            if not math.isfinite(current):
+                raise PersonaVisualManifestError()
+            continue
+        if type(current) is list:
+            pending.extend(current)
+            continue
+        if type(current) is dict:
+            nodes += len(current)
+            if nodes > MAX_MANIFEST_NODES:
+                raise PersonaVisualManifestError()
+            for key, item in current.items():
+                if not isinstance(key, str) or len(key) > MAX_MANIFEST_STRING_LENGTH:
+                    raise PersonaVisualManifestError()
+                pending.append(item)
+            continue
+        raise PersonaVisualManifestError()
 
 
 def _object(
@@ -239,7 +278,9 @@ def _known_assets(
             ):
                 raise PersonaVisualManifestError()
             dimensions[asset_id] = (size[0], size[1])
-    elif isinstance(known_assets, (set, frozenset, list, tuple)):
+    elif isinstance(known_assets, Collection) and not isinstance(
+        known_assets, (str, bytes)
+    ):
         if any(
             not isinstance(asset_id, str) or not asset_id for asset_id in known_assets
         ):
@@ -318,8 +359,11 @@ def _animations(
     asset_ids: frozenset[str],
     asset_dimensions: Mapping[str, tuple[int, int]],
 ) -> dict[str, PersonaVisualAnimation]:
+    raw_animations = _object(value)
+    if len(raw_animations) > MAX_ANIMATIONS:
+        raise PersonaVisualManifestError()
     result: dict[str, PersonaVisualAnimation] = {}
-    for animation_id, raw_animation in _object(value).items():
+    for animation_id, raw_animation in raw_animations.items():
         if not isinstance(animation_id, str) or not animation_id:
             raise PersonaVisualManifestError()
         animation = _object(raw_animation, allowed=_ANIMATION_FIELDS)
@@ -431,7 +475,9 @@ def _region(
 
 
 def _number(value: object) -> bool:
-    return type(value) in {int, float} and math.isfinite(value)
+    if type(value) is int:
+        return True
+    return type(value) is float and math.isfinite(value)
 
 
 def _states(
@@ -463,12 +509,18 @@ def _fallbacks(
 ) -> dict[str, tuple[str, ...]]:
     result: dict[str, tuple[str, ...]] = {}
     for state, chain in _object(value).items():
-        if state not in allowed_states or type(chain) is not list:
+        if (
+            state not in allowed_states
+            or type(chain) is not list
+            or len(chain) > MAX_FALLBACK_WIDTH
+        ):
             raise PersonaVisualManifestError()
         if any(
             not isinstance(candidate, str) or candidate not in allowed_states
             for candidate in chain
         ):
+            raise PersonaVisualManifestError()
+        if len(set(chain)) != len(chain):
             raise PersonaVisualManifestError()
         result[state] = tuple(chain)
 
@@ -539,20 +591,27 @@ def _resolve_animation(
     state: str,
     states: Mapping[str, str],
     fallbacks: Mapping[str, tuple[str, ...]],
+    memo: dict[str, str | None],
     seen: frozenset[str] = frozenset(),
 ) -> str | None:
     if state in seen:
         return None
+    if state in memo:
+        return memo[state]
     if animation_id := states.get(state):
+        memo[state] = animation_id
         return animation_id
     for candidate in fallbacks.get(state, ()):
         if animation_id := _resolve_animation(
             candidate,
             states,
             fallbacks,
+            memo,
             seen | {state},
         ):
+            memo[state] = animation_id
             return animation_id
+    memo[state] = None
     return None
 
 

@@ -230,16 +230,19 @@ def resolve_manifest_state(
     if not isinstance(requested_state, str) or type(reduced_motion) is not bool:
         raise PersonaVisualManifestError()
 
+    memo: dict[str, str | None] = {}
     resolved = _resolve_state_name(
         requested_state,
         states=manifest.states,
         fallbacks=manifest.fallbacks,
+        memo=memo,
     )
     if resolved is None and requested_state != "idle":
         resolved = _resolve_state_name(
             "idle",
             states=manifest.states,
             fallbacks=manifest.fallbacks,
+            memo=memo,
         )
     if resolved is None:
         return None
@@ -261,11 +264,15 @@ def _resolve_state_name(
     *,
     states: Mapping[str, str],
     fallbacks: Mapping[str, tuple[str, ...]],
+    memo: dict[str, str | None],
     seen: frozenset[str] = frozenset(),
 ) -> str | None:
     if state in seen:
         return None
+    if state in memo:
+        return memo[state]
     if state in states:
+        memo[state] = state
         return state
     next_seen = seen | {state}
     for candidate in fallbacks.get(state, ()):
@@ -273,9 +280,12 @@ def _resolve_state_name(
             candidate,
             states=states,
             fallbacks=fallbacks,
+            memo=memo,
             seen=next_seen,
         ):
+            memo[state] = resolved
             return resolved
+    memo[state] = None
     return None
 
 

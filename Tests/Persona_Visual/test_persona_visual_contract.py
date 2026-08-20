@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 
 import pytest
 
+import tldw_chatbook.Persona_Visual.validation as validation_module
 from tldw_chatbook.Persona_Visual import (
     ALLOWED_ASSET_EXTENSIONS,
     ALLOWED_ASSET_MIME_TYPES,
@@ -130,6 +131,26 @@ def _remove_fixture_custom_state(payload: dict[str, object]) -> None:
     payload["authored_triggers"] = []
 
 
+def _wide_failed_fallback_manifest() -> dict[str, object]:
+    payload = _manifest()
+    _remove_fixture_custom_state(payload)
+    levels = [[f"custom.l{level}_{index}" for index in range(5)] for level in range(5)]
+    payload["state_catalog"] = {
+        state: {"label": state, "kind": "pack_private"}
+        for level in levels
+        for state in level
+    }
+    for state in REQUIRED_STATES[1:]:
+        payload["states"].pop(state)  # type: ignore[union-attr]
+    payload["fallbacks"] = {
+        state: list(levels[level + 1]) for level in range(4) for state in levels[level]
+    }
+    payload["fallbacks"].update(  # type: ignore[union-attr]
+        {state: [*levels[0], "idle"] for state in REQUIRED_STATES[1:]}
+    )
+    return payload
+
+
 def _assert_invalid(payload: object, *, known_assets: object = KNOWN_ASSETS) -> None:
     with pytest.raises(PersonaVisualManifestError) as exc_info:
         validate_persona_visual_manifest(payload, known_assets)  # type: ignore[arg-type]
@@ -249,6 +270,43 @@ def test_deeply_nested_json_returns_the_fixed_manifest_error() -> None:
     nested_json = '{"nested":' * 2_000 + "null" + "}" * 2_000
 
     _assert_invalid(nested_json)
+
+
+def test_encoded_json_size_budget_rejects_oversized_trailing_whitespace() -> None:
+    encoded = json.dumps(PINNED_VALID_MANIFEST)
+    oversized_inputs = (
+        encoded + " " * (2 * 1024 * 1024),
+        encoded.encode() + b" " * (2 * 1024 * 1024),
+    )
+
+    for oversized in oversized_inputs:
+        _assert_invalid(oversized)
+
+
+def test_mapping_input_rejects_oversized_generic_scalar() -> None:
+    payload = _manifest()
+    payload["authored_triggers"][0]["match"] = "x" * 4_097  # type: ignore[index]
+
+    _assert_invalid(payload)
+
+
+def test_mapping_input_rejects_excessive_total_structure_nodes() -> None:
+    payload = _manifest()
+    for index in range(30):
+        payload["animations"][f"node-budget-{index}"] = {  # type: ignore[index]
+            "frames": [{"asset_id": "asset-idle"} for _ in range(240)]
+        }
+
+    _assert_invalid(payload)
+
+
+def test_animation_count_rejects_excess_orphan_animations() -> None:
+    payload = _manifest()
+    animations = payload["animations"]
+    for index in range(266 - len(animations)):  # type: ignore[arg-type]
+        animations[f"orphan-{index}"] = {"asset_ids": ["asset-idle"]}  # type: ignore[index]
+
+    _assert_invalid(payload)
 
 
 @pytest.mark.parametrize(
@@ -388,6 +446,18 @@ def test_animation_rate_alignment_and_loop_are_bounded(
     _assert_invalid(payload)
 
 
+def test_huge_signed_integers_return_fixed_errors_for_numeric_fields() -> None:
+    huge = 1 << 100_000
+    for value in (huge, -huge):
+        payload = _manifest()
+        payload["animations"]["idle"]["frame_rate"] = value  # type: ignore[index]
+        _assert_invalid(payload)
+
+        payload = _manifest()
+        payload["animations"]["idle"]["alignment"] = {"x": value, "y": 0.5}  # type: ignore[index]
+        _assert_invalid(payload)
+
+
 @pytest.mark.parametrize(
     "frame",
     [
@@ -429,6 +499,15 @@ def test_frame_region_is_accepted_when_dimensions_are_not_known() -> None:
     }
     manifest = validate_persona_visual_manifest(payload, set(KNOWN_ASSETS))
     assert manifest.animations["thinking"].frames[0].region.x == 200  # type: ignore[union-attr]
+
+
+def test_known_asset_ids_accept_any_non_string_collection() -> None:
+    manifest = validate_persona_visual_manifest(
+        PINNED_VALID_MANIFEST,
+        KNOWN_ASSETS.keys(),
+    )
+
+    assert manifest.renderer_type == "sprite_frames"
 
 
 def test_frame_count_limit_is_exact() -> None:
@@ -530,6 +609,55 @@ def test_fallback_depth_cannot_be_bypassed_by_a_previsited_shared_descendant() -
     }
 
     _assert_invalid(payload)
+
+
+def test_repeated_fallback_targets_are_rejected() -> None:
+    payload = _manifest()
+    payload["fallbacks"] = {"thinking": ["idle", "idle"]}
+
+    _assert_invalid(payload)
+
+
+def test_required_state_resolution_memoizes_wide_failed_fallback_dag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+    original = validation_module._resolve_animation
+
+    def counted(*args: object, **kwargs: object) -> str | None:
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(validation_module, "_resolve_animation", counted)
+
+    validate_persona_visual_manifest(_wide_failed_fallback_manifest(), KNOWN_ASSETS)
+
+    assert calls <= 200
+
+
+def test_runtime_resolution_memoizes_wide_failed_fallback_dag() -> None:
+    manifest = validate_persona_visual_manifest(
+        _wide_failed_fallback_manifest(), KNOWN_ASSETS
+    )
+
+    class CountingFallbacks(dict[str, tuple[str, ...]]):
+        calls = 0
+
+        def get(  # type: ignore[override]
+            self, key: str, default: tuple[str, ...] = ()
+        ) -> tuple[str, ...]:
+            self.calls += 1
+            return super().get(key, default)
+
+    fallbacks = CountingFallbacks(manifest.fallbacks)
+    manifest = replace(manifest, fallbacks=fallbacks)
+
+    selection = resolve_manifest_state(manifest, "listening")
+
+    assert selection is not None
+    assert selection.resolved_state == "idle"
+    assert fallbacks.calls <= 150
 
 
 @pytest.mark.parametrize(
