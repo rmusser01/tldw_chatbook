@@ -18,6 +18,13 @@ What each test pins, and against WHICH producer it runs today:
 * ``XML_Ingestion`` import: the ``chunk_xml`` part of the seam was restored
   by the Task 3 shim; the module has a second, PRE-EXISTING broken import
   unrelated to chunking (see the test for details).
+* ``§7.3 preview/ingest agreement`` (task 10): the chunk preview modal the
+  user inspects before ingesting must be produced by the same chunking code
+  that stores chunks. Both modal branches are pinned against the ingest seam
+  they correspond to, by driving the REAL modal (Textual ``run_test``), not
+  a replica of its code — see the two ``test_preview_matches_ingest_*``
+  tests for which branch maps to which ingest path and why the brief's
+  original cross-method assertion (words vs structure_aware) was replaced.
 """
 
 import pytest
@@ -104,3 +111,116 @@ def test_xml_ingestion_import():
     # scope for this task; strict=False so the test flips to XPASS the
     # moment that import is repaired.
     import tldw_chatbook.Local_Ingestion.XML_Ingestion as mod  # noqa: F401
+
+
+# ---------------------------------------------------------------------------
+# §7.3 preview/ingest agreement (task 10)
+# ---------------------------------------------------------------------------
+#
+# The chunk preview modal (Widgets/chunk_preview_modal.py) has TWO branches:
+#
+# * basic-chunker branch (chunk_preview_modal.py:132-138): builds a
+#   ``Chunk_Lib.Chunker`` with ``chunk_size``/``chunk_overlap`` from the
+#   config and calls ``chunk_text(text, method=...)``. Used for
+#   words/sentences/paragraphs — every method the media-details form's
+#   method Select offers except the three structural ones.
+# * ECS branch (chunk_preview_modal.py:109-117): calls
+#   ``EnhancedChunkingService.chunk_text_with_structure`` (the delegating
+#   shell → parent_child_adapter → engine structure_aware). Used for
+#   hierarchical/structural/contextual.
+#
+# The corresponding INGEST seams are:
+#
+# * basic methods → ``chunking_service.improved_chunking_process`` (what the
+#   ingestion paths call via the Chunk_Lib shim → engine);
+# * structural methods → ``chunk_with_parent_retrieval`` (what
+#   RAG_Search/simplified/enhanced_indexing_helpers.py:75 and
+#   enhanced_rag_service.py:117 call to store parent/child chunks).
+#
+# The brief's original assertion — improved_chunking_process(method="words")
+# == chunk_with_parent_retrieval(...)["chunks"] — was checked empirically
+# and is NOT a §7.3 invariant: the two calls select different engine
+# strategies (words vs structure_aware), which legitimately group the same
+# text differently (5 x 20-word chunks vs 1 structure-aware chunk for the
+# fixture below). §7.3 demands the same chunking CODE produce the preview
+# and the stored chunks, i.e. agreement per branch at equal options — which
+# is what these tests pin, by driving the real modal.
+PREVIEW_TEXT = "# H\n\nBody text here. More text. " * 10
+
+
+async def _drive_preview_modal(config):
+    """Mount the real ChunkPreviewModal in a host app, return its chunks.
+
+    The modal is a ModalScreen and needs an active app to mount; this drives
+    the actual widget code (``_generate_chunks`` runs in ``on_mount``), not a
+    replica of its branches.
+    """
+    from textual.app import App
+    from tldw_chatbook.Widgets.chunk_preview_modal import ChunkPreviewModal
+
+    class _Host(App):
+        def __init__(self):
+            super().__init__()
+            self.modal = None
+
+        def on_mount(self) -> None:
+            self.modal = ChunkPreviewModal(
+                content=PREVIEW_TEXT, config=config, media_title="test"
+            )
+            self.push_screen(self.modal)
+
+    app = _Host()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        return list(app.modal.chunks)
+
+
+@pytest.mark.parametrize("method", ["words", "sentences", "paragraphs"])
+async def test_preview_matches_ingest_basic_chunker_branch(method):
+    # §7.3, basic-chunker branch: the modal's Chunker() preview must produce
+    # the same chunks the ingestion path (improved_chunking_process) stores
+    # for the same method and options (the media-details form feeds the modal
+    # ``chunk_size``/``chunk_overlap``; ingestion passes the same values as
+    # ``max_size``/``overlap``).
+    modal_chunks = await _drive_preview_modal(
+        {"method": method, "chunk_size": 20, "chunk_overlap": 5}
+    )
+    ingest_chunks = chunking_service.improved_chunking_process(
+        PREVIEW_TEXT, {"method": method, "max_size": 20, "overlap": 5}
+    )
+    assert modal_chunks, "modal produced no chunks"
+    assert [c["text"] for c in modal_chunks] == [c["text"] for c in ingest_chunks]
+    # §6 shape note: the modal's word-count surface stays non-zero and agrees
+    # with the ingestion chunks' word counts (the modal's basic branch
+    # computes word_count itself via len(chunk.split())).
+    assert [c["word_count"] for c in modal_chunks] == [
+        c["word_count"] for c in ingest_chunks
+    ]
+    for c in modal_chunks:
+        assert c["word_count"] == len(c["text"].split()) > 0
+
+
+@pytest.mark.parametrize("method", ["hierarchical", "structural", "contextual"])
+async def test_preview_matches_ingest_structural_branch(method):
+    # §7.3, ECS branch: the modal's structural preview (chunk_text_with_structure
+    # → parent_child_adapter → engine structure_aware) must produce the same
+    # chunk texts the structural ingestion path (chunk_with_parent_retrieval)
+    # stores. The three method names are legacy aliases — the adapter maps all
+    # of them to the engine's structure_aware strategy — so one comparison per
+    # alias keeps every Select entry in the form pinned.
+    from tldw_chatbook.RAG_Search.parent_child_adapter import (
+        chunk_with_parent_retrieval,
+    )
+
+    modal_chunks = await _drive_preview_modal(
+        {"method": method, "chunk_size": 20, "chunk_overlap": 5}
+    )
+    ingest_result = chunk_with_parent_retrieval(PREVIEW_TEXT, max_size=20, overlap=5)
+    assert modal_chunks, "modal produced no chunks"
+    assert [c["text"] for c in modal_chunks] == [
+        c["text"] for c in ingest_result["chunks"]
+    ]
+    # §6 shape note: the ECS branch surfaces StructuredChunk.word_count
+    # (len(text.split())); it must stay non-zero.
+    for c in modal_chunks:
+        assert c["word_count"] == len(c["text"].split()) > 0
