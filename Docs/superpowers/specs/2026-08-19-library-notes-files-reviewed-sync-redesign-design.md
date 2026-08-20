@@ -64,6 +64,10 @@ The surface is **Operate** mode. Success means:
 - ADR-060 owns one-way direction semantics, representation/metadata
   preservation, binding uniqueness, guarded replacement, round-trip behavior,
   server claim fencing, and portable backup exclusions.
+- Server-backed lasting sync additionally requires the separately allocated,
+  cross-linked `tldw_server` ADR and versioned capability mandated by ADR-059.
+  That external decision/capability does not yet exist in this repository, so
+  local delivery must not imply server activation readiness.
 - ADR-021 and ADR-029 keep Folder Files disk-authoritative. Lasting Database
   Notes sync may reuse low-level containment and replacement primitives, but
   never File Notes tables, editor authority, recovery store, or orchestration.
@@ -222,6 +226,12 @@ Configure contains:
 - capability-dependent advanced settings;
 - primary action `Check folder`.
 
+The server-backed destination is visible but disabled with
+`Unavailable - server sync-folder capability not installed` until the required
+`tldw_server` ADR, versioned capability, claim fencing, and captured-payload
+conformance evidence exist. Local-root delivery neither invents that server
+contract nor falls back to flat/unowned server writes.
+
 There is no conflict-policy selector and no global `Auto-sync every 5m` toggle.
 Activation creates one root whose normal active state watches while Chatbook is
 running and performs complete startup/manual reconciliation. `Pause` is the
@@ -279,12 +289,25 @@ to erase an unexpected change on the non-authoritative side.
 | --- | --- | --- | --- |
 | New/changed file only | Apply to Library. | Needs attention. | Apply to Library. |
 | New/changed note only | Needs attention. | Apply to folder. | Apply to folder. |
+| Identity-proven file rename/move only | Apply the title/managed-placement change to Library. | Needs attention. | Apply the title/managed-placement change to Library. |
+| Note title or managed placement implies a filesystem rename/move | Needs attention. | Preview the exact filesystem move and require explicit approval. | Preview the exact filesystem move and require explicit approval. |
 | Both sides changed | Needs attention. | Needs attention. | Needs attention. |
-| File or note missing | Needs attention; never infer deletion from an offline root. | Needs attention; never infer deletion from an offline root. | Needs attention; never propagate automatically. |
+| Unmatched file or note missing after identity-based move detection | Needs attention; never infer deletion from an offline root. | Needs attention; never infer deletion from an offline root. | Needs attention; never propagate automatically. |
 | Unsafe representation, metadata, identity, overlap, or capability | Skip or block with an actionable reason. | Skip or block with an actionable reason. | Skip or block with an actionable reason. |
 
 The old `newer_wins`, `disk_wins`, and `db_wins` values have no counterpart in
 the new model. Timestamp recency is evidence, not intent.
+
+Classification order is fixed. Reconciliation first verifies the bound
+single-link regular-file identity and binding uniqueness. A unique,
+identity-proven path change is classified as a rename/move before missing-side
+logic runs. Ambiguous, aliased, replaced, or unprovable identity never becomes
+an automatic move; it enters Needs attention. Only an unmatched missing side
+after that pass is classified as a deletion candidate. A note-side title or
+managed-placement change that would move a file always produces a separate
+previewed journal operation with exact source/destination and collision/
+metadata checks; automatic direction authorization alone never approves the
+filesystem move.
 
 ### Manual Sync now
 
@@ -393,6 +416,15 @@ The transition is fail-closed and one-way:
    replacement. Never permit both owners to run.
 7. Preserve legacy history as read-only historical evidence; do not present it
    as lasting-root journal state.
+
+Before cutover, the current legacy Sync entry remains visible and operable under
+its existing contract; earlier presentation tracks may not hide, rename into a
+different meaning, or strand it. The cutover release closes new legacy
+admission, settles any admitted pass, migrates paused candidates, swaps the
+toolbar/navigation to `Add from files…` and root controls, removes the legacy
+timer/handlers/config writes, and only then permits reviewed lasting-root
+activation. Tests prove there is no process state in which both mutation owners
+are active.
 
 If the replacement backend is unavailable, the product does not ship a
 half-wired `Keep a folder synced` action. The choice remains visibly
@@ -505,11 +537,16 @@ Test at minimum:
   unsupported-encoding, mixed-newline, and metadata-unsafe roots/files.
 - No changes, safe one-sided changes, both-side changes, non-authoritative-side
   changes, missing sides, and large deletion bursts in every direction.
+- Identity-proven file rename/move, ambiguous replacement, unmatched deletion,
+  and preview-required note-title/managed-placement filesystem moves in every
+  direction.
 - Root setup, activation, stale review, partial journal, interruption/restart,
   recovery-capacity block, passive owner, pause/resume, retarget, disconnect,
   and capability/claim loss.
 - Legacy metadata absent, valid candidate, ambiguous roots, unsafe paths,
   unsupported bindings, and migration cancellation.
+- Server destination without capability, stale claim, explicit takeover, and
+  capability loss; local delivery must keep the unsupported setup action inert.
 - One-time import new/repeat/uncertain/unsupported/failed classifications,
   partial execution, retry, and receipt reopen.
 - Long Unicode paths/titles, viewport-wide paths, and large roots with bounded
@@ -561,6 +598,10 @@ Test at minimum:
 - Missing-root and deletion-burst fail-closed behavior.
 - Legacy migration creates paused candidates with zero note/file mutation.
 - Legacy and lasting mutation owners cannot both become active.
+- Move classification precedes missing-side/deletion classification, and every
+  note-originated filesystem move requires explicit preview approval.
+- Server-backed activation remains impossible without the external versioned
+  capability and current claim evidence.
 - Public models/logs remain free of content, absolute paths, hashes, raw
   exceptions, and recovery bytes.
 - Existing one-time import, folder, File Notes, and Session Git suites remain
@@ -570,6 +611,9 @@ Test at minimum:
 
 - Text-explicit source labels and pinned authority rows.
 - Add from files chooser before source access.
+- Pre-cutover Import UI leaves the legacy Sync entry reachable; the cutover
+  swaps both entries only after the lasting owner is ready and legacy admission
+  is closed.
 - Import once and lasting setup phase/focus flows.
 - Root tree status/context actions and persistent state across navigation.
 - Manual Check/Review/Apply/Receipt and stale-plan recovery.
@@ -599,25 +643,37 @@ This programme needs separate atomic plans. It must not become one enormous PR.
    source labels/status grammar, semantic state styling, and compact evidence.
 2. **Folder Files and Session Git refinement:** target-path label, contextual
    action hierarchy, exact decision/detail disclosure, and focused regressions.
-3. **One-time import UI:** Add from files chooser plus production UI over the
-   already-implemented planner/executor/receipt contracts.
-4. **Lasting-sync foundation:** private root registry, bindings,
+3. **One-time import UI:** production Review/Importing/Receipt UI over the
+   already-implemented planner/executor/receipt contracts, reached from the
+   existing Import entry. This track may build the reusable chooser component
+   behind tests, but it may not remove/hide the legacy Sync entry or expose an
+   enabled `Keep a folder synced` action.
+4. **Local lasting-sync foundation:** private root registry, bindings,
    representation profiles, coordinator, durable journal/recovery, and service
    contracts from the 2026-08-12 design and ADR-059/060.
-5. **Lasting-sync UI and legacy cutover:** setup dry-run, root states, manual
-   review, attention, pause/resume/retarget/disconnect, paused legacy migration,
-   and atomic retirement of legacy mutation entry points.
-6. **Polish and live evidence:** production-shaped captures, contrast checks,
+5. **Local lasting-sync UI and atomic legacy cutover:** compose the production
+   `Add from files…` chooser, setup dry-run, root states, manual review,
+   attention, pause/resume/retarget/disconnect, paused legacy migration,
+   toolbar replacement, and retirement of legacy mutation entry points in one
+   release boundary.
+6. **Server-backed parity:** a separate cross-repository programme, blocked
+   until `tldw_server` accepts its own cross-linked ADR and versioned folder,
+   membership, incremental-change, idempotency, and claim-fencing capability.
+   Until then, server-backed lasting setup stays explicitly unavailable.
+7. **Polish and live evidence:** production-shaped captures, contrast checks,
    critique rerun, docs, and regression closeout.
 
 Tracks 1, 2, 3, and 4 can be developed concurrently with separate file
-ownership. Track 5 depends on the lasting-sync service contract from track 4;
-it may build against fakes earlier but cannot ship an active root or legacy
-cutover first. Track 6 closes all tracks together.
+ownership. Track 5 depends on the local lasting-sync service and migration
+contracts from track 4; it may build against fakes earlier but cannot ship the
+chooser replacement, an active root, or legacy cutover first. Track 6 remains
+externally gated and does not block local-only completion. Track 7 closes the
+locally deliverable tracks together and separately records server parity as
+unavailable when its gate remains closed.
 
 ## ADR Check
 
-ADR required: no new ADR.
+ADR required: no new Chatbook ADR.
 
 ADR paths:
 `backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md`,
@@ -627,7 +683,10 @@ Reason: ADR-059/060 already decide storage ownership, sync/conflict/deletion
 policy, privacy, recovery, coordinator boundaries, migration, interoperability,
 and lasting application structure. This revision conforms the UI programme to
 those accepted decisions. Folder Files and Session Git changes are
-presentation-only refinements governed by their existing ADRs.
+presentation-only refinements governed by their existing ADRs. Server-backed
+activation is excluded from the local implementation gate until `tldw_server`
+publishes the separate cross-linked ADR and versioned capability ADR-059
+requires; that server ADR belongs in the server repository, not here.
 
 ## Known Risks and Resolutions
 
