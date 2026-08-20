@@ -6,6 +6,8 @@ import asyncio
 import inspect
 from typing import Any, Mapping
 
+from tldw_chatbook.Library.library_content_evidence import LibraryContentEvidence
+
 
 _LOCAL_UNSUPPORTED_CAPABILITIES = [
     {
@@ -180,6 +182,35 @@ class ChatConversationScopeService:
             return await asyncio.to_thread(list_conversations_fn, **kwargs)
         return await self._maybe_await(list_conversations_fn(**kwargs))
 
+    async def get_library_user_content_evidence(
+        self, *, mode: str = "local"
+    ) -> LibraryContentEvidence:
+        """Return tri-state evidence for durably saved conversations."""
+        payload = await self.list_conversations(mode=mode, limit=1, offset=0)
+        if not isinstance(payload, Mapping):
+            return LibraryContentEvidence.UNKNOWN
+        items = payload.get("items")
+        pagination = payload.get("pagination")
+        total = pagination.get("total") if isinstance(pagination, Mapping) else None
+        if (
+            type(total) is not int
+            or total < 0
+            or not isinstance(items, list)
+            or len(items) > 1
+        ):
+            return LibraryContentEvidence.UNKNOWN
+        if total == 0:
+            return (
+                LibraryContentEvidence.EMPTY
+                if not items
+                else LibraryContentEvidence.UNKNOWN
+            )
+        return (
+            LibraryContentEvidence.HAS_USER_CONTENT
+            if items
+            else LibraryContentEvidence.UNKNOWN
+        )
+
     async def locate_conversation_page(
         self,
         conversation_id: str,
@@ -194,9 +225,8 @@ class ChatConversationScopeService:
 
         service = self._service_for_mode(normalized_mode)
         locator_fn = getattr(service, "locate_conversation_page")
-        if (
-            not inspect.iscoroutinefunction(locator_fn)
-            and not self._is_memory_backed(service)
+        if not inspect.iscoroutinefunction(locator_fn) and not self._is_memory_backed(
+            service
         ):
             return await asyncio.to_thread(locator_fn, conversation_id, **kwargs)
         return await self._maybe_await(locator_fn(conversation_id, **kwargs))

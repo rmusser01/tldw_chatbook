@@ -1,9 +1,15 @@
 """Library rail preference contracts."""
 
+import inspect
+
+import pytest
+
+from tldw_chatbook.Library.library_content_evidence import LibraryContentEvidence
 from tldw_chatbook.Library.library_rail_state import (
     LIBRARY_RAIL_SECTION_IDS,
     LibraryLifecycle,
     LibraryRailPreferences,
+    aggregate_library_lifecycle,
     coerce_library_lifecycle,
     coerce_library_rail_preferences,
     serialize_library_lifecycle,
@@ -90,3 +96,50 @@ def test_lifecycle_round_trips_beside_section_preferences():
         serialized = serialize_library_lifecycle(lifecycle)
         assert serialized == lifecycle.value
         assert coerce_library_lifecycle(serialized, is_new_profile=False) is lifecycle
+
+
+def test_lifecycle_aggregation_accepts_exactly_six_evidence_enums():
+    assert tuple(inspect.signature(aggregate_library_lifecycle).parameters) == (
+        "lifecycle",
+        "evidence",
+    )
+    empty = [LibraryContentEvidence.EMPTY] * 6
+    assert (
+        aggregate_library_lifecycle(LibraryLifecycle.UNKNOWN, empty)
+        is LibraryLifecycle.STARTER
+    )
+    with pytest.raises(ValueError, match="exactly six"):
+        aggregate_library_lifecycle(LibraryLifecycle.UNKNOWN, empty[:5])
+    with pytest.raises(ValueError, match="exactly six"):
+        aggregate_library_lifecycle(
+            LibraryLifecycle.UNKNOWN, empty + [LibraryContentEvidence.EMPTY]
+        )
+    with pytest.raises(TypeError, match="LibraryContentEvidence"):
+        aggregate_library_lifecycle(
+            LibraryLifecycle.UNKNOWN,
+            [*empty[:5], "empty"],  # type: ignore[list-item]
+        )
+
+
+def test_lifecycle_aggregation_positive_wins_and_unknown_prevents_starter():
+    assert (
+        aggregate_library_lifecycle(
+            LibraryLifecycle.UNKNOWN,
+            [
+                LibraryContentEvidence.UNKNOWN,
+                LibraryContentEvidence.EMPTY,
+                LibraryContentEvidence.HAS_USER_CONTENT,
+                LibraryContentEvidence.EMPTY,
+                LibraryContentEvidence.EMPTY,
+                LibraryContentEvidence.EMPTY,
+            ],
+        )
+        is LibraryLifecycle.GRADUATED
+    )
+    assert (
+        aggregate_library_lifecycle(
+            LibraryLifecycle.UNKNOWN,
+            [LibraryContentEvidence.EMPTY] * 5 + [LibraryContentEvidence.UNKNOWN],
+        )
+        is LibraryLifecycle.UNKNOWN
+    )

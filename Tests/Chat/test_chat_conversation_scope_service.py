@@ -8,6 +8,7 @@ import pytest
 from tldw_chatbook.Chat.chat_conversation_scope_service import (
     ChatConversationScopeService,
 )
+from tldw_chatbook.Library.library_content_evidence import LibraryContentEvidence
 
 
 @dataclass
@@ -251,6 +252,53 @@ async def test_scope_service_routes_local_and_server_conversation_reads_with_pol
             {"limit": 10, "offset": 2, "max_depth": 3},
         ),
     ]
+
+
+@pytest.mark.asyncio
+async def test_conversations_user_content_evidence_requires_exact_saved_total():
+    local = FakeConversationService()
+    service = ChatConversationScopeService(local_service=local, server_service=None)
+
+    result = await service.get_library_user_content_evidence(mode="local")
+
+    assert type(result) is LibraryContentEvidence
+    assert result is LibraryContentEvidence.HAS_USER_CONTENT
+    assert local.calls == [("list_conversations", (), {"limit": 1, "offset": 0})]
+
+    class MissingOrFailedSave:
+        def list_conversations(self, **kwargs):
+            return {"items": [], "pagination": {"total": 0}}
+
+    service = ChatConversationScopeService(
+        local_service=MissingOrFailedSave(), server_service=None
+    )
+    assert (
+        await service.get_library_user_content_evidence(mode="local")
+        is LibraryContentEvidence.EMPTY
+    )
+
+
+@pytest.mark.asyncio
+async def test_conversations_user_content_evidence_accepts_server_and_rejects_ambiguity():
+    server = FakeServerConversationService()
+    service = ChatConversationScopeService(local_service=None, server_service=server)
+    assert (
+        await service.get_library_user_content_evidence(mode="server")
+        is LibraryContentEvidence.HAS_USER_CONTENT
+    )
+    assert server.calls == [("list_conversations", (), {"limit": 1, "offset": 0})]
+
+    class AmbiguousServer:
+        async def list_conversations(self, **kwargs):
+            return {"items": []}
+
+    service = ChatConversationScopeService(
+        local_service=None, server_service=AmbiguousServer()
+    )
+    assert (
+        await service.get_library_user_content_evidence(mode="server")
+        is LibraryContentEvidence.UNKNOWN
+    )
 
 
 @pytest.mark.asyncio

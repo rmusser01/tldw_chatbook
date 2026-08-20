@@ -10,6 +10,7 @@ from tldw_chatbook.Media.media_reading_scope_service import (
     MediaReadingScopeService,
 )
 from tldw_chatbook.Media.local_media_reading_service import LocalMediaReadingService
+from tldw_chatbook.Library.library_content_evidence import LibraryContentEvidence
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 from tldw_chatbook.tldw_api import (
     AddMediaRequest,
@@ -2785,6 +2786,95 @@ async def test_scope_service_library_media_summary_preserves_envelope_and_five_k
         "offset": 40,
         "limit": 20,
     }
+
+
+@pytest.mark.asyncio
+async def test_media_user_content_evidence_uses_active_complete_local_summary():
+    local = LibrarySummaryLocalService()
+    scope_service = MediaReadingScopeService(local_service=local, server_service=None)
+
+    evidence = await scope_service.get_library_user_content_evidence(mode="local")
+
+    assert type(evidence) is LibraryContentEvidence
+    assert evidence is LibraryContentEvidence.HAS_USER_CONTENT
+    assert local.calls == [
+        (
+            "search_media",
+            None,
+            1,
+            0,
+            {
+                "include_deleted": False,
+                "include_trash": False,
+                "library_summary": True,
+            },
+        )
+    ]
+
+    excluded = LibrarySummaryLocalService(
+        {"items": [], "total": 0, "offset": 0, "limit": 1}
+    )
+    scope_service = MediaReadingScopeService(
+        local_service=excluded, server_service=None
+    )
+    assert (
+        await scope_service.get_library_user_content_evidence(mode="local")
+        is LibraryContentEvidence.EMPTY
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "excluded_row",
+    [
+        {"id": 1, "deleted": True},
+        {"id": 2, "is_trash": True},
+        {"id": 3, "status": "incomplete"},
+    ],
+)
+async def test_media_user_content_evidence_excludes_deleted_trash_and_incomplete(
+    excluded_row,
+):
+    local = LibrarySummaryLocalService(
+        {"items": [excluded_row], "total": 1, "offset": 0, "limit": 1}
+    )
+    scope_service = MediaReadingScopeService(local_service=local, server_service=None)
+
+    assert (
+        await scope_service.get_library_user_content_evidence(mode="local")
+        is LibraryContentEvidence.EMPTY
+    )
+
+
+@pytest.mark.asyncio
+async def test_media_user_content_evidence_accepts_exact_server_summary_only():
+    server = FakeServerMediaService()
+    scope_service = MediaReadingScopeService(local_service=None, server_service=server)
+    assert (
+        await scope_service.get_library_user_content_evidence(mode="server")
+        is LibraryContentEvidence.HAS_USER_CONTENT
+    )
+    assert server.calls == [
+        (
+            "search_media",
+            None,
+            1,
+            0,
+            {"include_deleted": False, "include_trash": False},
+        )
+    ]
+
+    class AmbiguousServer:
+        async def search_media(self, **kwargs):
+            return {"items": []}
+
+    scope_service = MediaReadingScopeService(
+        local_service=None, server_service=AmbiguousServer()
+    )
+    assert (
+        await scope_service.get_library_user_content_evidence(mode="server")
+        is LibraryContentEvidence.UNKNOWN
+    )
 
 
 @pytest.mark.asyncio

@@ -11,6 +11,7 @@ from typing import Protocol
 from uuid import uuid4
 
 from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
+from tldw_chatbook.Library.library_content_evidence import LibraryContentEvidence
 from tldw_chatbook.Library.library_tool_contract import (
     LIBRARY_ITEM_TYPES,
     make_public_id,
@@ -76,6 +77,9 @@ class LibraryCollectionsService(Protocol):
     ) -> tuple[LibraryCollectionRecord, ...]:
         """List active Library Collections."""
 
+    def get_library_user_content_evidence(self) -> LibraryContentEvidence:
+        """Return tri-state evidence for active local Collections."""
+
     def get_collection(self, collection_id: str) -> LibraryCollectionRecord | None:
         """Return one active Library Collection if it exists."""
 
@@ -113,9 +117,7 @@ class LibraryCollectionsService(Protocol):
             LibraryCollectionsServiceError: If local persistence fails.
         """
 
-    def list_library_collections(
-        self, *, limit: int = 20, offset: int = 0
-    ) -> dict:
+    def list_library_collections(self, *, limit: int = 20, offset: int = 0) -> dict:
         """Page active Collections with an exact total for Library agent tools.
 
         Args:
@@ -198,6 +200,22 @@ class LocalLibraryCollectionsService:
         except sqlite3.Error as exc:
             raise LibraryCollectionsServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         return tuple(_record_from_row(row) for row in rows)
+
+    def get_library_user_content_evidence(self) -> LibraryContentEvidence:
+        """Return tri-state evidence for active local Collections."""
+        try:
+            with self.db.connection() as conn:
+                total = conn.execute(
+                    "SELECT COUNT(*) AS count FROM library_collections "
+                    "WHERE deleted_at IS NULL"
+                ).fetchone()["count"]
+        except sqlite3.Error as exc:
+            raise LibraryCollectionsServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        return (
+            LibraryContentEvidence.HAS_USER_CONTENT
+            if total > 0
+            else LibraryContentEvidence.EMPTY
+        )
 
     def get_collection(self, collection_id: str) -> LibraryCollectionRecord | None:
         try:

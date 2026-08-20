@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
+from tldw_chatbook.Library.library_content_evidence import LibraryContentEvidence
 from tldw_chatbook.Library.library_collections_service import (
     DuplicateLibraryCollectionItem,
     DuplicateLibraryCollectionName,
@@ -91,6 +92,21 @@ def test_delete_collection_hides_record_from_list_and_get(tmp_path: Path) -> Non
 
     assert service.list_collections() == ()
     assert service.get_collection(collection.collection_id) is None
+
+
+def test_collections_user_content_evidence_counts_only_active_local_collections(
+    tmp_path: Path,
+) -> None:
+    service = _service(tmp_path)
+    assert service.get_library_user_content_evidence() is LibraryContentEvidence.EMPTY
+
+    collection = service.create_collection("Private collection")
+    evidence = service.get_library_user_content_evidence()
+    assert type(evidence) is LibraryContentEvidence
+    assert evidence is LibraryContentEvidence.HAS_USER_CONTENT
+
+    assert service.delete_collection(collection.collection_id)
+    assert service.get_library_user_content_evidence() is LibraryContentEvidence.EMPTY
 
 
 def test_restore_collection_revives_record_with_membership(tmp_path: Path) -> None:
@@ -361,10 +377,16 @@ def test_search_library_collections_counts_multi_member_match_once(
     service = _service(tmp_path)
     collection = service.create_collection("Dedup")
     service.add_item_to_collection(
-        collection.collection_id, source_type="media", source_id="m-1", title="needle one"
+        collection.collection_id,
+        source_type="media",
+        source_id="m-1",
+        title="needle one",
     )
     service.add_item_to_collection(
-        collection.collection_id, source_type="media", source_id="m-2", title="needle two"
+        collection.collection_id,
+        source_type="media",
+        source_id="m-2",
+        title="needle two",
     )
 
     page = service.search_library_collections(query="needle")
@@ -450,7 +472,9 @@ def test_get_library_collection_pages_members_with_exact_total(
         for index in range(3)
     ]
 
-    first_page = service.get_library_collection(collection.collection_id, limit=2, offset=0)
+    first_page = service.get_library_collection(
+        collection.collection_id, limit=2, offset=0
+    )
 
     assert first_page["collection_id"] == collection.collection_id
     assert first_page["name"] == "Members"

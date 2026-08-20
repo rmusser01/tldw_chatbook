@@ -9,6 +9,7 @@ to read a number.
 import pytest
 
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
+from tldw_chatbook.Library.library_content_evidence import LibraryContentEvidence
 from tldw_chatbook.Prompt_Management.local_prompt_service import LocalPromptService
 from tldw_chatbook.Prompt_Management.prompt_scope_service import (
     LocalPromptService as ScopeLocalPromptService,
@@ -52,6 +53,109 @@ async def test_prompt_scope_service_count_prompts_passes_through_to_local_backen
 
     # Defaults to "local" per the interface contract.
     assert await service.count_prompts() == 1
+
+
+@pytest.mark.asyncio
+async def test_prompts_user_content_evidence_counts_only_active_local_user_prompts(
+    tmp_path,
+):
+    db = PromptsDatabase(tmp_path / "prompts.db", client_id="test-client")
+    service = PromptScopeService(
+        local_service=ScopeLocalPromptService(db), server_service=None
+    )
+    assert (
+        await service.get_library_user_content_evidence(mode="local")
+        is LibraryContentEvidence.EMPTY
+    )
+
+    db.add_prompt(name="alpha", author="user", details="d", user_prompt="private")
+    evidence = await service.get_library_user_content_evidence(mode="local")
+    assert type(evidence) is LibraryContentEvidence
+    assert evidence is LibraryContentEvidence.HAS_USER_CONTENT
+    db.soft_delete_prompt("alpha")
+    assert (
+        await service.get_library_user_content_evidence(mode="local")
+        is LibraryContentEvidence.EMPTY
+    )
+
+
+@pytest.mark.asyncio
+async def test_prompts_user_content_evidence_validates_server_provenance_and_total():
+    class ServerPrompts:
+        def __init__(self, payload):
+            self.payload = payload
+            self.calls = []
+
+        async def list_prompts(self, **kwargs):
+            self.calls.append(kwargs)
+            return self.payload
+
+    user = ServerPrompts(
+        {
+            "items": [{"id": 1, "name": "Private prompt"}],
+            "total_items": 1,
+            "page": 1,
+            "per_page": 1,
+        }
+    )
+    service = PromptScopeService(local_service=None, server_service=user)
+    assert (
+        await service.get_library_user_content_evidence(mode="server")
+        is LibraryContentEvidence.HAS_USER_CONTENT
+    )
+    assert user.calls == [
+        {
+            "page": 1,
+            "per_page": 1,
+            "include_deleted": False,
+            "sort_by": "last_modified",
+            "sort_order": "desc",
+        }
+    ]
+
+    class PromptEnvelope:
+        def model_dump(self, *, mode):
+            assert mode == "json"
+            return {
+                "items": [{"id": 2, "name": "Server model prompt"}],
+                "total_items": 1,
+            }
+
+    service = PromptScopeService(
+        local_service=None, server_service=ServerPrompts(PromptEnvelope())
+    )
+    assert (
+        await service.get_library_user_content_evidence(mode="server")
+        is LibraryContentEvidence.HAS_USER_CONTENT
+    )
+
+    for payload in (
+        {"items": []},
+        {
+            "items": [{"id": "sample", "name": "Sample", "source": "bundled"}],
+            "total_items": 2,
+        },
+    ):
+        service = PromptScopeService(
+            local_service=None, server_service=ServerPrompts(payload)
+        )
+        assert (
+            await service.get_library_user_content_evidence(mode="server")
+            is LibraryContentEvidence.UNKNOWN
+        )
+
+    for excluded in (
+        {"id": "sample", "name": "Sample", "source": "bundled"},
+        {"id": "fixture", "name": "Fixture", "is_sample": True},
+    ):
+        service = PromptScopeService(
+            local_service=None,
+            server_service=ServerPrompts({"items": [excluded], "total_items": 1}),
+        )
+        assert (
+            await service.get_library_user_content_evidence(mode="server")
+            is LibraryContentEvidence.EMPTY
+        )
 
 
 @pytest.mark.asyncio

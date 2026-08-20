@@ -9,6 +9,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Optional
 
 from ..DB.Prompts_DB import ConflictError, PromptsDatabase
+from ..Library.library_content_evidence import LibraryContentEvidence
 from ..runtime_policy.bootstrap import (
     build_runtime_api_client_provider_from_config,
     derive_configured_server_binding,
@@ -1451,6 +1452,65 @@ class PromptScopeService:
             )
         service = self._service_for_mode(normalized_mode)
         return int(await self._maybe_await(service.count_prompts()))
+
+    async def get_library_user_content_evidence(
+        self, *, mode: PromptBackend | str = "local"
+    ) -> LibraryContentEvidence:
+        """Return tri-state evidence for active user-owned prompts."""
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == PromptBackend.LOCAL:
+            total = await self.count_prompts(mode=normalized_mode)
+            return (
+                LibraryContentEvidence.HAS_USER_CONTENT
+                if total > 0
+                else LibraryContentEvidence.EMPTY
+            )
+
+        self._enforce_policy(self._action_id(normalized_mode, "list"))
+        service = self._service_for_mode(normalized_mode)
+        payload = await self._maybe_await(
+            service.list_prompts(
+                page=1,
+                per_page=1,
+                include_deleted=False,
+                sort_by="last_modified",
+                sort_order="desc",
+            )
+        )
+        payload = self._source_record(payload)
+        if not payload:
+            return LibraryContentEvidence.UNKNOWN
+        items = payload.get("items")
+        total = payload.get("total_items")
+        if (
+            type(total) is not int
+            or total < 0
+            or not isinstance(items, list)
+            or len(items) > 1
+        ):
+            return LibraryContentEvidence.UNKNOWN
+        if total == 0:
+            return (
+                LibraryContentEvidence.EMPTY
+                if not items
+                else LibraryContentEvidence.UNKNOWN
+            )
+        if not items or not isinstance(items[0], Mapping):
+            return LibraryContentEvidence.UNKNOWN
+        record = items[0]
+        source = str(record.get("source") or "").strip().lower()
+        excluded = bool(record.get("bundled") or record.get("is_sample")) or source in {
+            "bundled",
+            "sample",
+            "system",
+        }
+        if excluded:
+            return (
+                LibraryContentEvidence.EMPTY
+                if total == 1
+                else LibraryContentEvidence.UNKNOWN
+            )
+        return LibraryContentEvidence.HAS_USER_CONTENT
 
     async def search_prompts(
         self,

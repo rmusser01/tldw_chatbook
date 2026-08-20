@@ -7,6 +7,8 @@ from collections.abc import Sequence
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
+from tldw_chatbook.Library.library_content_evidence import LibraryContentEvidence
+
 if TYPE_CHECKING:
     # Deferred at runtime (mirrors local_skills_service.py's own TYPE_CHECKING
     # import of skill_script_runner): skills_scope_service is deliberately
@@ -179,6 +181,28 @@ class SkillsScopeService:
             action_id="skills.context.list.server",
             method_name="get_context",
         )
+
+    async def get_library_user_content_evidence(
+        self, *, mode: SkillsBackend | str | None = None
+    ) -> LibraryContentEvidence:
+        """Return tri-state evidence for available user-owned skills."""
+        context = await self.get_context(mode=mode)
+        if not isinstance(context, dict) or not isinstance(
+            context.get("available_skills"), list
+        ):
+            return LibraryContentEvidence.UNKNOWN
+        available = context["available_skills"]
+        if not all(isinstance(item, dict) for item in available):
+            return LibraryContentEvidence.UNKNOWN
+        for item in available:
+            source = str(item.get("source") or "").strip().lower()
+            if not (
+                item.get("bundled")
+                or item.get("is_sample")
+                or source in {"bundled", "sample", "system"}
+            ):
+                return LibraryContentEvidence.HAS_USER_CONTENT
+        return LibraryContentEvidence.EMPTY
 
     async def count_skills(
         self, *, mode: SkillsBackend | str | None = None, **kwargs: Any
@@ -357,12 +381,16 @@ class SkillsScopeService:
                 path, unknown skill, or missing file).
             SkillTrustBlockedError: Skill not currently trusted.
         """
-        normalized_mode = self._normalize_mode(mode) if mode is not None else SkillsBackend.LOCAL
+        normalized_mode = (
+            self._normalize_mode(mode) if mode is not None else SkillsBackend.LOCAL
+        )
         if normalized_mode is not SkillsBackend.LOCAL:
             raise ValueError("skill_file reads are local-only")
         service = self._require_service(SkillsBackend.LOCAL)
         self._enforce_policy("skills.read_file.launch.local")
-        return await self._maybe_await(service.read_skill_file(skill_name, relative_path))
+        return await self._maybe_await(
+            service.read_skill_file(skill_name, relative_path)
+        )
 
     def enforce_install_remote(self) -> None:
         """Gate a remote skill install (public seam for skill_remote_fetch).
