@@ -252,9 +252,10 @@ async def test_end_pressed_inside_the_prune_window_still_drains_to_the_tail():
 
         # Shrink the marks so the settled ~low-height view is now over high:
         # the next prune check fires deterministically, entry-detached.
-        app.app_config["chat_defaults"]["prune_low_watermark"] = 300
-        app.app_config["chat_defaults"]["prune_high_watermark"] = 400
-        assert transcript.virtual_size.height > 400, (
+        high_mark = transcript.virtual_size.height - 25
+        app.app_config["chat_defaults"]["prune_low_watermark"] = high_mark - 100
+        app.app_config["chat_defaults"]["prune_high_watermark"] = high_mark
+        assert transcript.virtual_size.height > high_mark, (
             "precondition: the mounted view must sit over the shrunken high mark"
         )
 

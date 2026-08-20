@@ -9637,13 +9637,12 @@ async def test_library_prompt_compatibility_editor_discard_returns_to_current_li
             (scope_before, f"library-prompt-row-{prompt_id}")
         ]
         assert refresh_calls == 1
+        row_id = f"library-prompt-row-{prompt_id}"
         for _ in range(100):
-            row = screen.query_one(f"#library-prompt-row-{prompt_id}", Button)
-            if screen.focused is row:
+            if getattr(screen.focused, "id", None) == row_id:
                 break
             await pilot.pause(0.02)
-        row = screen.query_one(f"#library-prompt-row-{prompt_id}", Button)
-        assert screen.focused is row
+        assert getattr(screen.focused, "id", None) == row_id
 
     save_prompt.assert_not_awaited()
     after = db.fetch_prompt_details(prompt_id)

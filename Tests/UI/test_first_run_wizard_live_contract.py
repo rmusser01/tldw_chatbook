@@ -1754,10 +1754,11 @@ async def _open_rerun_wizard_from_settings(pilot):
 async def _walk_rerun_quick_track_to_summary(pilot, wizard_screen) -> "SetupWizardContainer":
     # Quick track is pre-selected; walk welcome -> provider -> model ->
     # voice -> summary without picking anything (every step is skip-safe).
-    for _ in range(4):
-        _press(wizard_screen, "#wizard-next")
-        await pilot.pause(0.2)
     container = wizard_screen.query_one(SetupWizardContainer)
+    for _ in range(4):
+        previous_step = container.current_step
+        _press(wizard_screen, "#wizard-next")
+        await _wait_until(pilot, lambda: container.current_step != previous_step)
     step = container.steps[container.current_step]
     assert step.config.id == STEP_SUMMARY
     return container
