@@ -40,13 +40,23 @@ Persona JSON remains the authority for local Persona records in V1. Actor Pack
 operations that also mutate the SQLite portable-identity registry or visual records
 will use one purpose-built SQLite write-ahead intent containing bounded old/new
 Persona snapshots and authority digests. The coordinator atomically replaces Persona
-JSON, commits the registry and visual mutation in SQLite, and marks the intent
-committed. Startup recovery idempotently discards a prepared no-op intent when Persona
-JSON and SQLite still match the old authority, compensates an uncommitted JSON replace
-when JSON matches the prepared new value while SQLite remains old, retains the new JSON
-and cleans up when SQLite committed, and fails closed into quarantine when either store
-has an unexpected digest or revision. This is not a general distributed transaction
-framework or a broad Persona-to-SQLite migration.
+JSON, then uses one SQLite transaction to atomically write the new registry/visual
+rows and change the intent from `prepared` to `committed`. Recovery applies this full
+matrix:
+
+- `prepared` + old JSON + old SQLite is a no-op; discard and clean the intent;
+- `prepared` + new JSON + old SQLite compensates JSON to the old record, or removes a
+  newly created record, then cleans the intent;
+- `committed` + new JSON + new SQLite retains the new authority and finishes cleanup;
+- old JSON + new SQLite, `committed` + new JSON + old SQLite, any other unexpected
+  digest or revision, or any intent/store-state contradiction is quarantined without
+  a destructive guess and requires explicit recovery.
+
+Because the SQLite rows and committed status change atomically, `prepared` + new
+SQLite is impossible under normal operation and is treated as a contradiction. Intent
+payloads are profile-private, bounded to one actor mutation, never logged or exported,
+and deleted after successful completion or recovery. This is not a general distributed
+transaction framework or a broad Persona-to-SQLite migration.
 
 Import is review-first and makes no live mutation before explicit consent. The exact
 portable UUID matrix is:
