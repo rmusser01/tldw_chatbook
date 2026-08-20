@@ -128,8 +128,13 @@ async def test_production_routes_own_and_preserve_contextual_footer_hints():
                 else:
                     raise AssertionError("Library Search/RAG row did not mount.")
                 for _ in range(300):
-                    screen_footer = screen.query_one(AppFooterStatus)
-                    if "use Library context in Console" in screen_footer.shortcut_text:
+                    footers = list(screen.query(AppFooterStatus))
+                    if (
+                        footers
+                        and "use Library context in Console"
+                        in footers[0].shortcut_text
+                    ):
+                        screen_footer = footers[0]
                         break
                     await pilot.pause(0.01)
                 else:
@@ -155,13 +160,15 @@ async def test_production_routes_own_and_preserve_contextual_footer_hints():
                 footer_before = screen_footer
                 screen.refresh(recompose=True)
                 for _ in range(300):
-                    footer_after = screen.query_one(AppFooterStatus)
-                    if (
-                        footer_after is not footer_before
-                        and "use Library context in Console"
-                        in footer_after.shortcut_text
-                    ):
-                        break
+                    footers = list(screen.query(AppFooterStatus))
+                    if footers:
+                        footer_after = footers[0]
+                        if (
+                            footer_after is not footer_before
+                            and "use Library context in Console"
+                            in footer_after.shortcut_text
+                        ):
+                            break
                     await pilot.pause(0.01)
                 else:
                     raise AssertionError(

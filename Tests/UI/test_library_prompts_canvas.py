@@ -2500,7 +2500,13 @@ async def _wait_for_prompt_browse_scope(
     deadline = asyncio.get_running_loop().time() + timeout
     while asyncio.get_running_loop().time() < deadline:
         result = screen._library_prompt_browse_controller.result
-        if result.scope == scope and result.status != "loading":
+        canvases = list(screen.query("#library-prompts-canvas"))
+        if (
+            result.scope == scope
+            and result.status != "loading"
+            and len(canvases) == 1
+            and canvases[0].browse_result == result
+        ):
             await pilot.pause()
             return
         await pilot.pause(0.02)
@@ -9411,7 +9417,7 @@ async def test_library_use_recipe_creates_unsaved_prompt_copy_without_staging(tm
         await _wait_for_selector(
             screen,
             pilot,
-            "#prompt-block-syntax-goal SelectOverlay",
+            "#prompt-block-syntax-goal",
         )
 
         app.stage_console_prompt_insert.assert_not_called()

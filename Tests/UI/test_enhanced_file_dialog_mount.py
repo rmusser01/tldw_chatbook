@@ -467,10 +467,10 @@ async def test_confirm_coalesces_recent_and_last_dir_into_one_write(tmp_path):
 
             dialog.query_one("#select").press()
             await pilot.pause()
+            await app.workers.wait_for_complete()
 
-    # The host app has now fully exited (this test's whole point: the
-    # deferred worker must still have gotten to run before teardown threw
-    # its result away).
+    # Persistence is owned by the host app, not the dismissed dialog, and the
+    # coalesced write completed before host teardown.
     assert len(batch_calls) == 1, (
         f"expected exactly one coalesced write, got {len(batch_calls)}"
     )

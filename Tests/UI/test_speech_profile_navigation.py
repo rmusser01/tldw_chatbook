@@ -257,7 +257,16 @@ async def _open_real_profile_test(
 
     library.query_one("#stts-profile-preview-btn", Button).press()
     await _wait_until(pilot, lambda: _playground_ready(screen))
-    return selected_scroll, screen.query_one(SpeechPlaygroundPane)
+    playground = screen.query_one(SpeechPlaygroundPane)
+    await _wait_until(
+        pilot,
+        lambda: (
+            playground._profile_test_context is not None
+            and not playground._profile_preview_loading
+            and playground._profile_voice_validation_token is None
+        ),
+    )
+    return selected_scroll, playground
 
 
 async def _deliver_profile_sample(
