@@ -1,7 +1,7 @@
 # Library Notes, Folder Files, and Lasting Sync Surface Redesign
 
 Date: 2026-08-20
-Status: User-approved corrected direction; pending independent specification review
+Status: Independently reviewed; awaiting user approval of written specification
 Governing decisions:
 [ADR-059](../../../backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md),
 [ADR-060](../../../backlog/decisions/060-notes-sync-round-trip-and-interoperability-constraints.md)
