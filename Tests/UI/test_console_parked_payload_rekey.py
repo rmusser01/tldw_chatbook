@@ -209,3 +209,58 @@ def test_install_second_same_session_round_does_not_evict_the_first(
 
     ctrl.resolve_pending_skill_install(True, request_id=round_2)
     second.join(timeout=5)
+
+
+def _arm_script(ctrl, script, session_id, results, key):
+    def worker():
+        results[key] = ctrl.request_skill_script_confirm(
+            {"skill": "demo", "script": script}, session_id=session_id
+        )
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    return thread
+
+
+@pytest.fixture
+def script_controller():
+    store = ConsoleChatStore()
+    ctrl = ConsoleChatController(store=store, provider_gateway=object())
+    ctrl.app = FakeApp()
+    ctrl.mounted = []
+    ctrl.set_pending_skill_script = ctrl.mounted.append
+    ctrl.skill_script_confirm_timeout_seconds = lambda: 30.0
+    ctrl.session_a = store.create_session(title="A").id
+    store.switch_session(ctrl.session_a)
+    return ctrl
+
+
+def test_script_second_same_session_round_does_not_evict_the_first(
+    script_controller,
+):
+    ctrl = script_controller
+    results = {}
+    first = _arm_script(ctrl, "echo one", ctrl.session_a, results, "one")
+    assert _wait_until(lambda: len(ctrl.pending_skill_script_ids()) == 1)
+    round_1 = ctrl.pending_skill_script_ids()[0]
+    assert _wait_until(lambda: _mounted_round(ctrl) == round_1)
+
+    second = _arm_script(ctrl, "echo two", ctrl.session_a, results, "two")
+    assert _wait_until(lambda: len(ctrl.pending_skill_script_ids()) == 2)
+    time.sleep(0.1)
+
+    assert _mounted_round(ctrl) == round_1, (
+        "a second same-session script confirm must not evict the first's card"
+    )
+
+    # resolve_pending_skill_script takes (allow, remember, request_id).
+    ctrl.resolve_pending_skill_script(True, False, round_1)
+    first.join(timeout=5)
+
+    round_2 = ctrl.pending_skill_script_ids()[0]
+    assert _wait_until(lambda: _mounted_round(ctrl) == round_2), (
+        "the queued script confirm must mount once the head resolves"
+    )
+
+    ctrl.resolve_pending_skill_script(True, False, round_2)
+    second.join(timeout=5)

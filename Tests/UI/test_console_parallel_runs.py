@@ -1730,7 +1730,9 @@ async def test_background_skill_script_confirm_parks_badges_toasts_and_mounts_on
         assert console.query_one("#chat-skill-script-card").display
         assert len([n for n in notifications if "needs approval" in n]) == 1
 
-        request_id = controller._parked_skill_script_payloads[background]["request_id"]
+        request_id = controller._head_round_payload(
+            controller._parked_skill_script_payloads, background
+        )["request_id"]
         controller.resolve_pending_skill_script(True, False, request_id=request_id)
         decision = await asyncio.wait_for(decision_task, timeout=2.0)
         assert decision == {"allow": True, "remember": False}
@@ -1814,7 +1816,9 @@ async def test_skill_script_park_toast_survives_a_re_invocation_for_the_same_rou
         )
         await pilot.pause(0.3)
         assert len([n for n in notifications if "needs approval" in n]) == 1
-        request_id = controller._parked_skill_script_payloads[background]["request_id"]
+        request_id = controller._head_round_payload(
+            controller._parked_skill_script_payloads, background
+        )["request_id"]
 
         # Re-invoke the shared park seam for the SAME, still-outstanding
         # skill-script round.
