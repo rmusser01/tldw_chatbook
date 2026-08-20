@@ -160,17 +160,16 @@ class ProjectInstructionResolver:
                 dispatch_started_wall_ns=dispatch_started_wall_ns,
                 expected_ancestors=expected_ancestors,
             )
-            if result.source is not None:
-                rechecked_override = _read_candidate(
-                    root=root,
-                    filename="AGENTS.override.md",
-                    kind="override",
-                    max_bytes=max_bytes,
-                    dispatch_started_wall_ns=dispatch_started_wall_ns,
-                    expected_ancestors=expected_ancestors,
-                )
-                if rechecked_override.fallback_condition != override.fallback_condition:
-                    result = _fallback_changed_result(rechecked_override)
+            rechecked_override = _read_candidate(
+                root=root,
+                filename="AGENTS.override.md",
+                kind="override",
+                max_bytes=max_bytes,
+                dispatch_started_wall_ns=dispatch_started_wall_ns,
+                expected_ancestors=expected_ancestors,
+            )
+            if rechecked_override.fallback_condition != override.fallback_condition:
+                result = _fallback_changed_result(rechecked_override)
 
         return StartupInstructionCandidate(
             binding_id=binding_id,

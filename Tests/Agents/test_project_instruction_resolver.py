@@ -343,6 +343,84 @@ def test_empty_override_mutating_between_candidates_suppresses_standard_fallback
     ]
 
 
+def test_override_created_while_standard_is_absent_reports_stale_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    standard = tmp_path / "AGENTS.md"
+    override = tmp_path / "AGENTS.override.md"
+    dispatch_started = time.time_ns() + 1_000_000_000
+    real_lstat = resolver_module.os.lstat
+    created = False
+
+    def create_override_on_missing_standard(path: os.PathLike[str] | str):
+        nonlocal created
+        try:
+            return real_lstat(path)
+        except FileNotFoundError:
+            if Path(path) == standard and not created:
+                created = True
+                override.write_text("late override")
+                os.utime(
+                    override,
+                    ns=(dispatch_started + 1, dispatch_started + 1),
+                )
+            raise
+
+    monkeypatch.setattr(
+        resolver_module.os, "lstat", create_override_on_missing_standard
+    )
+
+    candidate = _resolve(tmp_path, dispatch_started_wall_ns=dispatch_started)
+
+    assert created is True
+    assert candidate.source is None
+    assert [(item.relative_path, item.code) for item in candidate.outcomes] == [
+        ("AGENTS.override.md", "stale")
+    ]
+
+
+@pytest.mark.parametrize(
+    ("standard_bytes", "max_bytes"),
+    [(b"\xff", 16), (b"12345", 4)],
+    ids=["invalid-standard", "omitted-standard"],
+)
+def test_empty_override_mutation_supersedes_invalid_or_omitted_standard_outcome(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    standard_bytes: bytes,
+    max_bytes: int,
+) -> None:
+    override = tmp_path / "AGENTS.override.md"
+    standard = tmp_path / "AGENTS.md"
+    override.write_text(" \n")
+    standard.write_bytes(standard_bytes)
+    dispatch_started = time.time_ns() + 1_000_000_000
+    real_lstat = resolver_module.os.lstat
+    mutated = False
+
+    def mutate_override_before_standard(path: os.PathLike[str] | str):
+        nonlocal mutated
+        if Path(path) == standard and not mutated:
+            mutated = True
+            override.write_text("x")
+            os.utime(override, ns=(dispatch_started - 1, dispatch_started - 1))
+        return real_lstat(path)
+
+    monkeypatch.setattr(resolver_module.os, "lstat", mutate_override_before_standard)
+
+    candidate = _resolve(
+        tmp_path,
+        max_bytes=max_bytes,
+        dispatch_started_wall_ns=dispatch_started,
+    )
+
+    assert mutated is True
+    assert candidate.source is None
+    assert [(item.relative_path, item.code) for item in candidate.outcomes] == [
+        ("AGENTS.override.md", "resolution_failed")
+    ]
+
+
 def test_ancestor_disappearing_after_root_validation_is_not_treated_as_absent_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
