@@ -4,7 +4,7 @@ title: >-
   Retired claude-3-haiku-20240307 survives as a live default in
   character_defaults, code_audit_tool, and deprecated Tools_Settings_Window
   fallbacks
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-20 15:46'
@@ -23,9 +23,9 @@ TASK-19020 replaced the retired claude-3-haiku-20240307 fallback in summarize_wi
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The shipped [character_defaults] template default names a currently-served Anthropic model
-- [ ] #2 code_audit_tool's hardcoded analysis model is a currently-served model
-- [ ] #3 The deprecated Tools_Settings_Window fallbacks are updated or the surface's deletion is confirmed as covering them
+- [x] #1 The shipped [character_defaults] template default names a currently-served Anthropic model
+- [x] #2 code_audit_tool's hardcoded analysis model is a currently-served model
+- [x] #3 The deprecated Tools_Settings_Window fallbacks are updated or the surface's deletion is confirmed as covering them
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -38,3 +38,15 @@ TASK-19020 replaced the retired claude-3-haiku-20240307 fallback in summarize_wi
 5. Green + targeted gate with READ counts: the two touched test files + Tests/UI/test_tools_settings_window.py + Tests/test_probe_import_provenance.py. No live-API leg: the 404 is on record (req_011CeEDXZ8iS29MZCgyySwQa) and claude-haiku-4-5/claude-sonnet-5 servedness was live-verified by 19020's runs (rows 1, 3, 4).
 6. Hygiene: tick ACs, Implementation Notes, Done; report; PR against dev.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+All three request-path sites replaced; branch fix/task-19048-retired-model-ids, report Docs/superpowers/plans/2026-08-20-task-19048-report.md.
+
+- config.py:3841 ([character_defaults] template default) and Tools/code_audit_tool.py:141 (hardcoded analysis model) -> claude-haiku-4-5, the retired id's served successor in the same cheap-fast haiku lineage (TASK-19020 precedent; both sites' cheap/fast intent matches, and the template's own [providers.Anthropic] list already carries the id). code_audit stays hardcoded — the [audit] config block was only ever proposed/example config and the tool is not wired into the Console runtime, so a config seam would be a redesign, not a repair.
+- UI/Tools_Settings_Window.py (DEPRECATED TASK-1346, nav-unreachable): updated, not deleted — task-1346 (Done) explicitly scoped the window with a deprecation banner INSTEAD of deleting ("not trivially safe": app.py module import + tests exercise it), and no deletion task exists on the board. The four character-defaults sites (1044/2456/4116/5647) -> claude-haiku-4-5 in lockstep with the template; the one [api_settings.anthropic] reset (4851) -> claude-sonnet-5, matching the shipped template default that reset restores (its sibling resets — ANTHROPIC_API_KEY, temperature 0.7 — mirror the same template block).
+- Docs/Development/Agent-Tools/Claude_Code_File_Audit_System.md updated where it quoted the hardcoded model.
+- Evidence (READ counts): red 2 failed 8 passed (both on the retired id) -> green 10 passed; config-defaults family + Tests/Tools/ + provenance 701 passed; Tests/UI/test_tools_settings_window.py + provenance 67 passed; collect-only sweep 52063 collected, 0 errors. No live leg spent: the 404 (req_011CeEDXZ8iS29MZCgyySwQa) and the replacements' servedness were already live-verified by 19020's runs.
+- Repo-wide re-sweep on the base: no new request-path site; exclusion list still accurate. One extra metadata occurrence flagged (repo-root config.toml:91, a dead checked-in sample's providers dropdown list — task-3600's class), reported, not filed.
+<!-- SECTION:NOTES:END -->
