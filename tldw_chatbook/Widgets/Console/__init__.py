@@ -12,6 +12,10 @@ from .console_composer_bar import (
 )
 from .console_command_popup import ConsoleCommandPopup
 from .console_background_effect import ConsoleBackgroundEffect, ConsoleTranscriptSurface
+from .console_changed_files_section import (
+    ConsoleChangedFilesSection,
+    ConsoleChangedFilesState,
+)
 from .console_citation_sources_modal import (
     ConsoleCitationSourceRow,
     ConsoleCitationSourcesModal,
@@ -46,6 +50,8 @@ __all__ = [
     "ConsoleDraftStash",
     "ConsoleCommandPopup",
     "ConsoleBackgroundEffect",
+    "ConsoleChangedFilesSection",
+    "ConsoleChangedFilesState",
     "ConsoleCitationSourceRow",
     "ConsoleCitationSourcesModal",
     "ConsoleControlBar",

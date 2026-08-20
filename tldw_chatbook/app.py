@@ -85,7 +85,6 @@ from textual.containers import Container
 from textual.reactive import reactive
 from textual.worker import Worker, WorkerCancelled, WorkerState
 from textual.binding import Binding
-from textual.message import Message
 from textual.timer import Timer
 from textual.css.query import NoMatches, QueryError
 from textual.command import Hit, Hits, Provider
@@ -11942,19 +11941,6 @@ class TldwCli(
     #
     ########################################################################
     # Notes editor changes are handled inside the Library screen, not dispatched here.
-
-    # Collections/Tags event handlers
-    @on(Message)
-    async def on_collections_tag_message(self, event: Message) -> None:
-        """Handle Collections/Tag events."""
-        from .Event_Handlers import collections_tag_events
-
-        if event.__class__.__name__ == "KeywordRenameEvent":
-            await collections_tag_events.handle_keyword_rename(self, event)
-        elif event.__class__.__name__ == "KeywordMergeEvent":
-            await collections_tag_events.handle_keyword_merge(self, event)
-        elif event.__class__.__name__ == "KeywordDeleteEvent":
-            await collections_tag_events.handle_keyword_delete(self, event)
 
     @on(SplashScreen.Closed)
     async def on_splash_screen_closed(self, event: SplashScreen.Closed) -> None:

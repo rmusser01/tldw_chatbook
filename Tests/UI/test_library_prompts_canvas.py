@@ -158,6 +158,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 AGENTIC_TERMINAL = REPO_ROOT / "tldw_chatbook/css/components/_agentic_terminal.tcss"
 BUNDLED_STYLESHEET = REPO_ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
 PROMPT_PAGER_TEST_SIZES = ((100, 30), (170, 48))
+# TASK-18611: cancelled-import settlement wait -- the retry Undo must not race
+# the cancelled worker's drain (the write gate refuses while it is live).
+# Poll count x interval = 5s ceiling.
+IMPORT_SETTLEMENT_POLLS = 250
+IMPORT_SETTLEMENT_POLL_SECONDS = 0.02
 
 
 def _css_block(text: str, selector: str) -> str:
@@ -6449,10 +6454,10 @@ async def test_library_prompt_import_blocks_undo_until_import_settles(tmp_path):
             pilot,
             screen._library_prompt_browse_controller.mutation_refresh_scope,
         )
-        retry_undo = await _wait_for_selector(
-            screen, pilot, "#library-prompts-delete-undo"
-        )
-        retry_undo.press()
+        await _wait_for_selector(screen, pilot, "#library-prompts-delete-undo")
+        # TASK-18611: re-query at press time -- the awaited widget can detach
+        # across the import's recomposes, and a press on a stale node no-ops.
+        screen.query_one("#library-prompts-delete-undo", Button).press()
         await _wait_for_prompt_mutation_settlement(screen, pilot)
         assert restore_calls == [receipt.targets]
         assert screen._library_prompt_delete_receipt is None
@@ -6643,11 +6648,19 @@ async def test_cancelled_prompt_import_retains_writer_ownership_until_commit(tmp
         finally:
             import_release.set()
 
-        for _ in range(150):
+        # TASK-18611: `import_finished` fires in the save stub's `finally` --
+        # BEFORE the durable-call wrapper drains the cancelled worker to real
+        # settlement. The retry Undo below must not race that drain (the write
+        # gate refuses while the worker is live), so wait for BOTH and assert
+        # the wait itself succeeded rather than silently timing through.
+        for _ in range(IMPORT_SETTLEMENT_POLLS):
             if import_finished.is_set() and worker.is_finished:
                 break
-            await pilot.pause(0.02)
-        assert import_finished.is_set()
+            await pilot.pause(IMPORT_SETTLEMENT_POLL_SECONDS)
+        assert import_finished.is_set(), "cancelled import never settled its save"
+        assert worker.is_finished, (
+            "cancelled import worker never drained; the retry Undo would race it"
+        )
         assert worker.is_cancelled
         assert refused_restore_calls == []
         assert writer_owned_while_held
@@ -6667,10 +6680,10 @@ async def test_cancelled_prompt_import_retains_writer_ownership_until_commit(tmp
             pilot,
             screen._library_prompt_browse_controller.mutation_refresh_scope,
         )
-        retry_undo = await _wait_for_selector(
-            screen, pilot, "#library-prompts-delete-undo"
-        )
-        retry_undo.press()
+        await _wait_for_selector(screen, pilot, "#library-prompts-delete-undo")
+        # TASK-18611: re-query at press time -- the awaited widget can detach
+        # across the import's recomposes, and a press on a stale node no-ops.
+        screen.query_one("#library-prompts-delete-undo", Button).press()
         await _wait_for_prompt_mutation_settlement(screen, pilot)
         assert restore_calls == [receipt.targets]
         assert screen._library_prompt_delete_receipt is None

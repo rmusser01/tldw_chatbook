@@ -929,6 +929,23 @@ async def _open_stts_view(
     await pilot.pause()
 
 
+def _profile_table_row_count(app: App[Any]) -> int | None:
+    """The profiles table's row count, or None while the view swap is mid-flight.
+
+    `STTSWindow.watch_current_view` replaces the body in a `speech-view-mount`
+    worker, so right after `current_view` is assigned the table may not exist
+    yet. Its existence is therefore part of the condition being settled on,
+    not a precondition: an unguarded `query_one` inside the predicate raised
+    `NoMatches` straight out of `_wait_until`'s first poll whenever the mount
+    worker had not run yet -- reproduced 13/13 under CPU load (task-19047).
+    """
+    try:
+        table = app.query_one("#stts-profile-table", DataTable)
+    except QueryError:
+        return None
+    return table.row_count
+
+
 async def _select_action_profile(
     app: _ActionHost,
     pilot: Any,
@@ -936,10 +953,7 @@ async def _select_action_profile(
     await _open_stts_view(app, pilot, "profiles")
     await _wait_until(
         pilot,
-        lambda: (
-            len(app.query("#stts-profile-table")) == 1
-            and app.query_one("#stts-profile-table", DataTable).row_count == 1
-        ),
+        lambda: _profile_table_row_count(app) == 1,
     )
     table = app.query_one("#stts-profile-table", DataTable)
     table.move_cursor(row=0)
@@ -1034,6 +1048,23 @@ async def _wait_availability_projected(app: App[Any], pilot: Any) -> None:
     """
     preview = app.query_one("#stts-profile-preview-btn", Button)
     await _wait_until(pilot, lambda: str(preview.label) != "Checking")
+
+
+def _stts_content_first_child(app: App[Any]) -> Widget | None:
+    """The first mounted child of the STTS body, or None mid-swap.
+
+    `STTSWindow._mount_view_unlocked` awaits `remove_children()` and then
+    `mount(...)`, so the body container is observably EMPTY between the two
+    awaits. Indexing `children[0]` inside a `_wait_until` predicate raised
+    IndexError out of the poll whenever it landed in that window --
+    reproduced 3x under 20-burner CPU load (task-19047). The container's
+    emptiness is part of the condition being settled on, not a precondition.
+    """
+    try:
+        children = app.query_one(".stts-content").children
+    except QueryError:
+        return None
+    return children[0] if children else None
 
 
 def _playground_is_mounted(app: App[Any]) -> bool:
@@ -1160,12 +1191,23 @@ async def test_audiobook_kokoro_blend_group_is_not_a_keyboard_select_option(
         # actually does and fails loudly (not silently, late) if it never
         # does.
         provider_select = app.query_one("#audiobook-provider-select", Select)
-        for _ in range(100):
-            if provider_select.value == "openai":
-                break
-            await pilot.pause()
-        else:
-            raise AssertionError("mount-time provider default never settled")
+        await _wait_until(pilot, lambda: provider_select.value == "openai")
+        # The value flip happens inside the timer callback itself, but the
+        # narrator-options rewrite rides the Select.Changed MESSAGE that the
+        # assignment posts -- still queued when the poll above returns. The
+        # openai option list is identical to the compose-time one, so the
+        # narrator select cannot witness that cascade landing; the sibling
+        # @on(Select.Changed) handler writing `provider` onto the (faked)
+        # character-voice widget runs in the same dispatch step and can.
+        # Without this settle, the queued rewrite landed AFTER the kokoro
+        # switch below and silently restored the openai options -- reproduced
+        # under 14-burner CPU load: the keyboard path then landed on
+        # 'shimmer', the LAST OPENAI option (task-19047).
+        voice_widget = app.query_one("#character-voice-widget")
+        await _wait_until(
+            pilot,
+            lambda: getattr(voice_widget, "provider", None) == "openai",
+        )
 
         widget._update_voice_options("kokoro")
         narrator = app.query_one("#narrator-voice-select", Select)
@@ -2865,10 +2907,7 @@ async def test_switching_stts_view_dismisses_owned_profile_modal_and_worker(
         await _wait_until(pilot, lambda: not isinstance(app.screen, modal_type))
         await _wait_until(
             pilot,
-            lambda: isinstance(
-                app.query_one(".stts-content").children[0],
-                SpeechSettingsPane,
-            ),
+            lambda: isinstance(_stts_content_first_child(app), SpeechSettingsPane),
         )
         await _wait_until(
             pilot,

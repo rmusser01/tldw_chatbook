@@ -138,7 +138,7 @@ Focus on detecting deception and incomplete implementations, not just syntax err
                 chat_api_call,
                 api_endpoint="anthropic",
                 messages_payload=[{"role": "user", "content": prompt}],
-                model="claude-3-haiku-20240307",  # fast model for quick analysis
+                model="claude-haiku-4-5",  # fast model for quick analysis
                 temp=0.1,  # low temperature for consistent analysis
                 max_tokens=500,
                 streaming=False,

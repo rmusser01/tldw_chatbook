@@ -88,9 +88,6 @@ DEPENDENCIES_AVAILABLE = {
     "pillow": False,
     "textual_image": False,
     "rich_pixels": False,
-    # Mindmap
-    "mindmap": False,
-    "anytree": False,
     # Subscriptions
     "subscriptions": False,
     "markdown": False,
@@ -394,15 +391,6 @@ OPTIONAL_FEATURES: dict[str, OptionalFeatureInfo] = {
         "Library > Import/Export",
         "Media processing",
         OWNER_LIBRARY_MEDIA,
-    ),
-    "mindmap": _feature(
-        "mindmap",
-        "Mind map visualization",
-        AREA_VISUALIZATION,
-        ("anytree",),
-        "Library",
-        "Mind map visualization",
-        OWNER_LIBRARY,
     ),
     "mlx_whisper": _feature(
         "mlx_whisper",
@@ -1335,24 +1323,6 @@ def check_mcp_deps() -> bool:
     return mcp_available
 
 
-def check_mindmap_available() -> bool:
-    """Check if mindmap dependencies are available.
-
-    Since anytree is in base dependencies, mindmap is always available.
-    This function exists for consistency with other optional features.
-    """
-    # anytree is in base dependencies, so always available
-    anytree_available = check_dependency("anytree", "mindmap")
-    DEPENDENCIES_AVAILABLE["mindmap"] = anytree_available
-
-    if anytree_available:
-        logger.info("✅ Mindmap dependencies found.")
-    else:
-        logger.warning("⚠️ Mindmap dependencies missing.")
-
-    return anytree_available
-
-
 def check_subscriptions_deps() -> bool:
     """Check dependencies needed for subscriptions functionality."""
     markdown_available = check_dependency("markdown")
@@ -1479,7 +1449,6 @@ def initialize_dependency_checks():
     check_stt_deps()
     check_image_processing_deps()
     check_mcp_deps()
-    check_mindmap_available()
     check_subscriptions_deps()
     check_web_server_deps()
 

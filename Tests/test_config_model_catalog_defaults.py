@@ -109,6 +109,23 @@ def test_bundled_provider_defaults_use_current_models():
         assert API_MODELS_BY_PROVIDER[provider] == providers[provider]
 
 
+def test_character_defaults_template_model_is_currently_served():
+    """TASK-19048: the shipped [character_defaults] default must be a served model.
+
+    The former default ``claude-3-haiku-20240307`` is RETIRED on the wire
+    (404 not_found_error, probe req_011CeEDXZ8iS29MZCgyySwQa), so a fresh
+    install's persona/character calls targeted a dead model. The replacement
+    is the retired id's served successor in the same cheap-fast haiku lineage
+    (TASK-19020 precedent). The template's own comment demands the model exist
+    in [providers.Anthropic], so that membership is pinned too.
+    """
+    parsed = tomllib.loads(CONFIG_TOML_CONTENT)
+    character_defaults = parsed["character_defaults"]
+    assert character_defaults["provider"] == "Anthropic"
+    assert character_defaults["model"] == "claude-haiku-4-5"
+    assert character_defaults["model"] in parsed["providers"]["Anthropic"]
+
+
 def test_load_settings_uses_current_models_when_legacy_api_models_are_omitted(
     tmp_path, monkeypatch
 ):

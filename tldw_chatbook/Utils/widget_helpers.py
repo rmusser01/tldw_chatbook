@@ -282,18 +282,6 @@ def alert_tts_not_available(parent) -> None:
     )
 
 
-def alert_mindmap_not_available(parent) -> None:
-    """Show alert for missing mindmap dependencies."""
-    show_feature_alert(
-        parent,
-        feature_name="Mindmap",
-        feature_key="mindmap",
-        extra_name="mindmap",
-        missing_deps=["anytree"],
-        additional_info="Note: anytree is included in base dependencies, so this should not normally appear.",
-    )
-
-
 def alert_subscriptions_not_available(parent) -> None:
     """Show alert for missing subscriptions dependencies."""
     from ..Library.ingest_capabilities import _module_present

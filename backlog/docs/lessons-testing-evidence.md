@@ -5430,3 +5430,62 @@ rest of the family, branched replay on checkpoint SHAPE instead of model id,
 and pinned the old stored shape with its own test plus a shape-guard
 mutation (M9b/M10b) at each import surface -- the guard-dropped mutants are
 exactly the "old data wrongly discarded" bug.
+
+## A settle whose predicate can RAISE is still a one-shot sample — and a value flip is not its message cascade (task-19047, 2026-08-20)
+
+Follow-up to the pilot.pause() entry above: `_wait_until`-style condition polls
+only settle what their predicate can *survive observing*. Two incidents from
+the same file, both reproduced under CPU-burner load before patching:
+
+1. **Raising predicates.** `test_switching_stts_view_dismisses_owned_profile_
+   modal_and_worker` polled `app.query_one("#stts-profile-table").row_count
+   == 1` right after assigning `current_view` — but `STTSWindow.watch_current_
+   view` swaps the body in a `speech-view-mount` worker, so the table's
+   *existence* is part of the condition, and the unguarded query raised
+   `NoMatches` straight out of the FIRST poll (13/13 failing instances under
+   load). Same class one step later: `.children[0]` in a predicate raised
+   `IndexError` inside the observable empty window between `await
+   remove_children()` and `await mount(...)` (3 reproductions at 20 burners —
+   which only fired AFTER the first shape was fixed; catalogue shapes by
+   re-running the load loop after each repair, since the first raise masks
+   everything behind it). A predicate that throws mid-transition is a one-shot
+   structural sample wearing a settle's clothes: predicates must return False
+   while the structure is absent (guard the query, index only non-empty).
+2. **Value-flip settles under-wait their cascade.** The kokoro-blend audiobook
+   test settled on `provider_select.value == "openai"` — but that flips inside
+   the timer callback, while the narrator-options rewrite rides the queued
+   `Select.Changed` message. Under load the queued rewrite landed AFTER the
+   test's own `_update_voice_options("kokoro")` and silently restored the
+   openai list; the keyboard walk then honestly selected `shimmer`, the LAST
+   OPENAI option — a failure that *looks* like broken key handling and is
+   actually a wiped precondition. Trap on top: the cascade's output (openai
+   options) was byte-identical to the compose-time options, so the watched
+   widget itself could never witness the cascade landing; the settle had to
+   target a DIFFERENT observable of the same dispatch step (a sibling
+   `@on(Select.Changed)` handler's attribute write on a test-faked widget).
+   When a reactive assignment's effects arrive by message, settle on the
+   cascade's own output — and if that output is indistinguishable from the
+   initial state, find any other observable the same dispatch step produces.
+
+## Deleting a diagnostic-bearing call obliges the inventory hand-edit — and two reviewers missed it in one wave (tasks 19042/19043, 2026-08-20)
+
+Companion to "Adding a resource of a GUARDED KIND obliges you to run that
+kind's inventory suite" above — the DELETION direction, which proved harder to
+see. The persistent diagnostic inventory
+(`Docs/security/production-diagnostic-inventory.json`, gated by
+`Tests/Architecture/test_persistent_diagnostic_inventory.py`) keys rows on
+each file's diagnostic CONTENT, so removing a `logger.*` call changes that
+file's row and the playbook requires a hand-edit in the same PR. In the
+third-wave burn-down this was missed twice by implementers and twice by
+reviewers: task-19042 initially skipped it, and its reviewer asserted the
+inventory JSON "had zero consumers" — refuted by the controller's
+rebuild-diff, which showed the architecture gate consuming it; then
+task-19043's deletion (stts_events 30→29) shipped with BOTH implementer and
+reviewer missing the step, leaving the gate red on dev (folded into
+task-19191's per-row regeneration). Two rules with teeth: (1) any PR that
+deletes or moves diagnostic-bearing code must run
+`scripts/check_persistent_diagnostic_inventory.py` and hand-review its row
+diff before merging — a deletion feels like it needs no review precisely
+because nothing new was added; (2) a reviewer claim that a guarded artifact is
+"unconsumed" is an untested claim until checked against the gate that
+consumes it — grep for the artifact's path in `Tests/` before agreeing.
