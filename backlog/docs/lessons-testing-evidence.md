@@ -5409,3 +5409,39 @@ other sessions fetch into, `origin/dev` at probe time is routinely not
 `origin/dev` at branch time; (2) `git log --oneline -1` inside the probe is
 part of the probe -- a comparison whose two arms' commits were never printed
 has not established which code either arm ran.
+
+## A settle whose predicate can RAISE is still a one-shot sample — and a value flip is not its message cascade (task-19047, 2026-08-20)
+
+Follow-up to the pilot.pause() entry above: `_wait_until`-style condition polls
+only settle what their predicate can *survive observing*. Two incidents from
+the same file, both reproduced under CPU-burner load before patching:
+
+1. **Raising predicates.** `test_switching_stts_view_dismisses_owned_profile_
+   modal_and_worker` polled `app.query_one("#stts-profile-table").row_count
+   == 1` right after assigning `current_view` — but `STTSWindow.watch_current_
+   view` swaps the body in a `speech-view-mount` worker, so the table's
+   *existence* is part of the condition, and the unguarded query raised
+   `NoMatches` straight out of the FIRST poll (13/13 failing instances under
+   load). Same class one step later: `.children[0]` in a predicate raised
+   `IndexError` inside the observable empty window between `await
+   remove_children()` and `await mount(...)` (3 reproductions at 20 burners —
+   which only fired AFTER the first shape was fixed; catalogue shapes by
+   re-running the load loop after each repair, since the first raise masks
+   everything behind it). A predicate that throws mid-transition is a one-shot
+   structural sample wearing a settle's clothes: predicates must return False
+   while the structure is absent (guard the query, index only non-empty).
+2. **Value-flip settles under-wait their cascade.** The kokoro-blend audiobook
+   test settled on `provider_select.value == "openai"` — but that flips inside
+   the timer callback, while the narrator-options rewrite rides the queued
+   `Select.Changed` message. Under load the queued rewrite landed AFTER the
+   test's own `_update_voice_options("kokoro")` and silently restored the
+   openai list; the keyboard walk then honestly selected `shimmer`, the LAST
+   OPENAI option — a failure that *looks* like broken key handling and is
+   actually a wiped precondition. Trap on top: the cascade's output (openai
+   options) was byte-identical to the compose-time options, so the watched
+   widget itself could never witness the cascade landing; the settle had to
+   target a DIFFERENT observable of the same dispatch step (a sibling
+   `@on(Select.Changed)` handler's attribute write on a test-faked widget).
+   When a reactive assignment's effects arrive by message, settle on the
+   cascade's own output — and if that output is indistinguishable from the
+   initial state, find any other observable the same dispatch step produces.
