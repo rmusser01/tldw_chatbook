@@ -559,6 +559,50 @@ def test_bundled_native_toggle_focus_states_match_source_contracts():
     assert "background: $ds-focus-bg;" in focus
 
 
+def test_bundled_compact_focus_outline_opt_outs_match_source_contracts():
+    """TASK-17961: the third `*:focus{outline:solid...}`-over-content-row
+    family member, after TASK-1160 (`DataTable:focus`, components/
+    _lists.tcss) and TASK-2300 (`Select.-textual-compact:focus`, also
+    components/_lists.tcss). A compact `Input` is exactly one row tall
+    (Textual pins `border: none !important` on `.-textual-compact`) and a
+    compact `ToggleButton`/`Checkbox`/`RadioButton` loses its own perimeter
+    the same way once this app's `ToggleButton:focus` border/background
+    rule re-adds a border `!important` cannot keep off (app CSS always
+    outranks a widget's own DEFAULT_CSS in Textual's cascade) -- so both
+    opt out of the outline AND restate `border: none` rather than relying
+    on Textual's compact contract alone. Mirrors
+    `test_bundled_native_toggle_focus_states_match_source_contracts`'s
+    two-surface shape (module source and bundle must agree)."""
+    for label, text in (
+        ("components/_forms.tcss", FORMS.read_text(encoding="utf-8")),
+        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
+    ):
+        toggle_focus = css_block(text, "ToggleButton:focus")
+        assert "outline: none;" in toggle_focus, (
+            f"{label} ToggleButton:focus is missing outline: none"
+        )
+        assert "outline: solid" not in toggle_focus
+
+        compact_toggle_focus = css_block(text, "ToggleButton.-textual-compact:focus")
+        assert "outline: none;" in compact_toggle_focus, (
+            f"{label} ToggleButton.-textual-compact:focus is missing outline: none"
+        )
+        assert "border: none;" in compact_toggle_focus, (
+            f"{label} ToggleButton.-textual-compact:focus is missing border: none"
+        )
+
+        compact_input_focus = css_block(text, "Input.-textual-compact:focus")
+        assert "outline: none;" in compact_input_focus, (
+            f"{label} Input.-textual-compact:focus is missing outline: none"
+        )
+        assert "border: none;" in compact_input_focus, (
+            f"{label} Input.-textual-compact:focus is missing border: none"
+        )
+        assert "background: $ds-focus-bg;" in compact_input_focus, (
+            f"{label} Input.-textual-compact:focus is missing its recolour cue"
+        )
+
+
 def test_console_and_library_visible_offenders_do_not_obscure_labels():
     text = AGENTIC.read_text(encoding="utf-8")
     for selector in (
