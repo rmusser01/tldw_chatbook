@@ -1534,9 +1534,9 @@ def test_mcp_round_and_skill_install_round_for_the_same_session_both_keep_the_ba
     install_worker = threading.Thread(target=_run_install)
     install_worker.start()
     time.sleep(0.1)
-    install_request_id = controller._parked_skill_install_payloads[background][
-        "request_id"
-    ]
+    install_request_id = controller._head_round_payload(
+        controller._parked_skill_install_payloads, background
+    )["request_id"]
     # Both rounds' ids are now tracked, still with no double-count.
     assert controller._pending_approvals[background] == {
         mcp_round_id,
@@ -1553,9 +1553,10 @@ def test_mcp_round_and_skill_install_round_for_the_same_session_both_keep_the_ba
     assert mcp_result["decisions"] == {"mcp__srv__tool": "deny"}
     assert controller.run_marker_for(background) is ConsoleRunMarker.NEEDS_APPROVAL
     assert background in controller._pending_approvals
-    assert background in controller._parked_skill_install_payloads
     assert (
-        controller._parked_skill_install_payloads[background]["request_id"]
+        controller._head_round_payload(
+            controller._parked_skill_install_payloads, background
+        )["request_id"]
         == install_request_id
     )
     # The MCP bridge's OWN payload map is cleared (it was the last MCP
@@ -1574,7 +1575,12 @@ def test_mcp_round_and_skill_install_round_for_the_same_session_both_keep_the_ba
     assert install_result["allowed"] is True
     assert controller.run_marker_for(background) is ConsoleRunMarker.NONE
     assert background not in controller._pending_approvals
-    assert background not in controller._parked_skill_install_payloads
+    assert (
+        controller._head_round_payload(
+            controller._parked_skill_install_payloads, background
+        )
+        is None
+    )
 
 
 def test_request_mcp_approvals_other_sessions_cancel_event_does_not_deny_this_round():

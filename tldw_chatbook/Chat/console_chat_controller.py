@@ -1712,12 +1712,9 @@ class ConsoleChatController:
         #: concurrent.
         self._pending_skill_install_rounds: dict[str, dict[str, Any]] = {}
         self._pending_skill_install_lock = threading.Lock()
-        #: TASK-910 (parked background skill confirms): retained payload for
-        #: a session-attributed `request_skill_install_confirm` round --
-        #: mounted or parked, exactly like `_parked_approval_payloads`.
-        #: `switch_session`/`new_session`/`close_session` re-derive the
-        #: mounted card from this map on every activation, never from
-        #: whatever the card happened to already be showing.
+        #: PR0: retained payload per ROUND (was per session), keyed by
+        #: `request_id`. The mounted card is the session's FIFO head, so a
+        #: second same-session confirm no longer evicts an older sibling.
         self._parked_skill_install_payloads: dict[str, dict[str, Any]] = {}
         #: UI-thread callback that pushes/clears the pending skill-SCRIPT
         #: confirm payload into the owning screen's task-resume state.
@@ -5385,6 +5382,9 @@ class ConsoleChatController:
         is_parked = session_id is not None and session_id != (
             self.store.active_session_id or ""
         )
+        # PR0: legacy `session_id is None` callers never park and never
+        # queue -- they keep the unconditional mount below.
+        is_head = True
         if session_id is not None:
             # TASK-1050 (Defect A): round-keyed, not a plain boolean -- see
             # `request_mcp_approvals`' identical `add_pending_round` call
@@ -5397,13 +5397,17 @@ class ConsoleChatController:
             # `request_mcp_approvals`' identical retention (Fix wave,
             # CRITICAL 1): a round that mounted immediately must still be
             # recoverable after a switch-away-and-back.
-            with self._approval_state_lock:
-                self._parked_skill_install_payloads[session_id] = payload
+            # PR0: keyed by ROUND, and the return says whether THIS round
+            # is its session's FIFO head. A non-head round must not mount:
+            # an older sibling is still holding the card.
+            is_head = self._park_round_payload(
+                self._parked_skill_install_payloads, request_id, payload
+            )
         try:
             if is_parked:
                 if self.app is not None and self.park_pending_approval is not None:
                     self.app.call_from_thread(self.park_pending_approval, session_id)
-            else:
+            elif is_head:
                 self._marshal_pending_skill_install(payload)
             # ADR-067: mark the owning run as waiting on a human decision
             # (see `request_mcp_approvals`' identical wrap for the why).
@@ -5421,116 +5425,43 @@ class ConsoleChatController:
         finally:
             with self._pending_skill_install_lock:
                 self._pending_skill_install_rounds.pop(request_id, None)
-                still_armed_same_session = any(
-                    state.get("session_id") == owning_session_id
-                    for state in self._pending_skill_install_rounds.values()
-                )
+            # PR0: drop exactly THIS round's retained payload. Pre-PR0 the
+            # slot was shared per session, so the pop had to be guarded by
+            # an order-dependent "is this the last armed round for the
+            # session" test to avoid discarding a still-armed sibling's
+            # only copy. Per-round storage makes that guard meaningless --
+            # each round owns its own key.
+            self._unpark_round_payload(
+                self._parked_skill_install_payloads, request_id
+            )
             if session_id is not None:
-                # TASK-1050 (Defect B) fix round 1 (review): `_parked_
-                # skill_install_payloads` is a SINGLE per-session slot
-                # holding whichever round's payload was LAST WRITTEN
-                # (arming overwrites it) -- an unconditional pop here would
-                # let the EARLIER round's teardown discard the NEWER
-                # round's still-armed retained payload. The original fix
-                # also popped whenever the stored payload was still this
-                # round's own id ("nothing has overwritten it since"), but
-                # that is true exactly when THIS round is the newest-armed
-                # one -- which is also the common case where an OLDER
-                # sibling is still outstanding (arming re-mounts/re-parks a
-                # card, which typically gets decided before an
-                # already-waiting sibling does). Popping there discarded
-                # the still-armed OLDER round's only remaining payload
-                # (reviewer reproduced live). Only the order-independent
-                # "no armed round left for this session" test is safe: pop
-                # ONLY when this is the LAST armed round for the session.
-                # (Accepted scope limitation: last-armed-wins regardless of
-                # resolution order -- see `request_mcp_approvals`' mirror
-                # of this comment for the full rationale.)
-                with self._approval_state_lock:
-                    if not still_armed_same_session:
-                        self._parked_skill_install_payloads.pop(session_id, None)
                 # TASK-1050 (Defect A): discard ONLY this round's own id --
                 # the badge clears only once every bridge round for this
                 # session (this one included) has resolved.
                 self.discard_pending_round(session_id, request_id)
-            # TASK-1050 fix round 2 (review): mirrors `request_mcp_
-            # approvals`' identical fix -- a plain boolean snapshot
-            # (`still_active`/`still_armed_same_session`) computed before
-            # enqueueing the clear via `call_from_thread` leaves a race
-            # window where a NEWER same-session round can arm, mount its
-            # own card, and then get wiped by this round's now-stale
-            # clear. `_clear_pending_skill_install_if_round_is_current`
-            # defers the whole decision (round-identity check included)
-            # to the UI thread's own execution of the enqueued callable
-            # -- see `_clear_pending_skill_install_if_round_is_current`'s
-            # own docstring for the full race analysis. (The MCP bridge's
-            # equivalent guard is gone: PR0 re-keyed its payload map by
-            # round, so `_remount_head` re-derives the FIFO head instead
-            # of deciding whether to clear. This bridge is re-keyed in its
-            # own task.)
+            # PR0: re-derive the card from the session's remaining FIFO
+            # head rather than deciding whether to CLEAR it. This
+            # subsumes `_clear_pending_skill_install_if_round_is_current`'s
+            # two-part TOCTOU guard -- see `request_mcp_approvals`'
+            # identical `_remount_head` teardown call for the full race
+            # analysis.
+            # `owning_session_id`, not `session_id`: a legacy no-session
+            # caller retains no payload, so its head resolves to `None` and
+            # the card clears exactly as the pre-PR0 unconditional clear
+            # did -- `_remount_head` no-ops on a `None` session_id, which
+            # would otherwise leave a legacy caller's card stuck on screen
+            # (caught live by `test_console_skill_install_confirm.py::
+            # test_confirm_round_trip_allow`).
             try:
-                self._clear_pending_skill_install_if_round_is_current(
-                    request_id, session_id
+                self._remount_head(
+                    self._parked_skill_install_payloads,
+                    self.set_pending_skill_install,
+                    owning_session_id,
                 )
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 -- suppress teardown-time errors
                 logger.opt(exception=True).debug(
-                    "Failed to clear skill-install confirm during teardown"
+                    "Failed to marshal skill-install remount during teardown"
                 )
-
-    def _clear_pending_skill_install_if_round_is_current(
-        self, request_id: str | None, session_id: str | None
-    ) -> None:
-        """WORKER THREAD: enqueue a round-identity-guarded clear of the mounted skill-install card.
-
-        TASK-1050 fix round 2 (review): mirrors ``_clear_pending_
-        approval_if_round_is_current``'s identical race-proofing -- see
-        that method's docstring for the full analysis of why a boolean
-        snapshot computed before enqueueing (however late) cannot close
-        this race, only deferring the whole identity check to the UI
-        thread's own execution of the enqueued callable can.
-
-        Fix round 3 (re-review) regression fix: mirrors ``_clear_pending_
-        approval_if_round_is_current``'s identical two-part guard -- the
-        round-identity check alone only catches "payload overwritten by a
-        newer arm", not "a DIFFERENT, OLDER sibling round is still armed"
-        (true exactly when THIS round is the newest-armed one and
-        resolves FIRST, the natural live ordering). Also re-reads
-        ``_pending_skill_install_rounds`` live (under ``_pending_skill_
-        install_lock``, sequentially after -- never nested with --
-        ``_approval_state_lock``, matching this file's existing lock-
-        ordering discipline) filtered to this session; any hit there is
-        necessarily a still-armed sibling (this round's own entry is
-        already popped earlier in ``finally``), so the clear must no-op
-        exactly as it does on a failed identity check.
-
-        Args:
-            request_id: This round's own id. Only consulted when
-                ``session_id`` is not ``None``.
-            session_id: This round's owning session. ``None`` preserves
-                the pre-existing unconditional-clear behavior for legacy
-                no-session callers.
-        """
-        if self.app is None or self.set_pending_skill_install is None:
-            return
-
-        def _clear_if_still_current() -> None:
-            if session_id is not None:
-                with self._approval_state_lock:
-                    current = self._parked_skill_install_payloads.get(session_id)
-                if current is not None and current.get("request_id") != request_id:
-                    return
-                with self._pending_skill_install_lock:
-                    still_armed_same_session = any(
-                        state.get("session_id") == session_id
-                        for state in self._pending_skill_install_rounds.values()
-                    )
-                if still_armed_same_session:
-                    return
-                if session_id != (self.store.active_session_id or ""):
-                    return
-            self.set_pending_skill_install(None)
-
-        self.app.call_from_thread(_clear_if_still_current)
 
     def _remount_parked_skill_install(self, session_id: str) -> None:
         """Re-derive the mounted skill-install confirm card for ``session_id``.
@@ -5546,9 +5477,9 @@ class ConsoleChatController:
         """
         if self.set_pending_skill_install is None:
             return
-        with self._approval_state_lock:
-            parked_payload = self._parked_skill_install_payloads.get(session_id)
-        self.set_pending_skill_install(parked_payload)
+        self.set_pending_skill_install(
+            self._head_round_payload(self._parked_skill_install_payloads, session_id)
+        )
 
     def _marshal_pending_skill_install(self, payload: dict[str, Any] | None) -> None:
         """WORKER THREAD: hand a skill-install confirm payload to the UI thread.

@@ -160,3 +160,52 @@ def test_last_round_teardown_clears_the_card(controller):
     assert _wait_until(lambda: _mounted_round(controller) is None), (
         "the card must clear once the session has no armed rounds left"
     )
+
+
+def _arm_install(ctrl, url, session_id, results, key):
+    def worker():
+        results[key] = ctrl.request_skill_install_confirm(url, session_id=session_id)
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    return thread
+
+
+@pytest.fixture
+def install_controller():
+    store = ConsoleChatStore()
+    ctrl = ConsoleChatController(store=store, provider_gateway=object())
+    ctrl.app = FakeApp()
+    ctrl.mounted = []
+    ctrl.set_pending_skill_install = ctrl.mounted.append
+    ctrl.skill_install_confirm_timeout_seconds = lambda: 30.0
+    ctrl.session_a = store.create_session(title="A").id
+    store.switch_session(ctrl.session_a)
+    return ctrl
+
+
+def test_install_second_same_session_round_does_not_evict_the_first(
+    install_controller,
+):
+    ctrl = install_controller
+    results = {}
+    first = _arm_install(ctrl, "https://x/one", ctrl.session_a, results, "one")
+    assert _wait_until(lambda: len(ctrl.pending_skill_install_ids()) == 1)
+    round_1 = ctrl.pending_skill_install_ids()[0]
+    assert _wait_until(lambda: _mounted_round(ctrl) == round_1)
+
+    second = _arm_install(ctrl, "https://x/two", ctrl.session_a, results, "two")
+    assert _wait_until(lambda: len(ctrl.pending_skill_install_ids()) == 2)
+    time.sleep(0.1)
+
+    assert _mounted_round(ctrl) == round_1, (
+        "a second same-session install confirm must not evict the first's card"
+    )
+
+    ctrl.resolve_pending_skill_install(True, request_id=round_1)
+    first.join(timeout=5)
+    round_2 = ctrl.pending_skill_install_ids()[0]
+    assert _wait_until(lambda: _mounted_round(ctrl) == round_2)
+
+    ctrl.resolve_pending_skill_install(True, request_id=round_2)
+    second.join(timeout=5)

@@ -1668,7 +1668,9 @@ async def test_background_skill_install_confirm_parks_badges_toasts_and_mounts_o
         assert console.query_one("#chat-skill-install-card").display
         assert len([n for n in notifications if "needs approval" in n]) == 1
 
-        request_id = controller._parked_skill_install_payloads[background]["request_id"]
+        request_id = controller._head_round_payload(
+            controller._parked_skill_install_payloads, background
+        )["request_id"]
         controller.resolve_pending_skill_install(True, request_id=request_id)
         allowed = await asyncio.wait_for(decision_task, timeout=2.0)
         assert allowed is True
@@ -1768,7 +1770,9 @@ async def test_skill_install_park_toast_survives_a_re_invocation_for_the_same_ro
         )
         await pilot.pause(0.3)
         assert len([n for n in notifications if "needs approval" in n]) == 1
-        request_id = controller._parked_skill_install_payloads[background]["request_id"]
+        request_id = controller._head_round_payload(
+            controller._parked_skill_install_payloads, background
+        )["request_id"]
 
         # Re-invoke the shared park seam for the SAME, still-outstanding
         # skill-install round.
