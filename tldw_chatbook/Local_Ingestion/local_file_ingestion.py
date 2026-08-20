@@ -170,6 +170,7 @@ def _ensure_local_video_processor():
 
 # Import database
 from ..DB.Client_Media_DB_v2 import MediaDatabase  # noqa: E402
+from ..Chunking.Chunk_Lib import ENGINE_VERSION  # noqa: E402
 from ..RAG_Search.ingestion_indexing import suppress_ingestion_indexing  # noqa: E402
 
 # Import metrics
@@ -1774,6 +1775,17 @@ def persist_parsed_media(
     _reject_empty_extraction(payload, file_type)
     try:
         logger.debug(f"Storing {file_type} content in database...")
+        # task-12 (spec §8): stamp every chunk with the chunking engine
+        # version at the ONE persist seam, so the DB writer
+        # (``_persist_chunks``) persists it to the new
+        # ``UnvectorizedMediaChunks.chunk_engine_version`` column. Top-level
+        # key only (the chunker's ``metadata`` copy exists for in-memory
+        # consumers); non-dict entries are skipped defensively -- the DB
+        # writer already skips them, and pre-stamped chunks are not
+        # overwritten (a future engine bump changes the value, not the rule).
+        for chunk in payload.get("chunks") or []:
+            if isinstance(chunk, dict):
+                chunk.setdefault("chunk_engine_version", ENGINE_VERSION)
         # Note: add_media_with_keywords returns tuple: (media_id, media_uuid, message)
         def _persist() -> tuple[Optional[int], Optional[str], str]:
             return media_db.add_media_with_keywords(

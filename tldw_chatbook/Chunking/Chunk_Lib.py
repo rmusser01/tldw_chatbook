@@ -101,6 +101,7 @@ __all__ = [
     "MAX_DOCUMENT_SIZE_MB",
     "MAX_DOCUMENT_SIZE_BYTES",
     "DEFAULT_CHUNK_OPTIONS",
+    "ENGINE_VERSION",
     # Classes / functions
     "Chunker",
     "improved_chunking_process",
@@ -137,6 +138,16 @@ MAX_CHUNK_SIZE_PARAGRAPHS = 100  # Maximum paragraphs per chunk
 MAX_CHUNK_SIZE_TOKENS = 10000  # Maximum tokens per chunk
 MAX_DOCUMENT_SIZE_MB = 100  # Maximum document size in MB
 MAX_DOCUMENT_SIZE_BYTES = MAX_DOCUMENT_SIZE_MB * 1024 * 1024  # In bytes
+
+# Chunking engine version identity (spec §8, task-12). Stamped into every
+# chunk's ``metadata["chunk_engine_version"]`` here so in-memory consumers
+# see the version without a DB read; the ingestion persist seam
+# (``Local_Ingestion.local_file_ingestion.persist_parsed_media``) stamps the
+# same value as the TOP-LEVEL ``chunk_engine_version`` key the DB writer
+# (``_persist_chunks``) persists to ``UnvectorizedMediaChunks``. The
+# top-level dict stays clean of the key by design (task-11): DB stamping
+# happens at persist, not at chunk time.
+ENGINE_VERSION = "parity-1@385afa95"
 
 
 #######################################################################################################################
@@ -1542,6 +1553,10 @@ def improved_chunking_process(
         current_chunk_metadata["chunk_content_hash"] = hashlib.md5(
             chunk_text_content.encode("utf-8")
         ).hexdigest()
+        # task-12 (spec §8): in-memory consumers see the engine version
+        # without a DB read. Top-level dict stays clean -- the persist seam
+        # owns the DB stamp.
+        current_chunk_metadata["chunk_engine_version"] = ENGINE_VERSION
 
         start_char = current_chunk_metadata.get("start_char")
         end_char = current_chunk_metadata.get("end_char")

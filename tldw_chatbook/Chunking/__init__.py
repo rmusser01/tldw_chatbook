@@ -13,6 +13,7 @@ from .Chunk_Lib import (
     chunk_for_embedding,
     process_document_with_metadata,
     DEFAULT_CHUNK_OPTIONS,
+    ENGINE_VERSION,
 )
 
 from .chunking_templates import (
@@ -39,6 +40,7 @@ __all__ = [
     "chunk_for_embedding",
     "process_document_with_metadata",
     "DEFAULT_CHUNK_OPTIONS",
+    "ENGINE_VERSION",
     # Template system
     "ChunkingTemplate",
     "ChunkingTemplateManager",

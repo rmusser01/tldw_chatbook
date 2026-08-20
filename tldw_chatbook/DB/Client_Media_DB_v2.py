@@ -5932,6 +5932,15 @@ class MediaDatabase:
                             )
                             if chunk_dict.get("metadata")
                             else None,
+                            # task-12 (spec §8): engine-version stamp. Unlike
+                            # _persist_chunks (which spreads ``**ch`` into the
+                            # sync payload), this writer builds insert_data
+                            # EXPLICITLY -- the column must be added here AND
+                            # to the SQL below, or the row is stamped while
+                            # the sync event silently drops it.
+                            "chunk_engine_version": chunk_dict.get(
+                                "chunk_engine_version"
+                            ),
                             "uuid": chunk_uuid,
                             "last_modified": current_time,  # Set sync last_modified
                             "version": new_sync_version,
@@ -5952,6 +5961,7 @@ class MediaDatabase:
                             ],  # Pass last_modified_orig
                             insert_data["is_processed"],
                             insert_data["metadata"],
+                            insert_data["chunk_engine_version"],
                             insert_data["uuid"],
                             insert_data["last_modified"],  # Pass sync last_modified
                             insert_data["version"],
@@ -5968,8 +5978,8 @@ class MediaDatabase:
                         continue
                     # Ensure columns match params order
                     sql = """INSERT INTO UnvectorizedMediaChunks (media_id, chunk_text, chunk_index, start_char, end_char, chunk_type,
-                               creation_date, last_modified_orig, is_processed, metadata, uuid,
-                               last_modified, version, client_id, deleted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+                               creation_date, last_modified_orig, is_processed, metadata, chunk_engine_version, uuid,
+                               last_modified, version, client_id, deleted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
                     cursor = conn.cursor()
                     cursor.executemany(sql, chunk_params)
                     actual_inserted = len(
