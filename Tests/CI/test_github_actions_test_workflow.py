@@ -330,3 +330,42 @@ def test_nightly_deep_runs_the_tiers_the_pr_gate_does_not() -> None:
     assert "-n auto" not in nightly  # serial on purpose: order-regression canary
     assert "windows-latest" in nightly
     assert "macos-latest" in nightly
+
+
+def test_every_json_report_invocation_omits_log_capture() -> None:
+    """Every ``--json-report`` MUST carry ``--json-report-omit log``.
+
+    Incident (2026-08-20, TASK-19003): pytest-json-report captures RAW
+    ``logging.LogRecord`` objects per test and attaches them to the report
+    (``report._json_report_extra``). The websockets library logs through a
+    ``LoggerAdapter`` whose extra carries the LIVE connection object, so when
+    a realtime test failed on the runner with DEBUG-level logging left on by
+    an earlier test in the same xdist worker, execnet hit
+    ``DumpError: can't serialize <class 'websockets...ServerConnection'>``
+    while shipping the report — killing the worker and aborting BOTH Core
+    jobs with INTERNALERROR. One flaky test nuked the whole job's results.
+
+    Reproduced deterministically (failing realtime test + ``--log-level=DEBUG``
+    + xdist + json-report) and verified fixed by the omit flag. Nothing
+    consumes the log section: ``generate_test_summary.py`` reads only
+    ``tests[].outcome`` and ``call.longrepr``.
+    """
+    text = _workflow_text()
+    activations = 0
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        # The ACTIVATION flag is the standalone token "--json-report";
+        # "--json-report-file"/"--json-report-omit" are its arguments and
+        # appear as distinct tokens.
+        tokens = line.replace("\\", " ").split()
+        if "--json-report" not in tokens:
+            continue
+        activations += 1
+        assert "--json-report-omit" in tokens and "log" in tokens, (
+            f"test.yml line {line_number}: '--json-report' without "
+            f"'--json-report-omit log' — raw LogRecords in reports crash "
+            f"xdist workers (see docstring): {line.strip()!r}"
+        )
+    assert activations >= 4, (
+        f"expected at least 4 json-report activations (core, UI, full, "
+        f"nightly); found {activations} — the pin may have gone inert"
+    )
