@@ -160,7 +160,7 @@ The canonical new-table DDL is:
 
 ```sql
 CREATE TABLE sync_migration_runs (
-    migration_id TEXT PRIMARY KEY
+    migration_id TEXT NOT NULL PRIMARY KEY
         CHECK (length(migration_id) = 36),
     source_kind TEXT NOT NULL
         CHECK (source_kind = 'legacy_notes_sync_v1'),
@@ -193,7 +193,7 @@ CREATE TABLE sync_migration_runs (
 );
 
 CREATE TABLE sync_roots (
-    root_id TEXT PRIMARY KEY
+    root_id TEXT NOT NULL PRIMARY KEY
         CHECK (length(root_id) BETWEEN 1 AND 256),
     lexical_root_path TEXT NOT NULL
         CHECK (
@@ -240,15 +240,15 @@ CREATE TABLE sync_roots (
     ),
     CHECK (
         direction <> 'unspecified' OR (
-            source_kind = 'legacy_notes_sync_v1'
+            source_kind IS 'legacy_notes_sync_v1'
             AND needs_rescan = 1
-            AND reason_code = 'legacy_direction_invalid'
+            AND reason_code IS 'legacy_direction_invalid'
         )
     )
 );
 
 CREATE TABLE sync_bindings (
-    binding_id TEXT PRIMARY KEY
+    binding_id TEXT NOT NULL PRIMARY KEY
         CHECK (length(binding_id) BETWEEN 1 AND 256),
     root_id TEXT NOT NULL
         REFERENCES sync_roots(root_id) ON DELETE RESTRICT,
@@ -801,6 +801,8 @@ construction.
   and do not reserve SQLite's writer slot.
 - Compare a hand-authored complete fresh-v2 schema to a real v1 upgrade using
   the exact census, including table checks and partial-index predicates.
+- Execute negative INSERT probes proving every textual primary key rejects NULL;
+  do not rely on SQLite's historical non-INTEGER PRIMARY KEY behavior.
 
 ### Root and binding contracts
 
@@ -815,7 +817,9 @@ construction.
   disconnected-root/live-binding state.
 - Prove create/update under a disconnected parent and binding reopen both fail,
   including a two-connection disconnect/create race; prove the canonical DDL
-  rejects `unspecified` direction without the exact migration review state.
+  rejects `unspecified` direction without the exact migration review state by
+  executing negative INSERT probes for null/manual source and null/wrong reason,
+  not merely parsing the DDL.
 - Cover exact limits at 64 roots and 100,000 bindings plus one-over rejection
   without constructing unbounded payload content.
 
