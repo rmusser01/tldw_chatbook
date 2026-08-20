@@ -1,7 +1,7 @@
 # Library Notes, Folder Files, and Reviewed Sync Redesign
 
 Date: 2026-08-19
-Status: User-approved direction; pending independent specification review
+Status: User-approved direction; review-round-one corrections pending re-review
 
 ## Summary
 
@@ -74,7 +74,8 @@ The surface is **Operate** mode. Success is:
 - Replace manual `Sync now` with Check, Review, Apply, and Receipt phases.
 - Show exact predicted conflict winners before apply.
 - Keep auto-sync opt-in and visibly active; invalidate its prior approval when
-  folder, direction, or conflict policy changes.
+  user, root identity, direction, effective conflict policy, or allowed
+  extensions change.
 - Retain the latest durable sync outcome when leaving and returning to Sync.
 - Persist validation and runtime failures in the panel with recovery actions.
 - Reduce Files editor action competition without hiding state-relevant actions.
@@ -164,7 +165,7 @@ Configure contains:
 - `Folder to mirror` Input and `Browse...`.
 - `Direction: Bidirectional - change...`.
 - `Conflicts: Newer wins - change...`.
-- `Auto-sync every 5m: On/Off` plus its approval state.
+- `Auto-sync every 5m: Off / Requested - Needs review / On`.
 - Primary action `Check changes`.
 - Latest receipt summary and `Show recent activity` disclosure.
 
@@ -177,9 +178,15 @@ Changing folder, direction, or conflict policy:
 
 - discards any unapplied plan;
 - increments the result-generation token;
-- turns auto-sync Off if it was On;
-- sets `Check changes to approve these settings for auto-sync`;
+- leaves any prior auto-sync request visible as `Needs review` but does not arm
+  its timer;
+- sets `Check changes, then explicitly enable auto-sync for these settings`;
 - persists the new setting only at the existing explicit commit points.
+
+In one-way directions, the direction itself decides the winner. The conflict
+choice is disabled and reads `Conflicts: Direction decides`; it becomes
+editable only for Bidirectional sync. This avoids asking for a policy that the
+operation will ignore.
 
 ### Checking
 
@@ -227,22 +234,30 @@ This is a real storage limitation, not optional warning copy.
 
 Apply never trusts the earlier review blindly.
 
-1. Reopen the selected folder through `PinnedSyncRoot`.
-2. Rebuild a fresh mutation-free plan before the first write.
-3. Compare its fingerprint with the reviewed plan.
-4. If they differ, perform no writes and return `Review stale - Check again`.
-5. If they match, apply the operations in deterministic path order.
-6. Immediately before every operation, revalidate its Database version/hash,
-   disk hash/identity, and pinned containment facts.
-7. Use existing optimistic Database versions and pinned-root file operations.
-8. If an entry changes during apply, stop before mutating that entry and return
-   a partial receipt. Already completed cross-store operations are not rolled
-   back or described as atomic.
+1. Acquire the ADR-021 `LegacyRootOwnershipGate` cooperative shared mutation
+   lease. Hold it for the full legacy mutation pass, including fresh planning,
+   writes, metadata, and terminal history. If that gate is unavailable, fail
+   closed before mutation; `Check changes` may remain available, but `Apply`
+   reads `Mutation ownership unavailable`.
+2. Reopen the selected folder through `PinnedSyncRoot`.
+3. Rebuild a fresh mutation-free plan before the first write.
+4. Compare its fingerprint with the reviewed plan.
+5. If they differ, perform no writes and return `Review stale - Check again`.
+6. If they match, apply the operations in deterministic path order.
+7. Immediately before every operation, revalidate its Database version/hash,
+   disk hash/identity, and pinned containment facts supported by the existing
+   primitives.
+8. Use existing optimistic Database versions and pinned-root file operations.
+9. If a detectable entry change occurs during apply, stop before mutating that
+   entry and return a partial receipt. Already completed cross-store operations
+   are not rolled back or described as atomic.
+10. Release the shared lease in a `finally` boundary after terminal history is
+    settled.
 
-Cancellation remains cooperative between operations. It cannot undo completed
-operations. The UI may offer `Stop after current item` only if the existing
-engine cancellation path can retain truthful partial results; otherwise the
-first tranche keeps `Back - sync continues` and does not invent a false cancel.
+The first tranche has no user-facing apply cancellation. `Back - sync
+continues` is the only Applying navigation action. Engine/shutdown cancellation
+remains cooperative between operations, cannot undo completed operations, and
+must settle a truthful `cancelled` receipt before releasing ownership.
 
 ### Receipt
 
@@ -266,8 +281,51 @@ The existing sync-session history remains the durable receipt owner. Planning
 does not create history rows. No schema change is required: the existing
 summary JSON adds backward-compatible `applied`, `resolved`, `skipped`,
 `stale`, `cancelled`, and `failed` counts while retaining every current summary
-key. Current-session row detail remains bounded screen state; durable history
-stores counts and safe reasons, not note contents.
+key and a new `outcome` discriminator. Current-session row detail remains
+bounded screen state; durable history stores counts and safe reason categories,
+not note contents.
+
+The existing constrained `sync_sessions.status` column is mapped as follows:
+
+| Receipt outcome | Existing durable status | Meaning |
+| --- | --- | --- |
+| `done` or `no_changes` | `completed` | Terminal and fully settled. |
+| `partial` | `completed` | Terminal with some successful operations; `summary.outcome` prevents it being presented as full success. |
+| `stale` | `completed` | Attempted Apply wrote nothing because the reviewed plan no longer matched. |
+| `cancelled` | `cancelled` | Internal/shutdown cancellation settled between operations. |
+| `failed` | `failed` | No trustworthy successful completion claim can be made. |
+
+Apply creates the `running` session row only after mutation ownership is
+acquired. A stale pre-write replan then completes that row with
+`summary.outcome = "stale"`. Conflict rows use the existing resolution values:
+`use_db` or `use_disk` only after that winner is applied, `skip` for a conflict
+intentionally left unapplied, and `NULL` only for unresolved legacy/ASK data.
+Skipped non-conflict operations do not create conflict rows. The latest-status
+UI reads `summary.outcome`, falling back to the legacy status/count fields for
+older rows.
+
+### Classification truth table
+
+One-way direction is authoritative and does not consult a conflict policy.
+Bidirectional is the only mode that uses `disk_wins`, `db_wins`, or
+`newer_wins`.
+
+| Observed state | Disk -> Library | Library -> Disk | Bidirectional |
+| --- | --- | --- | --- |
+| Disk path exists; no linked Library note | Create Library note. | Leave disk path unchanged. | Create Library note. |
+| Linked Library note exists; disk path is missing | Retain the Library note and unlink its mirror metadata. Never delete the note. | Recreate the disk file from Library. | `db_wins`: recreate disk; `disk_wins`: retain note and unlink; `newer_wins`: skip as a conflict because a deletion has no reliable comparable timestamp. |
+| Both exist; contents match | No operation. | No operation. | No operation. |
+| Both exist; only disk changed | Update Library from disk. | Restore disk from Library because the selected direction makes Library authoritative. | Update Library from disk. |
+| Both exist; only Library changed | Restore Library from disk because the selected direction makes disk authoritative. | Update disk from Library. | Update disk from Library. |
+| Both exist; both changed | Update Library from disk. | Update disk from Library. | `disk_wins`: update Library; `db_wins`: update disk; `newer_wins`: update the older side from the newer timestamp, or skip if timestamps cannot be compared reliably. |
+| Neither destination can be safely identified/read | Skip with a bounded reason. | Skip with a bounded reason. | Skip with a bounded reason. |
+
+The current data model has no durable tombstone that distinguishes a genuinely
+new disk-only file from a disk file whose Library note was deleted. Therefore
+Disk -> Library and Bidirectional continue to classify an unlinked disk-only
+file as `Create Library note`; the review makes that potential resurrection
+visible before Apply. Adding cross-store deletion tombstones is a schema and
+conflict-policy change outside this tranche.
 
 ## Sync Plan and Apply Contract
 
@@ -305,6 +363,10 @@ are never accepted from an untrusted serialized source.
   preview and mutation decision trees.
 - `NotesSyncService` exposes typed `plan_folder(...)` and `apply_plan(...)`
   methods and retains history/conflict access.
+- `plan_folder(...)` is read-only and does not acquire the mutation lease.
+  `apply_plan(...)` must use the ADR-021 `LegacyRootOwnershipGate` shared lease
+  for its full pass. The gate is a prerequisite: reviewed Apply and auto-sync
+  remain fail-closed until the repository has a conforming cross-process gate.
 - `LibraryScreen` owns the current in-memory plan, worker generation, visible
   phase, status, and screen-level auto-sync timer.
 - `LibraryNotesCanvas` remains presentation-only.
@@ -319,16 +381,27 @@ and verified identities, and predicted operations. It does not claim to lock
 either store.
 
 The fresh-plan comparison prevents ordinary review staleness before writes.
-Per-operation guards handle races that occur after the comparison. Because
-SQLite and disk cannot share a transaction, a mid-apply race may yield a
-partial receipt. The interface and tests must never promise rollback or
-all-or-nothing apply.
+Per-operation guards detect the races observable through optimistic Database
+versions, hashes, descriptor identity, and cooperative in-app ownership.
+Because SQLite and disk cannot share a transaction—and an external process can
+write a file between the last supported precondition check and atomic
+replacement—this design does not claim to prevent every external in-place-write
+race. Observable drift yields Stale/Partial; an unobservable external race is a
+documented residual risk. The interface and tests must never promise rollback,
+all-or-nothing apply, or cross-process filesystem compare-and-swap.
 
 ## Auto-sync Contract
 
-Auto-sync is disabled until the current folder/direction/policy combination has
-completed one user-reviewed Check/Apply flow, including a reviewed no-change
-plan. Approval is invalidated whenever any of those three settings changes.
+Turning Auto-sync On before review records only screen-level intent and renders
+`Auto-sync requested - Needs review`; it does not persist an active timer. On a
+Review screen—including a reviewed no-change plan—the user must explicitly
+choose `Enable auto-sync for these settings`. Only that action persists active
+auto-sync and arms the timer. Applying a manual sync alone is not implicit
+authorization for future background writes.
+
+Approval is invalidated whenever folder identity, user identity, direction, or
+effective conflict policy changes. In one-way modes the effective policy is
+the normalized value `direction_decides`, not a hidden prior selection.
 
 Once enabled, each timer tick performs plan then apply using the approved
 configuration and the same stale/per-operation guards. It does not open an
@@ -338,18 +411,30 @@ is On, its folder, and the latest outcome.
 Auto-sync:
 
 - skips quietly only when another sync is already running;
-- records a durable or screen-retained receipt for every attempted apply;
+- records a durable receipt for every Apply attempt after ownership is
+  acquired; screen state may retain additional bounded row detail;
 - pauses and shows a recovery action when the folder is invalid or the service
   is unavailable;
-- honors the configured global conflict policy;
+- honors the normalized effective conflict policy (`direction_decides` for a
+  one-way sync, or the configured global policy for Bidirectional);
 - does not enable `ASK` or per-conflict interaction.
 
-The persisted `auto_sync` boolean alone does not prove approval. A new optional
-`[notes] auto_sync_approval_fingerprint` config value binds the canonical root
-identity, direction, and conflict policy that completed the reviewed flow.
-Enabling auto-sync writes the fingerprint. Changing any bound setting clears it
-and persists `auto_sync = false`. On startup, a missing, unresolvable, or
-mismatched fingerprint renders `Needs review` and does not arm the timer.
+The persisted `auto_sync` boolean alone represents a request, not proof of
+approval. A new optional `[notes] auto_sync_approval_fingerprint` binds:
+
+- the authenticated/configured user identifier used for Notes operations;
+- lexical and canonical root paths;
+- the root descriptor identity (`st_dev`/`st_ino` where meaningful), so a root
+  replaced at the same path does not inherit approval;
+- direction, normalized effective conflict policy, and allowed extensions;
+- the reviewed plan fingerprint and approval contract version.
+
+`Enable auto-sync for these settings` writes the fingerprint, including for a
+reviewed no-change plan. A bound-setting change clears approval and leaves the
+request in `Needs review`. On startup, a missing, unresolvable, replaced-root,
+user-mismatched, or otherwise mismatched fingerprint does not arm the timer.
+The next tick always replans; the reviewed-plan fingerprint records the exact
+approval event but is not expected to equal every future changing-content plan.
 
 ## Persistent Status and Recovery
 
@@ -410,18 +495,41 @@ The action-status line remains visible and names outcomes/recovery.
 ## Session Git Refinement
 
 Session Git behavior and safety contracts remain unchanged. Commit and push
-reviews lead with four decision facts:
+reviews lead with four decision-fact groups:
 
 1. **What:** exact commit or push action.
 2. **Where:** local branch or configured remote/ref.
 3. **Impact:** included session notes and unrelated-change promise.
 4. **Recovery:** cancel/back boundary and uncertain-result action.
 
-Existing exact commit message and included-notes review remain visible. Lower-
-frequency identity, transport, hook, object, and lease facts move behind an
-explicit `Show technical details` disclosure using the panel's existing
-show/hide pattern. Security warnings needed for informed authorization remain
-visible before the user authorizes remote contact.
+The Commit review keeps these facts visible without disclosure:
+
+- canonical repository path, local branch, and author identity;
+- exact commit subject/body and candidate commit ID when available;
+- included session-note paths/count and the unrelated-change promise;
+- whether trusted repository hooks or filters can run;
+- local-only/no-network effect and the Back/cancel boundary.
+
+The Push authorization/final review keeps these facts visible without
+disclosure:
+
+- exact commit subject/ID and expected parent-to-candidate transition;
+- local branch, full destination ref, sanitized endpoint identity, and secure
+  transport/authentication method;
+- included session-note provenance and the fact that required Git objects—not
+  independently selected note rows—are published;
+- credential-helper or SSH-agent contact, local pre-push-hook bypass, and the
+  possibility of remote hooks, CI, mirrors, reflogs, or policy effects;
+- exact-lease protection in user language, later edits remaining local, and
+  the uncertain-result recovery action.
+
+`Show technical details` contains only lower-frequency implementation evidence:
+repository/worktree filesystem identity tuples, raw HEAD/parent object IDs
+already summarized above, index and ownership signatures, policy fingerprints,
+provenance sequence numbers, and internal lease/status identifiers. Endpoint
+details remain in the existing selectable Endpoint Details surface; transport,
+authentication, hook effects, destination ref, commit ID, and author identity
+must not be hidden because they can change an authorization decision.
 
 ## Visual and Accessibility Contract
 
@@ -465,11 +573,16 @@ Test at minimum:
 - No changes.
 - One Library create, one disk create, and mixed updates.
 - Both-changed and deleted-on-disk conflicts under every exposed global policy.
+- Every row in the classification truth table, including one-way restoration
+  and the disk-only resurrection limitation.
 - Containment skip, unreadable file, optimistic DB conflict, and disk race.
 - Stale plan before apply and race during apply.
 - Partial receipt after one or more successful operations.
+- Ownership-gate unavailable, shared-lease acquisition, full-pass retention,
+  shutdown cancellation, and release on every terminal path.
 - Apply failure and service unavailable.
-- Auto-sync Off, Needs review, On, running, paused, and resumed.
+- Auto-sync Off, requested/Needs review, explicit no-change approval, On,
+  running, paused, resumed, user mismatch, and same-path root replacement.
 - Activity from 0 through the current 20-entry cap.
 - Long Unicode paths/titles and paths wider than the viewport.
 - Large roots: summary rendering must remain bounded and row detail scrollable;
@@ -493,13 +606,21 @@ Test at minimum:
 ### Pure/service tests
 
 - Plan classification is mutation-free for every direction and conflict policy.
+- The complete direction/state/policy truth table is table-driven in one test
+  corpus consumed by planner and apply-replan tests.
 - Preview and apply share the same classifier.
 - Deterministic plan fingerprints change for every relevant precondition.
 - Fresh-plan mismatch performs zero writes.
-- Per-operation DB/disk guards stop stale writes.
-- Mid-apply races produce truthful partial receipts.
+- Per-operation DB/disk guards stop every supported detectable stale write.
+- Detectable mid-apply races produce truthful partial receipts; tests do not
+  claim an external filesystem compare-and-swap that the primitives lack.
 - Plan objects contain no full note content.
-- Auto-sync approval invalidates on folder/direction/policy changes.
+- Auto-sync approval binds user/root identity/direction/effective
+  policy/extensions and invalidates on every mismatch.
+- Durable receipt tests cover every `summary.outcome` to constrained status
+  mapping and the legacy-history fallback.
+- Apply cannot mutate without the ADR-021 shared legacy lease and holds it
+  through terminal history settlement.
 - Existing containment, permissions, sync history, and File Notes authority
   suites remain green.
 
@@ -533,13 +654,18 @@ This design is one coordinated tranche but should not become one indivisible
 task or one enormous commit.
 
 1. **Reviewed Sync contract:** ADR, pure plan/receipt types, shared classifier,
-   mutation-free plan, guarded apply, service tests, and history compatibility.
-2. **Sync presentation and durable status:** Canvas/screen phases, authority
+   conflict truth table, mutation-free plan, guarded apply, service tests, and
+   history compatibility.
+2. **Legacy ownership prerequisite:** locate or implement the ADR-021
+   `LegacyRootOwnershipGate`, route every legacy mutation entry point through
+   its full-pass shared lease, and keep reviewed Apply/auto-sync fail-closed
+   until its cross-process contract is proven.
+3. **Sync presentation and durable status:** Canvas/screen phases, authority
    row, explicit choices, auto-sync approval, recovery, compact UI tests.
-3. **Folder Files and Session Git refinement:** authority row, target-path
+4. **Folder Files and Session Git refinement:** authority row, target-path
    label, progressive actions/details, semantic state styling, responsive and
    accessibility verification.
-4. **Polish and evidence:** generated CSS, live captures, contrast checks,
+5. **Polish and evidence:** generated CSS, live captures, contrast checks,
    documentation, critique rerun, and regression closeout.
 
 The implementation plan may combine adjacent steps into one PR only when each
@@ -554,8 +680,10 @@ ADR path: `backlog/decisions/068-reviewed-notes-sync-plan-and-apply.md`
 
 Reason: this design introduces a long-lived Notes Sync service contract,
 separates read-only planning from mutation, defines stale/partial apply policy,
-and changes auto-sync approval semantics. Existing ADRs govern File Notes
-authority and legacy Sync containment but do not decide this boundary.
+defines a direction/conflict truth table and durable status mapping, applies the
+ADR-021 ownership lease to the reviewed path, and changes auto-sync approval
+semantics. Existing ADRs govern File Notes authority and legacy Sync
+containment but do not decide this combined boundary.
 
 The ADR must be created before implementation and linked from the Backlog task,
 implementation plan, and closeout notes.
@@ -581,22 +709,46 @@ deterministic ordering, and explicit partial receipts. Never promise rollback.
 Risk: disk or Database changes after fresh-plan comparison.
 
 Resolution: revalidate every operation immediately before mutation and stop
-before the stale item.
+before supported detectable stale writes. State explicitly that external
+writers outside cooperative ownership can still win an unobservable filesystem
+race between the final check and replacement.
+
+### Missing legacy ownership gate
+
+Risk: reviewed Sync adds a safer UI while continuing to violate ADR-021's
+cross-process mutation-ownership contract.
+
+Resolution: make the gate an explicit prerequisite, acquire its cooperative
+shared lease for the entire apply/history pass, and fail closed when ownership
+cannot be proven. Do not substitute path-prefix checks or the File Notes
+process-memory session gate.
 
 ### Auto-sync approval surviving changed settings
 
 Risk: the user reviews one configuration but auto-sync later runs another.
 
-Resolution: approval binds folder, direction, and policy; changing any of them
-turns auto-sync Off/Needs review.
+Resolution: explicit authorization after Review binds user, canonical and
+descriptor root identity, direction, normalized policy, extensions, and
+contract version. A mismatch keeps the request visible as Needs review but
+does not arm background writes.
 
 ### History schema creep
 
 Risk: detailed receipts trigger an unrelated Database migration.
 
-Resolution: prefer backward-compatible existing summary JSON; otherwise keep
-detailed current-session receipt in screen memory and existing durable summary
-fields. No schema change in this tranche.
+Resolution: map every new receipt outcome onto the existing constrained status
+values and store the precise outcome/counts in backward-compatible summary
+JSON. Keep detailed current-session rows in screen memory. No schema change in
+this tranche.
+
+### Deletion ambiguity without tombstones
+
+Risk: a disk file belonging to a deleted Library note is indistinguishable from
+a genuinely new disk-only note and can be proposed for recreation in Library.
+
+Resolution: disclose the exact `Create Library note` operation in Review and
+document the limitation. Durable tombstones require a separate schema/conflict
+ADR and are not smuggled into this UI tranche.
 
 ### Large roots and terminal overload
 
