@@ -584,7 +584,13 @@ Finally, rewrite `_remount_parked_skill_install`'s body to use the head:
 - [ ] **Step 4: Run the tests**
 
 Run: `.venv/bin/python -m pytest Tests/UI/test_console_parked_payload_rekey.py Tests/UI/test_skill_install_concurrent_confirms.py Tests/UI/test_console_skill_install_confirm.py -v`
-Expected: all PASS, including every pre-existing TASK-910 test.
+
+Expected: your new tests PASS and every pre-existing TASK-910 test PASSES, **except** these two, which already fail on `origin/dev` before any PR0 change and are NOT yours to fix:
+
+- `test_skill_install_concurrent_confirms.py::test_bare_shutdown_flag_alone_denies_a_real_session_round_within_one_poll_interval`
+- `test_skill_install_concurrent_confirms.py::test_shutdown_flag_alone_denies_both_unregistered_sessions_rounds_and_cleans_accounting`
+
+The baseline is exactly `2 failed, 26 passed` for `test_console_headless_approval.py` plus `test_skill_install_concurrent_confirms.py` together. A THIRD failure in that pair is a real regression. Do not "fix" the two known ones; if your change makes them pass, say so in your report rather than assuming it is unrelated luck.
 
 - [ ] **Step 5: Commit**
 
