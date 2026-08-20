@@ -4,7 +4,7 @@
 
 **Goal:** A "Changed files" section in Console's Inspector rail lists the conversation's cross-turn latest state per file; selecting a file opens the Review screen focused on it; the Review screen gains diff-line and whole-file comments feeding the existing auto-attach delivery loop.
 
-**Architecture:** Pure aggregation over existing snapshot rows (latest clean row per `(root, path)` wins); rail section on the cached-summary pattern (guard tuple + off-thread recompute — never DB/git on the sync tick); constructor-state click-through; line cursor over the existing flat diff Static with an `on_key` pane reclaim; `change_notes` anchor extension (audit v11: `anchor_kind`/`diff_line_index`/`diff_line_text`); kind-aware block/disclosure formatters with the delivery mechanics untouched.
+**Architecture:** Pure aggregation over existing snapshot rows (latest clean row per `(root, path)` wins); rail section on the cached-summary pattern (guard tuple + off-thread recompute — never DB/git on the sync tick); constructor-state click-through; line cursor over the existing flat diff Static with an `on_key` pane reclaim; `change_notes` anchor extension (audit v12 (renumbered from v11 at rebase: task-15669 concurrently minted v11 on dev): `anchor_kind`/`diff_line_index`/`diff_line_text`); kind-aware block/disclosure formatters with the delivery mechanics untouched.
 
 **Tech Stack:** Python 3.11+, Textual 8.x, SQLite (AgentRuns_DB), pytest (venv-only: `VIRTUAL_ENV=/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -p no:randomly -q`).
 
@@ -23,7 +23,7 @@
 
 ---
 
-### Task 1: `change_notes` anchor extension (audit v11) + note-counts query
+### Task 1: `change_notes` anchor extension (audit v12) + note-counts query
 
 **Files:**
 - Modify: `tldw_chatbook/DB/AgentRuns_DB.py` (change_notes DDL comment block; migration block; `add_change_note`; new counts query)
@@ -46,7 +46,7 @@ def change_note_counts_for_conversation(self, conversation_id: str) -> dict[tupl
 - [ ] **Step 2: Run to red.**
 - [ ] **Step 3: Implement** — PRAGMA-guarded idempotent ALTERs (`anchor_kind TEXT NOT NULL DEFAULT 'hunk'`, `diff_line_index INTEGER`, `diff_line_text TEXT`) + `INSERT OR IGNORE INTO schema_version (version) VALUES (11)` per the file's convention; counts query mirrors `pending_notes_for_conversation`'s JOIN shape; Google docstrings with Args/Returns.
 - [ ] **Step 4: Green** — plus `Tests/Chat/test_console_diff_feedback_delivery.py` and `Tests/UI/test_console_turn_file_card_notes.py` untouched-green (byte-compat proof).
-- [ ] **Step 5: Commit** — `feat(console): change_notes anchor kinds + per-file counts (audit v11)`
+- [ ] **Step 5: Commit** — `feat(console): change_notes anchor kinds + per-file counts (audit v12)`
 
 ---
 

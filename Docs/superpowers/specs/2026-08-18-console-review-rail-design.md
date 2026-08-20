@@ -192,7 +192,7 @@ precedent, copied exactly:
   Pending comments can be deleted from the strip (same
   `delete_change_note` rules as the card: pending only).
 
-### 4. Anchors + schema (audit v11)
+### 4. Anchors + schema (audit v12 (renumbered from v11 at rebase: task-15669 concurrently minted v11 on dev))
 
 `change_notes` (v8, +`delivered_by_run_id` v9, +`snapshot_id` v10) gains,
 by the same PRAGMA-guarded idempotent-ALTER convention:

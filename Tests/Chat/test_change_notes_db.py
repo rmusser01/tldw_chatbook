@@ -49,7 +49,7 @@ def test_add_change_note_returns_id_and_round_trips_all_fields(db):
     assert row["note"] == "use the cached value here"
     assert row["created_at"]
     assert row["delivered_at"] is None
-    # TASK-18060 Task 1 (audit v11): an old-signature call (no anchor_kind/
+    # TASK-18060 Task 1 (audit v12): an old-signature call (no anchor_kind/
     # diff_line_* kwargs) is byte-compatible with every V1.5 caller -- it
     # must still round-trip, now reading the new columns at their
     # backward-compatible defaults.
@@ -673,7 +673,7 @@ def test_migration_adds_snapshot_id_column_and_appends_audit_version_10(tmp_path
         reopened.close()
 
 
-def test_migration_adds_anchor_kind_and_diff_line_columns_and_appends_audit_version_11(
+def test_migration_adds_anchor_kind_and_diff_line_columns_and_appends_audit_version_12(
     tmp_path,
 ):
     """TASK-18060 Task 1 (spec §4): same idempotent-ALTER precedent as the
@@ -684,7 +684,7 @@ def test_migration_adds_anchor_kind_and_diff_line_columns_and_appends_audit_vers
     pre-existing row's true anchor kind) and the reopened instance's API
     must keep working against it.
     """
-    db_path = tmp_path / "migrate_v11.db"
+    db_path = tmp_path / "migrate_v12.db"
 
     first = AgentRunsDB(db_path, client_id="t")
     run_id = first.create_run(conversation_id="c", agent_kind="primary")
@@ -694,9 +694,9 @@ def test_migration_adds_anchor_kind_and_diff_line_columns_and_appends_audit_vers
     )
     first.close()
 
-    # Simulate a pre-v11 file: recreate change_notes with the OLD
+    # Simulate a pre-v12 file: recreate change_notes with the OLD
     # (12-column, no anchor_kind/diff_line_index/diff_line_text) shape and
-    # remove the version-11 audit row. Same DROP-and-recreate approach as
+    # remove the version-12 audit row. Same DROP-and-recreate approach as
     # the v9/v10 tests above (`ALTER TABLE ... DROP COLUMN` hits the same
     # SQLite schema-reconstruction quirk against this table's commented
     # DDL).
@@ -733,7 +733,7 @@ def test_migration_adds_anchor_kind_and_diff_line_columns_and_appends_audit_vers
             "snapshot_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             old_rows,
         )
-        raw.execute("DELETE FROM schema_version WHERE version = 11")
+        raw.execute("DELETE FROM schema_version WHERE version = 12")
         raw.commit()
     finally:
         raw.close()
@@ -745,7 +745,7 @@ def test_migration_adds_anchor_kind_and_diff_line_columns_and_appends_audit_vers
         assert "diff_line_index" not in columns
         assert "diff_line_text" not in columns
         versions = {row[0] for row in raw.execute("SELECT version FROM schema_version")}
-        assert 11 not in versions
+        assert 12 not in versions
     finally:
         raw.close()
 
@@ -792,10 +792,10 @@ def test_migration_adds_anchor_kind_and_diff_line_columns_and_appends_audit_vers
         try:
             raw = sqlite3.connect(str(db_path))
             try:
-                version_11_rows = raw.execute(
-                    "SELECT COUNT(*) FROM schema_version WHERE version = 11"
+                version_12_rows = raw.execute(
+                    "SELECT COUNT(*) FROM schema_version WHERE version = 12"
                 ).fetchone()[0]
-                assert version_11_rows == 1
+                assert version_12_rows == 1
             finally:
                 raw.close()
             assert third.notes_for_run(run_id)[0]["anchor_kind"] == "hunk"
@@ -839,10 +839,10 @@ def test_migration_reopening_twice_is_idempotent(tmp_path):
                 "SELECT COUNT(*) FROM schema_version WHERE version = 8"
             ).fetchone()[0]
             assert version_8_rows == 1  # INSERT OR IGNORE -- never duplicated
-            version_11_rows = raw.execute(
-                "SELECT COUNT(*) FROM schema_version WHERE version = 11"
+            version_12_rows = raw.execute(
+                "SELECT COUNT(*) FROM schema_version WHERE version = 12"
             ).fetchone()[0]
-            assert version_11_rows == 1  # TASK-18060 Task 1: also never duplicated
+            assert version_12_rows == 1  # TASK-18060 Task 1: also never duplicated
 
             tables = [
                 row[0]

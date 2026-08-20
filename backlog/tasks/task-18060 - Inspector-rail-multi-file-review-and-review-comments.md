@@ -65,7 +65,7 @@ widget (`Widgets/Console/console_changed_files_section.py`) is pure
 presentation over precomputed `ConsoleChangedFilesState`. The Review
 screen (`UI/Screens/change_review_screen.py`) gained a diff-line cursor,
 `c`/`C` comment creation, and a notes strip; `change_notes` gained
-`anchor_kind`/`diff_line_index`/`diff_line_text` (schema audit v11 in
+`anchor_kind`/`diff_line_index`/`diff_line_text` (schema audit v12 (renumbered from v11 at rebase: task-15669 concurrently minted v11 on dev) in
 `DB/AgentRuns_DB.py`) so a comment can anchor to a specific diff line or
 to the whole file, in addition to the existing hunk anchor.
 
