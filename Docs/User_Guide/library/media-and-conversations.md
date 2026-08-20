@@ -296,7 +296,10 @@ navigation keys live in the [guide index](../index.md).
 - Neither panel owns any config.toml keys; media arrives via
   [import & export](import-and-export.md) (Import media, including the
   "Analyze after import" and chunking options that shape what the viewer
-  shows).
+  shows). Note that imported text is lightly sanitized on the way in (null
+  bytes and unusual control characters become spaces; see
+  [import & export](import-and-export.md) for the details), and every chunk
+  is stamped with the chunking engine version that produced it.
 - Both panels are retrieval sources for
   [Search / RAG](search-and-rag.md) — the "Media" and "Conversations"
   scope toggles there search exactly what you browse here.
@@ -422,6 +425,13 @@ an active content search now pins the search box, match count, and
 sit below the visible fold exactly while being used; compositor-strip
 evidence at exactly 80x24 before/after, plus a 120x40 pin that an
 inactive search keeps today's in-flow layout with no reserved space.)*
+
+*Verified against the chunking-engine-parity worktree — 2026-08-19
+(chunking-engine-parity, doc-only on this page): the chunking-engine note
+above reflects the engine swap only — the media viewer and Conversations
+panel behavior is unchanged. Sanitization and the engine-version stamp live
+in the import pipeline; details and verification pointers are on the
+[import & export](import-and-export.md) page.*
 
 *Verified against codex/library-top-level-pagination — 2026-08-20
 (TASK-18914 / ADR-067: complete-source Media type filtering and exact 20-item

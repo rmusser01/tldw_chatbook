@@ -119,7 +119,13 @@ not:
 - **Embedding** — model ⚠, device, batch size, max length ⚠: what the index is
   built from.
 - **Chunking** — chunk size ⚠, overlap ⚠, method ⚠ (`Words` / `Sentences` /
-  `Paragraphs`): how source text is split before embedding.
+  `Paragraphs`): how source text is split before embedding. The picker offers
+  the three text methods; the chunking engine underneath (shared with the
+  server) also implements `tokens`, `semantic`, `json`, `xml`,
+  `ebook_chapters`, `rolling_summarize`, `fixed_size`, `code`, `code_ast` and
+  `structure_aware` for callers that go through the pipeline directly — see
+  [Import & export](../library/import-and-export.md) for the e-book
+  chapter method in the UI.
 - **Vector store** — distance metric ⚠ (`Cosine` / `Euclidean (L2)` / `Inner
   product`): how embeddings are compared.
 - **Reranking** — **Enable reranking**, **Reranker provider**, **Reranker
@@ -344,6 +350,15 @@ field has focus the footer relabels the hints as `Esc, s` / `Esc, r` /
   index never builds; keyword search keeps working regardless. "RAG backfill
   could not start: the shared RAG service is unavailable right now. Try again
   shortly." is different — that one is transient, so press **Backfill** again.
+- **The chunking engine clamps instead of scolding.** With `Words`,
+  `Sentences` or `Paragraphs`, an overlap at or above the chunk size used to
+  be rejected; the engine now clamps the overlap just under the size and
+  produces more, smaller chunks instead. (The `tokens` method is the one
+  exception — it still raises a clear error when overlap ≥ size.) Every
+  chunk is also stamped with the engine version that produced it, and text is
+  sanitized before chunking (null bytes and unusual control characters become
+  spaces, Unicode is normalized when that doesn't shift offsets) — see
+  [Import & export](../library/import-and-export.md).
 
 —
 *Verified against dev @ e7b9ebabd — 2026-08-06. Verified against d6b6a738f
@@ -419,3 +434,18 @@ per-category tables and the verbatim probe output:
 `Docs/superpowers/qa/2026-08-17-cross-encoder/report.md`. `cross_encoder` is
 not exposed in this pane — it is a config-file strategy — and no built-in
 profile uses it, so nothing on this screen changed behaviour.*
+
+*Verified against the chunking-engine-parity worktree — 2026-08-19
+(chunking-engine-parity, doc-only on this page): the chunking engine under
+this pane is now the server's engine (vendored, behind a compatibility
+shim), verified in `tldw_chatbook/Chunking/Chunk_Lib.py`'s method map and
+`tldw_chatbook/RAG_Search/chunking_service.py`'s now-whitelist-free
+delegation — every engine method (`words`, `sentences`, `paragraphs`,
+`tokens`, `semantic`, `json`, `xml`, `ebook_chapters`, `rolling_summarize`,
+`fixed_size`, `code`, `code_ast`, `structure_aware`) routes through for
+pipeline callers, while this pane's Method picker still offers the three
+text methods. The clamp-vs-raise overlap change and the `tokens` exception
+are the shim's `_guard_tokens_overlap` and the engine strategies' clamp
+(`tldw_chatbook/Chunking/engine/strategies/paragraphs.py`), pinned by
+`Tests/Chunking/`. No live TUI walkthrough; no behavior of this pane's own
+controls changed.*
