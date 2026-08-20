@@ -5370,7 +5370,7 @@ Two rules, both incident-backed here:
    `Packaging/check_manifest.py` sets, the test's `RUNTIME_MIGRATION_PATHS`)
    — `46945ebbe` missed all four.
 2. **A known-red gate is a masked gate.** "That test is just stale on the
-   version pin" was true AND the reason a shipped production bug (installed
-   users bricked at v39→v40) went undetected for three days. Re-greening a
-   trivially-red probe is not cosmetics; until it runs green, everything it
-   guards is unguarded.
+   version pin" was true AND the reason a production bug (any install built
+   from this tree could not migrate an existing DB past v39) sat undetected
+   from the v40 bump until this task. Re-greening a trivially-red probe is
+   not cosmetics; until it runs green, everything it guards is unguarded.
