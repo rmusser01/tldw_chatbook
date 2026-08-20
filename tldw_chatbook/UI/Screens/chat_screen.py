@@ -12098,13 +12098,19 @@ class ChatScreen(BaseAppScreen):
         """`(conversation_id, newest change_review_run_id)` -- the guard.
 
         `conversation_id` is the same accessor the world-book/dictionary
-        caches use. `newest change_review_run_id` is an O(messages) scan
-        of the active session's own in-memory message list (no DB read):
+        caches use. `newest change_review_run_id` is found by scanning the
+        active session's own in-memory message list (no DB read) in
+        REVERSE, breaking on the first truthy `change_review_run_id`:
         every change-summary TOOL marker carries `change_review_run_id`
         (live-appended and resume-injected alike, both real store
         messages -- see `ConsoleAgentBridge._append_change_markers` /
         `resume_marker_messages`), and `messages_for_session` returns them
-        in transcript order, so the last truthy one is the newest.
+        in transcript order, so the newest marker sits nearest the end of
+        the list -- markers cluster there in practice, so the reverse scan
+        with an early break makes steady-state cost near-constant instead
+        of walking the whole message list forward on every 0.2s sync tick
+        (worst case is still O(messages), when no message in the session
+        carries a marker at all).
         """
         conversation_id = self._current_console_rail_conversation_id()
         store = self._console_chat_store
@@ -12115,10 +12121,11 @@ class ChatScreen(BaseAppScreen):
                 messages = store.messages_for_session(session_id)
             except KeyError:
                 messages = ()
-            for message in messages:
+            for message in reversed(messages):
                 run_id = getattr(message, "change_review_run_id", None)
                 if run_id:
                     newest_run_id = str(run_id)
+                    break
         return (conversation_id, newest_run_id)
 
     def _build_console_changed_files_state(self) -> ConsoleChangedFilesState:

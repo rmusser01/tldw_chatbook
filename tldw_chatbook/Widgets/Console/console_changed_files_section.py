@@ -178,7 +178,15 @@ class ConsoleChangedFilesSection(RecomposeCaptureGuard, Vertical):
             # file card: a quick second press must never be silently
             # swallowed by the default "-active" flash.
             row.active_effect_duration = 0
-            row.entry_index = idx
+            # The entry itself is stored on the button (the frozen
+            # dataclass is safe to hold), not just its index: a stale
+            # press delivered after `update_state()` has recomposed with a
+            # REORDERED or different `entries` tuple would otherwise still
+            # be in-bounds for `idx` but resolve to a DIFFERENT file --
+            # mis-navigating the Review screen. Reading the entry straight
+            # off the pressed button sidesteps that positional trap
+            # entirely.
+            row.entry = entry
             # The row's own label is middle-elided to the section's width
             # (mirrors ConsoleTurnFileCard) -- the tooltip always carries
             # the FULL, un-elided (multi-root-prefixed) label so nothing is
@@ -221,22 +229,23 @@ class ConsoleChangedFilesSection(RecomposeCaptureGuard, Vertical):
         self.refresh(recompose=True)
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
-        """A row press: post ``FileSelected`` with that entry's identity."""
+        """A row press: post ``FileSelected`` with that entry's identity.
+
+        Reads the entry straight off the pressed button (``row.entry``,
+        stamped at compose time) rather than re-indexing
+        ``self.state.entries`` by a stored position -- a stale press
+        delivered after ``update_state()`` recomposed with a reordered or
+        different entries tuple could otherwise land in-bounds but resolve
+        to the WRONG file. Degrading to a no-op when the button carries no
+        entry (a partial-mount desync) keeps this handler from raising out
+        into ``app._handle_exception()`` and exiting the whole app.
+        """
         try:
             button = event.button
-            idx = getattr(button, "entry_index", None)
-            if idx is None:
+            entry = getattr(button, "entry", None)
+            if entry is None:
                 return
             event.stop()
-            if idx >= len(self.state.entries):
-                # A partial-mount desync (stale button event arriving after
-                # a state swap) could otherwise index past a shorter
-                # entries tuple -- degrade to a no-op rather than raise out
-                # of this `on_*` handler, which Textual would otherwise
-                # propagate to `app._handle_exception()` and exit the whole
-                # app.
-                return
-            entry = self.state.entries[idx]
             self.post_message(
                 self.FileSelected(
                     entry.run_id, entry.snapshot_id, entry.path, entry.root
@@ -252,7 +261,12 @@ class ConsoleChangedFilesSection(RecomposeCaptureGuard, Vertical):
 
         ``Resize`` does not bubble (``textual.events.Resize(bubble=False)``)
         so this fires only when THIS section's own width changes -- mirrors
-        ``ConsoleTurnFileCard.on_resize``.
+        ``ConsoleTurnFileCard.on_resize``. Each row re-elides from its OWN
+        stored entry (``row.entry``, stamped at compose time), never from a
+        positional re-slice of ``self.state.entries`` -- the same
+        stale-index trap ``on_button_pressed`` guards against would
+        otherwise let a resize mid-recompose re-label a row from the WRONG
+        entry.
 
         Args:
             event: The section's resize event (unused; the new size is
@@ -260,12 +274,11 @@ class ConsoleChangedFilesSection(RecomposeCaptureGuard, Vertical):
         """
         del event
         try:
-            if not self.state.entries:
-                return
-            rows = list(self.query(".console-changed-files-row"))
-            visible = self.state.entries[: len(rows)]
-            for idx, entry in enumerate(visible):
-                rows[idx].label = self._row_label(entry)
+            for row in self.query(".console-changed-files-row"):
+                entry = getattr(row, "entry", None)
+                if entry is None:
+                    continue
+                row.label = self._row_label(entry)
         except Exception:
             logger.opt(exception=True).warning(
                 "Changed-files section resize label refresh failed."

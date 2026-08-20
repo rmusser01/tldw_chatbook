@@ -252,6 +252,79 @@ async def test_update_state_resyncs_the_same_instance_in_place():
 
 
 @pytest.mark.asyncio
+async def test_stale_press_after_reorder_resolves_the_original_entry():
+    """Qodo round: a row press must resolve by IDENTITY, not by position.
+
+    A row `Button.Pressed` message can still be in flight when
+    `update_state()` recomposes the section onto a REORDERED (or
+    otherwise different) `entries` tuple -- Textual delivers the message
+    against the ALREADY-CAPTURED button object, whose position in the new
+    layout says nothing about which entry it was drawn for. Capturing the
+    row up front and pressing it only AFTER the reorder reproduces exactly
+    that race without relying on message-queue timing.
+    """
+    original_first = _entry(
+        root="/workspace",
+        path="a.py",
+        label="a.py",
+        run_id="run-a",
+        snapshot_id=10,
+    )
+    original_second = _entry(
+        root="/workspace",
+        path="b.py",
+        label="b.py",
+        run_id="run-b",
+        snapshot_id=20,
+    )
+    state = ConsoleChangedFilesState(entries=(original_first, original_second))
+    async with _Host(state).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        rows = list(pilot.app.query(".console-changed-files-row"))
+        assert len(rows) == 2
+        # Capture the FIRST row (drawn for `original_first`, index 0) --
+        # this is the stale button a late press event still targets.
+        stale_button = rows[0]
+
+        section = pilot.app.query_one(
+            "#section-under-test", ConsoleChangedFilesSection
+        )
+        # Recompose onto a REORDERED entries tuple: `original_first` is now
+        # at index 1, a brand-new entry now occupies index 0. Index-based
+        # re-resolution would read the row's stale `entry_index == 0` and
+        # find the NEW entry instead of `original_first`.
+        reordered_new = _entry(
+            root="/workspace",
+            path="c.py",
+            label="c.py",
+            run_id="run-c",
+            snapshot_id=30,
+        )
+        section.update_state(
+            ConsoleChangedFilesState(entries=(reordered_new, original_first))
+        )
+        await pilot.pause()
+
+        # Deliver the press directly against the captured (now-detached,
+        # stale) button object -- this is exactly what a late-arriving
+        # `Button.Pressed` message carries: `event.button` pointing at the
+        # widget instance that was pressed, regardless of whether it is
+        # still mounted by the time the handler runs.
+        await section.on_button_pressed(Button.Pressed(stale_button))
+        await pilot.pause()
+
+        assert len(pilot.app.captured) == 1
+        event = pilot.app.captured[0]
+        assert event.run_id == "run-a"
+        assert event.snapshot_id == 10
+        assert event.path == "a.py"
+        assert event.root == "/workspace", (
+            "a stale press must resolve to the ORIGINAL entry it was drawn "
+            "for, not whatever entry now occupies its old positional index"
+        )
+
+
+@pytest.mark.asyncio
 async def test_same_relative_path_under_two_roots_renders_two_distinct_rows():
     """TASK-2 pin, carried into this widget: a path shared by two roots must
     render as two rows, distinguished via the multi-root prefix already

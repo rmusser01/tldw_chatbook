@@ -1170,8 +1170,7 @@ def turn_file_entries(
 
 @dataclass(frozen=True)
 class ConversationFileEntry:
-    """One file's cross-turn latest state in a conversation (review rail,
-    TASK-18060 spec §1).
+    """One file's cross-turn latest state in a conversation (review rail, TASK-18060 spec §1).
 
     ``label`` follows :class:`TurnFileEntry`'s exact convention: the bare
     relpath when every contributing row shares one root, ``<root-name>/
