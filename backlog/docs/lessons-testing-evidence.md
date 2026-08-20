@@ -5266,3 +5266,39 @@ tasks, some review must check the CONNECTION, not the halves — that is what
 the whole-branch review is for; never skip it because per-task reviews were
 clean. (2) A test-plan deviation justified by assumed behavior of the thing
 under test is a red flag: the assumption is the test.
+
+## pilot.pause() is a CPU-idleness heuristic, not a queue drain — every assert-after-pause races under machine load
+
+**TASK-16842, 2026-08-16.** `Tests/UI/test_stts_profile_library.py` carried a
+five-test flake family two reviews had hit (3 failures normally, 14 in one run
+at 2x machine load; one test reproduced standalone: `assert None is not None`
+on `app.focused` after `_wait_until` had confirmed the button was *mounted*).
+A full-file run alongside 14 CPU burners reproduced exactly the two recurring
+victims on the first try — `app.focused` was None while the export-choice
+modal's buttons were already queryable. Three stacked mechanisms, all
+load-sensitive and none a product bug:
+
+1. **`Widget.focus()` is deferred.** It schedules `screen.set_focus` via
+   `app.call_later` — one pump callback AFTER the widget becomes queryable.
+   Mounted is not focused. (Not user-visible: the callback is FIFO-ordered
+   before any input that arrives after the modal is on screen.)
+2. **`pilot.pause()` is not a settle.** With a delay it is a bare
+   `asyncio.sleep`; with none, Textual's `wait_for_idle` compares process CPU
+   time to wall clock — an external load starves the process, which then
+   *reads as idle while its message queue is still full*. So a fixed
+   attempt-count wait (`100 × pause(0.01)`, ~1s nominal) exhausts, and any
+   single-pause-then-assert idiom (selection landing via `RowSelected`,
+   availability projection, focus fallback) samples pre-settle state. Under
+   load the victims rotate — which is why the family looked like five
+   unrelated tests.
+3. **A disabled `Button` silently swallows `press()`.** One-shot presses
+   issued after a heuristic pause (e.g. Continue right after toggling the
+   consent checkbox that enables it) are lost forever; no downstream wait can
+   recover them, so the failure surfaces as an unrelated timeout.
+
+**What to do.** Bound waits by monotonic wall clock, not attempt count; poll
+the actual asserted condition (`app.focused.id == ...`, `_selected_profile is
+not None`, `not button.disabled`, label != "Checking"), never a mounted-state
+or pause proxy; settle `not disabled` before any programmatic `press()`. After
+the class fix: 10/10 full-file runs green (4 under the same 14-burner load)
+plus 5/5 standalone runs of the old reproducer.
