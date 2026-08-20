@@ -1,9 +1,11 @@
 ---
 id: TASK-19170
 title: Kimi response-side and UI surfaces still pin the literal kimi-k3 id
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-20 20:34'
+updated_date: '2026-08-20 20:49'
 labels:
   - llm
 dependencies: []
@@ -20,3 +22,9 @@ TASK-18803 moved the Moonshot/Z.ai REQUEST builder gates onto family predicates 
 - [ ] #1 Each literal site above is either converted to a family predicate consultation or documented with probe evidence for why the exact id is correct
 - [ ] #2 Kimi/GLM family members added by a new release get a sensible reasoning-effort option list in Settings without a code edit
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Wire probes (standalone curl, real Moonshot key): does kimi-k2.6/kimi-latest/kimi-k3 return reasoning_content with reasoning_effort set; multi-turn follow-up WITH vs WITHOUT prior reasoning_content replayed (reject/degrade/dont-care); tool-call loop leg if decisive. GLM: no key -- Settings-list question decided client-side; replay question recorded unprobeable.\n2. Commit probe verdicts BEFORE fixes.\n3. Fixes per evidence: new/extended family predicate(s) in model_capabilities.py for the response-side preserved-thinking question; convert provider_continuation.py parse gates, moonshot.py candidate/replay, console_chat_controller keep_all, plus the same-rule companion validators (agent_runtime, ChaChaNotes_DB, Character_Chat_Lib, chatbook_importer) in lockstep; Settings derives effort options from the family predicates.\n4. Red-first pins per changed site, kimi-k3/glm-5.2 controls, mutations with Edit restores; live kimi-k2.6 multi-turn continuation through the production seam + dev control.\n5. Hygiene: report, notes, PR against dev.
+<!-- SECTION:PLAN:END -->
