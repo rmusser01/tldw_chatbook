@@ -294,6 +294,29 @@ def test_unusable_requested_animation_uses_healthy_manifest_fallback() -> None:
     assert [frame.asset_key for frame in result.frames] == ["custom"]
 
 
+def test_missing_requested_asset_record_uses_healthy_manifest_fallback() -> None:
+    payload = _manifest_payload()
+    payload["fallbacks"]["listening"] = ["tool.notes"]  # type: ignore[index]
+    graph = _graph(
+        manifest=validate_persona_visual_manifest(
+            payload,
+            {key: (4, 5) for key in ("idle", "listen-1", "listen-2", "custom")},
+        )
+    )
+    graph = replace(
+        graph,
+        assets=tuple(asset for asset in graph.assets if asset.asset_key != "listen-2"),
+    )
+    loader = RecordingLoader()
+
+    result = resolve_persona_visual(graph, "listening", asset_loader=loader)
+
+    assert result.source == "persona_visual"
+    assert result.resolved_state == "tool.notes"
+    assert result.reason == "persona_visual_state_fallback"
+    assert [call[2] for call in loader.calls] == ["listen-1", "custom"]
+
+
 @pytest.mark.parametrize("portrait", [_portrait(), None])
 def test_invalid_idle_falls_back_to_portrait_or_unavailable(
     portrait: PersonaVisualPortrait | None,
@@ -313,6 +336,29 @@ def test_invalid_idle_falls_back_to_portrait_or_unavailable(
     )
     assert result.frames == ()
     assert result.portrait == portrait
+
+
+@pytest.mark.parametrize("portrait", [_portrait(), None])
+def test_missing_idle_asset_record_falls_back_to_portrait_or_unavailable(
+    portrait: PersonaVisualPortrait | None,
+) -> None:
+    graph = _graph()
+    graph = replace(
+        graph,
+        assets=tuple(asset for asset in graph.assets if asset.asset_key != "idle"),
+    )
+
+    result = resolve_persona_visual(
+        graph,
+        "unknown.state",
+        asset_loader=RecordingLoader(),
+        portrait=portrait,
+    )
+
+    assert result.source == ("persona_portrait" if portrait else "unavailable")
+    assert result.reason == (
+        "persona_visual_idle_unavailable" if portrait else "persona_visual_unavailable"
+    )
 
 
 def test_stored_fallback_cycle_fails_closed_without_exposing_details() -> None:
@@ -436,6 +482,24 @@ def test_absent_active_graph_uses_normal_portrait_fallback_reason() -> None:
     assert result.source == "persona_portrait"
     assert result.reason == "persona_visual_idle_unavailable"
     assert loader.calls == []
+
+
+@pytest.mark.parametrize("graph", [None, _graph()])
+def test_invalid_requested_state_is_normalized_before_public_results(
+    graph: PersonaVisualGraph | None,
+) -> None:
+    private_marker = "/Users/example/.config/private/state"
+
+    result = resolve_persona_visual(
+        graph,
+        private_marker,
+        asset_loader=RecordingLoader(),
+        portrait=_portrait(),
+    )
+
+    assert result.requested_state == "invalid"
+    assert result.cache_identity.requested_state == "invalid"
+    assert private_marker not in repr(result)
 
 
 @pytest.mark.parametrize(

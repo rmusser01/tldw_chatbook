@@ -127,23 +127,23 @@ def resolve_persona_visual(
 ) -> PersonaVisualResolution:
     """Resolve one active graph without accepting or returning private storage data."""
 
+    valid_requested_state = (
+        type(requested_state) is str and _STATE.fullmatch(requested_state) is not None
+    )
+    public_requested_state = requested_state if valid_requested_state else "invalid"
     if graph is None:
         return _fallback_result(
             None,
-            requested_state if type(requested_state) is str else "invalid",
+            public_requested_state,
             portrait,
             reduced_motion if type(reduced_motion) is bool else False,
             IDLE_UNAVAILABLE_REASON,
             (),
         )
-    if (
-        type(requested_state) is not str
-        or _STATE.fullmatch(requested_state) is None
-        or type(reduced_motion) is not bool
-    ):
+    if not valid_requested_state or type(reduced_motion) is not bool:
         return _fallback_result(
             graph,
-            requested_state if type(requested_state) is str else "invalid",
+            public_requested_state,
             portrait,
             reduced_motion if type(reduced_motion) is bool else False,
             GRAPH_INVALID_REASON,
@@ -293,7 +293,7 @@ def _validated_graph(
         if type(animation) is not PersonaVisualAnimation:
             raise ValueError
         for frame in animation.frames:
-            if type(frame) is not PersonaVisualFrame or frame.asset_id not in records:
+            if type(frame) is not PersonaVisualFrame:
                 raise ValueError
     _reject_fallback_cycles(manifest)
     return identity, manifest, records
