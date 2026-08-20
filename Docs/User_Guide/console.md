@@ -99,7 +99,10 @@ handle (or via the **Sources**/**Tools** chips) always works, at any width,
 and your stored open/closed preference is kept and restored at wider sizes;
 and below 84 columns the workspace switches to a single pane — both edge
 handles hide and the transcript takes the full width, so it stays usable
-even at 80x24 or 60x18.
+even at 80x24 or 60x18. An explicitly opened rail yields to this rule once
+the terminal cannot fit the rail plus a usable transcript (~70 columns for
+the Context rail, ~74 for the Inspector); the preference itself survives and
+the rail returns when the terminal widens again.
 
 ### Focus mode
 
@@ -155,6 +158,8 @@ composer-level strip below shows once setup completes.
 | **Search Library** | Searches Library evidence before sending — see [Context & RAG](console/context-and-rag.md). |
 | **Save as Chatbook** (composer **Menu**) | Saves this run as a Chatbook — see [Artifacts](artifacts.md). |
 | **Help** | Opens the Console help panel (same as F1). |
+| **Speak replies** | Speaks new assistant replies in this conversation. |
+| **Hands-free** | Enters/exits the voice conversation loop (same as Ctrl+Shift+H) — the switch is the touch/soft-keyboard route into the mode. |
 
 ### Rails and handles
 

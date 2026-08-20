@@ -40,6 +40,17 @@ CONSOLE_RAIL_LEFT_COMPACT_COLLAPSE_COLUMNS = 100
 # hide and the main column's min-width is waived so the transcript always
 # renders (covers the 80x24 and 60x18 review captures).
 CONSOLE_SINGLE_PANE_COLUMNS = 84
+#: task-18911: rail min-widths mirrored from ChatScreen's compose-time
+#: styles (left 30, right 34), plus the floor a transcript needs to stay
+#: usable. An explicitly-toggled-open rail is honored only while the
+#: viewport can afford rail + this floor; below that budget the rendering
+#: override wins no matter how the preference was set -- an honored rail at
+#: phone width squeezed the transcript to ~14 cols (2026-08-19 mobile
+#: audit). The floor is deliberately NOT the single-pane threshold: at
+#: 84+ cols a honored rail + waived-min transcript still resolves fine.
+CONSOLE_RAIL_LEFT_MIN_COLUMNS = 30
+CONSOLE_RAIL_RIGHT_MIN_COLUMNS = 34
+CONSOLE_RAIL_MAIN_USABLE_COLUMNS = 40
 #: Width band where the Console may automatically reveal Inspector when its
 #: standard-width readiness contract is satisfied. Exported so resize
 #: deduplication and the UI eligibility check share exact boundaries.
@@ -679,15 +690,32 @@ def build_console_rail_state(
     #   ``ChatScreen._set_console_rail_preference``) records it. Legacy
     #   payloads lack the marker and keep the force-collapse default.
     explicit_left_open = console_rail_left_open_explicit(stored_preferences)
+    # task-18911: an explicit toggle is honored only while the viewport can
+    # afford rail + a usable transcript (rail min + main floor). Below that
+    # budget the collapse is a rendering override the explicit marker
+    # cannot buy its way past -- the stored preference is untouched, so
+    # widening back past the budget restores the explicit rail.
+    left_width_budget = (
+        CONSOLE_RAIL_LEFT_MIN_COLUMNS + CONSOLE_RAIL_MAIN_USABLE_COLUMNS
+    )
+    right_width_budget = (
+        CONSOLE_RAIL_RIGHT_MIN_COLUMNS + CONSOLE_RAIL_MAIN_USABLE_COLUMNS
+    )
     right_forced_collapsed = (
         available_columns is not None
         and available_columns < CONSOLE_RAIL_RIGHT_COMPACT_COLLAPSE_COLUMNS
-        and not preferences.right_open
+        and (
+            not preferences.right_open
+            or available_columns < right_width_budget
+        )
     )
     left_forced_collapsed = (
         available_columns is not None
         and available_columns < CONSOLE_RAIL_LEFT_COMPACT_COLLAPSE_COLUMNS
-        and not explicit_left_open
+        and (
+            not explicit_left_open
+            or available_columns < left_width_budget
+        )
     )
     single_pane = (
         available_columns is not None

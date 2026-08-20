@@ -1423,6 +1423,7 @@ class NetworkContextFactory:
         git_executable: str | None = None,
         git_exec_path: str | os.PathLike[str],
         ssh_executable: str | None = None,
+        python_executable: str | None = None,
         allow_ssh_agent: bool = False,
     ) -> None:
         """Freeze the explicit ambient allowlist and executable selections.
@@ -1434,6 +1435,12 @@ class NetworkContextFactory:
             git_executable: Optional exact Git executable selection.
             git_exec_path: Exact locally proved Git executable directory.
             ssh_executable: Optional exact OpenSSH executable selection.
+            python_executable: Optional exact Python interpreter selection
+                for SSH transport dispatch (TASK-18609). Without it the
+                running interpreter (``sys.executable``) is pinned, which
+                fails the safety predicates on hosts where the interpreter
+                lives in a shared tool cache (GitHub runners:
+                ``/opt/hostedtoolcache``).
             allow_ssh_agent: Whether to retain an explicit ``SSH_AUTH_SOCK``.
         """
         _require_posix()
@@ -1463,7 +1470,11 @@ class NetworkContextFactory:
             "_git_exec_directory",
             _pin_git_exec_directory(git_exec_path),
         )
-        object.__setattr__(self, "_python_executable_value", sys.executable)
+        object.__setattr__(
+            self,
+            "_python_executable_value",
+            sys.executable if python_executable is None else python_executable,
+        )
         agent_value = dict(base).get("SSH_AUTH_SOCK")
         object.__setattr__(
             self,

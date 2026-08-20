@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Iterable, Mapping, cast
 from tldw_chatbook.DB.ChaChaNotes_DB import CONVERSATION_SCOPE_ALL
 
 _ASSISTANT_AUTHORITY_UNSET = cast(str | None, object())
+_SQLITE_INTEGER_MAX = (1 << 63) - 1
 
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.citation_legacy_migration import (
@@ -474,6 +475,39 @@ class ChatConversationService:
             for conversation_id in conversation_ids
         }
 
+    def _normalize_conversation_rows(
+        self,
+        rows: Iterable[Mapping[str, Any]],
+        *,
+        include_deleted: bool,
+    ) -> list[dict[str, Any]]:
+        rows = list(rows)
+        conversation_ids = [
+            row.get("id") for row in rows if row.get("id") is not None
+        ]
+        message_counts = {}
+        if conversation_ids:
+            message_counts = self.db.count_messages_for_conversations(
+                conversation_ids,
+                include_deleted=include_deleted,
+                include_deleted_conversation=include_deleted,
+            )
+        keyword_map = self._fetch_keywords_for_conversations(conversation_ids)
+
+        items = []
+        for row in rows:
+            conversation_id = row.get("id")
+            item = normalize_conversation_row(
+                row,
+                keywords=keyword_map.get(conversation_id, []),
+                message_count=message_counts.get(
+                    conversation_id, row.get("message_count", 0)
+                ),
+            )
+            if item is not None:
+                items.append(item)
+        return items
+
     def get_conversation_keywords(self, conversation_id: str) -> list[str]:
         keyword_rows = self.db.get_keywords_for_conversation(conversation_id)
         return _normalize_keywords(keyword_rows)
@@ -633,6 +667,19 @@ class ChatConversationService:
         topic_label: str | None = None,
         character_id: int | None = None,
     ) -> dict[str, Any]:
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not 1 <= limit <= _SQLITE_INTEGER_MAX
+        ):
+            raise ValueError("limit must be a positive integer.")
+        if (
+            isinstance(offset, bool)
+            or not isinstance(offset, int)
+            or not 0 <= offset <= _SQLITE_INTEGER_MAX
+        ):
+            raise ValueError("offset must be a non-negative integer.")
+
         effective_scope = scope_type
         if effective_scope is None:
             effective_scope = "workspace" if workspace_id is not None else "global"
@@ -663,33 +710,115 @@ class ChatConversationService:
             offset=offset,
         )
 
-        conversation_ids = [row.get("id") for row in rows if row.get("id") is not None]
-        message_counts = {}
-        if conversation_ids:
-            message_counts = self.db.count_messages_for_conversations(
-                conversation_ids,
-                include_deleted=include_deleted or deleted_only,
-                include_deleted_conversation=include_deleted or deleted_only,
-            )
-        keyword_map = self._fetch_keywords_for_conversations(conversation_ids)
-
-        items = []
-        for row in rows:
-            conversation_id = row.get("id")
-            item = normalize_conversation_row(
-                row,
-                keywords=keyword_map.get(conversation_id, []),
-                message_count=message_counts.get(
-                    conversation_id, row.get("message_count", 0)
-                ),
-            )
-            if item is not None:
-                items.append(item)
+        items = self._normalize_conversation_rows(
+            rows, include_deleted=include_deleted or deleted_only
+        )
 
         pagination = {
             "limit": limit,
             "offset": offset,
             "total": total,
+            "has_more": offset + len(items) < total,
+        }
+        return {"items": items, "pagination": pagination}
+
+    def locate_conversation_page(
+        self,
+        conversation_id: str,
+        query: str | None = None,
+        *,
+        limit: int = 20,
+        scope_type: str | None = None,
+        workspace_id: str | None = None,
+        include_deleted: bool = False,
+        deleted_only: bool = False,
+        state: str | None = None,
+        topic_label: str | None = None,
+        character_id: int | None = None,
+    ) -> dict[str, Any] | None:
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit != 20:
+            raise ValueError("limit must be exactly 20.")
+
+        effective_scope = scope_type
+        if effective_scope is None:
+            effective_scope = "workspace" if workspace_id is not None else "global"
+        if workspace_id is not None:
+            effective_scope = "workspace"
+
+        if str(effective_scope).strip().lower() == CONVERSATION_SCOPE_ALL:
+            normalized_scope: str = CONVERSATION_SCOPE_ALL
+            normalized_workspace_id: str | None = None
+        else:
+            normalized_scope, normalized_workspace_id = _normalize_scope(
+                effective_scope, workspace_id
+            )
+        located = self.db.locate_conversation_page(
+            conversation_id,
+            query=query,
+            scope_type=normalized_scope,
+            workspace_id=normalized_workspace_id,
+            include_deleted=include_deleted,
+            deleted_only=deleted_only,
+            state=_normalize_state(state) if state is not None else None,
+            topic_label=_clean_text(topic_label),
+            character_id=character_id,
+            limit=limit,
+        )
+        if located is None:
+            return None
+
+        rows = located.get("rows")
+        offset = located.get("offset")
+        target_index = located.get("target_index")
+        total = located.get("total")
+        coordinates = (limit, offset, target_index, total)
+        if any(
+            isinstance(value, bool) or not isinstance(value, int)
+            for value in coordinates
+        ):
+            raise ValueError("Conversation locator coordinates must be integers.")
+        expected_offset = (target_index // limit) * limit if limit > 0 else -1
+        if (
+            limit <= 0
+            or target_index < 0
+            or total <= target_index
+            or offset != expected_offset
+        ):
+            raise ValueError("Conversation locator offset is not page-aligned.")
+        if not isinstance(rows, list) or len(rows) != min(limit, total - offset):
+            raise ValueError("Conversation locator returned an invalid bounded page.")
+        local_index = target_index - offset
+        if (
+            local_index < 0
+            or local_index >= len(rows)
+            or not isinstance(rows[local_index], Mapping)
+            or rows[local_index].get("id") != conversation_id
+        ):
+            raise ValueError("Conversation locator target identity is invalid.")
+        row_ids = [row.get("id") for row in rows if isinstance(row, Mapping)]
+        if (
+            len(row_ids) != len(rows)
+            or any(
+                not isinstance(row_id, str) or not row_id.strip()
+                for row_id in row_ids
+            )
+            or len(set(row_ids)) != len(row_ids)
+        ):
+            raise ValueError("Conversation locator page identity is invalid.")
+
+        items = self._normalize_conversation_rows(
+            rows, include_deleted=include_deleted or deleted_only
+        )
+        if len(items) != len(rows) or items[local_index].get("id") != conversation_id:
+            raise ValueError(
+                "Conversation locator target identity changed during normalization."
+            )
+        pagination = {
+            "limit": limit,
+            "offset": offset,
+            "page": offset // limit + 1,
+            "total": total,
+            "target_index": target_index,
             "has_more": offset + len(items) < total,
         }
         return {"items": items, "pagination": pagination}

@@ -2,12 +2,10 @@ import dataclasses
 from types import SimpleNamespace
 
 import pytest
-from textual.app import App
-
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from textual.widgets import Button, Static
+from textual.widgets import Button
 
 from tldw_chatbook.UI.Screens.library_screen import (
     LibraryScreen,
@@ -27,7 +25,9 @@ from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
     LibraryHarness,
     _active_library_screen,
+    _conversation_records,
     _seed_conversations,
+    _wait_for_condition,
     _two_conversations,
     _wait_for_library_shell,
     _wait_for_selector,
@@ -36,6 +36,7 @@ from Tests.UI.test_library_shell import (
 
 def _fake(select_mode):
     return SimpleNamespace(
+        _library_conversation_freshness="fresh",
         _library_conversations_select_mode=select_mode,
         _library_conversations_row_selection=RowSelection("conversations"),
         _selected_conversation_id="",
@@ -209,3 +210,96 @@ async def test_conversations_toolbar_count_static_stays_bounded_width_with_real_
         # unbounded Static's sibling Buttons were before the fix.
         assert 0 < select_all_btn.region.x < LIBRARY_TEST_SIZE[0]
         assert select_all_btn.region.width > 0
+
+
+@pytest.mark.asyncio
+async def test_library_conversation_selection_clears_on_page_exit_and_cannot_export():
+    app = _build_test_app()
+    _seed_conversations(app, _conversation_records(45))
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-conversations").press()
+        await _wait_for_selector(screen, pilot, "#library-conversation-row-19")
+        screen.query_one("#library-conversations-select-toggle", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_conversations_select_mode
+            and any(
+                str(row.label).startswith("☐")
+                for row in screen.query("#library-conversation-row-0")
+            ),
+            message="Conversation select-mode rows never recomposed.",
+        )
+        screen.query_one("#library-conversation-row-0", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_conversations_row_selection.count == 1,
+            message="Conversation row was not selected.",
+        )
+
+        screen.query_one("#library-conversations-next", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_conversation_page == 2,
+            message="Conversation page exit never applied.",
+        )
+
+        assert screen._library_conversations_select_mode is False
+        assert screen._library_conversations_row_selection.count == 0
+        assert screen._library_conversation_selection_notice == "Selection cleared."
+        assert (
+            screen._build_library_conversations_state().selection_notice
+            == "Selection cleared."
+        )
+        opened = []
+
+        async def record_open(scope):
+            opened.append(scope)
+
+        screen._open_library_export_canvas = record_open
+        await screen.handle_library_conversations_export_selected(
+            SimpleNamespace(stop=lambda: None)
+        )
+        assert opened == []
+
+
+@pytest.mark.asyncio
+async def test_library_conversation_stale_state_disables_actions_but_allows_recovery():
+    app = _build_test_app()
+    _seed_conversations(app, _conversation_records(25))
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-conversations").press()
+        await _wait_for_selector(screen, pilot, "#library-conversation-row-19")
+        selected_before = screen._selected_conversation_id
+        screen._library_conversation_freshness = "stale"
+        screen._library_conversation_total_known = False
+        screen._library_conversation_stale_copy = "Source changed again; try again."
+        screen._library_conversation_error = ""
+        screen._sync_library_conversation_canvas()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.query_one("#library-conversation-row-0", Button).disabled,
+            message="Stale Conversation row never disabled.",
+        )
+
+        state = screen._build_library_conversations_state()
+        assert state.actions_disabled is True
+        assert state.pager is not None and state.pager.retry_visible is True
+        assert screen.query_one("#library-conversations-previous", Button).disabled
+        assert screen.query_one("#library-conversations-next", Button).disabled
+        assert screen.query_one("#library-conversations-select-toggle", Button).disabled
+        assert screen.query_one("#library-conversations-filter").disabled is False
+
+        event = SimpleNamespace(
+            button=SimpleNamespace(conversation_id="chat-002"),
+            stop=lambda: None,
+        )
+        LibraryScreen.handle_library_conversation_row(screen, event)
+        assert screen._selected_conversation_id == selected_before

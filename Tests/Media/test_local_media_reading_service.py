@@ -6,6 +6,7 @@ from pathlib import Path
 import zipfile
 
 import pytest
+from loguru import logger
 
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase as Database
 from tldw_chatbook.Media.media_reading_scope_service import MediaReadingScopeService
@@ -142,6 +143,99 @@ class OverrideRecordingDb:
     def search_media_db(self, **kwargs):
         self.search_calls.append(kwargs)
         return [], 0
+
+
+class LibrarySummaryRecordingDb:
+    def __init__(self):
+        self.search_calls = []
+        self.type_calls = 0
+
+    def search_media_db(self, **kwargs):
+        self.search_calls.append(kwargs)
+        return [
+            {
+                "id": 41,
+                "title": "Summary title",
+                "type": "article",
+                "last_modified": "2026-08-16T12:00:00Z",
+            }
+        ], 45
+
+    def get_distinct_media_types(self):
+        self.type_calls += 1
+        return [f"private-type-{index:02}" for index in range(61)]
+
+
+def test_local_service_library_media_summary_uses_exact_db_offset_and_projection():
+    db = LibrarySummaryRecordingDb()
+
+    payload = LocalMediaReadingService(db).search_media(
+        query="summary query",
+        limit=20,
+        offset=40,
+        library_summary=True,
+        media_types=["article"],
+    )
+
+    assert db.search_calls[0]["results_per_page"] == 20
+    assert db.search_calls[0]["offset"] == 40
+    assert db.search_calls[0]["library_summary"] is True
+    assert payload == {
+        "items": [
+            {
+                "id": 41,
+                "title": "Summary title",
+                "type": "article",
+                "last_modified": "2026-08-16T12:00:00Z",
+            }
+        ],
+        "total": 45,
+        "offset": 40,
+        "limit": 20,
+    }
+
+
+@pytest.mark.parametrize(
+    ("limit", "offset"),
+    [
+        (True, 0),
+        (0, 0),
+        (2**63, 0),
+        (20, True),
+        (20, -1),
+        (20, 2**63),
+    ],
+)
+def test_local_service_library_media_summary_rejects_invalid_coordinates(
+    limit, offset
+):
+    db = LibrarySummaryRecordingDb()
+
+    with pytest.raises(ValueError):
+        LocalMediaReadingService(db).search_media(
+            limit=limit,
+            offset=offset,
+            library_summary=True,
+        )
+
+    assert db.search_calls == []
+
+
+def test_local_service_lists_complete_media_types_without_logging_values(caplog):
+    db = LibrarySummaryRecordingDb()
+    caplog.set_level("DEBUG")
+    loguru_output = io.StringIO()
+    sink_id = logger.add(loguru_output, level="DEBUG")
+    try:
+        media_types = LocalMediaReadingService(db).list_library_media_types()
+    finally:
+        logger.remove(sink_id)
+
+    assert len(media_types) == 61
+    assert media_types[-1] == "private-type-60"
+    assert db.type_calls == 1
+    assert "private-type" not in loguru_output.getvalue()
+    assert "private-type" not in caplog.text
 
 
 def test_local_service_search_media_uses_db_backed_saved_filter_spy():

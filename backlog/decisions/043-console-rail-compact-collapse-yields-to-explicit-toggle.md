@@ -60,3 +60,27 @@ The rails detect "explicit" differently because their defaults differ. The right
 - [UX review findings LY-11/DS-06](../../Docs/superpowers/qa/console-ux-review-2026-08/console-ux-review.md)
 - [Persistent rails design spec](../../Docs/superpowers/specs/2026-05-24-console-persistent-rails-design.md)
 - Parent epic: backlog/tasks/task-2154; sibling: task-2154.1 (responsive fallback below ~100 cols)
+
+## Amendment (2026-08-19, task-18911 — width budget for honored explicit toggles)
+
+The 2026-08-19 mobile tappability audit found the explicit-toggle yield has
+no floor: with `left_open_explicit` stored, a 48-column phone viewport
+rendered the rail at its full 30-column minimum and squeezed the transcript
+to 14 columns — with both rail handles hidden in single-pane mode, the
+layout was effectively unusable.
+
+An explicit open is now honored only while the viewport can afford
+**rail minimum + a usable transcript floor (40 columns)**: left rail
+honored at ≥70 columns, right rail at ≥74 (`CONSOLE_RAIL_*_MIN_COLUMNS` +
+`CONSOLE_RAIL_MAIN_USABLE_COLUMNS` in `console_rail_state.py`). Below those
+budgets the compact-collapse is a rendering override the marker cannot buy
+past. The stored preference is still never rewritten — widening back past
+the budget restores the explicit rail unchanged.
+
+The floor is deliberately NOT the single-pane threshold (84): between the
+budget and 84+ columns a honored rail plus the waived-min transcript
+resolves fine (e.g. an explicit left rail at 90 columns leaves a 60-column
+transcript), so TASK-2154.2's behavior is preserved everywhere the layout
+actually works. Status chips opening the Inspector in single-pane mode
+(the designed narrow route) are unaffected: they act on live state, not the
+stored marker.

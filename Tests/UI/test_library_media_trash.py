@@ -12,7 +12,6 @@ import types
 from types import SimpleNamespace
 
 import pytest
-from textual.app import App
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -28,8 +27,10 @@ from tldw_chatbook.Library.library_media_state import (
     LIBRARY_MEDIA_TRASH_RESTORE_DISABLED_ERROR_TOOLTIP,
     LIBRARY_MEDIA_TRASH_RESTORE_DISABLED_LOADING_TOOLTIP,
     LIBRARY_MEDIA_TRASH_RESTORE_TOOLTIP,
+    MediaBrowseScope,
     build_library_media_trash_state,
 )
+from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_MEDIA
 from tldw_chatbook.Widgets.Library.library_media_trash_canvas import (
     LibraryMediaTrashCanvas,
 )
@@ -444,6 +445,49 @@ async def test_confirm_copies_and_receipt_point_at_trash():
 # ---------------------------------------------------------------------------
 
 
+def _bind_trash_mutation_seams(fake):
+    """Give direct restore fakes the production mutation boundary shape."""
+    events = []
+    scope = MediaBrowseScope()
+    fake._mutation_events = events
+    fake._library_media_browse_controller = SimpleNamespace(
+        mutation_refresh_scope=scope,
+        begin_mutation=lambda: events.append(("begin",)) or scope,
+        reconcile_committed_mutation=lambda **kwargs: events.append(
+            ("reconcile", kwargs)
+        ),
+        request=lambda requested, **kwargs: events.append(
+            ("request", requested, kwargs)
+        ),
+        request_facets=lambda **kwargs: events.append(("facets", kwargs)),
+    )
+    fake._library_media_mutation_scope = None
+    fake._library_media_mutation_authority = None
+    fake._library_media_lifecycle_generation = 0
+    fake._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+    fake._library_media_type_choices_visible = False
+    fake._sync_library_media_browse_state = lambda *_args: events.append(("sync",))
+    fake._sync_library_media_viewer_mutation_gate = lambda: None
+    fake._begin_library_media_mutation = types.MethodType(
+        LibraryScreen._begin_library_media_mutation, fake
+    )
+    fake._library_media_backing_id = types.MethodType(
+        LibraryScreen._library_media_backing_id, fake
+    )
+    fake._required_library_media_backing_id = types.MethodType(
+        LibraryScreen._required_library_media_backing_id, fake
+    )
+    fake._library_media_mutation_summary = types.MethodType(
+        LibraryScreen._library_media_mutation_summary, fake
+    )
+    fake._complete_library_media_mutation = types.MethodType(
+        LibraryScreen._complete_library_media_mutation, fake
+    )
+    if fake._library_media_bulk_delete_in_flight:
+        fake._begin_library_media_mutation()
+    return fake
+
+
 def _trash_view_fake(
     *,
     records=None,
@@ -496,7 +540,7 @@ def _trash_view_fake(
     fake._exit_library_media_trash = types.MethodType(
         LibraryScreen._exit_library_media_trash, fake
     )
-    return fake
+    return _bind_trash_mutation_seams(fake)
 
 
 def test_trash_open_enters_view_resets_state_and_kicks_fetch():
@@ -635,6 +679,7 @@ def test_escape_gate_only_passes_in_trash_view():
     in_trash = SimpleNamespace(
         _library_selected_row_id=LIBRARY_ROW_BROWSE_MEDIA,
         _library_media_view="trash",
+        _library_media_bulk_delete_in_flight=False,
     )
     assert (
         LibraryScreen.check_action(in_trash, "library_media_trash_back", ())
@@ -705,7 +750,7 @@ def _restore_fake(*, db, trash_records, media_records, media_count):
     fake._notify_library_media_delete_warning = types.MethodType(
         LibraryScreen._notify_library_media_delete_warning, fake
     )
-    return fake
+    return _bind_trash_mutation_seams(fake)
 
 
 @pytest.mark.asyncio
@@ -753,6 +798,10 @@ async def test_restore_via_real_db_moves_item_back_and_updates_counts(tmp_path):
     assert fake._notified == []
     assert fake._refresh_calls == [{"recompose": True}]
     assert fake._library_media_bulk_delete_in_flight is False
+    assert fake._mutation_events[0] == ("begin",)
+    assert any(event[0] == "reconcile" for event in fake._mutation_events)
+    assert any(event[0] == "request" for event in fake._mutation_events)
+    assert any(event[0] == "facets" for event in fake._mutation_events)
 
     db.close_connection()
 

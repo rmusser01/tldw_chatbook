@@ -1,19 +1,29 @@
-"""TASK-1 (Console branching Phase B): the edit modal gains an explicit
-"Edit & resend" affordance alongside the existing in-place "Save".
+"""Console edit-message modal behavior and rendered-state contracts.
 
-Construction-level tests are the minimum contract (per the task brief); a
-mounted `run_test` pilot assertion is added to mirror the existing modal
-suite's style (Tests/UI/test_console_edit_modal_keystroke_guard.py).
+TASK-1 covers Save/Edit & resend construction and outcomes. TASK-2703 adds
+real-bundle compositor evidence for action geometry, paint, contrast, isolated
+keyboard focus cues, and Enter activation.
 """
 
+from pathlib import Path
+from types import SimpleNamespace
+
 import pytest
+from rich.segment import Segment
 from textual.app import App
+from textual.geometry import Region
 from textual.widgets import Button, Static, TextArea
 
 from tldw_chatbook.Widgets.Console.console_edit_message_modal import (
     ConsoleEditMessageModal,
     ConsoleEditResult,
 )
+
+
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+_BUNDLED_CSS = _REPOSITORY_ROOT / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"
+_REAL_BUNDLE_SIZES = ((200, 50), (235, 52))
+_MIN_ACTION_CONTRAST = 3.0
 
 
 def test_edit_result_dataclass_shape():
@@ -39,9 +49,458 @@ class _ModalHost(App):
     pass
 
 
+class _RealBundleModalHost(_ModalHost):
+    """The incumbent modal harness with the generated app stylesheet loaded."""
+
+    CSS_PATH = _BUNDLED_CSS
+
+
 def _static_plain_text(widget: Static) -> str:
     renderable = widget.renderable
     return getattr(renderable, "plain", str(renderable))
+
+
+def _cropped_compositor_region(
+    app: App, widget: Button
+) -> tuple[tuple[Segment, ...], ...]:
+    """Return exact compositor segments cropped to ``widget.region``."""
+    render_strips = list(app.screen._compositor.render_strips())
+    assert 0 <= widget.region.y and widget.region.bottom <= len(render_strips), (
+        f"{widget.id!r} compositor crop must be vertically contained; "
+        f"widget_region={widget.region!r}, screen_region={app.screen.region!r}, "
+        f"strip_count={len(render_strips)}"
+    )
+    cropped_rows: list[tuple[Segment, ...]] = []
+    for y in range(widget.region.y, widget.region.bottom):
+        row: list[Segment] = []
+        cursor = 0
+        for segment in render_strips[y]:
+            next_cursor = cursor + segment.cell_length
+            overlap_start = max(widget.region.x, cursor)
+            overlap_end = min(widget.region.right, next_cursor)
+            if overlap_start < overlap_end:
+                _, remainder = segment.split_cells(overlap_start - cursor)
+                cropped, _ = remainder.split_cells(overlap_end - overlap_start)
+                row.append(cropped)
+            cursor = next_cursor
+        cropped_rows.append(tuple(row))
+    return tuple(cropped_rows)
+
+
+def test_cropped_compositor_region_rejects_an_offscreen_widget() -> None:
+    screen_region = Region(0, 0, 10, 1)
+    app = SimpleNamespace(
+        screen=SimpleNamespace(
+            region=screen_region,
+            _compositor=SimpleNamespace(render_strips=lambda: ((),)),
+        )
+    )
+    widget_region = Region(0, 1, 4, 1)
+    widget = SimpleNamespace(id="offscreen-action", region=widget_region)
+
+    with pytest.raises(AssertionError) as exc_info:
+        _cropped_compositor_region(app, widget)  # type: ignore[arg-type]
+
+    message = str(exc_info.value)
+    assert "offscreen-action" in message
+    assert repr(widget_region) in message
+    assert repr(screen_region) in message
+    assert "strip_count=1" in message
+
+
+def _joined_segment_text(rows: tuple[tuple[Segment, ...], ...]) -> str:
+    """Join text only from already-cropped compositor segments."""
+    return "\n".join("".join(segment.text for segment in row) for row in rows)
+
+
+def _relative_luminance(color, *, foreground: bool = True) -> float:
+    """Return WCAG relative luminance for a compositor-painted Rich colour."""
+    triplet = color.get_truecolor(foreground=foreground)
+
+    def channel(value: int) -> float:
+        srgb = value / 255
+        return srgb / 12.92 if srgb <= 0.04045 else ((srgb + 0.055) / 1.055) ** 2.4
+
+    return (
+        0.2126 * channel(triplet.red)
+        + 0.7152 * channel(triplet.green)
+        + 0.0722 * channel(triplet.blue)
+    )
+
+
+def _contrast(foreground, background) -> float:
+    """Return WCAG contrast for explicit compositor foreground/background."""
+    lighter, darker = sorted(
+        (
+            _relative_luminance(foreground),
+            _relative_luminance(background, foreground=False),
+        ),
+        reverse=True,
+    )
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def _painted_label_segments(
+    rows: tuple[tuple[Segment, ...], ...], expected_label: str
+) -> tuple[Segment, ...]:
+    """Resolve the exact composited Rich segments that paint one action label."""
+    for row in rows:
+        painted_text = "".join(segment.text for segment in row)
+        label_start = painted_text.find(expected_label)
+        if label_start < 0:
+            continue
+
+        label_end = label_start + len(expected_label)
+        label_segments: list[Segment] = []
+        cursor = 0
+        for segment in row:
+            next_cursor = cursor + segment.cell_length
+            overlap_start = max(label_start, cursor)
+            overlap_end = min(label_end, next_cursor)
+            if overlap_start < overlap_end:
+                _, remainder = segment.split_cells(overlap_start - cursor)
+                cropped, _ = remainder.split_cells(overlap_end - overlap_start)
+                if (
+                    cropped.style is None
+                    or cropped.style.color is None
+                    or cropped.style.bgcolor is None
+                ):
+                    raise AssertionError(
+                        f"label segment lacks explicit foreground/background: {cropped!r}"
+                    )
+                label_segments.append(cropped)
+            cursor = next_cursor
+
+        if "".join(segment.text for segment in label_segments) == expected_label:
+            return tuple(label_segments)
+    raise AssertionError(f"no exact painted label segments for {expected_label!r}")
+
+
+_REAL_BUNDLE_ACTIONS = [
+    pytest.param(
+        False,
+        "#console-edit-message-cancel",
+        "Cancel",
+        id="without-resend-cancel",
+    ),
+    pytest.param(
+        False,
+        "#console-edit-message-save",
+        "Save",
+        id="without-resend-save",
+    ),
+    pytest.param(
+        True,
+        "#console-edit-message-cancel",
+        "Cancel",
+        id="with-resend-cancel",
+    ),
+    pytest.param(
+        True,
+        "#console-edit-message-save",
+        "Save",
+        id="with-resend-save",
+    ),
+    pytest.param(
+        True,
+        "#console-edit-message-resend",
+        "Edit & resend",
+        id="with-resend-resend",
+    ),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", _REAL_BUNDLE_SIZES)
+@pytest.mark.parametrize(
+    ("can_resend", "selector", "expected_label"), _REAL_BUNDLE_ACTIONS
+)
+async def test_real_bundle_action_containment(
+    size: tuple[int, int],
+    can_resend: bool,
+    selector: str,
+    expected_label: str,
+) -> None:
+    """Nonzero/display geometry is insufficient: each full action must fit its owners."""
+    app = _RealBundleModalHost()
+    async with app.run_test(size=size) as pilot:
+        modal = ConsoleEditMessageModal(
+            content="Synthetic edit body", can_resend=can_resend
+        )
+        app.push_screen(modal)
+        await pilot.pause()
+        await pilot.pause()
+
+        button = modal.query_one(selector, Button)
+        actions = modal.query_one("#console-edit-message-actions")
+        root = modal.query_one("#console-edit-message-modal")
+        containment = {
+            "actions.content_region": actions.content_region.contains_region(
+                button.region
+            ),
+            "modal.content_region": root.content_region.contains_region(button.region),
+            "screen.region": app.screen.region.contains_region(button.region),
+        }
+
+        assert containment == {
+            "actions.content_region": True,
+            "modal.content_region": True,
+            "screen.region": True,
+        }, (
+            f"{expected_label!r} must be fully contained at size={size}; "
+            f"display={button.display} region={button.region!r} containment={containment}. "
+            "A displayed widget with nonzero geometry may still be clipped."
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", _REAL_BUNDLE_SIZES)
+@pytest.mark.parametrize(
+    ("can_resend", "selector", "expected_label"), _REAL_BUNDLE_ACTIONS
+)
+async def test_real_bundle_action_hit_test(
+    size: tuple[int, int],
+    can_resend: bool,
+    selector: str,
+    expected_label: str,
+) -> None:
+    """Nonzero/display geometry does not prove an action owns its reported center."""
+    app = _RealBundleModalHost()
+    async with app.run_test(size=size) as pilot:
+        modal = ConsoleEditMessageModal(
+            content="Synthetic edit body", can_resend=can_resend
+        )
+        app.push_screen(modal)
+        await pilot.pause()
+        await pilot.pause()
+
+        button = modal.query_one(selector, Button)
+        hit, _ = app.screen.get_widget_at(*button.region.center)
+
+        assert hit is button, (
+            f"{expected_label!r} must own its center at size={size}; "
+            f"display={button.display} region={button.region!r}, hit={hit!r}. "
+            "A displayed widget with nonzero geometry may still be covered or clipped."
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", _REAL_BUNDLE_SIZES)
+@pytest.mark.parametrize(
+    ("can_resend", "selector", "expected_label"), _REAL_BUNDLE_ACTIONS
+)
+async def test_real_bundle_action_painted_label(
+    size: tuple[int, int],
+    can_resend: bool,
+    selector: str,
+    expected_label: str,
+) -> None:
+    """Crop each action: whole-frame Save/resend matches can come from USER prose."""
+    app = _RealBundleModalHost()
+    async with app.run_test(size=size) as pilot:
+        modal = ConsoleEditMessageModal(
+            content="Synthetic edit body", can_resend=can_resend
+        )
+        app.push_screen(modal)
+        await pilot.pause()
+        await pilot.pause()
+
+        button = modal.query_one(selector, Button)
+        cropped_rows = _cropped_compositor_region(app, button)
+        painted_text = _joined_segment_text(cropped_rows)
+        compositor = app.screen._compositor
+
+        assert (
+            expected_label in painted_text and button in compositor.visible_widgets
+        ), (
+            f"{expected_label!r} must be painted in its exact region at size={size}; "
+            f"display={button.display} region={button.region!r}, "
+            f"painted_text={painted_text!r}, cropped_rows={cropped_rows!r}, "
+            f"visible={button in compositor.visible_widgets}. Whole-frame matches are "
+            "false positives when USER-facing prose itself contains Save/Edit & resend."
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", _REAL_BUNDLE_SIZES)
+@pytest.mark.parametrize(
+    ("can_resend", "selector", "expected_label"), _REAL_BUNDLE_ACTIONS
+)
+async def test_real_bundle_action_ordinary_contrast(
+    size: tuple[int, int],
+    can_resend: bool,
+    selector: str,
+    expected_label: str,
+) -> None:
+    """Every ordinary action label must retain 3:1 in the real app cascade."""
+    app = _RealBundleModalHost()
+    async with app.run_test(size=size) as pilot:
+        modal = ConsoleEditMessageModal(
+            content="Synthetic edit body", can_resend=can_resend
+        )
+        app.push_screen(modal)
+        await pilot.pause()
+        await pilot.pause()
+
+        button = modal.query_one(selector, Button)
+        cropped_rows = _cropped_compositor_region(app, button)
+        label_segments = _painted_label_segments(cropped_rows, expected_label)
+        contrasts = tuple(
+            _contrast(segment.style.color, segment.style.bgcolor)
+            for segment in label_segments
+            if segment.style is not None
+        )
+
+        assert contrasts and min(contrasts) >= _MIN_ACTION_CONTRAST, (
+            f"ordinary {expected_label!r} must paint at >=3:1 at size={size}; "
+            f"region={button.region!r}, contrasts={contrasts!r}, "
+            f"label_segments={label_segments!r}"
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", _REAL_BUNDLE_SIZES)
+@pytest.mark.parametrize("can_resend", [False, True], ids=["save", "resend"])
+async def test_real_bundle_focus(
+    size: tuple[int, int],
+    can_resend: bool,
+) -> None:
+    """Tab focus must preserve each exact label and add a non-colour cue."""
+    app = _RealBundleModalHost()
+    async with app.run_test(size=size) as pilot:
+        modal = ConsoleEditMessageModal(
+            content="Synthetic edit body", can_resend=can_resend
+        )
+        app.push_screen(modal)
+        await pilot.pause()
+        await pilot.pause()
+
+        editor = modal.query_one("#console-edit-message-body", TextArea)
+        assert modal.focused is editor
+
+        focus_order = [
+            ("#console-edit-message-cancel", "Cancel"),
+            ("#console-edit-message-save", "Save"),
+        ]
+        if can_resend:
+            focus_order.append(("#console-edit-message-resend", "Edit & resend"))
+
+        buttons = {
+            action_selector: modal.query_one(action_selector, Button)
+            for action_selector, _ in focus_order
+        }
+        ordinary_rows_by_action = {
+            action_selector: _cropped_compositor_region(app, buttons[action_selector])
+            for action_selector, _ in focus_order
+        }
+        ordinary_cue_signatures = {}
+        for action_selector, action_label in focus_order:
+            action_rows = ordinary_rows_by_action[action_selector]
+            action_label_segments = _painted_label_segments(action_rows, action_label)
+            ordinary_cue_signatures[action_selector] = (
+                any(
+                    segment.style is not None and segment.style.underline
+                    for segment in action_label_segments
+                ),
+                tuple(
+                    tuple((segment.text, segment.style) for segment in edge_row)
+                    for edge_row in (action_rows[0], action_rows[-1])
+                ),
+            )
+
+        for expected_selector, expected_label in focus_order:
+            await pilot.press("tab")
+            await pilot.pause()
+            await pilot.pause()
+            assert modal.focused is buttons[expected_selector], (
+                f"Tab order must be {[item[0] for item in focus_order]!r}; "
+                f"expected {expected_selector!r}, "
+                f"focused={modal.focused!r}"
+            )
+
+            for action_selector, action_label in focus_order:
+                action_rows = _cropped_compositor_region(app, buttons[action_selector])
+                action_label_segments = _painted_label_segments(
+                    action_rows, action_label
+                )
+                cue_signature = (
+                    any(
+                        segment.style is not None and segment.style.underline
+                        for segment in action_label_segments
+                    ),
+                    tuple(
+                        tuple((segment.text, segment.style) for segment in edge_row)
+                        for edge_row in (action_rows[0], action_rows[-1])
+                    ),
+                )
+                if action_selector == expected_selector:
+                    ordinary_underline, ordinary_edges = ordinary_cue_signatures[
+                        action_selector
+                    ]
+                    focused_underline, focused_edges = cue_signature
+                    ordinary_edge_text = tuple(
+                        "".join(text for text, _ in edge_row)
+                        for edge_row in ordinary_edges
+                    )
+                    focused_edge_text = tuple(
+                        "".join(text for text, _ in edge_row)
+                        for edge_row in focused_edges
+                    )
+                    has_focus_only_non_color_cue = (
+                        focused_underline and not ordinary_underline
+                    ) or (
+                        focused_edge_text != ordinary_edge_text
+                        and any(text.strip() for text in focused_edge_text)
+                    )
+                    assert has_focus_only_non_color_cue, (
+                        f"focused {action_label!r} needs a new underline or visible "
+                        f"edge glyph at size={size}; ordinary_signature="
+                        f"{ordinary_cue_signatures[action_selector]!r}, "
+                        f"focused_signature={cue_signature!r}"
+                    )
+                else:
+                    assert cue_signature == ordinary_cue_signatures[action_selector], (
+                        f"focusing {expected_selector!r} must not change sibling "
+                        f"{action_selector!r} at size={size}; ordinary_signature="
+                        f"{ordinary_cue_signatures[action_selector]!r}, "
+                        f"current_signature={cue_signature!r}"
+                    )
+
+            button = buttons[expected_selector]
+            ordinary_label_segments = _painted_label_segments(
+                ordinary_rows_by_action[expected_selector], expected_label
+            )
+            ordinary_styles = tuple(
+                segment.style for segment in ordinary_label_segments
+            )
+            focused_rows = _cropped_compositor_region(app, button)
+            focused_text = _joined_segment_text(focused_rows)
+            focused_label_segments = _painted_label_segments(
+                focused_rows, expected_label
+            )
+            focused_styles = tuple(segment.style for segment in focused_label_segments)
+            focused_contrasts = tuple(
+                _contrast(segment.style.color, segment.style.bgcolor)
+                for segment in focused_label_segments
+                if segment.style is not None
+            )
+
+            assert modal.focused is button
+            assert expected_label in focused_text, (
+                f"focused {expected_label!r} must survive in its exact region at "
+                f"size={size}; focused_text={focused_text!r}, rows={focused_rows!r}"
+            )
+            assert (
+                focused_contrasts and min(focused_contrasts) >= _MIN_ACTION_CONTRAST
+            ), (
+                f"focused {expected_label!r} must paint at >=3:1 at size={size}; "
+                f"contrasts={focused_contrasts!r}, "
+                f"segments={focused_label_segments!r}"
+            )
+            assert focused_styles != ordinary_styles, (
+                f"focused {expected_label!r} styles must differ from ordinary styles; "
+                f"ordinary={ordinary_styles!r}, focused={focused_styles!r}"
+            )
 
 
 @pytest.mark.asyncio
@@ -84,6 +543,30 @@ async def test_save_dismisses_edit_result_with_resend_false():
         editor = modal.query_one("#console-edit-message-body", TextArea)
         editor.text = "edited"
         await pilot.click("#console-edit-message-save")
+        await pilot.pause()
+
+    assert result == [ConsoleEditResult(text="edited", resend=False)]
+
+
+@pytest.mark.asyncio
+async def test_enter_activates_focused_action():
+    """Enter activates Save reached through the modal's real keyboard order."""
+    app = _RealBundleModalHost()
+    result: list[ConsoleEditResult | None] = []
+
+    async with app.run_test(size=_REAL_BUNDLE_SIZES[0]) as pilot:
+        modal = ConsoleEditMessageModal(content="orig")
+        await app.push_screen(modal, callback=result.append)
+        await pilot.pause()
+
+        editor = modal.query_one("#console-edit-message-body", TextArea)
+        editor.text = "edited"
+        await pilot.press("tab")
+        await pilot.press("tab")
+        await pilot.pause()
+        assert modal.focused is modal.query_one("#console-edit-message-save", Button)
+
+        await pilot.press("enter")
         await pilot.pause()
 
     assert result == [ConsoleEditResult(text="edited", resend=False)]

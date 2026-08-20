@@ -4,6 +4,7 @@ import asyncio
 import concurrent.futures
 import json
 import sys
+import time
 import wave
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -187,20 +188,22 @@ def test_stale_profile_test_token_cannot_consume_newer_same_profile_context() ->
         preset,
     )
 
-    assert profile_library_module._retire_profile_test_context(
-        stale.context_token
+    assert profile_library_module._retire_profile_test_context(stale.context_token)
+    assert (
+        profile_library_module._resolve_profile_test_context(
+            current.context_token,
+            current.preset,
+        )
+        is not None
     )
-    assert profile_library_module._resolve_profile_test_context(
-        current.context_token,
-        current.preset,
-    ) is not None
-    assert not profile_library_module._retire_profile_test_context(
-        stale.context_token
+    assert not profile_library_module._retire_profile_test_context(stale.context_token)
+    assert (
+        profile_library_module._consume_profile_test_context(
+            current.context_token,
+            current.preset,
+        )
+        is not None
     )
-    assert profile_library_module._consume_profile_test_context(
-        current.context_token,
-        current.preset,
-    ) is not None
     assert profile_library_module._profile_test_context_count() == 0
 
 
@@ -938,10 +941,8 @@ async def _select_action_profile(
     table = app.query_one("#stts-profile-table", DataTable)
     table.move_cursor(row=0)
     table.action_select_cursor()
-    await pilot.pause()
     library = app.query_one(STTSProfileLibrary)
-    selected = library._selected_profile
-    assert selected is not None
+    selected = await _wait_selected(app, pilot)
     return library, selected
 
 
@@ -949,13 +950,87 @@ async def _wait_until(
     pilot: Any,
     predicate: Any,
     *,
-    attempts: int = 100,
+    timeout: float = 15.0,
 ) -> None:
-    for _ in range(attempts):
+    """Poll a condition, bounded by wall clock, never by attempt count.
+
+    `pilot.pause(delay)` is a bare `asyncio.sleep`, and `pilot.pause()`'s
+    `wait_for_idle` is a CPU-idleness heuristic: under external machine load
+    a starved process looks idle while its message queue is still full, so a
+    fixed attempt budget (the old `attempts=100`, ~1s nominal) exhausted on
+    loaded machines (task-16842). A monotonic deadline keeps the settle
+    measured -- the loop still exits on the first true predicate.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
         if predicate():
             return
+        if time.monotonic() >= deadline:
+            raise AssertionError(f"condition did not become true within {timeout:.1f}s")
         await pilot.pause(0.01)
-    raise AssertionError("condition did not become true")
+
+
+async def _wait_selected(app: App[Any], pilot: Any) -> LoadedTTSProfile:
+    """Settle on the row selection actually landing.
+
+    `DataTable.action_select_cursor()` posts `RowSelected`; the library's
+    handler (which sets `_selected_profile` and arms the action buttons) runs
+    only when the pump processes it. A single `pilot.pause()` is a CPU-idle
+    heuristic, not a queue drain, so reading `_selected_profile` -- or
+    pressing an action `Button`, which silently swallows `press()` while
+    still disabled -- right after the pause races under load (task-16842).
+    """
+    library = app.query_one(STTSProfileLibrary)
+    await _wait_until(pilot, lambda: library._selected_profile is not None)
+    selected = library._selected_profile
+    assert selected is not None
+    return selected
+
+
+async def _wait_focused(app: App[Any], pilot: Any, widget_id: str) -> None:
+    """Settle on the focus state itself, never on a mounted-state proxy.
+
+    `Widget.focus()` does not focus synchronously: it schedules
+    `screen.set_focus` via `app.call_later`, one pump callback AFTER the
+    widget became queryable. Waiting for a modal's button to be mounted and
+    then asserting `app.focused` therefore races -- mounted is not focused
+    yet, and under load `app.focused` stays None for several 10ms polls
+    (task-16842: the family's standalone reproducer). Not a product race:
+    the callback is FIFO-ordered before any user input that arrives after
+    the modal is visible.
+    """
+    await _wait_until(
+        pilot,
+        lambda: app.focused is not None and app.focused.id == widget_id,
+    )
+
+
+async def _acknowledge_bundle_warning(app: App[Any], pilot: Any) -> None:
+    """Toggle the consent checkbox, then press Continue only once it arms.
+
+    `Checkbox.toggle()` posts `Changed`; the handler that enables Continue
+    runs when the pump drains that message. `Button.press()` is a one-shot
+    that returns early while the button is still disabled, so a press after
+    a heuristic pause is silently swallowed under load and never retried
+    (task-16842).
+    """
+    app.screen.query_one("#bundle-warning-ack", Checkbox).toggle()
+    continue_button = app.screen.query_one("#bundle-warning-continue", Button)
+    await _wait_until(pilot, lambda: not continue_button.disabled)
+    continue_button.press()
+
+
+async def _wait_availability_projected(app: App[Any], pilot: Any) -> None:
+    """Settle on the availability projection landing for the selected row.
+
+    Availability arrives via an async observe->apply flow after rows render;
+    until it lands the preview action reads "Checking" and the status copy
+    is not yet the availability-derived text. Selection settling alone does
+    not settle this (task-16842). Not for tests that deliberately hold the
+    availability future pending.
+    """
+    preview = app.query_one("#stts-profile-preview-btn", Button)
+    await _wait_until(pilot, lambda: str(preview.label) != "Checking")
 
 
 def _playground_is_mounted(app: App[Any]) -> bool:
@@ -963,9 +1038,7 @@ def _playground_is_mounted(app: App[Any]) -> bool:
     try:
         window = app.query_one(STTSWindow)
         playground = app.query_one(SpeechPlaygroundPane)
-        playground.query_one("#tts-provider-select", Select).query_one(
-            "SelectOverlay"
-        )
+        playground.query_one("#tts-provider-select", Select).query_one("SelectOverlay")
     except QueryError:
         return False
     return (
@@ -1281,7 +1354,7 @@ async def test_repository_page_renders_before_availability_and_selection_arms_ac
 
         table.move_cursor(row=0)
         table.action_select_cursor()
-        await pilot.pause()
+        await _wait_selected(app, pilot)
 
         for selector in (
             "#stts-profile-edit-btn",
@@ -1375,9 +1448,7 @@ async def test_profile_recovery_copy_is_visible_at_80x24(
 
 
 @pytest.mark.asyncio
-async def test_unverified_legacy_profile_offers_an_exact_playground_test() -> (
-    None
-):
+async def test_unverified_legacy_profile_offers_an_exact_playground_test() -> None:
     """A provider without catalog authority needs sample evidence, not Ready."""
 
     legacy = replace(
@@ -1396,6 +1467,7 @@ async def test_unverified_legacy_profile_offers_an_exact_playground_test() -> (
 
     async with app.run_test(size=(80, 24)) as pilot:
         await _select_action_profile(app, pilot)
+        await _wait_availability_projected(app, pilot)
         status = app.query_one("#stts-profile-status")
 
         rows = _visible_content_rows(status)
@@ -1447,9 +1519,7 @@ async def test_availability_cell_uses_the_three_truthful_profile_states(
 
 
 @pytest.mark.asyncio
-async def test_publish_page_preserves_needs_test_during_same_page_refresh() -> (
-    None
-):
+async def test_publish_page_preserves_needs_test_during_same_page_refresh() -> None:
     """The availability cell is filled at two sites -- `_publish_page` (from
     preserved availability across a same-page refresh) and
     `_publish_availability` (from a fresh observation) -- and both must go
@@ -1511,6 +1581,7 @@ async def test_long_profile_identifiers_are_keyboard_scrollable_at_80x24() -> No
 
     async with app.run_test(size=(80, 24)) as pilot:
         library, _selected = await _select_action_profile(app, pilot)
+        await _wait_availability_projected(app, pilot)
         status = app.query_one("#stts-profile-status")
         visible_lines = _visible_content_rows(status)
 
@@ -1545,7 +1616,7 @@ async def test_long_profile_identifiers_are_keyboard_scrollable_at_80x24() -> No
         assert identifiers.text == unchanged  # type: ignore[attr-defined]
 
         library._set_status(PROFILE_STORE_UNAVAILABLE_COPY)
-        await pilot.pause()
+        await _wait_focused(app, pilot, "stts-profile-table")
         assert not identifiers.display
         assert identifiers.scroll_x == 0
         assert app.focused is table
@@ -1554,7 +1625,7 @@ async def test_long_profile_identifiers_are_keyboard_scrollable_at_80x24() -> No
         refresh = app.query_one("#stts-profile-refresh-btn", Button)
         refresh.focus()
         library._set_status(profile_library_module.PROFILE_ACTION_FAILED_COPY)
-        await pilot.pause()
+        await _wait_focused(app, pilot, "stts-profile-refresh-btn")
         assert app.focused is refresh
 
         for selector in (
@@ -1710,7 +1781,13 @@ async def test_stale_rendered_rows_cannot_arm_actions_or_emit_preview() -> None:
         )
         table.move_cursor(row=0)
         table.action_select_cursor()
-        await pilot.pause()
+        await _wait_until(
+            pilot,
+            lambda: (
+                library._selected_profile is not None
+                and library._selected_profile.repository_generation == 6
+            ),
+        )
         current_loaded = library._selected_profile
         current_disabled = tuple(
             app.query_one(selector, Button).disabled for selector in action_selectors
@@ -2040,6 +2117,7 @@ async def test_unavailable_profile_disables_playground_action_with_clear_recover
 
     async with app.run_test(size=(120, 40)) as pilot:
         await _select_action_profile(app, pilot)
+        await _wait_availability_projected(app, pilot)
         action = app.query_one("#stts-profile-preview-btn", Button)
 
         assert action.disabled
@@ -2168,8 +2246,8 @@ async def test_same_page_refresh_preserves_selected_profile_focus_and_scroll() -
         table.move_cursor(row=35)
         table.action_select_cursor()
         table.scroll_to(y=35, animate=False)
-        await pilot.pause()
-        selected_id = library._selected_profile.profile.profile_id
+        selected = await _wait_selected(app, pilot)
+        selected_id = selected.profile.profile_id
         scroll_y = table.scroll_offset.y
 
         app.query_one("#stts-profile-refresh-btn", Button).press()
@@ -2294,6 +2372,7 @@ async def test_exact_preview_at_80x24_focuses_playground_with_visible_recovery_b
 
         playground = app.query_one(SpeechPlaygroundPane)
         text_input = playground.query_one("#tts-text-input", TextArea)
+        await _wait_focused(app, pilot, "tts-text-input")
         banner = playground.query_one("#tts-profile-preview-status", Static)
         copy = str(banner.render())
 
@@ -3085,7 +3164,7 @@ async def test_edit_conflict_retains_the_exact_draft_without_leaking_values(
         table = app.query_one("#stts-profile-table", DataTable)
         table.move_cursor(row=0)
         table.action_select_cursor()
-        await pilot.pause()
+        await _wait_selected(app, pilot)
 
         await library.edit_selected_profile()
         assert dialog_calls == 3
@@ -3369,9 +3448,7 @@ async def test_refresh_and_editor_repair_keep_unavailable_persisted_values(
         table = app.query_one("#stts-profile-table", DataTable)
         table.move_cursor(row=0)
         table.action_select_cursor()
-        await pilot.pause()
-        refreshed = library._selected_profile
-        assert refreshed is not None
+        refreshed = await _wait_selected(app, pilot)
 
         async def _repair(screen: object) -> None:
             assert isinstance(
@@ -3837,7 +3914,7 @@ async def test_bundle_warning_acknowledgement_has_initial_focus_at_narrow_sizes(
 
     app = _ConsentHost()
     async with app.run_test(size=size) as pilot:
-        await pilot.pause()
+        await _wait_focused(app, pilot, "bundle-warning-ack")
         assert app.focused is not None
         assert app.focused.id == "bundle-warning-ack"
         assert app.screen.query_one("#bundle-warning-continue", Button).disabled
@@ -3860,7 +3937,7 @@ async def test_bundle_review_focus_order_is_facts_choice_consent_confirm_cancel(
 
     app = _ReviewHost()
     async with app.run_test(size=size) as pilot:
-        await pilot.pause()
+        await _wait_until(pilot, lambda: app.focused is not None)
         expected = (
             "stts-bundle-review-facts",
             "stts-bundle-review-choice",
@@ -3912,7 +3989,7 @@ async def test_windows_disables_bundle_import_truthfully_but_keeps_json_export()
         table.focus()
         table.move_cursor(row=0)
         table.action_select_cursor()
-        await pilot.pause()
+        await _wait_selected(app, pilot)
 
         assert app.query_one("#stts-profile-export-btn", Button).disabled is False
         import_button = app.query_one("#stts-profile-import-btn", Button)
@@ -3975,7 +4052,7 @@ async def test_windows_clone_export_keeps_sanitized_default_and_disables_bundle(
         table.focus()
         table.move_cursor(row=0)
         table.action_select_cursor()
-        await pilot.pause()
+        await _wait_selected(app, pilot)
         app.query_one("#stts-profile-export-btn", Button).press()
         await _wait_until(
             pilot,
@@ -3984,6 +4061,7 @@ async def test_windows_clone_export_keeps_sanitized_default_and_disables_bundle(
 
         sanitized = app.screen.query_one("#stts-export-choice-sanitized", Button)
         bundle = app.screen.query_one("#stts-export-choice-bundle", Button)
+        await _wait_focused(app, pilot, "stts-export-choice-sanitized")
         assert app.focused is sanitized
         assert sanitized.disabled is False
         assert bundle.disabled is True
@@ -4104,10 +4182,7 @@ async def test_reference_export_defaults_sanitized_and_bundle_requires_ack(
 
         monkeypatch.setattr(library, "_choose_voice_bundle_export_path", _destination)
         app.query_one("#stts-profile-export-btn", Button).press()
-        await _wait_until(
-            pilot,
-            lambda: len(app.screen.query("#stts-export-choice-sanitized")) == 1,
-        )
+        await _wait_focused(app, pilot, "stts-export-choice-sanitized")
         assert app.focused is not None
         assert app.focused.id == "stts-export-choice-sanitized"
         app.screen.query_one("#stts-export-choice-bundle", Button).press()
@@ -4116,10 +4191,9 @@ async def test_reference_export_defaults_sanitized_and_bundle_requires_ack(
             lambda: len(app.screen.query("#bundle-warning-ack")) == 1,
         )
         assert bundle_service.exports == []
+        await _wait_focused(app, pilot, "bundle-warning-ack")
         assert app.focused is not None and app.focused.id == "bundle-warning-ack"
-        app.screen.query_one("#bundle-warning-ack", Checkbox).toggle()
-        await pilot.pause()
-        app.screen.query_one("#bundle-warning-continue", Button).press()
+        await _acknowledge_bundle_warning(app, pilot)
 
         await _wait_until(pilot, lambda: len(bundle_service.exports) == 1)
         assert bundle_service.exports == [
@@ -4222,9 +4296,7 @@ async def test_import_warns_before_picker_and_stale_successor_requires_reconfirm
             lambda: len(app.screen.query("#bundle-warning-ack")) == 1,
         )
         assert picker_calls == 0
-        app.screen.query_one("#bundle-warning-ack", Checkbox).toggle()
-        await pilot.pause()
-        app.screen.query_one("#bundle-warning-continue", Button).press()
+        await _acknowledge_bundle_warning(app, pilot)
         await _wait_until(
             pilot,
             lambda: len(app.screen.query("#stts-bundle-review-confirm")) == 1,
@@ -4276,9 +4348,7 @@ async def test_import_review_cancel_invalidates_handle_without_committing(
             pilot,
             lambda: len(app.screen.query("#bundle-warning-ack")) == 1,
         )
-        app.screen.query_one("#bundle-warning-ack", Checkbox).toggle()
-        await pilot.pause()
-        app.screen.query_one("#bundle-warning-continue", Button).press()
+        await _acknowledge_bundle_warning(app, pilot)
         await _wait_until(
             pilot,
             lambda: len(app.screen.query("#stts-bundle-review-cancel")) == 1,
@@ -4314,9 +4384,7 @@ async def test_repeated_import_cancels_release_completed_invalidation_tasks(
                 pilot,
                 lambda: len(app.screen.query("#bundle-warning-ack")) == 1,
             )
-            app.screen.query_one("#bundle-warning-ack", Checkbox).toggle()
-            await pilot.pause()
-            app.screen.query_one("#bundle-warning-continue", Button).press()
+            await _acknowledge_bundle_warning(app, pilot)
             await _wait_until(
                 pilot,
                 lambda: len(app.screen.query("#stts-bundle-review-cancel")) == 1,
@@ -4444,9 +4512,7 @@ async def test_import_review_push_failure_invalidates_handle_exactly_once(
             pilot,
             lambda: len(app.screen.query("#bundle-warning-ack")) == 1,
         )
-        app.screen.query_one("#bundle-warning-ack", Checkbox).toggle()
-        await pilot.pause()
-        app.screen.query_one("#bundle-warning-continue", Button).press()
+        await _acknowledge_bundle_warning(app, pilot)
         expected_failure = (
             _ReviewPushAbort if failure_type is _ReviewPushAbort else WorkerFailed
         )
@@ -4514,9 +4580,7 @@ async def test_unmount_invalidates_handle_returned_by_late_inspection(
             pilot,
             lambda: len(app.screen.query("#bundle-warning-ack")) == 1,
         )
-        app.screen.query_one("#bundle-warning-ack", Checkbox).toggle()
-        await pilot.pause()
-        app.screen.query_one("#bundle-warning-continue", Button).press()
+        await _acknowledge_bundle_warning(app, pilot)
         await asyncio.wait_for(bundle_service.inspect_started.wait(), timeout=1)
 
         await library.remove()

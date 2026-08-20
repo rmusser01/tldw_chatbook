@@ -250,6 +250,182 @@ def anthropic_model_rejects_fixed_thinking_budget(model: object) -> bool:
     return _anthropic_is_modern_request_family(model)
 
 
+def anthropic_model_rejects_temperature_top_p_combination(model: object) -> bool:
+    """Return whether ``model`` rejects ``temperature`` and ``top_p`` together.
+
+    Distinct from :func:`anthropic_model_rejects_sampling_params`: the families
+    that still *accept* sampling parameters individually reject the pair --
+    ``400 invalid_request_error: `temperature` and `top_p` cannot both be
+    specified for this model. Please use only one.``
+
+    Probe-verified against api.anthropic.com with the exact trio the
+    summarization path used to build (``temperature=0.1, top_k=0, top_p=1.0``):
+
+    * 2026-08-20 (TASK-18802 discovery probes): ``claude-haiku-4-5``
+      (req_011CeEDXPHNyF7apkaZepbTN) and ``claude-sonnet-4-5``
+      (req_011CeEDXa9V99yBoHN5vcjDG) -> 400; ``temperature`` alone and
+      ``temperature``+``top_k`` -> 200 (req_011CeEDXQwqi7yXoozbdrXFX,
+      req_011CeEDXVk4nXXCoBGdf9mFm).
+    * 2026-08-20 (TASK-19020 boundary probes): ``claude-opus-4-6``
+      (req_011CeEFGsbHd7VCjcjz4etar), ``claude-sonnet-4-6``
+      (req_011CeEFGuRfeCzC6PiLyDtFb) and ``claude-opus-4-5``
+      (req_011CeEFGvySC6z61NDRH5uN5) -> the identical 400;
+      ``claude-opus-4-6`` + ``temperature``+``top_k`` without ``top_p`` -> 200
+      (msg_011CeEFGzjeXQ6ftPf9KH45n).
+
+    Together with Anthropic's published migration guidance ("passing both will
+    error on every Claude 4+ model"), the rule covers every tier-first-named
+    family -- a naming scheme that began with the Claude 4 generation -- so the
+    predicate is true for any id the family parser recognises with major >= 4.
+    The Claude 3.x generation, which accepted the pair, is number-first-named
+    (``claude-3-haiku-20240307``), never parses into a family, and is entirely
+    retired (that id itself now 404s: req_011CeEDXZ8iS29MZCgyySwQa); unparsed
+    ids keep their historical payload unchanged.
+
+    Args:
+        model: An Anthropic model identifier (any prefixed or suffixed form).
+
+    Returns:
+        True when sending ``temperature`` and ``top_p`` in the same request
+        would be answered with the 400 above. A caller holding both must send
+        temperature and drop top_p (``top_k`` remains compatible alongside
+        temperature). False for unrecognisable ids.
+    """
+    family = _anthropic_model_family(model)
+    if family is None:
+        return False
+    _tier, major, _minor = family
+    return major >= 4
+
+
+#
+#######################################################################################################################
+#
+# OpenAI per-model request capabilities
+#
+# Same design as the Anthropic predicates above (TASK-18414), for the same two
+# reasons: these are facts about what api.openai.com *accepts*, not user
+# preferences, so they live outside the config-driven tables; and a direct
+# mapping in those tables shadows every pattern, so a pattern row could never
+# be trusted to fire.
+#
+# Probe-verified against api.openai.com on 2026-08-20 (TASK-18802) with the
+# exact payload shape the summarization path builds:
+#
+#   * gpt-5, gpt-5.6, o3, o4-mini + ``max_tokens`` -> 400
+#     ``unsupported_parameter: 'max_tokens' is not supported with this model.
+#     Use 'max_completion_tokens' instead.``
+#   * gpt-5, gpt-5.6 + ``temperature: 0.7`` -> 400
+#     ``unsupported_value: 'temperature' does not support 0.7 with this model.
+#     Only the default (1) value is supported.``
+#   * gpt-5, gpt-5.6, o4-mini + ``max_completion_tokens`` and no sampling
+#     params -> 200
+#   * Controls: gpt-4o and gpt-4.1 return 200 with ``temperature: 0.7`` +
+#     ``max_tokens`` unchanged.
+#
+# The o1 family was not probed (no access on the project key) and is included
+# on the documented grounds already encoded in the chat path's reasoning-model
+# marker list (task-404): it shares the o-series request surface.
+#
+# Families are matched as (series, major) so dated snapshots
+# (``gpt-5-2025-08-07``, ``o3-2025-04-16``), dotted minors (``gpt-5.6``,
+# ``gpt-5.1``), suffixed variants (``gpt-5.6-terra``, ``o4-mini``) and
+# provider-prefixed forms (``openai/gpt-5``) all resolve, without matching the
+# legacy families that still accept both parameters (``gpt-4o``, ``gpt-4.1``,
+# ``gpt-4-turbo``, ``gpt-3.5-turbo``) or non-OpenAI lookalikes
+# (``o365-copilot``, ``olmo-7b``, ``gpt-oss-120b``).
+_OPENAI_O_SERIES_RE = re.compile(r"^o(?P<major>\d)(?=$|[-_.@\[])")
+_OPENAI_GPT_SERIES_RE = re.compile(r"^gpt[-_.](?P<major>\d+)(?=$|[-_.@\[])")
+
+# (series, major) pairs whose chat-completions surface rejects the classic
+# ``max_tokens`` cap and non-default sampling parameters.
+_OPENAI_MODERN_REQUEST_FAMILIES = frozenset(
+    {
+        ("gpt", 5),
+        ("o", 1),
+        ("o", 3),
+        ("o", 4),
+    }
+)
+
+
+def _openai_model_family(model: object) -> Optional[Tuple[str, int]]:
+    """Parse an OpenAI model id into ``(series, major)``.
+
+    Args:
+        model: A model identifier in any form the codebase passes through --
+            bare (``gpt-5``, ``o3``), dotted (``gpt-5.6``), dated
+            (``gpt-5-2025-08-07``, ``o3-2025-04-16``), suffixed
+            (``gpt-5.6-terra``, ``o4-mini``) or provider-prefixed
+            (``openai/gpt-5``).
+
+    Returns:
+        ``("gpt", major)`` or ``("o", major)``, or ``None`` when the id is not
+        a recognisable OpenAI series name. The o-series major is a single
+        digit and the gpt major must sit at a token boundary, so
+        ``o365-copilot``, ``olmo-7b`` and ``gpt-4o`` never parse into a
+        family.
+    """
+    if not isinstance(model, str):
+        return None
+    normalized = model.strip().lower()
+    if "/" in normalized:
+        normalized = normalized.rsplit("/", 1)[-1]
+    for pattern, series in (
+        (_OPENAI_O_SERIES_RE, "o"),
+        (_OPENAI_GPT_SERIES_RE, "gpt"),
+    ):
+        match = pattern.match(normalized)
+        if match is not None:
+            return (series, int(match.group("major")))
+    return None
+
+
+def _openai_is_modern_request_family(model: object) -> bool:
+    """Return whether ``model`` is in the modern OpenAI request family."""
+    family = _openai_model_family(model)
+    if family is None:
+        return False
+    return family in _OPENAI_MODERN_REQUEST_FAMILIES
+
+
+def openai_model_rejects_sampling_params(model: object) -> bool:
+    """Return whether ``model`` rejects non-default ``temperature``/``top_p``.
+
+    Args:
+        model: An OpenAI model identifier (any prefixed or suffixed form).
+
+    Returns:
+        True when sending a non-default sampling value would be answered with
+        ``400 unsupported_value: 'temperature' does not support 0.7 with this
+        model. Only the default (1) value is supported.`` -- the o-series and
+        gpt-5 reasoning families. False for gpt-4o, gpt-4.1 and earlier, which
+        still accept them.
+    """
+    return _openai_is_modern_request_family(model)
+
+
+def openai_model_requires_max_completion_tokens(model: object) -> bool:
+    """Return whether ``model`` requires ``max_completion_tokens``.
+
+    Args:
+        model: An OpenAI model identifier (any prefixed or suffixed form).
+
+    Returns:
+        True when sending the classic ``max_tokens`` cap would be answered
+        with ``400 unsupported_parameter: 'max_tokens' is not supported with
+        this model. Use 'max_completion_tokens' instead.``
+
+    Note:
+        This currently covers the same families as
+        :func:`openai_model_rejects_sampling_params` -- OpenAI changed both
+        rules with the reasoning generation -- but they are separate questions
+        about the request surface and are kept as separate predicates so a
+        future model can answer them differently.
+    """
+    return _openai_is_modern_request_family(model)
+
+
 #
 #######################################################################################################################
 #

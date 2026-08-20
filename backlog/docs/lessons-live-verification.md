@@ -1141,3 +1141,49 @@ that must keep working in the same batch — Opus 4.6, Sonnet 4.5 and Haiku 4.5 
 200 for the identical payload is what turned "don't break older models" from an
 intention into evidence. Keep this out of the app's config path entirely: a standalone
 `curl` imports no `tldw_chatbook` module and cannot touch the live config.
+---
+
+## An "unchanged behavior" AC can faithfully pin behavior that is already broken — run the control leg live
+
+**TASK-18802, 2026-08-20.** The summarization fix gated sampling params on the
+modern-Anthropic predicate and pinned AC #4 ("models that still accept these
+parameters are unchanged") with payload tests: legacy models keep receiving
+`temperature=0.1, top_k=0, top_p=1.0` byte-for-byte. Those pins were green,
+mutation-hardened — and pinning a payload that no served model accepts. Only
+running the *legacy* leg of the live pass (claude-haiku-4-5, expected to just
+work) surfaced it: HTTP 400 ``` `temperature` and `top_p` cannot both be
+specified for this model. Please use only one. ``` (req_011CeEDXPHNyF7apkaZepbTN).
+Follow-up probes showed every currently-served Claude 4.x rejects the
+temperature+top_p combination, and the function's own fallback default
+(`claude-3-haiku-20240307`) now 404s as retired — so the "preserved" legacy
+path had no live model it worked on. Filed as TASK-19020 rather than silently
+widening the fix, since changing those payloads is exactly what the AC forbade.
+
+**What to do.** When an AC says "X is unchanged", the payload pin proves only
+*unchanged*, not *working*. Give the control leg one live request in the same
+pass as the fixed leg — it is one extra call, and it is the only thing that can
+distinguish "preserved" from "preserved a fossil". If the control fails live,
+probe the minimal shapes standalone, and file the discovery against its own
+task instead of mutating the payloads your current AC pins.
+
+---
+
+## A Textual live harness needs screen, event, and paint readiness (TASK-18913, 2026-08-16)
+
+**Incident.** The first Prompt-pagination live attempts failed even though the
+mounted product state was correct. The harness treated app-level `_ui_ready` as
+Library readiness, called Textual 8's async `Input.action_submit()` without
+awaiting it, and sampled the compositor in the same cycle that focus/scroll was
+scheduled. Those three harness errors respectively lost the initial rail action,
+never posted `Input.Submitted`, and reported a reachable row as unpainted. A later
+real run exposed the inverse product race: loading recomposed disabled pager
+buttons and moved focus before the ready page could restore the invoking button.
+
+**What to do.** A live Textual check must wait at each boundary for all three
+layers it claims: authoritative screen state, the freshly mounted DOM, and the
+compositor text/geometry. Read the installed Textual method contract before
+driving it (`Button.press()` and `focus()` are synchronous schedulers;
+`Input.action_submit()` is async), re-query widgets after recomposition, and
+settle then re-check side-effect-free predicates. App startup readiness does not
+prove a destination screen has loaded. A correct harness can then reveal a real
+focus race instead of manufacturing one.

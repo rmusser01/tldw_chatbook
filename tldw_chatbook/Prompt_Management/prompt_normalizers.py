@@ -504,26 +504,49 @@ def normalize_prompt_list(
     payload: Any, *, backend: str, page: int = 1, per_page: int = 10
 ) -> dict[str, Any]:
     """Normalize paginated prompt list responses from local DBs or the server API."""
+    def page_int(value: Any, *, field: str) -> int:
+        if isinstance(value, bool) or not isinstance(value, (int, str)):
+            raise TypeError(f"{field} must be an integer.")
+        try:
+            return int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{field} must be an integer.") from exc
+
     if isinstance(payload, tuple) and len(payload) == 4:
         items, total_pages, current_page, total_items = payload
+        current_page = page_int(current_page, field="current_page")
         return {
             "items": [normalize_prompt_record(item, backend=backend) for item in items],
-            "total_pages": total_pages,
+            "total_pages": page_int(total_pages, field="total_pages"),
             "current_page": current_page,
-            "total_items": total_items,
+            "total_items": page_int(total_items, field="total_items"),
             "page": current_page,
-            "per_page": per_page,
+            "per_page": page_int(per_page, field="per_page"),
         }
 
     data = _to_plain_dict(payload)
     raw_items = data.get("items", [])
+    page_alias = page_int(data["page"] if "page" in data else page, field="page")
+    current_page = page_int(
+        data["current_page"] if "current_page" in data else page_alias,
+        field="current_page",
+    )
     return {
         "items": [normalize_prompt_record(item, backend=backend) for item in raw_items],
-        "total_pages": int(data.get("total_pages", 0) or 0),
-        "current_page": int(data.get("current_page", data.get("page", page)) or page),
-        "total_items": int(data.get("total_items", len(raw_items)) or 0),
-        "page": int(data.get("current_page", data.get("page", page)) or page),
-        "per_page": int(data.get("per_page", per_page) or per_page),
+        "total_pages": page_int(
+            data["total_pages"] if "total_pages" in data else 0,
+            field="total_pages",
+        ),
+        "current_page": current_page,
+        "total_items": page_int(
+            data["total_items"] if "total_items" in data else len(raw_items),
+            field="total_items",
+        ),
+        "page": page_alias if "page" in data else current_page,
+        "per_page": page_int(
+            data["per_page"] if "per_page" in data else per_page,
+            field="per_page",
+        ),
     }
 
 

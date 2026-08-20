@@ -24,12 +24,10 @@ chooser, not a cycler, so it loses the ``⇄``.
 from types import SimpleNamespace
 
 import pytest
-from textual.app import App
-
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from textual.widgets import Button, Static
+from textual.widgets import Button, OptionList, Static
 
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_library_shell import (
@@ -185,24 +183,23 @@ async def test_media_type_strip_opens_full_set_marks_active_and_picks():
         screen = await _open_media_list(host, pilot)
 
         opener = screen.query_one("#library-media-type-filter", Button)
-        assert str(opener.label) == "type: All"
+        assert str(opener.label) == "type: All types"
 
         opener.press()
-        await _wait_for_selector(screen, pilot, "#library-media-type-choices")
-
-        labels = {
-            str(button.label)
-            for button in screen.query(".library-media-type-choice")
-        }
-        # Full option set on screen, ✓ on the active option only.
-        assert labels == {"✓ All", "audio", "video"}
-
-        audio = next(
-            button
-            for button in screen.query(".library-media-type-choice")
-            if str(button.label) == "audio"
+        chooser = await _wait_for_selector(
+            screen, pilot, "#library-media-type-choices"
         )
-        audio.press()
+        assert isinstance(chooser, OptionList)
+        labels = {str(option.prompt) for option in chooser.options}
+        # Full option set on screen, ✓ on the active option only.
+        assert labels == {"✓ All types", "audio", "video"}
+
+        chooser.highlighted = next(
+            index
+            for index, option in enumerate(chooser.options)
+            if getattr(option, "choice_value", None) == "audio"
+        )
+        chooser.action_select()
         await pilot.pause()
         await pilot.pause()
 
@@ -232,7 +229,7 @@ async def test_media_type_strip_escape_closes_without_change():
         await pilot.pause()
 
         assert not screen.query("#library-media-type-choices")
-        assert screen._library_media_type_filter == "All"
+        assert screen._library_media_type_filter is None
         # The opener regains focus so Escape round-trips for keyboard users.
         await _wait_for_condition(
             pilot,
@@ -265,19 +262,18 @@ async def test_media_type_strip_works_in_both_layouts():
             )
 
             screen.query_one("#library-media-type-filter", Button).press()
-            await _wait_for_selector(screen, pilot, "#library-media-type-choices")
-            choices = list(screen.query(".library-media-type-choice"))
-            assert len(choices) == 3
-            for choice in choices:
-                region = choice.region
-                assert region.width > 0 and region.height > 0, (
-                    f"choice {choice.id} got no geometry at {size}: {region!r}"
-                )
-
-            video = next(
-                button for button in choices if str(button.label) == "video"
+            chooser = await _wait_for_selector(
+                screen, pilot, "#library-media-type-choices"
             )
-            video.press()
+            assert isinstance(chooser, OptionList)
+            assert chooser.option_count == 3
+            assert chooser.region.width > 0 and chooser.region.height > 0
+            chooser.highlighted = next(
+                index
+                for index, option in enumerate(chooser.options)
+                if getattr(option, "choice_value", None) == "video"
+            )
+            chooser.action_select()
             await pilot.pause()
             await pilot.pause()
             assert screen._library_media_type_filter == "video"
@@ -306,25 +302,79 @@ async def test_media_type_strip_keyboard_only_path():
 
         await pilot.press("enter")
         await _wait_for_selector(screen, pilot, "#library-media-type-choices")
-        # Focus lands on the active choice (✓ All).
+        # Focus lands in the chooser with the active unfiltered option highlighted.
         await _wait_for_condition(
             pilot,
             lambda: getattr(screen.focused, "id", "")
-            and getattr(screen.focused, "id", "").startswith(
-                "library-media-type-choice-"
-            ),
+            == "library-media-type-choices",
             message=f"Focus never entered the strip; focused: {screen.focused!r}",
         )
-        assert str(screen.focused.label) == "✓ All"
+        chooser = screen.query_one("#library-media-type-choices", OptionList)
+        assert chooser.highlighted == 0
+        assert str(chooser.highlighted_option.prompt) == "✓ All types"
 
-        await pilot.press("tab")
+        await pilot.press("down")
         await pilot.pause()
-        assert str(screen.focused.label) == "audio"
+        assert str(chooser.highlighted_option.prompt) == "audio"
         await pilot.press("enter")
         await pilot.pause()
         await pilot.pause()
 
         assert screen._library_media_type_filter == "audio"
+        assert not screen.query("#library-media-type-choices")
+
+
+@pytest.mark.asyncio
+async def test_media_type_chooser_keeps_complete_facets_in_one_bounded_widget():
+    media = [
+        {
+            "id": f"media-{index}",
+            "title": f"Media {index:02d}",
+            "type": "All" if index == 0 else f"type-{index:02d}",
+            "last_modified": f"2026-08-01T00:{index:02d}:00Z",
+        }
+        for index in range(63)
+    ]
+    app = _build_test_app()
+    _seed_conversations(app, [], media=media)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=NARROW_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        controller = screen._library_media_browse_controller
+        await _wait_for_condition(
+            pilot,
+            lambda: len(controller.type_options) == 63,
+            message="Complete Media facets never settled.",
+        )
+        applied_before = controller.applied_scope
+        requested_before = controller.requested_scope
+
+        screen.query_one("#library-media-type-filter", Button).press()
+        chooser = await _wait_for_selector(
+            screen, pilot, "#library-media-type-choices"
+        )
+        assert isinstance(chooser, OptionList)
+        assert len(screen.query("#library-media-type-choices")) == 1
+        assert chooser.option_count == 64
+        assert len(chooser.children) == 0
+        assert chooser.region.height <= 10
+        assert getattr(chooser.get_option_at_index(0), "choice_value") is None
+        assert str(chooser.get_option_at_index(0).prompt) == "✓ All types"
+        assert getattr(chooser.get_option_at_index(1), "choice_value") == "All"
+        assert str(chooser.get_option_at_index(1).prompt) == "All"
+        assert controller.applied_scope == applied_before
+        assert controller.requested_scope == requested_before
+
+        chooser.focus()
+        await pilot.press("end")
+        await pilot.press("enter")
+        await _wait_for_condition(
+            pilot,
+            lambda: controller.applied_scope is not None
+            and controller.applied_scope.media_type == "type-62",
+            message="Keyboard commit never selected the final complete type.",
+        )
         assert not screen.query("#library-media-type-choices")
 
 
@@ -516,12 +566,14 @@ def test_prompts_sort_choice_requests_exact_scope():
     refreshes = []
 
     def make_fake(sort_by: str):
+        applied_scope = PromptBrowseScope(sort_by=sort_by)
         return SimpleNamespace(
             # task-15790: production gained this in-flight guard; stale double.
             _library_prompts_mutation_in_flight=False,
             _library_prompts_sort_choices_visible=True,
             _library_prompt_browse_controller=SimpleNamespace(
-                scope=PromptBrowseScope(sort_by=sort_by)
+                scope=applied_scope,
+                visible_result=SimpleNamespace(scope=applied_scope),
             ),
             _request_library_prompts_browse=lambda scope, focus_identity=None: (
                 requests.append((scope, focus_identity))

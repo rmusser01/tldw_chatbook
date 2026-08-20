@@ -25,8 +25,9 @@ Press **Ctrl+3** to open Library, then click **Prompts** in the rail's
   ("sort: Newest" / "sort: Name", "Select", "Import…", and "Export…"), and
   one row per prompt showing its name, artifact/source/lane summary, and
   description and age when present.
-  Lists longer than one 50-row page have **Previous** and **Next** controls
-  plus an exact "Page … · showing … of …" line.
+  Lists longer than one 20-row page have **Previous** and **Next** controls
+  plus an exact range, total, and page line, such as **"21-40 of 45 · Page
+  2 of 3"**.
 - **Import row** — appears inline under the toolbar when you press
   "Import…": a "File or folder path…" field, then "Browse…", "Import",
   and "Cancel", with an outcome line underneath.
@@ -46,15 +47,19 @@ Press **Ctrl+3** to open Library, then click **Prompts** in the rail's
 | collection: All prompts | Opens the local-only collection manager; choose **All prompts** or one collection |
 | sort: Newest / sort: Name | Press to open a one-row strip of Newest / Name (✓ on the active one) in place of the toolbar; pick one directly (changing sort returns to page 1), or press Escape to cancel |
 | Select | Enters selection mode so Prompt and Recipe rows can be checked across searches and pages |
-| Previous / Next | Requests the adjacent exact 50-row page without changing search, collection, or sort |
+| Previous / Next | Requests the adjacent exact 20-row page without changing search, collection, or sort |
 | Import… | Opens the inline Import row (below) |
 | Export… | Opens the local **Export bundle (.zip)** canvas scoped to every active Prompt and Recipe; this is separate from the editor's one-item Markdown export |
 | A prompt row | Opens that prompt in the editor |
 
-Search, collection, sort, and page form one exact local request. The header and
-page line use the matching total, including results beyond the first page. The
-list shows a loading state while that request runs. If it fails, the bounded
-error line and **Retry** repeat the same request. Empty outcomes remain distinct:
+Search, collection, sort, and page form one exact local request. Search,
+collection, and sort apply to the complete source before its page is chosen and
+successful changes return to page 1. The header and page line use the matching
+total, including results beyond the first page. While an adjacent page loads,
+the last applied rows remain visible and the pager explains why it is disabled.
+If a request fails, those rows remain read-only and **Retry** repeats the failed
+request; the filter still shows the text you tried while the rows and range
+continue to describe the last applied scope. Empty outcomes remain distinct:
 
 - **No prompts yet. Create or import a prompt to begin.** — the local library is empty.
 - **This collection has no prompts. Choose another collection or add prompts.** —
@@ -65,9 +70,11 @@ error line and **Retry** repeat the same request. Empty outcomes remain distinct
 ### Selecting Prompts and Recipes
 
 Press **Select** to enter selection mode. Each Prompt or Recipe row becomes a
-literal unchecked/checked row; press it to add or remove that item. The summary
-reports both the complete basket and the current settled page, for example
-`7 selected · 2 on this page`.
+literal unchecked/checked row; press it to add or remove that item. Every
+selection captures the item's version, so a later delete/export can reject a
+changed record instead of acting on a different revision. The summary reports
+both the complete basket and the current settled page, for example `7 selected
+· 2 on this page`.
 
 - **Select page** adds every valid row on the currently settled page without
   replacing items selected elsewhere.
@@ -139,7 +146,7 @@ folder."
 From the normal Prompts list, press **Export…** to open the existing **Export
 bundle (.zip)** canvas with the scope line `Prompts · N items`. The count is a
 fresh, uncapped query over all active local Prompts and Recipes, not just the
-visible 50-row page or current search/collection filter. In selection mode,
+visible 20-row page or current search/collection filter. In selection mode,
 **Export selected** opens the same canvas for exactly the basket's active IDs,
 including selections hidden by the current page or filter. Returning from the
 canvas preserves the basket after success, cancellation, or failure.

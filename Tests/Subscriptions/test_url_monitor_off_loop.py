@@ -162,11 +162,14 @@ def _spy_diff_work(monkeypatch) -> dict[str, list[int]]:
 
     real_percentage = ContentExtractor.calculate_change_percentage
 
-    def percentage_spy(old_content, new_content):
+    # `check_url`'s percentage hop passes pre-built segment lists (TASK-16839
+    # fix round: segments are shared with the details hop), so the spy must
+    # forward them.
+    def percentage_spy(old_content, new_content, **kwargs):
         threads.setdefault("calculate_change_percentage", []).append(
             threading.get_ident()
         )
-        return real_percentage(old_content, new_content)
+        return real_percentage(old_content, new_content, **kwargs)
 
     monkeypatch.setattr(
         ContentExtractor, "calculate_change_percentage", staticmethod(percentage_spy)
@@ -247,9 +250,15 @@ async def test_the_diff_work_runs_off_the_event_loop_thread(tmp_path, monkeypatc
     assert set(threads) == expected, (
         f"every difflib call must have happened (saw {sorted(threads)})"
     )
+    # 2 = one segmentation per side, total, for the whole changed path: the
+    # percentage hop builds both lists and passes them through to the details
+    # hop (TASK-16839 fix round, review finding 2 -- each hop previously
+    # segmented independently, paying the dominant cost twice for every
+    # significant change). A 3rd call means the cross-hop sharing broke.
     assert len(threads["_segment_for_diff"]) == 2, (
-        "each side is segmented once and shared (the Qodo segment-once rule) "
-        "-- a third call means the sharing broke in the move"
+        "the changed path segments each side exactly once, shared across the "
+        "percentage and details hops -- an extra call means the segment-once "
+        "sharing broke"
     )
     loop_thread = threading.get_ident()
     for name, idents in threads.items():

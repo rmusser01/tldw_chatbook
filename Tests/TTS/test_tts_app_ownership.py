@@ -909,6 +909,14 @@ async def test_app_lifecycle_shutdown_drains_artifact_coordinator_first() -> Non
     async def image_shutdown() -> None:
         calls.append("image")
 
+    async def console_runtime_shutdown() -> None:
+        # TASK-18609: production drains the Console runtime between the
+        # image-edit and file-notes owners (app.py
+        # `_shutdown_app_owned_lifecycles`); the double drifted when the
+        # call was added and the test died on the missing attribute instead
+        # of asserting the ordering it exists for.
+        calls.append("console-runtime")
+
     async def notes_shutdown() -> None:
         calls.append("notes")
 
@@ -916,12 +924,19 @@ async def test_app_lifecycle_shutdown_drains_artifact_coordinator_first() -> Non
         _audio_cpp_artifact_lease_coordinator=Coordinator(),
         audio_cpp_model_install_owner=InstallOwner(),
         _shutdown_console_image_edits=image_shutdown,
+        _shutdown_console_runtime=console_runtime_shutdown,
         _shutdown_file_notes_session_owner=notes_shutdown,
     )
 
     await TldwCli._shutdown_app_owned_lifecycles(owner)
 
-    assert calls == ["coordinator", "install", "image", "notes"]
+    assert calls == [
+        "coordinator",
+        "install",
+        "image",
+        "console-runtime",
+        "notes",
+    ]
 
 
 @pytest.mark.asyncio
