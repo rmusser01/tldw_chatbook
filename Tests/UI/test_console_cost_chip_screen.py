@@ -683,6 +683,10 @@ async def test_fingerprint_recompute_is_skipped_while_streaming():
 
 @pytest.mark.asyncio
 async def test_cost_chip_press_opens_the_breakdown_modal():
+    """task-8: the cost chip now opens the shared Conversation Inspector
+    (not the retired standalone ``ConsoleCostModal``), starting on its
+    Costs tab -- copies this file's existing chip-press driver verbatim,
+    only the pushed-modal assertion changes."""
     gateway = _AnthropicCostGateway(PRICED_USAGE, reply="the priced answer")
     app = _build_test_app()
     _configure_anthropic_ready_console(app)
@@ -704,11 +708,16 @@ async def test_cost_chip_press_opens_the_breakdown_modal():
         chip.action_open_cost_breakdown()
         await pilot.pause()
 
-        from tldw_chatbook.Widgets.Console.console_cost_modal import ConsoleCostModal
+        from tldw_chatbook.Widgets.Console.console_conversation_inspector import (
+            TAB_COSTS,
+            ConsoleConversationInspector,
+        )
 
-        assert isinstance(host.screen_stack[-1], ConsoleCostModal)
-        modal_text = _visible_text(host.screen_stack[-1])
-        assert "Cost breakdown" in modal_text
+        modal = host.screen_stack[-1]
+        assert isinstance(modal, ConsoleConversationInspector)
+        assert modal.query_one("#console-inspector-tabs").active == TAB_COSTS
+        modal_text = _visible_text(modal)
+        assert "Conversation Inspector" in modal_text
         assert "Total" in modal_text
 
 

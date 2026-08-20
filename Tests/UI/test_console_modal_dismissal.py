@@ -94,6 +94,9 @@ from tldw_chatbook.Widgets.Console.console_citation_sources_modal import (
 )
 from tldw_chatbook.Widgets.Console.console_context_modal import ConsoleContextModal
 from tldw_chatbook.Widgets.Console.console_cost_modal import ConsoleCostModal
+from tldw_chatbook.Widgets.Console.console_conversation_inspector import (
+    ConsoleConversationInspector,
+)
 from tldw_chatbook.Widgets.Console.console_image_viewer_modal import (
     ConsoleImageViewerModal,
 )
@@ -221,6 +224,24 @@ _RESTORE_OPENER = "restore opener or Console composer fallback"
 
 async def _empty_context_snapshot() -> ConsoleContextSnapshot:
     return ConsoleContextSnapshot(current_messages=[], next_send_payload={})
+
+
+async def _empty_exchanges_loader(_native_message_id: str) -> list[tuple[Any, bool]]:
+    return []
+
+
+def _inspector_factory() -> ConsoleConversationInspector:
+    """task-8: the Conversation Inspector replaced ``ConsoleCostModal``/
+    ``ConsoleContextModal`` as the Console root's actual launch target --
+    both entry points now push this instead (see ``chat_screen.py``'s
+    ``_push_console_inspector``)."""
+    return ConsoleConversationInspector(
+        rows=[],
+        totals=ConsoleCostRowTotals(0, 0.0, False, 0),
+        turns=[],
+        exchanges_loader=_empty_exchanges_loader,
+        snapshot_factory=_empty_context_snapshot,
+    )
 
 
 async def _empty_records(_query: str) -> list[dict[str, object]]:
@@ -386,21 +407,11 @@ TASK2_MODAL_CONTRACTS = (
         _RESTORE_OPENER,
     ),
     _Task2ModalContract(
-        ConsoleContextModal,
-        lambda: ConsoleContextModal(_empty_context_snapshot),
-        "#console-context-modal",
+        ConsoleConversationInspector,
+        _inspector_factory,
+        "#console-inspector-modal",
         None,
-        "Console context action",
-        None,
-        "none",
-        _RESTORE_OPENER,
-    ),
-    _Task2ModalContract(
-        ConsoleCostModal,
-        lambda: ConsoleCostModal([], ConsoleCostRowTotals(0, 0.0, False, 0)),
-        "#console-cost-modal",
-        None,
-        "Console cost action",
+        "Console cost chip / Console context action",
         None,
         "none",
         _RESTORE_OPENER,
@@ -1215,14 +1226,15 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
         )
     }
     discovered_console_types = _discover_console_modal_types()
-    # task-18515 review-note management, task 3: ConsoleReviewNotesModal is
-    # now wired into the `n`/marker-click flow (see
-    # ChatScreen.on_console_review_notes_requested) and lives in
-    # TASK2_MODAL_CONTRACTS, so the inventory-only escape hatch is empty
-    # again -- kept in place (same escape hatch ConsoleReactionPickerModal
-    # used before it was wired) for the next modal that ships ahead of its
-    # launch site.
-    inventory_only_types: set[type[ModalScreen[Any]]] = set()
+    # task-18300: ConsoleConversationInspector replaced both of these as the
+    # Console root's actual launch target (chat_screen.py no longer
+    # constructs either) -- the files are untouched at this commit
+    # (task-10 retires them), so they are still DISCOVERED here, just no
+    # longer adopted by any contract table or reachable from the root.
+    inventory_only_types: set[type[ModalScreen[Any]]] = {
+        ConsoleCostModal,
+        ConsoleContextModal,
+    }
 
     assert discovered_console_types - console_contract_types == inventory_only_types
     assert discovered_console_types == console_contract_types | inventory_only_types
@@ -1239,9 +1251,10 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
         for node in reachable
         if inspect.isclass(node) and issubclass(node, ModalScreen)
     }
-    # 43 after TASK-3070.6 removed the unreachable Console skill picker;
-    # task-18810's WorkspaceCreateModal/SelectDirectory launches remain.
-    assert len(reachable_modal_types) == 43
+    # dev baseline 43, minus the two Console modals this task unwires
+    # (ConsoleCostModal/ConsoleContextModal), plus the inspector that
+    # replaced them.
+    assert len(reachable_modal_types) == 42
     all_contract_types = console_contract_types | {
         contract.modal_type for contract in TASK4_MODAL_CONTRACTS
     } | {TrajectoryScreen}
@@ -1371,14 +1384,13 @@ class _SyntheticDeclaredOwner:
 
 
 def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
-    assert len(TASK2_MODAL_CONTRACTS) == 15
+    assert len(TASK2_MODAL_CONTRACTS) == 14
     assert {contract.modal_type.__name__ for contract in TASK2_MODAL_CONTRACTS} == {
         "AutoSpeakConsentModal",
         "ConsoleCharacterPickerModal",
         "ConsoleReactionPickerModal",
         "ConsoleCitationSourcesModal",
-        "ConsoleContextModal",
-        "ConsoleCostModal",
+        "ConsoleConversationInspector",
         "ConsoleImageViewerModal",
         "ConsoleModelPopover",
         "ConsolePromptPickerModal",
