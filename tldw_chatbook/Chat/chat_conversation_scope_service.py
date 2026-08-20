@@ -186,8 +186,12 @@ class ChatConversationScopeService:
         self, *, mode: str = "local"
     ) -> LibraryContentEvidence:
         """Return tri-state evidence for durably saved conversations."""
+        normalized_mode = self._normalize_mode(mode)
         payload = await self.list_conversations(
-            mode=mode, scope_type="all", limit=1, offset=0
+            mode=normalized_mode,
+            scope_type="all" if normalized_mode == "local" else "global",
+            limit=1,
+            offset=0,
         )
         if not isinstance(payload, Mapping):
             return LibraryContentEvidence.UNKNOWN
@@ -204,7 +208,7 @@ class ChatConversationScopeService:
         if total == 0:
             return (
                 LibraryContentEvidence.EMPTY
-                if not items
+                if normalized_mode == "local" and not items
                 else LibraryContentEvidence.UNKNOWN
             )
         return (
