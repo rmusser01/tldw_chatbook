@@ -189,7 +189,7 @@ git commit -m "test(ui): characterize Textual palette refresh race"
 - Create: `tldw_chatbook/UI/stable_command_palette.py`
 - Modify: `Tests/UI/test_command_palette_selection_race.py`
 
-- [ ] **Step 1: Add and run a failing API-presence test**
+- [x] **Step 1: Add and run a failing API-presence test**
 
 Add this test without importing the missing module at collection time:
 
@@ -210,7 +210,7 @@ Run:
 
 Expected: one assertion failure because the compatibility module does not exist.
 
-- [ ] **Step 2: Add the pass-through API and verify the API test GREEN**
+- [x] **Step 2: Add the pass-through API and verify the API test GREEN**
 
 Create `tldw_chatbook/UI/stable_command_palette.py` with only:
 
@@ -228,7 +228,7 @@ Run the Step 1 node again.
 
 Expected: PASS. This establishes a valid import/API boundary before behavioral RED.
 
-- [ ] **Step 3: Add failing stable-selection and early-navigation tests**
+- [x] **Step 3: Add failing stable-selection and early-navigation tests**
 
 Import `StableCommandPalette` and add mounted tests that use the same fake clock and gates:
 
@@ -379,7 +379,7 @@ async def test_escape_closes_without_running_a_command(monkeypatch):
         assert PROBE.calls == []
 ```
 
-- [ ] **Step 4: Run the behavioral tests and verify RED**
+- [x] **Step 4: Run the behavioral tests and verify RED**
 
 Run:
 
@@ -391,7 +391,7 @@ Run:
 
 Expected: the pass-through subclass fails the pending-provider stable-selection test because Textual refreshes/resets the acted-on snapshot. Early-navigation, settled, and Escape cases are non-regression controls and must pass or expose fixture errors before the override is added.
 
-- [ ] **Step 5: Implement the minimal compatibility override**
+- [x] **Step 5: Implement the minimal compatibility override**
 
 Create `tldw_chatbook/UI/stable_command_palette.py`:
 
@@ -417,13 +417,13 @@ class StableCommandPalette(CommandPalette):
 
 Do not add timers, provider coordination, callback invocation, configuration, or copied Textual code.
 
-- [ ] **Step 6: Run the Task 2 tests and verify GREEN**
+- [x] **Step 6: Run the Task 2 tests and verify GREEN**
 
 Run the Step 4 command.
 
 Expected: all selected tests pass. The stable selection test must prove callback identity/count and cancellation; the two early-navigation families must prove later results actually appear.
 
-- [ ] **Step 7: Run the stock/stable characterization together**
+- [x] **Step 7: Run the stock/stable characterization together**
 
 ```bash
 ../../.venv/bin/python -m pytest -q Tests/UI/test_command_palette_selection_race.py
@@ -431,7 +431,7 @@ Expected: all selected tests pass. The stable selection test must prove callback
 
 Expected: PASS. The stock row resets after the forced late refresh; the stable row cancels before that refresh and runs the acted-on callback once.
 
-- [ ] **Step 8: Commit the compatibility slice**
+- [x] **Step 8: Commit the compatibility slice**
 
 ```bash
 git add tldw_chatbook/UI/stable_command_palette.py \

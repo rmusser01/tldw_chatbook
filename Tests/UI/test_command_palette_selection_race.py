@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Callable
+from importlib.util import find_spec
 
 import pytest
 from textual.app import App, ComposeResult
 from textual.command import CommandList, CommandPalette, Hit, Provider
 from textual.pilot import Pilot
 from textual.widgets import Static
+from textual.widgets.option_list import Option
+
+from tldw_chatbook.UI.stable_command_palette import StableCommandPalette
 
 
 class FakeClock:
@@ -90,6 +94,10 @@ class PaletteHarness(App[None]):
         self.push_screen(self.palette_type(id="--command-palette"))
 
 
+def test_stable_palette_api_exists() -> None:
+    assert find_spec("tldw_chatbook.UI.stable_command_palette") is not None
+
+
 @pytest.mark.asyncio
 async def test_stock_palette_refresh_resets_a_navigated_highlight(
     monkeypatch: pytest.MonkeyPatch,
@@ -152,6 +160,252 @@ async def test_stock_palette_refresh_resets_a_navigated_highlight(
                 state=lambda: {"calls": PROBE.calls},
             )
             assert PROBE.calls == ["first"]
+        finally:
+            PROBE.release_batch.set()
+            PROBE.release_late.set()
+
+
+@pytest.mark.asyncio
+async def test_stable_palette_runs_the_navigated_command_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    global PROBE
+    PROBE = PaletteProbe()
+    clock = FakeClock()
+    monkeypatch.setattr("textual.command.monotonic", clock)
+
+    app = PaletteHarness(StableCommandPalette)
+    async with app.run_test() as pilot:
+        try:
+            await pilot.press("l", "o", "g", "s")
+            await wait_event(PROBE.batch_waiting)
+            clock.advance()
+            PROBE.release_batch.set()
+
+            command_list = app.screen.query_one(CommandList)
+            await wait_until(
+                pilot,
+                lambda: command_list.option_count == 3,
+                state=lambda: {
+                    "option_count": command_list.option_count,
+                    "highlighted": command_list.highlighted,
+                    "late_waiting": PROBE.late_waiting.is_set(),
+                    "calls": PROBE.calls,
+                },
+            )
+            assert PROBE.late_waiting.is_set()
+
+            await pilot.press("down")
+            assert command_list.highlighted == 1
+            clock.advance()
+            PROBE.release_late.set()
+            await wait_until(
+                pilot,
+                lambda: PROBE.cancelled.is_set() or command_list.option_count == 4,
+                state=lambda: {
+                    "cancelled": PROBE.cancelled.is_set(),
+                    "option_count": command_list.option_count,
+                    "highlighted": command_list.highlighted,
+                    "calls": PROBE.calls,
+                },
+            )
+            assert PROBE.cancelled.is_set()
+            assert command_list.option_count == 3
+            assert command_list.highlighted == 1
+
+            await pilot.press("enter")
+            await wait_until(
+                pilot,
+                lambda: not CommandPalette.is_open(app),
+                state=lambda: {
+                    "screen": type(app.screen).__name__,
+                    "calls": PROBE.calls,
+                },
+            )
+            await wait_until(
+                pilot,
+                lambda: PROBE.calls == ["second"],
+                state=lambda: {"calls": PROBE.calls},
+            )
+            assert PROBE.calls == ["second"]
+
+            await pilot.pause()
+            assert PROBE.calls == ["second"]
+            assert not CommandPalette.is_open(app)
+        finally:
+            PROBE.release_batch.set()
+            PROBE.release_late.set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "key", ["down", "up", "pageup", "pagedown", "ctrl+home", "ctrl+end"]
+)
+async def test_navigation_before_first_result_does_not_cancel_gathering(
+    monkeypatch: pytest.MonkeyPatch,
+    key: str,
+) -> None:
+    global PROBE
+    PROBE = PaletteProbe()
+    clock = FakeClock()
+    monkeypatch.setattr("textual.command.monotonic", clock)
+
+    app = PaletteHarness(StableCommandPalette)
+    async with app.run_test() as pilot:
+        try:
+            await pilot.press("l", "o", "g", "s")
+            await wait_event(PROBE.batch_waiting)
+            command_list = app.screen.query_one(CommandList)
+            assert command_list.option_count == 0
+
+            await pilot.press(key)
+            assert not PROBE.cancelled.is_set()
+            clock.advance()
+            PROBE.release_batch.set()
+            await wait_until(
+                pilot,
+                lambda: command_list.option_count == 3,
+                state=lambda: {
+                    "key": key,
+                    "option_count": command_list.option_count,
+                    "cancelled": PROBE.cancelled.is_set(),
+                },
+            )
+            assert not PROBE.cancelled.is_set()
+        finally:
+            PROBE.release_batch.set()
+            PROBE.release_late.set()
+
+
+@pytest.mark.asyncio
+async def test_navigation_during_stale_no_matches_does_not_cancel_new_query(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    global PROBE
+    PROBE = PaletteProbe()
+    clock = FakeClock()
+    monkeypatch.setattr("textual.command.monotonic", clock)
+
+    app = PaletteHarness(StableCommandPalette)
+    async with app.run_test() as pilot:
+        try:
+            palette = app.screen
+            assert isinstance(palette, StableCommandPalette)
+            command_list = palette.query_one(CommandList)
+            command_list.clear_options().add_option(
+                Option("No matches found", disabled=True, id=palette._NO_MATCHES)
+            )
+            palette._list_visible = True
+
+            replacement_worker = palette._gather_commands("logs")
+            palette._action_command_list("cursor_up")
+            assert not replacement_worker.is_cancelled
+
+            await wait_event(PROBE.batch_waiting)
+            clock.advance()
+            PROBE.release_batch.set()
+            await wait_until(
+                pilot,
+                lambda: command_list.option_count == 3,
+                state=lambda: {
+                    "option_count": command_list.option_count,
+                    "cancelled": PROBE.cancelled.is_set(),
+                    "worker_cancelled": replacement_worker.is_cancelled,
+                },
+            )
+            assert not PROBE.cancelled.is_set()
+        finally:
+            PROBE.release_batch.set()
+            PROBE.release_late.set()
+
+
+@pytest.mark.asyncio
+async def test_settled_multi_hit_selection_runs_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    global PROBE
+    PROBE = PaletteProbe()
+    clock = FakeClock()
+    monkeypatch.setattr("textual.command.monotonic", clock)
+
+    app = PaletteHarness(StableCommandPalette)
+    async with app.run_test() as pilot:
+        try:
+            await pilot.press("l", "o", "g", "s")
+            await wait_event(PROBE.batch_waiting)
+            clock.advance()
+            PROBE.release_batch.set()
+            await wait_event(PROBE.late_waiting)
+            clock.advance()
+            PROBE.release_late.set()
+
+            command_list = app.screen.query_one(CommandList)
+            await wait_until(
+                pilot,
+                lambda: command_list.option_count == 4,
+                state=lambda: {
+                    "option_count": command_list.option_count,
+                    "calls": PROBE.calls,
+                },
+            )
+
+            await pilot.press("down", "enter")
+            await wait_until(
+                pilot,
+                lambda: not CommandPalette.is_open(app),
+                state=lambda: {
+                    "screen": type(app.screen).__name__,
+                    "calls": PROBE.calls,
+                },
+            )
+            await wait_until(
+                pilot,
+                lambda: PROBE.calls == ["second"],
+                state=lambda: {"calls": PROBE.calls},
+            )
+            await pilot.pause()
+            assert PROBE.calls == ["second"]
+        finally:
+            PROBE.release_batch.set()
+            PROBE.release_late.set()
+
+
+@pytest.mark.asyncio
+async def test_escape_closes_without_running_a_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    global PROBE
+    PROBE = PaletteProbe()
+    clock = FakeClock()
+    monkeypatch.setattr("textual.command.monotonic", clock)
+
+    app = PaletteHarness(StableCommandPalette)
+    async with app.run_test() as pilot:
+        try:
+            await pilot.press("l", "o", "g", "s")
+            await wait_event(PROBE.batch_waiting)
+            clock.advance()
+            PROBE.release_batch.set()
+            await wait_until(
+                pilot,
+                lambda: app.screen.query_one(CommandList).option_count == 3,
+                state=lambda: {
+                    "option_count": app.screen.query_one(CommandList).option_count,
+                    "calls": PROBE.calls,
+                },
+            )
+
+            await pilot.press("escape")
+            await wait_until(
+                pilot,
+                lambda: not CommandPalette.is_open(app),
+                state=lambda: {
+                    "screen": type(app.screen).__name__,
+                    "calls": PROBE.calls,
+                },
+            )
+            await pilot.pause()
+            assert PROBE.calls == []
         finally:
             PROBE.release_batch.set()
             PROBE.release_late.set()
