@@ -407,6 +407,24 @@ async def test_filtered_mutation_does_not_retain_out_of_scope_restore() -> None:
 
 
 @pytest.mark.asyncio
+async def test_queried_mutation_does_not_guess_restored_row_membership() -> None:
+    screen = _Screen()
+    service = _Service(_page(1, 1), RuntimeError("refresh failed"))
+    controller = _controller(screen, service)
+    scope = MediaBrowseScope(query="needle")
+    controller.request(scope, focus_identity=None)
+    await screen.pending.pop()
+
+    controller.begin_mutation()
+    controller.reconcile_committed_mutation(upsert_items=(_item(99),))
+    controller.request(scope, focus_identity=None)
+    await screen.pending.pop()
+
+    assert [item["id"] for item in controller.retained_items] == ["local:media:1"]
+    assert controller.freshness == "stale"
+
+
+@pytest.mark.asyncio
 async def test_mutation_refresh_clamps_once_after_page_two_becomes_empty() -> None:
     screen = _Screen()
     service = _Service(_page(2, 21), _page(2, 20), _page(1, 20))

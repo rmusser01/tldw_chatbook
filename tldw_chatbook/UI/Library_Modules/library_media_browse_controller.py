@@ -267,11 +267,14 @@ class LibraryMediaBrowseController:
         if type(upsert_items) is not tuple:
             raise TypeError("upsert_items must be an exact tuple.")
         normalized_upserts = validate_media_browse_items(upsert_items)
-        if self.applied_scope is not None and self.applied_scope.media_type is not None:
+        applied_scope = self.applied_scope
+        if applied_scope is not None and applied_scope.query:
+            normalized_upserts = ()
+        elif applied_scope is not None and applied_scope.media_type is not None:
             normalized_upserts = tuple(
                 item
                 for item in normalized_upserts
-                if item["media_type"] == self.applied_scope.media_type
+                if item["media_type"] == applied_scope.media_type
             )
         removed = set(remove_ids)
         upsert_ids = {str(item["id"]) for item in normalized_upserts}
