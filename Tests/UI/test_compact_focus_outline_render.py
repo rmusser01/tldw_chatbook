@@ -42,9 +42,15 @@ from textual.app import App, ComposeResult
 from textual.widget import Widget
 from textual.widgets import Checkbox, Input
 
-import tldw_chatbook
-
-_BUNDLED_CSS_PATH = Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
+# Repo-root resolution, matching test_non_obscuring_focus_contract.py --
+# layout-stable regardless of how the package itself is installed/imported.
+_BUNDLED_CSS_PATH = (
+    Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"
+)
+assert _BUNDLED_CSS_PATH.is_file(), (
+    f"Production CSS bundle not found at {_BUNDLED_CSS_PATH} -- these tests "
+    "must run against the real bundle or they cannot see the *:focus rule."
+)
 
 
 def _rendered_text(app: App) -> str:
@@ -54,6 +60,12 @@ def _rendered_text(app: App) -> str:
     8.2.7 has no `App.export_text()`, so `Screen._compositor.render_strips()`
     is the only way to read what was ACTUALLY painted (post-CSS, post-clip),
     as opposed to inferring it from the un-clipped source string.
+
+    Args:
+        app: The running harness app whose current screen to read.
+
+    Returns:
+        The painted frame as newline-joined rows of plain segment text.
     """
     strips = app.screen._compositor.render_strips()
     return "\n".join("".join(segment.text for segment in strip) for strip in strips)
