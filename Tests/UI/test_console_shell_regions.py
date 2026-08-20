@@ -184,11 +184,11 @@ def _transcript_anchor_state(transcript: ConsoleTranscript) -> tuple[bool, bool]
     """Return Textual's raw anchor flags for continuity assertions."""
     return (
         bool(transcript.is_anchored),
-        bool(getattr(transcript, "_anchor_released", False)),
+        bool(transcript._anchor_released),
     )
 
 
-def _transcript_tail_is_anchored(transcript: ConsoleTranscript) -> bool:
+def _transcript_is_following_tail(transcript: ConsoleTranscript) -> bool:
     """Return the transcript's semantic tail-follow state."""
     return transcript._is_following_tail()
 
@@ -223,12 +223,11 @@ async def _seed_resize_transcript(screen, pilot):
     transcript.scroll_to(y=2, animate=False)
     await pilot.pause()
     assert transcript.selected_message_id == selected_message_id
-    assert _transcript_tail_is_anchored(transcript) is False
+    assert _transcript_is_following_tail(transcript) is False
     assert transcript.scroll_y == 2
     return (
-        transcript,
         selected_message_id,
-        _transcript_tail_is_anchored(transcript),
+        _transcript_is_following_tail(transcript),
         _transcript_anchor_state(transcript),
         transcript.scroll_y,
     )
@@ -551,9 +550,8 @@ async def test_exact_100_live_resize_preserves_workspace_and_interaction_state(
     async with make_console_pilot(size=(start_width, 30), app=app) as pilot:
         screen = pilot.app.screen
         (
-            transcript,
             selected_message_id,
-            tail_was_anchored,
+            was_following_tail,
             anchor_state,
             reading_y,
         ) = await _seed_resize_transcript(screen, pilot)
@@ -612,8 +610,18 @@ async def test_exact_100_live_resize_preserves_workspace_and_interaction_state(
         assert expected_focus.display is True
         assert pilot.app.focused is expected_focus
 
-        assert transcript.selected_message_id == selected_message_id
-        assert _transcript_tail_is_anchored(transcript) is tail_was_anchored
-        assert _transcript_anchor_state(transcript) == anchor_state
-        assert transcript.scroll_y == min(reading_y, transcript.max_scroll_y)
+        current_transcript = screen.query_one(
+            "#console-native-transcript", ConsoleTranscript
+        )
+        assert current_transcript.max_scroll_y >= reading_y
+        selected_row = current_transcript.query_one(
+            f"#console-message-{selected_message_id}"
+        )
+        assert selected_row.is_mounted
+        assert current_transcript.selected_message_id == selected_message_id
+        assert _transcript_is_following_tail(current_transcript) is was_following_tail
+        assert _transcript_anchor_state(current_transcript) == anchor_state
+        assert current_transcript.scroll_y == min(
+            reading_y, current_transcript.max_scroll_y
+        )
         save_spy.assert_not_called()
