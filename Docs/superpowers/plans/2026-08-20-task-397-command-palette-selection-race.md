@@ -32,7 +32,7 @@ No provider, dependency-pin, keybinding, CSS, or general command-palette documen
 **Files:**
 - Create: `Tests/UI/test_command_palette_selection_race.py`
 
-- [ ] **Step 1: Add a fake clock, gated providers, and callback recorder**
+- [x] **Step 1: Add a fake clock, gated providers, and callback recorder**
 
 Define a minimal harness around real Textual palette widgets and workers:
 
@@ -124,7 +124,7 @@ Keep every provider gate bounded with `wait_event`; use `wait_until` for mounted
 state rather than sleeping for the expected condition. Add palette state to the
 failure message if the first RED needs more diagnostic detail.
 
-- [ ] **Step 2: Add a passing stock characterization test**
+- [x] **Step 2: Add a passing stock characterization test**
 
 Patch the exact imported clock used by Textual:
 
@@ -160,7 +160,7 @@ async def test_stock_palette_refresh_resets_a_navigated_highlight(monkeypatch):
 
 The exact hit counts may be adjusted only to match observed Textual queue ordering; the test must retain two visible commands, a still-pending provider, an explicit post-navigation refresh, and the highlight-reset assertion.
 
-- [ ] **Step 3: Run the stock characterization**
+- [x] **Step 3: Run the stock characterization**
 
 Run:
 
@@ -176,7 +176,7 @@ no-command symptom did not reproduce under this deterministic ordering while the
 wrong-command selection race did. Do not generalize that one result into ruling out
 other live orderings.
 
-- [ ] **Step 4: Commit the diagnostic harness**
+- [x] **Step 4: Commit the diagnostic harness**
 
 ```bash
 git add Tests/UI/test_command_palette_selection_race.py
