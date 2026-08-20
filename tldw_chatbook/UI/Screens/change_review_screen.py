@@ -820,6 +820,18 @@ class ChangeReviewScreen(Screen):
         #: inside ``_render_diff`` (including on every cursor-move
         #: re-render) so a marker never costs a DB query per keypress.
         self._marked_diff_lines: "set[int]" = set()
+        #: TASK-18060 final-review fix round (Fix 2): the memoized diff
+        #: text for the CURRENTLY focused leaf — see ``_diff_text_for``.
+        #: Keyed by ``(generation, id(row), path)`` so cursor movement
+        #: never re-spawns the ``provider.diff_text`` git subprocess pair;
+        #: ``_diff_cache_generation`` is bumped by ``_load_turn`` (every
+        #: turn (re)load, including a post-revert reload) so a revert of
+        #: the SAME turn still forces a fresh read despite the row objects
+        #: and path being byte-identical to what was cached before it.
+        self._diff_cache_generation: int = 0
+        self._diff_cache_key: "tuple[int, int, str] | None" = None
+        self._diff_cache_text: "str | None" = None
+        self._diff_cache_error: "ChangeTrackingError | None" = None
 
     # -- compose -----------------------------------------------------------
 
@@ -931,6 +943,34 @@ class ChangeReviewScreen(Screen):
                 select.value = run_id  # Select.Changed performs the load
                 return
 
+    def _close_any_open_comment_input(self) -> None:
+        """Unmount any open comment ``Input`` and neuter its pending capture.
+
+        TASK-18060 final-review fix round (Fix 1b): the comment ``Input``
+        is mounted as a SIBLING of the diff pane (never its descendant),
+        so nothing ``_load_turn`` rebuilds ever removes it on its own —
+        switching turns via the Select left an open input mounted,
+        still bound (via ``leaf_row``/``leaf_change``) to the leaf it was
+        opened against on the PRIOR turn. Left alone, a later Enter on it
+        would fire ``_save_comment_input`` with that stale capture while
+        ``self._active_turn`` has already moved on. Clearing the captured
+        attributes makes any in-flight submit a guaranteed no-op
+        (``_save_comment_input``'s own ``row is None`` guard) even before
+        ``remove()``'s async detach has actually taken the widget out of
+        the DOM.
+        """
+        try:
+            for note_input in list(self.query(".change-review-comment-input")):
+                note_input.leaf_row = None
+                note_input.leaf_change = None
+                note_input.anchor_kind = None
+                note_input.cursor_line = None
+                note_input.remove()
+        except Exception:
+            logger.opt(exception=True).warning(
+                "change_review: comment input cleanup on turn load failed"
+            )
+
     @on(Select.Changed, "#change-review-turn-select")
     def _on_turn_changed(self, event: Select.Changed) -> None:
         if isinstance(event.value, str) and event.value:
@@ -940,6 +980,21 @@ class ChangeReviewScreen(Screen):
                     return
 
     def _load_turn(self, turn: ReviewTurn) -> None:
+        # TASK-18060 final-review fix round (Fix 1b + Fix 2): both must
+        # happen before anything below rebuilds the tree/leaves. Fix 1b: a
+        # comment input opened against the PRIOR turn's leaf is a SIBLING
+        # of the diff pane, not a descendant of anything rebuilt here --
+        # left mounted, a later Enter on it would save a note whose
+        # row/change was captured against a turn this screen has already
+        # left. Fix 2: bumping the generation invalidates the per-leaf
+        # diff-text memo so a revert-reload of THIS SAME turn (identical
+        # row objects, identical path) refetches instead of serving
+        # pre-revert content.
+        self._close_any_open_comment_input()
+        self._diff_cache_generation += 1
+        self._diff_cache_key = None
+        self._diff_cache_text = None
+        self._diff_cache_error = None
         self._active_turn = turn
         multi_root = len(turn.rows) > 1
         tree = self.query_one("#change-review-tree", Tree)
@@ -1286,7 +1341,7 @@ class ChangeReviewScreen(Screen):
                 if change.binary:
                     return
                 try:
-                    self._provider.diff_text(row, change.path)
+                    self._diff_text_for(row, change)
                 except ChangeTrackingError:
                     return
             container = self.query_one("#change-review-right", Vertical)
@@ -1399,7 +1454,16 @@ class ChangeReviewScreen(Screen):
             kind = getattr(note_input, "anchor_kind", None)
             if row is None or change is None or kind is None:
                 return
-            run_id = self._active_turn.run_id
+            # TASK-18060 final-review fix round (Fix 1a): the run this note
+            # belongs to is the CAPTURED leaf's own row -- read at
+            # input-OPEN time alongside `change`/`cursor_line` -- never
+            # `self._active_turn`, which is read at SAVE time and can have
+            # moved on to a different turn if the Select was switched while
+            # this input sat open (Fix 1b closes that input on switch, but
+            # this keeps the WRITE itself self-consistent regardless: the
+            # note's run_id always matches the same row its path/snapshot/
+            # excerpt came from).
+            run_id = str(row["run_id"])
             snapshot_id = row.get("id")
 
             if kind == "diff_line":
@@ -1407,7 +1471,7 @@ class ChangeReviewScreen(Screen):
                 if cursor_line is None:
                     return
                 try:
-                    diff_text = self._provider.diff_text(row, change.path)
+                    diff_text = self._diff_text_for(row, change)
                 except ChangeTrackingError:
                     self.notify(
                         "Diff unavailable — comment not saved",
@@ -1416,6 +1480,15 @@ class ChangeReviewScreen(Screen):
                     return
                 lines = diff_text.splitlines()
                 if not (0 <= cursor_line < len(lines)):
+                    # Fix 4(a) (final review): mirror the ChangeTrackingError
+                    # branch above -- a shrunk diff (the file changed under
+                    # the open input, e.g. a revert or a later turn) must
+                    # tell the user the comment was NOT saved rather than
+                    # silently leaving the input mounted with no feedback.
+                    self.notify(
+                        "That diff line no longer exists — comment not saved",
+                        severity="warning",
+                    )
                     return
                 diff_line_text = lines[cursor_line]
                 hunks = split_unified_diff(diff_text)
@@ -1755,6 +1828,58 @@ class ChangeReviewScreen(Screen):
             return renderable.plain
         return str(renderable)
 
+    def _diff_text_for(self, row: dict, change: ChangedFile) -> str:
+        """Fetch (once per focused leaf) and memoize ``change``'s diff text.
+
+        TASK-18060 final-review fix round (Fix 2): the SOLE path every
+        diff-line consumer reads through — ``_render_diff``'s render,
+        ``_open_comment_input``'s diff-line availability probe, and
+        ``_save_comment_input``'s line-text lookup. Pre-fix each ran its
+        OWN ``provider.diff_text`` call (a git subprocess pair): cursor
+        movement alone re-ran it on EVERY keypress (``_move_diff_cursor``
+        -> ``_render_diff``, 40 arrow presses == 40 synchronous subprocess
+        spawns on the UI thread), and a single ``c``+Enter line-comment
+        flow ran it three separate times (render, open-probe, save).
+
+        Cached per ``(generation, id(row), change.path)`` — ``_load_turn``
+        bumps ``_diff_cache_generation`` on every turn (re)load, including
+        the post-revert reload in ``_report_outcomes``, so a revert of the
+        SAME turn (identical row objects, identical path) still forces a
+        fresh read rather than serving pre-revert content still sitting in
+        the cache; a genuine file-focus change is already disambiguated by
+        ``change.path`` differing within one generation, and a STALE
+        capture (a comment input opened against an earlier leaf) resolves
+        correctly too since its own ``(row, path)`` pair still computes the
+        right key.
+
+        Args:
+            row: The leaf's owning ``change_snapshots`` row.
+            change: The leaf's ``ChangedFile``.
+
+        Returns:
+            The file's unified diff text.
+
+        Raises:
+            ChangeTrackingError: Propagated from the provider on a cache
+                miss — and itself cached, so a transient failure does not
+                re-spawn a doomed subprocess on every subsequent keypress
+                either; a later ``_load_turn`` (a fresh generation) is what
+                gives it another chance.
+        """
+        key = (self._diff_cache_generation, id(row), change.path)
+        if self._diff_cache_key != key:
+            self._diff_cache_key = key
+            self._diff_cache_text = None
+            self._diff_cache_error = None
+            try:
+                self._diff_cache_text = self._provider.diff_text(row, change.path)
+            except ChangeTrackingError as exc:
+                self._diff_cache_error = exc
+        if self._diff_cache_error is not None:
+            raise self._diff_cache_error
+        assert self._diff_cache_text is not None
+        return self._diff_cache_text
+
     def _render_diff(self, row: dict, change: ChangedFile) -> None:
         content = self.query_one("#change-review-diff-content", Static)
         if change.binary:
@@ -1766,7 +1891,7 @@ class ChangeReviewScreen(Screen):
             )
             return
         try:
-            diff = self._provider.diff_text(row, change.path)
+            diff = self._diff_text_for(row, change)
         except ChangeTrackingError as exc:
             content.update(Text(f"diff unavailable: {exc}"))
             return

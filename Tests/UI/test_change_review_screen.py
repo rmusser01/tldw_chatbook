@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.containers import Vertical
 from textual.widgets import Button, Input, Select, Static, Tree
 
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
@@ -2284,3 +2285,256 @@ async def test_notes_strip_scoped_to_its_own_window_not_the_sibling_window(
     assert not any("belongs to window 1 only" in t for t in window2_texts), (
         f"window 1's note leaked into window 2's strip: {window2_texts}"
     )
+
+
+# -- final-review fix wave (2026-08-20) ------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_open_comment_input_closes_on_turn_switch(review_fixture):
+    """Fix 1b (final review): a comment input opened on one turn must not
+    survive a turn switch via the Select -- left mounted, a later Enter on
+    it would save a note whose row/change was captured against a turn
+    this screen has already left (the run_id data-level half of this fix
+    is pinned separately, below)."""
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider, initial_run_id=run1)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen._leaves, "leaves loaded")
+
+        await pilot.press("C")
+        note_input = await _open_comment_input(pilot, screen)
+        note_input.value = "orphaned by a turn switch"
+
+        screen.select_turn(run2)
+        await _wait_for(
+            pilot,
+            lambda: screen._active_turn is not None
+            and screen._active_turn.run_id == run2
+            or None,
+            "switched to run2",
+        )
+        await pilot.pause()
+
+        assert not screen.query(".change-review-comment-input"), (
+            "an open comment input must not survive a turn switch"
+        )
+        assert note_input.leaf_row is None, "the pending capture must be cleared"
+        assert note_input.leaf_change is None
+        assert note_input.anchor_kind is None
+
+
+@pytest.mark.asyncio
+async def test_save_comment_input_uses_captured_rows_run_id_not_active_turn(
+    review_fixture,
+):
+    """Fix 1a (final review): `_save_comment_input` must read `run_id`
+    from the CAPTURED leaf's own row (set at input-OPEN time, alongside
+    `change`) -- never from `self._active_turn`, which is read at SAVE
+    time and can have moved on. Belt-and-braces against Fix 1b: even if a
+    save somehow still fires after the active turn changed, the note it
+    writes must stay self-consistent with the row it was captured
+    against, not a Frankenstein mix of stale row data + a fresh active
+    turn's run_id."""
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider, initial_run_id=run1)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen._leaves, "leaves loaded")
+        row_a, change_a = screen._leaves[0]
+        assert row_a["run_id"] == run1
+
+        # Mount a comment input directly, captured against turn A's leaf --
+        # bypassing `_open_comment_input` so this test isolates the DATA
+        # guarantee (fix 1a) from the UI-level cleanup (fix 1b), which
+        # would otherwise remove this input the moment the turn switches.
+        note_input = Input(classes="change-review-comment-input")
+        note_input.anchor_kind = "file"
+        note_input.leaf_row = row_a
+        note_input.leaf_change = change_a
+        note_input.cursor_line = None
+        note_input.value = "captured before the active turn moved on"
+        container = screen.query_one("#change-review-right", Vertical)
+        strip = screen.query_one("#change-review-notes-strip", Vertical)
+        await container.mount(note_input, before=strip)
+
+        for turn in screen._turns:
+            if turn.run_id == run2:
+                screen._active_turn = turn
+                break
+        assert screen._active_turn.run_id == run2
+
+        await screen._save_comment_input(note_input)
+
+        notes_a = provider.notes_for_run(run1)
+        notes_b = provider.notes_for_run(run2)
+        assert len(notes_a) == 1, (
+            f"the note must land under the CAPTURED row's own run: {notes_a}"
+        )
+        assert notes_a[0]["note"] == "captured before the active turn moved on"
+        assert notes_a[0]["path"] == change_a.path
+        assert not notes_b, (
+            f"the note must not land under the now-active (but uncaptured) "
+            f"turn's run: {notes_b}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_diff_text_memoized_across_cursor_moves_and_refetched_on_reload(
+    tmp_path,
+):
+    """Fix 2 (final review): `_move_diff_cursor` must not re-run
+    `provider.diff_text` (a git subprocess pair) on every keypress -- the
+    focused leaf's diff is fetched once and reused for every subsequent
+    cursor move. A revert-reload of the SAME turn (`_report_outcomes` ->
+    `_load_turn`) must still refetch -- the memo must not survive it, even
+    though the row objects and path are byte-identical to what was cached
+    before it."""
+    provider, root = _big_diff_provider(tmp_path, line_count=200, cap=50)
+    calls: list[str] = []
+    original_diff_text = provider.diff_text
+
+    def _spy(row, path):
+        calls.append(path)
+        return original_diff_text(row, path)
+
+    provider.diff_text = _spy
+
+    app = _Harness(provider)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen._leaves, "leaves loaded")
+        screen.select_file("big.txt")
+        await _wait_for(
+            pilot,
+            lambda: (lambda t: t if "line 0" in t else None)(screen.diff_pane_text()),
+            "big.txt diff",
+        )
+        assert calls.count("big.txt") == 1, f"initial focus must fetch once: {calls}"
+
+        screen.action_focus_diff()
+        await pilot.pause()
+        await _press_n(pilot, "down", 40)
+        await pilot.pause()
+
+        assert calls.count("big.txt") == 1, (
+            f"cursor movement re-fetched the diff via git -- 40 keypresses "
+            f"should still be exactly 1 fetch, got {calls}"
+        )
+
+        # A revert reload must refetch -- the memo must drop.
+        screen._report_outcomes([])
+        await pilot.pause()
+        await _wait_for(
+            pilot, lambda: calls.count("big.txt") >= 2 or None, "reload refetch"
+        )
+        assert calls.count("big.txt") == 2, (
+            f"a revert-reload of the same turn must refetch exactly once "
+            f"more, not serve the pre-reload memo: {calls}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_line_comment_flow_fetches_diff_text_once(review_fixture):
+    """Fix 2 (final review): opening a line comment (`c`, which probes
+    diff-line availability) and saving it (`_save_comment_input`'s
+    line-text lookup) must reuse the SAME memoized diff text the render
+    already fetched -- not each run `provider.diff_text` again (pre-fix:
+    three separate git subprocess reads for one line-comment flow:
+    render, open-probe, save)."""
+    provider, root, run1, run2 = review_fixture
+    calls: list[str] = []
+    original_diff_text = provider.diff_text
+
+    def _spy(row, path):
+        calls.append(path)
+        return original_diff_text(row, path)
+
+    provider.diff_text = _spy
+
+    app = _Harness(provider, initial_run_id=run2, initial_path="edit.txt")
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(
+            pilot,
+            lambda: (lambda t: t if "after" in t else None)(screen.diff_pane_text()),
+            "edit.txt diff",
+        )
+        assert calls.count("edit.txt") == 1, f"initial focus fetch: {calls}"
+
+        screen.action_focus_diff()
+        await pilot.pause()
+        await pilot.press("down")
+        await pilot.pause()
+        await pilot.press("c")
+        note_input = await _open_comment_input(pilot, screen)
+        note_input.value = "single fetch please"
+        note_input.focus()
+        await pilot.press("enter")
+        await _wait_input_closed(pilot, screen)
+
+        assert calls.count("edit.txt") == 1, (
+            f"opening+saving a line comment re-fetched the diff via git "
+            f"instead of reusing the render's memo: {calls}"
+        )
+        assert len(provider.notes_for_run(run2)) == 1
+
+
+@pytest.mark.asyncio
+async def test_shrunk_diff_save_notifies_instead_of_silent_noop(review_fixture):
+    """Fix 4(a) (final review): a diff-line comment whose cursor index no
+    longer falls inside the diff at SAVE time (the file changed under the
+    open input) must notify the user their comment was NOT saved --
+    mirroring the ChangeTrackingError branch right above it -- instead of
+    silently leaving the input mounted with no feedback at all."""
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider, initial_run_id=run2, initial_path="edit.txt")
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(
+            pilot,
+            lambda: (lambda t: t if "after" in t else None)(screen.diff_pane_text()),
+            "edit.txt diff",
+        )
+        screen.action_focus_diff()
+        await pilot.pause()
+        await pilot.press("c")
+        note_input = await _open_comment_input(pilot, screen)
+        # Simulate the diff shrinking under the open input (the cursor
+        # index it was opened with is now past the end of the diff text).
+        note_input.cursor_line = 999999
+        note_input.value = "the file moved under me"
+
+        notify_calls: list[tuple[tuple, dict]] = []
+        pilot.app.notify = lambda *a, **kw: notify_calls.append((a, kw))
+
+        note_input.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert notify_calls, "a shrunk-diff save must notify, not silently no-op"
+        message = str(notify_calls[0][0][0])
+        assert "not saved" in message.lower() or "no longer" in message.lower(), message
+        assert notify_calls[0][1].get("severity") == "warning"
+        assert not provider.notes_for_run(run2), "no note should have been persisted"

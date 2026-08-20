@@ -368,6 +368,76 @@ async def test_conversation_switch_clears_memo_and_summary_synchronously(
 
 
 @pytest.mark.asyncio
+async def test_stale_worker_land_after_conversation_switch_does_not_clobber_summary(
+    workspace_fixture,
+):
+    """Fix 4(c) (final review): `_sync_console_changed_files_if_scope_
+    changed` advances `_last_console_changed_files_scope` to the NEW scope
+    BEFORE dispatching the recompute worker for it -- so a worker started
+    for an OLDER conversation that lands late must not be trusted to still
+    be relevant just because "the guard hasn't changed since" (it HAS,
+    the guard moved on before dispatch, not after landing). Textual's
+    exclusive worker group only guarantees the run_worker() call cancels
+    the PRIOR WORKER TASK; a `call_from_thread` callback that worker had
+    already queued on the main loop before that cancellation still runs.
+    `_land_console_changed_files`/`_land_console_changed_files_empty`
+    carry the dispatch-time conversation id and must no-op when it no
+    longer matches the CURRENT one."""
+    ws = workspace_fixture
+    run_id = ws.db.create_run(conversation_id=CONV_ID, agent_kind="primary")
+    _record_turn(
+        ws.db, ws.tracker, ws.root, run_id,
+        lambda: (ws.root / "a.py").write_text("line1\nCHANGED\n"),
+    )
+
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        store = console._ensure_console_chat_store()
+        session1 = await _mount_console_session(pilot, console, store, ws)
+        store.append_message(
+            session1.id,
+            role=ConsoleMessageRole.TOOL,
+            content=MARKER,
+            change_review_run_id=run_id,
+        )
+
+        await console._sync_native_console_chat_ui()
+        await _wait_for_changed_files_state(
+            console, pilot, lambda state: bool(state.entries)
+        )
+        live_summary = console._console_changed_files_summary
+        assert live_summary
+
+        # A second conversation becomes active -- as far as the screen is
+        # concerned, this is what happens WHILE an older worker (dispatched
+        # for CONV_ID) is still in flight.
+        session2 = store.create_session(session_id="conv-wiring-stale-2")
+        session2.persisted_conversation_id = "conv-wiring-stale-2"
+        assert (
+            console._current_console_rail_conversation_id()
+            == "conv-wiring-stale-2"
+        )
+
+        # The stale worker's callback, captured at DISPATCH time against
+        # CONV_ID, finally lands -- after the conversation has moved on.
+        console._land_console_changed_files(CONV_ID, [], 0)
+        assert console._console_changed_files_summary == live_summary, (
+            "a stale worker land overwrote a newer conversation's summary"
+        )
+
+        console._land_console_changed_files_empty(CONV_ID)
+        assert console._console_changed_files_summary == live_summary, (
+            "a stale empty-land overwrote a newer conversation's summary"
+        )
+
+        # A land/empty-land for the CURRENT conversation must still apply.
+        console._land_console_changed_files_empty("conv-wiring-stale-2")
+        assert console._console_changed_files_summary == ()
+
+
+@pytest.mark.asyncio
 async def test_file_selected_opens_review_screen_with_matching_initials(
     workspace_fixture,
 ):

@@ -93,8 +93,16 @@ precedent, copied exactly:
 - **Guard**: `_last_console_changed_files_scope = (conversation_id,
   newest change_review_run_id present in the message store)`. Marker
   messages already carry `change_review_run_id`, so the guard costs no DB
-  read at all (an O(messages) in-memory scan; derived where the message
-  list is already being handled rather than re-scanned per idle tick). When the guard tuple changes, the screen dispatches ONE
+  read at all -- just an O(messages) in-memory scan of the active
+  session's message list, re-run on every 0.2s sync tick to notice whether
+  the scope moved (final-review fix round: an earlier draft of this
+  section claimed the scan reused work "already being handled" elsewhere
+  per tick; it does not -- it is its own dedicated pass, same as the
+  dictionary/world-book scope checks beside it). Acceptable because it is
+  in-memory only (no DB/git), bounded by one session's message count, and
+  measured sub-millisecond -- the guard's whole point is to make that scan
+  the ONLY per-tick cost, gating the actual git work behind it. When the
+  guard tuple changes, the screen dispatches ONE
   off-thread worker (`asyncio.to_thread`, exclusive group) that calls the
   provider's `conversation_changed_files()` and lands the cache via
   `call_from_thread`, then syncs the section in place by id.
