@@ -1,11 +1,11 @@
 ---
 id: TASK-19001
 title: Refine Folder Files target path and action hierarchy
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-20 07:40'
-updated_date: '2026-08-20 21:03'
+updated_date: '2026-08-20 21:07'
 labels:
   - notes
   - files
@@ -40,5 +40,5 @@ Reduce competing controls in Folder files while preserving disk authority, exist
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implemented the approved Folder Files action hierarchy without changing storage, routing, guarded file handlers, service calls, messages, or shortcuts. The target input now keeps the persistent label Target path · New / Move / Save copy; normal primary order is New, Move, Delete, More file actions; Restore, Reload, and Save copy/Export exact copy are promoted only when state-critical; Protect, normal Reload, and Refresh remain behind the existing keyboard disclosure. The single Reload control is conditionally reordered so conflict/error place it before Save copy while normal forward Tab traverses More, Reload, Protect, Refresh. Reload confirmation remains Cancel-first and keeps Target path plus Save copy reachable; the editor pane owns compact scrolling and conflict resolution uses scroll-aware safe focus. Updated the File Notes guide and added production-shaped 40-column compositor, keyboard, focus-redirection, confirmation, and state-matrix coverage. Existing ADR-021, ADR-029, and ADR-031 govern the unchanged boundaries; no new ADR was required. Verification: full owning suite 122 passed; root final slice 14 passed; CSS integrity 11 passed; Ruff, CSS bundle parity, and git diff --check passed. Independent spec and quality reviews approved with no remaining findings.
+Reopened after TASK-19002 baseline exposed a reproducible compact regression in Tests/UI/test_library_file_notes_git.py::test_narrow_editor_actions_keep_complete_labels_at_40_by_20: after Protect, #file-notes-back paints at y=2 while #file-notes-editor-pane begins at y=3. The prior owning suite did not include this adjacent Git-panel compact contract. Diagnose and fix before continuing TASK-19002, then rerun the owning and adjacent Git UI gates and update closeout evidence.
 <!-- SECTION:NOTES:END -->
