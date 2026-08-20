@@ -20,6 +20,7 @@ from .library_ingest_canvas import (
 from .library_media_canvas import LibraryMediaCanvas
 from .library_media_trash_canvas import LibraryMediaTrashCanvas
 from .library_media_viewer import LibraryMediaViewer
+from .library_note_import_canvas import LibraryNoteImportCanvas
 from .library_notes_canvas import LibraryNotesCanvas
 from .library_prompts_canvas import (
     PROMPT_DISCARD_TOOLTIP_BUSY,
@@ -93,6 +94,7 @@ __all__ = [
     "LibraryMediaCanvas",
     "LibraryMediaTrashCanvas",
     "LibraryMediaViewer",
+    "LibraryNoteImportCanvas",
     "LibraryNotesCanvas",
     "LibraryNavigationRailHandle",
     "LibraryPromptsListCanvas",
