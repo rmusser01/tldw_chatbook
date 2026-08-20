@@ -2043,20 +2043,22 @@ class ConsoleChatStore:
         setter = getattr(
             self.persistence, "set_conversation_console_project_context", None
         )
-        if not callable(setter):
-            return
-        try:
-            setter(
-                conversation_id=conversation_id,
-                project_context_json=encode_project_context_json(
-                    session.project_instruction_state
-                ),
-            )
-        except Exception:
-            logger.warning(
-                "project_instruction_state_write_failed: the updated choice "
-                "may not survive restart."
-            )
+        if callable(setter):
+            try:
+                setter(
+                    conversation_id=conversation_id,
+                    project_context_json=encode_project_context_json(
+                        session.project_instruction_state
+                    ),
+                )
+            except Exception:
+                pass
+            else:
+                return
+        logger.warning(
+            "project_instruction_state_write_failed: the updated choice "
+            "may not survive restart."
+        )
 
     def restore_state(
         self,

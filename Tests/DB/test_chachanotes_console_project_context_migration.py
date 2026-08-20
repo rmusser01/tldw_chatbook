@@ -115,6 +115,88 @@ def test_v32_to_v33_rejects_wrong_start_version(tmp_path) -> None:
     db.close_connection()
 
 
+@pytest.mark.parametrize("declared_default", ["DEFAULT 'hostile'", "DEFAULT NULL"])
+def test_v32_to_v33_rejects_any_declared_column_default(
+    declared_default: str,
+) -> None:
+    db, connection = _minimal_v32_partial_database(f"TEXT {declared_default}")
+    before = _conversation_columns(connection)[COLUMN_NAME]
+    assert before[4] is not None
+
+    connection.execute("BEGIN")
+    with pytest.raises(SchemaError, match="incompatible shape"):
+        db._migrate_from_v32_to_v33(connection)
+    connection.rollback()
+
+    assert _version(connection) == 32
+    assert _conversation_columns(connection)[COLUMN_NAME] == before
+    connection.close()
+
+
+def test_v32_to_v33_rejects_primary_key_column_shape() -> None:
+    db, connection = _minimal_v32_partial_database("TEXT PRIMARY KEY")
+    before = _conversation_columns(connection)[COLUMN_NAME]
+    assert before[5] != 0
+
+    connection.execute("BEGIN")
+    with pytest.raises(SchemaError, match="incompatible shape"):
+        db._migrate_from_v32_to_v33(connection)
+    connection.rollback()
+
+    assert _version(connection) == 32
+    assert _conversation_columns(connection)[COLUMN_NAME] == before
+    connection.close()
+
+
+@pytest.mark.parametrize(
+    "column_definition",
+    [
+        "TEXT UNIQUE",
+        "TEXT CHECK (console_project_context_json IS NULL)",
+        "TEXT REFERENCES local_project_context_parent(id)",
+    ],
+)
+def test_v32_to_v33_rejects_additional_column_constraints(
+    column_definition: str,
+) -> None:
+    db, connection = _minimal_v32_partial_database(column_definition)
+
+    connection.execute("BEGIN")
+    with pytest.raises(SchemaError, match="incompatible shape"):
+        db._migrate_from_v32_to_v33(connection)
+    connection.rollback()
+
+    assert _version(connection) == 32
+    connection.close()
+
+
+@pytest.mark.parametrize(
+    "index_expression",
+    ["console_project_context_json", "lower(console_project_context_json)"],
+)
+def test_v32_to_v33_rejects_separate_unique_index_on_local_column(
+    index_expression: str,
+) -> None:
+    db, connection = _minimal_v32_partial_database("TEXT")
+    connection.execute(
+        "CREATE UNIQUE INDEX hostile_project_context_unique "
+        f"ON conversations({index_expression})"
+    )
+    connection.commit()
+
+    connection.execute("BEGIN")
+    with pytest.raises(SchemaError, match="incompatible shape"):
+        db._migrate_from_v32_to_v33(connection)
+    connection.rollback()
+
+    assert _version(connection) == 32
+    assert connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'index' "
+        "AND name = 'hostile_project_context_unique'"
+    ).fetchone()
+    connection.close()
+
+
 def test_v32_to_v33_error_rolls_back_and_leaves_version_32(
     tmp_path, monkeypatch
 ) -> None:

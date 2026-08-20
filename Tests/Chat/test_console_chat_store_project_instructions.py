@@ -15,7 +15,7 @@ from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
     encode_project_context_json,
 )
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 
 
 ENABLED_STATE = ProjectInstructionControlState(
@@ -24,6 +24,7 @@ ENABLED_STATE = ProjectInstructionControlState(
     working_folder_locator_fingerprint="locator-fingerprint",
     project_instruction_notice_key="notice-key",
 )
+WRITE_WARNING = "project_instruction_state_write_failed: the updated choice may not survive restart."
 
 
 def _conversation_snapshot(db: CharactersRAGDB, conversation_id: str) -> dict:
@@ -178,6 +179,23 @@ def test_persistence_service_delegates_local_project_context_accessors(
     db.close_connection()
 
 
+@pytest.mark.parametrize("target", ["missing", "deleted"])
+def test_db_project_context_set_rejects_non_active_rows(tmp_path, target) -> None:
+    db = CharactersRAGDB(tmp_path / f"{target}.db", client_id="rowcount-test")
+    conversation_id = "missing-secret-id"
+    if target == "deleted":
+        conversation_id = db.add_conversation({"title": "deleted"})
+        row = db.get_conversation_by_id(conversation_id)
+        db.soft_delete_conversation(conversation_id, expected_version=row["version"])
+
+    with pytest.raises(CharactersRAGDBError, match="active conversation"):
+        db.set_conversation_console_project_context(
+            conversation_id, encode_project_context_json(ENABLED_STATE)
+        )
+
+    db.close_connection()
+
+
 def test_session_default_is_legacy_disabled_but_store_new_session_opts_in() -> None:
     assert ConsoleChatSession().project_instruction_state == (
         ProjectInstructionControlState.legacy_disabled()
@@ -304,10 +322,127 @@ def test_failed_state_write_keeps_memory_warns_once_and_never_uses_metadata() ->
         logger.remove(sink_id)
 
     assert session.project_instruction_state == ENABLED_STATE
-    assert warnings == [
-        "project_instruction_state_write_failed: the updated choice may not survive restart."
-    ]
+    assert warnings == [WRITE_WARNING]
     assert "secret adapter detail" not in warnings[0]
+    assert persistence.metadata_writes == 0
+
+
+def test_missing_real_db_state_write_warns_without_creating_a_row(tmp_path) -> None:
+    db_path = tmp_path / "missing.db"
+    db = CharactersRAGDB(db_path, client_id="missing-test")
+    store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+    session = store.restore_persisted_session(
+        title="missing",
+        workspace_id=None,
+        persisted_conversation_id="missing-secret-id",
+        all_nodes=[],
+    )
+    warnings: list[str] = []
+    sink_id = logger.add(
+        lambda message: warnings.append(message.record["message"]), level="WARNING"
+    )
+    try:
+        store.set_session_project_instruction_state(session.id, ENABLED_STATE)
+    finally:
+        logger.remove(sink_id)
+
+    assert session.project_instruction_state == ENABLED_STATE
+    assert warnings == [WRITE_WARNING]
+    assert "missing-secret-id" not in warnings[0]
+    db.close_connection()
+
+    reopened = CharactersRAGDB(db_path, client_id="missing-restart")
+    assert reopened.get_conversation_by_id("missing-secret-id") is None
+    reopened.close_connection()
+
+
+def test_deleted_real_db_state_write_warns_and_preserves_state_after_restore(
+    tmp_path,
+) -> None:
+    db_path = tmp_path / "deleted.db"
+    db = CharactersRAGDB(db_path, client_id="deleted-test")
+    conversation_id = db.add_conversation({"title": "deleted"})
+    encoded = encode_project_context_json(ENABLED_STATE)
+    db.set_conversation_console_project_context(conversation_id, encoded)
+    row = db.get_conversation_by_id(conversation_id)
+    db.soft_delete_conversation(conversation_id, expected_version=row["version"])
+    deleted = db.get_conversation_by_id(conversation_id, include_deleted=True)
+
+    store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+    session = store.restore_persisted_session(
+        title="deleted",
+        workspace_id=None,
+        persisted_conversation_id=conversation_id,
+        all_nodes=[],
+    )
+    replacement = ProjectInstructionControlState.new_session()
+    warnings: list[str] = []
+    sink_id = logger.add(
+        lambda message: warnings.append(message.record["message"]), level="WARNING"
+    )
+    try:
+        store.set_session_project_instruction_state(session.id, replacement)
+    finally:
+        logger.remove(sink_id)
+
+    assert session.project_instruction_state == replacement
+    assert warnings == [WRITE_WARNING]
+    after_failed_write = db.get_conversation_by_id(
+        conversation_id, include_deleted=True
+    )
+    assert after_failed_write["console_project_context_json"] == encoded
+    assert after_failed_write["version"] == deleted["version"]
+    assert after_failed_write["last_modified"] == deleted["last_modified"]
+    db.restore_conversation(conversation_id, expected_version=deleted["version"])
+    db.close_connection()
+
+    reopened = CharactersRAGDB(db_path, client_id="deleted-restart")
+    restored = ConsoleChatStore(
+        persistence=ChatPersistenceService(reopened)
+    ).restore_persisted_session(
+        title="restored",
+        workspace_id=None,
+        persisted_conversation_id=conversation_id,
+        all_nodes=[],
+    )
+    assert restored.project_instruction_state == ENABLED_STATE
+    reopened.close_connection()
+
+
+def test_adapter_without_state_setter_warns_and_keeps_memory_choice() -> None:
+    class GetterOnlyPersistence:
+        db = None
+
+        def __init__(self) -> None:
+            self.metadata_writes = 0
+
+        def get_conversation_console_project_context(self, *, conversation_id: str):
+            return None
+
+        def update_conversation_pinned_prefill(self, **kwargs) -> bool:
+            self.metadata_writes += 1
+            return True
+
+    persistence = GetterOnlyPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.restore_persisted_session(
+        title="legacy adapter",
+        workspace_id=None,
+        persisted_conversation_id="adapter-secret-id",
+        all_nodes=[],
+    )
+    warnings: list[str] = []
+    sink_id = logger.add(
+        lambda message: warnings.append(message.record["message"]), level="WARNING"
+    )
+    try:
+        store.set_session_project_instruction_state(session.id, ENABLED_STATE)
+    finally:
+        logger.remove(sink_id)
+
+    assert session.project_instruction_state == ENABLED_STATE
+    assert warnings == [WRITE_WARNING]
+    assert "adapter-secret-id" not in warnings[0]
     assert persistence.metadata_writes == 0
 
 
@@ -379,7 +514,7 @@ def test_promotion_state_write_failure_keeps_durable_conversation_and_choice(
     assert db.get_message_by_id(promoted_message.persisted_message_id) is not None
     assert db.get_conversation_console_project_context(conversation_id) is None
     assert [warning for warning in warnings if "project_instruction" in warning] == [
-        "project_instruction_state_write_failed: the updated choice may not survive restart."
+        WRITE_WARNING
     ]
     assert all("do not leak this detail" not in warning for warning in warnings)
     db.close_connection()

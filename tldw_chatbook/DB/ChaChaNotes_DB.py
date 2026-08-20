@@ -8805,11 +8805,16 @@ UPDATE db_schema_version
                 clear the local state.
         """
         with self.transaction() as conn:
-            conn.execute(
+            cursor = conn.execute(
                 "UPDATE conversations SET console_project_context_json = ? "
                 "WHERE id = ? AND deleted = 0",
                 (project_context_json, conversation_id),
             )
+            if cursor.rowcount != 1:
+                raise CharactersRAGDBError(
+                    "Cannot set Console project context: active conversation "
+                    "was not found."
+                )
 
     def get_conversation_console_project_context(
         self, conversation_id: str
