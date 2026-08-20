@@ -1232,23 +1232,34 @@ async def test_wide_files_task_return_restores_database_browse_receipt() -> None
 async def test_path_transition_authority_names_file_operation_and_settles(
     tmp_path: Path,
 ) -> None:
-    root = tmp_path / "notes"
+    root = tmp_path / "Research notes with a very long private directory name"
     root.mkdir()
     replica = FileNotesReplica(":memory:")
     workspace = LibraryFileNotesWorkspace(root=root, replica=replica, poll_interval=10)
 
-    async with _WorkspaceHarness(workspace).run_test(size=(60, 20)) as pilot:
+    async with _CssTrueWorkspaceHarness(workspace).run_test(size=(60, 20)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
 
         with workspace._hold_path_transition() as transition:
             assert transition is not None
-            authority = _static_text(workspace, "#file-notes-authority")
-            assert "File operation in progress" in authority
-            assert "Changing folder" not in authority
-            assert "Next: Wait for file operation." in authority
+            await pilot.pause()
+            authority = workspace.query_one("#file-notes-authority", Static)
+            authority_copy = _static_text(workspace, "#file-notes-authority")
+            painted = _painted_text_in_region(pilot.app, authority.region)
+            assert authority.region.height == 2
+            assert len(authority_copy.splitlines()) == 2
+            assert all(
+                cell_len(row) <= authority.region.width
+                for row in authority_copy.splitlines()
+            )
+            assert "File operation" in painted
+            assert "Changing folder" not in painted
+            assert "Session Git: 0 changes" in painted
+            assert "Next: Wait for file operation." in painted
 
+        await pilot.pause()
         authority = _static_text(workspace, "#file-notes-authority")
-        assert "File operation in progress" not in authority
+        assert "File operation" not in authority
         assert "Ready" in authority
 
     replica.close()

@@ -1387,7 +1387,7 @@ class LibraryFileNotesWorkspace(Vertical):
             root_state = "Changing folder"
             root_next = "Wait for folder change."
         elif self._path_transitioning:
-            root_state = "File operation in progress"
+            root_state = "File operation"
             root_next = "Wait for file operation."
         elif self._root_offline is None:
             root_state = "Checking folder"
