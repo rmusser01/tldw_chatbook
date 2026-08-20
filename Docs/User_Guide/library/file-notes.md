@@ -7,9 +7,9 @@ what you see in the editor is exactly what's in the file, and saves write
 straight back to it. It is a separate system from [Database notes](notes.md):
 nothing here is stored in the Library database, there are no templates or
 autosync, and no "Use in Console" handoff. This is also the key difference
-from the Database side's Notes sync panel: Sync *mirrors* a folder's notes
-into the Library database (a copy lives in both places), while Files mode
-edits that folder directly with nothing mirrored anywhere. Reach for it
+from the Library notes side's Notes sync panel: Sync *mirrors* a folder's
+notes into the Library database (a copy lives in both places), while Folder
+files mode edits that folder directly with nothing mirrored anywhere. Reach for it
 when your notes are a
 folder of Markdown files (a wiki, a repo's docs, an Obsidian vault) and you
 want to read, edit, search, and — if the folder is a Git repository — stage
@@ -20,13 +20,15 @@ commit to its existing upstream, without leaving the app.
 
 Open [Library](../library.md) (**Ctrl+3**), pick **Notes** in the rail's
 Browse section, then use the source strip at the top of the canvas: it reads
-**Database** | **Files**. Click **Files** — while the workspace loads you'll
-briefly see "Opening File Notes…". At 120 columns and wider, the rail stays
+**Library notes** | **Folder files**. Click **Folder files** — while the
+workspace loads you'll briefly see "Opening File Notes…". At 120 columns
+and wider, the rail stays
 beside the workspace unless you press **Collapse** in its **Navigation**
 heading; use the slim **Nav** handle to expand it again. On compact
 terminals, Library shows the File Notes canvas as the single visible stage so
-its controls remain on-screen; **Escape** or **Database** returns to Database
-Notes. Either switch first saves any unsaved edits on the side you're leaving.
+its controls remain on-screen; **Escape** or **Library notes** returns to the
+Library notes view. Either switch first saves any unsaved edits on the side
+you're leaving.
 
 ## Layout tour
 
@@ -344,9 +346,9 @@ not available.
   be unavailable.
 
 —
-*Verified against dev @ e3d0d2c9d — 2026-08-07 (TASK-2850: Files mode
+*Verified against dev @ e3d0d2c9d — 2026-08-07 (TASK-2850: Folder files mode
 stays inside the Library rail/canvas frame instead of replacing the whole
-shell; Escape returns to Database)*
+shell; Escape returns to Library notes)*
 *Verified against dev @ 6b38a13b8 — 2026-08-07 (task-2858 Task 4, LIB-19:
-Files mode's canvas now states in-app how it differs from Sync — edits the
+Folder files mode's canvas now states in-app how it differs from Sync — edits the
 folder directly, versus Sync's mirror-into-the-Library behavior).*

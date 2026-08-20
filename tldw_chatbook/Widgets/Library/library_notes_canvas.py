@@ -267,10 +267,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             return f"{prefix} · {status} · Next: {next_action}"
         state = self.list_state
         status = state.operation_status if state is not None else ""
-        status = status or "Ready"
+        running = state is not None and state.operation_running
+        status = status or ("Updating notes…" if running else "Ready")
         next_action = (
             "Wait for the running notes operation to finish."
-            if state is not None and state.operation_running
+            if running
             else "Create, Sync, or Import."
         )
         return f"{prefix} · {status} · Next: {next_action}"

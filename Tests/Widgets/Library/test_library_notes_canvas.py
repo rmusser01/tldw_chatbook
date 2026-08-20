@@ -191,6 +191,27 @@ async def test_authority_row_is_first_plain_child_in_every_notes_mode(
         assert "Next:" in text
 
 
+async def test_list_authority_running_without_status_uses_updating_fallback(
+    widget_pilot,  # noqa: F811
+):
+    running = replace(
+        _list_state(),
+        operation_running=True,
+        operation_status="",
+    )
+    async with await widget_pilot(
+        LibraryNotesCanvas,
+        list_state=running,
+    ) as pilot:
+        await pilot.pause()
+        authority = pilot.app.query_one("#library-notes-authority", Static)
+        text = getattr(authority.renderable, "plain", str(authority.renderable))
+
+        assert "Updating notes…" in text
+        assert "Ready" not in text
+        assert "Next: Wait for the running notes operation to finish." in text
+
+
 async def test_editor_authority_tracks_post_mount_save_state(widget_pilot):  # noqa: F811
     initial = _editor_state()
     async with await widget_pilot(

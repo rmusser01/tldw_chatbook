@@ -56,8 +56,8 @@ editor's own Back control returns to its list.
 +----------------------------+     +----------------------------+
 ```
 
-- **Source strip** — a "Database | Files" toggle above the canvas. This
-  page covers the Database side; see below for Files.
+- **Source strip** — a "Library notes | Folder files" toggle above the canvas.
+  This page covers the Library notes side; see below for Folder files.
 - **Notes list** — the default view: a "Notes (N)" header, the
   "Filter notes… (Enter)" field, a toolbar (sort / Sync / Import note /
   Export… / Select), and one row per note showing its title and age.
@@ -70,17 +70,17 @@ editor's own Back control returns to its list.
 - **Notes sync panel** — opens from the toolbar's "Sync" button: folder,
   direction, conflict policy, auto-sync, and an activity log.
 
-### Database vs. Files vs. Sync
+### Library notes vs. Folder files vs. Sync
 
 Three different notes worlds meet here, and each surface now says so in
 place: the strip above the canvas switches between two of them.
-**Database** (this page) keeps notes inside the Library itself — its own
-placement line points to Files or Sync for notes that live in a folder on
-disk. **Files** swaps the whole canvas for the File Notes workspace, which
-edits plain files under a folder you choose directly and has its own
-Session Git panel — see [File notes](file-notes.md). **Sync** (opened from
+**Library notes** (this page) keeps notes inside the Library database — its
+own placement line points to Folder files or Sync for notes that live in a
+folder on disk. **Folder files** swaps the whole canvas for the File Notes
+workspace, which edits plain files under a folder you choose directly and
+has its own Session Git panel — see [File notes](file-notes.md). **Sync** (opened from
 this page's toolbar, below) is the third: it mirrors a folder's notes INTO
-the Library's database, unlike Files mode, which edits that folder
+the Library's database, unlike Folder files mode, which edits that folder
 directly without mirroring it in.
 
 ## Features & controls
@@ -284,8 +284,8 @@ round-trip tests, task-2374).*
 untouched, and the title shows an "Untitled" placeholder instead of
 literal editable text).*
 *Verified against dev @ 6b38a13b8 — 2026-08-07 (task-2858 Task 4, LIB-19:
-Database mode, Files mode, and the Sync panel each now carry a one-line
-placement sentence in-app relating them to each other).*
+Library notes mode, Folder files mode, and the Sync panel each now carry a
+one-line placement sentence in-app relating them to each other).*
 
 *Re-stamped against dev @ 4acb17a0b — 2026-08-07 (TASK-2857: "Export…"
 now opens the "Export bundle (.zip)" canvas, not "Export chatbook").*

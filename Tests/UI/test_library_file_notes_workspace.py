@@ -1086,6 +1086,48 @@ async def test_wide_files_task_return_reuses_the_existing_leave_guard() -> None:
         assert screen.query_one("#library-notes-source-database", Button)
         assert screen.query_one("#library-rail").display is True
 
+
+@pytest.mark.asyncio
+async def test_initial_root_scan_projects_checking_authority_while_actions_are_gated(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    scan_started = threading.Event()
+    release_scan = threading.Event()
+    original_scan = FileNotesService.scan
+
+    def delayed_scan(service: FileNotesService):
+        scan_started.set()
+        assert release_scan.wait(timeout=5)
+        return original_scan(service)
+
+    monkeypatch.setattr(FileNotesService, "scan", delayed_scan)
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(root=root, replica=replica, poll_interval=10)
+
+    async with _WorkspaceHarness(workspace).run_test(size=(60, 20)) as pilot:
+        try:
+            await _wait_until(
+                pilot,
+                scan_started.is_set,
+                "initial root scan did not start",
+            )
+            assert "Checking" in _static_text(
+                workspace,
+                "#file-notes-root-status",
+            )
+            authority = _static_text(workspace, "#file-notes-authority")
+            assert "Checking folder" in authority
+            assert "Ready" not in authority
+            assert "Next: Wait for folder check." in authority
+            assert workspace.query_one("#file-notes-new", Button).disabled
+        finally:
+            release_scan.set()
+
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+
     replica.close()
 
 
@@ -1239,6 +1281,9 @@ async def test_root_transition_retains_and_freezes_old_document_until_scan_finis
         assert editor.read_only
         assert workspace.query_one("#file-notes-new", Button).disabled
         assert workspace.query_one("#file-notes-search", Input).disabled
+        authority = _static_text(workspace, "#file-notes-authority")
+        assert "Changing folder" in authority
+        assert "Next: Wait for folder change." in authority
         assert (old_root / "old.md").read_text(encoding="utf-8") == (
             "saved before root change"
         )
@@ -4163,6 +4208,95 @@ async def test_file_notes_merged_recovery_authority_paints_at_60x20_shell(
         assert next_copy in painted
         assert detail not in _static_text(workspace, "#file-notes-authority")
         assert detail in _static_text(workspace, "#file-notes-save-status")
+
+    await workspace.shutdown()
+
+
+@pytest.mark.parametrize("root_state", ("offline", "warning"))
+@pytest.mark.parametrize("save_state", ("error", "conflict"))
+@pytest.mark.asyncio
+async def test_file_notes_combined_non_ready_authority_matrix_paints_at_60x20(
+    tmp_path: Path,
+    root_state: str,
+    save_state: str,
+) -> None:
+    """Root, save, Git, push, and recovery remain painted in two rows."""
+    root = tmp_path / "Research notes with a very long private directory name"
+    root.mkdir()
+    owner = FileNotesSessionOwner()
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica_path=tmp_path / "owned.sqlite",
+        session_owner=owner,
+        poll_interval=10,
+    )
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        notes=[{"title": "Database note", "id": "db-note-1"}],
+    )
+    screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
+
+    async with LibraryHarness(app, screen=screen).run_test(size=(60, 20)) as pilot:
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        await _wait_until(
+            pilot,
+            lambda: bool(screen.query("#library-notes-source-files")),
+            "Notes source strip did not compose",
+        )
+        screen.query_one("#library-notes-source-files", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: workspace.initialized and workspace.is_mounted,
+            "File Notes workspace did not mount",
+        )
+        binding = workspace._session_binding
+        assert binding is not None
+        assert owner.record_change(binding, SessionChange("modified", "draft.md"))
+        workspace._root_offline = root_state == "offline"
+        workspace._runtime_warning = (
+            "" if root_state == "offline" else "Replica recovery unavailable"
+        )
+        workspace._update_root_surface()
+        workspace._set_save_state(
+            save_state,
+            "permission denied while writing a long private filesystem path",
+        )
+
+        for push_phase, push_copy in (
+            ("idle", ""),
+            ("checking", "Check push"),
+            ("pushing", "Pushing"),
+            ("needs_attention", "Push attention"),
+        ):
+            workspace._push_phase = push_phase
+            workspace._render_session_git_label()
+            await pilot.pause()
+
+            authority = workspace.query_one("#file-notes-authority", Static)
+            authority_copy = _static_text(workspace, "#file-notes-authority")
+            painted = _painted_text_in_region(pilot.app, authority.region)
+            assert authority.region.height == 2, (root_state, save_state, push_phase)
+            assert len(authority_copy.splitlines()) == 2
+            assert all(
+                cell_len(row) <= authority.region.width
+                for row in authority_copy.splitlines()
+            )
+            assert "Folder files" in painted
+            assert "Folder: Research…" in painted
+            assert ("Offline" if root_state == "offline" else "Warning") in painted
+            assert ("Conflict" if save_state == "conflict" else "Save failed") in painted
+            assert "Session Git: 1" in painted
+            if push_copy:
+                assert push_copy in painted
+            expected_next = (
+                "Next: Reconnect/change."
+                if root_state == "offline"
+                else "Next: Open Details."
+            )
+            assert expected_next in painted
 
     await workspace.shutdown()
 

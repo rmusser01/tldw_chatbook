@@ -175,11 +175,12 @@ did not choose a newer rail target in the meantime.
   "key action" pair — the Notes editor, for example, shows "ctrl+s save
   note | esc back to notes".
 
-One special case: selecting **Notes** adds a **Database | Files** strip
-above the workbench. **Files** swaps the canvas pane for the File Notes
-workspace. At 120 columns and wider the rail stays beside it; on compact
-terminals the canvas becomes the single visible stage so its controls remain
-on-screen. Escape (or the **Database** link) returns to the notes list — see
+One special case: selecting **Notes** adds a
+**Library notes | Folder files** strip above the workbench. **Folder files**
+swaps the canvas pane for the File Notes workspace. At 120 columns and wider
+the rail stays beside it; on compact terminals the canvas becomes the single
+visible stage so its controls remain on-screen. Escape (or the
+**Library notes** link) returns to the notes list — see
 [File Notes](library/file-notes.md).
 
 ## Features & controls
@@ -232,7 +233,7 @@ previously empty page cannot hide an in-progress or recoverable request.
 |---|---|---|
 | **Media** | The media list and viewer. | [Media & conversations](library/media-and-conversations.md) |
 | **Conversations** | Your Console conversations, with preview and "Open in Console". | [Media & conversations](library/media-and-conversations.md) |
-| **Notes** | The notes list/editor, plus the Database \| Files source strip. | [Notes](library/notes.md) |
+| **Notes** | The notes list/editor, plus the Library notes \| Folder files source strip. | [Notes](library/notes.md) |
 | **Prompts** | The prompts list and editor. | [Prompts](library/prompts.md) |
 | **Skills** | The skills list, editor, and trust panel. | [Skills](library/skills.md) |
 | **Collections** | Library Collections (local records). | [Collections](library/collections.md) |
@@ -379,7 +380,7 @@ you're on:
 
 Escape and Ctrl+S are also bound inside the skill editor specifically
 (back to list / save) — see [Skills](library/skills.md). Escape also
-returns Notes ▸ Files mode to the Database notes view, and is live
+returns Notes ▸ Folder files mode to the Library notes view, and is live
 inside the File Notes surface's own panels and dialogs — see
 [File Notes](library/file-notes.md). On the Study screen (reached via
 **Continue in Study**), Escape returns to the Study decks staging canvas
@@ -418,9 +419,9 @@ here in Library.
   retired; their names now route to the matching Library row.
 
 —
-*Verified against dev @ f0379c035 — 2026-08-07 (TASK-2850: Notes ▸ Files
+*Verified against dev @ f0379c035 — 2026-08-07 (TASK-2850: Notes ▸ Folder files
 mode stays inside the Library rail/canvas frame; Escape returns to
-Database; TASK-2851: the legacy Media Library screen is retired — "Media &
+Library notes; TASK-2851: the legacy Media Library screen is retired — "Media &
 Content: Open Media Library" now deep-links into Library's Media row;
 TASK-2854: the Study/Flashcards/Quizzes hand-off rows read "opens staging
 canvas", not "opens Study"; the Study screen names itself "Library ▸

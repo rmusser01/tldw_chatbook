@@ -1356,8 +1356,7 @@ class LibraryFileNotesWorkspace(Vertical):
         folder_name = self._root.name or self._root.anchor or str(self._root)
         folder_label = Text(folder_name)
         folder_label.truncate(12, overflow="ellipsis")
-        folder_name = folder_label.plain
-        segments = ["Folder files", f"Local folder: {folder_name}"]
+        segments = ["Folder files", f"Local folder: {folder_label.plain}"]
         if self._root_offline is True:
             segments.append("Folder offline")
         elif self._runtime_warning:
@@ -1382,17 +1381,40 @@ class LibraryFileNotesWorkspace(Vertical):
             session_git_count = len(coalesce_session_changes(changes))
         change_word = "change" if session_git_count == 1 else "changes"
         segments.append(f"Session Git: {session_git_count} {change_word}")
-        if (
-            self._save_state in {"conflict", "error"}
-            and self._root_offline is not True
-            and not self._runtime_warning
-        ):
+        root_state = ""
+        root_next = ""
+        if self._root_transitioning or self._path_transitioning:
+            root_state = "Changing folder"
+            root_next = "Wait for folder change."
+        elif self._root_offline is None:
+            root_state = "Checking folder"
+            root_next = "Wait for folder check."
+        elif self._root_offline is True:
+            root_state = "Offline"
+            root_next = "Reconnect/change."
+        elif self._runtime_warning:
+            root_state = "Warning"
+            root_next = "Open Details."
+        save_state = {
+            "conflict": "Conflict",
+            "error": "Save failed",
+            "saving": "Saving",
+            "dirty": "Save pending",
+            "saved": "Saved",
+        }.get(self._save_state, "")
+        save_non_ready = self._save_state in {"conflict", "error", "saving", "dirty"}
+        if root_state or save_non_ready:
+            if root_state or self._save_state in {"saving", "dirty"}:
+                compact_folder = Text(folder_name)
+                compact_folder.truncate(9, overflow="ellipsis")
+                first_line = ["Folder files", f"Folder: {compact_folder.plain}"]
+                if root_state:
+                    first_line.append(root_state)
+                if save_state:
+                    first_line.append(save_state)
+            else:
+                first_line = segments[:-1]
             if self._push_phase == "idle":
-                next_action = (
-                    "Resolve conflict or copy."
-                    if self._save_state == "conflict"
-                    else "Retry or save a copy."
-                )
                 git_copy = segments[-1]
             else:
                 push_copy = {
@@ -1401,13 +1423,30 @@ class LibraryFileNotesWorkspace(Vertical):
                     "needs_attention": "Push attention",
                 }[self._push_phase]
                 git_copy = f"Session Git: {session_git_count} · {push_copy}"
+            if root_next:
+                next_action = root_next
+                if self._push_phase != "idle" and root_state == "Changing folder":
+                    next_action = "Wait for change."
+                elif self._push_phase != "idle" and root_state == "Checking folder":
+                    next_action = "Wait for check."
+            elif self._save_state == "conflict":
                 next_action = (
-                    "Resolve/copy."
-                    if self._save_state == "conflict"
+                    "Resolve conflict or copy."
+                    if self._push_phase == "idle"
+                    else "Resolve/copy."
+                )
+            elif self._save_state == "error":
+                next_action = (
+                    "Retry or save a copy."
+                    if self._push_phase == "idle"
                     else "Retry/copy."
                 )
+            elif self._save_state == "saving":
+                next_action = "Wait for save."
+            else:
+                next_action = "Keep editing."
             return (
-                f"{' · '.join(segments[:-1])}\n"
+                f"{' · '.join(first_line)}\n"
                 f"{git_copy} · Next: {next_action}"
             )
         if self._push_phase != "idle":
@@ -1561,6 +1600,8 @@ class LibraryFileNotesWorkspace(Vertical):
         self._replica = replica
         self._service = service
         self._runtime_warning = warning
+        self._update_root_surface()
+        self._update_controls()
         if service is None:
             self._initialized = True
             self._update_root_surface()
@@ -4194,7 +4235,11 @@ class LibraryFileNotesWorkspace(Vertical):
         ):
             self._editor_action_focus_target = focused.id
         structurally_available = not transitioning and not mutation_active
-        has_service = self._service is not None and structurally_available
+        has_service = (
+            self._service is not None
+            and self._initialized
+            and structurally_available
+        )
         has_document = self._opened is not None and not transitioning
         has_deleted = bool(self._selected_deleted_path) and not transitioning
         self.query_one("#file-notes-new", Button).disabled = not has_service
