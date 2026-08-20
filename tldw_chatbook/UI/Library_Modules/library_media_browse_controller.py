@@ -329,7 +329,7 @@ class LibraryMediaBrowseController:
                 raise TypeError("Media types must be a sequence.")
             if any(type(value) is not str or not value.strip() for value in values):
                 raise ValueError("Media types must be non-empty strings.")
-            normalized = tuple(sorted({value.strip() for value in values}))
+            normalized = tuple(sorted(set(values)))
         except asyncio.CancelledError:
             raise
         except Exception as exc:

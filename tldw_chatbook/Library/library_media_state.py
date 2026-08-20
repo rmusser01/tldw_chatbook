@@ -80,8 +80,8 @@ class MediaBrowseScope:
             raise ValueError("page offset exceeds SQLite's integer range.")
 
         query = self.query.strip()
-        media_type = self.media_type.strip() if self.media_type is not None else None
-        if not media_type:
+        media_type = self.media_type
+        if media_type is not None and not media_type.strip():
             media_type = None
         sort_by = self.sort_by.strip().lower()
         if sort_by not in _MEDIA_BROWSE_SORTS:
@@ -443,7 +443,7 @@ def build_library_media_browse_state(
         type(value) is not str or not value.strip() for value in type_options
     ):
         raise ValueError("type_options must be an exact tuple of non-empty strings.")
-    normalized_types = tuple(sorted({value.strip() for value in type_options}))
+    normalized_types = tuple(sorted(set(type_options)))
     if len(normalized_types) != len(type_options):
         raise ValueError("type_options must contain unique source values.")
     items = (

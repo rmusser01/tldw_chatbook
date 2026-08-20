@@ -127,6 +127,21 @@ async def test_controller_filters_literal_all_type_values(media_type: str) -> No
 
 
 @pytest.mark.asyncio
+async def test_controller_round_trips_nonblank_source_type_verbatim() -> None:
+    screen = _Screen()
+    service = _Service(_page(1, 1), types=("pdf", " pdf "))
+    controller = _controller(screen, service)
+
+    controller.request_facets(fingerprint="current")
+    await screen.pending.pop()
+    controller.request(MediaBrowseScope(media_type=" pdf "), focus_identity=None)
+    await screen.pending.pop()
+
+    assert controller.type_options == (" pdf ", "pdf")
+    assert service.search_calls[0]["media_types"] == [" pdf "]
+
+
+@pytest.mark.asyncio
 async def test_controller_omits_type_filter_for_unfiltered_scope() -> None:
     screen = _Screen()
     service = _Service(_page(1, 1))

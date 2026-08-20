@@ -38,13 +38,13 @@ def _page(scope: MediaBrowseScope, *, total: int) -> dict[str, object]:
     }
 
 
-def test_media_browse_scope_is_fixed_normalized_and_immutable() -> None:
+def test_media_browse_scope_normalizes_query_but_preserves_literal_type() -> None:
     scope = MediaBrowseScope(
         query="  needle  ", media_type="  video  ", sort_by="title_asc", page=3
     )
 
     assert scope.query == "needle"
-    assert scope.media_type == "video"
+    assert scope.media_type == "  video  "
     assert scope.page_size == 20
     assert scope.offset == 40
     assert scope.with_page(2).same_except_page(scope)
@@ -67,7 +67,9 @@ def test_empty_query_relevance_cannot_misdescribe_database_order() -> None:
 @pytest.mark.parametrize("media_type", ["All", "all", "ALL"])
 def test_media_browse_scope_preserves_literal_all_type_values(media_type: str) -> None:
     assert MediaBrowseScope(media_type=media_type).media_type == media_type
-    assert MediaBrowseScope(media_type=f" {media_type} ").media_type == media_type
+    assert (
+        MediaBrowseScope(media_type=f" {media_type} ").media_type == f" {media_type} "
+    )
 
 
 @pytest.mark.parametrize("media_type", [None, "", "   "])
@@ -196,12 +198,12 @@ def test_authoritative_projection_distinguishes_unfiltered_from_literal_all_type
 
     state = build_library_media_browse_state(
         result,
-        type_options=("ALL", "All", "all"),
+        type_options=("ALL", "All", "all", " pdf ", "pdf"),
         now=NOW,
     )
 
     assert state.active_type is None
-    assert state.type_options == (None, "ALL", "All", "all")
+    assert state.type_options == (None, " pdf ", "ALL", "All", "all", "pdf")
 
 
 def test_rows_with_type_and_age_secondary_and_missing_last():
