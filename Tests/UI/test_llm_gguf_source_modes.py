@@ -1187,8 +1187,13 @@ async def test_supported_width_keyboard_reaches_each_provider_source_and_actions
         await pilot.press("tab")
         await _settle_pilot_until(
             pilot,
-            lambda: managed.has_focus,
-            message=f"{provider} managed selector did not receive focus",
+            lambda: (
+                managed.has_focus
+                and managed in app.screen._compositor.visible_widgets
+                and managed.region.y >= view.content_region.y
+                and managed.region.bottom <= view.content_region.bottom
+            ),
+            message=f"{provider} managed selector did not settle inside its view",
         )
         assert managed.has_focus
         assert not managed.expanded
