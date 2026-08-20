@@ -6858,8 +6858,15 @@ async def test_library_media_initial_error_is_unknown_and_retry_is_unique() -> N
         assert getattr(screen.focused, "id", None) == "library-media-type-filter"
 
 
+@pytest.mark.parametrize(
+    ("commit_phase", "requested_type"),
+    (("loading", "All"), ("error", "ALL"), ("error", "all")),
+)
 @pytest.mark.asyncio
-async def test_library_media_complete_facets_survive_initial_loading_and_error() -> None:
+async def test_library_media_complete_facets_commit_during_initial_recovery(
+    commit_phase: str,
+    requested_type: str,
+) -> None:
     app = _build_test_app()
     _seed_conversations(app, [], media=_two_media_items())
     service = GatedFailingInitialMediaWithCompleteFacets(_two_media_items())
@@ -6894,6 +6901,15 @@ async def test_library_media_complete_facets_survive_initial_loading_and_error()
                 message="Complete facets never reached the settled Media canvas.",
             )
 
+            if commit_phase == "error":
+                service.page_release.set()
+                await _wait_for_condition(
+                    pilot,
+                    lambda: bool(controller.error_copy)
+                    and bool(screen.query("#library-media-type-filter")),
+                    message="Initial page failure never reached recovery state.",
+                )
+
             requested_before = controller.requested_scope
             opener = screen.query_one("#library-media-type-filter", Button)
             opener.press()
@@ -6906,21 +6922,33 @@ async def test_library_media_complete_facets_survive_initial_loading_and_error()
                 for index in range(chooser.option_count)
             ) == (None, "ALL", "All", "all")
             assert "✓ All types" in str(chooser.get_option_at_index(0).prompt)
-            chooser.highlighted = 2
+            selected_index = next(
+                index
+                for index in range(chooser.option_count)
+                if getattr(
+                    chooser.get_option_at_index(index), "choice_value"
+                )
+                == requested_type
+            )
+            chooser.highlighted = selected_index
+            chooser.focus()
             await pilot.pause()
             assert controller.requested_scope == requested_before
             assert len(service.search_calls) == 1
 
-            service.page_release.set()
+            await pilot.press("enter")
             await _wait_for_condition(
                 pilot,
-                lambda: bool(controller.error_copy)
-                and screen.query_one(
-                    "#library-media-type-choices", OptionList
-                ).option_count
-                == 4,
-                message="Complete facets did not survive initial page failure.",
+                lambda: controller.requested_scope
+                == MediaBrowseScope(media_type=requested_type)
+                and len(service.search_calls) == 2
+                and not screen.query("#library-media-type-choices"),
+                message="Committed complete facet never started one exact request.",
             )
+            await pilot.pause()
+            assert len(service.search_calls) == 2
+            assert screen._library_media_type_filter == requested_type
+            assert requested_type is not None
             assert "private-initial-page-failure" not in _visible_text(screen)
     finally:
         service.page_release.set()
@@ -7271,9 +7299,7 @@ def test_library_media_type_handler_preserves_none_and_literal_all(
 ) -> None:
     screen = LibraryScreen(_build_test_app())
     screen._library_media_type_filter = initial
-    screen._build_library_media_state = lambda: SimpleNamespace(
-        type_options=(None, "All", "video")
-    )
+    screen._library_media_browse_controller.type_options = ("All", "video")
     requested: list[str | None] = []
     screen._request_library_media_type = lambda value, **_kwargs: requested.append(
         value

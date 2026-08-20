@@ -668,8 +668,11 @@ def test_type_filter_change_exits_select_mode_and_notifies_discard():
     fake._library_media_row_selection.select_all(["9"])
     fake._library_media_type_filter = "All"
     fake._library_media_type_choices_visible = False
-    fake._build_library_media_state = lambda: SimpleNamespace(
+    fake._library_media_browse_controller = SimpleNamespace(
         type_options=("All", "video")
+    )
+    fake._library_media_type_options = (
+        LibraryScreen._library_media_type_options.__get__(fake)
     )
     # Pressing the chooser under an armed confirm is inert: no strip, no
     # filter drift, the confirmation stays exactly as armed.

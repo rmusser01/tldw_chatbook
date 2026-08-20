@@ -10294,11 +10294,15 @@ class LibraryScreen(BaseAppScreen):
         controller = self._library_media_browse_controller
         return {
             "pager": controller.pager,
-            "type_options": (None, *controller.type_options),
+            "type_options": self._library_media_type_options(),
             "stale_action_reason": (
                 controller.stale_copy if controller.freshness == "stale" else ""
             ),
         }
+
+    def _library_media_type_options(self) -> tuple[str | None, ...]:
+        """Return the unfiltered sentinel plus every complete stored facet."""
+        return (None, *self._library_media_browse_controller.type_options)
 
     @staticmethod
     def _restore_library_media_scope(state: Mapping[str, Any]) -> MediaBrowseScope:
@@ -15780,7 +15784,7 @@ class LibraryScreen(BaseAppScreen):
         if requested is not None and type(requested) is not str:
             return
         self._library_media_type_choices_visible = False
-        type_options = self._build_library_media_state().type_options
+        type_options = self._library_media_type_options()
         if requested in type_options and requested != self._library_media_type_filter:
             self._library_media_type_filter = requested
             self._request_library_media_type(
