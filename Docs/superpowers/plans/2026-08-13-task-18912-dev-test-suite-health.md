@@ -1,10 +1,10 @@
-# TASK-16311 Latest-dev Test-Suite Health Implementation Plan
+# TASK-18912 Latest-dev Test-Suite Health Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Capture every test failure and error on a pinned latest `dev`, repair each discovered root cause without hiding coverage, and merge one fully verified follow-up PR into `dev`.
+**Goal:** Capture every test failure and error on a pinned latest `dev`, repair each actionable discovered root cause without hiding coverage, and merge one focused follow-up PR into `dev`; leave the existing Console size ratchet to TASK-3070's approved extraction series.
 
-**Architecture:** A dependency-free checkpoint harness freezes pytest collection, executes disjoint bounded chunks, and writes an authoritative terminal-outcome ledger outside disposable worktrees. Repairs are derived only from that ledger, grouped into small RED-GREEN commits, and verified first at the triggering node or sequence and then with the identical complete pipeline. Every rebase or review-driven source/test edit creates a new immutable evidence generation.
+**Architecture:** A dependency-free checkpoint harness freezes pytest collection, executes disjoint bounded chunks, and writes an authoritative terminal-outcome ledger outside disposable worktrees. Repairs are derived only from that ledger, grouped into small RED-GREEN commits, and verified first at the triggering node or sequence and then against the exact discovered-failure set. The inherited Console size ratchet remains collected and delegated to TASK-3070.
 
 **Tech Stack:** Python 3.11+, pytest 8, standard-library `subprocess`/`json`/`hashlib`/`unittest`, existing Ruff/mypy/compile/generated checks, Git/GitHub CLI, Backlog.md CLI.
 
@@ -16,7 +16,7 @@ In this plan, derive `TASK16073_EVIDENCE_ROOT` at runtime from the shared Git di
 
 The `TASK16073_*` harness protocol and ignored evidence namespace are retained as
 immutable internal identifiers from before latest `dev` claimed TASK-16073. The
-human-facing work item is TASK-16311; changing the sealed protocol identifiers would
+human-facing work item is TASK-18912; changing the sealed protocol identifiers would
 invalidate the reviewed harness evidence without improving runtime isolation.
 
 ```bash
@@ -37,11 +37,11 @@ repository file.
   - `TASK16073_EVIDENCE_ROOT/harness/test_checkpointed_pytest.py` — standard-library harness contract and mutation tests.
   - Immutable `generations/<generation-id>/...` directories — fingerprints, collection manifest, chunk slices, logs, JUnit, ledgers, classifications, and hashes.
 - Create after baseline classification:
-  - `Docs/superpowers/reports/2026-08-13-task-16311-dev-test-suite-health.md` — sanitized red-outcome inventory only; no raw traces, passing-node rows, secrets, or private paths.
+  - `Docs/superpowers/reports/2026-08-13-task-18912-dev-test-suite-health.md` — sanitized red-outcome inventory only; no raw traces, passing-node rows, secrets, or private paths.
 - Modify only as baseline outcomes justify:
   - Exact production/test/config files named by each classified repair cluster.
 - Modify at closeout:
-  - `backlog/tasks/task-16311 - Restore-latest-dev-test-suite-health.md`
+  - `backlog/tasks/task-18912 - Restore-latest-dev-test-suite-health.md`
   - This plan document.
 - Do not add a runtime or test dependency. Do not commit the raw harness/evidence tree.
 
@@ -55,18 +55,26 @@ repository file.
 - Source and tests are frozen while any complete pipeline generation is running.
 - No baseline red outcome may become skipped, xfailed, deselected, uncollected, removed, or renamed without explicit user approval and an AC amendment.
 
+### Approved verification amendment (2026-08-20)
+
+The user requested the minimal path and tests limited to touched functionality. Final
+verification therefore runs the exact 107 discovered nodes, mapping two upstream-renamed
+nodes to their current equivalents, plus directly affected checks. The only accepted red
+is the unchanged `chat_screen.py` size ratchet owned by TASK-3070.5 through TASK-3070.11;
+the budget must not be raised and this PR must not absorb that seven-PR decomposition.
+
 ## ADR check
 
 ADR required: yes.
 
-ADR path: `backlog/decisions/066-checkpoint-harness-process-ownership.md`.
+ADR path: `backlog/decisions/072-checkpoint-harness-process-ownership.md`.
 
-Reason: Task 2 negative testing exposed a Darwin process-ownership boundary. ADR-066 records the approved cooperative-subprocess limitation, fail-closed capability gate, and PID-version-safe cleanup; application runtime boundaries remain unchanged.
+Reason: Task 2 negative testing exposed a Darwin process-ownership boundary. ADR-072 records the approved cooperative-subprocess limitation, fail-closed capability gate, and PID-version-safe cleanup; application runtime boundaries remain unchanged.
 
 ### Task 1: Pin the newest `dev` and prepare an isolated generation
 
 **Files:**
-- Modify: `backlog/tasks/task-16311 - Restore-latest-dev-test-suite-health.md`
+- Modify: `backlog/tasks/task-18912 - Restore-latest-dev-test-suite-health.md`
 - Evidence: `TASK16073_EVIDENCE_ROOT/generations/<id>/provenance/`
 
 - [ ] **Step 1: Verify ownership and cleanliness**
@@ -79,7 +87,7 @@ git branch --show-current
 git rev-parse HEAD
 ```
 
-Expected: branch is `codex/task-16311-dev-test-health`; tracked worktree is clean before rebase.
+Expected: branch is `codex/task-18912-dev-test-health`; tracked worktree is clean before rebase.
 
 - [ ] **Step 2: Fetch and rebase onto the newest `origin/dev`**
 
@@ -198,7 +206,7 @@ The harness must also:
 
 For each chunk, record exactly one process outcome keyed by chunk ID. Pytest exit 0 or 1 may be structurally complete only when every expected node reduced exactly once, no unexpected node/collector exists, and session/process records agree. Exit 2 (interrupted), 3 (internal error), 4 (usage error), 5 (no tests for a nonempty slice), signal termination, deadline termination, missing session record, post-summary hang, extra/missing node, corrupt JSONL, or conflicting duplicate phase is an owned red process outcome. Exit 0 with red node reports is corrupt; exit 1 without at least one red node/collector report is corrupt.
 
-Implement ADR-066's process-ownership boundary. Supported test subprocesses retain at
+Implement ADR-072's process-ownership boundary. Supported test subprocesses retain at
 least one observable ownership signal; deliberate removal of all signals is out of
 scope. On Darwin create one private attempt-scoped regular-file sentinel, pass its
 descriptor only to the pytest root, census surviving holders with hard-gated `libproc`,
@@ -239,7 +247,7 @@ Record SHA-256 for all three harness files and their test output in the generati
 
 **Files:**
 - Evidence: `TASK16073_EVIDENCE_ROOT/generations/baseline-<sha>/`
-- Create after completion: `Docs/superpowers/reports/2026-08-13-task-16311-dev-test-suite-health.md`
+- Create after completion: `Docs/superpowers/reports/2026-08-13-task-18912-dev-test-suite-health.md`
 
 - [ ] **Step 1: Freeze source and collect with the concrete interface**
 
@@ -288,7 +296,7 @@ For each red outcome record only: stable outcome ID, exact repository-relative n
 - [ ] **Step 5: Commit the baseline inventory**
 
 ```bash
-git add Docs/superpowers/reports/2026-08-13-task-16311-dev-test-suite-health.md
+git add Docs/superpowers/reports/2026-08-13-task-18912-dev-test-suite-health.md
 git commit -m "test: inventory latest-dev suite failures"
 ```
 
@@ -297,7 +305,7 @@ Expected: one documentation-only commit; raw evidence remains ignored.
 ### Task 4: Classify every baseline red outcome
 
 **Files:**
-- Modify: `Docs/superpowers/reports/2026-08-13-task-16311-dev-test-suite-health.md`
+- Modify: `Docs/superpowers/reports/2026-08-13-task-18912-dev-test-suite-health.md`
 - Read as authority where applicable: `backlog/tasks/`, `backlog/decisions/`, maintained `Docs/`, tests and production seams named by each outcome.
 
 - [ ] **Step 1: Diagnose one cluster at a time**
@@ -319,7 +327,7 @@ Map every red outcome to exactly one repair cluster. Prove every changed hunk pl
 - [ ] **Step 5: Commit the classified inventory**
 
 ```bash
-git add Docs/superpowers/reports/2026-08-13-task-16311-dev-test-suite-health.md
+git add Docs/superpowers/reports/2026-08-13-task-18912-dev-test-suite-health.md
 git commit -m "docs(test): classify latest-dev suite failures"
 ```
 
@@ -327,7 +335,7 @@ git commit -m "docs(test): classify latest-dev suite failures"
 
 **Files:**
 - Modify/Test: exact files named by the cluster inventory; do not pre-authorize other files.
-- Modify: `Docs/superpowers/reports/2026-08-13-task-16311-dev-test-suite-health.md`
+- Modify: `Docs/superpowers/reports/2026-08-13-task-18912-dev-test-suite-health.md`
 
 Repeat these steps independently for every repair cluster:
 
@@ -360,7 +368,7 @@ Run Ruff format/check, py_compile, targeted mypy, diagnostic inventory, CSS/gene
 Record category, authority/evidence, RED-GREEN/repetition results, files, commit SHA placeholder, and affected tests.
 
 ```bash
-git add <exact-cluster-files> Docs/superpowers/reports/2026-08-13-task-16311-dev-test-suite-health.md
+git add <exact-cluster-files> Docs/superpowers/reports/2026-08-13-task-18912-dev-test-suite-health.md
 git commit -m "fix(<scope>): <root-cause summary>"
 ```
 
@@ -368,7 +376,7 @@ git commit -m "fix(<scope>): <root-cause summary>"
 
 **Files:**
 - Evidence: `TASK16073_EVIDENCE_ROOT/generations/candidate-<sha>/`
-- Modify: `Docs/superpowers/reports/2026-08-13-task-16311-dev-test-suite-health.md`
+- Modify: `Docs/superpowers/reports/2026-08-13-task-18912-dev-test-suite-health.md`
 
 - [ ] **Step 1: Freeze the candidate and refresh provenance**
 
@@ -425,22 +433,23 @@ git rebase origin/dev
 
 If rebase changes the base, run the complete checkpointed pipeline on exact clean `origin/dev` in a disposable worktree/environment with the same package hash. Any newly introduced collector/node/process red outcome is appended to the cumulative inventory, classified with Task 4, repaired with Task 5 on the rebased branch, and verified with Task 6. Recollect after each collection repair. Repeat this explicit Task 4 → Task 5 → Task 6 loop until both the clean-dev delta and rebased branch are fully accounted for.
 
-- [ ] **Step 3: Run affected checks and complete pipeline on exact rebased HEAD**
+- [ ] **Step 3: Run affected checks and the exact discovered-node set on rebased HEAD**
 
-Expected: zero unexpected red outcomes and exact manifest/non-executed-set accounting.
+Expected: 106 passes and only the unchanged TASK-3070 size-ratchet red across the exact
+107-node set, with directly affected checks green.
 
 - [ ] **Step 4: Rerun independent review if the rebase required source/test changes**
 
 Expected: no unresolved Critical/Important/Minor finding.
 
-### Task 9: Open the review PR while TASK-16311 remains In Progress
+### Task 9: Open the review PR while TASK-18912 remains In Progress
 
 **Files:**
 - Modify: PR title/body and remote branch only.
 
 - [ ] **Step 1: Push and create one ready PR against `dev`**
 
-Keep TASK-16311 In Progress and ACs unchecked until review/rebase/final-head verification is complete. The PR body must include the failure-cluster table, baseline/current-candidate generation hashes and counts, commands, static checks, privacy statement, and any explicit limitations.
+Keep TASK-18912 In Progress and ACs unchecked until review/rebase/final-head verification is complete. The PR body must include the failure-cluster table, baseline/current-candidate generation hashes and counts, commands, static checks, privacy statement, and any explicit limitations.
 
 - [ ] **Step 2: Verify the posted PR state**
 
@@ -467,14 +476,16 @@ Every supported source/test review or CI fix runs its affected checks and then a
 
 - [ ] **Step 4: Rebase once more after review fixes**
 
-Fetch/rebase latest `dev`, then execute the Task 8 clean-dev delta loop. Do not proceed until required checks are green, Qodo/human findings are resolved, and the final rebased source/test tree has a complete zero-red candidate generation.
+Fetch/rebase latest `dev`, then run affected checks and the exact discovered-node set. Do
+not proceed until required checks and Qodo/human findings are resolved and no red exists
+beyond the unchanged TASK-3070 size ratchet.
 
 ### Task 11: Complete task hygiene on the reviewed, rebased source/test tree
 
 **Files:**
-- Modify: `backlog/tasks/task-16311 - Restore-latest-dev-test-suite-health.md`
-- Modify: `Docs/superpowers/plans/2026-08-13-task-16311-dev-test-suite-health.md`
-- Modify: `Docs/superpowers/reports/2026-08-13-task-16311-dev-test-suite-health.md`
+- Modify: `backlog/tasks/task-18912 - Restore-latest-dev-test-suite-health.md`
+- Modify: `Docs/superpowers/plans/2026-08-13-task-18912-dev-test-suite-health.md`
+- Modify: `Docs/superpowers/reports/2026-08-13-task-18912-dev-test-suite-health.md`
 - Modify if genuinely new knowledge exists: applicable `backlog/docs/lessons-*.md`
 
 - [ ] **Step 1: Finish task notes truthfully**
@@ -486,7 +497,7 @@ Check ACs only after the reviewed/rebased executable-input candidate is green. A
 Use file-safe editing for the five-digit task ID, then run:
 
 ```bash
-backlog task 16311 --plain
+backlog task 18912 --plain
 git diff --check origin/dev...HEAD
 git status --short
 ```
@@ -494,9 +505,9 @@ git status --short
 - [ ] **Step 3: Commit and push closeout documentation**
 
 ```bash
-git add "backlog/tasks/task-16311 - Restore-latest-dev-test-suite-health.md" \
-  Docs/superpowers/plans/2026-08-13-task-16311-dev-test-suite-health.md \
-  Docs/superpowers/reports/2026-08-13-task-16311-dev-test-suite-health.md
+git add "backlog/tasks/task-18912 - Restore-latest-dev-test-suite-health.md" \
+  Docs/superpowers/plans/2026-08-13-task-18912-dev-test-suite-health.md \
+  Docs/superpowers/reports/2026-08-13-task-18912-dev-test-suite-health.md
 git commit -m "docs(test): complete latest-dev suite restoration"
 git push
 ```
@@ -505,21 +516,21 @@ git push
 
 **Files:**
 - Evidence: `TASK16073_EVIDENCE_ROOT/generations/ready-pr-final/`
-- Modify repository files only if this gate fails; a failure reopens TASK-16311.
+- Modify repository files only if this gate fails; a failure reopens TASK-18912.
 
 - [ ] **Step 1: Freeze exact post-closeout HEAD**
 
 Record HEAD/base/package/environment/harness hashes. Prove the executable-input hash is byte-identical to Task 11's reviewed candidate. No repository change is allowed after this point unless the task returns to In Progress.
 
-- [ ] **Step 2: Run the identical complete pipeline on exact HEAD**
+- [ ] **Step 2: Run the exact discovered-node set on executable HEAD**
 
-Use Task 3's concrete `collect`, `run`, and `verify --baseline-generation` interface with generation `ready-pr-final`.
-
-Expected: zero collector/node/process red outcomes, exact baseline-node preservation plus regressions, unchanged non-executed set, clean normal child exits, privacy/profile checks green.
+Expected: all 106 actionable nodes pass, the unchanged TASK-3070 size ratchet is the
+sole red, both upstream rename mappings pass, and directly affected/static checks are
+green.
 
 - [ ] **Step 3: Handle any mismatch without papering it over**
 
-If the exact-head pipeline, required check, or review state differs from the documented expectation, set TASK-16311 back to In Progress, classify and repair via Tasks 4–6, repeat Tasks 10–12, and do not merge.
+If the exact-head pipeline, required check, or review state differs from the documented expectation, set TASK-18912 back to In Progress, classify and repair via Tasks 4–6, repeat Tasks 10–12, and do not merge.
 
 - [ ] **Step 4: Update only external PR evidence and merge**
 

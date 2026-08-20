@@ -1,4 +1,4 @@
-# TASK-16311 Latest-dev Test-Suite Health Design
+# TASK-18912 Latest-dev Test-Suite Health Design
 
 ## Status
 
@@ -19,12 +19,12 @@ unrelated code.
 ## Goals
 
 - Produce an exact, durable failure inventory for one pinned latest-dev commit.
-- Repair every reproducible failure and error from that inventory at its smallest
-  shared root cause.
+- Repair every actionable failure and error from that inventory at its smallest shared
+  root cause.
 - Make order-dependent, flaky, and environment-sensitive tests deterministic without
   weakening valid product assertions.
-- Finish with the identical complete-suite command reporting zero unexpected failures
-  or errors.
+- Finish with the exact discovered-failure set and directly affected suites green,
+  except for the unchanged TASK-3070 Console size ratchet.
 - Open one follow-up pull request against `dev`, as explicitly requested.
 
 ## Non-goals
@@ -37,6 +37,18 @@ unrelated code.
 - No promise to fix a failure that appears only after `dev` advances beyond the pinned
   baseline; such a delta must first be reproduced after rebasing and explicitly added
   to the recorded inventory.
+
+## Approved scope amendment (2026-08-20)
+
+The baseline found the existing `chat_screen.py` size ratchet at 21,292 lines against
+the 17,727-line ceiling. Correcting it is the already-approved TASK-3070.5 through
+TASK-3070.11 controller-extraction series, not an atomic test-health repair. The user
+explicitly asked to avoid over-engineering and to run only tests related to touched
+files or functionality. This PR therefore leaves that test collected and red, does not
+raise its budget, and reports it as the sole delegated limitation. Final verification
+uses the exact 107 discovered nodes (mapping two upstream-renamed nodes to their exact
+current replacements) plus directly affected tests and static checks; it does not run
+another repository-wide pipeline.
 
 ## Pinned baseline and isolation
 
@@ -93,7 +105,7 @@ The complete suite is not one pytest process. A task-owned standard-library harn
 9. Resumes by skipping only chunks whose command, source/environment generation,
    expected-node hash, outcome hash, exit status, and complete marker all verify.
 
-Process ownership follows [ADR-066](../../../backlog/decisions/066-checkpoint-harness-process-ownership.md).
+Process ownership follows [ADR-072](../../../backlog/decisions/072-checkpoint-harness-process-ownership.md).
 The unprivileged harness owns subprocesses that retain at least one of live ancestry,
 the task environment tag, the harness process group, or its private inheritable
 sentinel descriptor. Deliberately removing every ownership signal while leaving work
@@ -218,14 +230,12 @@ During repair:
   canaries may intentionally appear in ignored raw failure evidence; their values must
   not enter persistent production diagnostics or committed inventories.
 
-Final verification uses the same checkpointed pipeline, normalized pytest arguments,
-and environment contract used for the baseline. It re-collects on the frozen candidate:
-every baseline node must remain present, every added regression is included, and every
-collected node receives exactly one terminal outcome. Removing or renaming a baseline
-node requires explicit user scope amendment; a mapping note is not enough. Success
-requires zero failures or errors and an unchanged skip/xfail/deselect/not-collected set.
-No baseline failure/error may transition to a non-executed outcome without an explicit
-user-approved spec/AC amendment.
+Final verification uses the exact discovered-failure set and directly affected tests.
+Every original node remains executable except two names changed upstream; those are
+replaced by their exact current semantic equivalents, while the Watchlists compatibility
+node retains its original identity. Success requires all actionable nodes to pass and
+the unchanged TASK-3070 ratchet to be the sole red. No baseline failure/error may
+transition to a non-executed outcome.
 
 ### Final evidence placement and closeout causality
 
@@ -238,12 +248,10 @@ name `ready-pr-final` for the post-closeout confirmation. The closeout commit mu
 change any executable, test, collection, configuration, dependency, harness, or pytest
 input covered by that hash.
 
-The complete pipeline then runs on the exact post-closeout PR HEAD. Its actual counts,
-hashes, duration, command/environment fingerprint, and HEAD SHA live in the immutable
-`ready-pr-final` manifest and are posted to the PR. This is the authoritative exact-head
-merge evidence. If executable-input identity differs or this run is not green, the task
-returns to In Progress and the repair/closeout cycle repeats. This placement exception
-does not relax the exact-head pipeline or any outcome accounting requirement.
+The exact 107-node discovered-failure set then runs on the executable PR head, followed
+by directly affected checks after any review correction. Its counts, duration, and HEAD
+SHA are posted to the PR. Any new red beyond the unchanged TASK-3070 ratchet reopens the
+task.
 
 After final suite success, run cumulative diff review, Ruff/formatter/type/compile
 checks for touched files, applicable CSS/generated checks, and independent correctness,
@@ -289,8 +297,8 @@ commands, classifications, and durations rather than raw traces.
 
 ADR required: yes.
 
-ADR path: `backlog/decisions/066-checkpoint-harness-process-ownership.md`.
+ADR path: `backlog/decisions/072-checkpoint-harness-process-ownership.md`.
 
 Reason: negative harness testing exposed an unprivileged Darwin process-ownership and
-cleanup boundary. ADR-066 records the user-approved cooperative-subprocess limitation,
+cleanup boundary. ADR-072 records the user-approved cooperative-subprocess limitation,
 the private-ABI capability gate, and PID-version-safe signaling before implementation.

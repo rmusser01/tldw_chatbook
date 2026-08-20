@@ -1,14 +1,14 @@
-# ADR-066: Bound checkpoint-harness process ownership to retained signals
+# ADR-072: Bound checkpoint-harness process ownership to retained signals
 
 Status: Accepted
 Date: 2026-08-14
-Related Task: [TASK-16311](../tasks/task-16311%20-%20Restore-latest-dev-test-suite-health.md)
-Related Spec: [Latest-dev Test-Suite Health Design](../../Docs/superpowers/specs/2026-08-13-task-16311-dev-test-suite-health-design.md)
+Related Task: [TASK-18912](../tasks/task-18912%20-%20Restore-latest-dev-test-suite-health.md)
+Related Spec: [Latest-dev Test-Suite Health Design](../../Docs/superpowers/specs/2026-08-13-task-18912-dev-test-suite-health-design.md)
 Supersedes: N/A
 
 ## Decision
 
-TASK-16311's unprivileged checkpoint harness owns test subprocesses that retain at
+TASK-18912's unprivileged checkpoint harness owns test subprocesses that retain at
 least one observable ownership signal: live ancestry, the task-scoped environment
 tag, the harness process group, or the private inheritable sentinel descriptor.
 Tests must not deliberately remove every ownership signal while leaving work
