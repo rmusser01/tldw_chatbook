@@ -7,6 +7,8 @@ import copy
 import importlib
 import inspect
 import threading
+import time
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -23,7 +25,12 @@ from tldw_chatbook.Agents.agent_models import (
     ToolResult,
     ToolSchema,
 )
-from tldw_chatbook.Agents.agent_service import RUN_LOG_PROMPT_SECTION, AgentService
+from tldw_chatbook.Agents.agent_service import (
+    RUN_LOG_PROMPT_SECTION,
+    AgentService,
+    RunLogRequestPlan,
+    build_first_request_schema_plan,
+)
 from tldw_chatbook.Agents.project_instruction_resolver import (
     InstructionOutcome,
     InstructionSource,
@@ -241,8 +248,17 @@ async def test_status_sync_never_resolves_authority_and_async_refresh_publishes(
         locator_matches=None,
     )
     row = SimpleNamespace(sync_state=Mock())
+    metadata = {
+        "value": SimpleNamespace(
+            warning_codes=(),
+            relative_source="AGENTS.md",
+            scope=".",
+            byte_count=99,
+            outcome="active",
+        )
+    }
     backend = SimpleNamespace(
-        project_instruction_display_metadata=lambda _session_id: None,
+        project_instruction_display_metadata=lambda _session_id: metadata["value"],
         _clear_project_instruction_delivery=Mock(),
     )
     controller = ConsoleSessionController.__new__(ConsoleSessionController)
@@ -253,7 +269,9 @@ async def test_status_sync_never_resolves_authority_and_async_refresh_publishes(
     controller._console_project_instruction_display_cache = {
         session.id: (control, loaded)
     }
-    controller._console_project_instruction_refresh_inflight = {session.id: control}
+    controller._console_project_instruction_refresh_inflight = {
+        session.id: (control, metadata["value"])
+    }
     started = threading.Event()
     release = threading.Event()
 
@@ -277,10 +295,12 @@ async def test_status_sync_never_resolves_authority_and_async_refresh_publishes(
     controller._sync_console_project_instruction_status_row()
     row.sync_state.assert_called_once_with(loaded)
 
+    metadata["value"] = None
     release.set()
     state = await refresh
     assert state.binding_label == "Repo [literal]"
     assert state.locator_match == "match"
+    assert state.sources == ()
     assert controller._build_console_project_instruction_display_state() == state
 
 
@@ -305,6 +325,50 @@ def test_status_sync_schedules_bounded_async_authority_refresh():
     controller._request_console_project_instruction_display_refresh.assert_called_once_with(
         session.id
     )
+
+
+@pytest.mark.asyncio
+async def test_authority_refresh_is_snapshot_driven_and_explicitly_invalidatable():
+    display = importlib.import_module("tldw_chatbook.Chat.console_display_state")
+    control = ProjectInstructionControlState(True, "binding-1", "f" * 64, None)
+    store = ConsoleChatStore()
+    session = store.create_session(project_instruction_state=control)
+    state = display.build_console_project_instruction_state(control)
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+    controller._current_chat_store_accessor = lambda: store
+    controller._ensure_console_chat_controller_fn = lambda: SimpleNamespace(
+        project_instruction_display_metadata=lambda _session_id: None
+    )
+    controller._console_project_instruction_refresh_inflight = {}
+    controller._console_project_instruction_refresh_completed = {}
+    controller._refresh_console_project_instruction_display_state = AsyncMock(
+        return_value=state
+    )
+    controller._active_native_console_session = lambda: None
+    tasks = []
+    controller._screen = SimpleNamespace(
+        run_worker=lambda coroutine, **_kwargs: tasks.append(
+            asyncio.create_task(coroutine)
+        )
+    )
+
+    controller._request_console_project_instruction_display_refresh(session.id)
+    await tasks[-1]
+    controller._request_console_project_instruction_display_refresh(session.id)
+    await asyncio.sleep(0)
+    assert controller._refresh_console_project_instruction_display_state.await_count == 1
+
+    changed = ProjectInstructionControlState(True, "binding-2", "e" * 64, None)
+    store.set_session_project_instruction_state(session.id, changed)
+    controller._request_console_project_instruction_display_refresh(session.id)
+    await tasks[-1]
+    assert controller._refresh_console_project_instruction_display_state.await_count == 2
+
+    controller._request_console_project_instruction_display_refresh(
+        session.id, force=True
+    )
+    await tasks[-1]
+    assert controller._refresh_console_project_instruction_display_state.await_count == 3
 
 
 def test_disposable_preview_matches_live_exact_request_when_source_is_omitted(
@@ -377,6 +441,113 @@ def test_disposable_preview_matches_live_exact_request_when_source_is_omitted(
     preview_consent.assert_not_called()
 
 
+def test_run_log_bind_failure_keeps_preview_live_eviction_and_admission_exact(
+    tmp_path, monkeypatch
+):
+    class BindFailureWriter:
+        is_active = False
+        log_dir = None
+
+        def bind(self, _run_id):
+            return None
+
+        def append(self, **_kwargs):
+            return None
+
+        def write_manifest(self, _manifest):
+            return None
+
+        def close(self):
+            return None
+
+    candidate = _candidate(tmp_path)
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    config = AgentConfig(
+        model="gpt-4o-mini",
+        system_prompt="system",
+        allowed_tools=("calculator",),
+        budget=RunBudget(max_subagents=0),
+        native_tools=True,
+        response_reserve_tokens=10,
+    )
+    run_log = RunLogRequestPlan(
+        requested=True, eviction_enabled=True, min_recent_rounds=1
+    )
+    schemas = build_first_request_schema_plan(
+        registry,
+        config.allowed_tools,
+        config.budget,
+        skill_file_enabled=False,
+        install_skill_enabled=False,
+        run_skill_script_enabled=False,
+        run_log_active=run_log.requested,
+    )
+    bound_calls = []
+
+    def bound(messages, **kwargs):
+        bound_calls.append((kwargs["enabled"], kwargs["min_recent_rounds"]))
+        rows = list(messages)
+        return [rows[0], rows[-1]] if kwargs["enabled"] else rows
+
+    monkeypatch.setattr(agent_service, "bound_history_for_send", bound)
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a, **_k: 200)
+    monkeypatch.setattr(agent_service, "_count_model_messages", lambda *_a, **_k: 20)
+    monkeypatch.setattr(agent_service, "count_tokens_messages", lambda *_a, **_k: 5)
+    monkeypatch.setattr(agent_service, "estimate_tokens", lambda *_a, **_k: 0)
+    messages = [
+        {"role": "user", "content": "old round"},
+        {"role": "assistant", "content": "old reply"},
+        {"role": "user", "content": "question"},
+    ]
+    preview_service = AgentService(
+        AgentRunsDB(tmp_path / "runlog-preview.db", client_id="test"),
+        registry,
+        chat_call=Mock(side_effect=AssertionError("preview called provider")),
+        run_log_request_plan=run_log,
+    )
+    preview_request, preview_snapshot = preview_service.build_project_instruction_request(
+        candidate=candidate,
+        config=config,
+        api_endpoint="openai",
+        runtime_schemas=list(schemas.runtime_schemas),
+        messages=messages,
+        active_schemas=schemas.active_schemas,
+        log_active=schemas.log_active,
+    )
+    provider_calls = []
+
+    def chat_call(**kwargs):
+        provider_calls.append(kwargs)
+        return {"choices": [{"message": {"content": "done"}}]}
+
+    writer = BindFailureWriter()
+    live_service = AgentService(
+        AgentRunsDB(tmp_path / "runlog-live.db", client_id="test"),
+        registry,
+        chat_call=chat_call,
+        run_log_writer=writer,
+        run_log_request_plan=run_log,
+        startup_instruction_candidate=candidate,
+        confirm_project_instruction_dispatch=lambda _snapshot: "proceed",
+    )
+    live_service.run_turn(
+        conversation_id="conversation",
+        messages=messages,
+        config=config,
+        api_endpoint="openai",
+    )
+
+    assert writer.is_active is False
+    assert list(preview_request.messages) == provider_calls[0]["messages_payload"]
+    assert list(preview_request.tools) == provider_calls[0]["tools"]
+    assert RUN_LOG_PROMPT_SECTION in preview_request.messages[0]["content"]
+    assert preview_snapshot.primary_delivery.source_digests == (
+        candidate.source.digest,
+    )
+    assert bound_calls and set(bound_calls) == {(True, 1)}
+
+
 @pytest.mark.asyncio
 async def test_controller_preview_uses_live_destination_fresh_tools_and_raw_admission(
     tmp_path, monkeypatch
@@ -444,6 +615,11 @@ async def test_controller_preview_uses_live_destination_fresh_tools_and_raw_admi
         "resolve_startup",
         lambda _resolver, **_kwargs: candidate,
     )
+    monkeypatch.setattr(
+        controller_module,
+        "project_instruction_authority_is_current",
+        lambda **_kwargs: True,
+    )
     mcp_provider = _PreviewCatalogProvider("mcp__srv__search", "mcp")
     local_provider = _PreviewCatalogProvider("fs_read", "local")
     controller._compose_mcp_provider = AsyncMock(return_value=mcp_provider)
@@ -478,8 +654,313 @@ async def test_controller_preview_uses_live_destination_fresh_tools_and_raw_admi
     assert "run_skill_script" not in native_names
     assert RUN_LOG_PROMPT_SECTION in preview.next_send_payload["messages"][0]["content"]
     gateway.resolve_for_send.assert_awaited_once()
-    controller._compose_mcp_provider.assert_awaited_once_with(session.id)
+    controller._compose_mcp_provider.assert_awaited_once_with(
+        session.id, publish_counts=False
+    )
     controller._compose_local_provider.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_controller_preview_applies_live_skill_turn_before_admission(
+    tmp_path, monkeypatch
+):
+    """A triggering skill must change the disposable request exactly as live."""
+
+    class Skills:
+        async def get_context(self, *, mode="local"):
+            return {
+                "available_skills": [
+                    {
+                        "name": "code-review",
+                        "description": "Review code",
+                        "user_invocable": True,
+                        "trust_blocked": False,
+                        "disable_model_invocation": False,
+                    }
+                ],
+                "blocked_skills": [],
+            }
+
+        async def execute_skill(self, name, *, mode="local", args=None):
+            assert (name, mode, args) == ("code-review", "local", "the diff")
+            return {
+                "rendered_prompt": "RENDERED SKILL TURN",
+                "execution_mode": "inline",
+                "allowed_tools": None,
+                "reference_files": [
+                    {"path": "references/checklist.md", "size": 12, "is_text": True}
+                ],
+            }
+
+    candidate = _candidate(tmp_path)
+    control = ProjectInstructionControlState(True, "binding-1", "f" * 64, None)
+    store = ConsoleChatStore()
+    session = store.create_session(project_instruction_state=control)
+    store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="$code-review the diff"
+    )
+    resolution = SimpleNamespace(
+        ready=True,
+        provider="alias",
+        execution_key="openai",
+        model="resolved-model",
+        max_tokens=20,
+    )
+    gateway = SimpleNamespace(resolve_for_send=AsyncMock(return_value=resolution))
+    skills = Skills()
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=AgentRunsDB(tmp_path / "skill-preview.db", client_id="test"),
+        store=store,
+        provider_gateway=gateway,
+        skills_service=skills,
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_bridge=bridge,
+        agent_runtime_enabled=True,
+        skills_service=skills,
+    )
+    controller.app = SimpleNamespace(
+        workspace_registry_service=object(), unified_mcp_service=None
+    )
+    selection = SimpleNamespace(
+        binding=SimpleNamespace(binding_id="binding-1"),
+        root=tmp_path,
+        locator_fingerprint="f" * 64,
+        allow_write=True,
+        root_identity=None,
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "resolve_project_instruction_binding",
+        lambda _session, _registry: selection,
+    )
+    monkeypatch.setattr(
+        controller_module.ProjectInstructionResolver,
+        "resolve_startup",
+        lambda _resolver, **_kwargs: candidate,
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "project_instruction_authority_is_current",
+        lambda **_kwargs: True,
+    )
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a, **_k: 100)
+    monkeypatch.setattr(
+        agent_service,
+        "_count_model_messages",
+        lambda messages, *_a, **_k: 95
+        if "$code-review" in str(messages)
+        else 20,
+    )
+    monkeypatch.setattr(agent_service, "count_tokens_messages", lambda *_a, **_k: 5)
+    monkeypatch.setattr(agent_service, "estimate_tokens", lambda *_a, **_k: 0)
+
+    snapshot = await controller.build_context_snapshot("", session_id=session.id)
+
+    preview = snapshot.project_instruction_preview
+    assert preview is not None
+    assert "omitted_token_budget" not in preview.outcomes
+    rendered = str(preview.next_send_payload)
+    assert "$code-review" not in rendered
+    assert "RENDERED SKILL TURN" in rendered
+    assert "Bundled files" in rendered
+    assert "AUTOMATIC_BODY_ONLY_IN_EXPLICIT_PREVIEW" in rendered
+    tool_names = {
+        item["function"]["name"] for item in preview.next_send_payload["tools"]
+    }
+    assert {"code-review", "skill_file"} <= tool_names
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("race", ["disable", "remove", "retarget"])
+async def test_preview_revalidates_authority_after_awaited_composition(
+    tmp_path, monkeypatch, race
+):
+    root = tmp_path / "root"
+    other = tmp_path / "other"
+    root.mkdir()
+    other.mkdir()
+    fingerprint = controller_module.fingerprint_canonical_locator(str(root))
+    candidate = replace(
+        _candidate(root), binding_root=root, locator_fingerprint=fingerprint
+    )
+    binding = WorkspaceRuntimeBinding(
+        workspace_id="workspace-1",
+        binding_id="binding-1",
+        binding_kind="local-filesystem",
+        label="Repo",
+        locator=str(root),
+        status="ready",
+        metadata={"access": "rw"},
+    )
+
+    class Registry:
+        current = binding
+
+        def get_runtime_binding(self, _binding_id):
+            return self.current
+
+    registry = Registry()
+    control = ProjectInstructionControlState(True, "binding-1", fingerprint, None)
+    store = ConsoleChatStore()
+    session = store.create_session(
+        workspace_id="workspace-1", project_instruction_state=control
+    )
+    resolution = SimpleNamespace(
+        ready=True, provider="openai", execution_key="openai", model="m", max_tokens=20
+    )
+    gateway = SimpleNamespace(resolve_for_send=AsyncMock(return_value=resolution))
+    composed = asyncio.Event()
+    release = asyncio.Event()
+
+    async def compose(**_kwargs):
+        composed.set()
+        await release.wait()
+        return None, Mock(), None, None
+
+    bridge = SimpleNamespace(
+        build_project_instruction_preview_request=Mock(
+            return_value=(
+                {
+                    "model": "m",
+                    "messages": [
+                        {"role": "user", "content": candidate.source.body}
+                    ],
+                },
+                SimpleNamespace(
+                    startup_source_metadata=None,
+                    startup_source=candidate.source,
+                    primary_delivery=SimpleNamespace(outcomes=()),
+                    warning_codes=(),
+                ),
+            )
+        )
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_bridge=bridge,
+        agent_runtime_enabled=True,
+    )
+    controller.app = SimpleNamespace(workspace_registry_service=registry)
+    controller._compose_agent_request_providers = compose
+    monkeypatch.setattr(
+        controller_module.ProjectInstructionResolver,
+        "resolve_startup",
+        lambda _resolver, **_kwargs: candidate,
+    )
+
+    task = asyncio.create_task(
+        controller._build_project_instruction_preview_for_session(
+            session.id,
+            {"messages": [{"role": "user", "content": "question"}]},
+            [{"role": "user", "content": "question"}],
+        )
+    )
+    await composed.wait()
+    if race == "disable":
+        store.set_session_project_instruction_state(
+            session.id, ProjectInstructionControlState.legacy_disabled()
+        )
+    elif race == "remove":
+        registry.current = None
+    else:
+        registry.current = replace(binding, locator=str(other))
+    release.set()
+
+    assert await task is None
+
+
+@pytest.mark.asyncio
+async def test_parked_session_preview_does_not_publish_global_mcp_counts(
+    tmp_path, monkeypatch
+):
+    candidate = StartupInstructionCandidate(
+        binding_id="binding-1",
+        binding_root=tmp_path,
+        locator_fingerprint="f" * 64,
+        dispatch_started_wall_ns=1,
+        source=None,
+        outcomes=(),
+    )
+    control = ProjectInstructionControlState(True, "binding-1", "f" * 64, None)
+    store = ConsoleChatStore()
+    parked = store.create_session(project_instruction_state=control)
+    store.create_session(project_instruction_state=ProjectInstructionControlState.legacy_disabled())
+    resolution = SimpleNamespace(
+        ready=True, provider="openai", execution_key="openai", model="m", max_tokens=20
+    )
+    gateway = SimpleNamespace(resolve_for_send=AsyncMock(return_value=resolution))
+    bridge = SimpleNamespace(
+        build_project_instruction_preview_request=Mock(
+            return_value=(
+                {"model": "m", "messages": [{"role": "user", "content": "q"}]},
+                SimpleNamespace(
+                    startup_source_metadata=None,
+                    startup_source=None,
+                    primary_delivery=SimpleNamespace(outcomes=()),
+                    warning_codes=(),
+                ),
+            )
+        )
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_bridge=bridge,
+        agent_runtime_enabled=True,
+    )
+    app = SimpleNamespace(
+        workspace_registry_service=object(),
+        unified_mcp_service=object(),
+        console_mcp_tool_count=41,
+        console_mcp_not_connected_count=7,
+    )
+    controller.app = app
+    selection = SimpleNamespace(
+        binding=SimpleNamespace(binding_id="binding-1"),
+        root=tmp_path,
+        locator_fingerprint="f" * 64,
+        allow_write=True,
+        root_identity=None,
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "resolve_project_instruction_binding",
+        lambda _session, _registry: selection,
+    )
+    monkeypatch.setattr(
+        controller_module.ProjectInstructionResolver,
+        "resolve_startup",
+        lambda _resolver, **_kwargs: candidate,
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "project_instruction_authority_is_current",
+        lambda **_kwargs: True,
+    )
+
+    async def compose_mcp(_session_id, *, publish_counts=True):
+        if publish_counts:
+            controller._publish_mcp_inspector_counts(1, 2)
+        return None
+
+    controller._compose_mcp_provider = AsyncMock(side_effect=compose_mcp)
+
+    preview = await controller._build_project_instruction_preview_for_session(
+        parked.id,
+        {"messages": [{"role": "user", "content": "q"}]},
+        [{"role": "user", "content": "q"}],
+    )
+
+    assert preview is not None
+    assert app.console_mcp_tool_count == 41
+    assert app.console_mcp_not_connected_count == 7
+    controller._compose_mcp_provider.assert_awaited_once_with(
+        parked.id, publish_counts=False
+    )
 
 
 def test_controller_has_no_candidate_or_body_cache():
@@ -651,6 +1132,11 @@ async def test_controller_preview_does_not_advance_live_session_state(
         controller_module.ProjectInstructionResolver,
         "resolve_startup",
         lambda _resolver, **_kwargs: candidate,
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "project_instruction_authority_is_current",
+        lambda **_kwargs: True,
     )
     state_setter = Mock(side_effect=AssertionError("preview changed controls"))
     monkeypatch.setattr(store, "set_session_project_instruction_state", state_setter)
@@ -873,7 +1359,7 @@ def test_notice_timeout_fails_closed_and_dismisses_owning_modal():
     mounted[0][0].dismiss.assert_called_once_with("cancel")
 
 
-def test_notice_observes_owning_run_stop_and_dismisses_promptly():
+def test_notice_observes_captured_stop_event_after_run_map_cleanup():
     controller = ConsoleSessionController.__new__(ConsoleSessionController)
     controller._current_chat_store_accessor = lambda: SimpleNamespace(
         sessions=lambda: [SimpleNamespace(id="session-a")]
@@ -887,16 +1373,17 @@ def test_notice_observes_owning_run_stop_and_dismisses_promptly():
         mounted.set()
 
     cancel_event = threading.Event()
+    active_events = {"session-a": cancel_event}
     controller._screen = SimpleNamespace(
         app=SimpleNamespace(push_screen=push_screen),
         _console_chat_controller=SimpleNamespace(
-            _active_cancel_events={"session-a": cancel_event}
+            _active_cancel_events=active_events
         ),
     )
     controller.app_instance = SimpleNamespace(
         call_from_thread=lambda callback: callback()
     )
-    controller._project_instruction_notice_timeout_seconds = 30.0
+    controller._project_instruction_notice_timeout_seconds = 0.25
     result = []
     worker = threading.Thread(
         target=lambda: result.append(
@@ -908,10 +1395,13 @@ def test_notice_observes_owning_run_stop_and_dismisses_promptly():
     worker.start()
     assert mounted.wait(1)
 
+    stopped_at = time.monotonic()
     cancel_event.set()
+    active_events.pop("session-a")
     worker.join(1)
 
     assert not worker.is_alive()
+    assert time.monotonic() - stopped_at < 0.15
     assert result == ["cancel"]
     modal_holder[0].dismiss.assert_called_once_with("cancel")
 

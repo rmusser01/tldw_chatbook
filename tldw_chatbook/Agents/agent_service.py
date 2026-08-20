@@ -512,6 +512,15 @@ class FirstRequestSchemaPlan:
     log_active: bool
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class RunLogRequestPlan:
+    """Configured first-request log disclosure and history bounds."""
+
+    requested: bool
+    eviction_enabled: bool
+    min_recent_rounds: int
+
+
 def build_first_request_schema_plan(
     registry: ToolCatalogRegistry,
     allowed_tools: tuple[str, ...],
@@ -553,9 +562,18 @@ def build_first_request_schema_plan(
     )
 
 
-def run_log_requested() -> bool:
-    """Return the content-free config gate used by disposable preflight."""
-    return bool(_setting("run_log_enabled", True))
+def build_run_log_request_plan() -> RunLogRequestPlan:
+    """Freeze the configured run-log request shape without binding a writer."""
+    return RunLogRequestPlan(
+        requested=bool(_setting("run_log_enabled", True)),
+        eviction_enabled=bool(_setting(RUN_LOG_EVICT_ENABLED_KEY, False)),
+        min_recent_rounds=coerce_min_recent_rounds(
+            _setting(
+                RUN_LOG_EVICT_MIN_RECENT_ROUNDS_KEY,
+                DEFAULT_MIN_RECENT_ROUNDS,
+            )
+        ),
+    )
 
 
 def build_project_instruction_row(source: InstructionSource) -> dict:
@@ -924,6 +942,7 @@ class AgentService:
         run_skill_script_tool: Callable[[str, str, list[str]], ToolResult]
         | None = None,
         run_log_writer: "RunLogWriter | None" = None,
+        run_log_request_plan: RunLogRequestPlan | None = None,
         fleet_coordinator: FleetCoordinator | None = None,
         # `-> object`, not `-> None`: the Console's implementation returns
         # the number of rounds it revoked (which this service ignores), and
@@ -1136,14 +1155,24 @@ class AgentService:
         # before.
         self._fleet_threads: dict[str, threading.Thread] = {}
         self._fleet_cancels: dict[str, threading.Event] = {}
+        self._configured_run_log_plan = run_log_request_plan
         self.startup_instruction_candidate = startup_instruction_candidate
         self.confirm_project_instruction_dispatch = (
             confirm_project_instruction_dispatch
         )
         self._startup_instruction_snapshot: InstructionSnapshot | None = None
         self._tool_protocol_cache: dict[tuple[str, ...], str] = {}
-        self._run_log_evict_enabled = False
-        self._run_log_min_recent_rounds = DEFAULT_MIN_RECENT_ROUNDS
+        self._run_log_requested = bool(
+            run_log_request_plan.requested if run_log_request_plan else False
+        )
+        self._run_log_evict_enabled = bool(
+            run_log_request_plan.eviction_enabled if run_log_request_plan else False
+        )
+        self._run_log_min_recent_rounds = (
+            run_log_request_plan.min_recent_rounds
+            if run_log_request_plan
+            else DEFAULT_MIN_RECENT_ROUNDS
+        )
 
     # -- internals -------------------------------------------------------
 
@@ -4320,15 +4349,10 @@ class AgentService:
         turn_started = self.clock()
         self._startup_instruction_snapshot = None
         self._tool_protocol_cache.clear()
-        self._run_log_evict_enabled = bool(
-            _setting(RUN_LOG_EVICT_ENABLED_KEY, False)
-        )
-        self._run_log_min_recent_rounds = coerce_min_recent_rounds(
-            _setting(
-                RUN_LOG_EVICT_MIN_RECENT_ROUNDS_KEY,
-                DEFAULT_MIN_RECENT_ROUNDS,
-            )
-        )
+        run_log_plan = self._configured_run_log_plan or build_run_log_request_plan()
+        self._run_log_requested = run_log_plan.requested
+        self._run_log_evict_enabled = run_log_plan.eviction_enabled
+        self._run_log_min_recent_rounds = run_log_plan.min_recent_rounds
         run_id, outcome = self._run_one(
             conversation_id=conversation_id,
             messages=messages,

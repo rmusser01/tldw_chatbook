@@ -210,6 +210,7 @@ logger = logger.bind(module="ChatScreen")
 
 _DEFAULT_PROJECT_INSTRUCTION_NOTICE_TIMEOUT_SECONDS = 120.0
 _PROJECT_INSTRUCTION_NOTICE_POLL_SECONDS = 0.1
+_PROJECT_INSTRUCTION_AUTHORITY_REFRESH_SECONDS = 2.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -699,7 +700,10 @@ class ConsoleSessionController:
             str, tuple[ProjectInstructionControlState, ConsoleProjectInstructionState]
         ] = {}
         self._console_project_instruction_refresh_inflight: dict[
-            str, ProjectInstructionControlState
+            str, tuple[Any, Any]
+        ] = {}
+        self._console_project_instruction_refresh_completed: dict[
+            str, tuple[tuple[Any, Any], float]
         ] = {}
 
     # -- Framework services (live-read via `@property`) --------------------
@@ -1387,6 +1391,7 @@ class ConsoleSessionController:
             self._console_undo_histories.pop(session_id, None)
             self._console_project_instruction_display_cache.pop(session_id, None)
             self._console_project_instruction_refresh_inflight.pop(session_id, None)
+            self._console_project_instruction_refresh_completed.pop(session_id, None)
             await self._sync_native_console_chat_ui()
 
         while True:
@@ -2898,7 +2903,6 @@ class ConsoleSessionController:
             )
         control = session.project_instruction_state
         controller = self._ensure_console_chat_controller()
-        metadata = controller.project_instruction_display_metadata(session_id)
         registry = getattr(self.app_instance, "workspace_registry_service", None)
 
         def resolve_content_free() -> tuple[str, bool | None, tuple[str, ...]]:
@@ -2924,6 +2928,7 @@ class ConsoleSessionController:
         )
         if current is None or current.project_instruction_state != control:
             return self._build_console_project_instruction_display_state(session_id)
+        metadata = controller.project_instruction_display_metadata(session_id)
         sources: tuple[ConsoleProjectInstructionSourceRow, ...] = ()
         warning_codes = authority_warnings
         if locator_matches is False:
@@ -2961,7 +2966,7 @@ class ConsoleSessionController:
         return state
 
     def _request_console_project_instruction_display_refresh(
-        self, session_id: str
+        self, session_id: str, *, force: bool = False
     ) -> None:
         """Start at most one authority refresh for a session/control snapshot."""
         store = self._console_chat_store
@@ -2973,12 +2978,29 @@ class ConsoleSessionController:
         if session is None:
             return
         control = session.project_instruction_state
+        controller = self._ensure_console_chat_controller()
+        metadata = controller.project_instruction_display_metadata(session_id)
+        signature = (control, metadata)
         inflight = getattr(self, "_console_project_instruction_refresh_inflight", None)
         if inflight is None:
             inflight = self._console_project_instruction_refresh_inflight = {}
-        if inflight.get(session_id) == control:
+        if inflight.get(session_id) == signature:
             return
-        inflight[session_id] = control
+        completed = getattr(
+            self, "_console_project_instruction_refresh_completed", None
+        )
+        if completed is None:
+            completed = self._console_project_instruction_refresh_completed = {}
+        previous = completed.get(session_id)
+        now = time.monotonic()
+        if (
+            not force
+            and previous is not None
+            and previous[0] == signature
+            and now - previous[1] < _PROJECT_INSTRUCTION_AUTHORITY_REFRESH_SECONDS
+        ):
+            return
+        inflight[session_id] = signature
 
         async def refresh() -> None:
             try:
@@ -2997,7 +3019,15 @@ class ConsoleSessionController:
                     else:
                         row.sync_state(state)
             finally:
-                if inflight.get(session_id) == control:
+                current_store = self._console_chat_store
+                session_exists = current_store is not None and any(
+                    item.id == session_id for item in current_store.sessions()
+                )
+                if session_exists:
+                    completed[session_id] = (signature, time.monotonic())
+                else:
+                    completed.pop(session_id, None)
+                if inflight.get(session_id) == signature:
                     inflight.pop(session_id, None)
 
         self.run_worker(
@@ -3071,6 +3101,11 @@ class ConsoleSessionController:
         decided = threading.Event()
         result = {"decision": "cancel"}
         mounted_modal: list[ProjectInstructionNoticeModal] = []
+        chat_controller = getattr(
+            getattr(self, "_screen", None), "_console_chat_controller", None
+        )
+        active_cancel_events = getattr(chat_controller, "_active_cancel_events", {})
+        owning_cancel_event = active_cancel_events.get(notice.session_id)
 
         def owning_session_exists() -> bool:
             sessions = (
@@ -3079,10 +3114,9 @@ class ConsoleSessionController:
             return any(session.id == notice.session_id for session in sessions)
 
         def owning_run_cancelled() -> bool:
-            controller = getattr(self._screen, "_console_chat_controller", None)
-            events = getattr(controller, "_active_cancel_events", {})
-            event = events.get(notice.session_id)
-            return bool(event is not None and event.is_set())
+            return bool(
+                owning_cancel_event is not None and owning_cancel_event.is_set()
+            )
 
         def finish(decision: str | None) -> None:
             if owning_session_exists():

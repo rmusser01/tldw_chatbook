@@ -5145,6 +5145,8 @@ class ConsoleChatController:
     async def _compose_mcp_provider(
         self,
         session_id: str | None = None,
+        *,
+        publish_counts: bool = True,
     ) -> MCPToolProvider | None:
         """Build + compose THIS run's MCPToolProvider on the running main loop.
 
@@ -5190,9 +5192,13 @@ class ConsoleChatController:
             ``ConsoleAgentBridge.run_reply`` when eligible; ``None``
             otherwise.
         """
+        def publish(tool_count: int | None, not_connected: int | None) -> None:
+            if publish_counts:
+                self._publish_mcp_inspector_counts(tool_count, not_connected)
+
         service = getattr(self.app, "unified_mcp_service", None)
         if service is None:
-            self._publish_mcp_inspector_counts(None, None)
+            publish(None, None)
             return None
         try:
             kill_switch = service.get_kill_switch()
@@ -5200,10 +5206,10 @@ class ConsoleChatController:
             logger.opt(exception=True).warning(
                 "ConsoleChatController: get_kill_switch failed; skipping MCP this run"
             )
-            self._publish_mcp_inspector_counts(None, None)
+            publish(None, None)
             return None
         if kill_switch:
-            self._publish_mcp_inspector_counts(None, None)
+            publish(None, None)
             return None
         bound_request_approvals = functools.partial(
             self.request_mcp_approvals, session_id=session_id
@@ -5224,13 +5230,13 @@ class ConsoleChatController:
             logger.opt(exception=True).warning(
                 "ConsoleChatController: MCP compose_catalog failed; skipping MCP this run"
             )
-            self._publish_mcp_inspector_counts(None, None)
+            publish(None, None)
             return None
         catalog = provider.list_catalog()
         if not catalog:
-            self._publish_mcp_inspector_counts(None, None)
+            publish(None, None)
             return None
-        self._publish_mcp_inspector_counts(len(catalog), provider.not_connected_count)
+        publish(len(catalog), provider.not_connected_count)
         return provider
 
     async def _compose_agent_request_providers(
@@ -5240,6 +5246,7 @@ class ConsoleChatController:
         project_selection: ProjectInstructionBindingSelection | None,
         project_authority_guard: Callable[[], bool] | None,
         turn_context: ConsoleTurnExecutionContext | None = None,
+        publish_mcp_counts: bool = True,
     ) -> tuple[
         MCPToolProvider | None,
         "BuiltinToolGate",
@@ -5247,7 +5254,9 @@ class ConsoleChatController:
         Callable[[list["ToolCall"]], dict[str, str]] | None,
     ]:
         """Compose the per-request providers shared by live and preview."""
-        mcp_provider = await self._compose_mcp_provider(session_id)
+        mcp_provider = await self._compose_mcp_provider(
+            session_id, publish_counts=publish_mcp_counts
+        )
         builtin_gate = build_builtin_gate(
             getattr(self.app, "unified_mcp_service", None)
         )
@@ -7606,7 +7615,7 @@ class ConsoleChatController:
     ) -> ConsoleContextSnapshot:
         """Return a read-only snapshot of the current transcript and the assembled next-send payload.
 
-        Skills with side effects are NOT executed; only chat dictionaries are applied.
+        Skill rendering runs on disposable messages; live session state is untouched.
 
         Args:
             draft: The current composer draft text to include as a synthetic user turn.
@@ -7659,13 +7668,30 @@ class ConsoleChatController:
                 )
                 provider_messages.extend(synthetic_user)
 
-            # Do NOT call _apply_skill_substitution because it may execute skills with side effects.
-            # Instead, annotate the final user message if a synthetic turn was appended and it
-            # starts with a skill command. Historical turns have already been resolved at send time
-            # and must not be annotated.
-            provider_messages = self._annotate_skill_commands(
-                provider_messages, synthetic_turn_added=synthetic_turn_added
+            prefill, prefill_from_one_shot = self._resolve_submit_prefill(session_id)
+            dispatch_eligible = self._agent_dispatch_is_eligible(
+                session, prefill=prefill
             )
+            skill_bindings: tuple[str, ...] = ()
+            skill_bundle_block = ""
+            if dispatch_eligible:
+                (
+                    provider_messages,
+                    skill_refusal,
+                    _skill_notes,
+                    skill_bindings,
+                    skill_bundle_block,
+                ) = await self._apply_skill_substitution(
+                    copy.deepcopy(provider_messages)
+                )
+                if skill_refusal is not None:
+                    dispatch_eligible = False
+            else:
+                # Historical turns have already been resolved at send time;
+                # annotate only a newly synthesized bypassed turn.
+                provider_messages = self._annotate_skill_commands(
+                    provider_messages, synthetic_turn_added=synthetic_turn_added
+                )
 
             # Chat dictionaries are safe to apply (string replacements only).
             provider_messages = await self._apply_chat_dictionaries(
@@ -7694,7 +7720,6 @@ class ConsoleChatController:
             # read-only preview). Placed after dictionaries to match
             # `_stream_assistant_response`'s ordering (dictionaries never
             # rewrite prefill text).
-            prefill, prefill_from_one_shot = self._resolve_submit_prefill(session_id)
             if prefill:
                 provider_messages = [
                     *provider_messages,
@@ -7759,11 +7784,13 @@ class ConsoleChatController:
                     "agent_loop_bypassed": True,
                 }
             preview = None
-            if self._agent_dispatch_is_eligible(session, prefill=prefill):
+            if dispatch_eligible:
                 preview = await self._build_project_instruction_preview_for_session(
                     session_id,
                     next_send_payload,
                     exact_provider_messages,
+                    turn_skill_bindings=skill_bindings,
+                    turn_bundle_block=skill_bundle_block,
                 )
             if preview is not None:
                 next_send_payload = preview.next_send_payload
@@ -7821,6 +7848,9 @@ class ConsoleChatController:
         session_id: str,
         base_payload: dict[str, Any],
         provider_messages: list[dict[str, Any]],
+        *,
+        turn_skill_bindings: tuple[str, ...] = (),
+        turn_bundle_block: str = "",
     ) -> ProjectInstructionPreview | None:
         """Securely reread root guidance into a disposable preview only."""
         if not self._agent_runtime_enabled or self._agent_bridge is None:
@@ -7833,6 +7863,7 @@ class ConsoleChatController:
             or not session.project_instruction_state.project_instructions_enabled
         ):
             return None
+        expected_control = session.project_instruction_state
         try:
             resolution = await self.provider_gateway.resolve_for_send(
                 self._provider_selection()
@@ -7890,6 +7921,7 @@ class ConsoleChatController:
                 session_id=session_id,
                 project_selection=selection,
                 project_authority_guard=None,
+                publish_mcp_counts=False,
             )
         )
         try:
@@ -7904,12 +7936,34 @@ class ConsoleChatController:
                 mcp_provider=mcp_provider,
                 builtin_gate=builtin_gate,
                 local_provider=local_provider,
+                turn_skill_bindings=turn_skill_bindings,
+                turn_bundle_block=turn_bundle_block,
                 request_skill_install_enabled=True,
                 request_skill_script_enabled=(
                     self.set_pending_skill_script is not None
                 ),
             )
         except Exception:  # noqa: BLE001 - preview failure stays content-free
+            return None
+        current_session = next(
+            (item for item in self.store.sessions() if item.id == session_id), None
+        )
+        if (
+            current_session is None
+            or current_session.project_instruction_state != expected_control
+        ):
+            return None
+        try:
+            authority_current = await asyncio.to_thread(
+                project_instruction_authority_is_current,
+                store=self.store,
+                session_id=session_id,
+                registry=registry,
+                expected_selection=selection,
+            )
+        except Exception:  # noqa: BLE001 - authority doubt fails closed
+            return None
+        if not authority_current:
             return None
         payload = copy.deepcopy(base_payload)
         payload.pop("tools", None)

@@ -59,8 +59,9 @@ from tldw_chatbook.Agents.agent_service import (
     SUBAGENT_SYSTEM_PROMPT,
     AgentService,
     FirstRequestSchemaPlan,
+    RunLogRequestPlan,
     build_first_request_schema_plan,
-    run_log_requested,
+    build_run_log_request_plan,
 )
 from tldw_chatbook.Agents.project_instruction_resolver import (
     InstructionSnapshot,
@@ -2444,6 +2445,7 @@ class ConsoleFirstRequestPlan:
     skill_names: frozenset[str]
     config: AgentConfig
     schemas: FirstRequestSchemaPlan
+    run_log: RunLogRequestPlan
     messages: list[dict]
     api_endpoint: str
 
@@ -2515,6 +2517,7 @@ def build_console_first_request_plan(
         or getattr(resolution, "provider", "")
         or "agent"
     )
+    run_log = build_run_log_request_plan()
     schemas = build_first_request_schema_plan(
         registry,
         allowed_tools,
@@ -2522,7 +2525,7 @@ def build_console_first_request_plan(
         skill_file_enabled=bool(skills_present and turn_skill_bindings),
         install_skill_enabled=install_skill_enabled,
         run_skill_script_enabled=run_skill_script_enabled,
-        run_log_active=run_log_requested(),
+        run_log_active=run_log.requested,
     )
     config = AgentConfig(
         model=resolved_model,
@@ -2561,6 +2564,7 @@ def build_console_first_request_plan(
         skill_names=skill_names,
         config=config,
         schemas=schemas,
+        run_log=run_log,
         messages=messages,
         api_endpoint=api_endpoint,
     )
@@ -2981,6 +2985,7 @@ class ConsoleAgentBridge:
             self._db,
             plan.registry,
             chat_call=no_provider_call,
+            run_log_request_plan=plan.run_log,
         )
         request, snapshot = service.build_project_instruction_request(
             candidate=candidate,
@@ -3684,6 +3689,7 @@ class ConsoleAgentBridge:
             review_state_scope=review_state_scope,
             install_skill_tool=install_skill_tool,
             run_skill_script_tool=run_skill_script_tool,
+            run_log_request_plan=first_request_plan.run_log,
             revoke_approvals=revoke_approvals,
             persist_provider_continuation=(
                 self._store.persist_provider_continuation_event
