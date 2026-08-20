@@ -1,10 +1,10 @@
 # Library Notes, Folder Files, and Lasting Sync Surface Redesign
 
 Date: 2026-08-20
-Status: Independently reviewed; awaiting user approval of written specification
+Status: Approved for implementation planning
 Governing decisions:
 [ADR-059](../../../backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md),
-[ADR-060](../../../backlog/decisions/060-notes-sync-round-trip-and-interoperability-constraints.md)
+[ADR-073](../../../backlog/decisions/073-notes-sync-round-trip-and-interoperability-constraints.md)
 
 ## Summary
 
@@ -15,7 +15,7 @@ panel with the accepted **Add from files…** and lasting-sync-root model, reduc
 Folder Files and Session Git action density, and close contrast, recovery,
 keyboard, and compact-layout gaps.
 
-This specification is a surface and delivery addendum to ADR-059/060 and the
+This specification is a surface and delivery addendum to ADR-059/073 and the
 approved [Notes Folder Import and Lasting Sync design](2026-08-12-notes-folder-import-sync-design.md).
 It does not define a second sync engine. In particular, it removes the prior
 draft's global `newer_wins`/`disk_wins`/`db_wins` policies, single timer,
@@ -33,7 +33,7 @@ device-private journal architecture.
 - Keep **Library notes** and **Folder files** visibly separate.
 - Preserve the current two-mode Library structure and strengthen labels,
   hierarchy, status, and recovery.
-- Align Sync with ADR-059/060 rather than extending the legacy engine.
+- Align Sync with ADR-059/073 rather than extending the legacy engine.
 - Use text-only design review; no browser visual companion.
 
 ## Job and Audience
@@ -61,7 +61,7 @@ The surface is **Operate** mode. Success means:
 - ADR-059 owns multi-root lasting-sync authority, managed folder memberships,
   the device-private root/binding/journal store, explicit conflict/deletion
   review, root coordinator leases, migration, and privacy.
-- ADR-060 owns one-way direction semantics, representation/metadata
+- ADR-073 owns one-way direction semantics, representation/metadata
   preservation, binding uniqueness, guarded replacement, round-trip behavior,
   server claim fencing, and portable backup exclusions.
 - Server-backed lasting sync additionally requires the separately allocated,
@@ -104,7 +104,7 @@ The surface is **Operate** mode. Success means:
   review and receipt flow.
 - Shape lasting-root setup, dry-run activation, manual reviewed reconciliation,
   root status, attention review, pause/resume, and disconnect surfaces around
-  ADR-059/060.
+  ADR-059/073.
 - Define the safe transition from legacy sync metadata to paused candidates.
 - Refine Folder Files action hierarchy and target-path labeling.
 - Progressive-disclose Session Git implementation evidence while keeping all
@@ -121,7 +121,7 @@ The surface is **Operate** mode. Success means:
 - Reuse legacy `sync_sessions`/`sync_conflicts` as lasting-sync history.
 - Store device-local paths, hashes, recovery bytes, or root state in ordinary
   ChaChaNotes, server payloads, logs, backups, or portable exports.
-- Add new schema or service decisions beyond ADR-059/060.
+- Add new schema or service decisions beyond ADR-059/073.
 - Change Session Git trust, stage, commit, push, or uncertainty policy.
 - Add a generic workflow/state-machine framework or new dependency.
 - Add new screen-specific keyboard shortcuts.
@@ -380,7 +380,7 @@ for import receipts. They do not reuse legacy note-row sync metadata or
 
 The private owner stores the root registry, bindings, representation profiles,
 hashes, versions, cursor state, durable operation journal, recovery admission,
-receipts, and bounded recovery content required by ADR-059/060. Public status
+receipts, and bounded recovery content required by ADR-059/073. Public status
 models expose opaque IDs and sanitized reason codes only.
 
 One cross-process coordinator lease owns watcher and mutation authority for a
@@ -419,12 +419,19 @@ The transition is fail-closed and one-way:
 
 Before cutover, the current legacy Sync entry remains visible and operable under
 its existing contract; earlier presentation tracks may not hide, rename into a
-different meaning, or strand it. The cutover release closes new legacy
-admission, settles any admitted pass, migrates paused candidates, swaps the
-toolbar/navigation to `Add from files…` and root controls, removes the legacy
-timer/handlers/config writes, and only then permits reviewed lasting-root
-activation. Tests prove there is no process state in which both mutation owners
-are active.
+different meaning, or strand it. The shipped cutover occurs across a normal
+application restart: the prior process follows its ordinary shutdown/settlement
+path, while the cutover release contains no new legacy admission path. If the
+prior process was interrupted, its incomplete evidence becomes paused migration
+input rather than resumed mutation. The cutover release migrates paused
+candidates, swaps the toolbar/navigation to `Add from files…` and root controls,
+removes the legacy timer/handlers/config writes, records a private cutover marker,
+and only then permits reviewed lasting-root activation. If another process for
+the profile is already open, activation fails closed until it is closed and the
+cutover release restarts. Tests prove there is no production path in the cutover
+release in which both mutation owners are active; an older binary launched after
+the cutover process is outside the new runtime's enforceable lease boundary and
+must be closed before activation.
 
 If the replacement backend is unavailable, the product does not ship a
 half-wired `Keep a folder synced` action. The choice remains visibly
@@ -565,7 +572,7 @@ Test at minimum:
 - Recovery capacity: `Sync paused - Free recovery space or disconnect items`.
 - Server claim/capability loss: `Sync paused - Reauthorize or review takeover`.
 - Unknown failure: safe generic reason plus `Retry check`; raw context remains
-  in private/sanitized diagnostics according to ADR-059/060.
+  in private/sanitized diagnostics according to ADR-059/073.
 - Toasts may reinforce failures but are never their sole carrier.
 
 ## Component and Ownership Boundaries
@@ -650,7 +657,7 @@ This programme needs separate atomic plans. It must not become one enormous PR.
    enabled `Keep a folder synced` action.
 4. **Local lasting-sync foundation:** private root registry, bindings,
    representation profiles, coordinator, durable journal/recovery, and service
-   contracts from the 2026-08-12 design and ADR-059/060.
+  contracts from the 2026-08-12 design and ADR-059/073.
 5. **Local lasting-sync UI and atomic legacy cutover:** compose the production
    `Add from files…` chooser, setup dry-run, root states, manual review,
    attention, pause/resume/retarget/disconnect, paused legacy migration,
@@ -677,9 +684,9 @@ ADR required: no new Chatbook ADR.
 
 ADR paths:
 `backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md`,
-`backlog/decisions/060-notes-sync-round-trip-and-interoperability-constraints.md`
+`backlog/decisions/073-notes-sync-round-trip-and-interoperability-constraints.md`
 
-Reason: ADR-059/060 already decide storage ownership, sync/conflict/deletion
+Reason: ADR-059/073 already decide storage ownership, sync/conflict/deletion
 policy, privacy, recovery, coordinator boundaries, migration, interoperability,
 and lasting application structure. This revision conforms the UI programme to
 those accepted decisions. Folder Files and Session Git changes are

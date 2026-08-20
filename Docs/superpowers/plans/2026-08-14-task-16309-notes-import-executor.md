@@ -12,9 +12,9 @@
 
 **ADR required:** no
 
-**ADR paths:** `backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md`, `backlog/decisions/060-notes-sync-round-trip-and-interoperability-constraints.md`
+**ADR paths:** `backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md`, `backlog/decisions/073-notes-sync-round-trip-and-interoperability-constraints.md`
 
-**Reason:** ADR-059 already assigns one-time import provenance and receipts to the device-private Notes sync owner. ADR-060 already fixes optimistic replacement, backup exclusion, private matching material, and interruption semantics. This slice implements those accepted boundaries without creating a new authority.
+**Reason:** ADR-059 already assigns one-time import provenance and receipts to the device-private Notes sync owner. ADR-073 already fixes optimistic replacement, backup exclusion, private matching material, and interruption semantics. This slice implements those accepted boundaries without creating a new authority.
 
 ---
 
@@ -488,7 +488,7 @@ Review the full `origin/dev...HEAD` diff for approval authority, deterministic i
 
 - [ ] **Step 5: Close task documentation**
 
-Check every acceptance criterion, add concise implementation notes with exact verification counts and the ADR-059/060 decision, state whether a lesson was warranted, and change TASK-16309 to Done only after all Definition-of-Done gates pass.
+Check every acceptance criterion, add concise implementation notes with exact verification counts and the ADR-059/073 decision, state whether a lesson was warranted, and change TASK-16309 to Done only after all Definition-of-Done gates pass.
 
 - [ ] **Step 6: Commit closeout**
 

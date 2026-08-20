@@ -1,4 +1,4 @@
-# ADR-060: Notes Sync Round-trip and Interoperability Constraints
+# ADR-073: Notes Sync Round-trip and Interoperability Constraints
 
 Status: Accepted
 Date: 2026-08-12
@@ -8,7 +8,10 @@ Supersedes: N/A
 
 Allocation note: ADR-059 was initially unallocated in the 2026-08-12 checkout,
 but the ownership decision moved there after upstream assigned ADR-058. This
-amendment moved with it to the next available identifier during rebase.
+amendment was originally allocated ADR-060, then renumbered after add-commit
+provenance showed that the Prompt batch-mutation decision had claimed ADR-060
+earlier on the same date. A concurrent remote then claimed ADR-072 before this
+implementation plan landed, so the amendment moved to the next free ADR-073.
 
 ## Decision
 

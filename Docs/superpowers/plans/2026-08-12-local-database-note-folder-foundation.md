@@ -18,7 +18,7 @@
 - ADR required: yes
 - ADR paths:
   - `backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md`
-  - `backlog/decisions/060-notes-sync-round-trip-and-interoperability-constraints.md`
+  - `backlog/decisions/073-notes-sync-round-trip-and-interoperability-constraints.md`
 - Reason: this slice implements the accepted local folder schema, ownership,
   backup, normalized service, and paging boundaries.
 
@@ -885,7 +885,7 @@ Review the diff and prove:
 - [ ] **Step 5: Complete Backlog hygiene and commit closeout**
 
 Check all seven acceptance criteria, add concise Implementation Notes describing
-the approach, files, tests, measured query evidence, trade-offs, and ADR-059/060.
+the approach, files, tests, measured query evidence, trade-offs, and ADR-059/073.
 Set `TASK-15705` to Done only when every repository Definition of Done requirement
 is satisfied. Add a lessons entry only if implementation produced a demonstrated,
 generalizable incident.

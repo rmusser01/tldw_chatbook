@@ -4,7 +4,7 @@ Date: 2026-08-12
 Status: Approved written specification (ready for slice planning)
 ADRs:
 [ADR-059](../../../backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md),
-[ADR-060](../../../backlog/decisions/060-notes-sync-round-trip-and-interoperability-constraints.md)
+[ADR-073](../../../backlog/decisions/073-notes-sync-round-trip-and-interoperability-constraints.md)
 
 ## Summary
 
@@ -888,12 +888,12 @@ ADR required: yes
 ADR paths:
 
 - `backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md`
-- `backlog/decisions/060-notes-sync-round-trip-and-interoperability-constraints.md`
+- `backlog/decisions/073-notes-sync-round-trip-and-interoperability-constraints.md`
 
 Reason: this design changes the local Notes schema, folder and membership
 ownership, sync/conflict/deletion policy, private recovery storage, cross-process
 runtime authority, server service contract, privacy boundary, and long-lived
-Library structure. ADR-060 amends the accepted ADR-059 with the reviewed
+Library structure. ADR-073 amends the accepted ADR-059 with the reviewed
 round-trip representation, binding uniqueness, composite-operation, Sync-v2,
 backup/restore, and per-mutation claim-fencing constraints.
 

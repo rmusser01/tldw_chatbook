@@ -4,7 +4,7 @@
 
 **Goal:** Replace the flat Database Notes list with a lazy, placement-aware folder navigator that supports manual organization without regressing the existing note editor or File Notes.
 
-**Architecture:** A pure projection module will merge bounded `NoteFolderPage` batches into immutable tree rows and stable navigation state. `LibraryScreen` will own service calls, generations, mutations, and focus restoration; `LibraryNotesCanvas` will only render the projection and emit controls. All storage access remains behind `NotesScopeService`, in accordance with ADR-059 and ADR-060.
+**Architecture:** A pure projection module will merge bounded `NoteFolderPage` batches into immutable tree rows and stable navigation state. `LibraryScreen` will own service calls, generations, mutations, and focus restoration; `LibraryNotesCanvas` will only render the projection and emit controls. All storage access remains behind `NotesScopeService`, in accordance with ADR-059 and ADR-073.
 
 **Tech Stack:** Python 3.11+, Textual 8.x, dataclasses, pytest/pytest-asyncio, Rich/Textual screenshot export.
 
@@ -13,7 +13,7 @@
 **Architecture decisions:**
 
 - ADR required: no
-- Existing ADRs: `backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md`; `backlog/decisions/060-notes-sync-round-trip-and-interoperability-constraints.md`
+- Existing ADRs: `backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md`; `backlog/decisions/073-notes-sync-round-trip-and-interoperability-constraints.md`
 - Reason: these ADRs already define normalized folder services, placement identity, managed ownership, lazy rendering, and local/server separation.
 
 **Known baseline:** The focused baseline has 109 passing tests and one unrelated existing failure in `Tests/UI/test_library_multiselect_notes.py`; its fake screen omits the already-required `_library_notes_mutation_in_flight` attribute.
