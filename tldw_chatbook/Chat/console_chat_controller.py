@@ -207,7 +207,10 @@ from tldw_chatbook.Chat.console_provider_gateway import (
 )
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
-from tldw_chatbook.model_capabilities import is_vision_capable
+from tldw_chatbook.model_capabilities import (
+    is_vision_capable,
+    moonshot_model_returns_reasoning_content,
+)
 
 if TYPE_CHECKING:
     from tldw_chatbook.Agents.agent_models import ToolCall
@@ -11768,7 +11771,12 @@ class ConsoleChatController:
         target = _continuation_restore_target_for_resolution(resolution)
         if target is None:
             return (), None
-        keep_all = target.provider == "moonshot" and target.model == "kimi-k3"
+        # TASK-19170: preserved-thinking retention follows the versioned kimi
+        # reasoning family (probe-verified reasoning_content across the
+        # family), not the kimi-k3 literal.
+        keep_all = target.provider == "moonshot" and (
+            moonshot_model_returns_reasoning_content(target.model)
+        )
         keep_tool_history = target.provider == "deepseek"
         if not keep_all and not keep_tool_history:
             return (), None

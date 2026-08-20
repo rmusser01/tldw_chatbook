@@ -653,9 +653,32 @@ async def test_resume_excludes_visible_owner_and_reports_failed_completion(
             True,
             False,
         ),
+        # TASK-19170: keep_all is a versioned-kimi-family policy, not a
+        # kimi-k3 literal -- k2.6 returns reasoning_content on the wire
+        # (chatcmpl-6a8768a9b5c429b466fbc42f), so its complete checkpoints
+        # (tool-bearing or reasoning-only) must survive a resume.
         (
             "Moonshot",
             "kimi-k2",
+            "chat_completions",
+            "https://api.moonshot.ai/v1",
+            True,
+            True,
+        ),
+        (
+            "Moonshot",
+            "kimi-k2.6",
+            "chat_completions",
+            "https://api.moonshot.ai/v1",
+            False,
+            True,
+        ),
+        # kimi-latest returns no reasoning_content
+        # (chatcmpl-6a8768a616ceb0c0ae780f2c): stays outside the retention
+        # policy.
+        (
+            "Moonshot",
+            "kimi-latest",
             "chat_completions",
             "https://api.moonshot.ai/v1",
             True,
