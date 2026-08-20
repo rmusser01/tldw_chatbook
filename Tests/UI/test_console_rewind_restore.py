@@ -634,3 +634,97 @@ async def test_rewind_with_args_keeps_restore_before_dispatch_behavior():
 
         assert isinstance(host.screen_stack[-1], ConsoleRewindModal)
         assert composer.draft_text() == "/rewind anythingnext"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["keyboard", "visible-send"])
+async def test_rewind_modal_launch_failure_preserves_draft(source, monkeypatch):
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="Existing prompt.",
+        )
+        await console._sync_native_console_chat_ui()
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("/rewind")
+
+        if source == "keyboard":
+            stash = composer.stash_draft_for_send()
+            assert stash is not None and stash.text == "/rewind"
+            console._console_pending_send_stash = stash
+            composer.insert_text("late")
+
+        real_push_screen = console.app.push_screen
+
+        def fail_rewind_modal(screen, *args, **kwargs):
+            if isinstance(screen, ConsoleRewindModal):
+                raise RuntimeError("rewind modal launch failed")
+            return real_push_screen(screen, *args, **kwargs)
+
+        monkeypatch.setattr(console.app, "push_screen", fail_rewind_modal)
+
+        with pytest.raises(RuntimeError, match="rewind modal launch failed"):
+            await console._send_console_message_from_visible_action()
+
+        expected = "/rewindlate" if source == "keyboard" else "/rewind"
+        assert composer.draft_text() == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mutation", ["identity", "edit-retype", "generation"])
+async def test_visible_rewind_cleanup_preserves_a_changed_composer(
+    mutation, monkeypatch
+):
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("/rewind")
+        opening_snapshot = composer.capture_draft_snapshot()
+        replacement = MagicMock(spec=ConsoleComposerBar)
+
+        async def succeed_after_mutation(_parse):
+            if mutation == "identity":
+                monkeypatch.setattr(
+                    console, "_console_composer_or_none", lambda: replacement
+                )
+            elif mutation == "edit-retype":
+                composer.insert_text("x")
+                composer.delete_left()
+            else:
+                composer.load_draft("/rewind")
+            return True
+
+        clear_draft = MagicMock()
+        monkeypatch.setattr(console, "_console_command_rewind", succeed_after_mutation)
+        monkeypatch.setattr(console, "_clear_console_composer_draft", clear_draft)
+
+        assert not await console._send_console_message_from_visible_action()
+
+        current_snapshot = composer.capture_draft_snapshot()
+        assert composer.draft_text() == "/rewind"
+        clear_draft.assert_not_called()
+        if mutation == "identity":
+            assert console._console_composer_or_none() is replacement
+            assert replacement is not composer
+            assert current_snapshot.edit_serial == opening_snapshot.edit_serial
+            assert current_snapshot.generation == opening_snapshot.generation
+        elif mutation == "edit-retype":
+            assert console._console_composer_or_none() is composer
+            assert current_snapshot.edit_serial > opening_snapshot.edit_serial
+            assert current_snapshot.generation == opening_snapshot.generation
+        else:
+            assert console._console_composer_or_none() is composer
+            assert current_snapshot.edit_serial == opening_snapshot.edit_serial
+            assert current_snapshot.generation > opening_snapshot.generation
