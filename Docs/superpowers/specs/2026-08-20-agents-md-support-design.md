@@ -64,7 +64,7 @@ The rejected alternatives were:
    subagents.
 4. Keep automatically loaded instruction contents out of the conversation
    transcript, run database, agent steps, persisted logs, diagnostic logs,
-   compaction summaries, and outbound exchange captures.
+   compaction summaries, and durable outbound exchange captures.
 5. Make the feature visible and controllable through a per-session toggle,
    folder selection, compact rail state, pre-send notice, and Context
    diagnostics.
@@ -247,9 +247,19 @@ the additional directory chains required by its targets:
 - `fs_read`, `fs_write`, `fs_edit`, and patch operations use the exact target's
   parent chain.
 - `fs_list` uses the listed directory chain.
-- `fs_glob`, `fs_grep`, and repository-wide read-only git operations use only
-  their declared search/repository root. Matching or mentioning a deep file
-  does not activate every descendant instruction file.
+- `fs_glob` and `fs_grep` use only their declared search root. Matching or
+  mentioning a deep file does not activate every descendant instruction file.
+- `git_branches`, unfiltered `git_diff`, and unfiltered `git_log` activate only
+  the discovered repository-root chain.
+- `git_status`, including `git_status(path)`, activates only the discovered
+  repository-root chain because `path` selects which repository to inspect but
+  the command reports status for that whole repository.
+- Path-filtered `git_diff(path)` and `git_log(path)` activate the repository
+  root through the validated target scope: the target itself when it is a
+  directory, otherwise its lexical parent (which also covers deleted paths).
+  `commit_range`, `staged`, and `stat` do not change that path scope.
+- `git_blame(path)` activates the repository root through the blamed file's
+  parent chain.
 - A later concrete action on a matched file activates that file's directory
   chain.
 
@@ -270,11 +280,14 @@ metadata.
 
 Every automatic rider and nested update carries an internal ephemeral-origin
 tag. That tag is not sent to the model, but every persistence, diagnostic,
-compaction, and exchange-capture boundary uses it to omit the body. A future or
-concurrently developed exact-payload inspector must replace these bodies with
-a content-free marker such as `[ephemeral project instructions omitted]` and
-may record only relative source metadata. This ADR-backed exception takes
-priority over exact historical payload capture.
+compaction, and **durable historical exchange-capture** boundary uses it to
+omit the body. A future or concurrently developed historical payload inspector
+must replace these bodies with a content-free marker such as
+`[ephemeral project instructions omitted]` and may record only relative source
+metadata. This ADR-backed exception takes priority over durable exact
+historical payload capture. It does not redact the existing user-invoked,
+nonpersistent Next Send preview, which may show the exact rider about to be
+sent and is discarded when the Context surface closes.
 
 One pure context-rider builder handles text, multimodal submit, retry,
 regenerate, and continue. It produces provider-safe message ordering and a
@@ -478,6 +491,8 @@ Temporary directory trees cover:
 - refusal of symlinked files and directory traversal
 - stable-read and changed-after-dispatch behavior
 - sibling-scope isolation
+- unfiltered and path-filtered semantics for every `git_*` tool, including
+  `git_status(path)` as a repository selector rather than a result filter
 - deepest-first admission with broad-to-specific rendering
 - whole-source omissions under startup/nested byte budgets
 
@@ -573,17 +588,21 @@ testable, PR-sized deliveries while preserving one design and one ADR:
 
 1. **Startup project context:** resolver, session working context, startup
    instructions, byte/token budgets, migration-safe defaults, first-load
-   notice, persistence round trips, and basic rail/Context visibility.
-2. **Nested path activation:** path-aware provider contract, typed atomic
-   preflight, per-chain delivery cursors, shared subagent ledger, protocol
-   stubs, and persistence-leak protection.
-3. **Interop and rollout:** complete UX states, provider grammar coverage,
-   real-provider UAT, performance/concurrency evidence, and user documentation.
+   notice, persistence round trips, ephemeral-origin tagging, historical
+   exchange-capture omission, compaction exclusion/rebuild, base-rider provider
+   transport tests, and basic rail/Context visibility.
+2. **Nested path activation:** path-aware provider contract and every `git_*`
+   scope rule, typed atomic preflight, per-chain terminal outcomes and delivery
+   cursors, shared subagent ledger, protocol stubs, nested-channel
+   persistence-leak tests, and the full multi-tool provider-grammar suite.
+3. **Interop and rollout:** complete UX states, real-provider UAT,
+   performance/concurrency evidence, and user documentation.
 
-Each delivery includes its own tests and is safe if later deliveries do not
-land. Delivery 1 may ship with nested activation explicitly unavailable;
-delivery 2 completes the requested path-aware semantics; delivery 3 supplies
-the release evidence and polish.
+Each delivery includes all safety and transport checks needed by the context it
+introduces and is safe if later deliveries do not land. Delivery 1 may ship
+with nested activation explicitly unavailable; delivery 2 completes the
+requested path-aware semantics; delivery 3 supplies release evidence and
+polish rather than correctness prerequisites.
 
 ## 15. ADR check
 
