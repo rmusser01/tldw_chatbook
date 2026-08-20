@@ -98,5 +98,5 @@
 - [x] Run `git diff --check`, inspect the cumulative diff for the one-controller/YAGNI boundary, and verify no CSS, DOM IDs, storage schema, dependency, or user-visible copy changed.
 - [x] Run the persistent-diagnostic checker and its two focused architecture tests. Regenerate the manifest only for proven moved-owner metadata with unchanged sink topology.
 - [x] Obtain an independent correctness/spec review if the active collaboration policy permits it; otherwise perform and record a separate self-review pass without changing scope.
-- [ ] Update the task ACs and concise Implementation Notes with exact RED/GREEN/mutation/static evidence, ADR decision, modified files, inherited baseline classification, and the explicit no-full-suite user constraint.
+- [x] Update the task ACs and concise Implementation Notes with exact RED/GREEN/mutation/static evidence, ADR decision, modified files, inherited baseline classification, and the explicit no-full-suite user constraint.
 - [ ] Commit the implementation, rebase onto latest `origin/dev`, rerun the same focused gates on the rebased head, then push and open one atomic PR against `dev`.
