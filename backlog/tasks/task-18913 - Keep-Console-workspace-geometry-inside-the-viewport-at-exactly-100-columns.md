@@ -1,7 +1,7 @@
 ---
 id: TASK-18913
 title: Keep Console workspace geometry inside the viewport at exactly 100 columns
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-20 07:07'
 labels:
@@ -33,3 +33,22 @@ Prevent the reproduced exact-100-column Console rail state from expanding the gr
 <!-- SECTION:DESIGN:BEGIN -->
 Approved design: `Docs/superpowers/specs/2026-08-20-task-18913-console-exact-100-column-containment-design.md`.
 <!-- SECTION:DESIGN:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Add failing pure-state tests for the 99/100/101 minimum-waiver and resize-band boundaries.
+2. Implement the inclusive exact-100 waiver and distinct semantic resize band in `console_rail_state.py`.
+3. Add production-CSS four-state cold geometry coverage with separate 55-column allocation and 40-column readable-content assertions.
+4. Add all four adjacent live-resize directions with focus, selection, anchor, and zero-preference-save assertions.
+5. Correct stale width arithmetic and compact-override comments without changing other rail behavior.
+6. Mutation-check both corrections independently, run focused/full verification, and record evidence before closing the task.
+
+Detailed plan: `Docs/superpowers/plans/2026-08-20-task-18913-console-exact-100-column-containment.md`.
+
+ADR required: no
+
+ADR path: `backlog/decisions/043-console-rail-compact-collapse-yields-to-explicit-toggle.md`
+
+Reason: direct defect correction within ADR-043's existing minimum-width-waiver and responsive priority mechanism; no persistence or application-structure decision changes.
+<!-- SECTION:PLAN:END -->
