@@ -1229,6 +1229,32 @@ async def test_wide_files_task_return_restores_database_browse_receipt() -> None
 
 
 @pytest.mark.asyncio
+async def test_path_transition_authority_names_file_operation_and_settles(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(root=root, replica=replica, poll_interval=10)
+
+    async with _WorkspaceHarness(workspace).run_test(size=(60, 20)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+
+        with workspace._hold_path_transition() as transition:
+            assert transition is not None
+            authority = _static_text(workspace, "#file-notes-authority")
+            assert "File operation in progress" in authority
+            assert "Changing folder" not in authority
+            assert "Next: Wait for file operation." in authority
+
+        authority = _static_text(workspace, "#file-notes-authority")
+        assert "File operation in progress" not in authority
+        assert "Ready" in authority
+
+    replica.close()
+
+
+@pytest.mark.asyncio
 async def test_root_transition_retains_and_freezes_old_document_until_scan_finishes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

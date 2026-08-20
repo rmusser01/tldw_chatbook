@@ -246,7 +246,7 @@ not available.
 
 ## Common tasks
 
-1. **Link a notes folder.** Open Files (source strip), press
+1. **Link a notes folder.** Open **Folder files** (source strip), press
    **Choose folder…**, pick the folder in "Choose File Notes Folder". The
    status becomes "Linked — \<folder\>" and the **Files** tree fills in.
 2. **Create a file.** Type its location — e.g. `ideas/today.md` — into the

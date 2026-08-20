@@ -1383,9 +1383,12 @@ class LibraryFileNotesWorkspace(Vertical):
         segments.append(f"Session Git: {session_git_count} {change_word}")
         root_state = ""
         root_next = ""
-        if self._root_transitioning or self._path_transitioning:
+        if self._root_transitioning:
             root_state = "Changing folder"
             root_next = "Wait for folder change."
+        elif self._path_transitioning:
+            root_state = "File operation in progress"
+            root_next = "Wait for file operation."
         elif self._root_offline is None:
             root_state = "Checking folder"
             root_next = "Wait for folder check."

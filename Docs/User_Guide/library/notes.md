@@ -247,7 +247,7 @@ click-driven. Global navigation keys live in the [guide index](../index.md).
   `sync_directory` (default `~/Documents/Notes`).
 - [Notes bidirectional sync](../../Features/notes_bidirectional_sync.md) —
   deep dive on the sync engine behind the panel.
-- [File notes](file-notes.md) — the "Files" side of the source strip.
+- [File notes](file-notes.md) — the **Folder files** side of the source strip.
 - [Library overview](../library.md) — the rail, landing canvas, and the
   other Library sources.
 
