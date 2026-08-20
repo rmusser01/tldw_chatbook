@@ -2827,6 +2827,7 @@ async def test_media_user_content_evidence_uses_active_complete_local_summary():
             "offset": 0,
             "include_deleted": False,
             "include_trash": False,
+            "chunking_status": "completed",
         }
     ]
 
@@ -2838,6 +2839,41 @@ async def test_media_user_content_evidence_uses_active_complete_local_summary():
         await scope_service.get_library_user_content_evidence(mode="local")
         is LibraryContentEvidence.EMPTY
     )
+
+
+@pytest.mark.asyncio
+async def test_media_user_content_evidence_filters_completed_real_local_population():
+    db = Database(db_path=":memory:", client_id="library-evidence")
+    try:
+        completed_id, _, _ = db.add_media_with_keywords(
+            title="Older completed",
+            content="completed body",
+            media_type="article",
+            keywords=[],
+            chunks=[],
+        )
+        db.add_media_with_keywords(
+            title="Newer pending",
+            content="pending body",
+            media_type="article",
+            keywords=[],
+        )
+        scope_service = MediaReadingScopeService(
+            local_service=LocalMediaReadingService(db), server_service=None
+        )
+
+        assert (
+            await scope_service.get_library_user_content_evidence(mode="local")
+            is LibraryContentEvidence.HAS_USER_CONTENT
+        )
+
+        assert db.soft_delete_media(completed_id)
+        assert (
+            await scope_service.get_library_user_content_evidence(mode="local")
+            is LibraryContentEvidence.EMPTY
+        )
+    finally:
+        db.close_connection()
 
 
 @pytest.mark.asyncio
@@ -2920,7 +2956,7 @@ async def test_media_user_content_evidence_accepts_exact_server_summary_only():
     )
     assert (
         await scope_service.get_library_user_content_evidence(mode="server")
-        is LibraryContentEvidence.EMPTY
+        is LibraryContentEvidence.UNKNOWN
     )
 
     client = StrictReadingClient(

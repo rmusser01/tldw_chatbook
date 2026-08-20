@@ -1,6 +1,9 @@
+import threading
+
 import pytest
 
 from tldw_chatbook.Library.library_content_evidence import LibraryContentEvidence
+from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
 from tldw_chatbook.Skills_Interop.skills_scope_service import SkillsScopeService
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 from tldw_chatbook.tldw_api.skills_schemas import SkillContextPayload, SkillSummary
@@ -216,6 +219,37 @@ async def test_skills_user_content_evidence_uses_only_available_user_skills():
         await service.get_library_user_content_evidence(mode="local")
         is LibraryContentEvidence.HAS_USER_CONTENT
     )
+
+
+@pytest.mark.asyncio
+async def test_skills_user_content_evidence_runs_real_local_scan_off_loop(
+    tmp_path, monkeypatch
+):
+    local = LocalSkillsService(
+        store_dir=tmp_path,
+        allow_untrusted_without_trust_service=True,
+    )
+    await local.create_skill(
+        name="user-skill",
+        content="---\ndescription: User skill\n---\n# User skill\n",
+    )
+    loop_thread = threading.get_ident()
+    scan_threads = []
+    load_index = local._load_index
+
+    def tracked_load_index():
+        scan_threads.append(threading.get_ident())
+        return load_index()
+
+    monkeypatch.setattr(local, "_load_index", tracked_load_index)
+    service = SkillsScopeService(local_service=local)
+
+    assert (
+        await service.get_library_user_content_evidence(mode="local")
+        is LibraryContentEvidence.HAS_USER_CONTENT
+    )
+    assert scan_threads
+    assert all(thread_id != loop_thread for thread_id in scan_threads)
 
 
 @pytest.mark.asyncio

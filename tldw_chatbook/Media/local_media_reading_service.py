@@ -101,9 +101,7 @@ class LocalMediaReadingService:
 
     # --- Library read seams (task-1337) ---
 
-    def list_library_media(
-        self, *, limit: int = 20, offset: int = 0
-    ) -> dict[str, Any]:
+    def list_library_media(self, *, limit: int = 20, offset: int = 0) -> dict[str, Any]:
         """Page the active local media library for agent-facing list tools.
 
         Args:
@@ -231,6 +229,10 @@ class LocalMediaReadingService:
         fts_match_kwargs = (
             {"fts_match_query": fts_match_query} if fts_match_query is not None else {}
         )
+        chunking_status = filters.get("chunking_status")
+        chunking_status_kwargs = (
+            {"chunking_status": chunking_status} if chunking_status is not None else {}
+        )
         library_summary_kwargs = (
             {"offset": offset, "library_summary": True} if library_summary else {}
         )
@@ -250,6 +252,7 @@ class LocalMediaReadingService:
             include_trash=bool(filters.get("include_trash", False)),
             include_deleted=bool(filters.get("include_deleted", False)),
             **fts_match_kwargs,
+            **chunking_status_kwargs,
             **library_summary_kwargs,
         )
         items = (

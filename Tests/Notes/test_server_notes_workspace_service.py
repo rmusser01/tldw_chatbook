@@ -123,6 +123,30 @@ class FakeClient:
         return {"deleted": True, "edge_id": edge_id}
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("payload", "expected_count", "expected_exact"),
+    [
+        ({"notes": [{"id": "page-only"}]}, 1, False),
+        ({"notes": [{"id": "exact"}], "count": 7}, 7, True),
+        ({"notes": [], "count": 0}, 0, True),
+    ],
+)
+async def test_list_server_notes_marks_whether_raw_count_is_exact(
+    payload, expected_count, expected_exact
+):
+    class RawNotesClient:
+        async def list_server_notes(self, limit=100, offset=0, include_keywords=True):
+            return payload
+
+    result = await ServerNotesWorkspaceService(
+        client=RawNotesClient()
+    ).list_server_notes(limit=1, offset=0)
+
+    assert result["count"] == expected_count
+    assert result["count_exact"] is expected_exact
+
+
 class FakeClientProvider:
     def __init__(self, client):
         self.client = client

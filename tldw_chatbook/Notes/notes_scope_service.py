@@ -1293,6 +1293,8 @@ class NotesScopeService:
         payload = await self.server_service.list_server_notes(limit=1, offset=0)
         if not isinstance(payload, Mapping):
             return LibraryContentEvidence.UNKNOWN
+        if payload.get("count_exact") is not True:
+            return LibraryContentEvidence.UNKNOWN
         items = payload.get("items")
         total = payload.get("count")
         if (

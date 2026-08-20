@@ -797,7 +797,11 @@ class MediaReadingScopeService:
         self._enforce_policy(self._reading_action_id(normalized_mode, "list"))
         service = self._service_for_mode(normalized_mode)
         filters = (
-            {"include_deleted": False, "include_trash": False}
+            {
+                "include_deleted": False,
+                "include_trash": False,
+                "chunking_status": "completed",
+            }
             if normalized_mode == MediaReadingBackend.LOCAL
             else {}
         )
@@ -843,7 +847,10 @@ class MediaReadingScopeService:
             status = str(record.get(status_field) or "").strip().lower()
             if status == "completed":
                 return LibraryContentEvidence.HAS_USER_CONTENT
-            if status in {"pending", "incomplete"}:
+            if normalized_mode == MediaReadingBackend.LOCAL and status in {
+                "pending",
+                "incomplete",
+            }:
                 return (
                     LibraryContentEvidence.EMPTY
                     if total == 1

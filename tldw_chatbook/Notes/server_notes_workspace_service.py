@@ -451,6 +451,7 @@ class ServerNotesWorkspaceService:
             "count": int(response.get("count", len(items)))
             if isinstance(response, Mapping)
             else len(items),
+            "count_exact": isinstance(response, Mapping) and "count" in response,
         }
 
     async def search_server_notes(

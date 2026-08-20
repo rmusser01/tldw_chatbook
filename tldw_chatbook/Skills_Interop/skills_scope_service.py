@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from collections.abc import Sequence
 from enum import Enum
@@ -187,7 +188,17 @@ class SkillsScopeService:
     ) -> LibraryContentEvidence:
         """Return tri-state evidence for available user-owned skills."""
         normalized_mode = self._normalize_mode(mode)
-        context = await self.get_context(mode=normalized_mode)
+        service = self._require_service(normalized_mode)
+        local_evidence_context = getattr(
+            service, "get_library_user_content_evidence_context", None
+        )
+        if normalized_mode == SkillsBackend.LOCAL and callable(local_evidence_context):
+            self._enforce_policy("skills.context.list.local")
+            context = self._normalize_response(
+                normalized_mode, await asyncio.to_thread(local_evidence_context)
+            )
+        else:
+            context = await self.get_context(mode=normalized_mode)
         model_dump = getattr(context, "model_dump", None)
         if callable(model_dump):
             context = model_dump(mode="json")

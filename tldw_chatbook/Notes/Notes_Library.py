@@ -283,7 +283,7 @@ class NotesInteropService:
 
         duration = time.time() - start_time
         log_histogram("notes_library_count_notes_duration", duration)
-        log_counter("notes_library_count_notes_success", labels={"count": str(result)})
+        log_counter("notes_library_count_notes_success")
 
         return result
 
@@ -482,9 +482,7 @@ class NotesInteropService:
             )
             raise
 
-    def restore_note(
-        self, user_id: str, note_id: str, expected_version: int
-    ) -> bool:
+    def restore_note(self, user_id: str, note_id: str, expected_version: int) -> bool:
         """Restore a soft-deleted note through the per-user database seam.
 
         Args:
@@ -504,9 +502,7 @@ class NotesInteropService:
 
         try:
             db = self._get_db(user_id)
-            result = db.restore_note(
-                note_id=note_id, expected_version=expected_version
-            )
+            result = db.restore_note(note_id=note_id, expected_version=expected_version)
             duration = time.time() - start_time
             log_histogram(
                 "notes_library_restore_note_duration",

@@ -17,10 +17,14 @@ from datetime import datetime
 
 import pytest
 
+import tldw_chatbook.Notes.Notes_Library as notes_library_module
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
 from tldw_chatbook.Library.library_content_evidence import LibraryContentEvidence
 from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
+from tldw_chatbook.Notes.server_notes_workspace_service import (
+    ServerNotesWorkspaceService,
+)
 
 USER_ID = "library-canvas-user"
 
@@ -522,37 +526,99 @@ async def test_notes_user_content_evidence_tracks_only_accessible_active_local_n
 
 
 @pytest.mark.asyncio
+async def test_notes_user_content_evidence_does_not_log_exact_local_count(
+    notes_scope_service, monkeypatch
+):
+    calls = []
+    monkeypatch.setattr(
+        notes_library_module,
+        "log_counter",
+        lambda name, labels=None: calls.append((name, labels)),
+    )
+    for index in range(2):
+        await notes_scope_service.save_note(
+            scope="local_note",
+            title=f"Private {index}",
+            content="PRIVATE_BODY",
+            user_id=USER_ID,
+        )
+    calls.clear()
+
+    assert (
+        await notes_scope_service.get_library_user_content_evidence(
+            scope="local_note", user_id=USER_ID
+        )
+        is LibraryContentEvidence.HAS_USER_CONTENT
+    )
+    success_labels = [
+        labels for name, labels in calls if name == "notes_library_count_notes_success"
+    ]
+    assert success_labels == [None]
+
+
+@pytest.mark.asyncio
 async def test_notes_user_content_evidence_accepts_exact_server_total_only():
-    class ServerNotes:
+    class RawNotesClient:
         def __init__(self, payload):
             self.payload = payload
             self.calls = []
 
-        async def list_server_notes(self, **kwargs):
-            self.calls.append(kwargs)
+        async def list_server_notes(self, limit=100, offset=0, include_keywords=True):
+            self.calls.append(
+                {
+                    "limit": limit,
+                    "offset": offset,
+                    "include_keywords": include_keywords,
+                }
+            )
             return self.payload
 
-    positive = ServerNotes(
-        {"items": [{"id": "private-note", "content": "PRIVATE_BODY"}], "count": 1}
+    positive_client = RawNotesClient(
+        {"notes": [{"id": "private-note", "content": "PRIVATE_BODY"}], "count": 1}
     )
+    positive = ServerNotesWorkspaceService(client=positive_client)
     service = NotesScopeService(local_notes_service=None, server_service=positive)
     result = await service.get_library_user_content_evidence(scope="server_note")
     assert type(result) is LibraryContentEvidence
     assert result is LibraryContentEvidence.HAS_USER_CONTENT
-    assert positive.calls == [{"limit": 1, "offset": 0}]
+    assert positive_client.calls == [
+        {"limit": 1, "offset": 0, "include_keywords": True}
+    ]
 
-    ambiguous = ServerNotes({"items": []})
+    empty = ServerNotesWorkspaceService(
+        client=RawNotesClient({"notes": [], "count": 0})
+    )
+    service = NotesScopeService(local_notes_service=None, server_service=empty)
+    assert (
+        await service.get_library_user_content_evidence(scope="server_note")
+        is LibraryContentEvidence.EMPTY
+    )
+
+    ambiguous = ServerNotesWorkspaceService(
+        client=RawNotesClient(
+            {"notes": [{"id": "page-only", "content": "PRIVATE_BODY"}]}
+        )
+    )
     service = NotesScopeService(local_notes_service=None, server_service=ambiguous)
     assert (
         await service.get_library_user_content_evidence(scope="server_note")
         is LibraryContentEvidence.UNKNOWN
     )
 
+    class ServerNotes:
+        def __init__(self, payload):
+            self.payload = payload
+
+        async def list_server_notes(self, **kwargs):
+            return self.payload
+
     for excluded_row in (
         {"id": "deleted", "deleted": True},
         {"id": "hidden", "accessible": False},
     ):
-        excluded = ServerNotes({"items": [excluded_row], "count": 1})
+        excluded = ServerNotes(
+            {"items": [excluded_row], "count": 1, "count_exact": True}
+        )
         service = NotesScopeService(local_notes_service=None, server_service=excluded)
         assert (
             await service.get_library_user_content_evidence(scope="server_note")
