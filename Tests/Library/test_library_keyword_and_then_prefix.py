@@ -66,6 +66,7 @@ from tldw_chatbook.Library.library_fts_query import (
     build_prefix_match_query,
 )
 from tldw_chatbook.Library.library_local_rag_search_service import (
+    SeamState,
     LibraryLocalRagSearchService,
 )
 from tldw_chatbook.Media.local_media_reading_service import LocalMediaReadingService
@@ -297,9 +298,12 @@ async def test_a_sub_leg_whose_primary_returns_rows_never_builds_the_prefix_form
     app = seams().app
     service = LibraryLocalRagSearchService(app)
 
-    available, rows = await service._search_notes(SPLIT_QUERY, 5, _USER_ID)
+    state, rows = await service._search_notes(SPLIT_QUERY, 5, _USER_ID)
 
-    assert available is True
+    # TASK-18903: the boolean became `SeamState`; same assertion, new
+    # vocabulary. Compared with `is` -- every Enum member is truthy, so a
+    # truthiness check here would pass for FAILED too.
+    assert state is SeamState.AVAILABLE
     assert len(rows) == 1, f"expected the notes primary to hit: {rows!r}"
     assert prefix_spy == [], (
         "the prefix form was built for a sub-leg whose primary returned "
@@ -403,9 +407,12 @@ async def test_a_zero_row_sub_leg_is_rescued_by_the_prefix_form(
         "prompts": lambda: service._search_prompts(SPLIT_QUERY, 5),
     }[seam]
 
-    available, rows = await call()
+    state, rows = await call()
 
-    assert available is True
+    # TASK-18903: the boolean became `SeamState`; same assertion, new
+    # vocabulary. Compared with `is` -- every Enum member is truthy, so a
+    # truthiness check here would pass for FAILED too.
+    assert state is SeamState.AVAILABLE
     assert _types(rows) == [source_type], (
         f"the {seam} seam was not rescued: {rows!r}"
     )

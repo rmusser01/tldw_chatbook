@@ -50,6 +50,7 @@ def main() -> int:
     import tldw_chatbook
     from tldw_chatbook.Library.library_local_rag_search_service import (
         LibraryLocalRagSearchService,
+        SeamState,
     )
 
     from Tests.RAG_Eval.harness.canonicalize import rows_to_doc_ids, slug_lookup_from
@@ -84,11 +85,13 @@ def main() -> int:
             seam = LibraryLocalRagSearchService(rt.app)
             svc = getattr(rt.app, "prompt_scope_service", None)
             print(f"\nPROBE PROOF: app.prompt_scope_service = {type(svc).__name__}")
-            available, rows = rt.run(seam._search_prompts("prompt", K))
-            print(f"PROBE PROOF: _search_prompts availability = {available} "
-                  f"(False means UNAVAILABLE, not 'matched nothing')")
+            state, rows = rt.run(seam._search_prompts("prompt", K))
+            print(f"PROBE PROOF: _search_prompts state = {state} "
+                  f"(UNAVAILABLE/FAILED both mean the rows are meaningless)")
             print(f"PROBE PROOF: smoke-query rows = {len(rows)}")
-            if not available:
+            # TASK-18903: `if not state` would be ALWAYS FALSE -- every Enum
+            # member is truthy. Compare with `is`, or this guard goes inert.
+            if state is not SeamState.AVAILABLE:
                 print("  SEAM UNAVAILABLE -- nothing below would be meaningful.")
                 return 1
 

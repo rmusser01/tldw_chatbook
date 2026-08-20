@@ -35,6 +35,10 @@ from tldw_chatbook.Library.library_expand_policy import (
     EXPANDABLE_SOURCE_TYPES,
     expand_hint,
 )
+from tldw_chatbook.Library.library_local_rag_search_service import (
+    KEYWORD_SEAM_DIAGNOSTICS_KEY,
+    SEAM_STATUS_FAILED,
+)
 from tldw_chatbook.Library.library_rag_service import (
     LibraryRagSearchRequest,
     run_library_rag_search,
@@ -339,6 +343,32 @@ class LibraryRagToolProvider:
             "returned": len(rows),
             "results": rows,
         }
+        # PARTIAL seam failures survive outcome normalization in
+        # `diagnostics` (TASK-18903), and dropping them here would tell the
+        # agent an incomplete corpus search was a complete one -- the exact
+        # collapse that task removed from the user-facing panel. Surfaced as
+        # a dedicated key (at most four short seam names, so the bounding
+        # loop below is unaffected) plus the same sentence the panel renders.
+        failed_seams = sorted(
+            {
+                str(entry.get("seam"))
+                for entry in (
+                    (getattr(outcome, "diagnostics", None) or {}).get(
+                        KEYWORD_SEAM_DIAGNOSTICS_KEY
+                    )
+                    or ()
+                )
+                if isinstance(entry, Mapping)
+                and entry.get("status") == SEAM_STATUS_FAILED
+                and entry.get("seam")
+            }
+        )
+        if failed_seams:
+            payload["failed_seams"] = failed_seams
+            payload["note"] = (
+                f"Incomplete search: the {', '.join(failed_seams)} "
+                "seam(s) failed and contributed no rows."
+            )
         # Bound the sealed payload: drop trailing rows first, then shrink the
         # lone remaining row in a fixed order. Every iteration removes at
         # least one character or the row itself, so hostile metadata cannot
