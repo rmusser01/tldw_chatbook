@@ -3838,7 +3838,7 @@ api_key = "<API_KEY_HERE>"
 [character_defaults]
 # Default settings specifically for the 'Character' tab
 provider = "Anthropic"
-model = "claude-3-haiku-20240307" # Make sure this exists in [providers.Anthropic]
+model = "claude-haiku-4-5" # Make sure this exists in [providers.Anthropic]
 system_prompt = "You are roleplaying as a witty pirate captain."
 temperature = 0.8
 top_p = 0.9
