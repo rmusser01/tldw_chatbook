@@ -32,6 +32,11 @@ VENDORED = [
 UPSTREAM_ROOT = "tldw_Server_API/app/core/Chunking"
 TARGET_ROOT = Path("tldw_chatbook/Chunking/engine")
 
+# Non-Python files shipped verbatim (manifest `extra`), copied from the repo
+# root at the pin. GPLv3 §4 requires the licence text itself to accompany
+# distribution, so LICENSES/GPL-3.0-only.txt ships alongside the scope map.
+EXTRA_FILES = ["LICENSE", "LICENSES/GPL-3.0-only.txt"]
+
 # tests to port (spec §10.1): the whole suite minus endpoint/DB-fixture files.
 # 46 upstream test files − 6 excluded = 40 ported (the brief's "41" counted
 # upstream's 43-file snapshot plus the two dev adds minus exclusions; the
@@ -429,10 +434,13 @@ def main() -> int:
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_text(rewrite_imports(git_show(worktree, rel)))
 
-    # 3. Manifest + licence
-    (TARGET_ROOT / "LICENSE").write_bytes(
-        subprocess.run(["git", "-C", str(worktree), "show", f"{PIN}:LICENSE"],
-                       capture_output=True).stdout)
+    # 3. Manifest + licence (GPLv3 §4: licence text ships in-subtree)
+    for rel in EXTRA_FILES:
+        dst = TARGET_ROOT / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes(
+            subprocess.run(["git", "-C", str(worktree), "show", f"{PIN}:{rel}"],
+                           capture_output=True).stdout)
     print(f"Synced {len(VENDORED)} files from {REPO} @ {PIN}")
 
     # 4. Tests (spec §10.1): port with the same import rewrite + chatbook-side

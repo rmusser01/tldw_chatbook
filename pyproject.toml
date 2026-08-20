@@ -519,7 +519,10 @@ exclude = [
 # Preserve the licenses for vendored packages
 "tldw_chatbook.Third_Party.aider" = ["LICENSE.txt"]
 "tldw_chatbook.Third_Party.textual_fspicker" = ["LICENSE"]
-"tldw_chatbook.Chunking.engine" = ["LICENSE"]
+# Engine is vendored from tldw_server (GPL-3.0-only): GPLv3 §4 requires the
+# licence text itself to ship, so the scope map and the GPL text both travel
+# with the package.
+"tldw_chatbook.Chunking.engine" = ["LICENSE", "LICENSES/GPL-3.0-only.txt"]
 # Include CSS files in subdirectories
 "tldw_chatbook.css.core" = ["*.tcss"]
 "tldw_chatbook.css.features" = ["*.tcss"]

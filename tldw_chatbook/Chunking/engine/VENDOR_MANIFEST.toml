@@ -22,7 +22,7 @@ vendored = [
     "strategies/rolling_summarize.py",
     "utils/metrics.py",
 ]
-extra = ["LICENSE"]  # GPLv3 text shipped verbatim in the vendored subtree
+extra = ["LICENSE", "LICENSES/GPL-3.0-only.txt"]  # scope map + GPLv3 §4 licence text, shipped verbatim
 excluded = ["__init__.py", "README.md", "SECURITY.md", "templates.py",
             "template_initialization.py", "template_library/", "auto_planner.py",
             "async_chunker.py", "auto_boundary_assistant.py",
@@ -30,4 +30,4 @@ excluded = ["__init__.py", "README.md", "SECURITY.md", "templates.py",
 
 [licence]
 spdx = "GPL-3.0-only"
-obligations = "preserve upstream headers; LICENSE shipped in-subtree; recorded here and in pyproject license-files"
+obligations = "preserve upstream headers; LICENSE + LICENSES/GPL-3.0-only.txt shipped in-subtree (GPLv3 §4); recorded here and in pyproject license-files"

@@ -29,12 +29,20 @@ def test_manifest_pins_upstream():
     assert manifest["upstream"]["commit"] == PIN
     assert "chunker.py" in " ".join(manifest["files"]["vendored"])
     assert "LICENSE" in manifest["files"]["extra"]
+    # GPLv3 §4: the licence text itself must ship with the vendored subtree
+    assert "LICENSES/GPL-3.0-only.txt" in manifest["files"]["extra"]
     assert manifest["licence"]["spdx"] == "GPL-3.0-only"
 
 
 def test_engine_tree_complete():
     for rel in manifest_vendored():
         assert (ENGINE / rel).exists(), f"missing vendored file {rel}"
+    for rel in manifest_extra():
+        assert (ENGINE / rel).exists(), f"missing extra file {rel}"
+    # GPLv3 §4: the shipped extra really is the GPL-3.0 text, not a stub
+    gpl = (ENGINE / "LICENSES" / "GPL-3.0-only.txt").read_text(errors="ignore")
+    assert "GNU GENERAL PUBLIC LICENSE" in gpl
+    assert "Version 3, 29 June 2007" in gpl
     # excluded-by-design files must NOT exist
     for rel in ("templates.py", "template_initialization.py", "auto_planner.py",
                 "async_chunker.py", "auto_boundary_assistant.py",
@@ -46,6 +54,10 @@ def test_engine_tree_complete():
 
 def manifest_vendored():
     return tomllib.loads((ENGINE / "VENDOR_MANIFEST.toml").read_text())["files"]["vendored"]
+
+
+def manifest_extra():
+    return tomllib.loads((ENGINE / "VENDOR_MANIFEST.toml").read_text())["files"]["extra"]
 
 
 def test_no_server_imports_remain():
