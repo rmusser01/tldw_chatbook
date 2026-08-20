@@ -161,6 +161,7 @@ AREA_LOCAL_INFERENCE = "Local inference"
 AREA_WEB = "Web access"
 AREA_DIAGNOSTICS = "Diagnostics and telemetry"
 AREA_WATCHLISTS = "Watchlists and schedules"
+AREA_VISUALIZATION = "Library visualization"
 AREA_DEVELOPMENT = "Development tooling"
 AREA_ALL = "All optional capabilities"
 
