@@ -22,7 +22,7 @@
 - Modify `Tests/UI/test_console_rewind_restore.py`: add mounted product-path and race regressions beside the existing rewind wiring coverage.
 - Modify `Docs/User_Guide/console/branching-and-rewind.md`: remove the resolved TASK-2705 workaround.
 - Modify `Docs/superpowers/specs/2026-08-19-task-2705-rewind-cancel-draft-design.md`: retain the independently reviewed focus correction and final design evidence.
-- Modify `backlog/tasks/task-2705 - Console-rewind-Esc-cancel-leaves-command-text-in-composer.md`: track this plan, evidence, acceptance criteria, notes, and Done status.
+- Modify `backlog/tasks/task-2705 - Console-rewind-cancelling-the-menu-leaves-rewind-in-the-composer.md`: track this plan, evidence, acceptance criteria, notes, and Done status.
 - Modify this plan document: check steps as evidence is collected.
 
 ### Task 1: Prove and fix ordinary `/rewind` consumption
@@ -32,7 +32,7 @@
 - Modify: `tldw_chatbook/UI/Screens/chat_screen.py:16790-16845`
 - Modify: `tldw_chatbook/UI/Screens/chat_screen.py:17374-17395`
 
-- [ ] **Step 1: Add mounted helpers and failing command-route tests**
+- [x] **Step 1: Add mounted helpers and failing command-route tests**
 
 Add a synchronous Enter helper using the same real keypress seam as `test_console_send_draft_snapshot.py`:
 
@@ -85,7 +85,7 @@ async def test_rewind_with_args_keeps_existing_restore_before_dispatch_behavior(
     # opens and cancellation leaves the invocation in the composer.
 ```
 
-- [ ] **Step 2: Run the new tests and verify RED**
+- [x] **Step 2: Run the new tests and verify RED**
 
 Run:
 
@@ -99,7 +99,7 @@ remains/restores in the composer. Restore replacement, refusal, and
 non-empty-args cases are non-regression controls and should pass (or expose only
 test-fixture errors that must be corrected before production edits).
 
-- [ ] **Step 3: Implement the minimal successful/refused dispatch contract**
+- [x] **Step 3: Implement the minimal successful/refused dispatch contract**
 
 In `_send_console_message_from_visible_action`, before the ordinary command restore, recognize only:
 
@@ -132,13 +132,13 @@ async def _console_command_rewind(self, parse: CommandParse) -> bool:
     return True
 ```
 
-- [ ] **Step 4: Run the focused tests and verify GREEN**
+- [x] **Step 4: Run the focused tests and verify GREEN**
 
 Run the Step 2 command.
 
 Expected: all selected tests pass; mounted assertions prove the modal actually opened before each dismissal.
 
-- [ ] **Step 5: Run adjacent rewind behavior tests**
+- [x] **Step 5: Run adjacent rewind behavior tests**
 
 Run:
 
@@ -150,7 +150,7 @@ Run:
 
 Expected: pass; Restore, Summarize, no-row warning, modal results, and active-path behavior remain unchanged.
 
-- [ ] **Step 6: Commit the ordinary behavior slice**
+- [x] **Step 6: Commit the ordinary behavior slice**
 
 ```bash
 git add tldw_chatbook/UI/Screens/chat_screen.py Tests/UI/test_console_rewind_restore.py
@@ -163,7 +163,7 @@ git commit -m "fix(console): consume handled rewind drafts"
 - Modify: `Tests/UI/test_console_rewind_restore.py`
 - Modify: `tldw_chatbook/UI/Screens/chat_screen.py:16825-16850`
 
-- [ ] **Step 1: Add failing rollback and stale-composer tests**
+- [x] **Step 1: Add failing rollback and stale-composer tests**
 
 Add direct-through-mounted-screen tests that still exercise `_send_console_message_from_visible_action`:
 
@@ -192,7 +192,7 @@ async def test_visible_rewind_cleanup_preserves_a_changed_composer(
     # was not invoked.
 ```
 
-- [ ] **Step 2: Run the safety tests and verify RED**
+- [x] **Step 2: Run the safety tests and verify RED**
 
 Run:
 
@@ -203,7 +203,7 @@ Run:
 
 Expected: launch failure loses the keyboard stash and/or stale visible cleanup clears a changed composer under the basic Task 1 implementation.
 
-- [ ] **Step 3: Add the minimal rollback and revision guard**
+- [x] **Step 3: Add the minimal rollback and revision guard**
 
 Use the established revision precedent already in `ChatScreen._submit_console_native_draft`:
 
@@ -241,13 +241,13 @@ if opened and opening_composer is not None and opening_revision is not None:
 
 Do not add a helper, token class, composer API, or generic command policy.
 
-- [ ] **Step 4: Run the safety tests and verify GREEN**
+- [x] **Step 4: Run the safety tests and verify GREEN**
 
 Run the Step 2 command.
 
 Expected: all parameterized cases pass, including same-text edit/retype.
 
-- [ ] **Step 5: Re-run all TASK-2705 behavior tests**
+- [x] **Step 5: Re-run all TASK-2705 behavior tests**
 
 Run the Task 1 Step 5 command plus:
 
@@ -257,7 +257,7 @@ Run the Task 1 Step 5 command plus:
 
 Expected: all pass; the general Enter snapshot/restore contract is unchanged.
 
-- [ ] **Step 6: Commit the safety slice**
+- [x] **Step 6: Commit the safety slice**
 
 ```bash
 git add tldw_chatbook/UI/Screens/chat_screen.py Tests/UI/test_console_rewind_restore.py
@@ -269,10 +269,10 @@ git commit -m "fix(console): preserve rewind drafts across launch races"
 **Files:**
 - Modify: `Docs/User_Guide/console/branching-and-rewind.md:158-159`
 - Modify: `Docs/superpowers/specs/2026-08-19-task-2705-rewind-cancel-draft-design.md`
-- Modify: `backlog/tasks/task-2705 - Console-rewind-Esc-cancel-leaves-command-text-in-composer.md`
+- Modify: `backlog/tasks/task-2705 - Console-rewind-cancelling-the-menu-leaves-rewind-in-the-composer.md`
 - Modify: `Docs/superpowers/plans/2026-08-19-task-2705-rewind-cancel-draft.md`
 
-- [ ] **Step 1: Remove the resolved User Guide workaround**
+- [x] **Step 1: Remove the resolved User Guide workaround**
 
 Delete only:
 
@@ -281,7 +281,7 @@ Delete only:
   clear it with `Ctrl+U`. (task-2705)
 ```
 
-- [ ] **Step 2: Run the bounded final test matrix**
+- [x] **Step 2: Run the bounded final test matrix**
 
 Run:
 
@@ -296,7 +296,7 @@ Run:
 
 Expected: pass, with only pre-existing dependency/deprecation warnings documented by exact message.
 
-- [ ] **Step 3: Run targeted static checks**
+- [x] **Step 3: Run targeted static checks**
 
 Run:
 
@@ -316,15 +316,15 @@ git diff --check
 
 Expected: no new diagnostics. If a large legacy file is baseline-red, prove exact provenance from `origin/dev` and do not rewrite unrelated lines.
 
-- [ ] **Step 4: Request independent code review and address all P0-P2 findings**
+- [x] **Step 4: Request independent code review and address all P0-P2 findings**
 
 Review the implementation commits against the approved design and task AC. Re-run only tests related to any correction.
 
-- [ ] **Step 5: Complete task hygiene**
+- [x] **Step 5: Complete task hygiene**
 
 Check every AC only after evidence exists. Add concise Implementation Notes covering the command-route branch, rollback/stale guard, files, tests, static results, ADR decision, and review. Update this plan's checkboxes. If a new generalizable incident occurred, update the relevant `backlog/docs/lessons-*.md`; otherwise state that no lesson change was needed.
 
-- [ ] **Step 6: Mark TASK-2705 Done through the exact CLI id**
+- [x] **Step 6: Mark TASK-2705 Done through the exact CLI id**
 
 ```bash
 backlog task 2705 --plain
@@ -345,7 +345,7 @@ git add \
   Docs/User_Guide/console/branching-and-rewind.md \
   Docs/superpowers/plans/2026-08-19-task-2705-rewind-cancel-draft.md \
   Docs/superpowers/specs/2026-08-19-task-2705-rewind-cancel-draft-design.md \
-  'backlog/tasks/task-2705 - Console-rewind-Esc-cancel-leaves-command-text-in-composer.md'
+  'backlog/tasks/task-2705 - Console-rewind-cancelling-the-menu-leaves-rewind-in-the-composer.md'
 git commit -m "docs(console): complete TASK-2705 rewind cleanup"
 ```
 
