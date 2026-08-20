@@ -274,8 +274,9 @@ class LocalRAGAdminService:
         # diagnostics payload -- the surviving RAG Admin stats surface (the
         # legacy UI was deleted with PR #669; the scope service routes this
         # as the local admin "observe" action). Rendered only when legacy
-        # chunks exist (N > 0): a fully stamped library shows nothing, per
-        # the surface's omit-empty convention. Guarded so a media DB the
+        # chunks exist (N > 0): a fully stamped library shows nothing
+        # (report-only-when-actionable choice; no pre-existing omit-empty
+        # convention on this dict). Guarded so a media DB the
         # report can't query never breaks template diagnostics.
         try:
             report = self.get_legacy_chunk_report_line()
