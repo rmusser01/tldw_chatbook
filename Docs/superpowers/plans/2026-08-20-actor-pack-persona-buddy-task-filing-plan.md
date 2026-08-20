@@ -82,7 +82,11 @@ Expected: no probe file remains in `backlog/tasks/`.
 
 - [ ] **Step 5: Record the final allocation**
 
-Replace the provisional values in this plan's allocation table with the freshly allocated values. Do not carry any “next safe ID” beyond this filing session.
+Replace the provisional values in this plan's allocation table with the freshly
+allocated values, then replace every corresponding `<ADR_*_ID>` and `<TASK_*_ID>`
+symbol throughout this plan's paths, dependencies, commands, and link instructions.
+Use whole-document searches to prove no dynamic ID symbol remains. Do not carry any
+“next safe ID” beyond this filing session.
 
 - [ ] **Step 6: Verify allocation uniqueness**
 
@@ -242,7 +246,8 @@ Confirm dependency and eight ACs through direct read plus `backlog task list --p
 
 - [ ] **Step 1: Create the task with dependency on Task 1**
 
-Status `To Do`, priority `high`, dependency `<TASK_PERSONA_FOUNDATION_ID>`.
+Status `To Do`, priority `high`, dependency `<TASK_PERSONA_FOUNDATION_ID>`, references
+to the programme spec and portable-pack ADR.
 
 - [ ] **Step 2: Set the description**
 
@@ -327,6 +332,7 @@ Confirm empty dependencies, eight ACs, and no premature export/import implementa
 - [ ] **Step 1: Create the task with Tasks 1, 4, and 5 dependencies**
 
 Status `To Do`, priority `high`, dependencies `<TASK_PERSONA_FOUNDATION_ID>`, `<TASK_PERSONA_SVI_ID>`, and `<TASK_ACTOR_FOUNDATION_ID>`.
+Add references to the programme spec and portable-pack ADR.
 
 - [ ] **Step 2: Set the description**
 
@@ -355,6 +361,7 @@ Confirm the three exact dependencies and eight ACs; commit only this task file.
 - [ ] **Step 1: Create the task with Tasks 1, 3, 4, 5, and 6 dependencies**
 
 Status `To Do`, priority `high`, dependencies `<TASK_PERSONA_FOUNDATION_ID>`, `<TASK_BUDDY_ID>`, `<TASK_PERSONA_SVI_ID>`, `<TASK_ACTOR_FOUNDATION_ID>`, and `<TASK_ACTOR_EXPORT_ID>`.
+Add references to the programme spec and portable-pack ADR.
 
 - [ ] **Step 2: Set the description**
 
@@ -393,7 +400,11 @@ Status `To Do`, priority `high`, dependency `TASK-16319`, references to ADR-067,
 1. Streaming and non-streaming character responses parse only standalone case-insensitive `Emote:` lines from assistant-visible text, with exact safe-slug normalization, five-event cap, duplicate handling, fences, CRLF, chunk, and unterminated-line behavior from the pinned server.
 2. Valid, invalid, duplicate, and over-cap directive lines never reach rendered text, persisted content, search, or exports; inline prose and fenced code remain visible.
 3. Prompting lists normalized active-version states in stored order, exposes the first 25, and uses the exact `(+N more)` suffix without imported labels/text.
-4. Live portrait precedence is manual override, operational thinking/speaking, first explicit emote, then heuristic only when no explicit event; missing assets retain current/base portrait with a stable reason.
+4. Live portrait precedence is manual override, then operational thinking/speaking
+until the first accepted explicit event; every accepted event updates the live
+expression, the last accepted event becomes the persisted final expression, and the
+heuristic runs only when no explicit event exists. Missing assets retain the
+current/base portrait with a stable reason.
 5. Assistant metadata durably stores bounded final mood fields, at most five UTF-16-offset events, actor identity, immutable pack/version/expression/asset identity, and fallback reason; malformed metadata fails soft on load.
 6. History restores only the exact final immutable expression when available, reports deterministic fallback otherwise, and does not replay historical beats.
 7. Reasoning, tool arguments/results, citations, provider controls, Persona Buddy, and raw assistant content never enter directive diagnostics or state control.
