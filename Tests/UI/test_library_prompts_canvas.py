@@ -6452,7 +6452,7 @@ async def test_library_prompt_import_blocks_undo_until_import_settles(tmp_path):
         retry_undo = await _wait_for_selector(
             screen, pilot, "#library-prompts-delete-undo"
         )
-        retry_undo.press()
+        screen.query_one("#library-prompts-delete-undo").press()  # TASK-18611: press the live mounted button
         await _wait_for_prompt_mutation_settlement(screen, pilot)
         assert restore_calls == [receipt.targets]
         assert screen._library_prompt_delete_receipt is None
@@ -6643,11 +6643,26 @@ async def test_cancelled_prompt_import_retains_writer_ownership_until_commit(tmp
         finally:
             import_release.set()
 
-        for _ in range(150):
+        # TASK-18611: `import_finished` fires in the save stub's `finally` --
+        # BEFORE the durable-call wrapper drains the cancelled worker to real
+        # settlement. The retry Undo below must not race that drain (the write
+        # gate refuses while the worker is live), so wait for BOTH and assert
+        # the wait itself succeeded rather than silently timing through.
+        for _ in range(250):
             if import_finished.is_set() and worker.is_finished:
                 break
             await pilot.pause(0.02)
-        assert import_finished.is_set()
+        assert import_finished.is_set(), "cancelled import never settled its save"
+        assert worker.is_finished, (
+            "cancelled import worker never drained; the retry Undo would race it"
+        )
+        import os as _os, sys as _sys
+        if _os.environ.get("TLDW_TRACE_UNDO"):
+            print(
+                f"TEST-WORKER id={id(worker)} finished={worker.is_finished} "
+                f"cancelled={worker.is_cancelled}",
+                file=_sys.stderr,
+            )
         assert worker.is_cancelled
         assert refused_restore_calls == []
         assert writer_owned_while_held
@@ -6670,7 +6685,7 @@ async def test_cancelled_prompt_import_retains_writer_ownership_until_commit(tmp
         retry_undo = await _wait_for_selector(
             screen, pilot, "#library-prompts-delete-undo"
         )
-        retry_undo.press()
+        screen.query_one("#library-prompts-delete-undo").press()  # TASK-18611: press the live mounted button
         await _wait_for_prompt_mutation_settlement(screen, pilot)
         assert restore_calls == [receipt.targets]
         assert screen._library_prompt_delete_receipt is None
