@@ -7,7 +7,7 @@ import json
 import logging
 import traceback
 import tracemalloc
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from typing import Any
 
 import pytest
@@ -925,6 +925,10 @@ def test_restore_target_requires_all_four_exact_frozen_fields(
     )
 
     validate_continuation_restore(checkpoint, target)
+    validate_continuation_restore(
+        checkpoint,
+        replace(target, api_base_url="https://api.deepseek.com/v1/chat/completions"),
+    )
     with pytest.raises(FrozenInstanceError):
         target.model = "changed"  # type: ignore[misc]
 

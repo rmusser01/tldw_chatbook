@@ -1123,7 +1123,17 @@ def test_restore_target_mismatch_stops_before_translation_or_model(field: str) -
     assert order == ["step:error"]
 
 
-def test_restore_forwards_only_injected_history_rows_byte_exact() -> None:
+@pytest.mark.parametrize(
+    "restore_endpoint",
+    (
+        "https://api.deepseek.com/v1",
+        "https://api.deepseek.com/v1/chat/completions",
+    ),
+    ids=("configured-endpoint", "canonical-endpoint"),
+)
+def test_restore_forwards_only_injected_history_rows_byte_exact(
+    restore_endpoint: str,
+) -> None:
     order: list[str] = []
     rows = [{"role": "opaque-provider-row", "private": {"exact": [1, True]}}]
     seen = []
@@ -1158,7 +1168,7 @@ def test_restore_forwards_only_injected_history_rows_byte_exact() -> None:
         deps,
         restore_provider_continuation=checkpoint,
         restore_provider_target=ContinuationRestoreTarget(
-            "deepseek", "deepseek-v4-flash", "responses", "https://api.deepseek.com/v1"
+            "deepseek", "deepseek-v4-flash", "responses", restore_endpoint
         ),
         resume_provider_continuation=True,
     )
