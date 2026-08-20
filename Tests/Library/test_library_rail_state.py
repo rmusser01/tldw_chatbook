@@ -2,8 +2,11 @@
 
 from tldw_chatbook.Library.library_rail_state import (
     LIBRARY_RAIL_SECTION_IDS,
+    LibraryLifecycle,
     LibraryRailPreferences,
+    coerce_library_lifecycle,
     coerce_library_rail_preferences,
+    serialize_library_lifecycle,
     serialize_library_rail_preferences,
 )
 
@@ -45,3 +48,40 @@ def test_coerce_unknown_input_returns_defaults():
     assert coerce_library_rail_preferences(None) == LibraryRailPreferences()
     assert coerce_library_rail_preferences("junk") == LibraryRailPreferences()
     assert coerce_library_rail_preferences(42) == LibraryRailPreferences()
+
+
+def test_missing_lifecycle_uses_unknown_only_for_new_profile():
+    assert (
+        coerce_library_lifecycle(None, is_new_profile=True) is LibraryLifecycle.UNKNOWN
+    )
+    assert (
+        coerce_library_lifecycle(None, is_new_profile=False)
+        is LibraryLifecycle.EXPANDED
+    )
+
+
+def test_corrupt_lifecycle_fails_safe_to_expanded_without_resetting_sections():
+    sections = {"browse_open": "off", "details_open": "true"}
+    expected_sections = LibraryRailPreferences(browse_open=False, details_open=True)
+
+    for corrupt in ("", "starter-ish", 0, {}, []):
+        assert (
+            coerce_library_lifecycle(corrupt, is_new_profile=True)
+            is LibraryLifecycle.EXPANDED
+        )
+        assert coerce_library_rail_preferences(sections) == expected_sections
+
+
+def test_lifecycle_round_trips_beside_section_preferences():
+    preferences = LibraryRailPreferences(create_open=False, details_open=True)
+    stored = {
+        "sections": serialize_library_rail_preferences(preferences),
+        "lifecycle": serialize_library_lifecycle(LibraryLifecycle.STARTER),
+    }
+
+    assert stored["lifecycle"] == "starter"
+    assert (
+        coerce_library_lifecycle(stored["lifecycle"], is_new_profile=False)
+        is LibraryLifecycle.STARTER
+    )
+    assert coerce_library_rail_preferences(stored["sections"]) == preferences
