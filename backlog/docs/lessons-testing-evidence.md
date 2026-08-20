@@ -4493,6 +4493,20 @@ assert them absent), and bootstrap-at-vN measured FASTER than
 bootstrap-current-then-rollback (~80-130ms vs ~220-255ms + replay) — the
 registry was never even a perf win.
 
+**Coda (task-19045, 2026-08-20): the disclosed escape is closed the same way
+tables were.** The MUT-INDEX shape the 16840 review left open (delete a
+`CREATE INDEX` from a migration step; nothing reds — 84 of 94 named indexes
+had zero Tests/ references) is now pinned by an absolute census
+(`Tests/ChaChaNotesDB/test_index_census.py`): a hand-maintained literal of
+all index names + UNIQUE flags + column tuples, asserted both directions
+against a live DB, on both a fresh and a chain-migrated bootstrap — the
+VALID_TABLES/TASK-864 pattern generalized. The mutation re-run confirmed the
+division of labor: under the seeded index deletion the parity sweep stayed
+green 36/36 (identity, as documented) while the census redded by name on
+both variants. The trap to preserve: such a census only works as an
+EXPLICIT literal — derive it from the same schema code it checks and it
+becomes the identity too.
+
 ## A silently-shadowed upstream sentinel is a defect class, not a file-local bug (task-16502, 2026-08-15)
 
 Textual 8.x removed `Select.BLANK` (the blank-selection sentinel, renamed
