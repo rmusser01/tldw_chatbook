@@ -261,6 +261,8 @@ git commit -m "feat: validate Persona Visual assets"
 **Files:**
 - Create: `tldw_chatbook/Persona_Visual/runtime.py`
 - Create: `Tests/Persona_Visual/test_persona_visual_runtime.py`
+- Modify: `tldw_chatbook/Persona_Visual/repository.py`
+- Modify: `Tests/Persona_Visual/test_persona_visual_repository.py`
 
 - [ ] **Step 1: Write resolver RED tests**
 
@@ -285,6 +287,8 @@ TLDW_TEST_MODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/pyt
 
 Load one active graph, validate its stored manifest, and build the finite ordered candidate chain: requested mapping, its validated manifest fallbacks, then `idle` and its validated fallbacks without duplicates. Read one candidate animation at a time. If any referenced frame fails read/decode/digest validation, reject that whole animation and continue to the next candidate; never return a partial animation. Use portrait/unavailable with a fixed reason only after every candidate is exhausted. For reduced motion choose `preview_frame`, then a frame naming the manifest preview asset, then frame zero, and set `animate=False`.
 
+Add one package-private repository lookup that resolves an asset storage key only under the exact active nine-field graph identity and exact immutable asset record. A convenience runtime entry point may use that lookup plus the asset boundary so persisted graphs are resolvable without exposing a path in any public result or duplicating repository SQL. Memoize each immutable asset/frame load for one resolution, bound aggregate graph metadata and decoded work, snapshot scalar result identities, carry the selected embedded-frame index to renderers, validate supplied portrait bytes, and distinguish stable asset misses from unexpected runtime-boundary failures.
+
 - [ ] **Step 4: Run contract/assets/repository/runtime tests and verify GREEN**
 
 ```bash
@@ -294,7 +298,7 @@ TLDW_TEST_MODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/pyt
 - [ ] **Step 5: Commit the resolver slice**
 
 ```bash
-git add tldw_chatbook/Persona_Visual/runtime.py Tests/Persona_Visual/test_persona_visual_runtime.py
+git add tldw_chatbook/Persona_Visual/runtime.py Tests/Persona_Visual/test_persona_visual_runtime.py tldw_chatbook/Persona_Visual/repository.py Tests/Persona_Visual/test_persona_visual_repository.py
 git commit -m "feat: resolve Persona Visual runtime states"
 ```
 
