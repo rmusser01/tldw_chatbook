@@ -31,8 +31,10 @@ Chatbook's system prompt, workspace authorization, path confinement,
 permission review, risk policy, and provider safety remain authoritative.
 Automatically loaded instruction bodies are never persisted to conversations,
 agent runs, steps, transcript markers, compaction summaries, exchange captures,
-or logs. Explicit file reads and model-authored quotations retain their normal
-persistence semantics; automatic loading is not a data-loss-prevention system.
+or logs. Here, exchange capture means durable historical capture; the explicit,
+nonpersistent Next Send preview may display the exact rider. Explicit file
+reads and model-authored quotations retain their normal persistence semantics;
+automatic loading is not a data-loss-prevention system.
 
 ## Context
 
