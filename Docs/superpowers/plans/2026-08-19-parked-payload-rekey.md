@@ -21,6 +21,7 @@
 - **Locate code by SYMBOL, never by line number.** This file changes fast; every `:NNNN` anchor in an earlier draft of this plan was stale within a day. Each step below names the enclosing method and quotes the code block to replace. Use `grep -n` on the quoted text.
 - This work is **task-15661**, already filed. It is cited in `remount_pending_approval_for_active_session`'s docstring and in the test that pins the defect. Do not open a new backlog task.
 - Branch from `origin/dev`. `origin/main` is over 10,000 commits behind and is not the trunk.
+- **Grep the WHOLE REPO for each map you re-key, not just the controller.** These maps are private but not local: a consumer outside `console_chat_controller.py` read `_parked_approval_payloads` by session key (`ChatScreen._current_park_round_ids`), and a second in-file caller of a deleted guard would have raised `AttributeError` on every cancellation. Before you finish a bridge, run `grep -rn "_parked_<bridge>_payloads" --include=*.py .` and account for every hit, production and test.
 - **Never read `tldw_chatbook/Chat/console_chat_controller.py` whole.** It is 12,482 lines / 608KB, and a single full read is large enough to kill an agent — it already killed one attempt at Task 2. Read it only in bounded windows (~120 lines) with explicit offset/limit, and locate sites with `grep -n` on the quoted code rather than by browsing.
 
 ---
@@ -600,7 +601,12 @@ Expected: your new tests PASS and every pre-existing TASK-910 test PASSES, **exc
 - `test_skill_install_concurrent_confirms.py::test_bare_shutdown_flag_alone_denies_a_real_session_round_within_one_poll_interval`
 - `test_skill_install_concurrent_confirms.py::test_shutdown_flag_alone_denies_both_unregistered_sessions_rounds_and_cleans_accounting`
 
-The baseline is exactly `2 failed, 26 passed` for `test_console_headless_approval.py` plus `test_skill_install_concurrent_confirms.py` together. A THIRD failure in that pair is a real regression. Do not "fix" the two known ones; if your change makes them pass, say so in your report rather than assuming it is unrelated luck.
+The baseline across the suites this plan touches is **4 known pre-existing failures**, all verified at the base commit in a detached worktree before any PR0 code change. The other two are in `Tests/UI/test_console_parallel_runs.py`:
+
+- `test_navigating_away_with_busy_fleet_confirms_and_records_teardown`
+- `test_navigation_guard_survives_stay_then_renavigate_then_leave_by_coordinates`
+
+Any failure OUTSIDE these four is a real regression. Do not "fix" the two known ones; if your change makes them pass, say so in your report rather than assuming it is unrelated luck.
 
 - [ ] **Step 5: Commit**
 
