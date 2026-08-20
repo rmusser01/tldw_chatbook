@@ -812,6 +812,24 @@ class _LibraryEvidenceGates:
                 gate.release.set()
 
 
+class _FailOnceOnboardingCreateNotesService(StaticLibraryNotesScopeService):
+    """Production-shaped Notes create seam with independently gated evidence."""
+
+    def __init__(self, evidence_call):
+        super().__init__([])
+        self._evidence_call = evidence_call
+        self._fail_next_create = True
+
+    async def get_library_user_content_evidence(self, **kwargs):
+        return await self._evidence_call(**kwargs)
+
+    async def save_note(self, **kwargs):
+        if kwargs.get("note_id") is None and self._fail_next_create:
+            self._fail_next_create = False
+            raise RuntimeError("first create unavailable")
+        return await super().save_note(**kwargs)
+
+
 def _new_library_onboarding_app(gates: _LibraryEvidenceGates):
     app = _build_test_app()
     app.app_config["_first_run"] = True
@@ -960,10 +978,19 @@ async def test_library_onboarding_fresh_usable_content_graduates_and_persists(
     monkeypatch,
 ) -> None:
     saved = []
+    first_write_entered = threading.Event()
+    first_write_release = threading.Event()
+
+    def save_lifecycle(*args):
+        saved.append(args)
+        if len(saved) == 1:
+            first_write_entered.set()
+            first_write_release.wait(_GATED_RELEASE_TIMEOUT_SECONDS)
+
     monkeypatch.setattr(
         library_screen_module,
         "save_setting_to_cli_config",
-        lambda *args: saved.append(args),
+        save_lifecycle,
     )
     gates = _LibraryEvidenceGates(
         outcomes={"notes": [LibraryContentEvidence.HAS_USER_CONTENT]}
@@ -975,6 +1002,11 @@ async def test_library_onboarding_fresh_usable_content_graduates_and_persists(
         async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
             screen = host.screen_stack[-1]
             await _wait_for_evidence_round(pilot, gates)
+            await _wait_for_condition(
+                pilot,
+                first_write_entered.is_set,
+                message="initial lifecycle write never reached its gate",
+            )
             screen._set_library_lifecycle(LibraryLifecycle.EXPANDED)
             gates.release_round(0, "notes")
             await _wait_for_condition(
@@ -982,22 +1014,130 @@ async def test_library_onboarding_fresh_usable_content_graduates_and_persists(
                 lambda: screen._library_lifecycle is LibraryLifecycle.GRADUATED,
                 message="fresh positive evidence did not graduate",
             )
+            assert [args[-1] for args in saved] == ["unknown"]
+            first_write_release.set()
             await _wait_for_condition(
                 pilot,
                 lambda: (
-                    saved
-                    and saved[-1]
-                    == (
-                        "library.rail_state",
-                        "lifecycle",
-                        "graduated",
-                    )
+                    len(saved) == 2
+                    and screen._library_lifecycle_persist_worker is not None
+                    and screen._library_lifecycle_persist_worker.is_finished
                 ),
                 message="coalesced lifecycle writer did not store graduated last",
             )
+            assert [args[-1] for args in saved] == ["unknown", "graduated"]
             assert app.app_config["library"]["rail_state"]["lifecycle"] == "graduated"
             assert screen._library_onboarding_status is LibraryEvidenceStatus.SETTLED
             assert screen._library_onboarding_all_empty is False
+    finally:
+        first_write_release.set()
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+async def test_library_onboarding_failed_persistence_retries_same_lifecycle(
+    monkeypatch,
+) -> None:
+    attempts = []
+
+    def fail_once(*args):
+        attempts.append(args)
+        if len(attempts) == 1:
+            raise OSError("read only once")
+
+    monkeypatch.setattr(
+        library_screen_module,
+        "save_setting_to_cli_config",
+        fail_once,
+    )
+    gates = _LibraryEvidenceGates()
+    app = _new_library_onboarding_app(gates)
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = host.screen_stack[-1]
+            await _wait_for_evidence_round(pilot, gates)
+            await _wait_for_condition(
+                pilot,
+                lambda: bool(screen._library_onboarding_persistence_warning),
+                message="first lifecycle persistence failure was not visible",
+            )
+
+            screen._set_library_lifecycle(LibraryLifecycle.UNKNOWN)
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    len(attempts) == 2
+                    and not screen._library_onboarding_persistence_warning
+                ),
+                message="same-lifecycle persistence retry did not succeed",
+            )
+            assert [args[-1] for args in attempts] == ["unknown", "unknown"]
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+async def test_library_onboarding_note_create_refreshes_evidence_once_after_commit(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        library_screen_module,
+        "save_setting_to_cli_config",
+        lambda *_args: None,
+    )
+    gates = _LibraryEvidenceGates(
+        rounds=2,
+        outcomes={
+            "notes": [
+                LibraryContentEvidence.EMPTY,
+                LibraryContentEvidence.HAS_USER_CONTENT,
+            ]
+        },
+    )
+    app = _new_library_onboarding_app(gates)
+    app.notes_scope_service = _FailOnceOnboardingCreateNotesService(
+        gates._async_call("notes")
+    )
+    app.notes_service = StaticLibraryNotesKeywordsService({})
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = host.screen_stack[-1]
+            await _wait_for_evidence_round(pilot, gates, 0)
+            gates.release_round(0)
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_lifecycle is LibraryLifecycle.STARTER,
+                message="initial empty evidence did not settle Starter",
+            )
+            settled_generation = screen._library_onboarding_generation
+
+            failed = await screen._create_library_note(
+                title="Retryable note",
+                content="durable body",
+            )
+            assert failed.kind == "failed"
+            assert screen._library_onboarding_generation == settled_generation
+            assert set(gates.calls.values()) == {1}
+
+            created = await screen._create_library_note(
+                title="Retryable note",
+                content="durable body",
+            )
+            assert created.kind == "opened"
+            await _wait_for_evidence_round(pilot, gates, 1)
+            assert screen._library_onboarding_generation == settled_generation + 1
+            assert set(gates.calls.values()) == {2}
+
+            gates.release_round(1, "notes")
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_lifecycle is LibraryLifecycle.GRADUATED,
+                message="created Note evidence did not graduate Library",
+            )
     finally:
         gates.release_all()
 

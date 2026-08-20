@@ -2813,6 +2813,11 @@ class LibraryScreen(BaseAppScreen):
             lifecycle_raw,
             is_new_profile=self._library_new_profile_admission,
         )
+        self._library_lifecycle_last_persisted = (
+            self._library_lifecycle
+            if lifecycle_stored and lifecycle_raw == self._library_lifecycle.value
+            else None
+        )
         self._library_onboarding_generation = 0
         self._library_onboarding_all_empty = False
         self._library_onboarding_status = LibraryEvidenceStatus.LOADING
@@ -15241,7 +15246,10 @@ class LibraryScreen(BaseAppScreen):
 
     def _set_library_lifecycle(self, lifecycle: LibraryLifecycle) -> None:
         """Accept and queue persistence for one lifecycle transition."""
-        if lifecycle is self._library_lifecycle:
+        if (
+            lifecycle is self._library_lifecycle
+            and lifecycle is self._library_lifecycle_last_persisted
+        ):
             return
         self._library_lifecycle = lifecycle
         self._queue_library_lifecycle_persistence(lifecycle)
@@ -15276,6 +15284,7 @@ class LibraryScreen(BaseAppScreen):
             except Exception:
                 self._library_onboarding_persistence_warning = "Library view is updated for this session, but the choice may not be remembered."
             else:
+                self._library_lifecycle_last_persisted = lifecycle
                 self._library_onboarding_persistence_warning = ""
 
     def _library_rail_preferences(self):
@@ -28855,6 +28864,7 @@ class LibraryScreen(BaseAppScreen):
                 "last_modified": datetime.now(timezone.utc).isoformat(),
             }
         )
+        self._refresh_local_source_snapshot()
         route_is_current = (
             self._library_selected_row_id == origin_row
             and self._library_notes_view == origin_view
