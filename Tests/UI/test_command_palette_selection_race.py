@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Callable
 from importlib.util import find_spec
+from unittest.mock import MagicMock
 
 import pytest
 from textual.app import App, ComposeResult
@@ -11,6 +12,7 @@ from textual.pilot import Pilot
 from textual.widgets import Static
 from textual.widgets.option_list import Option
 
+from tldw_chatbook.app import TldwCli
 from tldw_chatbook.UI.stable_command_palette import StableCommandPalette
 
 
@@ -96,6 +98,40 @@ class PaletteHarness(App[None]):
 
 def test_stable_palette_api_exists() -> None:
     assert find_spec("tldw_chatbook.UI.stable_command_palette") is not None
+
+
+def test_tldw_cli_constructs_the_stable_palette(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = MagicMock()
+    app.use_command_palette = True
+    monkeypatch.setattr(StableCommandPalette, "is_open", lambda _app: False)
+
+    assert "action_command_palette" in TldwCli.__dict__
+    TldwCli.action_command_palette(app)
+
+    palette = app.push_screen.call_args.args[0]
+    assert type(palette) is StableCommandPalette
+    assert palette.id == "--command-palette"
+
+
+@pytest.mark.parametrize("enabled, already_open", [(False, False), (True, True)])
+def test_tldw_cli_does_not_open_a_duplicate_or_disabled_palette(
+    monkeypatch: pytest.MonkeyPatch,
+    enabled: bool,
+    already_open: bool,
+) -> None:
+    app = MagicMock()
+    app.use_command_palette = enabled
+    monkeypatch.setattr(
+        StableCommandPalette,
+        "is_open",
+        lambda _app: already_open,
+    )
+
+    TldwCli.action_command_palette(app)
+
+    app.push_screen.assert_not_called()
 
 
 @pytest.mark.asyncio

@@ -462,6 +462,7 @@ from .UI.Navigation.screen_registry import (
 from .UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 from .UI.Workbench.help import WorkbenchHelpPanel, WorkbenchHelpState
 from .UI.Screens.study_scope_models import StudyScopeContext
+from .UI.stable_command_palette import StableCommandPalette
 from .Prompt_Management.prompt_variables import PromptVariableApplication
 
 from .UI.Tools_Settings_Window import ToolsSettingsWindow  # noqa: E402
@@ -5182,6 +5183,11 @@ class TldwCli(
     """A Textual app for interacting with LLMs."""
 
     _runtime_policy_projection_snapshot: tuple[str, str | None] = ("local", None)
+
+    def action_command_palette(self) -> None:
+        """Open the app's stable Textual command palette."""
+        if self.use_command_palette and not StableCommandPalette.is_open(self):
+            self.push_screen(StableCommandPalette(id="--command-palette"))
 
     @property
     def current_runtime_backend(self) -> str:

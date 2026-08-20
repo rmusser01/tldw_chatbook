@@ -446,7 +446,7 @@ git commit -m "fix(ui): stabilize command palette keyboard selection"
 - Modify: `tldw_chatbook/app.py:5173-8300`
 - Modify: `Tests/UI/test_command_palette_selection_race.py`
 
-- [ ] **Step 1: Add failing construction-contract tests**
+- [x] **Step 1: Add failing construction-contract tests**
 
 Use a minimal fake app and patch the inherited open-state check:
 
@@ -477,7 +477,7 @@ def test_tldw_cli_does_not_open_a_duplicate_or_disabled_palette(
     app.push_screen.assert_not_called()
 ```
 
-- [ ] **Step 2: Run the construction tests and verify RED**
+- [x] **Step 2: Run the construction tests and verify RED**
 
 ```bash
 ../../.venv/bin/python -m pytest -q \
@@ -487,7 +487,7 @@ def test_tldw_cli_does_not_open_a_duplicate_or_disabled_palette(
 
 Expected: FAIL because `TldwCli` inherits Textual's stock action and does not define the stable construction contract.
 
-- [ ] **Step 3: Add the narrow TldwCli override**
+- [x] **Step 3: Add the narrow TldwCli override**
 
 Import the compatibility class with the other app UI dependencies:
 
@@ -504,7 +504,7 @@ def action_command_palette(self) -> None:
         self.push_screen(StableCommandPalette(id="--command-palette"))
 ```
 
-- [ ] **Step 4: Run construction and mounted behavior tests**
+- [x] **Step 4: Run construction and mounted behavior tests**
 
 ```bash
 ../../.venv/bin/python -m pytest -q Tests/UI/test_command_palette_selection_race.py
@@ -512,7 +512,7 @@ def action_command_palette(self) -> None:
 
 Expected: PASS.
 
-- [ ] **Step 5: Run adjacent palette/provider regressions**
+- [x] **Step 5: Run adjacent palette/provider regressions**
 
 ```bash
 ../../.venv/bin/python -m pytest -q \
@@ -548,7 +548,7 @@ git worktree remove /private/tmp/tldw-task397-origin-dev
 
 Do not broaden to unrelated test directories.
 
-- [ ] **Step 6: Run focused static checks**
+- [x] **Step 6: Run focused static checks**
 
 ```bash
 ../../.venv/bin/python -m ruff check \
@@ -572,7 +572,7 @@ diagnostics, run the exact Ruff command against `app.py` in the disposable
 Do not include the new module/test in the baseline command and do not reformat
 unrelated `app.py` lines.
 
-- [ ] **Step 7: Commit application integration**
+- [x] **Step 7: Commit application integration**
 
 ```bash
 git add tldw_chatbook/app.py Tests/UI/test_command_palette_selection_race.py
