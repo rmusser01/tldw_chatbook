@@ -1636,7 +1636,25 @@ def hunk_excerpt(hunk: DiffHunk, cap: int = 40, byte_cap: int = _EXCERPT_BYTE_CA
 
 
 def _diff_feedback_note_entry(note: Mapping[str, Any]) -> str:
-    """Render one note's block entry (spec §4), sans the shared heading.
+    """Render one note's block entry (spec §5), sans the shared heading.
+
+    Kind-aware (TASK-18060 Task 8, spec §5): ``note["anchor_kind"]`` picks
+    the shape. Every existing caller's dict predates this column and
+    lacks the key entirely, so a missing/falsy value defaults to
+    ``"hunk"`` -- the same "every existing row reads as hunk truthfully"
+    contract the DB migration itself makes (spec §4).
+
+    - ``"file"``: ``### <path> — whole file   [run <short-id>]`` + the
+      ``> note`` quote -- NO fence, NO ``@@`` (a file row's
+      ``hunk_header``/``hunk_excerpt`` are always the ``''`` sentinels
+      and are never rendered).
+    - ``"diff_line"``: the standard hunk heading, plus
+      ``> on line: <diff_line_text>`` ABOVE the ``> note`` quote, plus
+      the fenced excerpt exactly as a hunk note (the hunk fields are
+      ALSO populated for a line note -- spec §4).
+    - ``"hunk"`` (default): byte-unchanged from before this method
+      learned kinds -- this is the byte-parity contract every pre-Task-8
+      exact-format test pins.
 
     The excerpt is fenced with FOUR backticks, not the usual three
     (final-review fix wave): the excerpt is a verbatim hunk body, and a
@@ -1649,6 +1667,16 @@ def _diff_feedback_note_entry(note: Mapping[str, Any]) -> str:
     used for exactly this nesting problem.
     """
     short_id = str(note["run_id"])[:8]
+    kind = str(note.get("anchor_kind") or "hunk")
+    if kind == "file":
+        return f"### {note['path']} — whole file   [run {short_id}]\n" f"> {note['note']}"
+    if kind == "diff_line":
+        return (
+            f"### {note['path']} — {note['hunk_header']}   [run {short_id}]\n"
+            f"> on line: {note['diff_line_text']}\n"
+            f"> {note['note']}\n"
+            f"````\n{note['hunk_excerpt']}\n````"
+        )
     return (
         f"### {note['path']} — {note['hunk_header']}   [run {short_id}]\n"
         f"> {note['note']}\n"
@@ -1810,18 +1838,31 @@ def format_diff_feedback_disclosure(notes: Sequence[dict]) -> str:
     """Render the disclosure text for delivered diff-feedback notes.
 
     Shared verbatim by live emission at run completion and by resume
-    re-derivation from delivered ``change_notes`` rows (spec §4) -- both
-    callers must render identical text for the same notes.
+    re-derivation from delivered ``change_notes`` rows (spec §4/§5) --
+    both callers must render identical text for the same notes, and that
+    byte-parity contract now holds PER KIND (TASK-18060 Task 8): each
+    caller renders the same rows through this one function, so a mixed
+    batch resumes byte-identical to how it was disclosed live.
 
     Args:
         notes: ``change_notes`` row dicts to disclose, one line each.
 
     Returns:
-        One "📝 Diff feedback attached — ``<path>`` ``<hunk_header>``:
-        ``"<note>"``" line per note, newline-joined. Empty ``notes``
-        returns ``""``.
+        One "📝 Diff feedback attached — ``<location>``: ``"<note>"``"
+        line per note, newline-joined, where ``<location>`` is
+        ``<path> <hunk_header>`` for a ``"hunk"`` note (default, byte-
+        unchanged), ``<path> (whole file)`` for a ``"file"`` note, or
+        ``<path> <hunk_header> line`` for a ``"diff_line"`` note. Empty
+        ``notes`` returns ``""``.
     """
-    return "\n".join(
-        f'📝 Diff feedback attached — {note["path"]} {note["hunk_header"]}: "{note["note"]}"'
-        for note in notes
-    )
+    lines = []
+    for note in notes:
+        kind = str(note.get("anchor_kind") or "hunk")
+        if kind == "file":
+            location = f'{note["path"]} (whole file)'
+        elif kind == "diff_line":
+            location = f'{note["path"]} {note["hunk_header"]} line'
+        else:
+            location = f'{note["path"]} {note["hunk_header"]}'
+        lines.append(f'📝 Diff feedback attached — {location}: "{note["note"]}"')
+    return "\n".join(lines)

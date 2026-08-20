@@ -124,6 +124,49 @@ def _add_note(db, run_id, *, path="a.py", header="@@ -1,1 +1,1 @@", excerpt="+x"
     )
 
 
+def _add_file_note(db, run_id, *, path="c.py", note="n"):
+    """A `file`-kind note (TASK-18060 Task 8, spec §4/§5): `hunk_index=-1`,
+    `hunk_header=''`, `hunk_excerpt=''` sentinels."""
+    return db.add_change_note(
+        run_id=run_id,
+        root="/workspace",
+        path=path,
+        hunk_index=-1,
+        hunk_header="",
+        hunk_excerpt="",
+        note=note,
+        anchor_kind="file",
+    )
+
+
+def _add_diff_line_note(
+    db,
+    run_id,
+    *,
+    path="b.py",
+    header="@@ -5,3 +5,4 @@",
+    excerpt="+line5\n+line6",
+    note="n",
+    diff_line_index=6,
+    diff_line_text="+line6",
+):
+    """A `diff_line`-kind note (TASK-18060 Task 8, spec §4/§5): the hunk
+    fields are ALSO populated (the hunk the line falls in), plus the
+    line-specific fields."""
+    return db.add_change_note(
+        run_id=run_id,
+        root="/workspace",
+        path=path,
+        hunk_index=1,
+        hunk_header=header,
+        hunk_excerpt=excerpt,
+        note=note,
+        anchor_kind="diff_line",
+        diff_line_index=diff_line_index,
+        diff_line_text=diff_line_text,
+    )
+
+
 # -- (a) happy path: attach + stamp + disclosure -------------------------
 
 
@@ -757,3 +800,104 @@ def test_fallback_hunk_with_empty_header_renders_sanely_in_block_and_disclosure(
     assert "@@" not in disclosure
     assert disclosure.startswith("📝 Diff feedback attached — assets/logo.png ")
     assert '"please regenerate this at 2x"' in disclosure
+
+
+# -- mixed-batch end-to-end (TASK-18060 Task 8, spec §5): one hunk + one
+# file + one diff_line note, through the real bridge harness -------------
+
+
+def test_mixed_kind_batch_attaches_one_block_stamps_and_discloses_all_three_kinds(
+    tmp_path,
+):
+    """A pending batch of one `hunk`, one `file`, and one `diff_line` note
+    -- `run_reply` must attach exactly ONE block containing all three,
+    each correctly rendered per its own kind, stamp all three by their
+    exact ids, and disclose with the kind-aware lines. This is the
+    mixed-batch proof the delivery MECHANICS (attach/stamp/cap/resume)
+    never needed to change -- only the two shared formatters learned
+    kinds."""
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    gateway = _ChunkGateway([["Done."]])
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway, db=db)
+
+    earlier_run = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    hunk_id = _add_note(
+        db,
+        earlier_run,
+        path="a.py",
+        header="@@ -1,2 +1,3 @@",
+        excerpt="+cache = {}",
+        note="hunk note",
+    )
+    file_id = _add_file_note(
+        db, earlier_run, path="c.py", note="please clean this whole file"
+    )
+    line_id = _add_diff_line_note(
+        db, earlier_run, path="b.py", note="fix this line"
+    )
+
+    original_user_message = {"role": "user", "content": "hi"}
+    agent_messages = [original_user_message]
+    captured: dict = {}
+
+    with patch.object(AgentService, "run_turn", _spy_run_turn(captured)):
+        run_id, outcome = bridge.run_reply(
+            **_run_kwargs(session, aid, agent_messages=agent_messages)
+        )
+
+    assert outcome.status == "done"
+
+    # -- one block, all three kinds correctly rendered ---------------------
+    sent = captured["messages_by_call"][-1]
+    block_text = sent[-1]["content"]
+    assert block_text.count("## Diff feedback from the user") == 1
+    assert "### a.py — @@ -1,2 +1,3 @@   [run " in block_text
+    assert "### c.py — whole file   [run " in block_text
+    assert "### b.py — @@ -5,3 +5,4 @@   [run " in block_text
+    assert "> on line: +line6" in block_text
+    assert "hunk note" in block_text
+    assert "please clean this whole file" in block_text
+    assert "fix this line" in block_text
+    # File-note entry carries no dangling `@@`/fence.
+    file_entry_start = block_text.index("### c.py — whole file")
+    file_entry_end = block_text.index(
+        "### b.py", file_entry_start
+    )  # next heading -- brittle to order but ids are inserted oldest-first
+    file_entry = block_text[file_entry_start:file_entry_end]
+    assert "@@" not in file_entry
+    assert "````" not in file_entry
+
+    # -- exact-id stamping ---------------------------------------------------
+    assert db.pending_notes_for_conversation("conv-1") == []
+    delivered = db.notes_for_run(earlier_run)
+    assert {n["id"] for n in delivered} == {hunk_id, file_id, line_id}
+    for delivered_note in delivered:
+        assert delivered_note["delivered_at"] is not None
+
+    # -- kind-aware disclosure -----------------------------------------------
+    tool_rows = [
+        m
+        for m in store.messages_for_session(session.id)
+        if m.role is ConsoleMessageRole.TOOL
+    ]
+    assert len(tool_rows) == 1
+    disclosure = tool_rows[0].content
+    assert disclosure == format_diff_feedback_disclosure(delivered)
+    assert "(whole file):" in disclosure
+    assert " line: " in disclosure
+    disclosure_lines = disclosure.splitlines()
+    assert len(disclosure_lines) == 3
+
+    # -- resume re-derives byte-identical to the live disclosure -------------
+    fresh_bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=None, provider_gateway=None
+    )
+    blocks = fresh_bridge.resume_marker_messages("conv-1")
+    resumed_disclosure_msgs = [
+        m
+        for _anchor, block in blocks
+        for m in block
+        if "Diff feedback attached" in m.content
+    ]
+    assert len(resumed_disclosure_msgs) == 1
+    assert resumed_disclosure_msgs[0].content == disclosure
