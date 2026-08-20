@@ -1932,7 +1932,6 @@ async def test_tldwcli_css_finish_slice_restores_terminal_import_focus(
                 lambda: (
                     view.query_one("#installed-models-import-gguf", Button).has_focus
                 ),
-                timeout_seconds=30.0,
             )
 
             assert "Imported and ready" in _rendered_static_text(view)
