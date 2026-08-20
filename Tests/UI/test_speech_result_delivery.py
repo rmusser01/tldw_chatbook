@@ -26,17 +26,25 @@ def test_both_playgrounds_can_receive_a_delivered_artifact(host):
 
 
 @pytest.mark.unit
-def test_delivery_comes_from_the_shared_mixin():
+def test_delivery_comes_from_the_shared_mixin(monkeypatch):
     """The pane's provenance hook still delegates delivery to the mixin.
 
     The pane now retains profile-test provenance before the shared mixin
     sanitizes the artifact, but playback/result delivery remains shared.
     """
-    import inspect
-
     assert SpeechPlaybackMixin in SpeechPlaygroundPane.__mro__
-    source = inspect.getsource(SpeechPlaygroundPane._generation_complete)
-    assert "super()._generation_complete(artifact)" in source
+    delivered: list[tuple[object, object]] = []
+
+    def receive(self, artifact):
+        delivered.append((self, artifact))
+
+    monkeypatch.setattr(SpeechPlaybackMixin, "_generation_complete", receive)
+    pane = object.__new__(SpeechPlaygroundPane)
+    artifact = object()
+
+    pane._generation_complete(artifact)
+
+    assert delivered == [(pane, artifact)]
 
 
 @pytest.mark.unit
