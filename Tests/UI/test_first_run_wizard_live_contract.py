@@ -2447,16 +2447,23 @@ async def test_speech_step_install_button_visible_at_120x40_without_scrolling(
             _select_radio(app.screen, "#setup-track-full")
             await pilot.pause(0.1)
             _press(app.screen, "#wizard-next")  # Welcome -> Provider, track=full
-            await pilot.pause(0.2)
+            container = app.screen.query_one(SetupWizardContainer)
+            await _wait_until(
+                pilot,
+                lambda: container.steps[container.current_step].config.id
+                == STEP_PROVIDER,
+            )
 
             for _ in range(5):
-                step = app.screen.query_one(SetupWizardContainer).steps[
-                    app.screen.query_one(SetupWizardContainer).current_step
-                ]
+                step = container.steps[container.current_step]
                 if step.config and step.config.id == "speech":
                     break
+                previous_step = container.current_step
                 _press(app.screen, "#wizard-next")
-                await pilot.pause(0.2)
+                await _wait_until(
+                    pilot,
+                    lambda: container.current_step != previous_step,
+                )
             else:
                 raise AssertionError("never reached the speech step")
 
