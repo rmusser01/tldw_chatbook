@@ -62,8 +62,10 @@ from Tests.UI.test_console_native_chat_flow import _configure_native_ready_conso
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.Widgets.Console import ConsoleTranscript
 from tldw_chatbook.Widgets.Console.console_rail_handle import ConsoleRailHandle
 
 # (id, expected_at_160x45, expected_at_235x52, expected_at_120x30) where
@@ -175,6 +177,60 @@ def _assert_workspace_state_is_contained(
     assert transcript_hit is transcript or transcript in transcript_hit.ancestors, (
         f"native transcript is not painted at {transcript_point}: "
         f"hit={transcript_hit!r}"
+    )
+
+
+def _transcript_anchor_state(transcript: ConsoleTranscript) -> tuple[bool, bool]:
+    """Return Textual's raw anchor flags for continuity assertions."""
+    return (
+        bool(transcript.is_anchored),
+        bool(getattr(transcript, "_anchor_released", False)),
+    )
+
+
+def _transcript_tail_is_anchored(transcript: ConsoleTranscript) -> bool:
+    """Return the transcript's semantic tail-follow state."""
+    return transcript._is_following_tail()
+
+
+async def _seed_resize_transcript(screen, pilot):
+    """Create a selected, detached real transcript at a stable reading offset."""
+    store = screen._ensure_console_chat_store()
+    selected_message_id = ""
+    for index in range(24):
+        message = store.append_message(
+            store.active_session_id,
+            role=(
+                ConsoleMessageRole.USER
+                if index % 2 == 0
+                else ConsoleMessageRole.ASSISTANT
+            ),
+            content="\n".join(
+                f"resize message {index} line {line}" for line in range(3)
+            ),
+        )
+        selected_message_id = message.id
+    await screen._sync_native_console_chat_ui()
+    transcript = screen.query_one("#console-native-transcript", ConsoleTranscript)
+    for _ in range(40):
+        if transcript.max_scroll_y > 0:
+            break
+        await pilot.pause(0.05)
+    assert transcript.max_scroll_y > 0
+
+    transcript.select_message(selected_message_id)
+    transcript.release_anchor()
+    transcript.scroll_to(y=2, animate=False)
+    await pilot.pause()
+    assert transcript.selected_message_id == selected_message_id
+    assert _transcript_tail_is_anchored(transcript) is False
+    assert transcript.scroll_y == 2
+    return (
+        transcript,
+        selected_message_id,
+        _transcript_tail_is_anchored(transcript),
+        _transcript_anchor_state(transcript),
+        transcript.scroll_y,
     )
 
 
@@ -470,4 +526,94 @@ async def test_exact_100_workspace_state_matrix_is_contained(
             expected_displayed=expected_displayed,
             default_context_only=stored_left_open and not stored_right_open,
         )
+        save_spy.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("start_width", "destination_width"),
+    [
+        pytest.param(101, 100, id="101-to-100"),
+        pytest.param(100, 101, id="100-to-101"),
+        pytest.param(99, 100, id="99-to-100"),
+        pytest.param(100, 99, id="100-to-99"),
+    ],
+)
+async def test_exact_100_live_resize_preserves_workspace_and_interaction_state(
+    monkeypatch,
+    start_width,
+    destination_width,
+) -> None:
+    """All adjacent exact-100 crossings preserve reading and focus continuity."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+
+    async with make_console_pilot(size=(start_width, 30), app=app) as pilot:
+        screen = pilot.app.screen
+        (
+            transcript,
+            selected_message_id,
+            tail_was_anchored,
+            anchor_state,
+            reading_y,
+        ) = await _seed_resize_transcript(screen, pilot)
+        initial_rail_state = screen._last_console_rail_state
+        assert initial_rail_state is not None
+        assert initial_rail_state.preferred_left_open is True
+        assert initial_rail_state.preferred_right_open is False
+
+        starts_open = start_width >= 100
+        initial_focus_selector = (
+            "#console-context-rail-collapse"
+            if starts_open
+            else "#console-context-rail-open"
+        )
+        initial_focus = screen.query_one(initial_focus_selector, Button)
+        initial_focus.focus()
+        await pilot.pause()
+        assert pilot.app.focused is initial_focus
+
+        save_spy = Mock()
+        monkeypatch.setattr(screen, "_save_console_rail_preferences", save_spy)
+        await pilot.resize_terminal(destination_width, 30)
+        await pilot.pause(0.2)
+        await pilot.pause()
+
+        destination_open = destination_width >= 100
+        expected_displayed = {
+            "console-left-rail" if destination_open else "console-context-rail-handle",
+            "console-main-column",
+            "console-inspector-rail-handle",
+        }
+        _assert_workspace_state_is_contained(
+            screen,
+            expected_displayed=expected_displayed,
+            default_context_only=destination_open,
+        )
+
+        rail_state = screen._last_console_rail_state
+        assert rail_state is not None
+        assert rail_state.preferred_left_open is initial_rail_state.preferred_left_open
+        assert (
+            rail_state.preferred_right_open is initial_rail_state.preferred_right_open
+        )
+        assert rail_state.left_open is destination_open
+        assert rail_state.right_open is False
+        assert rail_state.left_forced_collapsed is (destination_width < 100)
+        assert rail_state.left_compact_override is (destination_width == 100)
+        assert rail_state.compact_override is (destination_width == 100)
+
+        expected_focus_selector = (
+            "#console-context-rail-collapse"
+            if destination_open
+            else "#console-context-rail-open"
+        )
+        expected_focus = screen.query_one(expected_focus_selector, Button)
+        assert expected_focus.display is True
+        assert pilot.app.focused is expected_focus
+
+        assert transcript.selected_message_id == selected_message_id
+        assert _transcript_tail_is_anchored(transcript) is tail_was_anchored
+        assert _transcript_anchor_state(transcript) == anchor_state
+        assert transcript.scroll_y == min(reading_y, transcript.max_scroll_y)
         save_spy.assert_not_called()
