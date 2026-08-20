@@ -121,13 +121,12 @@ async def make_console_pilot(*, size, app=None, hide_setup_overlay=True):
 
 
 def _assert_workspace_state_is_contained(
-    pilot,
+    screen,
     *,
     expected_displayed: set[str],
     default_context_only: bool,
 ) -> None:
     """Assert displayed workspace panes have real, contained compositor regions."""
-    screen = pilot.app.screen
     grid = screen.query_one("#console-workspace-grid")
     children = tuple(grid.children)
 
@@ -399,7 +398,7 @@ async def test_exact_100_workspace_state_matrix_is_contained(
     effective_right_open,
     expected_displayed,
 ) -> None:
-    """Every stored rail preference cold-starts into usable 100x30 geometry."""
+    """Compose-time and settled rail states both have usable 100x30 geometry."""
     app = _build_test_app()
     _configure_native_ready_console(app)
     stored_preferences = {
@@ -407,12 +406,46 @@ async def test_exact_100_workspace_state_matrix_is_contained(
         "right_open": stored_right_open,
     }
     save_spy = Mock()
+    pre_sync_observations = []
+    queued_first_sync_states = []
+    original_sync = ChatScreen._sync_console_rail_visibility_if_changed
+
+    def sync_after_first_paint_assertions(screen, rail_state):
+        """Inspect the first compositor geometry, then delegate normal sync."""
+        if pre_sync_observations:
+            return original_sync(screen, rail_state)
+
+        queued_first_sync_states.append(rail_state)
+        if len(queued_first_sync_states) == 1:
+
+            def assert_first_paint_then_delegate_sync():
+                """Run after layout but before any queued visibility sync."""
+                setup_modal = screen.query_one("#console-setup-modal")
+                assert setup_modal.display is False
+                _assert_workspace_state_is_contained(
+                    screen,
+                    expected_displayed=expected_displayed,
+                    default_context_only=stored_left_open and not stored_right_open,
+                )
+                pre_sync_observations.append(True)
+                for queued_state in queued_first_sync_states:
+                    original_sync(screen, queued_state)
+                queued_first_sync_states.clear()
+
+            screen.call_after_refresh(assert_first_paint_then_delegate_sync)
+        return None
+
     monkeypatch.setattr(
         ChatScreen,
         "_stored_console_rail_preferences",
         lambda _self, _key, _fallback_key: stored_preferences,
     )
     monkeypatch.setattr(ChatScreen, "_save_console_rail_preferences", save_spy)
+    monkeypatch.setattr(
+        ChatScreen,
+        "_sync_console_rail_visibility_if_changed",
+        sync_after_first_paint_assertions,
+    )
 
     async with make_console_pilot(
         size=(100, 30),
@@ -420,8 +453,11 @@ async def test_exact_100_workspace_state_matrix_is_contained(
         hide_setup_overlay=False,
     ) as pilot:
         screen = pilot.app.screen
+        assert pre_sync_observations == [True]
         assert screen.query_one("#console-setup-modal").display is False
 
+        # `_last_console_rail_state` is a settled-state oracle only; compose-time
+        # geometry was asserted by the first-sync wrapper before delegation.
         rail_state = screen._last_console_rail_state
         assert rail_state is not None
         assert rail_state.preferred_left_open is stored_left_open
@@ -430,7 +466,7 @@ async def test_exact_100_workspace_state_matrix_is_contained(
         assert rail_state.right_open is effective_right_open
 
         _assert_workspace_state_is_contained(
-            pilot,
+            screen,
             expected_displayed=expected_displayed,
             default_context_only=stored_left_open and not stored_right_open,
         )
