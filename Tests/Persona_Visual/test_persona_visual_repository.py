@@ -1,0 +1,745 @@
+"""Real-SQLite tests for the immutable Persona Visual graph repository."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import sqlite3
+from dataclasses import asdict, fields, replace
+from pathlib import Path
+from typing import Any
+
+import pytest
+from loguru import logger
+
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Persona_Visual.repository import (
+    PersonaVisualGraph,
+    PersonaVisualIdentity,
+    PersonaVisualRepository,
+)
+
+
+def _manifest(asset_key: str = "idle", *, marker: str = "v1") -> dict[str, Any]:
+    return {
+        "renderer_type": "sprite_frames",
+        "manifest_version": 1,
+        "states": {
+            "idle": {"animation_id": "idle"},
+            "listening": {"animation_id": "idle"},
+            "thinking": {"animation_id": "idle"},
+            "speaking": {"animation_id": "idle"},
+            "error": {"animation_id": "idle"},
+        },
+        "animations": {
+            "idle": {
+                "frames": [{"asset_id": asset_key}],
+                "preview_asset_id": asset_key,
+            }
+        },
+        "state_catalog": {},
+        "fallbacks": {},
+        "authored_triggers": [],
+        "marker": marker,
+    }
+
+
+def _valid_manifest(asset_key: str = "idle", *, frame_rate: int = 1) -> dict[str, Any]:
+    manifest = _manifest(asset_key)
+    manifest.pop("marker")
+    manifest["animations"]["idle"]["frame_rate"] = frame_rate
+    return manifest
+
+
+def _asset(
+    asset_key: str = "idle",
+    *,
+    sha256: str = "b" * 64,
+    storage_relpath: str = "persona_visual/pack/v1/idle.png",
+) -> dict[str, Any]:
+    return {
+        "asset_key": asset_key,
+        "role": "sprite",
+        "storage_relpath": storage_relpath,
+        "mime_type": "image/png",
+        "bytes": 12,
+        "sha256": sha256,
+        "width": 4,
+        "height": 5,
+        "frame_count": 1,
+        "duration_ms": None,
+    }
+
+
+def _canonical_digest(value: object) -> str:
+    payload = json.dumps(
+        value,
+        allow_nan=False,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+@pytest.fixture
+def db(tmp_path: Path) -> CharactersRAGDB:
+    database = CharactersRAGDB(tmp_path / "persona-visual.db", client_id="repository")
+    yield database
+    database.close_connection()
+
+
+@pytest.fixture
+def repository(db: CharactersRAGDB) -> PersonaVisualRepository:
+    return PersonaVisualRepository(db)
+
+
+def _activate(
+    repository: PersonaVisualRepository,
+    *,
+    persona_id: str = "persona-local-1",
+    persona_revision: int = 7,
+) -> PersonaVisualGraph:
+    return repository.activate_new_pack(
+        persona_id=persona_id,
+        title="Operator states",
+        description="Local-only runtime art",
+        source_kind="manual",
+        source_context={"origin": "workbench"},
+        manifest=_valid_manifest(),
+        manifest_storage_relpath="persona_visual/pack/v1/manifest.json",
+        assets=[_asset()],
+        expected_persona_revision=persona_revision,
+        authority_guard=lambda: True,
+    )
+
+
+def test_activate_new_pack_returns_immutable_path_safe_graph(
+    repository: PersonaVisualRepository,
+    db: CharactersRAGDB,
+) -> None:
+    shared_counts_before = tuple(
+        db.get_connection()
+        .execute(
+            """
+            SELECT
+                (SELECT COUNT(*) FROM visual_identity_packs),
+                (SELECT COUNT(*) FROM visual_identity_pack_versions),
+                (SELECT COUNT(*) FROM visual_identity_assets),
+                (SELECT COUNT(*) FROM visual_identity_bindings)
+            """
+        )
+        .fetchone()
+    )
+
+    graph = _activate(repository)
+
+    assert graph == repository.get_active_persona_pack("persona-local-1")
+    assert graph.identity == PersonaVisualIdentity(
+        persona_id="persona-local-1",
+        persona_revision=7,
+        binding_id=graph.binding.id,
+        binding_version=1,
+        pack_id=graph.pack.id,
+        pack_revision=1,
+        pack_version_id=graph.version.id,
+        version_number=1,
+        manifest_sha256=_canonical_digest(_valid_manifest()),
+    )
+    assert tuple(field.name for field in fields(PersonaVisualIdentity)) == (
+        "persona_id",
+        "persona_revision",
+        "binding_id",
+        "binding_version",
+        "pack_id",
+        "pack_revision",
+        "pack_version_id",
+        "version_number",
+        "manifest_sha256",
+    )
+    assert not any("path" in field.name for field in fields(PersonaVisualIdentity))
+    assert not any(
+        "path" in field.name or "storage" in field.name
+        for record in (graph.pack, graph.version, graph.assets[0], graph.binding)
+        for field in fields(record)
+    )
+    assert not hasattr(graph.pack, "source_context")
+
+    shared_counts_after = tuple(
+        db.get_connection()
+        .execute(
+            """
+            SELECT
+                (SELECT COUNT(*) FROM visual_identity_packs),
+                (SELECT COUNT(*) FROM visual_identity_pack_versions),
+                (SELECT COUNT(*) FROM visual_identity_assets),
+                (SELECT COUNT(*) FROM visual_identity_bindings)
+            """
+        )
+        .fetchone()
+    )
+    assert shared_counts_after == shared_counts_before
+
+
+def test_publish_version_preserves_old_rows_and_advances_full_identity(
+    repository: PersonaVisualRepository,
+    db: CharactersRAGDB,
+) -> None:
+    first = _activate(repository)
+    old_version_row = tuple(
+        db.get_connection()
+        .execute(
+            "SELECT * FROM persona_visual_pack_versions WHERE id = ?",
+            (first.version.id,),
+        )
+        .fetchone()
+    )
+    old_asset_row = tuple(
+        db.get_connection()
+        .execute(
+            "SELECT * FROM persona_visual_assets WHERE id = ?",
+            (first.assets[0].id,),
+        )
+        .fetchone()
+    )
+    next_manifest = _valid_manifest(frame_rate=2)
+
+    second = repository.publish_version(
+        persona_id="persona-local-1",
+        manifest=next_manifest,
+        manifest_storage_relpath="persona_visual/pack/v2/manifest.json",
+        assets=[
+            _asset(
+                sha256="c" * 64,
+                storage_relpath="persona_visual/pack/v2/idle.png",
+            )
+        ],
+        expected_identity=first.identity,
+        expected_persona_revision=7,
+        authority_guard=lambda: True,
+    )
+
+    assert second.identity == PersonaVisualIdentity(
+        persona_id="persona-local-1",
+        persona_revision=7,
+        binding_id=first.identity.binding_id,
+        binding_version=2,
+        pack_id=first.identity.pack_id,
+        pack_revision=2,
+        pack_version_id=second.version.id,
+        version_number=2,
+        manifest_sha256=_canonical_digest(next_manifest),
+    )
+    assert (
+        tuple(
+            db.get_connection()
+            .execute(
+                "SELECT * FROM persona_visual_pack_versions WHERE id = ?",
+                (first.version.id,),
+            )
+            .fetchone()
+        )
+        == old_version_row
+    )
+    assert (
+        tuple(
+            db.get_connection()
+            .execute(
+                "SELECT * FROM persona_visual_assets WHERE id = ?",
+                (first.assets[0].id,),
+            )
+            .fetchone()
+        )
+        == old_asset_row
+    )
+    assert (
+        db.get_connection()
+        .execute(
+            "SELECT COUNT(*) FROM persona_visual_pack_versions WHERE pack_id = ?",
+            (first.pack.id,),
+        )
+        .fetchone()[0]
+        == 2
+    )
+
+
+def test_only_one_active_binding_and_archived_or_deleted_bindings_are_ignored(
+    repository: PersonaVisualRepository,
+    db: CharactersRAGDB,
+) -> None:
+    active = _activate(repository)
+    with pytest.raises(ValueError, match="^persona_visual_binding_changed$"):
+        _activate(repository)
+
+    repository.archive_binding(
+        persona_id="persona-local-1", expected_identity=active.identity
+    )
+    assert repository.get_active_persona_pack("persona-local-1") is None
+    replacement = _activate(repository, persona_revision=8)
+    assert replacement.identity.persona_revision == 8
+
+    db.get_connection().execute(
+        "UPDATE persona_visual_bindings SET status = 'deleted' WHERE id = ?",
+        (replacement.binding.id,),
+    )
+    db.get_connection().commit()
+    assert repository.get_active_persona_pack("persona-local-1") is None
+
+
+@pytest.mark.parametrize(
+    "field",
+    (
+        "persona_id",
+        "persona_revision",
+        "binding_id",
+        "binding_version",
+        "pack_id",
+        "pack_revision",
+        "pack_version_id",
+        "version_number",
+        "manifest_sha256",
+    ),
+)
+def test_publish_rejects_every_stale_identity_component(
+    repository: PersonaVisualRepository,
+    field: str,
+) -> None:
+    active = _activate(repository)
+    value = getattr(active.identity, field)
+    stale_value: object = f"{value}-stale" if isinstance(value, str) else value + 1
+    stale = replace(active.identity, **{field: stale_value})
+
+    with pytest.raises(ValueError, match="^persona_visual_identity_changed$"):
+        repository.publish_version(
+            persona_id="persona-local-1",
+            manifest=_valid_manifest(frame_rate=2),
+            manifest_storage_relpath="persona_visual/pack/v2/manifest.json",
+            assets=[_asset(storage_relpath="persona_visual/pack/v2/idle.png")],
+            expected_identity=stale,
+            expected_persona_revision=7,
+            authority_guard=lambda: True,
+        )
+
+
+def test_publish_rejects_stale_expected_persona_revision(
+    repository: PersonaVisualRepository,
+) -> None:
+    active = _activate(repository)
+    with pytest.raises(ValueError, match="^persona_visual_persona_revision_changed$"):
+        repository.publish_version(
+            persona_id="persona-local-1",
+            manifest=_valid_manifest(frame_rate=2),
+            manifest_storage_relpath="persona_visual/pack/v2/manifest.json",
+            assets=[_asset(storage_relpath="persona_visual/pack/v2/idle.png")],
+            expected_identity=active.identity,
+            expected_persona_revision=8,
+            authority_guard=lambda: True,
+        )
+
+
+def test_source_pack_and_version_must_still_be_active_and_same_pack(
+    repository: PersonaVisualRepository,
+    db: CharactersRAGDB,
+) -> None:
+    active = _activate(repository)
+    connection = db.get_connection()
+    other_pack = int(
+        connection.execute(
+            "INSERT INTO persona_visual_packs(title) VALUES ('Other')"
+        ).lastrowid
+    )
+    other_version = int(
+        connection.execute(
+            """
+            INSERT INTO persona_visual_pack_versions(
+                pack_id, version_number, renderer_type, manifest_version,
+                manifest_json, manifest_sha256, storage_relpath
+            ) VALUES (?, 1, 'sprite_frames', 1, ?, ?, 'other/manifest.json')
+            """,
+            (other_pack, json.dumps(_valid_manifest()), "d" * 64),
+        ).lastrowid
+    )
+    connection.commit()
+    connection.execute("PRAGMA foreign_keys = OFF")
+    connection.execute(
+        "UPDATE persona_visual_packs SET active_version_id = ? WHERE id = ?",
+        (other_version, active.pack.id),
+    )
+    connection.commit()
+    connection.execute("PRAGMA foreign_keys = ON")
+
+    with pytest.raises(ValueError, match="^persona_visual_pack_relationship_invalid$"):
+        repository.get_active_persona_pack("persona-local-1")
+
+
+def test_guard_runs_under_write_reservation_immediately_before_activation(
+    repository: PersonaVisualRepository,
+    db: CharactersRAGDB,
+) -> None:
+    active = _activate(repository)
+    observed: dict[str, object] = {}
+
+    def guard() -> bool:
+        connection = db.get_connection()
+        observed["in_transaction"] = connection.in_transaction
+        observed["version_rows"] = connection.execute(
+            "SELECT COUNT(*) FROM persona_visual_pack_versions WHERE pack_id = ?",
+            (active.pack.id,),
+        ).fetchone()[0]
+        observed["active_version"] = connection.execute(
+            "SELECT active_version_id FROM persona_visual_packs WHERE id = ?",
+            (active.pack.id,),
+        ).fetchone()[0]
+        with sqlite3.connect(db.db_path_str, timeout=0.01) as contender:
+            with pytest.raises(sqlite3.OperationalError, match="locked"):
+                contender.execute("BEGIN IMMEDIATE")
+        return True
+
+    published = repository.publish_version(
+        persona_id="persona-local-1",
+        manifest=_valid_manifest(frame_rate=2),
+        manifest_storage_relpath="persona_visual/pack/v2/manifest.json",
+        assets=[_asset(storage_relpath="persona_visual/pack/v2/idle.png")],
+        expected_identity=active.identity,
+        expected_persona_revision=7,
+        authority_guard=guard,
+    )
+
+    assert observed == {
+        "in_transaction": True,
+        "version_rows": 2,
+        "active_version": active.version.id,
+    }
+    assert published.version.version_number == 2
+
+
+@pytest.mark.parametrize("guard_behavior", ["false", "raise"])
+def test_guard_failure_is_fixed_and_rolls_back_inserted_graph_rows(
+    repository: PersonaVisualRepository,
+    db: CharactersRAGDB,
+    guard_behavior: str,
+) -> None:
+    active = _activate(repository)
+    counts_before = tuple(
+        db.get_connection()
+        .execute(
+            """
+            SELECT
+                (SELECT COUNT(*) FROM persona_visual_pack_versions),
+                (SELECT COUNT(*) FROM persona_visual_assets)
+            """
+        )
+        .fetchone()
+    )
+
+    def guard() -> bool:
+        if guard_behavior == "raise":
+            raise RuntimeError("private path and exception detail")
+        return False
+
+    with pytest.raises(ValueError, match="^persona_visual_authority_changed$"):
+        repository.publish_version(
+            persona_id="persona-local-1",
+            manifest=_valid_manifest(frame_rate=2),
+            manifest_storage_relpath="persona_visual/private/v2/manifest.json",
+            assets=[_asset(storage_relpath="persona_visual/private/v2/idle.png")],
+            expected_identity=active.identity,
+            expected_persona_revision=7,
+            authority_guard=guard,
+        )
+
+    counts_after = tuple(
+        db.get_connection()
+        .execute(
+            """
+            SELECT
+                (SELECT COUNT(*) FROM persona_visual_pack_versions),
+                (SELECT COUNT(*) FROM persona_visual_assets)
+            """
+        )
+        .fetchone()
+    )
+    assert counts_after == counts_before
+    assert repository.get_active_persona_pack("persona-local-1") == active
+
+
+@pytest.mark.parametrize(
+    ("column", "changed_value"),
+    (
+        ("manifest_sha256", "d" * 64),
+        ("manifest_json", json.dumps(_valid_manifest(frame_rate=9))),
+        ("renderer_type", "live2d"),
+        ("manifest_version", 99),
+    ),
+)
+def test_guard_cannot_mutate_the_source_identity_before_activation(
+    repository: PersonaVisualRepository,
+    db: CharactersRAGDB,
+    column: str,
+    changed_value: object,
+) -> None:
+    active = _activate(repository)
+    original_value = (
+        db.get_connection()
+        .execute(
+            f"SELECT {column} FROM persona_visual_pack_versions WHERE id = ?",
+            (active.version.id,),
+        )
+        .fetchone()[0]
+    )
+
+    def guard() -> bool:
+        db.get_connection().execute(
+            f"UPDATE persona_visual_pack_versions SET {column} = ? WHERE id = ?",
+            (changed_value, active.version.id),
+        )
+        return True
+
+    with pytest.raises(ValueError, match="^persona_visual_identity_changed$"):
+        repository.publish_version(
+            persona_id="persona-local-1",
+            manifest=_valid_manifest(frame_rate=2),
+            manifest_storage_relpath="persona_visual/pack/v2/manifest.json",
+            assets=[_asset(storage_relpath="persona_visual/pack/v2/idle.png")],
+            expected_identity=active.identity,
+            expected_persona_revision=7,
+            authority_guard=guard,
+        )
+
+    connection = db.get_connection()
+    assert (
+        connection.execute(
+            f"SELECT {column} FROM persona_visual_pack_versions WHERE id = ?",
+            (active.version.id,),
+        ).fetchone()[0]
+        == original_value
+    )
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM persona_visual_pack_versions WHERE pack_id = ?",
+            (active.pack.id,),
+        ).fetchone()[0]
+        == 1
+    )
+
+
+def test_late_asset_insert_failure_rolls_back_pack_and_version(
+    repository: PersonaVisualRepository,
+    db: CharactersRAGDB,
+) -> None:
+    with pytest.raises(ValueError, match="^persona_visual_repository_write_failed$"):
+        repository.activate_new_pack(
+            persona_id="persona-local-rollback",
+            title="Rollback",
+            manifest=_valid_manifest(),
+            manifest_storage_relpath="persona_visual/rollback/manifest.json",
+            assets=[_asset(), _asset(storage_relpath="different/idle.png")],
+            expected_persona_revision=1,
+            authority_guard=lambda: True,
+        )
+
+    connection = db.get_connection()
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM persona_visual_packs WHERE title = 'Rollback'"
+        ).fetchone()[0]
+        == 0
+    )
+    assert repository.get_active_persona_pack("persona-local-rollback") is None
+
+
+def test_write_rejects_a_caller_owned_transaction_before_any_insert(
+    repository: PersonaVisualRepository,
+    db: CharactersRAGDB,
+) -> None:
+    connection = db.get_connection()
+    connection.execute("BEGIN")
+
+    with pytest.raises(ValueError, match="^persona_visual_transaction_active$"):
+        repository.activate_new_pack(
+            persona_id="persona-borrowed-transaction",
+            title="Must not borrow",
+            manifest=_valid_manifest(),
+            manifest_storage_relpath="persona_visual/borrowed/manifest.json",
+            assets=[_asset(storage_relpath="persona_visual/borrowed/idle.png")],
+            expected_persona_revision=1,
+            authority_guard=lambda: True,
+        )
+
+    assert connection.in_transaction is True
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM persona_visual_packs WHERE title = 'Must not borrow'"
+        ).fetchone()[0]
+        == 0
+    )
+    connection.rollback()
+
+
+def test_write_rejects_managed_transaction_after_native_transaction_ended(
+    repository: PersonaVisualRepository,
+    db: CharactersRAGDB,
+) -> None:
+    connection = db.get_connection()
+    with db.transaction():
+        connection.executescript("SELECT 1;")
+        assert connection.in_transaction is False
+
+        with pytest.raises(ValueError, match="^persona_visual_transaction_active$"):
+            repository.activate_new_pack(
+                persona_id="persona-managed-transaction",
+                title="Must not nest",
+                manifest=_valid_manifest(),
+                manifest_storage_relpath="persona_visual/nested/manifest.json",
+                assets=[_asset(storage_relpath="persona_visual/nested/idle.png")],
+                expected_persona_revision=1,
+                authority_guard=lambda: True,
+            )
+
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM persona_visual_packs WHERE title = 'Must not nest'"
+            ).fetchone()[0]
+            == 0
+        )
+
+
+def test_source_context_rejects_private_data_and_is_redacted_from_sql_logs(
+    repository: PersonaVisualRepository,
+) -> None:
+    for source_context in (
+        {"source_path": "/Users/alice/private.png"},
+        {"api_key": "secret"},
+        {"persona_payload": {"name": "Alice"}},
+    ):
+        with pytest.raises(ValueError, match="^persona_visual_source_context_invalid$"):
+            repository.activate_new_pack(
+                persona_id="persona-private-context",
+                title="Private",
+                source_context=source_context,
+                manifest=_valid_manifest(),
+                manifest_storage_relpath="persona_visual/private/manifest.json",
+                assets=[_asset(storage_relpath="persona_visual/private/idle.png")],
+                expected_persona_revision=1,
+                authority_guard=lambda: True,
+            )
+
+    messages: list[str] = []
+    sink = logger.add(messages.append, level="DEBUG", format="{message}")
+    try:
+        repository.activate_new_pack(
+            persona_id="persona-redacted-context",
+            title="Redacted",
+            source_context={"origin": "private-context-marker"},
+            manifest=_valid_manifest(),
+            manifest_storage_relpath="persona_visual/redacted/manifest.json",
+            assets=[_asset(storage_relpath="persona_visual/redacted/idle.png")],
+            expected_persona_revision=1,
+            authority_guard=lambda: True,
+        )
+    finally:
+        logger.remove(sink)
+    assert "private-context-marker" not in "".join(messages)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "category"),
+    (
+        ({"manifest": ["not", "an", "object"]}, "persona_visual_manifest_invalid"),
+        ({"manifest": {"value": float("nan")}}, "persona_visual_manifest_invalid"),
+        (
+            {"source_context": ["not", "an", "object"]},
+            "persona_visual_source_context_invalid",
+        ),
+        ({"source_context": []}, "persona_visual_source_context_invalid"),
+        (
+            {"source_context": {"value": "\ud800"}},
+            "persona_visual_source_context_invalid",
+        ),
+        (
+            {"source_context": {"value": float("inf")}},
+            "persona_visual_source_context_invalid",
+        ),
+        (
+            {"assets": [{"asset_key": "idle"}]},
+            "persona_visual_asset_invalid",
+        ),
+    ),
+)
+def test_invalid_json_and_asset_shapes_use_fixed_categories(
+    repository: PersonaVisualRepository,
+    overrides: dict[str, object],
+    category: str,
+) -> None:
+    kwargs: dict[str, object] = {
+        "persona_id": "persona-invalid",
+        "title": "Invalid",
+        "source_context": {},
+        "manifest": _valid_manifest(),
+        "manifest_storage_relpath": "persona_visual/invalid/manifest.json",
+        "assets": [_asset()],
+        "expected_persona_revision": 1,
+        "authority_guard": lambda: True,
+    }
+    kwargs.update(overrides)
+    with pytest.raises(ValueError, match=f"^{category}$"):
+        repository.activate_new_pack(**kwargs)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("column", "value", "category"),
+    (
+        ("source_context_json", "[]", "persona_visual_source_context_invalid"),
+        ("manifest_json", "NaN", "persona_visual_manifest_invalid"),
+    ),
+)
+def test_corrupt_stored_json_is_rejected_without_private_detail(
+    repository: PersonaVisualRepository,
+    db: CharactersRAGDB,
+    column: str,
+    value: str,
+    category: str,
+) -> None:
+    active = _activate(repository)
+    table = (
+        "persona_visual_packs"
+        if column == "source_context_json"
+        else "persona_visual_pack_versions"
+    )
+    row_id = active.pack.id if table.endswith("packs") else active.version.id
+    db.get_connection().execute(
+        f"UPDATE {table} SET {column} = ? WHERE id = ?", (value, row_id)
+    )
+    db.get_connection().commit()
+
+    with pytest.raises(ValueError, match=f"^{category}$"):
+        repository.get_active_persona_pack("persona-local-1")
+
+
+def test_stored_manifest_must_match_its_full_identity_digest(
+    repository: PersonaVisualRepository,
+    db: CharactersRAGDB,
+) -> None:
+    active = _activate(repository)
+    db.get_connection().execute(
+        "UPDATE persona_visual_pack_versions SET manifest_json = ? WHERE id = ?",
+        (json.dumps(_valid_manifest(frame_rate=2)), active.version.id),
+    )
+    db.get_connection().commit()
+
+    with pytest.raises(ValueError, match="^persona_visual_manifest_invalid$"):
+        repository.get_active_persona_pack("persona-local-1")
+
+
+def test_archive_binding_uses_full_identity_cas(
+    repository: PersonaVisualRepository,
+) -> None:
+    active = _activate(repository)
+    stale = replace(active.identity, pack_revision=active.identity.pack_revision + 1)
+    with pytest.raises(ValueError, match="^persona_visual_identity_changed$"):
+        repository.archive_binding(
+            persona_id="persona-local-1", expected_identity=stale
+        )
+    assert asdict(
+        repository.get_active_persona_pack("persona-local-1").identity
+    ) == asdict(active.identity)

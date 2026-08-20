@@ -254,7 +254,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 40  # Local transcript annotations (task-17169).
+    _CURRENT_SCHEMA_VERSION = 41  # Separate local Persona Visual runtime.
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -5208,6 +5208,45 @@ UPDATE db_schema_version
                 f"Migration from V39 to V40 failed for '{self._SCHEMA_NAME}': {exc}"
             ) from exc
 
+    def _migrate_from_v40_to_v41(self, conn: sqlite3.Connection) -> None:
+        """Add separate Persona Visual packs, versions, assets, and bindings."""
+        if self._get_db_version(conn) != 40:
+            raise SchemaError(
+                f"[{self._SCHEMA_NAME} V40→V41] Migration requires schema version 40"
+            )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v40_to_v41_persona_visual.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                pending = ""
+                for line in migration_path.read_text(encoding="utf-8").splitlines(
+                    keepends=True
+                ):
+                    pending += line
+                    if not sqlite3.complete_statement(pending):
+                        continue
+                    cursor.execute(pending)
+                    pending = ""
+                if pending.strip():
+                    raise SchemaError(
+                        "Persona Visual migration contains incomplete SQL"
+                    )
+                row = cursor.execute(
+                    "SELECT version FROM db_schema_version WHERE schema_name = ?",
+                    (self._SCHEMA_NAME,),
+                ).fetchone()
+                if row is None or row["version"] != 41:
+                    raise SchemaError(
+                        "Persona Visual schema version verification failed"
+                    )
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration from V40 to V41 failed for '{self._SCHEMA_NAME}': {exc}"
+            ) from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -5379,6 +5418,7 @@ UPDATE db_schema_version
                     37: self._migrate_from_v37_to_v38,
                     38: self._migrate_from_v38_to_v39,
                     39: self._migrate_from_v39_to_v40,
+                    40: self._migrate_from_v40_to_v41,
                 }
 
                 if current_db_version == 0:
