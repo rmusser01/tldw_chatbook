@@ -237,3 +237,75 @@ class TestSemanticChunkingWithoutNltkData:
             "re-probe after the download attempt, then a latched verdict"
         )
         assert chunk_lib._nltk_data_ready is False
+
+
+# ---------------------------------------------------------------------------
+# Phase B convergence (spec §6.3.1): all methods route through the engine
+# (chunking-engine-parity task 7 -- the module's regex splitter is deleted
+# and ChunkingService delegates to the Chunk_Lib shim for every method).
+# ---------------------------------------------------------------------------
+import pytest
+from tldw_chatbook.RAG_Search import chunking_service
+from tldw_chatbook.RAG_Search.chunking_service import ChunkingService, ChunkingError
+
+
+def test_validation_messages_preserved():
+    svc = ChunkingService()
+    with pytest.raises(ChunkingError, match="max_words must be positive"):
+        svc.chunk_text("text", chunk_size=0, chunk_overlap=0, method="words")
+    with pytest.raises(ChunkingError, match="Overlap must be non-negative"):
+        svc.chunk_text("text", chunk_size=10, chunk_overlap=-1, method="words")
+    with pytest.raises(ChunkingError, match="Overlap must be less than max_words"):
+        svc.chunk_text("text", chunk_size=10, chunk_overlap=10, method="words")
+
+
+def test_all_methods_flat_contract():
+    svc = ChunkingService()
+    for method in ["words", "sentences", "paragraphs"]:
+        chunks = svc.chunk_text(
+            "One two three. Four five six. Seven eight nine ten.",
+            chunk_size=4, chunk_overlap=1, method=method,
+        )
+        assert chunks
+        for c in chunks:
+            assert set(c) >= {"text", "start_char", "end_char", "word_count", "chunk_index"}
+
+
+def test_ebook_chapters_no_whitelist():
+    text = "# Chapter 1\n\nText one.\n\n# Chapter 2\n\nText two.\n"
+    chunks = svc_ebook(text)
+    assert len(chunks) >= 2
+
+
+def svc_ebook(text):
+    svc = ChunkingService()
+    return svc.chunk_text(text, chunk_size=400, chunk_overlap=0, method="ebook_chapters")
+
+
+def test_exceptions_are_aliases_of_the_engine_classes():
+    """One exception tree: ``except chunking_service.ChunkingError`` and
+    ``except Chunk_Lib.ChunkingError`` must catch the same objects."""
+    from tldw_chatbook.Chunking import Chunk_Lib
+
+    assert chunking_service.ChunkingError is Chunk_Lib.ChunkingError
+    assert (
+        chunking_service.InvalidChunkingMethodError
+        is Chunk_Lib.InvalidChunkingMethodError
+    )
+    assert issubclass(
+        chunking_service.InvalidChunkingMethodError, chunking_service.ChunkingError
+    )
+
+
+def test_module_level_improved_chunking_process_keeps_validation():
+    """The options-dict entry point keeps the legacy size/overlap contract
+    (the engine clamps instead of raising, so the wrapper must enforce it)."""
+    with pytest.raises(ChunkingError, match="Overlap must be less than max_words"):
+        chunking_service.improved_chunking_process(
+            "text", {"method": "words", "max_size": 10, "overlap": 10}
+        )
+
+
+def test_module_level_improved_chunking_process_rejects_unknown_methods():
+    with pytest.raises(chunking_service.InvalidChunkingMethodError):
+        chunking_service.improved_chunking_process("text", {"method": "bogus"})

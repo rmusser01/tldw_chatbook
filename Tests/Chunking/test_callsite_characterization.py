@@ -6,15 +6,15 @@ must still pass unchanged.
 
 What each test pins, and against WHICH producer it runs today:
 
-* ``words`` shape + DB round-trip: ``chunking_service`` still has its own
-  in-process regex path (Phase B Task 7 converges it onto the engine). These
-  two tests pin the *contract* — flat chunks with top-level
+* ``words`` shape + DB round-trip: since Phase B Task 7 these run through
+  the Chunk_Lib shim (the engine), no longer chunking_service's own regex
+  path. These two tests pin the *contract* — flat chunks with top-level
   text/start_char/end_char/word_count/chunk_index, and non-NULL offset
   columns after ``MediaDatabase.add_media_with_keywords`` — so the
   convergence cannot silently change what call sites and the DB seam see.
-* ``ebook_chapters``: currently rejected by chunking_service's method
-  whitelist (``InvalidChunkingMethodError``). xfail until Phase B removes
-  the whitelist; the engine already implements the method.
+* ``ebook_chapters``: Phase B Task 7 removed chunking_service's method
+  whitelist, so the method now chunks through the engine (the §7.2
+  regression fix; the xfail marker was removed with the whitelist).
 * ``XML_Ingestion`` import: the ``chunk_xml`` part of the seam was restored
   by the Task 3 shim; the module has a second, PRE-EXISTING broken import
   unrelated to chunking (see the test for details).
@@ -69,14 +69,10 @@ def test_db_roundtrip_offsets_populated(tmp_path):
             "flat contract violated: DB offset columns went NULL"
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason="Phase B: whitelist not yet removed",
-)
 def test_ebook_chapters_through_rag_service():
     # §7.2 regression: no InvalidChunkingMethodError after whitelist removal.
-    # chunking_service.improved_chunking_process still validates
-    # method ∈ {words, sentences, paragraphs, tokens, semantic} today.
+    # Phase B (task 7) removed chunking_service's five-method whitelist; this
+    # used to be xfail'd on that whitelist and now runs for real.
     text = "# Chapter 1\n\nText one.\n\n# Chapter 2\n\nText two.\n"
     chunks = chunking_service.improved_chunking_process(
         text, {"method": "ebook_chapters", "max_size": 400, "overlap": 0}
