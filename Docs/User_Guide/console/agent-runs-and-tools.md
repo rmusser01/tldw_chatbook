@@ -117,7 +117,10 @@ scoped to the one run that raised it, so deciding one card never resolves or
 touches another's. Cancelling that sub-agent (see
 [Stopping & leaving](#stopping--leaving)) withdraws only its own still-pending
 cards; a sibling sub-agent's card, or the parent's, is left exactly as it
-was.
+was. Within one session, Console shows only one card at a time, oldest-armed
+first — a second round arming for the same session while another is still
+pending queues silently and mounts its own card only once the earlier round
+is decided.
 
 ### Interrupted provider tool runs — Resume, Take over, or Discard
 
@@ -1285,6 +1288,14 @@ advances to `· 5s` on the next poll
 live-walked in a terminal — the states and the elapsed are covered by that
 suite plus mutation testing; the rest of this page's content is unchanged
 from the prior stamp.*
+
+*The one-card-at-a-time-per-session sentence added @ HEAD — 2026-08-19
+(task-15661, PR0 parked-payload re-key: documentation-only for this page.
+A second same-session approval round used to evict the first's card from
+the pre-PR0 shared slot; the round-keyed FIFO map now leaves it mounted
+and queues the new round's card invisibly behind it until the head
+resolves. The rest of this page's content is unchanged from the prior
+stamp.)*
 
 *Headless-wake sections (auto-wake off-screen, wake at launch, headless
 approval, the kill switch) re-verified against dev @ 524194c15 —

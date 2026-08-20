@@ -1687,15 +1687,11 @@ class ConsoleChatController:
         #: whose id was stamped onto the card the user actually decided --
         #: never "whichever session happens to be active right now".
         self._pending_approval_rounds: dict[str, dict[str, Any]] = {}
-        #: Task 9: retained payload for a PARKED round (session_id !=
-        #: active_session_id at round-start), keyed by owning session id --
-        #: the exact dict ``request_mcp_approvals`` would otherwise have
-        #: pushed straight to ``set_pending_approval``. ``switch_session``
-        #: re-derives the mounted card from this map every time the user
-        #: visits (or re-visits) the session, per the spec's "card state
-        #: derives from the run's pending review state, not mounted-widget
-        #: lifetime" contract -- never mutated by mount/unmount itself, only
-        #: by the round's own start (park) and end (any resolution path).
+        #: PR0: retained payload per ROUND (was per session), keyed by
+        #: `round_id`. `switch_session` and every teardown re-derive the
+        #: mounted card from this map's FIFO head for the session, so a
+        #: second same-session round no longer evicts an older sibling's
+        #: card. Every payload carries its own `round_id` and `session_id`.
         self._parked_approval_payloads: dict[str, dict[str, Any]] = {}
         #: UI-thread callback that pushes/clears the pending skill-install
         #: confirm payload into the owning screen's task-resume state
@@ -1716,12 +1712,9 @@ class ConsoleChatController:
         #: concurrent.
         self._pending_skill_install_rounds: dict[str, dict[str, Any]] = {}
         self._pending_skill_install_lock = threading.Lock()
-        #: TASK-910 (parked background skill confirms): retained payload for
-        #: a session-attributed `request_skill_install_confirm` round --
-        #: mounted or parked, exactly like `_parked_approval_payloads`.
-        #: `switch_session`/`new_session`/`close_session` re-derive the
-        #: mounted card from this map on every activation, never from
-        #: whatever the card happened to already be showing.
+        #: PR0: retained payload per ROUND (was per session), keyed by
+        #: `request_id`. The mounted card is the session's FIFO head, so a
+        #: second same-session confirm no longer evicts an older sibling.
         self._parked_skill_install_payloads: dict[str, dict[str, Any]] = {}
         #: UI-thread callback that pushes/clears the pending skill-SCRIPT
         #: confirm payload into the owning screen's task-resume state.
@@ -1744,15 +1737,10 @@ class ConsoleChatController:
         #: both worker threads then blocked to their full deadline.
         self._pending_skill_script_rounds: dict[str, dict[str, Any]] = {}
         self._pending_skill_script_lock = threading.Lock()
-        #: TASK-910 (parked background skill confirms): retained payload for
-        #: a session-attributed `request_skill_script_confirm` round --
-        #: mirrors `_parked_skill_install_payloads` above.
+        #: PR0: retained payload per ROUND (was per session), keyed by
+        #: `request_id`. The mounted card is the session's FIFO head, so a
+        #: second same-session confirm no longer evicts an older sibling.
         self._parked_skill_script_payloads: dict[str, dict[str, Any]] = {}
-        #: The currently-armed round's unique id (see `request_skill_script_
-        #: confirm` / `resolve_pending_skill_script`). A resolve carrying any
-        #: other id (including None) is dropped -- this is what stops a
-        #: late button press from a torn-down round 1 from authorizing
-        #: round 2's script. `None` whenever no round is armed.
 
     @property
     def run_state(self) -> ConsoleRunState:
@@ -3372,12 +3360,9 @@ class ConsoleChatController:
         # "card state derives from the run's pending review state" rule
         # every other activation path follows.
         if self.set_pending_approval is not None:
-            # F2b fix (Qodo wave): guard the read for consistency with
-            # every other `_parked_approval_payloads` access, even though
-            # a single `.get()` is not itself an iteration hazard.
-            with self._approval_state_lock:
-                parked_payload = self._parked_approval_payloads.get(session.id)
-            self.set_pending_approval(parked_payload)
+            self.set_pending_approval(
+                self._head_round_payload(self._parked_approval_payloads, session.id)
+            )
         # TASK-910: same re-derive for the skill-install/script cards -- a
         # brand-new session can never itself have a parked confirm, so this
         # always resolves to clearing whatever the session being left behind
@@ -3543,11 +3528,9 @@ class ConsoleChatController:
         # parking -- the round now stays alive until its own resolution
         # (decision, cancel, or timeout).
         if self.set_pending_approval is not None:
-            # F2b fix (Qodo wave): guard the read for consistency with
-            # every other `_parked_approval_payloads` access.
-            with self._approval_state_lock:
-                parked_payload = self._parked_approval_payloads.get(session_id)
-            self.set_pending_approval(parked_payload)
+            self.set_pending_approval(
+                self._head_round_payload(self._parked_approval_payloads, session_id)
+            )
         # TASK-910: skill-install/script confirms now get the SAME park/
         # re-derive treatment as MCP batch approvals above -- a context
         # change (switch away) no longer force-denies either bridge's
@@ -3650,11 +3633,11 @@ class ConsoleChatController:
         if new_active_id is not None and new_active_id != previous_active_id:
             self.mark_session_visited(new_active_id)
             if self.set_pending_approval is not None:
-                # F2b fix (Qodo wave): guard the read for consistency with
-                # every other `_parked_approval_payloads` access.
-                with self._approval_state_lock:
-                    parked_payload = self._parked_approval_payloads.get(new_active_id)
-                self.set_pending_approval(parked_payload)
+                self.set_pending_approval(
+                    self._head_round_payload(
+                        self._parked_approval_payloads, new_active_id
+                    )
+                )
             # TASK-910: same re-derive for the skill-install/script cards --
             # closing the ACTIVE session auto-activates a neighbor, which is
             # now the VIEWED session exactly as if `switch_session` had
@@ -4065,8 +4048,12 @@ class ConsoleChatController:
         Task 9: the retained ``payload`` goes into
         ``_parked_approval_payloads`` for ``switch_session`` to mount
         later, and ``park_pending_approval`` fires the fleet badge +
-        one-shot toast instead of touching the mounted-card slot). Either
-        way it then polls ``event.wait(1.0)`` re-checking this run's OWN
+        one-shot toast instead of touching the mounted-card slot). PR0
+        adds a third case: an ACTIVE-session round that is not its
+        session's FIFO head neither mounts nor parks -- an older sibling
+        still owns the card, and this round's payload is retained under
+        its own ``round_id`` until that sibling's teardown promotes it.
+        Either way it then polls ``event.wait(1.0)`` re-checking this run's OWN
         cancel signal (``_is_session_cancelled``) and -- only when a
         POSITIVE timeout is configured (ADR-067: the default is 0 = none)
         -- a deadline, every second until one of three things happens: the
@@ -4219,6 +4206,11 @@ class ConsoleChatController:
                 for call in pending
             ],
             "timeout_seconds": timeout_seconds,
+            # Qodo PR #1836 finding 1: the absolute deadline, so a mount
+            # that happens AFTER arm (promotion, switch-back, attach) can
+            # show the remaining window instead of the arm-time total --
+            # see `_head_round_payload`'s snapshot.
+            "deadline_monotonic": deadline,
         }
         # Task 9: park rather than mount when this round's session is a
         # DIFFERENT, background session -- `session_id is None` (a legacy
@@ -4227,6 +4219,9 @@ class ConsoleChatController:
         is_parked = session_id is not None and session_id != (
             self.store.active_session_id or ""
         )
+        # PR0: legacy `session_id is None` callers never park and never
+        # queue -- they keep the unconditional mount below.
+        is_head = True
         if session_id is not None:
             # Register THIS round's own id directly here (worker thread,
             # plain-dict/set mutation -- same no-marshal convention as
@@ -4258,11 +4253,13 @@ class ConsoleChatController:
             # here too makes retention symmetric with that cleanup, per
             # spec §5 ("card state survives tab switches") for every round,
             # not only parked ones.
-            # F2b fix (Qodo wave): guard the store -- `switch_session`'s
-            # own re-derive read (`.get()`) runs on the UI thread and can
-            # race this worker-thread write.
-            with self._approval_state_lock:
-                self._parked_approval_payloads[session_id] = payload
+            # PR0: keyed by ROUND, and the return says whether THIS round
+            # is its session's FIFO head. A non-head round must not mount:
+            # an older sibling is still holding the card, and evicting it
+            # is exactly the task-15661 defect this replaced.
+            is_head = self._park_round_payload(
+                self._parked_approval_payloads, round_id, payload
+            )
 
         try:
             if self._approval_view_is_detached():
@@ -4276,7 +4273,7 @@ class ConsoleChatController:
             elif is_parked:
                 if self.app is not None and self.park_pending_approval is not None:
                     self.app.call_from_thread(self.park_pending_approval, session_id)
-            else:
+            elif is_head:
                 self._marshal_pending_approval(payload)
             # ADR-067: mark this run as waiting on a human decision for the
             # duration of the wait, so a per-call wrapper hosting this round
@@ -4355,187 +4352,56 @@ class ConsoleChatController:
             # a second source of truth.
             return {name: decisions.get(name, "deny") for name in unique_names}
         finally:
-            # F2b fix (Qodo wave): guard both pops -- `resolve_pending_
-            # approval`'s round_id lookup and `switch_session`'s re-derive
-            # read can each observe these maps from the UI thread while
+            # F2b fix (Qodo wave): guard the pop -- `resolve_pending_
+            # approval`'s round_id lookup and the `fleet_summary_counts`
+            # sync tick can each observe this map from the UI thread while
             # this worker thread tears the round down.
             with self._approval_state_lock:
                 self._pending_approval_rounds.pop(round_id, None)
-                # TASK-1050 (Defect B) fix round 1 (review): `_parked_
-                # approval_payloads` is a SINGLE per-session slot that
-                # always holds whichever round's payload was LAST WRITTEN
-                # (arming always overwrites it) -- mirrors `request_skill_
-                # install_confirm`'s/`request_skill_script_confirm`'s
-                # identical guard. The original fix also popped whenever
-                # the STORED payload was still this round's own id, on the
-                # theory that meant "nothing has overwritten it since" --
-                # but that condition is true exactly when THIS round is
-                # the newest-armed one, which is also the common case where
-                # an OLDER sibling round is still outstanding (arming a
-                # round re-mounts/re-parks its card, which typically gets
-                # decided before an already-waiting sibling does). Popping
-                # there discarded the still-armed OLDER round's only
-                # remaining payload, so a switch-away/back re-derive found
-                # nothing and mounted `None` -- the reviewer reproduced
-                # this live. Only the order-independent "no armed round
-                # left for this session" test is safe: pop ONLY when this
-                # is the LAST armed MCP round for the session. (Accepted
-                # scope limitation: because the slot is single-payload,
-                # last-armed-wins regardless of resolution order -- a
-                # remount after the newest round resolves first shows the
-                # newest round's now-stale payload, not the still-live
-                # older round's; per-round payload storage is a larger
-                # change out of scope here.)
-                still_armed_same_session = session_id is not None and any(
-                    state.get("session_id") == session_id
-                    for state in self._pending_approval_rounds.values()
-                )
-                if session_id is not None and not still_armed_same_session:
-                    self._parked_approval_payloads.pop(session_id, None)
+            # PR0: drop exactly THIS round's retained payload. Pre-PR0 the
+            # slot was shared per session, so the pop had to be guarded by
+            # an order-dependent "is this the last armed round for the
+            # session" test to avoid discarding a still-armed sibling's
+            # only copy. Per-round storage makes that guard meaningless --
+            # each round owns its own key -- and takes the accepted
+            # last-armed-wins limitation (task-15661) with it.
+            self._unpark_round_payload(self._parked_approval_payloads, round_id)
             if session_id is not None:
                 # TASK-1050 (Defect A): discard ONLY this round's own id --
                 # the badge clears only once every bridge round for this
                 # session (this one included) has resolved.
                 self.discard_pending_round(session_id, round_id)
-            # TASK-1050 fix round 2 (review): clearing the mounted card
-            # here used to be guarded by `still_active`/`still_armed_same_
-            # session` booleans computed BEFORE enqueueing the clear via
-            # `call_from_thread` -- a race window between that snapshot and
-            # the UI thread actually running the clear let a NEWER
-            # same-session round arm, mount its own card, and then get
-            # wiped by this round's now-stale clear. `_clear_pending_
-            # approval_if_round_is_current` closes this by deferring the
-            # ENTIRE decision (round-identity check included) to the UI
-            # thread's own execution of the enqueued callable -- see its
-            # docstring for the full race analysis.
+            # PR0: re-derive the card from the session's remaining FIFO
+            # head rather than deciding whether to CLEAR it. This
+            # subsumes `_clear_pending_approval_if_round_is_current`'s
+            # two-part TOCTOU guard: clearing was order-dependent, so the
+            # decision could go stale between a worker-thread snapshot and
+            # the UI thread running it; a head re-derive is a pure
+            # function of current state. The race-proofing principle is
+            # unchanged -- `_remount_head` still computes the answer
+            # INSIDE the callable that runs on the UI thread, never from a
+            # snapshot taken here.
+            # `owning_session_id`, not `session_id`: a legacy no-session
+            # caller retains no payload, so its head resolves to `None` and
+            # the card clears exactly as the pre-PR0 unconditional clear
+            # did -- unless a real session-attributed sibling is armed for
+            # the session it mounted over, in which case that sibling's
+            # card is (correctly) what stays up.
             try:
-                self._clear_pending_approval_if_round_is_current(round_id, session_id)
+                # Qodo PR #1836 finding 2: a legacy no-session round's card
+                # mounted unconditionally and may sit over ANY session by
+                # now -- pass None so `_remount_head` re-derives for the
+                # session active when the callback runs, not the arm-time
+                # snapshot (whose mismatch would strand the card).
+                self._remount_head(
+                    self._parked_approval_payloads,
+                    self.set_pending_approval,
+                    owning_session_id if session_id is not None else None,
+                )
             except Exception:  # noqa: BLE001 -- suppress teardown-time errors
                 logger.opt(exception=True).debug(
-                    "Failed to marshal approval clear during teardown"
+                    "Failed to marshal approval remount during teardown"
                 )
-
-    def _clear_pending_approval_if_round_is_current(
-        self, round_id: str | None, session_id: str | None
-    ) -> None:
-        """WORKER THREAD: enqueue a round-identity-guarded clear of the mounted MCP approval card.
-
-        TASK-1050 fix round 2 (review): `request_mcp_approvals`'s
-        `finally` used to decide whether to clear the mounted card via a
-        plain boolean snapshot (``still_active and not still_armed_same_
-        session``) computed BEFORE enqueueing ``self._marshal_pending_
-        approval(None)`` through ``call_from_thread``. A NEWER same-
-        session round could arm -- and, if this session is the one being
-        viewed, fully mount ITS OWN card via its own ``call_from_thread``
-        call -- in the window between that snapshot and the UI thread
-        actually running THIS round's clear, which would then wipe the
-        newer round's just-mounted card, stranding it until a manual
-        remount (switch away/back) or its own timeout. Recomputing the
-        same boolean any earlier -- e.g. right before enqueueing --
-        narrows that window but cannot close it: checking and enqueueing
-        are still two separate steps a concurrent round's own check-and-
-        enqueue can interleave with. The only race-proof fix is to defer
-        the ENTIRE decision to the single-threaded UI event loop's own
-        execution of the enqueued callable, which re-reads the CURRENT
-        authoritative state (never a snapshot) at the last possible
-        moment: once that callable starts running, Textual's
-        ``call_from_thread`` callables run to completion, one at a time,
-        on the UI thread, so no further worker-thread interleaving can
-        change the outcome mid-decision.
-
-        The check is TWO-PART, and BOTH parts must pass before clearing:
-
-        1. Round-IDENTITY based, not boolean: ``_parked_approval_payloads
-           [session_id]`` always holds whichever round's payload was LAST
-           WRITTEN (arming overwrites it -- mirrors the payload-pop
-           guard's own "last-armed-wins" contract in the ``finally``
-           block above). If it no longer names THIS round's own
-           ``round_id``, a newer round has already claimed the slot (and,
-           if ``session_id`` is the currently active session, already
-           marshaled its own mount), so this round's clear must no-op.
-           This closes the ORIGINAL Qodo TOCTOU (a newer round's own
-           mount getting wiped by an older round's stale clear).
-
-        2. Fix round 3 (re-review) regression fix: the identity check
-           ALONE only detects "payload overwritten by a newer arm" -- it
-           says nothing about whether a DIFFERENT, OLDER sibling round is
-           still armed. When the newest-armed round resolves FIRST (the
-           natural live ordering, per this file's own fix-round-1
-           docstrings: arming a round typically gets it decided before an
-           already-waiting older sibling does), the identity check
-           trivially PASSES (nothing has overwritten the slot since this
-           round armed) even though an older round is still pending --
-           the old snapshot-based ``still_armed_same_session`` guard this
-           closure replaced used to catch exactly this case; dropping it
-           entirely (rather than also re-checking it live) reintroduced a
-           stranded-card regression: the card cleared while the badge
-           stayed lit, leaving the older round undecidable through the
-           UI until its own timeout. Closed by ALSO re-reading (live,
-           under the same lock, at the same last-possible-moment as the
-           identity check -- never a pre-enqueue snapshot)
-           ``_pending_approval_rounds`` filtered to this session: if ANY
-           round remains registered there (this round's own entry is
-           already popped earlier in ``finally``, before this closure
-           even runs, so any hit here is necessarily a DIFFERENT,
-           still-armed sibling), the clear must no-op just as surely as a
-           failed identity check does.
-
-        Only once both checks pass does it fall through to the
-        ``still_active`` check -- also re-read live here, not from a
-        snapshot -- before actually clearing.
-
-        Args:
-            round_id: This round's own id. Only consulted when
-                ``session_id`` is not ``None`` (every session-attributed
-                round is 1:1 with a real round id).
-            session_id: This round's owning session. ``None`` preserves
-                the pre-existing unconditional-clear behavior for legacy
-                no-session callers -- there is no "newer round for this
-                session" concept without a session to key by.
-        """
-        if self.app is None or self.set_pending_approval is None:
-            return
-
-        def _clear_if_still_current() -> None:
-            if session_id is not None:
-                # F2b-style guard: this runs on the UI thread, but a
-                # worker thread can concurrently write `_parked_approval_
-                # payloads`/`_pending_approval_rounds` under this same
-                # lock (MCP's round registry shares `_approval_state_
-                # lock` with the payload map, so both reads happen in one
-                # atomic critical section).
-                with self._approval_state_lock:
-                    current = self._parked_approval_payloads.get(session_id)
-                    still_armed_same_session = any(
-                        state.get("session_id") == session_id
-                        for state in self._pending_approval_rounds.values()
-                    )
-                if current is not None and current.get("round_id") != round_id:
-                    # A newer round already claimed this session's
-                    # retained-payload slot -- whatever the mounted card
-                    # is currently showing (if this session is even the
-                    # one being viewed) belongs to THAT round, not this
-                    # one. Leave it alone.
-                    return
-                if still_armed_same_session:
-                    # A DIFFERENT round (necessarily -- this round's own
-                    # entry was already popped before this closure runs)
-                    # is still armed for this session. Clearing now would
-                    # strand it: card gone, badge still lit, undecidable
-                    # through the UI until its own timeout.
-                    return
-                if session_id != (self.store.active_session_id or ""):
-                    # Not (or no longer) the session being viewed --
-                    # nothing of THIS round's own was ever mounted here
-                    # (a parked round never marshals), or the user has
-                    # since switched away (`switch_session`'s own
-                    # explicit clear already handled the departing
-                    # card). Clearing here would blank whatever the
-                    # CURRENTLY active session's own card is showing.
-                    return
-            self.set_pending_approval(None)
-
-        self.app.call_from_thread(_clear_if_still_current)
 
     def _record_cancelled_approval_decisions(
         self,
@@ -4585,6 +4451,141 @@ class ConsoleChatController:
         if self.app is not None and self.set_pending_approval is not None:
             self.app.call_from_thread(self.set_pending_approval, payload)
 
+    # -- PR0: per-round retained payloads ------------------------------
+    #
+    # All three bridges' retained-payload maps are keyed by ROUND id and
+    # guarded by `_approval_state_lock`. The mounted card is always the
+    # session's FIFO HEAD -- its oldest-armed round. Dict insertion order
+    # is arm order, which is why every write goes through
+    # `_park_round_payload` and nothing assigns into these maps directly.
+    #
+    # This replaces the pre-PR0 single-slot-per-session maps, whose
+    # last-armed-wins semantics let a second same-session round overwrite
+    # the first's payload and strand it until timeout (task-15661).
+
+    @staticmethod
+    def _head_round_payload_locked(
+        store: dict[str, dict[str, Any]], session_id: str | None
+    ) -> dict[str, Any] | None:
+        """The session's oldest-armed payload. Caller holds the lock."""
+        for payload in store.values():
+            if payload.get("session_id") == session_id:
+                return payload
+        return None
+
+    def _park_round_payload(
+        self, store: dict[str, dict[str, Any]], round_id: str, payload: dict[str, Any]
+    ) -> bool:
+        """Retain ``payload``; return whether it is now its session's head.
+
+        A round that is NOT the head must not mount -- an older sibling is
+        still holding the card.
+        """
+        session_id = payload.get("session_id")
+        with self._approval_state_lock:
+            store[round_id] = payload
+            head = self._head_round_payload_locked(store, session_id)
+        return head is payload
+
+    def _head_round_payload(
+        self, store: dict[str, dict[str, Any]], session_id: str
+    ) -> dict[str, Any] | None:
+        """The payload whose card ``session_id`` should currently show.
+
+        Qodo PR #1836 finding 1: a round's auto-deny deadline starts at ARM
+        time, but a queued round can mount much later (promotion at the
+        head's resolve, a switch back to a parked session, a headless
+        attach). Handing the card the arm-time ``timeout_seconds`` then
+        overstates the decision window -- "Auto-denies in 2:00" on a card
+        whose worker denies in seconds. When the payload carries its
+        ``deadline_monotonic``, return a shallow SNAPSHOT whose
+        ``timeout_seconds`` is the remaining time at this call; the
+        retained payload is never mutated, so every later re-derive
+        computes its own fresh snapshot. A payload without a deadline
+        (ADR-067 arms none for ``timeout <= 0`` script confirms) passes
+        through untouched. ``_park_round_payload``'s ``head is payload``
+        identity check goes through ``_head_round_payload_locked`` and is
+        unaffected.
+        """
+        with self._approval_state_lock:
+            payload = self._head_round_payload_locked(store, session_id)
+        if payload is None:
+            return None
+        deadline = payload.get("deadline_monotonic")
+        if not deadline:
+            return payload
+        snapshot = dict(payload)
+        snapshot["timeout_seconds"] = max(0.0, deadline - time.monotonic())
+        return snapshot
+
+    def _session_round_payloads(
+        self, store: dict[str, dict[str, Any]], session_id: str
+    ) -> list[dict[str, Any]]:
+        """Every payload ``store`` retains for ``session_id``, arm order first.
+
+        Key-shape agnostic on purpose: it matches on the payload's own
+        ``session_id``, so it reads a PR0 round-keyed map and a not-yet-
+        migrated session-keyed one identically (`ChatScreen._current_park_
+        round_ids` scans all three bridges' maps through it).
+        """
+        with self._approval_state_lock:
+            return [
+                payload
+                for payload in store.values()
+                if payload.get("session_id") == session_id
+            ]
+
+    def _unpark_round_payload(
+        self, store: dict[str, dict[str, Any]], round_id: str
+    ) -> None:
+        """Drop one round's retained payload. Idempotent."""
+        with self._approval_state_lock:
+            store.pop(round_id, None)
+
+    def _remount_head(
+        self,
+        store: dict[str, dict[str, Any]],
+        setter: Callable[[dict[str, Any] | None], None] | None,
+        session_id: str | None,
+    ) -> None:
+        """WORKER THREAD: enqueue a head re-derive onto the UI thread.
+
+        Replaces the pre-PR0 two-part TOCTOU guard. That guard existed
+        because CLEARING the card was order-dependent -- whether to clear
+        depended on which sibling resolved first, and a worker-thread
+        snapshot of that answer could be stale by the time the UI thread
+        ran it. Re-deriving the head is order-INDEPENDENT: it is a pure
+        function of current state. The race-proofing principle is
+        unchanged -- the decision still runs inside the callable on the UI
+        thread, never from a snapshot -- but the decision itself is now one
+        lookup instead of an identity check plus a sibling check.
+
+        ``session_id=None`` means "the session being VIEWED when the
+        callback runs" (Qodo PR #1836 finding 2): a legacy no-session round
+        mounts unconditionally, so its card can be sitting over ANY session
+        by teardown time, and re-deriving for the arm-time snapshot id
+        no-ops on a mismatch -- stranding the card where the deleted
+        pre-PR0 guard cleared it unconditionally. Resolving the active
+        session inside ``_apply`` clears the stale legacy card AND restores
+        that session's own real head if it has one -- strictly better than
+        the old unconditional clear, which could wipe a real sibling's
+        card. Session-attributed rounds keep the exact-match guard so a
+        background teardown can never touch the viewed session's card.
+        """
+        if self.app is None or setter is None:
+            return
+
+        def _apply() -> None:
+            if session_id is None:
+                active = self.store.active_session_id or ""
+                setter(self._head_round_payload(store, active))
+                return
+            if session_id != (self.store.active_session_id or ""):
+                return
+            setter(self._head_round_payload(store, session_id))
+
+        self.app.call_from_thread(_apply)
+
     def remount_pending_approval_for_active_session(self) -> bool:
         """Mount the ACTIVE session's still-armed approval round, if any.
 
@@ -4598,13 +4599,12 @@ class ConsoleChatController:
         ``None`` here would clear a card on every new claim, and an attach
         is not a reason to hide anything.
 
-        **Known limitation, not fixed here:**
-        ``_parked_approval_payloads`` holds ONE payload per session
-        (last-armed wins -- see ``request_mcp_approvals``' ``finally``),
-        so with two rounds armed for one session only the newest can
-        mount. Filed as task-15661; pinned by
-        ``Tests/UI/test_console_headless_approval.py::
-        test_two_headless_rounds_share_one_payload_slot_and_only_one_mounts``.
+        PR0 (task-15661, fixed): ``_parked_approval_payloads`` is keyed by
+        ROUND now, so two rounds armed for one session each keep their own
+        payload. This mounts the session's FIFO HEAD -- the oldest-armed
+        round -- and each later sibling mounts in turn as the head ahead of
+        it resolves. Covered by ``Tests/UI/test_console_headless_approval.
+        py::test_two_headless_rounds_each_mount_in_turn``.
 
         Returns:
             True when a card was mounted.
@@ -4614,16 +4614,12 @@ class ConsoleChatController:
         session_id = self.store.active_session_id
         if not session_id:
             return False
-        with self._approval_state_lock:
-            still_armed = any(
-                state.get("session_id") == session_id
-                for state in self._pending_approval_rounds.values()
-            )
-            payload = (
-                self._parked_approval_payloads.get(session_id)
-                if still_armed
-                else None
-            )
+        # The pre-PR0 `still_armed` pre-test is redundant: a round unparks
+        # its own payload in its own teardown, so a payload present here
+        # necessarily belongs to a live round.
+        payload = self._head_round_payload(
+            self._parked_approval_payloads, session_id
+        )
         if payload is None:
             return False
         self.set_pending_approval(payload)
@@ -5190,15 +5186,15 @@ class ConsoleChatController:
         rather than at its auto-deny deadline, (e) discarded from
         ``_pending_approvals`` so the session's NEEDS_APPROVAL badge
         clears once its last round is gone, and (f) taken off screen
-        through the SAME round-identity-guarded clear that round's own
-        teardown uses, so a sibling round's card is never clobbered.
+        through the SAME FIFO-head re-derive (``_remount_head``) that the
+        round's own teardown uses, so a sibling round's card is never
+        clobbered.
 
         Thread-safe. Each registry is swept under its own lock, and the
-        two locks are taken SEQUENTIALLY, never nested -- the ordering
-        contract ``_clear_pending_skill_script_if_round_is_current``
-        already documents. ``discard_pending_round`` and both UI clears
-        take those (non-reentrant) locks themselves, so they are
-        deliberately called after every critical section is released.
+        two locks are taken SEQUENTIALLY, never nested. ``discard_pending_
+        round`` and both UI clears take those (non-reentrant) locks
+        themselves, so they are deliberately called after every critical
+        section is released.
 
         Args:
             run_id: The cancelled/abandoned run whose cards must die. A
@@ -5218,16 +5214,28 @@ class ConsoleChatController:
             if session_id is not None:
                 self.discard_pending_round(session_id, round_id)
             try:
-                self._clear_pending_approval_if_round_is_current(round_id, session_id)
-            except Exception:  # noqa: BLE001 -- a UI clear must never
+                # PR0: re-derive from the session's remaining FIFO head --
+                # revoking one round of several must promote the next, not
+                # blank the session's card.
+                self._remount_head(
+                    self._parked_approval_payloads,
+                    self.set_pending_approval,
+                    session_id,
+                )
+            except Exception:  # noqa: BLE001 -- a UI remount must never
                 # break the cancellation path that called us.
-                logger.debug("Failed to marshal approval clear during revocation")
+                logger.debug("Failed to marshal approval remount during revocation")
         for request_id, session_id in script_revoked:
             if session_id is not None:
                 self.discard_pending_round(session_id, request_id)
             try:
-                self._clear_pending_skill_script_if_round_is_current(
-                    request_id, session_id
+                # PR0: re-derive from the session's remaining FIFO head --
+                # revoking one round of several must promote the next, not
+                # blank the session's card.
+                self._remount_head(
+                    self._parked_skill_script_payloads,
+                    self.set_pending_skill_script,
+                    session_id,
                 )
             except Exception:  # noqa: BLE001 -- as above.
                 logger.debug("Failed to clear skill-script confirm during revocation")
@@ -5269,28 +5277,24 @@ class ConsoleChatController:
                     # Last, and only once the round is unreachable: the
                     # thread this releases returns the moment it wakes.
                     event.set()
-            # Mirrors `request_mcp_approvals`' `finally` exactly: the
-            # retained payload is a SINGLE per-session slot, so it may
-            # only be dropped once NO armed round is left for that
-            # session -- otherwise a still-armed sibling loses the only
-            # copy of its card and a switch away/back mounts nothing.
-            for _round_id, session_id in revoked:
-                if session_id is None:
-                    continue
-                if not any(
-                    state.get("session_id") == session_id
-                    for state in self._pending_approval_rounds.values()
-                ):
-                    self._parked_approval_payloads.pop(session_id, None)
+        # PR0: mirrors `request_mcp_approvals`' `finally` exactly -- each
+        # round drops exactly its OWN retained payload, so a still-armed
+        # sibling keeps its own copy. The pre-PR0 "is this the last armed
+        # round for the session" test existed only because the slot was
+        # shared. Runs outside the critical section above because
+        # `_unpark_round_payload` takes the (non-reentrant) same lock.
+        for round_id_to_drop, _session_id in revoked:
+            self._unpark_round_payload(
+                self._parked_approval_payloads, round_id_to_drop
+            )
         return revoked
 
     def _revoke_skill_script_rounds(self, run_id: str) -> list[tuple[str, str | None]]:
         """Fail this run's ``run_skill_script`` confirms closed.
 
         Registry work only, under ``_pending_skill_script_lock`` and then
-        (sequentially, never nested -- see
-        ``_clear_pending_skill_script_if_round_is_current``)
-        ``_approval_state_lock`` for the retained-payload slot.
+        (sequentially, never nested) ``_approval_state_lock`` for the
+        retained-payload slot.
 
         Args:
             run_id: The cancelled/abandoned run.
@@ -5316,15 +5320,16 @@ class ConsoleChatController:
                 event = state.get("event")
                 if event is not None:
                     event.set()
-            still_armed = {
-                state.get("session_id")
-                for state in self._pending_skill_script_rounds.values()
-            }
-        if revoked:
-            with self._approval_state_lock:
-                for _request_id, session_id in revoked:
-                    if session_id is not None and session_id not in still_armed:
-                        self._parked_skill_script_payloads.pop(session_id, None)
+        # PR0: mirrors `request_skill_script_confirm`'s `finally` exactly --
+        # each round drops exactly its OWN retained payload, so a
+        # still-armed sibling keeps its own copy. The pre-PR0 "is this the
+        # last armed round for the session" test existed only because the
+        # slot was shared. Runs outside the critical section above because
+        # `_unpark_round_payload` takes the (non-reentrant) same lock.
+        for round_id_to_drop, _session_id in revoked:
+            self._unpark_round_payload(
+                self._parked_skill_script_payloads, round_id_to_drop
+            )
         return revoked
 
     # -- Skill-install confirm bridge (task-5, parked TASK-910) --------------
@@ -5419,6 +5424,9 @@ class ConsoleChatController:
             "timeout_seconds": timeout_seconds,
             "request_id": request_id,
             "session_id": owning_session_id,
+            # Qodo PR #1836 finding 1 -- see `_head_round_payload`'s
+            # remaining-time snapshot. None when ADR-067 armed no deadline.
+            "deadline_monotonic": deadline,
         }
         # TASK-910: park rather than mount when this round's session is a
         # DIFFERENT, background session -- mirrors `request_mcp_approvals`'
@@ -5427,6 +5435,9 @@ class ConsoleChatController:
         is_parked = session_id is not None and session_id != (
             self.store.active_session_id or ""
         )
+        # PR0: legacy `session_id is None` callers never park and never
+        # queue -- they keep the unconditional mount below.
+        is_head = True
         if session_id is not None:
             # TASK-1050 (Defect A): round-keyed, not a plain boolean -- see
             # `request_mcp_approvals`' identical `add_pending_round` call
@@ -5439,13 +5450,17 @@ class ConsoleChatController:
             # `request_mcp_approvals`' identical retention (Fix wave,
             # CRITICAL 1): a round that mounted immediately must still be
             # recoverable after a switch-away-and-back.
-            with self._approval_state_lock:
-                self._parked_skill_install_payloads[session_id] = payload
+            # PR0: keyed by ROUND, and the return says whether THIS round
+            # is its session's FIFO head. A non-head round must not mount:
+            # an older sibling is still holding the card.
+            is_head = self._park_round_payload(
+                self._parked_skill_install_payloads, request_id, payload
+            )
         try:
             if is_parked:
                 if self.app is not None and self.park_pending_approval is not None:
                     self.app.call_from_thread(self.park_pending_approval, session_id)
-            else:
+            elif is_head:
                 self._marshal_pending_skill_install(payload)
             # ADR-067: mark the owning run as waiting on a human decision
             # (see `request_mcp_approvals`' identical wrap for the why).
@@ -5463,112 +5478,45 @@ class ConsoleChatController:
         finally:
             with self._pending_skill_install_lock:
                 self._pending_skill_install_rounds.pop(request_id, None)
-                still_armed_same_session = any(
-                    state.get("session_id") == owning_session_id
-                    for state in self._pending_skill_install_rounds.values()
-                )
+            # PR0: drop exactly THIS round's retained payload. Pre-PR0 the
+            # slot was shared per session, so the pop had to be guarded by
+            # an order-dependent "is this the last armed round for the
+            # session" test to avoid discarding a still-armed sibling's
+            # only copy. Per-round storage makes that guard meaningless --
+            # each round owns its own key.
+            self._unpark_round_payload(
+                self._parked_skill_install_payloads, request_id
+            )
             if session_id is not None:
-                # TASK-1050 (Defect B) fix round 1 (review): `_parked_
-                # skill_install_payloads` is a SINGLE per-session slot
-                # holding whichever round's payload was LAST WRITTEN
-                # (arming overwrites it) -- an unconditional pop here would
-                # let the EARLIER round's teardown discard the NEWER
-                # round's still-armed retained payload. The original fix
-                # also popped whenever the stored payload was still this
-                # round's own id ("nothing has overwritten it since"), but
-                # that is true exactly when THIS round is the newest-armed
-                # one -- which is also the common case where an OLDER
-                # sibling is still outstanding (arming re-mounts/re-parks a
-                # card, which typically gets decided before an
-                # already-waiting sibling does). Popping there discarded
-                # the still-armed OLDER round's only remaining payload
-                # (reviewer reproduced live). Only the order-independent
-                # "no armed round left for this session" test is safe: pop
-                # ONLY when this is the LAST armed round for the session.
-                # (Accepted scope limitation: last-armed-wins regardless of
-                # resolution order -- see `request_mcp_approvals`' mirror
-                # of this comment for the full rationale.)
-                with self._approval_state_lock:
-                    if not still_armed_same_session:
-                        self._parked_skill_install_payloads.pop(session_id, None)
                 # TASK-1050 (Defect A): discard ONLY this round's own id --
                 # the badge clears only once every bridge round for this
                 # session (this one included) has resolved.
                 self.discard_pending_round(session_id, request_id)
-            # TASK-1050 fix round 2 (review): mirrors `request_mcp_
-            # approvals`' identical fix -- a plain boolean snapshot
-            # (`still_active`/`still_armed_same_session`) computed before
-            # enqueueing the clear via `call_from_thread` leaves a race
-            # window where a NEWER same-session round can arm, mount its
-            # own card, and then get wiped by this round's now-stale
-            # clear. `_clear_pending_skill_install_if_round_is_current`
-            # defers the whole decision (round-identity check included)
-            # to the UI thread's own execution of the enqueued callable --
-            # see `_clear_pending_approval_if_round_is_current`'s
-            # docstring for the full race analysis.
+            # PR0: re-derive the card from the session's remaining FIFO
+            # head rather than deciding whether to CLEAR it. This
+            # subsumes `_clear_pending_skill_install_if_round_is_current`'s
+            # two-part TOCTOU guard -- see `request_mcp_approvals`'
+            # identical `_remount_head` teardown call for the full race
+            # analysis.
+            # `owning_session_id`, not `session_id`: a legacy no-session
+            # caller retains no payload, so its head resolves to `None` and
+            # the card clears exactly as the pre-PR0 unconditional clear
+            # did -- `_remount_head` no-ops on a `None` session_id, which
+            # would otherwise leave a legacy caller's card stuck on screen
+            # (caught live by `test_console_skill_install_confirm.py::
+            # test_confirm_round_trip_allow`).
             try:
-                self._clear_pending_skill_install_if_round_is_current(
-                    request_id, session_id
+                # Qodo PR #1836 finding 2 -- see the approvals teardown's
+                # identical legacy-round note.
+                self._remount_head(
+                    self._parked_skill_install_payloads,
+                    self.set_pending_skill_install,
+                    owning_session_id if session_id is not None else None,
                 )
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 -- suppress teardown-time errors
                 logger.opt(exception=True).debug(
-                    "Failed to clear skill-install confirm during teardown"
+                    "Failed to marshal skill-install remount during teardown"
                 )
-
-    def _clear_pending_skill_install_if_round_is_current(
-        self, request_id: str | None, session_id: str | None
-    ) -> None:
-        """WORKER THREAD: enqueue a round-identity-guarded clear of the mounted skill-install card.
-
-        TASK-1050 fix round 2 (review): mirrors ``_clear_pending_
-        approval_if_round_is_current``'s identical race-proofing -- see
-        that method's docstring for the full analysis of why a boolean
-        snapshot computed before enqueueing (however late) cannot close
-        this race, only deferring the whole identity check to the UI
-        thread's own execution of the enqueued callable can.
-
-        Fix round 3 (re-review) regression fix: mirrors ``_clear_pending_
-        approval_if_round_is_current``'s identical two-part guard -- the
-        round-identity check alone only catches "payload overwritten by a
-        newer arm", not "a DIFFERENT, OLDER sibling round is still armed"
-        (true exactly when THIS round is the newest-armed one and
-        resolves FIRST, the natural live ordering). Also re-reads
-        ``_pending_skill_install_rounds`` live (under ``_pending_skill_
-        install_lock``, sequentially after -- never nested with --
-        ``_approval_state_lock``, matching this file's existing lock-
-        ordering discipline) filtered to this session; any hit there is
-        necessarily a still-armed sibling (this round's own entry is
-        already popped earlier in ``finally``), so the clear must no-op
-        exactly as it does on a failed identity check.
-
-        Args:
-            request_id: This round's own id. Only consulted when
-                ``session_id`` is not ``None``.
-            session_id: This round's owning session. ``None`` preserves
-                the pre-existing unconditional-clear behavior for legacy
-                no-session callers.
-        """
-        if self.app is None or self.set_pending_skill_install is None:
-            return
-
-        def _clear_if_still_current() -> None:
-            if session_id is not None:
-                with self._approval_state_lock:
-                    current = self._parked_skill_install_payloads.get(session_id)
-                if current is not None and current.get("request_id") != request_id:
-                    return
-                with self._pending_skill_install_lock:
-                    still_armed_same_session = any(
-                        state.get("session_id") == session_id
-                        for state in self._pending_skill_install_rounds.values()
-                    )
-                if still_armed_same_session:
-                    return
-                if session_id != (self.store.active_session_id or ""):
-                    return
-            self.set_pending_skill_install(None)
-
-        self.app.call_from_thread(_clear_if_still_current)
 
     def _remount_parked_skill_install(self, session_id: str) -> None:
         """Re-derive the mounted skill-install confirm card for ``session_id``.
@@ -5584,9 +5532,9 @@ class ConsoleChatController:
         """
         if self.set_pending_skill_install is None:
             return
-        with self._approval_state_lock:
-            parked_payload = self._parked_skill_install_payloads.get(session_id)
-        self.set_pending_skill_install(parked_payload)
+        self.set_pending_skill_install(
+            self._head_round_payload(self._parked_skill_install_payloads, session_id)
+        )
 
     def _marshal_pending_skill_install(self, payload: dict[str, Any] | None) -> None:
         """WORKER THREAD: hand a skill-install confirm payload to the UI thread.
@@ -5741,21 +5689,31 @@ class ConsoleChatController:
         card_payload["timeout_seconds"] = timeout_seconds
         card_payload["request_id"] = request_id
         card_payload["session_id"] = owning_session_id
+        # Qodo PR #1836 finding 1 -- see `_head_round_payload`'s
+        # remaining-time snapshot. None when ADR-067 armed no deadline.
+        card_payload["deadline_monotonic"] = deadline
         is_parked = session_id is not None and session_id != (
             self.store.active_session_id or ""
         )
+        # PR0: legacy `session_id is None` callers never park and never
+        # queue -- they keep the unconditional mount below.
+        is_head = True
         if session_id is not None:
             # TASK-1050 (Defect A): round-keyed, not a plain boolean -- see
             # `request_mcp_approvals`' identical `add_pending_round` call
             # for the full rationale.
             self.add_pending_round(session_id, request_id)
-            with self._approval_state_lock:
-                self._parked_skill_script_payloads[session_id] = card_payload
+            # PR0: keyed by ROUND, and the return says whether THIS round
+            # is its session's FIFO head. A non-head round must not mount:
+            # an older sibling is still holding the card.
+            is_head = self._park_round_payload(
+                self._parked_skill_script_payloads, request_id, card_payload
+            )
         try:
             if is_parked:
                 if self.app is not None and self.park_pending_approval is not None:
                     self.app.call_from_thread(self.park_pending_approval, session_id)
-            else:
+            elif is_head:
                 self._marshal_pending_skill_script(card_payload)
             # ADR-067: mark the owning run as waiting on a human decision
             # (see `request_mcp_approvals`' identical wrap for the why).
@@ -5790,93 +5748,42 @@ class ConsoleChatController:
         finally:
             with self._pending_skill_script_lock:
                 self._pending_skill_script_rounds.pop(request_id, None)
-                still_armed_same_session = any(
-                    state.get("session_id") == owning_session_id
-                    for state in self._pending_skill_script_rounds.values()
-                )
+            # PR0: drop exactly THIS round's retained payload. Pre-PR0 the
+            # slot was shared per session, so the pop had to be guarded by
+            # an order-dependent "is this the last armed round for the
+            # session" test to avoid discarding a still-armed sibling's
+            # only copy. Per-round storage makes that guard meaningless --
+            # each round owns its own key.
+            self._unpark_round_payload(
+                self._parked_skill_script_payloads, request_id
+            )
             if session_id is not None:
-                # TASK-1050 (Defect B) fix round 1 (review): mirrors
-                # `request_skill_install_confirm`'s identical guard --
-                # `_parked_skill_script_payloads` is a SINGLE per-session
-                # slot holding whichever round's payload was LAST WRITTEN.
-                # The original fix also popped whenever the stored payload
-                # was still this round's own id, but that is true exactly
-                # when THIS round is the newest-armed one -- which is also
-                # the common case where an OLDER sibling is still
-                # outstanding. Popping there discarded the still-armed
-                # OLDER round's only remaining payload (reviewer reproduced
-                # live). Only pop when this is the LAST armed round for the
-                # session -- see `request_mcp_approvals`' mirror of this
-                # comment for the full rationale and the accepted
-                # single-slot/last-armed-wins scope limitation.
-                with self._approval_state_lock:
-                    if not still_armed_same_session:
-                        self._parked_skill_script_payloads.pop(session_id, None)
                 # TASK-1050 (Defect A): discard ONLY this round's own id --
                 # the badge clears only once every bridge round for this
                 # session (this one included) has resolved.
                 self.discard_pending_round(session_id, request_id)
-            # TASK-1050 fix round 2 (review): mirrors `request_mcp_
-            # approvals`'/`request_skill_install_confirm`'s identical
-            # fix -- see `_clear_pending_approval_if_round_is_current`'s
-            # docstring for the full race analysis a plain boolean
-            # snapshot (however late it is recomputed) cannot close.
+            # PR0: re-derive the card from the session's remaining FIFO
+            # head rather than deciding whether to CLEAR it. This subsumes
+            # the pre-PR0 `_clear_pending_skill_script_if_round_is_current`
+            # guard's two-part TOCTOU check -- see `request_mcp_approvals`'
+            # identical `_remount_head` teardown call for the full race
+            # analysis.
+            # Qodo PR #1836 finding 2: a legacy no-session round passes
+            # None, so `_remount_head` re-derives for the session active
+            # WHEN THE CALLBACK RUNS -- the arm-time `owning_session_id`
+            # snapshot could mismatch after a switch and strand the
+            # unconditionally-mounted legacy card. Session-attributed
+            # rounds keep the exact-match owning id.
             try:
-                self._clear_pending_skill_script_if_round_is_current(
-                    request_id, session_id
+                self._remount_head(
+                    self._parked_skill_script_payloads,
+                    self.set_pending_skill_script,
+                    owning_session_id if session_id is not None else None,
                 )
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 -- suppress teardown-time errors
                 logger.opt(exception=True).debug(
-                    "Failed to clear skill-script confirm during teardown"
+                    "Failed to marshal skill-script remount during teardown"
                 )
-
-    def _clear_pending_skill_script_if_round_is_current(
-        self, request_id: str | None, session_id: str | None
-    ) -> None:
-        """WORKER THREAD: enqueue a round-identity-guarded clear of the mounted skill-script card.
-
-        TASK-1050 fix round 2 (review): mirrors ``_clear_pending_
-        approval_if_round_is_current``'s identical race-proofing -- see
-        that method's docstring for the full analysis.
-
-        Fix round 3 (re-review) regression fix: mirrors ``_clear_pending_
-        approval_if_round_is_current``'s/``_clear_pending_skill_install_
-        if_round_is_current``'s identical two-part guard -- also
-        re-reads ``_pending_skill_script_rounds`` live (under
-        ``_pending_skill_script_lock``, sequentially after -- never
-        nested with -- ``_approval_state_lock``) filtered to this
-        session, so a still-armed OLDER sibling round (true exactly when
-        THIS round is the newest-armed one and resolves FIRST) blocks the
-        clear just as surely as a failed identity check does.
-
-        Args:
-            request_id: This round's own id. Only consulted when
-                ``session_id`` is not ``None``.
-            session_id: This round's owning session. ``None`` preserves
-                the pre-existing unconditional-clear behavior for legacy
-                no-session callers.
-        """
-        if self.app is None or self.set_pending_skill_script is None:
-            return
-
-        def _clear_if_still_current() -> None:
-            if session_id is not None:
-                with self._approval_state_lock:
-                    current = self._parked_skill_script_payloads.get(session_id)
-                if current is not None and current.get("request_id") != request_id:
-                    return
-                with self._pending_skill_script_lock:
-                    still_armed_same_session = any(
-                        state.get("session_id") == session_id
-                        for state in self._pending_skill_script_rounds.values()
-                    )
-                if still_armed_same_session:
-                    return
-                if session_id != (self.store.active_session_id or ""):
-                    return
-            self.set_pending_skill_script(None)
-
-        self.app.call_from_thread(_clear_if_still_current)
 
     def _remount_parked_skill_script(self, session_id: str) -> None:
         """Re-derive the mounted skill-script confirm card for ``session_id``.
@@ -5887,14 +5794,19 @@ class ConsoleChatController:
         departing session had shown, all in one call. A no-op when no UI
         bridge is wired.
 
+        PR0: re-keyed by round, so this now re-derives the session's FIFO
+        head instead of a single per-session slot. It already runs on the
+        UI thread, so it calls `_head_round_payload` directly rather than
+        `_remount_head`.
+
         Args:
             session_id: The session now being activated/viewed.
         """
         if self.set_pending_skill_script is None:
             return
-        with self._approval_state_lock:
-            parked_payload = self._parked_skill_script_payloads.get(session_id)
-        self.set_pending_skill_script(parked_payload)
+        self.set_pending_skill_script(
+            self._head_round_payload(self._parked_skill_script_payloads, session_id)
+        )
 
     def _marshal_pending_skill_script(self, payload: dict[str, Any] | None) -> None:
         """WORKER THREAD: hand a skill-script confirm payload to the UI thread.

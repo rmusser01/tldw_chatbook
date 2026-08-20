@@ -508,8 +508,11 @@ async def test_an_approval_round_armed_with_no_view_is_not_lost(tmp_path):
             "a round armed with no view is unregistered -- the next mount "
             "has nothing to claim and the card is silently swallowed"
         )
-        with controller._approval_state_lock:
-            parked = controller._parked_approval_payloads.get(session.id)
+        # PR0 (task-15661): keyed by ROUND now -- this session's retained
+        # payload is its FIFO head, not a `.get(session_id)`.
+        parked = controller._head_round_payload(
+            controller._parked_approval_payloads, session.id
+        )
         assert parked is not None and parked.get("calls"), (
             "the round's payload was not retained, so a mount could not "
             "re-derive the card even knowing the round exists"
