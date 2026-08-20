@@ -6649,7 +6649,7 @@ class MediaDatabase:
         Raises:
             DatabaseError: If a database query error occurs.
         """
-        conditions = ["type IS NOT NULL AND TRIM(type) != ''"]
+        conditions = ["type IS NOT NULL AND type != ''"]
         if not include_deleted:
             conditions.append("deleted = 0")
         if not include_trash:
@@ -6662,7 +6662,7 @@ class MediaDatabase:
         )
         try:
             cursor = self.get_connection().execute(query)
-            results = [row["type"] for row in cursor.fetchall() if row["type"]]
+            results = [row["type"] for row in cursor.fetchall() if row["type"].strip()]
             logger.info(
                 "Distinct media types loaded (result_count={}, include_deleted={}, include_trash={}).",
                 len(results),

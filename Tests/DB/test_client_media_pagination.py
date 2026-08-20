@@ -276,7 +276,9 @@ def test_distinct_types_exclude_whitespace_only_and_preserve_nonblank_verbatim(
     media_db,
 ):
     database, _path = media_db
-    for index, media_type in enumerate(("   ", " pdf ")):
+    for index, media_type in enumerate(
+        ("   ", "\t", "\n", "\N{NO-BREAK SPACE}", " pdf ")
+    ):
         media_id, _uuid, _message = database.add_media_with_keywords(
             title=f"Type edge {index}",
             media_type=media_type,
