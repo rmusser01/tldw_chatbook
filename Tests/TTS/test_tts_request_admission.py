@@ -3477,6 +3477,43 @@ async def test_newer_managed_stage_discards_older_staged_preferences() -> None:
 
 
 @pytest.mark.asyncio
+async def test_failed_newer_managed_save_cannot_reopen_with_mixed_preferences(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, adapters, _supervisor = _managed_promotion_service()
+    registry = service.registry
+    await _publish_settings(
+        service,
+        _snapshot(model_id="Model/B"),
+        {"audio_cpp": _managed_config(6.0)},
+    )
+
+    async def fail_stage(*_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError("staging failed")
+
+    monkeypatch.setattr(service, "_stage_managed_boundary", fail_stage)
+    failed = await _publish_settings(
+        service,
+        _snapshot(model_id="Model/C"),
+        {"audio_cpp": _managed_config(7.0)},
+    )
+    assert failed.provider_statuses == {"audio_cpp": "unavailable"}
+    with pytest.raises(TTSProviderUnavailableError):
+        await registry.acquire("audio_cpp")
+
+    await service.shutdown_audio_cpp()
+    response = await service.synthesize_default(text="Coherent retry")
+
+    assert (adapters[0].generation, adapters[0].requests[-1].model_id) == (
+        "6.0",
+        "Model/B",
+    )
+    await response.aclose()
+    await service.close()
+    await service.wait_closed()
+
+
+@pytest.mark.asyncio
 async def test_pre_replacement_failure_changes_no_preferences_or_provider() -> None:
     adapter = _CapturingAdapter("audio_cpp", generation="one")
     old_snapshot = _snapshot(model_id="Model/One")

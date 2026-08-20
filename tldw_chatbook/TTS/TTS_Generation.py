@@ -3274,12 +3274,12 @@ class TTSService:
                         )
                     if (
                         staging_failed_provider_id == preferences.provider_id
-                        or self._preferences_can_activate(
-                            preferences,
-                            generation,
-                            provider_configs,
-                            provider_statuses,
-                        )
+                        and self._settings_staged_preferences is None
+                    ) or self._preferences_can_activate(
+                        preferences,
+                        generation,
+                        provider_configs,
+                        provider_statuses,
                     ):
                         self._request_admission._publish_preferences(
                             preferences,
