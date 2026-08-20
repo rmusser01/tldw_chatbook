@@ -779,6 +779,143 @@ def test_prior_observation_lookup_respects_a_lowered_sqlite_variable_limit(
     assert all("/private/limited" not in statement for statement in lookup_statements)
 
 
+def test_read_only_prior_observation_lookup_does_not_create_a_missing_database(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "notes-sync.sqlite3"
+    repository = NoteImportReceiptRepository(database)
+
+    assert repository.prior_observations_for_plan_read_only(_plan()) == ()
+    assert not database.exists()
+
+
+def test_read_only_prior_observation_lookup_leaves_schema_less_database_unchanged(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "notes-sync.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.execute("CREATE TABLE unrelated (value INTEGER)")
+        connection.execute("INSERT INTO unrelated VALUES (42)")
+        connection.commit()
+    database.chmod(0o600)
+    before = database.read_bytes()
+    repository = NoteImportReceiptRepository(database)
+
+    def reject_mutating_path(*_args, **_kwargs):
+        raise AssertionError("read-only lookup entered a mutating schema path")
+
+    monkeypatch.setattr(repository, "transaction", reject_mutating_path)
+    monkeypatch.setattr(repository, "_initialize_schema", reject_mutating_path)
+
+    assert repository.prior_observations_for_plan_read_only(_plan()) == ()
+    assert database.read_bytes() == before
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone() == (0,)
+        assert connection.execute("SELECT value FROM unrelated").fetchone() == (42,)
+        assert connection.execute(
+            "SELECT COUNT(*) FROM sqlite_schema WHERE name LIKE 'import_%'"
+        ).fetchone() == (0,)
+
+
+def test_read_only_prior_observation_lookup_uses_sqlite_enforced_read_only_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _repository(tmp_path)
+    repository.begin(_approved(), batch_size=25)
+    calls: list[tuple[bool, bool]] = []
+    original_connect = repository._connect
+
+    def traced_connect(*, read_only: bool = False, must_exist: bool = False):
+        calls.append((read_only, must_exist))
+        connection = original_connect(
+            read_only=read_only,
+            must_exist=must_exist,
+        )
+        if read_only:
+            with pytest.raises(sqlite3.OperationalError):
+                connection.execute("DELETE FROM import_sessions")
+        return connection
+
+    monkeypatch.setattr(repository, "_connect", traced_connect)
+
+    assert repository.prior_observations_for_plan_read_only(_plan()) == ()
+    assert calls == [(True, True)]
+
+
+def test_read_only_prior_observation_lookup_returns_completed_exact_match(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    repository.begin(_approved(), batch_size=25)
+    repository.transition_session(_APPROVAL_ID, ImportSessionState.RUNNING)
+    snapshot = repository.load_session_snapshot(_APPROVAL_ID)
+    payload = snapshot.payload_effects[0]
+    membership = snapshot.membership_effects[0]
+    repository.transition_effects(
+        _APPROVAL_ID,
+        tuple(_applied_transition(effect) for effect in snapshot.folder_effects)
+        + (
+            EffectTransition(
+                category=payload.category,
+                effect_id=payload.effect_id,
+                state=ImportEffectState.APPLIED,
+                target_note_id="opaque-note-7",
+                observed_version=8,
+            ),
+            EffectTransition(
+                category=membership.category,
+                effect_id=membership.effect_id,
+                state=ImportEffectState.APPLIED,
+                target_note_id="opaque-note-7",
+                target_folder_id=_folder_id_for_effect(membership),
+            ),
+        ),
+    )
+    repository.transition_item(
+        _APPROVAL_ID,
+        "item-1",
+        ImportItemOutcome.UPDATED,
+        target_note_id="opaque-note-7",
+        observed_version=8,
+    )
+    repository.transition_session(_APPROVAL_ID, ImportSessionState.COMPLETED)
+    expected = repository.prior_observations_for_plan(_plan())
+    database = tmp_path / "notes-sync.sqlite3"
+    before = database.read_bytes()
+
+    observations = repository.prior_observations_for_plan_read_only(_plan())
+
+    assert observations == expected
+    assert len(observations) == 1
+    assert observations[0].note_id == "opaque-note-7"
+    assert observations[0].note_version == 8
+    assert database.read_bytes() == before
+
+
+@pytest.mark.parametrize("database_kind", ["corrupt", "newer"])
+def test_read_only_prior_observation_lookup_bounds_invalid_database_failures(
+    tmp_path: Path,
+    database_kind: str,
+) -> None:
+    database = tmp_path / "notes-sync.sqlite3"
+    if database_kind == "corrupt":
+        database.write_bytes(b"private corrupt sqlite payload")
+    else:
+        with sqlite3.connect(database) as connection:
+            connection.execute("PRAGMA user_version = 2")
+    database.chmod(0o600)
+
+    with pytest.raises(ImportReceiptError) as caught:
+        NoteImportReceiptRepository(database).prior_observations_for_plan_read_only(
+            _plan()
+        )
+
+    assert str(database) not in str(caught.value)
+    assert caught.value.__cause__ is None
+
+
 def test_existing_v1_without_folder_parent_authority_fails_safe(tmp_path: Path) -> None:
     database = tmp_path / "notes-sync.sqlite3"
     with sqlite3.connect(database) as connection:

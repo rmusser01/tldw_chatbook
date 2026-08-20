@@ -68,11 +68,14 @@ RESTORE_BACKUP_OWNER_IDS = (
 MIGRATION_BOUNDARY_BACKUP_OWNER_IDS = ("tts.profile_migration_boundary",)
 
 
-def test_notes_sync_state_owner_is_private_file_only_and_not_backup_enabled() -> None:
+def test_notes_sync_state_owner_allows_private_and_read_only_without_backup() -> None:
     policy = SQLITE_OWNER_REGISTRY["notes.sync_state"]
 
-    assert policy.allowed_target_kinds == frozenset({SQLiteTargetKind.PRIVATE_FILE})
+    assert policy.allowed_target_kinds == frozenset(
+        {SQLiteTargetKind.PRIVATE_FILE, SQLiteTargetKind.READ_ONLY_URI}
+    )
     assert policy.centralized_backup_allowed is False
+    assert policy.preserve_read_only_source_mode is False
     reason = policy.reason.casefold()
     assert "device-private import receipts" in reason
     assert "future lasting-sync state" in reason

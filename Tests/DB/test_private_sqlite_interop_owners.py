@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 import stat
 from collections.abc import Callable
 from pathlib import Path
@@ -15,6 +16,7 @@ from tldw_chatbook.Notifications import (
     client_notifications_db,
     event_state_repository,
 )
+from tldw_chatbook.Notes import note_import_receipts
 from tldw_chatbook.Research_Interop import local_research_service
 from tldw_chatbook.Sync_Interop import notes_mirror, sync_state_repository
 from tldw_chatbook.Utils.private_paths import PrivatePathError
@@ -291,3 +293,48 @@ def test_research_path_memory_reuses_connection_and_supports_crud() -> None:
         assert [row["id"] for row in service.list_sessions()] == [session["id"]]
     finally:
         service.close()
+
+
+def test_notes_receipt_owner_routes_write_and_read_only_modes_through_one_seam(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, object, bool, bool]] = []
+    real_connect = private_sqlite.connect_private_sqlite
+
+    def tracking_connect(
+        owner_id: str,
+        database: object,
+        *,
+        read_only: bool = False,
+        must_exist: bool = False,
+        **kwargs: object,
+    ) -> sqlite3.Connection:
+        calls.append((owner_id, database, read_only, must_exist))
+        return real_connect(
+            owner_id,
+            database,
+            read_only=read_only,
+            must_exist=must_exist,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(
+        note_import_receipts, "connect_private_sqlite", tracking_connect
+    )
+    database = tmp_path / "notes-sync.sqlite3"
+    repository = note_import_receipts.NoteImportReceiptRepository(database)
+
+    writable = repository._connect()
+    writable.close()
+    read_only = repository._connect(read_only=True, must_exist=True)
+    try:
+        with pytest.raises(sqlite3.OperationalError):
+            read_only.execute("CREATE TABLE forbidden (value INTEGER)")
+    finally:
+        read_only.close()
+
+    assert calls == [
+        ("notes.sync_state", database, False, False),
+        ("notes.sync_state", database, True, True),
+    ]

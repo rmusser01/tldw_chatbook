@@ -11,7 +11,7 @@ import re
 import sqlite3
 import time
 from collections.abc import Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import dataclass, field
 from enum import Enum
 from itertools import islice
@@ -56,6 +56,13 @@ _PAYLOAD_TABLE = "import_payload_effects"
 _FOLDER_TABLE = "import_folder_effects"
 _MEMBERSHIP_TABLE = "import_membership_effects"
 _EFFECT_TABLES = frozenset({_PAYLOAD_TABLE, _FOLDER_TABLE, _MEMBERSHIP_TABLE})
+_REQUIRED_IMPORT_TABLES = frozenset(
+    {
+        "import_sessions",
+        "import_items",
+        *_EFFECT_TABLES,
+    }
+)
 
 
 SESSION_STATE_TRANSITIONS: Mapping[
@@ -609,8 +616,18 @@ class NoteImportReceiptRepository:
     def __repr__(self) -> str:
         return "NoteImportReceiptRepository(<private>)"
 
-    def _connect(self) -> sqlite3.Connection:
-        connection = connect_private_sqlite("notes.sync_state", self._database_path)
+    def _connect(
+        self,
+        *,
+        read_only: bool = False,
+        must_exist: bool = False,
+    ) -> sqlite3.Connection:
+        connection = connect_private_sqlite(
+            "notes.sync_state",
+            self._database_path,
+            read_only=read_only,
+            must_exist=must_exist,
+        )
         connection.execute("PRAGMA foreign_keys = ON")
         return connection
 
@@ -2320,6 +2337,58 @@ class NoteImportReceiptRepository:
     ) -> tuple[PriorImportObservation, ...]:
         """Return latest exact single-note observations for current plan sources."""
 
+        return self._prior_observations_for_plan(plan, self.transaction())
+
+    def prior_observations_for_plan_read_only(
+        self,
+        plan: NoteImportPlan,
+    ) -> tuple[PriorImportObservation, ...]:
+        """Inspect an existing ledger without creating or migrating its schema."""
+
+        if type(plan) is not NoteImportPlan:
+            raise TypeError("plan must be a NoteImportPlan.")
+        if not plan.items or not self._database_path.exists():
+            return ()
+        connection: sqlite3.Connection | None = None
+        try:
+            connection = self._connect(read_only=True, must_exist=True)
+            if not self._read_only_schema_is_available(connection):
+                return ()
+            return self._prior_observations_for_plan(plan, nullcontext(connection))
+        except ImportReceiptError:
+            raise
+        except sqlite3.Error:
+            raise ImportReceiptError(
+                "Private receipt observations are unavailable."
+            ) from None
+        finally:
+            if connection is not None:
+                connection.close()
+
+    @staticmethod
+    def _read_only_schema_is_available(connection: sqlite3.Connection) -> bool:
+        current_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+        if current_version not in {0, _SCHEMA_VERSION}:
+            raise ImportReceiptError("Unsupported private receipt schema version.")
+        tables = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_schema WHERE type = 'table'"
+            ).fetchall()
+        }
+        if not _REQUIRED_IMPORT_TABLES <= tables:
+            return False
+        if current_version != _SCHEMA_VERSION:
+            raise ImportReceiptError("Unsupported private receipt schema version.")
+        return True
+
+    def _prior_observations_for_plan(
+        self,
+        plan: NoteImportPlan,
+        connection_context: AbstractContextManager[sqlite3.Connection],
+    ) -> tuple[PriorImportObservation, ...]:
+        """Project planner observations using a caller-owned connection context."""
+
         if type(plan) is not NoteImportPlan:
             raise TypeError("plan must be a NoteImportPlan.")
         try:
@@ -2338,7 +2407,7 @@ class NoteImportReceiptRepository:
             str,
             tuple[tuple[int, int], str, list[tuple[object, ...]]],
         ] = {}
-        with self.transaction() as connection:
+        with connection_context as connection:
             digests = tuple(digest_items)
             chunk_size = _prior_observation_chunk_size(connection)
             for offset in range(0, len(digests), chunk_size):

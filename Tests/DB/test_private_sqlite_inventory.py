@@ -935,13 +935,14 @@ def test_notes_sync_state_inventory_row_is_exact_and_backup_excluded() -> None:
         "module": "tldw_chatbook/Notes/note_import_receipts",
         "symbol": "NoteImportReceiptRepository._connect",
         "owner_id": "notes.sync_state",
-        "classification": "private_file",
+        "classification": "private_file, read_only_uri",
         "intent": "device-private import receipts and future lasting-sync state",
         "disposition": (
             "Migrated via `connect_private_sqlite`. The profile-local ledger stores "
             "only opaque identifiers, private digests, bounded lifecycle state, and "
-            "reconciliation metadata; it is excluded from portable export and "
-            "centralized backup."
+            "reconciliation metadata; read-only planning cannot create or migrate "
+            "the ledger, and it is excluded from portable export and centralized "
+            "backup."
         ),
     }
     assert SQLITE_OWNER_REGISTRY["notes.sync_state"].centralized_backup_allowed is False
@@ -1023,9 +1024,7 @@ def test_subscriptions_agent_reader_is_read_only_and_preserves_source_mode() -> 
     policy = SQLITE_OWNER_REGISTRY["db.subscriptions.agent_read"]
 
     assert policy.production_module == "tldw_chatbook/DB/Subscriptions_DB"
-    assert policy.allowed_target_kinds == frozenset(
-        {SQLiteTargetKind.READ_ONLY_URI}
-    )
+    assert policy.allowed_target_kinds == frozenset({SQLiteTargetKind.READ_ONLY_URI})
     assert policy.preserve_read_only_source_mode is True
 
 
