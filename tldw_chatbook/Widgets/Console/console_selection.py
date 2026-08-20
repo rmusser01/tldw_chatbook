@@ -70,10 +70,6 @@ class SelectionManager:
         self._release_click_pending = False
         return pending
 
-    def suppress_release_click(self) -> None:
-        """Suppress the click synthesized for the current press/release."""
-        self._release_click_pending = True
-
     def begin_drag(self, row_key: str, offset: int) -> None:
         self._release_click_pending = False
         self._origin_row = row_key

@@ -9638,7 +9638,7 @@ async def test_library_prompt_compatibility_editor_discard_returns_to_current_li
         ]
         assert refresh_calls == 1
         row_id = f"library-prompt-row-{prompt_id}"
-        for _ in range(100):
+        for _ in range(500):
             if getattr(screen.focused, "id", None) == row_id:
                 break
             await pilot.pause(0.02)

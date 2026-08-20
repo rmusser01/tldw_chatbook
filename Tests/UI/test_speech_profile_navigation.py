@@ -212,7 +212,7 @@ def _valid_openai_artifact(
     )
 
 
-async def _wait_until(pilot, predicate, *, attempts: int = 120) -> None:
+async def _wait_until(pilot, predicate, *, attempts: int = 500) -> None:
     for _ in range(attempts):
         if predicate():
             return

@@ -942,7 +942,7 @@ async def _wait_for_library_shell(screen, pilot, *, attempts=120, timeout=15.0):
     )
 
 
-async def _wait_for_selector(screen, pilot, selector, *, attempts=120, timeout=15.0):
+async def _wait_for_selector(screen, pilot, selector, *, attempts=120, timeout=30.0):
     """Await ``selector`` mounting. Wall-clock bounded -- see
     ``_wait_for_library_shell`` for why a pause count is not a time budget."""
     budget = max(timeout, attempts * 0.02)

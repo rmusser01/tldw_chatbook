@@ -2365,14 +2365,21 @@ async def test_summary_three_actions_visible_and_focused_on_full_track(
             _select_radio(app.screen, "#setup-track-full")
             await pilot.pause(0.1)
             _press(app.screen, "#wizard-next")  # Welcome -> Provider, track=full
-            await pilot.pause(0.2)
+            await _wait_until(
+                pilot,
+                lambda: container.steps[container.current_step].config.id
+                == STEP_PROVIDER,
+            )
 
             for _ in range(10):
                 step = container.steps[container.current_step]
                 if step.config.id == STEP_SUMMARY:
                     break
+                previous_step = container.current_step
                 _press(app.screen, "#wizard-next")
-                await pilot.pause(0.2)
+                await _wait_until(
+                    pilot, lambda: container.current_step != previous_step
+                )
             else:
                 raise AssertionError("never reached the summary step")
 
@@ -2557,12 +2564,20 @@ async def test_external_cancel_is_keyboard_reachable_and_in_bounds_at_80_columns
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
             )
             _select_radio(app.screen, "#setup-track-full")
-            _press(app.screen, "#wizard-next")
-            await pilot.pause(0.2)
+            await pilot.pause(0.1)
             container = app.screen.query_one(SetupWizardContainer)
+            _press(app.screen, "#wizard-next")
+            await _wait_until(
+                pilot,
+                lambda: container.steps[container.current_step].config.id
+                == STEP_PROVIDER,
+            )
             while container.steps[container.current_step].config.id != "speech":
+                previous_step = container.current_step
                 _press(app.screen, "#wizard-next")
-                await pilot.pause(0.2)
+                await _wait_until(
+                    pilot, lambda: container.current_step != previous_step
+                )
 
             step = container.steps[container.current_step]
             assert isinstance(step, SpeechSetupStep)
@@ -2583,7 +2598,7 @@ async def test_external_cancel_is_keyboard_reachable_and_in_bounds_at_80_columns
 
             cancel.focus()
             await pilot.press("enter")
-            await pilot.pause()
+            await _wait_until(pilot, lambda: not step._external_busy)
 
             assert step._external_busy is False
             assert "prior source is unchanged" in step._external_status.lower()

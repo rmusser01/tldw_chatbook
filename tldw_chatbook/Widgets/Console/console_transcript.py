@@ -4771,7 +4771,6 @@ class ConsoleTranscript(VerticalScroll):
         ):
             press_node = press_node.parent
         if press_node is None:
-            had_menu = bool(self._attached_selection_menus())
             self._remove_selection_menu()
         # Textual encodes a real left press as button 1 (the XTerm driver
         # maps the left button to ``(buttons + 1) & 3``; 0 means "no button",
@@ -4787,10 +4786,6 @@ class ConsoleTranscript(VerticalScroll):
             return
         offset = self._selection_offset_for(row, event.screen_x, event.screen_y)
         self.selection_manager.begin_drag(row.id, offset)
-        if had_menu:
-            # A plain press dismisses the popover without toggling the row,
-            # while a genuine drag may still replace it with a new menu.
-            self.selection_manager.suppress_release_click()
         self._selection_origin_row = row
         # Capture the mouse so the terminal MouseUp reaches this transcript
         # even when the pointer is released outside it; otherwise the

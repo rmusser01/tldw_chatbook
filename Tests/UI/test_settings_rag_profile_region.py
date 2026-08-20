@@ -2948,8 +2948,9 @@ async def test_starter_panel_shown_when_builtin_active_no_users_and_index_absent
     async with host.run_test(size=(190, 55)) as pilot:
         await _open_settings_category(pilot, "#settings-category-library-rag")
         screen = _active_destination_screen(host)
-        await pilot.app.workers.wait_for_complete()
-        await pilot.pause()
+        await _wait_for_settings_text(
+            screen, pilot, "Search already works on Hybrid Basic."
+        )
 
         panel = screen.query_one("#settings-library-rag-starter-panel")
         assert panel.display is True
@@ -3068,8 +3069,9 @@ async def test_starter_panel_disappears_after_a_clone_completes(monkeypatch, tmp
     async with host.run_test(size=(190, 55)) as pilot:
         await _open_settings_category(pilot, "#settings-category-library-rag")
         screen = _active_destination_screen(host)
-        await pilot.app.workers.wait_for_complete()
-        await pilot.pause()
+        await _wait_for_settings_text(
+            screen, pilot, "Search already works on Hybrid Basic."
+        )
         assert screen.query_one("#settings-library-rag-starter-panel").display is True
         assert (
             screen.query_one(
@@ -3111,8 +3113,9 @@ async def test_starter_panel_disappears_after_backfill_completes(monkeypatch, tm
     async with host.run_test(size=(190, 55)) as pilot:
         await _open_settings_category(pilot, "#settings-category-library-rag")
         screen = _active_destination_screen(host)
-        await pilot.app.workers.wait_for_complete()
-        await pilot.pause()
+        await _wait_for_settings_text(
+            screen, pilot, "Search already works on Hybrid Basic."
+        )
         assert screen.query_one("#settings-library-rag-starter-panel").display is True
         assert (
             screen.query_one(
@@ -3303,8 +3306,9 @@ async def test_set_active_to_another_first_run_eligible_builtin_keeps_panel_visi
     async with host.run_test(size=(190, 55)) as pilot:
         await _open_settings_category(pilot, "#settings-category-library-rag")
         screen = _active_destination_screen(host)
-        await pilot.app.workers.wait_for_complete()
-        await pilot.pause()
+        await _wait_for_settings_text(
+            screen, pilot, "Search already works on BM25 Only."
+        )
         assert screen.query_one("#settings-library-rag-starter-panel").display is True
 
         screen._rag_after_set_active(

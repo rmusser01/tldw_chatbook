@@ -2759,6 +2759,10 @@ async def test_ready_clone_setup_preserves_editable_text_and_current_result_geom
         screen = _PaneScreen()
         await app.push_screen(screen)
         await _wait_until(pilot, lambda: len(screen.query(SpeechCloneSetup)) == 1)
+        await _wait_until(
+            pilot,
+            lambda: len(screen.query("#speech-clone-reference-text")) == 1,
+        )
         pane = screen.query_one(SpeechPlaygroundPane)
         screen.query_one("#tts-text-input", TextArea).text = "Generate speech."
         screen.query_one("#speech-clone-reference-text", TextArea).text = (
