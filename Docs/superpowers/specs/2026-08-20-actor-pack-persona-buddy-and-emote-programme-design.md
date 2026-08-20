@@ -115,6 +115,9 @@ local database ID. Add a small profile-local registry keyed by
 `(actor_kind, local_actor_id)` with a UUID portable identity. The registry:
 
 - is created atomically with New Actor Pack actor creation;
+- stores a canonical lowercase RFC 4122 UUIDv4 generated with the standard library;
+- enforces portable UUID uniqueness across both actor kinds, so a cross-kind reuse is
+  a database conflict rather than an application convention;
 - survives soft deletion and restoration;
 - never cascades into chats or visual versions;
 - is emitted in the Actor Pack manifest and actor payload;
@@ -140,13 +143,14 @@ store, while portable identities and visual bindings/versions live in SQLite. V1
 not perform a broad Persona-authority migration as incidental Actor Pack work and does
 not claim these stores share an ACID transaction.
 
-Task 5 adds one durable local-actor mutation coordinator for the operations that must
-span those stores. Character mutations stay within the existing SQLite transaction.
-Persona mutations use a SQLite write-ahead intent containing bounded canonical old/new
-Persona snapshots and authority digests, followed by the existing atomic Persona JSON
-replace, then one SQLite commit for the registry and visual rows. The same SQLite
-transaction marks the intent committed. Before the Personas or Actor Pack surfaces
-become available, startup recovery handles any prepared intent idempotently:
+Task 5 adds one purpose-built Actor Pack mutation coordinator for the operations that
+must span those stores; it is not a general transaction framework. Character
+mutations stay within the existing SQLite transaction. Persona mutations use a SQLite
+write-ahead intent containing bounded canonical old/new Persona snapshots and
+authority digests, followed by the existing atomic Persona JSON replace, then one
+SQLite commit for the registry and visual rows. The same SQLite transaction marks the
+intent committed. Before the Personas or Actor Pack surfaces become available,
+startup recovery handles any prepared intent idempotently:
 
 - if only the JSON replace occurred and its digest still equals the prepared new
   value, restore the old record (or remove the newly created record) atomically;
@@ -392,7 +396,11 @@ Canonical JSON uses UTF-8, sorted object keys, compact separators,
 field. `actor-pack.json` is not included in its own per-file size/SHA-256 inventory.
 The digest covers the remaining canonical top-level manifest plus every declared
 payload/portrait/license/section file's canonical path, size, and SHA-256. Export
-normalizes ZIP entry order, permissions, and timestamps for deterministic output.
+uses the standard library's `ZIP_STORED` mode—visual assets are already compressed—and
+fixes entry order, creator system, general-purpose flags, regular-file permissions,
+and the DOS timestamp to `1980-01-01 00:00:00`. Avoiding zlib output removes
+compressor-version drift, so identical canonical inputs produce byte-identical
+archives.
 
 Unknown required features or sections are rejected. V1 does not silently discard and
 later re-export content it cannot understand.
@@ -446,6 +454,14 @@ The envelope composes two separately bounded visual systems:
 - maximum 100:1 per-entry and aggregate decompression ratio;
 - no encrypted entries, symlinks, nested archives, duplicate/colliding paths,
   undeclared files, device names, or external references.
+
+Non-section members have tighter parsing/decode caps within that envelope:
+
+- `actor-pack.json`: 1 MiB;
+- `actor/actor.json`: 2 MiB;
+- portrait: 25 MiB encoded, at most 4,096 × 4,096 pixels, and the incumbent decoded
+  pixel-budget checks; and
+- each section manifest: 4 MiB.
 
 Section limits remain stricter:
 
@@ -744,7 +760,9 @@ Only local actors are eligible; server-backed Personas expose Save Local Copy fi
 Add the durable Persona JSON/SQLite mutation journal, compensation, and startup
 recovery boundary consumed later by import.
 
-Depends on Tasks 1 and 4.
+Depends only on the merged actor editors and the new Actor Pack ADR. Optional visual
+sections are declared structurally here; their runtime adapters are supplied by Tasks
+1 and 4 before export/import.
 
 ### Task 6 — Export self-contained Actor Packs
 
@@ -761,7 +779,8 @@ authority revalidation, crash-consistent activation, cleanup, and post-commit
 cache/Buddy refresh.
 An omitted optional visual section preserves the matching existing local binding.
 
-Depends on Tasks 1–6.
+Depends on Tasks 1, 3, 4, 5, and 6. Persona Visual authoring/import from Task 2 is not
+required for Actor Pack validation or activation.
 
 ### Task 8 — Match server streaming emotes and persistence
 
