@@ -670,6 +670,87 @@ def _native_service(
     )
 
 
+class _ManagedPromotionSupervisor:
+    def __init__(self) -> None:
+        self.state = "running"
+        self.draining_started = asyncio.Event()
+
+    def admission_snapshot(self) -> Any:
+        return generation_module.AudioCppProcessAdmissionSnapshot(
+            lifecycle_epoch=1,
+            process_generation=1,
+            state=self.state,
+            stage_application_eligible=self.state == "stopped",
+        )
+
+    async def begin_draining(self) -> None:
+        self.state = "draining"
+        self.draining_started.set()
+
+    async def stop(self) -> None:
+        self.state = "stopped"
+
+    close = stop
+
+    async def wait_closed(self) -> None:
+        return None
+
+
+def _managed_config(timeout: float) -> dict[str, Any]:
+    return {"mode": "managed", "connect_timeout_seconds": timeout}
+
+
+def _managed_promotion_service():
+    adapters: list[_CapturingAdapter] = []
+
+    def audio_factory(config: Mapping[str, Any]) -> _CapturingAdapter:
+        adapter = _CapturingAdapter(
+            "audio_cpp",
+            generation=str(config["connect_timeout_seconds"]),
+        )
+        adapters.append(adapter)
+        return adapter
+
+    registry = _RecordingRegistry(
+        specs=(
+            TTSProviderSpec(
+                TTSProviderDescriptor("audio_cpp", "audio.cpp", True),
+                audio_factory,
+                _managed_config(5.0),
+                True,
+            ),
+            TTSProviderSpec(
+                TTSProviderDescriptor("other", "Other", True),
+                lambda _config: _CapturingAdapter("other"),
+                {"generation": "one"},
+            ),
+        ),
+        aliases={},
+    )
+    supervisor = _ManagedPromotionSupervisor()
+    service = _test_service(
+        registry,
+        preferences_snapshot=_snapshot(model_id="Model/A"),
+        audio_cpp_supervisor=supervisor,
+    )
+    service._publish_native_catalog = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
+    return service, adapters, supervisor
+
+
+async def _publish_settings(
+    service: TTSService,
+    preferences: TTSPreferencesSnapshot,
+    provider_configs: Mapping[str, Mapping[str, Any]],
+) -> Any:
+    ticket = service.begin_preferences_publication(
+        preferences,
+        provider_configs,
+        lambda: generation_module.TTSSettingsPersistenceOutcome(True, True, None),
+        foreground_timeout_seconds=0,
+    )
+    return await _wait_bounded(ticket.completion)
+
+
 @pytest.mark.asyncio
 async def test_invalid_initial_provider_is_unconfigured_and_publication_recovers() -> (
     None
@@ -3268,6 +3349,65 @@ async def test_settings_publication_times_out_without_cancelling_old_speech() ->
     await replacement.aclose()
     await service.close()
     await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_unrelated_publication_cannot_activate_staged_managed_preferences() -> (
+    None
+):
+    service, adapters, _supervisor = _managed_promotion_service()
+    registry = service.registry
+    saved = _snapshot(model_id="Model/B")
+    staged = await _publish_settings(
+        service, saved, {"audio_cpp": _managed_config(6.0)}
+    )
+    assert staged.provider_statuses == {"audio_cpp": "pending"}
+    await _publish_settings(service, saved, {"other": {"generation": "two"}})
+
+    response = await _wait_bounded(service.synthesize_default(text="Still applied A"))
+    assert (adapters[0].generation, adapters[0].requests[-1].model_id) == (
+        "5.0",
+        "Model/A",
+    )
+    await _wait_bounded(response.aclose())
+
+    await _wait_bounded(service.shutdown_audio_cpp())
+    assert service.preferences_snapshot() == saved
+    assert registry.configuration_generation("audio_cpp") == staged.generation
+    await _wait_bounded(service.close())
+    await _wait_bounded(service.wait_closed())
+
+
+@pytest.mark.asyncio
+async def test_cancelled_managed_transition_settles_preferences_before_caller() -> None:
+    service, adapters, supervisor = _managed_promotion_service()
+    saved = _snapshot(model_id="Model/B")
+    active = await _wait_bounded(service.synthesize_default(text="Hold applied A"))
+    await _publish_settings(service, saved, {"audio_cpp": _managed_config(6.0)})
+    supervisor.state = "stopped"
+    transition = asyncio.create_task(
+        service.synthesize_default(text="Cancelled promotion")
+    )
+    await _wait_bounded(supervisor.draining_started.wait())
+    transition.cancel("caller cancelled")
+    await asyncio.sleep(0)
+    assert transition.done() is False
+
+    await _wait_bounded(active.aclose())
+    with pytest.raises(asyncio.CancelledError):
+        await _wait_bounded(transition)
+
+    assert service.preferences_snapshot() == saved
+    replacement = await _wait_bounded(
+        service.synthesize_default(text="Coherent after cancellation")
+    )
+    assert (adapters[1].generation, adapters[1].requests[-1].model_id) == (
+        "6.0",
+        "Model/B",
+    )
+    await _wait_bounded(replacement.aclose())
+    await _wait_bounded(service.close())
+    await _wait_bounded(service.wait_closed())
 
 
 @pytest.mark.asyncio

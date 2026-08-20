@@ -1124,6 +1124,9 @@ class TTSService:
         self._settings_generation = 0
         self._settings_persisted_provider_generations: dict[str, int] = {}
         self._settings_persisted_provider_configs: dict[str, dict[str, Any]] = {}
+        self._settings_staged_preferences: tuple[int, TTSPreferencesSnapshot] | None = (
+            None
+        )
         self._settings_publication_tasks: set[asyncio.Task[TTSSettingsPublication]] = (
             set()
         )
@@ -1207,12 +1210,7 @@ class TTSService:
                             or not current_admission.stage_application_eligible
                         ):
                             continue
-                        await self.registry.run_exclusive_provider_transition(
-                            "audio_cpp",
-                            on_draining=supervisor.begin_draining,
-                            action=self._stop_audio_cpp_for_transition,
-                            apply_staged=True,
-                        )
+                        await self._promote_audio_cpp_stage()
                     continue
                 if configuration.staged_config is not None and admission.state in {
                     "stopped",
@@ -2934,18 +2932,10 @@ class TTSService:
 
     async def _restart_audio_cpp(self) -> TTSProviderCatalog | None:
         async with self._audio_cpp_lifecycle_lock:
-            supervisor = self._audio_cpp_supervisor
-            if supervisor is None:
-                raise RuntimeError("Managed audio.cpp lifecycle is unavailable")
             request_generation = self._reserve_native_catalog_request("audio_cpp")
             async with self._request_admission._publication_lock:
                 async with self._request_admission._gate.write():
-                    await self.registry.run_exclusive_provider_transition(
-                        "audio_cpp",
-                        on_draining=supervisor.begin_draining,
-                        action=self._stop_audio_cpp_for_transition,
-                        apply_staged=True,
-                    )
+                    await self._promote_audio_cpp_stage()
                     configuration = await self.registry.provider_configuration_snapshot(
                         "audio_cpp"
                     )
@@ -2981,24 +2971,9 @@ class TTSService:
 
     async def _shutdown_audio_cpp(self) -> None:
         async with self._audio_cpp_lifecycle_lock:
-            await self._transition_audio_cpp_lifecycle(apply_staged=True)
-
-    async def _transition_audio_cpp_lifecycle(
-        self,
-        *,
-        apply_staged: bool,
-    ) -> ReconfigureResult:
-        supervisor = self._audio_cpp_supervisor
-        if supervisor is None:
-            raise RuntimeError("Managed audio.cpp lifecycle is unavailable")
-        async with self._request_admission._publication_lock:
-            async with self._request_admission._gate.write():
-                return await self.registry.run_exclusive_provider_transition(
-                    "audio_cpp",
-                    on_draining=supervisor.begin_draining,
-                    action=self._stop_audio_cpp_for_transition,
-                    apply_staged=apply_staged,
-                )
+            async with self._request_admission._publication_lock:
+                async with self._request_admission._gate.write():
+                    await self._promote_audio_cpp_stage()
 
     async def _stop_audio_cpp_for_transition(self) -> None:
         """Stop a transition under the outer shutdown deadline, if active."""
@@ -3007,6 +2982,39 @@ class TTSService:
             raise RuntimeError("Managed audio.cpp lifecycle is unavailable")
         with shutdown_deadline_scope(self._shutdown_deadline):
             await supervisor.stop()
+
+    async def _promote_audio_cpp_stage(self) -> ReconfigureResult:
+        """Retain one transition through exact staged-preference publication."""
+        supervisor = self._audio_cpp_supervisor
+        if supervisor is None:
+            raise RuntimeError("Managed audio.cpp lifecycle is unavailable")
+
+        async def promote() -> ReconfigureResult:
+            result = await self.registry.run_exclusive_provider_transition(
+                "audio_cpp",
+                on_draining=supervisor.begin_draining,
+                action=self._stop_audio_cpp_for_transition,
+                apply_staged=True,
+            )
+            pending = self._settings_staged_preferences
+            if (
+                pending is not None
+                and self.registry.configuration_generation("audio_cpp") == pending[0]
+            ):
+                pending_generation, pending_preferences = pending
+                self._request_admission._publish_preferences(
+                    pending_preferences,
+                    pending_generation,
+                )
+                self._settings_staged_preferences = None
+            return result
+
+        task = self._start_audio_cpp_lifecycle(
+            promote(),
+            name="tts_audio_cpp_transition_publication",
+        )
+        await join_retained_task(task)
+        return task.result()
 
     def begin_preferences_publication(
         self,
@@ -3211,6 +3219,7 @@ class TTSService:
                                 deepcopy(dict(provider_configs[provider_id]))
                             )
                 transition_failed = False
+                staging_failed_provider_id: str | None = None
                 for provider_id, config in provider_configs.items():
                     try:
                         staged_status = await self._stage_managed_boundary(
@@ -3218,11 +3227,16 @@ class TTSService:
                             config,
                             generation=generation,
                         )
-                        if staged_status is not None:
-                            provider_statuses[provider_id] = staged_status
-                            if staged_status == "pending":
-                                staged_provider_ids.add(provider_id)
-                            continue
+                    except BaseException:
+                        staging_failed_provider_id = provider_id
+                        transition_failed = True
+                        break
+                    if staged_status is not None:
+                        provider_statuses[provider_id] = staged_status
+                        if staged_status == "pending":
+                            staged_provider_ids.add(provider_id)
+                        continue
+                    try:
                         ticket = await self.registry.begin_reconfigure_provider(
                             provider_id,
                             config,
@@ -3234,6 +3248,12 @@ class TTSService:
                         break
 
                 if transition_failed:
+                    if (
+                        staging_failed_provider_id is not None
+                        or tickets
+                        or staged_provider_ids
+                    ):
+                        await self._seal_provider_configs(provider_configs)
                     provider_statuses.update(
                         {provider_id: "unavailable" for provider_id in provider_configs}
                     )
@@ -3246,16 +3266,27 @@ class TTSService:
                         )
                     )
 
-                if publish_preferences and self._preferences_can_activate(
-                    preferences,
-                    generation,
-                    provider_configs,
-                    provider_statuses,
-                ):
-                    self._request_admission._publish_preferences(
-                        preferences,
-                        generation,
-                    )
+                if publish_preferences:
+                    if preferences.provider_id in staged_provider_ids:
+                        self._settings_staged_preferences = (
+                            generation,
+                            preferences,
+                        )
+                    if (
+                        staging_failed_provider_id == preferences.provider_id
+                        or self._preferences_can_activate(
+                            preferences,
+                            generation,
+                            provider_configs,
+                            provider_statuses,
+                        )
+                    ):
+                        self._request_admission._publish_preferences(
+                            preferences,
+                            generation,
+                        )
+                        if preferences.provider_id == "audio_cpp":
+                            self._settings_staged_preferences = None
                 provider_revisions.update(
                     self._safe_provider_revisions(provider_configs)
                 )
@@ -3316,7 +3347,13 @@ class TTSService:
 
         provider_id = preferences.provider_id
         if provider_id not in provider_configs:
-            return True
+            return self.saved_configuration_revision(
+                provider_id
+            ) == self.applied_configuration_revision(provider_id)
+        if provider_statuses.get(provider_id) == "pending":
+            return (
+                provider_id != "audio_cpp" or self._settings_staged_preferences is None
+            )
         if provider_statuses.get(provider_id) not in {"applied", "unchanged"}:
             return False
         return tts_configuration_is_active(self, provider_id, generation)
@@ -3525,12 +3562,23 @@ class TTSService:
             return "applied"
         if result is ReconfigureResult.UNCHANGED:
             return "unchanged"
-        if (
+        if result is ReconfigureResult.SUPERSEDED and (
             self._settings_persisted_provider_generations.get(provider_id, 0)
             > ticket.generation
         ):
             return "superseded"
+        await self._seal_provider_configs((provider_id,))
         return "unavailable"
+
+    async def _seal_provider_configs(
+        self,
+        provider_ids: Collection[str],
+    ) -> None:
+        for provider_id in reversed(tuple(provider_ids)):
+            try:
+                await self.registry.seal_provider_unavailable(provider_id)
+            except BaseException:
+                pass
 
     def _safe_provider_revisions(
         self,
