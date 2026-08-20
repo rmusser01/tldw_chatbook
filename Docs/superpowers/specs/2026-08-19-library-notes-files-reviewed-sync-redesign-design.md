@@ -221,7 +221,13 @@ enough for identity and avoid exposing entire notes unnecessarily.
 Primary actions:
 
 - `Apply sync` when at least one operation is applicable.
-- `Done - no changes` when the plan is empty.
+- `Record skipped result` when the plan has no applicable operation but has one
+  or more skipped/conflict rows. This uses the guarded Apply path, performs a
+  fresh replan, and writes history/conflict evidence without changing note
+  content or disk files.
+- `Done - no changes` only when the plan has no operations, conflicts, or
+  skipped rows. It also performs a guarded fresh replan and records a durable
+  `no_changes` receipt; Back remains the non-recording exit.
 - `Back to settings`.
 
 The review states:
@@ -279,11 +285,11 @@ Failed · Folder unavailable · Choose folder
 
 The existing sync-session history remains the durable receipt owner. Planning
 does not create history rows. No schema change is required: the existing
-summary JSON adds backward-compatible `applied`, `resolved`, `skipped`,
-`stale`, `cancelled`, and `failed` counts while retaining every current summary
-key and a new `outcome` discriminator. Current-session row detail remains
-bounded screen state; durable history stores counts and safe reason categories,
-not note contents.
+summary JSON adds backward-compatible `applied`, `reconciled`, `resolved`,
+`skipped`, `stale`, `cancelled`, and `failed` counts while retaining every
+current summary key and a new `outcome` discriminator. Current-session row
+detail remains bounded screen state; durable history stores counts and safe
+reason categories, not note contents.
 
 The existing constrained `sync_sessions.status` column is mapped as follows:
 
@@ -292,17 +298,24 @@ The existing constrained `sync_sessions.status` column is mapped as follows:
 | `done` or `no_changes` | `completed` | Terminal and fully settled. |
 | `partial` | `completed` | Terminal with some successful operations; `summary.outcome` prevents it being presented as full success. |
 | `stale` | `completed` | Attempted Apply wrote nothing because the reviewed plan no longer matched. |
+| `skipped` | `completed` | Terminal with no content/file operation applied; review evidence and safe skip reasons were recorded. |
 | `cancelled` | `cancelled` | Internal/shutdown cancellation settled between operations. |
 | `failed` | `failed` | No trustworthy successful completion claim can be made. |
 
-Apply creates the `running` session row only after mutation ownership is
-acquired. A stale pre-write replan then completes that row with
-`summary.outcome = "stale"`. Conflict rows use the existing resolution values:
-`use_db` or `use_disk` only after that winner is applied, `skip` for a conflict
+The guarded terminal path—including `Apply sync`, `Record skipped result`, and
+`Done - no changes`—creates the `running` session row only after mutation
+ownership is acquired. A stale pre-write replan then completes that row with
+`summary.outcome = "stale"`. A fresh empty plan completes with `no_changes`. A
+fresh skipped-only plan completes with `summary.outcome = "skipped"`,
+`processed_files = 0`, its exact skipped count in summary JSON, and
+`errors_count` equal to containment/unsupported skips (not policy-skipped
+conflicts). Conflict rows use the existing resolution values: `use_db` or
+`use_disk` only after that winner is applied, `skip` for a conflict
 intentionally left unapplied, and `NULL` only for unresolved legacy/ASK data.
-Skipped non-conflict operations do not create conflict rows. The latest-status
-UI reads `summary.outcome`, falling back to the legacy status/count fields for
-older rows.
+`Record skipped result` writes each intentionally skipped conflict with
+`resolution = "skip"` and `resolved_at`; skipped non-conflict operations do not
+create conflict rows. The latest-status UI reads `summary.outcome`, falling
+back to the legacy status/count fields for older rows.
 
 ### Classification truth table
 
@@ -314,10 +327,11 @@ Bidirectional is the only mode that uses `disk_wins`, `db_wins`, or
 | --- | --- | --- | --- |
 | Disk path exists; no linked Library note | Create Library note. | Leave disk path unchanged. | Create Library note. |
 | Linked Library note exists; disk path is missing | Retain the Library note and unlink its mirror metadata. Never delete the note. | Recreate the disk file from Library. | `db_wins`: recreate disk; `disk_wins`: retain note and unlink; `newer_wins`: skip as a conflict because a deletion has no reliable comparable timestamp. |
-| Both exist; contents match | No operation. | No operation. | No operation. |
+| Both exist; contents and last-synced baseline match | No operation. | No operation. | No operation. |
+| Both exist; contents match each other but baseline hash/mtime is stale or missing | Reconcile sync baseline metadata. | Reconcile sync baseline metadata. | Reconcile sync baseline metadata. |
 | Both exist; only disk changed | Update Library from disk. | Restore disk from Library because the selected direction makes Library authoritative. | Update Library from disk. |
 | Both exist; only Library changed | Restore Library from disk because the selected direction makes disk authoritative. | Update disk from Library. | Update disk from Library. |
-| Both exist; both changed | Update Library from disk. | Update disk from Library. | `disk_wins`: update Library; `db_wins`: update disk; `newer_wins`: update the older side from the newer timestamp, or skip if timestamps cannot be compared reliably. |
+| Both exist; both changed | Update Library from disk. | Update disk from Library. | `disk_wins`: update Library; `db_wins`: update disk; `newer_wins`: the strictly newer valid timestamp wins; equal/invalid/incomparable timestamps skip deterministically. |
 | Neither destination can be safely identified/read | Skip with a bounded reason. | Skip with a bounded reason. | Skip with a bounded reason. |
 
 The current data model has no durable tombstone that distinguishes a genuinely
@@ -326,6 +340,16 @@ Disk -> Library and Bidirectional continue to classify an unlinked disk-only
 file as `Create Library note`; the review makes that potential resurrection
 visible before Apply. Adding cross-store deletion tombstones is a schema and
 conflict-policy change outside this tranche.
+
+`newer_wins` compares only a Database content-modification timestamp and the
+freshly descriptor-verified disk mtime. They are comparable only when the
+Database timestamp is present, parseable, timezone-aware, and finite, and the
+disk timestamp is present and finite. Both values are normalized to UTC at
+their stored precision. A side wins only when its normalized value is strictly
+greater; equal values or any failed precondition deterministically produce a
+skipped conflict. Sync-metadata writes must not update the Database content
+`last_modified` timestamp, because doing so would fabricate a newer content
+edit.
 
 ## Sync Plan and Apply Contract
 
@@ -347,13 +371,26 @@ Add a small Notes-owned pure model, not a generic sync framework:
   - Database expected version/content hash;
   - disk expected hash and descriptor-verified identity facts;
   - selected conflict winner when relevant.
+  - `reconcile_baseline` is an applicable metadata-only operation when both
+    contents match but `last_synced_disk_file_hash`/mtime is stale or missing.
+    Its preconditions include the expected note version, equal current content
+    hashes, prior baseline values, and verified disk identity/mtime.
 - `NotesSyncApplyReceipt`
   - plan fingerprint;
-  - applied, resolved, skipped, stale, cancelled, and failed rows;
+  - applied, reconciled, resolved, skipped, stale, cancelled, and failed rows;
   - terminal status and safe recovery action.
 
 Plans remain process-memory objects. They do not store full note contents and
 are never accepted from an untrusted serialized source.
+
+Applying `reconcile_baseline` updates only sync-link/baseline metadata through
+an optimistic expected-version write. It increments the note version so a
+concurrent mutation is detectable, but it preserves title, content, and the
+user-visible/content `last_modified` timestamp. Review labels it `Refresh sync
+baseline - contents already match`; Receipt counts it as `reconciled`, not as a
+Library or disk content change. Its prior and proposed baseline values are part
+of the plan fingerprint, so apply cannot silently repair different metadata
+than the user reviewed.
 
 ### Ownership
 
@@ -393,11 +430,15 @@ all-or-nothing apply, or cross-process filesystem compare-and-swap.
 ## Auto-sync Contract
 
 Turning Auto-sync On before review records only screen-level intent and renders
-`Auto-sync requested - Needs review`; it does not persist an active timer. On a
-Review screen—including a reviewed no-change plan—the user must explicitly
-choose `Enable auto-sync for these settings`. Only that action persists active
-auto-sync and arms the timer. Applying a manual sync alone is not implicit
-authorization for future background writes.
+`Auto-sync requested - Needs review`; it does not persist an active timer. The
+user first completes the reviewed terminal action (`Apply sync`, `Record
+skipped result`, or `Done - no changes`) and reaches Receipt. Receipt then
+offers `Enable auto-sync for these settings` only when the outcome is `done` or
+`no_changes`; skipped, partial, stale, cancelled, and failed receipts show their
+recovery action instead. Only the explicit Enable action binds the just-settled
+receipt fingerprint, persists active auto-sync, and arms the timer. Applying or
+finalizing a manual review alone is not implicit authorization for future
+background writes.
 
 Approval is invalidated whenever folder identity, user identity, direction, or
 effective conflict policy changes. In one-way modes the effective policy is
@@ -415,6 +456,8 @@ Auto-sync:
   acquired; screen state may retain additional bounded row detail;
 - pauses and shows a recovery action when the folder is invalid or the service
   is unavailable;
+- pauses after any `partial`, `stale`, `skipped`, `cancelled`, or `failed`
+  receipt instead of repeating an unresolved operation every interval;
 - honors the normalized effective conflict policy (`direction_decides` for a
   one-way sync, or the configured global policy for Bidirectional);
 - does not enable `ASK` or per-conflict interaction.
@@ -429,12 +472,13 @@ approval. A new optional `[notes] auto_sync_approval_fingerprint` binds:
 - direction, normalized effective conflict policy, and allowed extensions;
 - the reviewed plan fingerprint and approval contract version.
 
-`Enable auto-sync for these settings` writes the fingerprint, including for a
-reviewed no-change plan. A bound-setting change clears approval and leaves the
-request in `Needs review`. On startup, a missing, unresolvable, replaced-root,
-user-mismatched, or otherwise mismatched fingerprint does not arm the timer.
-The next tick always replans; the reviewed-plan fingerprint records the exact
-approval event but is not expected to equal every future changing-content plan.
+`Enable auto-sync for these settings` writes the fingerprint from a settled
+`done` or `no_changes` Receipt. A bound-setting change clears approval and
+leaves the request in `Needs review`. On startup, a missing, unresolvable,
+replaced-root, user-mismatched, or otherwise mismatched fingerprint does not arm
+the timer. The next tick always replans; the receipt plan fingerprint records
+the exact approval event but is not expected to equal every future
+changing-content plan.
 
 ## Persistent Status and Recovery
 
@@ -608,6 +652,11 @@ Test at minimum:
 - Plan classification is mutation-free for every direction and conflict policy.
 - The complete direction/state/policy truth table is table-driven in one test
   corpus consumed by planner and apply-replan tests.
+- Equal-content/stale-baseline plans produce one guarded metadata
+  reconciliation, preserve content `last_modified`, and cannot poison later
+  one-sided change classification.
+- `newer_wins` strictly orders valid timestamps and skips equal, missing,
+  non-finite, naive, or unparseable values.
 - Preview and apply share the same classifier.
 - Deterministic plan fingerprints change for every relevant precondition.
 - Fresh-plan mismatch performs zero writes.
@@ -618,7 +667,10 @@ Test at minimum:
 - Auto-sync approval binds user/root identity/direction/effective
   policy/extensions and invalidates on every mismatch.
 - Durable receipt tests cover every `summary.outcome` to constrained status
-  mapping and the legacy-history fallback.
+  mapping—including skipped-only/conflict-only plans—and the legacy-history
+  fallback.
+- Skipped-only Review offers `Record skipped result`, persists conflict
+  resolution `skip`, and never offers Auto-sync enablement on its Receipt.
 - Apply cannot mutate without the ADR-021 shared legacy lease and holds it
   through terminal history settlement.
 - Existing containment, permissions, sync history, and File Notes authority
@@ -740,6 +792,15 @@ Resolution: map every new receipt outcome onto the existing constrained status
 values and store the precise outcome/counts in backward-compatible summary
 JSON. Keep detailed current-session rows in screen memory. No schema change in
 this tranche.
+
+### Equal content with stale baseline
+
+Risk: treating equal current hashes as a no-op leaves an old baseline, so the
+next one-sided edit appears to be a both-changed conflict.
+
+Resolution: model and review a guarded metadata-only baseline reconciliation,
+fingerprint its old/new values, preserve content `last_modified`, and count it
+separately from user-content changes.
 
 ### Deletion ambiguity without tombstones
 
