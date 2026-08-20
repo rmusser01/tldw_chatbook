@@ -5445,3 +5445,26 @@ the same file, both reproduced under CPU-burner load before patching:
    When a reactive assignment's effects arrive by message, settle on the
    cascade's own output — and if that output is indistinguishable from the
    initial state, find any other observable the same dispatch step produces.
+
+## Deleting a diagnostic-bearing call obliges the inventory hand-edit — and two reviewers missed it in one wave (tasks 19042/19043, 2026-08-20)
+
+Companion to "Adding a resource of a GUARDED KIND obliges you to run that
+kind's inventory suite" above — the DELETION direction, which proved harder to
+see. The persistent diagnostic inventory
+(`Docs/security/production-diagnostic-inventory.json`, gated by
+`Tests/Architecture/test_persistent_diagnostic_inventory.py`) keys rows on
+each file's diagnostic CONTENT, so removing a `logger.*` call changes that
+file's row and the playbook requires a hand-edit in the same PR. In the
+third-wave burn-down this was missed twice by implementers and twice by
+reviewers: task-19042 initially skipped it, and its reviewer asserted the
+inventory JSON "had zero consumers" — refuted by the controller's
+rebuild-diff, which showed the architecture gate consuming it; then
+task-19043's deletion (stts_events 30→29) shipped with BOTH implementer and
+reviewer missing the step, leaving the gate red on dev (folded into
+task-19191's per-row regeneration). Two rules with teeth: (1) any PR that
+deletes or moves diagnostic-bearing code must run
+`scripts/check_persistent_diagnostic_inventory.py` and hand-review its row
+diff before merging — a deletion feels like it needs no review precisely
+because nothing new was added; (2) a reviewer claim that a guarded artifact is
+"unconsumed" is an untested claim until checked against the gate that
+consumes it — grep for the artifact's path in `Tests/` before agreeing.
