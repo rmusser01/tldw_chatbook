@@ -534,8 +534,12 @@ is:
 5. after that destination commit, read fresh config snapshot B and a fresh
    ChaChaNotes transaction B, canonicalize the same projection, and derive
    digest B; a second read from transaction A is explicitly invalid evidence;
-6. in a new destination transaction, set `matched_recheck` only when A equals B
-   or `drifted` otherwise, recording digest B; and
+6. in a new destination transaction, compare-and-set the run to
+   `matched_recheck` only when A equals B or `drifted` otherwise, recording
+   digest B. The `UPDATE` predicate must include
+   `state = 'pending_recheck' AND source_revision_after IS NULL`; when it changes
+   zero rows, reread and return the already committed terminal receipt without
+   mutation; and
 7. on crash after step 4, leave `pending_recheck`; replay of digest A performs
    the missing fresh recheck without duplicating candidates.
 
@@ -550,7 +554,9 @@ Replay follows one exact state machine:
 
 - no run for digest A: execute step 4 once, including candidate/item writes;
 - existing `pending_recheck` run for digest A: do not preflight or rewrite its
-  candidates/items; perform only a fresh snapshot B and the final state update;
+  candidates/items; perform only a fresh snapshot B and the conditional final
+  state update. Concurrent rechecks may race, but only one compare-and-set can
+  commit and the loser returns that immutable receipt;
 - existing `matched_recheck` or `drifted` run for digest A: return its immutable
   receipt without source or candidate writes; and
 - a genuinely new digest: open a new run. An exact source-locator match owned by
@@ -831,6 +837,9 @@ construction.
   DDL and derive aggregate counts from items rather than stored summaries.
 - Simulate cross-owner drift and prove the resulting generation remains
   provisional and marked for rescan.
+- Race two real connections finalizing the same pending run with different B
+  snapshots; prove one terminal receipt wins and the loser cannot overwrite its
+  state or `source_revision_after`.
 - Use operand-aware filesystem spies and nonexistent/adversarial stored paths;
   prove no candidate path is accessed while required config/database I/O still
   occurs.
