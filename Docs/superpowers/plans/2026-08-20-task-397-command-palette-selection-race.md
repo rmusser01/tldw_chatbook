@@ -586,7 +586,7 @@ git commit -m "fix(app): use stable command palette selection"
 - Modify: this plan document
 - Modify only if assumptions changed: `Docs/superpowers/specs/2026-08-20-task-397-command-palette-selection-race-design.md`
 
-- [ ] **Step 1: Search upstream before filing**
+- [x] **Step 1: Search upstream before filing**
 
 ```bash
 gh issue list --repo Textualize/textual --state all \
@@ -595,7 +595,13 @@ gh issue list --repo Textualize/textual --state all \
 
 Expected: either identify an exact existing issue to link or establish that a new report is warranted. Record the search terms and result; do not file a duplicate.
 
-- [ ] **Step 2: File or link the upstream issue**
+Evidence: searched `command palette refresh highlight selection race`,
+`CommandPalette highlight reset`, `command palette wrong command`, and
+`command palette async provider selection` across open and closed Textual issues.
+The only nearby reports, #4705 and #3714, concern unrelated help/scroll/order and
+duplicate-ID clearing defects, so a new report was warranted.
+
+- [x] **Step 2: File or link the upstream issue**
 
 If no exact issue exists, use `gh issue create --repo Textualize/textual` with a standalone reproduction derived from the passing stock characterization. Include Textual `8.2.8`, Python version, fake-clock/gated ordering, exact expected/actual highlight and callback identity, source behavior, and the app workaround. State whether the original no-command symptom reproduced or whether only the narrower highlight reset was confirmed.
 
@@ -605,15 +611,39 @@ task In Progress, commit the implemented mitigation/evidence if otherwise ready,
 stop with an explicit filing handoff. Do not run the Done transition or claim task
 completion until a durable existing or newly filed issue URL is linked.
 
-- [ ] **Step 3: Run the final related verification matrix**
+Evidence: filed [Textual issue #6701](https://github.com/Textualize/textual/issues/6701)
+with Textual 8.2.8, Python 3.12.11, the fake-clock/gated-provider reproduction,
+expected and actual callback identities, the batch refresh mechanism, and the local
+workaround. The report explicitly says the deterministic run confirmed a
+wrong-command race but did not reproduce the original no-command symptom.
+
+- [x] **Step 3: Run the final related verification matrix**
 
 Repeat Task 3 Steps 4-6 on the settled branch. Capture exact pass/fail counts, warnings, durations, and any identical `origin/dev` baseline proof.
 
-- [ ] **Step 4: Request independent cumulative review**
+Evidence: the four exact related palette files passed with `90 passed, 1 warning in
+9.13s`; the warning was the existing Requests dependency-version warning. Focused
+Ruff, Ruff format, MyPy, compileall, and `git diff --check` all passed. No baseline
+comparison was needed because no focused check failed.
 
-Use `superpowers:requesting-code-review` over `origin/dev..HEAD`. Require review of the protected Textual seam, actionable/no-match guard, deterministic non-vacuity, callback exactly-once behavior, app construction, upstream report honesty, scope, and task evidence. Resolve all P0-P2 findings before closeout.
+- [x] **Step 4: Request independent cumulative review**
 
-- [ ] **Step 5: Complete documentation and task hygiene**
+Use `superpowers:requesting-code-review` over
+`$(git merge-base origin/dev HEAD)..HEAD`. During closeout that merge base resolved to
+`1bf7f234e`; `origin/dev` had advanced by 93 commits after the worktree was created,
+so literal `origin/dev..HEAD` included unrelated upstream changes and was not a valid
+TASK-397 review range. Require review of the protected Textual seam,
+actionable/no-match guard, deterministic non-vacuity, callback exactly-once behavior,
+app construction, upstream report honesty, scope, and task evidence. Resolve all
+P0-P2 findings before closeout.
+
+Evidence: independent cumulative review approved the protected compatibility seam,
+guards, non-vacuous behavior tests, exactly-once callback contract, app construction,
+upstream report, scope, and task evidence. The review's sole P2 corrected the stale
+literal `origin/dev..HEAD` instruction to the merge-base-scoped range above;
+re-review approved with no open P0-P2 findings.
+
+- [x] **Step 5: Complete documentation and task hygiene**
 
 Update TASK-397 with:
 
@@ -632,7 +662,12 @@ backlog task edit 397 -s Done
 backlog task 397 --plain
 ```
 
-- [ ] **Step 6: Commit closeout documentation**
+Evidence: TASK-397 now records all checked ACs, the reviewed plan, concise
+implementation/verification notes, issue #6701, the ADR-no rationale, and the
+no-lessons/no-user-guide rationale. `backlog task edit 397 -s Done` completed, and
+`backlog task 397 --plain` resolves the exact task as Done with all three ACs checked.
+
+- [x] **Step 6: Commit closeout documentation**
 
 ```bash
 git add \
@@ -642,13 +677,25 @@ git add \
 git commit -m "docs(ui): complete TASK-397 palette race mitigation"
 ```
 
-- [ ] **Step 7: Verify final repository state**
+Evidence: the task record and executable plan were committed with the prescribed
+`docs(ui): complete TASK-397 palette race mitigation` message; the unchanged design
+spec required no closeout edit because implementation did not disprove an assumption.
+
+- [x] **Step 7: Verify final repository state**
 
 ```bash
 git status --short
-git diff --check origin/dev..HEAD
+git diff --check "$(git merge-base origin/dev HEAD)..HEAD"
 git log --oneline --decorate -6
 backlog task 397 --plain
 ```
 
-Expected: clean worktree; scoped commits; TASK-397 uniquely resolves to Done with every AC checked; no implementation or review evidence is overstated.
+Expected: clean worktree; the merge-base-scoped diff contains only TASK-397 commits;
+TASK-397 uniquely resolves to Done with every AC checked; no implementation or
+review evidence is overstated. The merge-base range is required because `origin/dev`
+advanced by 93 commits after branch creation; a literal `origin/dev..HEAD` diff would
+mix those unrelated upstream changes into the closeout check.
+
+Evidence: `git status --short` was empty, merge-base-scoped `git diff --check` and
+`git show --check` passed, the log contained only the eight scoped TASK-397 commits,
+and `backlog task 397 --plain` resolved the task as Done with all three ACs checked.
