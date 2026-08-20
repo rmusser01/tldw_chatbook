@@ -1666,7 +1666,11 @@ async def test_full_track_skip_everything_leaves_app_usable(
             _select_radio(app.screen, "#setup-track-full")
             await pilot.pause(0.1)
             _press(app.screen, "#wizard-next")  # Welcome -> Provider, track=full
-            await pilot.pause(0.2)
+            await _wait_until(
+                pilot,
+                lambda: container.steps[container.current_step].config.id
+                == STEP_PROVIDER,
+            )
 
             seen_step_ids: list[str] = []
             for _ in range(12):
@@ -1675,8 +1679,11 @@ async def test_full_track_skip_everything_leaves_app_usable(
                 if step_id == STEP_SUMMARY:
                     break
                 seen_step_ids.append(step_id)
+                previous_step = container.current_step
                 _press(app.screen, "#wizard-next")
-                await pilot.pause(0.2)
+                await _wait_until(
+                    pilot, lambda: container.current_step != previous_step
+                )
             else:
                 raise AssertionError("never reached the summary step")
 

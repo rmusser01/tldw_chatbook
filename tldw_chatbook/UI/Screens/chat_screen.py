@@ -20271,9 +20271,9 @@ class ChatScreen(BaseAppScreen):
         # manager state), then remove any stragglers (e.g. menus mounted by
         # harnesses without a transcript ancestor).
         for transcript in self.query(ConsoleTranscript):
+            transcript._remove_selection_menu()
             transcript.selection_manager.cancel()
             transcript._selection_origin_row = None
-            transcript._remove_selection_menu()
         for menu in self.query(ConsoleSelectionMenu):
             if not getattr(menu, "_pruning", False):
                 menu.remove()
