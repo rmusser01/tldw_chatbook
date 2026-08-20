@@ -584,7 +584,15 @@ def test_console_rail_state_narrow_width_honors_explicit_left_open():
     assert state.single_pane is False
 
 
-def test_console_rail_state_left_rail_not_collapsed_at_or_above_threshold():
+@pytest.mark.parametrize(
+    ("width", "expected_open", "expected_override"),
+    [(99, False, False), (100, True, True), (101, True, False)],
+)
+def test_console_rail_state_default_left_boundary(
+    width: int,
+    expected_open: bool,
+    expected_override: bool,
+):
     key = build_console_rail_preference_key(
         workspace_id="workspace-1",
         session_id="session-1",
@@ -593,12 +601,13 @@ def test_console_rail_state_left_rail_not_collapsed_at_or_above_threshold():
     state = build_console_rail_state(
         preference_key=key,
         stored_preferences={"left_open": True},
-        available_columns=100,
+        available_columns=width,
     )
 
-    assert state.left_open is True
-    assert state.left_forced_collapsed is False
-    assert state.single_pane is False
+    assert state.left_open is expected_open
+    assert state.preferred_left_open is True
+    assert state.left_compact_override is expected_override
+    assert state.compact_override is expected_override
 
 
 def test_console_rail_state_single_pane_below_84_columns():
@@ -772,7 +781,8 @@ def test_console_inspector_auto_open_bounds_are_shared_contracts():
         (83, "single-pane"),
         (84, "narrow"),
         (99, "narrow"),
-        (100, "compact-before-auto-open"),
+        (100, "exact-left-boundary"),
+        (101, "compact-before-auto-open"),
         (117, "compact-before-auto-open"),
         (118, "compact-auto-open"),
         (128, "compact-auto-open"),

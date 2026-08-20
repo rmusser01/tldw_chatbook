@@ -154,11 +154,11 @@ class ConsoleRailState:
     right_forced_collapsed: bool = False
     left_forced_collapsed: bool = False
     single_pane: bool = False
-    # TASK-2154.2: a rail rendered OPEN below its compact-collapse threshold
-    # (an explicit user toggle overrode the responsive default). Drives the
-    # main column's min-width waiver so the honored rail can never break the
-    # grid. build_console_rail_state computes preference-derived overrides;
-    # resolve_console_rail_priority may grant Inspector override authority
+    # Layout-minimum-waiver authority for a rail rendered open in compact
+    # geometry. Below a collapse threshold this covers an honored explicit
+    # open; for Context it also covers the effective default open at exactly
+    # 100 columns. It does not record persistence or explicit user intent.
+    # resolve_console_rail_priority may also grant Inspector this authority
     # after an automatic open.
     right_compact_override: bool = False
     left_compact_override: bool = False
@@ -614,6 +614,8 @@ def console_rail_width_band(available_columns: int | None) -> str:
         return "single-pane"
     if available_columns < CONSOLE_RAIL_LEFT_COMPACT_COLLAPSE_COLUMNS:
         return "narrow"
+    if available_columns == CONSOLE_RAIL_LEFT_COMPACT_COLLAPSE_COLUMNS:
+        return "exact-left-boundary"
     if available_columns < CONSOLE_INSPECTOR_AUTO_OPEN_MIN_COLUMNS:
         return "compact-before-auto-open"
     if available_columns < CONSOLE_INSPECTOR_AUTO_OPEN_MAX_COLUMNS + 1:
@@ -665,8 +667,10 @@ def build_console_rail_state(
     Returns:
         Effective rail state combining stored preferences, badges, and the
         responsive rail-collapse/single-pane rules. The collapse rules are
-        the default rendering only: explicit toggles below a threshold are
-        honored and reported via the ``*_compact_override`` flags.
+        the default rendering only: ``*_compact_override`` grants the layout
+        minimum waiver needed by honored explicit opens below a threshold
+        and by effective Context openness at exactly 100 columns; it does not
+        mark persisted preference or explicit intent.
     """
     preferences = coerce_console_rail_preferences(stored_preferences)
     # TASK-2154.2 (LY-11, ADR-042): the compact-collapse rules below are the
@@ -730,7 +734,7 @@ def build_console_rail_state(
     )
     left_compact_override = (
         available_columns is not None
-        and available_columns < CONSOLE_RAIL_LEFT_COMPACT_COLLAPSE_COLUMNS
+        and available_columns <= CONSOLE_RAIL_LEFT_COMPACT_COLLAPSE_COLUMNS
         and left_open
     )
 
