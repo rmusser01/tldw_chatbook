@@ -177,9 +177,27 @@ class LocalMediaReadingService:
         query: Optional[str] = None,
         limit: int = 20,
         offset: int = 0,
+        library_summary: bool = False,
         **filters: Any,
     ) -> dict[str, Any]:
         db = self._require_db()
+
+        if library_summary:
+            sqlite_integer_max = 2**63 - 1
+            if (
+                not isinstance(limit, int)
+                or isinstance(limit, bool)
+                or limit < 1
+                or limit > sqlite_integer_max
+            ):
+                raise ValueError("Limit must be a positive SQLite integer.")
+            if (
+                not isinstance(offset, int)
+                or isinstance(offset, bool)
+                or offset < 0
+                or offset > sqlite_integer_max
+            ):
+                raise ValueError("Offset must be a non-negative SQLite integer.")
 
         caller_media_ids_filter = filters.get("media_ids_filter")
         media_ids_filter = self._normalize_media_id_filter(caller_media_ids_filter)
@@ -207,10 +225,13 @@ class LocalMediaReadingService:
                     "limit": limit,
                 }
 
-        results_per_page = max(limit + offset, limit)
+        results_per_page = limit if library_summary else max(limit + offset, limit)
         fts_match_query = filters.get("fts_match_query")
         fts_match_kwargs = (
             {"fts_match_query": fts_match_query} if fts_match_query is not None else {}
+        )
+        library_summary_kwargs = (
+            {"offset": offset, "library_summary": True} if library_summary else {}
         )
         rows, total = db.search_media_db(
             search_query=query,
@@ -228,9 +249,14 @@ class LocalMediaReadingService:
             include_trash=bool(filters.get("include_trash", False)),
             include_deleted=bool(filters.get("include_deleted", False)),
             **fts_match_kwargs,
+            **library_summary_kwargs,
         )
-        items = self._enrich_rows_with_read_it_later_state(
-            list(rows)[offset : offset + limit]
+        items = (
+            list(rows)
+            if library_summary
+            else self._enrich_rows_with_read_it_later_state(
+                list(rows)[offset : offset + limit]
+            )
         )
         return {
             "items": items,
@@ -238,6 +264,10 @@ class LocalMediaReadingService:
             "offset": offset,
             "limit": limit,
         }
+
+    def list_library_media_types(self) -> list[str]:
+        """Return every active local Media type in database order."""
+        return list(self._require_db().get_distinct_media_types())
 
     def get_media_detail(
         self,

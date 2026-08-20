@@ -1170,7 +1170,7 @@ ConsoleRunLogModal {
 
 #library-conversations-list {
     height: 1fr;
-    min-height: 4;
+    min-height: 0;
     overflow-y: auto;
     overflow-x: hidden;
     scrollbar-size: 1 1;
@@ -1180,17 +1180,33 @@ ConsoleRunLogModal {
     scrollbar-color-active: $ds-action-focus;
 }
 
-#library-conversations-pager {
-    height: 3;
-    min-height: 3;
+.library-source-pager {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 0;
+}
+
+.library-source-pager-status {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    content-align: center middle;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+    color: $ds-text-muted;
+}
+
+.library-source-pager-controls {
+    width: 100%;
+    min-width: 0;
+    height: auto;
     align: center middle;
 }
 
-#library-conversations-page-status {
+.library-source-pager-controls > .library-canvas-action {
     width: auto;
-    height: 1;
-    content-align: center middle;
-    color: $ds-text-muted;
+    min-width: 0;
 }
 
 .library-rail-empty-copy {
@@ -2586,6 +2602,11 @@ with stray left-edge border fragments), and padding 0 1 so the full
     content-align: left middle;
 }
 
+#library-media-canvas {
+    height: 100%;
+    min-height: 0;
+}
+
 #library-media-type-filter {
     width: auto;
     min-width: 0;
@@ -2618,6 +2639,17 @@ with stray left-edge border fragments), and padding 0 1 so the full
     overflow-x: hidden;
 }
 
+#library-media-list {
+    overflow-y: hidden;
+}
+
+#library-media-row-scroll {
+    width: 100%;
+    min-width: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
 #library-media-preview,
 #library-media-detail-empty {
     margin: 0 0 0 1;
@@ -2642,7 +2674,13 @@ with stray left-edge border fragments), and padding 0 1 so the full
     height: auto;
 }
 
-#library-canvas.library-notes-compact #library-media-list,
+#library-canvas.library-notes-compact #library-media-list {
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    overflow-y: hidden;
+}
+
 #library-canvas.library-notes-compact #library-media-preview {
     width: 100%;
     height: auto;

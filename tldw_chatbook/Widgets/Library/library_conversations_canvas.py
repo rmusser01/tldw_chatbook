@@ -60,33 +60,43 @@ class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, V
             ComposeResult for the conversations canvas.
         """
         select_mode = getattr(self.canvas, "select_mode", False)
-        # Gate/label off the RENDERED rows, not a pre-filter total -- the
-        # conversations canvas state has no ``.count`` field at all (unlike
-        # media), so ``len(self.canvas.rows)`` is the only correct source for
-        # "how many rows are shown right now".
         rendered_count = len(self.canvas.rows)
-        # task-2859 item 1: every sibling canvas (Media/Notes/Prompts/Skills)
-        # opens with a "Name (n)" title Static; Conversations had none at
-        # all, so its top row read as "Export… / Select" with no label
-        # naming what the canvas even is.
+        pager = self.canvas.pager
+        title_count = pager.title_count if pager is not None else None
+        title = (
+            "Conversations"
+            if title_count is None
+            else f"Conversations ({title_count})"
+        )
         yield Static(
-            f"Conversations ({rendered_count})",
+            title,
             id="library-conversations-title",
             classes="destination-section",
             markup=False,
         )
+        actions_disabled = self.canvas.actions_disabled
+        stale_action_reason = ""
+        if actions_disabled:
+            stale_action_reason = (
+                pager.status_copy if pager is not None else self.canvas.status_copy
+            )
         export_btn = Button(
-            "Export…",
+            library_disabled_action_label("Export…", actions_disabled),
             id="library-conversations-export",
             classes="library-canvas-action",
             compact=True,
         )
+        export_btn.disabled = actions_disabled
         export_btn.display = not select_mode
+        if actions_disabled:
+            export_btn.tooltip = stale_action_reason
         yield export_btn
         # Disable only when nothing to select AND not already in select mode --
         # in select mode "Done" must stay pressable so the user can always exit,
         # even if the rows dropped to zero (e.g. a background snapshot refresh).
-        select_disabled = rendered_count == 0 and not select_mode
+        select_disabled = actions_disabled or (
+            rendered_count == 0 and not select_mode
+        )
         select_btn = Button(
             # task-4023 AC#1 (RC-07): disabled carries the non-colour "○"
             # marker; the F-018 reason tooltip below says why.
@@ -99,7 +109,11 @@ class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, V
         )
         select_btn.disabled = select_disabled
         if select_disabled:
-            select_btn.tooltip = LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP
+            select_btn.tooltip = (
+                stale_action_reason
+                if actions_disabled
+                else LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP
+            )
         yield select_btn
         if select_mode:
             action_row = Horizontal(classes="ds-toolbar")
@@ -118,19 +132,29 @@ class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, V
                     classes="library-toolbar-count",
                     markup=False,
                 )
-                yield Button(
-                    f"Select all {rendered_count} shown",
+                select_all = Button(
+                    library_disabled_action_label(
+                        f"Select all {rendered_count} shown", actions_disabled
+                    ),
                     id="library-conversations-select-all",
                     classes="library-canvas-action",
                     compact=True,
+                    disabled=actions_disabled,
                 )
-                yield Button(
-                    "Clear",
+                if actions_disabled:
+                    select_all.tooltip = stale_action_reason
+                yield select_all
+                clear = Button(
+                    library_disabled_action_label("Clear", actions_disabled),
                     id="library-conversations-select-clear",
                     classes="library-canvas-action",
                     compact=True,
+                    disabled=actions_disabled,
                 )
-                export_disabled = self.canvas.selected_count == 0
+                if actions_disabled:
+                    clear.tooltip = stale_action_reason
+                yield clear
+                export_disabled = actions_disabled or self.canvas.selected_count == 0
                 export_selected = Button(
                     # task-4023 AC#1 (RC-07): "○" disabled marker; base
                     # label stashed for `_apply_library_row_toggle`'s
@@ -146,7 +170,9 @@ class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, V
                 export_selected.disabled = export_disabled
                 # F-018: a disabled action says why.
                 export_selected.tooltip = (
-                    LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP
+                    stale_action_reason
+                    if actions_disabled
+                    else LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP
                     if export_selected.disabled
                     else LIBRARY_EXPORT_SELECTED_TOOLTIP
                 )
@@ -170,6 +196,13 @@ class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, V
         )
         status.display = bool(status_text)
         yield status
+        selection_notice = self.canvas.selection_notice
+        if selection_notice and selection_notice != status_text:
+            yield Static(
+                selection_notice,
+                id="library-conversations-selection-notice",
+                markup=False,
+            )
 
         conversation_list = VerticalScroll(id="library-conversations-list")
         with conversation_list:
@@ -194,34 +227,84 @@ class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, V
                 button.conversation_id = row.conversation_id
                 button._library_row_label_rest = label_rest
                 # Tooltips are rendered as markup too -- escape user titles.
-                button.tooltip = escape_markup(row.title)
+                button.tooltip = (
+                    stale_action_reason
+                    if actions_disabled
+                    else escape_markup(row.title)
+                )
                 button.set_class(row.selected, "library-conversation-row-selected")
+                button.disabled = actions_disabled
                 button.styles.height = 2
                 button.styles.min_height = 2
                 yield button
 
-        with Horizontal(id="library-conversations-pager", classes="ds-toolbar"):
-            previous = Button(
-                "Previous",
-                id="library-conversations-previous",
-                classes="library-canvas-action",
-                compact=True,
+        previous_disabled = (
+            pager.previous_disabled
+            if pager is not None
+            else self.canvas.previous_disabled
+        )
+        next_disabled = (
+            pager.next_disabled if pager is not None else self.canvas.next_disabled
+        )
+        range_copy = pager.range_copy if pager is not None else self.canvas.range_copy
+        page_copy = pager.page_copy if pager is not None else self.canvas.page_copy
+        previous_reason = pager.previous_reason if pager is not None else ""
+        next_reason = pager.next_reason if pager is not None else ""
+        disabled_reasons = tuple(
+            dict.fromkeys(
+                reason
+                for disabled, reason in (
+                    (previous_disabled, previous_reason),
+                    (next_disabled, next_reason),
+                )
+                if disabled and reason
             )
-            previous.disabled = self.canvas.previous_disabled
-            yield previous
+        )
+        with Vertical(
+            id="library-conversations-pager",
+            classes="library-source-pager",
+        ):
             yield Static(
-                f"{self.canvas.range_copy} · {self.canvas.page_copy}",
+                " · ".join(copy for copy in (range_copy, page_copy) if copy),
                 id="library-conversations-page-status",
+                classes="library-source-pager-status",
                 markup=False,
             )
-            next_page = Button(
-                "Next",
-                id="library-conversations-next",
-                classes="library-canvas-action",
-                compact=True,
-            )
-            next_page.disabled = self.canvas.next_disabled
-            yield next_page
+            if disabled_reasons:
+                yield Static(
+                    " · ".join(disabled_reasons),
+                    id="library-conversations-disabled-reason",
+                    classes="library-source-pager-status",
+                    markup=False,
+                )
+            with Horizontal(classes="library-source-pager-controls"):
+                previous = Button(
+                    library_disabled_action_label("Previous", previous_disabled),
+                    id="library-conversations-previous",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                previous.disabled = previous_disabled
+                if previous_disabled:
+                    previous.tooltip = previous_reason
+                yield previous
+                if pager is not None and pager.retry_visible:
+                    yield Button(
+                        "Try again",
+                        id="library-conversations-retry",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                next_page = Button(
+                    library_disabled_action_label("Next", next_disabled),
+                    id="library-conversations-next",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                next_page.disabled = next_disabled
+                if next_disabled:
+                    next_page.tooltip = next_reason
+                yield next_page
 
         preview = Vertical(id="library-conversation-preview")
         preview.styles.height = "auto"
@@ -236,9 +319,15 @@ class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, V
             toolbar = Horizontal(classes="ds-toolbar")
             toolbar.styles.height = "auto"
             with toolbar:
-                yield Button(
-                    "Open in Console",
+                open_console = Button(
+                    library_disabled_action_label(
+                        "Open in Console", actions_disabled
+                    ),
                     id="library-conversation-open-console",
                     classes="library-canvas-action",
                     compact=True,
+                    disabled=actions_disabled,
                 )
+                if actions_disabled:
+                    open_console.tooltip = stale_action_reason
+                yield open_console

@@ -20,7 +20,10 @@ from tldw_chatbook.Prompt_Management.prompt_scope_service import (
     ServerPromptService,
     build_prompt_scope_service,
 )
-from tldw_chatbook.Prompt_Management.prompt_normalizers import normalize_prompt_record
+from tldw_chatbook.Prompt_Management.prompt_normalizers import (
+    normalize_prompt_list,
+    normalize_prompt_record,
+)
 from tldw_chatbook.Prompt_Management.prompt_restore_errors import (
     PromptRestoreError,
     PromptRestoreErrorCode,
@@ -547,6 +550,75 @@ async def test_browse_prompt_routes_normalized_local_scope_through_real_adapter(
     assert result["per_page"] == 100
     assert policy.actions == ["prompts.list.local"]
     assert server.calls == []
+
+
+@pytest.mark.asyncio
+async def test_browse_prompt_omitted_page_size_keeps_generic_fifty_row_default():
+    database = RecordingPromptBrowseDatabase()
+    service = PromptScopeService(
+        local_service=LocalPromptService(database),
+        server_service=FakeServerPromptService(),
+        policy_enforcer=FakePolicyEnforcer(),
+    )
+
+    result = await service.browse_prompts()
+
+    assert database.calls[0]["page_size"] == 50
+    assert result["per_page"] == 50
+
+
+def test_normalize_prompt_list_preserves_divergent_page_aliases():
+    normalized = normalize_prompt_list(
+        {
+            "items": [],
+            "total_items": 0,
+            "total_pages": 0,
+            "current_page": 2,
+            "page": 1,
+            "per_page": 20,
+        },
+        backend="local",
+        page=9,
+        per_page=50,
+    )
+
+    assert normalized["current_page"] == 2
+    assert normalized["page"] == 1
+    assert normalized["per_page"] == 20
+
+
+def test_normalize_prompt_list_defaults_page_metadata_only_when_keys_are_absent():
+    normalized = normalize_prompt_list(
+        {"items": [], "total_items": 0, "total_pages": 0},
+        backend="local",
+        page=4,
+        per_page=20,
+    )
+
+    assert normalized["current_page"] == 4
+    assert normalized["page"] == 4
+    assert normalized["per_page"] == 20
+
+
+@pytest.mark.parametrize(
+    "field", ["total_items", "total_pages", "current_page", "page", "per_page"]
+)
+@pytest.mark.parametrize("value", [True, None, 1.5])
+def test_normalize_prompt_list_rejects_present_non_integer_envelope_metadata(
+    field, value
+):
+    payload = {
+        "items": [],
+        "total_items": 0,
+        "total_pages": 0,
+        "current_page": 1,
+        "page": 1,
+        "per_page": 20,
+    }
+    payload[field] = value
+
+    with pytest.raises((TypeError, ValueError), match=field):
+        normalize_prompt_list(payload, backend="local", page=7, per_page=50)
 
 
 @pytest.mark.asyncio

@@ -44,6 +44,7 @@ class FakeDB:
     deletes: list[tuple[str, int]] = field(default_factory=list)
     restores: list[tuple[str, int]] = field(default_factory=list)
     created_conversations: list[dict[str, Any]] = field(default_factory=list)
+    located_page: dict[str, Any] | None = None
 
     def add_conversation(self, conversation_data):
         self.calls.append(("add_conversation", (conversation_data,), {}))
@@ -58,6 +59,10 @@ class FakeDB:
         )
         rows = self.conversations_page_rows[offset : offset + limit]
         return rows, len(self.conversations_page_rows), 0.0
+
+    def locate_conversation_page(self, conversation_id, **kwargs):
+        self.calls.append(("locate_conversation_page", (conversation_id,), kwargs))
+        return self.located_page
 
     def count_messages_for_conversations(self, conversation_ids, **kwargs):
         self.calls.append(
@@ -506,6 +511,155 @@ def test_list_conversations_scope_all_passes_through_without_workspace_filter():
     ][-1]
     assert deleted_only_call[2]["deleted_only"] is True
     assert deleted_only_call[2]["include_deleted"] is False
+
+
+def test_list_conversations_retains_the_exact_ordinary_page_envelope():
+    db = FakeDB(
+        conversations_page_rows=[
+            {"id": f"conv-{index}", "scope_type": "global", "version": 1}
+            for index in range(45)
+        ]
+    )
+    service = ChatConversationService(db)
+
+    result = service.list_conversations(limit=20, offset=20)
+
+    assert result["pagination"] == {
+        "limit": 20,
+        "offset": 20,
+        "total": 45,
+        "has_more": True,
+    }
+    assert [item["id"] for item in result["items"]] == [
+        f"conv-{index}" for index in range(20, 40)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"limit": -1}, "limit"),
+        ({"limit": 0}, "limit"),
+        ({"limit": True}, "limit"),
+        ({"limit": 1.5}, "limit"),
+        ({"limit": "20"}, "limit"),
+        ({"limit": 2**63}, "limit"),
+        ({"offset": -1}, "offset"),
+        ({"offset": True}, "offset"),
+        ({"offset": 1.5}, "offset"),
+        ({"offset": "0"}, "offset"),
+        ({"offset": 2**63}, "offset"),
+    ],
+)
+def test_list_conversations_rejects_invalid_coordinates_before_db_call(
+    kwargs, message
+):
+    db = FakeDB(conversations_page_rows=[{"id": "conv-1"}])
+    service = ChatConversationService(db)
+
+    with pytest.raises(ValueError, match=message):
+        service.list_conversations(**kwargs)
+
+    assert db.calls == []
+
+
+def test_list_conversations_accepts_sqlite_integer_max_without_real_sql():
+    sqlite_integer_max = (1 << 63) - 1
+    db = FakeDB(conversations_page_rows=[])
+    service = ChatConversationService(db)
+
+    result = service.list_conversations(
+        limit=sqlite_integer_max, offset=sqlite_integer_max
+    )
+
+    assert result["pagination"] == {
+        "limit": sqlite_integer_max,
+        "offset": sqlite_integer_max,
+        "total": 0,
+        "has_more": False,
+    }
+    search_call = next(
+        call for call in db.calls if call[0] == "search_conversations_page"
+    )
+    assert search_call[2]["limit"] == sqlite_integer_max
+    assert search_call[2]["offset"] == sqlite_integer_max
+
+
+def test_locate_conversation_page_normalizes_the_bounded_owning_page():
+    rows = [
+        {"id": f"conv-{index}", "scope_type": "global", "version": 1}
+        for index in range(20, 40)
+    ]
+    rows[4]["title"] = None
+    db = FakeDB(
+        located_page={"rows": rows, "offset": 20, "target_index": 24, "total": 45},
+        keywords_by_conversation={"conv-24": [{"keyword": "located"}]},
+        message_counts={"conv-24": 3},
+    )
+    service = ChatConversationService(db)
+
+    result = service.locate_conversation_page(
+        "conv-24", scope_type="all", limit=20
+    )
+
+    assert result["pagination"] == {
+        "limit": 20,
+        "offset": 20,
+        "page": 2,
+        "total": 45,
+        "target_index": 24,
+        "has_more": True,
+    }
+    assert len(result["items"]) == 20
+    assert result["items"][4]["id"] == "conv-24"
+    assert result["items"][4]["keywords"] == ["located"]
+    assert result["items"][4]["message_count"] == 3
+    locate_call = next(call for call in db.calls if call[0] == "locate_conversation_page")
+    assert locate_call[2]["scope_type"] == "all"
+    assert locate_call[2]["workspace_id"] is None
+
+
+@pytest.mark.parametrize(
+    "located_page, match",
+    [
+        (
+            {"rows": [{"id": "conv-24"}], "offset": 0, "target_index": 24, "total": 45},
+            "aligned",
+        ),
+        (
+            {"rows": [{"id": "wrong"}], "offset": 20, "target_index": 20, "total": 21},
+            "target",
+        ),
+        (
+            {"rows": [], "offset": 20, "target_index": 20, "total": 45},
+            "bounded page",
+        ),
+    ],
+)
+def test_locate_conversation_page_rejects_malformed_coordinates(
+    located_page, match
+):
+    service = ChatConversationService(FakeDB(located_page=located_page))
+
+    with pytest.raises(ValueError, match=match):
+        service.locate_conversation_page("conv-24", scope_type="all", limit=20)
+
+
+def test_locate_conversation_page_returns_none_when_target_is_unavailable():
+    service = ChatConversationService(FakeDB(located_page=None))
+
+    assert service.locate_conversation_page("conv-missing", limit=20) is None
+
+
+@pytest.mark.parametrize("limit", [19, 21, True, -1, 1_000_000])
+def test_locate_conversation_page_requires_fixed_limit_before_db_call(limit):
+    db = FakeDB(located_page=None)
+    service = ChatConversationService(db)
+
+    with pytest.raises(ValueError, match="limit"):
+        service.locate_conversation_page("conv-target", limit=limit)
+
+    assert db.calls == []
 
 
 def test_replace_conversation_keywords_resolves_ids_before_replacing():

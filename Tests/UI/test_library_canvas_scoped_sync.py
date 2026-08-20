@@ -210,7 +210,7 @@ async def test_media_choice_and_rag_toggles_are_canvas_scoped() -> None:
         calls, spy = _screen_recompose_spy()
         with patch.object(BaseAppScreen, "refresh", spy):
             screen.query_one("#library-media-type-filter").press()
-            await _wait_for_selector(screen, pilot, "#library-media-type-choice-1")
+            await _wait_for_selector(screen, pilot, "#library-media-type-choices")
             await pilot.press("escape")
             await _wait_for_selector(screen, pilot, "#library-media-type-filter")
         assert calls == []

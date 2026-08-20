@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -641,8 +641,40 @@ class StaticLibraryConversationScopeService:
         return {
             "items": page,
             "pagination": {
+                "limit": limit,
+                "offset": offset,
                 "total": len(matching),
                 "has_more": offset + len(page) < len(matching),
+            },
+        }
+
+    async def locate_conversation_page(self, conversation_id, **kwargs):
+        self.calls.append(
+            {"conversation_id": conversation_id, "locator": True, **kwargs}
+        )
+        limit = max(0, int(kwargs.get("limit", 20)))
+        target_index = next(
+            (
+                index
+                for index, record in enumerate(self.conversations)
+                if str(record.get("id") or record.get("conversation_id") or "")
+                == conversation_id
+            ),
+            None,
+        )
+        if target_index is None or limit == 0:
+            return None
+        offset = (target_index // limit) * limit
+        page = self.conversations[offset : offset + limit]
+        return {
+            "items": list(page),
+            "pagination": {
+                "limit": limit,
+                "offset": offset,
+                "page": offset // limit + 1,
+                "total": len(self.conversations),
+                "target_index": target_index,
+                "has_more": offset + len(page) < len(self.conversations),
             },
         }
 

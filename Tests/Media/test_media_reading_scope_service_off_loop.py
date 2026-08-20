@@ -61,6 +61,10 @@ class _RecordingLocalService:
         self._record("search_media", query)
         return {"items": [], "total": 0, "offset": offset, "limit": limit}
 
+    def list_library_media_types(self):
+        self._record("list_library_media_types")
+        return ["article"]
+
     def get_media_detail(self, media_id):
         self._record("get_media_detail", media_id)
         return {"id": media_id, "title": "Detail", "type": "article"}
@@ -164,6 +168,11 @@ LOCAL_LEAF_CASES: list[tuple[str, Any, list[str]]] = [
         "search_media",
         lambda s: s.search_media(mode="local", query="q"),
         ["search_media"],
+    ),
+    (
+        "list_library_media_types",
+        lambda s: s.list_library_media_types(mode="local"),
+        ["list_library_media_types"],
     ),
     (
         "list_read_it_later",
@@ -395,6 +404,20 @@ async def test_search_media_runs_no_sqlite_on_the_event_loop(real_local_scope):
     )
     assert result["total"] == 1
     assert result["items"][0]["title"] == "Offloop Fixture"
+
+
+@pytest.mark.asyncio
+async def test_library_media_types_run_no_sqlite_on_the_event_loop(real_local_scope):
+    scope, db, _media_id = real_local_scope
+    loop_statements: list[str] = []
+    db.get_connection().set_trace_callback(loop_statements.append)
+    try:
+        media_types = await scope.list_library_media_types(mode="local")
+    finally:
+        db.get_connection().set_trace_callback(None)
+
+    assert loop_statements == []
+    assert media_types == ["article"]
 
 
 @pytest.mark.asyncio

@@ -1069,15 +1069,18 @@ class _CollectionCanvasHost(ConsolidatedCSSApp):
                 {
                     "items": [
                         {
-                            "id": 1,
+                            "id": "local:prompt:1",
+                            "local_id": 1,
                             "name": "Literal",
                             "artifact_type": "prompt",
                             "backend": "local",
+                            "version": 1,
                         }
                     ],
                     "total_items": 1,
                     "total_pages": 1,
                     "current_page": 1,
+                    "page": 1,
                     "per_page": 2,
                 },
             )

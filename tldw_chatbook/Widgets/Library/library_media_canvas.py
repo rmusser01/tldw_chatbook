@@ -6,9 +6,11 @@ from typing import Any
 
 from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Static
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.widgets import Button, OptionList, Static
+from textual.widgets.option_list import Option
 
+from tldw_chatbook.Library.library_pager_state import LibraryPagerDisplay
 from tldw_chatbook.Library.library_media_state import LibraryMediaCanvasState
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_DELETE_SELECTED_DISABLED_TOOLTIP,
@@ -19,9 +21,6 @@ from tldw_chatbook.Library.library_shell_state import (
     library_choice_label,
     library_choice_tooltip,
     library_disabled_action_label,
-)
-from tldw_chatbook.Widgets.Library.library_choice_strip import (
-    compose_library_choice_strip,
 )
 from tldw_chatbook.Widgets.Library.library_rail import _visible_row_title
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
@@ -40,10 +39,21 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
     def __init__(
         self,
         canvas: LibraryMediaCanvasState,
+        *,
+        pager: LibraryPagerDisplay | None = None,
+        type_options: tuple[str | None, ...] | None = None,
+        stale_action_reason: str = "",
+        mutation_action_reason: str = "",
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.canvas = canvas
+        self.pager = pager
+        self.type_options = (
+            canvas.type_options if type_options is None else type_options
+        )
+        self.stale_action_reason = stale_action_reason
+        self.mutation_action_reason = mutation_action_reason
         # Fill the (already 13fr) canvas host, not an independent 13fr --
         # ``LibraryMediaViewer`` documented this trap first: an `fr` width
         # here resolves against the HOST's content width per fraction, so
@@ -55,7 +65,15 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.styles.width = "1fr"
         self.styles.min_width = 40
 
-    def sync_state(self, canvas: LibraryMediaCanvasState) -> None:
+    def sync_state(
+        self,
+        canvas: LibraryMediaCanvasState,
+        *,
+        pager: LibraryPagerDisplay | None = None,
+        type_options: tuple[str | None, ...] | None = None,
+        stale_action_reason: str = "",
+        mutation_action_reason: str = "",
+    ) -> None:
         """Refresh the canvas from new state.
 
         Args:
@@ -65,7 +83,30 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             None.
         """
         self.canvas = canvas
+        self.pager = pager
+        self.type_options = (
+            canvas.type_options if type_options is None else type_options
+        )
+        self.stale_action_reason = stale_action_reason
+        self.mutation_action_reason = mutation_action_reason
         self.refresh(recompose=True)
+
+    def _gate_stale_action(self, button: Button, base_label: str) -> Button:
+        """Apply the controller's stale-page gate to one unsafe action."""
+        reason = self.mutation_action_reason or self.stale_action_reason
+        if reason:
+            button.label = library_disabled_action_label(base_label, True)
+            button.disabled = True
+            button.tooltip = reason
+        return button
+
+    def _gate_mutation_action(self, button: Button, base_label: str) -> Button:
+        """Disable even recovery controls only while a write is unsettled."""
+        if self.mutation_action_reason:
+            button.label = library_disabled_action_label(base_label, True)
+            button.disabled = True
+            button.tooltip = self.mutation_action_reason
+        return button
 
     def compose(self) -> ComposeResult:
         """Render the header/filter, status line, media rows, and preview.
@@ -73,10 +114,9 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         Returns:
             ComposeResult for the media canvas.
         """
-        yield Static(
-            f"Media ({self.canvas.count})",
-            id="library-media-title",
-        )
+        title_count = self.pager.title_count if self.pager is not None else self.canvas.count
+        title = "Media" if title_count is None else f"Media ({title_count})"
+        yield Static(title, id="library-media-title")
         select_mode = getattr(self.canvas, "select_mode", False)
         # Gate/label off the RENDERED rows, not ``canvas.count`` -- the latter
         # is the pre-filter total across ALL media types, so with a media-type
@@ -100,17 +140,27 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         type_choices_visible = getattr(self.canvas, "type_choices_visible", False)
         toolbar.display = not type_choices_visible
         with toolbar:
-            yield Button(
+            type_filter = Button(
                 # task-14902: a chooser-opener, no longer a cycler -- press
                 # opens the direct-pick strip below instead of advancing.
-                library_choice_label("type", self.canvas.active_type),
+                library_choice_label(
+                    "type",
+                    "All types"
+                    if self.canvas.active_type is None
+                    else self.canvas.active_type,
+                ),
                 id="library-media-type-filter",
                 classes="library-canvas-action",
                 compact=True,
                 tooltip=library_choice_tooltip(
-                    "media type", tuple(self.canvas.type_options)
+                    "media type",
+                    tuple(
+                        "All types" if value is None else value
+                        for value in self.type_options
+                    ),
                 ),
             )
+            yield self._gate_mutation_action(type_filter, str(type_filter.label))
             export_btn = Button(
                 "Export…",
                 id="library-media-export",
@@ -118,7 +168,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 compact=True,
             )
             export_btn.display = not select_mode
-            yield export_btn
+            yield self._gate_stale_action(export_btn, "Export…")
             # task-4025: the browsable Trash surface's entry point -- a
             # plain navigation action (never a `type:` cycle value: `type:`
             # cycles CONTENT types derived from the records, and trash is a
@@ -155,20 +205,31 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             select_btn.disabled = select_disabled
             if select_disabled:
                 select_btn.tooltip = LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP
-            yield select_btn
-        if type_choices_visible:
-            # task-14902 AC#1: the full type option set on screen with a
-            # direct pick; sits ABOVE the task-14900 workbench split, so one
-            # strip serves both the wide side-by-side and stacked layouts.
-            yield from compose_library_choice_strip(
-                strip_id="library-media-type-choices",
-                choice_class="library-media-type-choice",
-                options=tuple(
-                    (f"library-media-type-choice-{index}", value, value)
-                    for index, value in enumerate(self.canvas.type_options)
-                ),
-                active_value=self.canvas.active_type,
+            yield self._gate_stale_action(
+                select_btn, "Done" if select_mode else "Select"
             )
+        if type_choices_visible:
+            options: list[Option] = []
+            highlighted = 0
+            for index, value in enumerate(self.type_options):
+                display = "All types" if value is None else value
+                option = Option(
+                    f"✓ {display}" if value == self.canvas.active_type else display,
+                    id=f"library-media-type-option-{index}",
+                )
+                option.choice_value = value
+                options.append(option)
+                if value == self.canvas.active_type:
+                    highlighted = index
+            choices = OptionList(
+                *options,
+                id="library-media-type-choices",
+                compact=True,
+                markup=False,
+            )
+            choices.highlighted = highlighted
+            choices.styles.height = min(8, max(1, len(options)))
+            yield choices
         confirming_bulk_delete = getattr(self.canvas, "confirming_bulk_delete", False)
         if select_mode:
             if confirming_bulk_delete:
@@ -217,31 +278,37 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     markup=False,
                 )
                 if confirming_bulk_delete:
-                    yield Button(
+                    confirm = Button(
                         "Delete",
                         id="library-media-bulk-delete-confirm",
                         classes="library-canvas-action library-media-action-danger",
                         compact=True,
                     )
-                    yield Button(
+                    yield self._gate_stale_action(confirm, "Delete")
+                    cancel = Button(
                         "Cancel",
                         id="library-media-bulk-delete-cancel",
                         classes="library-canvas-action",
                         compact=True,
                     )
+                    yield self._gate_mutation_action(cancel, "Cancel")
                 else:
-                    yield Button(
+                    select_all = Button(
                         f"Select all {rendered_count} shown",
                         id="library-media-select-all",
                         classes="library-canvas-action",
                         compact=True,
                     )
-                    yield Button(
+                    yield self._gate_stale_action(
+                        select_all, f"Select all {rendered_count} shown"
+                    )
+                    clear = Button(
                         "Clear",
                         id="library-media-select-clear",
                         classes="library-canvas-action",
                         compact=True,
                     )
+                    yield self._gate_stale_action(clear, "Clear")
                     export_disabled = self.canvas.selected_count == 0
                     export_selected = Button(
                         # task-4023 AC#1 (RC-07): "○" disabled marker --
@@ -267,7 +334,9 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         if export_selected.disabled
                         else LIBRARY_EXPORT_SELECTED_TOOLTIP
                     )
-                    yield export_selected
+                    yield self._gate_stale_action(
+                        export_selected, "Export selected"
+                    )
                     # task-2853: the second real bulk action -- "Delete
                     # selected" -- pushed to the far end (CSS margin, same
                     # library-media-action-danger idiom the single-item
@@ -291,7 +360,9 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         if delete_selected.disabled
                         else LIBRARY_DELETE_SELECTED_TOOLTIP
                     )
-                    yield delete_selected
+                    yield self._gate_stale_action(
+                        delete_selected, "Delete selected"
+                    )
 
         # task-4022 AC2: a completed bulk delete's receipt, naming the
         # count with an Undo affordance right at the point of action --
@@ -322,20 +393,26 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     classes="library-toolbar-count",
                     markup=False,
                 )
-                yield Button(
+                undo = Button(
                     "Undo",
                     id="library-media-bulk-delete-undo",
                     classes="library-canvas-action",
                     compact=True,
                 )
-                yield Button(
+                yield self._gate_stale_action(undo, "Undo")
+                dismiss = Button(
                     "Dismiss",
                     id="library-media-bulk-delete-receipt-dismiss",
                     classes="library-canvas-action",
                     compact=True,
                 )
+                yield self._gate_mutation_action(dismiss, "Dismiss")
 
-        status_text = self.canvas.status_copy or self.canvas.empty_copy
+        status_text = (
+            self.pager.status_copy
+            if self.pager is not None and self.pager.status_copy
+            else self.canvas.status_copy or self.canvas.empty_copy
+        )
         status = Static(
             status_text,
             id="library-media-status",
@@ -372,34 +449,36 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         with workbench:
             media_list = Vertical(id="library-media-list")
             with media_list:
-                for index, row in enumerate(self.canvas.rows):
-                    if select_mode:
-                        marker = "☑" if row.checked else "☐"
-                    else:
-                        marker = "▸" if row.selected else " "
+                with VerticalScroll(id="library-media-row-scroll"):
+                    for index, row in enumerate(self.canvas.rows):
+                        if select_mode:
+                            marker = "☑" if row.checked else "☐"
+                        else:
+                            marker = "▸" if row.selected else " "
                     # task-281 (PR #665 review): the in-place toggle needs the
                     # marker-less RAW label to rebuild from -- reading it back
                     # off the mounted Button un-escapes user titles (both
                     # ``.plain`` and Textual 8's ``str(Content)`` return
                     # rendered text), so the raw remainder is stashed here at
                     # the single point of truth.
-                    label_rest = (
-                        f" {_visible_row_title(row.title)}\n    {row.secondary}"
-                    )
-                    button = Button(
-                        f"{marker}{label_rest}",
-                        id=f"library-media-row-{index}",
-                        classes="library-media-row",
-                        compact=True,
-                    )
-                    button.media_id = row.media_id
-                    button._library_row_label_rest = label_rest
-                    # Tooltips are rendered as markup too -- escape user titles.
-                    button.tooltip = escape_markup(row.title)
-                    button.set_class(row.selected, "library-media-row-selected")
-                    button.styles.height = 2
-                    button.styles.min_height = 2
-                    yield button
+                        label_rest = (
+                            f" {_visible_row_title(row.title)}\n    {row.secondary}"
+                        )
+                        button = Button(
+                            f"{marker}{label_rest}",
+                            id=f"library-media-row-{index}",
+                            classes="library-media-row",
+                            compact=True,
+                        )
+                        button.media_id = row.media_id
+                        button._library_row_label_rest = label_rest
+                        button.tooltip = escape_markup(row.title)
+                        button.set_class(row.selected, "library-media-row-selected")
+                        button.styles.height = 2
+                        button.styles.min_height = 2
+                        yield self._gate_stale_action(button, label_rest.lstrip())
+                if self.pager is not None:
+                    yield from self._compose_pager(self.pager)
 
             preview = Vertical(id="library-media-preview")
             preview.display = has_preview
@@ -417,12 +496,13 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     # own action row (`#library-media-open`, `LibraryMediaViewer`
                     # -- "Open in Library ▸ Media", task-2857), which posts a
                     # fresh ``NavigateToScreen`` for the "media" route.
-                    yield Button(
+                    open_viewer = Button(
                         "Open in viewer",
                         id="library-media-open-viewer",
                         classes="library-canvas-action",
                         compact=True,
                     )
+                    yield self._gate_stale_action(open_viewer, "Open in viewer")
 
             # task-14900: the wide split's detail half never sits blank --
             # when the preview is hidden (Select mode, or an empty list) a
@@ -441,3 +521,63 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 id="library-media-detail-empty",
                 markup=False,
             )
+
+    def _compose_pager(self, pager: LibraryPagerDisplay) -> ComposeResult:
+        """Render the controller-owned Media pager below the row viewport."""
+        disabled_reasons = tuple(
+            dict.fromkeys(
+                reason
+                for disabled, reason in (
+                    (pager.previous_disabled, pager.previous_reason),
+                    (pager.next_disabled, pager.next_reason),
+                )
+                if disabled and reason
+            )
+        )
+        with Vertical(id="library-media-pager", classes="library-source-pager"):
+            yield Static(
+                " · ".join(
+                    copy for copy in (pager.range_copy, pager.page_copy) if copy
+                ),
+                id="library-media-page-status",
+                classes="library-source-pager-status",
+                markup=False,
+            )
+            if disabled_reasons:
+                yield Static(
+                    " · ".join(disabled_reasons),
+                    id="library-media-disabled-reason",
+                    classes="library-source-pager-status",
+                    markup=False,
+                )
+            with Horizontal(classes="library-source-pager-controls"):
+                previous = Button(
+                    library_disabled_action_label(
+                        "Previous", pager.previous_disabled
+                    ),
+                    id="library-media-previous",
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=pager.previous_disabled,
+                )
+                if pager.previous_disabled:
+                    previous.tooltip = pager.previous_reason
+                yield self._gate_mutation_action(previous, "Previous")
+                if pager.retry_visible:
+                    retry = Button(
+                        "Retry",
+                        id="library-media-retry",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                    yield self._gate_mutation_action(retry, "Retry")
+                next_page = Button(
+                    library_disabled_action_label("Next", pager.next_disabled),
+                    id="library-media-next",
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=pager.next_disabled,
+                )
+                if pager.next_disabled:
+                    next_page.tooltip = pager.next_reason
+                yield self._gate_mutation_action(next_page, "Next")

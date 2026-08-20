@@ -22,7 +22,7 @@ from __future__ import annotations
 from functools import partial
 
 import pytest
-from textual.widgets import Button, Static
+from textual.widgets import Button, OptionList, Static
 
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_library_selection_updates import _spy_screen_recomposes
@@ -33,6 +33,7 @@ from Tests.UI.test_library_shell import (
     LibraryHarness,
     _active_library_screen,
     _seed_conversations,
+    _wait_for_condition,
     _wait_for_library_shell,
     _wait_for_selector,
 )
@@ -136,16 +137,21 @@ async def test_media_type_filter_keeps_selected_id_in_step_with_the_canvas():
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = await _open_media_canvas(host, pilot)
+        await _wait_for_condition(
+            pilot,
+            lambda: len(screen.query(".library-media-row")) == 4,
+            message="Exact Media page never settled before selection.",
+        )
 
-        # ``_media()`` alternates document/video, so id "4" is a video and
-        # ids "1"/"3" are documents. Select the video, then filter to
+        # ``_media()`` alternates document/video, so backing id 4 is a video
+        # and backing ids 1/3 are documents. Select the video, then filter to
         # documents so the selected row stops being rendered at all.
         video_row = next(
             button
             for button in screen.query(".library-media-row").results(Button)
-            if str(getattr(button, "media_id", "")) == "4"
+            if str(getattr(button, "media_id", "")) == "local:media:4"
         )
-        video_id = "4"
+        video_id = "local:media:4"
         video_row.press()
         await pilot.pause()
         assert screen._selected_media_id == video_id
@@ -159,13 +165,16 @@ async def test_media_type_filter_keeps_selected_id_in_step_with_the_canvas():
         screen.query_one("#library-media-type-filter", Button).focus()
         await pilot.pause()
         screen.query_one("#library-media-type-filter", Button).press()
-        await _wait_for_selector(screen, pilot, ".library-media-type-choice")
-        document_choice = next(
-            button
-            for button in screen.query(".library-media-type-choice").results(Button)
-            if str(getattr(button, "choice_value", "")) == "document"
+        chooser = await _wait_for_selector(
+            screen, pilot, "#library-media-type-choices"
         )
-        document_choice.press()
+        assert isinstance(chooser, OptionList)
+        chooser.highlighted = next(
+            index
+            for index, option in enumerate(chooser.options)
+            if getattr(option, "choice_value", None) == "document"
+        )
+        chooser.action_select()
         await pilot.pause()
         await pilot.pause()
 
