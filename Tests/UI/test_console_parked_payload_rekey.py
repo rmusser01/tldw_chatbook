@@ -129,6 +129,13 @@ def test_the_queued_round_mounts_when_the_head_resolves(controller):
     assert _wait_until(lambda: len(_round_ids(controller)) == 2)
     round_2 = [r for r in _round_ids(controller) if r != round_1][0]
 
+    # Pre-condition: the head still owns the card. Without this, the test
+    # cannot tell FIFO promotion from the arm-time clobber it exists to
+    # catch -- round_2 would already be mounted and the post-assert would
+    # pass for the wrong reason, on both sides of the fix.
+    time.sleep(0.1)  # let any errant mount land before asserting
+    assert _mounted_round(controller) == round_1
+
     controller.resolve_pending_approval({"alpha": "approve_once"}, round_id=round_1)
     first.join(timeout=5)
 
