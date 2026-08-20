@@ -1354,25 +1354,24 @@ class LibraryFileNotesWorkspace(Vertical):
         if self._root is None:
             return "Folder files · No folder selected · Next: Choose folder."
         folder_name = self._root.name or self._root.anchor or str(self._root)
-        prefix = f"Folder files · Local folder: {folder_name}"
+        segments = ["Folder files", f"Local folder: {folder_name}"]
         if self._root_offline is True:
-            return f"{prefix} · Folder offline · Next: Reconnect or choose another folder."
-        if self._runtime_warning:
-            return f"{prefix} · Folder needs attention · Next: Open Details."
+            segments.append("Folder offline")
+        elif self._runtime_warning:
+            segments.append("Folder needs attention")
         if self._save_state in {"conflict", "error"}:
             status = _SAVE_STATE_COPY[self._save_state]
             if self._save_detail:
                 status = f"{status}; {self._save_detail}"
-            next_action = (
-                "Resolve the conflict or save the draft as a copy."
-                if self._save_state == "conflict"
-                else "Resolve the save error or save the draft as a copy."
-            )
-            return f"{prefix} · {status} · Next: {next_action}"
-        if self._save_state == "saving":
-            return f"{prefix} · Saving to local folder… · Next: Wait for saving to finish."
-        if self._save_state == "dirty":
-            return f"{prefix} · Auto-save pending · Next: Keep editing while auto-save runs."
+            segments.append(status)
+        elif self._save_state == "saving":
+            segments.append("Saving to local folder…")
+        elif self._save_state == "dirty":
+            segments.append("Auto-save pending")
+        elif self._save_state == "saved":
+            segments.append("Saved to local folder")
+        else:
+            segments.append("Ready")
         if session_git_count is None:
             binding = self._session_binding
             changes = (
@@ -1380,27 +1379,34 @@ class LibraryFileNotesWorkspace(Vertical):
             )
             session_git_count = len(coalesce_session_changes(changes))
         change_word = "change" if session_git_count == 1 else "changes"
+        segments.append(f"Session Git: {session_git_count} {change_word}")
         if self._push_phase != "idle":
             status = {
                 "checking": "Checking push",
                 "pushing": "Pushing",
                 "needs_attention": "Push needs attention",
             }[self._push_phase]
-            return (
-                f"{prefix} · Session Git: {session_git_count} {change_word} · "
-                f"{status} · Next: Review session changes."
-            )
-        if session_git_count:
-            return (
-                f"{prefix} · Session Git: {session_git_count} {change_word} · "
-                "Ready · Next: Review session changes."
-            )
-        if self._save_state == "saved":
-            return (
-                f"{prefix} · Saved to local folder · "
-                "Next: Keep editing or review session changes."
-            )
-        return f"{prefix} · Ready · Next: Choose a file or create one."
+            segments.append(status)
+
+        if self._root_offline is True:
+            next_action = "Reconnect or choose another folder."
+        elif self._runtime_warning:
+            next_action = "Open Details."
+        elif self._save_state == "conflict":
+            next_action = "Resolve the conflict or save the draft as a copy."
+        elif self._save_state == "error":
+            next_action = "Resolve the save error or save the draft as a copy."
+        elif self._save_state == "saving":
+            next_action = "Wait for saving to finish."
+        elif self._save_state == "dirty":
+            next_action = "Keep editing while auto-save runs."
+        elif self._push_phase != "idle" or session_git_count:
+            next_action = "Review session changes."
+        elif self._save_state == "saved":
+            next_action = "Keep editing or review session changes."
+        else:
+            next_action = "Choose a file or create one."
+        return f"{' · '.join(segments)} · Next: {next_action}"
 
     def on_mount(self) -> None:
         """Start background initialization and polling for this mount."""

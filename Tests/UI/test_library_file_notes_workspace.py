@@ -36,6 +36,7 @@ from tldw_chatbook.Library.library_shell_state import (  # noqa: E402
 from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica  # noqa: E402
 from tldw_chatbook.Notes.file_notes_session_owner import (  # noqa: E402
     FileNotesSessionOwner,
+    SessionChange,
 )
 from tldw_chatbook.Notes.file_notes_service import (  # noqa: E402
     INTERACTIVE_FILE_CHARS,
@@ -630,6 +631,7 @@ async def test_folder_files_authority_row_tracks_root_save_and_session_git(
         workspace._push_phase = "needs_attention"
         workspace._render_session_git_label(2)
         git_attention = _static_text(workspace, "#file-notes-authority")
+        assert "Saved to local folder" in git_attention
         assert "Session Git: 2 changes · Push needs attention" in git_attention
         assert "Next: Review session changes." in git_attention
     replica.close()
@@ -665,6 +667,59 @@ async def test_folder_files_authority_status_survives_in_surface_navigation(
 
 
 @pytest.mark.parametrize(
+    ("save_state", "save_detail"),
+    (("error", "permission denied"), ("conflict", "disk changed")),
+)
+@pytest.mark.parametrize("git_first", (True, False))
+@pytest.mark.asyncio
+async def test_folder_files_authority_merges_save_and_git_in_either_update_order(
+    tmp_path: Path,
+    save_state: str,
+    save_detail: str,
+    git_first: bool,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    owner = FileNotesSessionOwner()
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        session_owner=owner,
+        poll_interval=10,
+    )
+
+    async with _WorkspaceHarness(workspace).run_test() as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        binding = workspace._session_binding
+        assert binding is not None
+        assert owner.record_change(binding, SessionChange("modified", "draft.md"))
+        if git_first:
+            workspace._render_session_git_label()
+            workspace._set_save_state(save_state, save_detail)
+        else:
+            workspace._set_save_state(save_state, save_detail)
+            workspace._render_session_git_label()
+
+        expected = _static_text(workspace, "#file-notes-authority")
+        assert "Local folder: notes" in expected
+        assert _static_text(workspace, "#file-notes-save-status") in expected
+        assert save_detail in expected
+        assert "Session Git: 1 change" in expected
+        assert "Next:" in expected
+
+        workspace._navigator_mode = "git"
+        workspace._sync_navigator_mode()
+        workspace._navigator_mode = "files"
+        workspace._sync_navigator_mode()
+        await pilot.pause()
+        assert _static_text(workspace, "#file-notes-authority") == expected
+
+    await workspace.shutdown()
+    replica.close()
+
+
+@pytest.mark.parametrize(
     ("size", "expected_height"),
     (((160, 45), 1), ((120, 40), 1), ((60, 20), 2)),
 )
@@ -690,7 +745,7 @@ async def test_file_notes_authority_copy_is_complete_and_bounded(
         poll_interval=10,
     )
     expected = (
-        "Folder files · Local folder: notes · Ready · "
+        "Folder files · Local folder: notes · Ready · Session Git: 0 changes · "
         "Next: Choose a file or create one."
     )
 
@@ -3969,6 +4024,54 @@ async def test_file_notes_production_shell_preserves_canvas_across_breakpoints(
                 task_return = screen.query_one("#library-notes-task-return", Button)
                 assert task_return.display is True
                 assert str(task_return.label) == "‹ Library / Notes"
+
+    await workspace.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_file_notes_authority_is_painted_and_contained_at_60x20_shell(
+    tmp_path: Path,
+) -> None:
+    """The real Library hierarchy paints the complete pinned Files authority."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica_path=tmp_path / "owned.sqlite",
+        poll_interval=10,
+    )
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        notes=[{"title": "Database note", "id": "db-note-1"}],
+    )
+    screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
+
+    async with LibraryHarness(app, screen=screen).run_test(size=(60, 20)) as pilot:
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        await _wait_until(
+            pilot,
+            lambda: bool(screen.query("#library-notes-source-files")),
+            "Notes source strip did not compose",
+        )
+        screen.query_one("#library-notes-source-files", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: workspace.initialized and workspace.is_mounted,
+            "File Notes workspace did not mount",
+        )
+        await pilot.pause()
+
+        authority = workspace.query_one("#file-notes-authority", Static)
+        canvas = screen.query_one("#library-canvas")
+        assert authority in pilot.app.screen._compositor.visible_widgets
+        assert workspace.content_region.contains_region(authority.region)
+        assert canvas.content_region.contains_region(workspace.region)
+        assert 0 < authority.region.height <= 2
+        assert _painted_style_of_text(pilot.app, authority.region, "Folder files")
+        assert _painted_style_of_text(pilot.app, authority.region, "Next:")
 
     await workspace.shutdown()
 

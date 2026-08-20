@@ -229,13 +229,22 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             if state is None:
                 return f"{prefix} · Editor unavailable · Next: Back to notes."
             status = state.status_line or "Ready"
+            transfer = (
+                f" · {state.transfer_status}"
+                if state.transfer_status and state.transfer_status != status
+                else ""
+            )
             if state.conflict:
                 next_action = "Resolve the conflict or reload the note."
             elif state.snapshot.saving:
                 next_action = "Wait for saving to finish."
+            elif state.transfer_running:
+                next_action = "Wait for export to finish."
+            elif "failed" in f"{status} {state.transfer_status}".lower():
+                next_action = "Review the error, then keep editing."
             else:
                 next_action = "Keep editing; changes save automatically."
-            return f"{prefix} · {status} · Next: {next_action}"
+            return f"{prefix} · {status}{transfer} · Next: {next_action}"
         if self.mode == "create":
             status = self.create_status or (
                 "Creating note…" if self.create_running else "Ready"
@@ -1175,6 +1184,10 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             return
         self.presentation_state = state
         self.compact = state.compact
+        authority = self.query_one("#library-notes-authority", Static)
+        authority_copy = self._authority_copy()
+        if self._static_text(authority) != authority_copy:
+            authority.update(authority_copy)
         snapshot = state.snapshot
         conflict = state.conflict
         confirming_delete = state.confirming_delete and not conflict

@@ -8,13 +8,21 @@ import pytest
 from textual.widgets import Button, Static
 
 from Tests.textual_test_utils import widget_pilot  # noqa: F401
-from tldw_chatbook.Library.library_notes_state import LibraryNotesListState
+from tldw_chatbook.Library.library_notes_state import (
+    DatabaseNoteDraft,
+    LibraryNoteSessionSnapshot,
+    LibraryNotesListState,
+    NormalizedDatabaseNote,
+)
 from tldw_chatbook.Library.library_notes_sync_state import LibraryNotesSyncState
 from tldw_chatbook.Library.library_notes_tree_state import (
     LibraryNotesTreeProjection,
     LibraryNotesTreeRow,
 )
-from tldw_chatbook.Widgets.Library.library_notes_canvas import LibraryNotesCanvas
+from tldw_chatbook.Widgets.Library.library_notes_canvas import (
+    LibraryNotePresentationState,
+    LibraryNotesCanvas,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -36,6 +44,44 @@ def _sync_state() -> LibraryNotesSyncState:
         auto_sync=False,
         status_line="idle",
         activity_lines=(),
+    )
+
+
+def _editor_state(
+    *,
+    status: str = "Saved",
+    saving: bool = False,
+    transfer_status: str = "",
+    transfer_running: bool = False,
+    region: str = "editor",
+) -> LibraryNotePresentationState:
+    baseline = NormalizedDatabaseNote(
+        "n-1",
+        "Note",
+        "Body",
+        (),
+        1,
+        "2026-08-20T00:00:00+00:00",
+        "2026-08-20T00:00:00+00:00",
+    )
+    snapshot = LibraryNoteSessionSnapshot(
+        baseline=baseline,
+        draft=DatabaseNoteDraft("n-1", "Note", "Body", "", 0),
+        session_generation=1,
+        saved_revision=0,
+        dirty=False,
+        saving=saving,
+        in_conflict=False,
+        conflict_generation=0,
+        status_message=status,
+    )
+    return LibraryNotePresentationState(
+        snapshot=snapshot,
+        metadata_line="Updated today",
+        status_line=status,
+        region=region,
+        transfer_status=transfer_status,
+        transfer_running=transfer_running,
     )
 
 
@@ -143,6 +189,66 @@ async def test_authority_row_is_first_plain_child_in_every_notes_mode(
         assert "Library database" in text
         assert status_fragment in text
         assert "Next:" in text
+
+
+async def test_editor_authority_tracks_post_mount_save_state(widget_pilot):  # noqa: F811
+    initial = _editor_state()
+    async with await widget_pilot(
+        LibraryNotesCanvas,
+        mode="editor",
+        presentation_state=initial,
+    ) as pilot:
+        await pilot.pause()
+        canvas = pilot.app.query_one(LibraryNotesCanvas)
+        authority = canvas.query_one("#library-notes-authority", Static)
+
+        canvas.apply_session_state(_editor_state(status="Saving note…", saving=True))
+        assert canvas.query_one("#library-notes-authority", Static) is authority
+        text = getattr(authority.renderable, "plain", str(authority.renderable))
+        assert "Saving note…" in text
+        assert "Next: Wait for saving to finish." in text
+
+        canvas.apply_session_state(_editor_state(status="Save failed: database busy"))
+        text = getattr(authority.renderable, "plain", str(authority.renderable))
+        assert "Save failed: database busy" in text
+        assert "Next: Review the error, then keep editing." in text
+
+
+async def test_editor_authority_tracks_transfer_through_context_navigation(
+    widget_pilot,  # noqa: F811
+):
+    initial = _editor_state()
+    async with await widget_pilot(
+        LibraryNotesCanvas,
+        mode="editor",
+        presentation_state=initial,
+    ) as pilot:
+        await pilot.pause()
+        canvas = pilot.app.query_one(LibraryNotesCanvas)
+        authority = canvas.query_one("#library-notes-authority", Static)
+
+        canvas.apply_session_state(
+            _editor_state(
+                transfer_status="Exporting Markdown…",
+                transfer_running=True,
+                region="context",
+            )
+        )
+        text = getattr(authority.renderable, "plain", str(authority.renderable))
+        assert "Saved" in text
+        assert "Exporting Markdown…" in text
+        assert "Next: Wait for export to finish." in text
+
+        canvas.apply_session_state(
+            _editor_state(
+                transfer_status="Export failed: permission denied",
+                region="editor",
+            )
+        )
+        assert canvas.query_one("#library-notes-authority", Static) is authority
+        text = getattr(authority.renderable, "plain", str(authority.renderable))
+        assert "Export failed: permission denied" in text
+        assert "Next: Review the error, then keep editing." in text
 
 
 async def test_database_mode_list_carries_a_placement_sentence(widget_pilot):  # noqa: F811
