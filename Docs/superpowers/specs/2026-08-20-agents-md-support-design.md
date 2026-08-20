@@ -1,9 +1,9 @@
 # Console AGENTS.md Project Instructions — Design
 
 - **Date:** 2026-08-20
-- **Status:** Owner-approved; independently reviewed
+- **Status:** Owner-approved amendments; pending post-amendment review
 - **Scope:** Console agent runs only
-- **Decision record:** [ADR-068](../../../backlog/decisions/068-console-project-instruction-context-boundary.md)
+- **Decision record:** Proposed [ADR-069](../../../backlog/decisions/069-console-project-instruction-local-state-and-preflight.md), which will supersede ADR-068 if accepted
 
 ## 1. Problem
 
@@ -55,11 +55,10 @@ The rejected alternatives were:
 
 ## 3. Goals
 
-1. Give each Console agent run an explicit working folder and working
-   directory within an authorized workspace binding.
-2. Resolve `AGENTS.override.md` / `AGENTS.md` from the working-folder root to
-   the working directory, then activate narrower instructions before local
-   operations in deeper paths.
+1. Give each Console agent run one explicit working folder selected from its
+   authorized workspace bindings.
+2. Resolve `AGENTS.override.md` / `AGENTS.md` at that working-folder root, then
+   activate narrower instructions before local operations in deeper paths.
 3. Apply the same rules to parent agents and subagents, including concurrent
    subagents.
 4. Keep automatically loaded instruction contents out of the conversation
@@ -79,6 +78,9 @@ The rejected alternatives were:
 - Project-instruction discovery for ordinary chat, non-Console surfaces, or
   non-agent provider calls.
 - Interpreting MCP or other remote tool paths as local workspace paths.
+- Inferring nested scopes from opaque script/process execution, including
+  `run_skill_script`; such tools do not structurally declare every path they
+  may touch and receive only the startup guidance already in their model chain.
 - A dedicated source-file viewer/editor. The Context surface reports metadata
   and the existing file tools remain the way to open files.
 - Enforcement of repository prose as a security policy. It is guidance to the
@@ -98,38 +100,76 @@ working context, not a provider preference. The session adds:
 
 - `project_instructions_enabled: bool`
 - `working_folder_binding_id: str | None`
-- `working_directory_relpath: str`, default `"."`
-- `project_instruction_notice_binding_id: str | None`, recording that the
-  user accepted the first-load notice for the currently selected binding
+- `working_folder_locator_fingerprint: str | None`, the SHA-256 fingerprint of
+  the canonical locator when the binding was selected
+- `project_instruction_notice_key: str | None`, an opaque SHA-256 key recording
+  consent for the canonical working folder **and resolved provider destination**
 
-These fields round-trip through both Console screen-state restoration and the
-durable conversation metadata path. They do not require a database schema
-change. `working_folder_binding_id` stores stable binding identity rather than
-a raw path. At every agent dispatch, Chatbook resolves that binding through
-the workspace registry and revalidates its canonical locator. A removed,
-retargeted, unavailable, or unauthorized binding enters recovery; Chatbook
-never silently selects a different folder.
+The selected binding root is the working directory in v1. There is no second
+relative-cwd setting or UI: the selected-root `fs_*`/`git_*` paths are relative
+to that binding root, while lazy activation covers descendants. A future
+independent working-directory feature can add that distinction if users need
+it.
+
+For an enabled, validated session, `_compose_local_provider` constructs the
+run's `LocalToolProvider` with that selected binding root instead of the global
+`[console] workspace_root` fallback. This makes `fs_*` and `git_*` paths and
+project-instruction paths share one canonical origin. When project instructions
+are disabled or legacy-disabled, local-provider composition remains exactly as
+it works today, including the configured/cwd fallback.
+
+Binding access remains authoritative. A read-only selected binding still
+supports instruction loading and the read-only `fs_*`/`git_*` operations, but
+the run does not advertise `fs_write`, `fs_edit`, or `fs_patch`. Selecting a
+binding must never turn its workspace access metadata into a broader writable
+root. V1 omits `fs_patch` entirely for read-only bindings rather than adding a
+special dry-run-only schema variant.
+
+These fields round-trip through Console screen-state restoration and a new
+local-only `conversations.console_project_context_json` column. The versioned
+JSON envelope stores one schema-version discriminator plus only the four
+control fields above; it never stores a raw locator, instruction path,
+instruction digest, or instruction body. A dedicated local read/write method
+updates the column without changing conversation sync metadata, and the column
+is omitted from all `conversations_sync_*` trigger conditions and payloads.
+This requires a schema migration whose version must be allocated against the
+actual schema head at implementation time. Temporary or ephemeral sessions
+keep the same fields only in live/screen state; if a session becomes a durable
+conversation, its current control state is then written through the local-only
+column.
+
+At every agent dispatch, Chatbook resolves `working_folder_binding_id` through
+the workspace registry, revalidates the canonical locator, recomputes its
+fingerprint, and compares it with the stored selection fingerprint. A removed,
+retargeted, unavailable, mismatched, or unauthorized binding enters recovery;
+Chatbook never silently follows the same binding ID to a different folder or
+selects a replacement binding.
 
 Defaults are migration-safe:
 
 - Sessions created after this feature ships explicitly set project
   instructions enabled.
-- Restored conversations without the new metadata field are treated as legacy
-  and default disabled. Merely upgrading Chatbook cannot block an old send or
-  transmit newly discovered repository text.
-- When an enabled session has exactly one folder binding, it is selected
-  automatically. With several bindings and no selection, the agent send is
-  held at a chooser. With none, the user may disable project instructions or
-  cancel the send.
+- Restored conversations whose local-only project-context column is null,
+  missing, malformed, or forward-versioned—and restored legacy screen-state
+  payloads with no project-context fields—are treated as legacy and default
+  disabled. Merely upgrading, restoring, or synchronizing Chatbook cannot block
+  an old send or transmit newly discovered repository text.
+- When an enabled session has exactly one eligible folder binding—belonging to
+  the session workspace and currently authorized, available, canonical, and
+  non-symlinked—it is selected automatically. With several eligible bindings
+  and no selection, the agent send is held at a chooser. With none, the user
+  may disable project instructions or cancel the send; stale/ineligible entries
+  may be shown only as disabled recovery information.
 - Enabling the feature later uses the same sole-binding/chooser behavior.
-- Changing the selected binding clears the notice acknowledgement and resets
-  `working_directory_relpath` to `"."` unless the caller supplies and validates
-  a directory in the new binding.
+- Selecting or changing a binding captures its current locator fingerprint and
+  clears the notice acknowledgement.
 
-Other folders bound to the same workspace remain available to existing local
-tools. They are outside the selected project's instruction scope and generate
+Other folders bound to the same workspace remain available through the
+existing built-in `read_file`, `list_directory`, and `write_file` authorization
+rules. They are outside the selected project's instruction scope and generate
 one explicit warning per run when targeted. They do not acquire their own
-instruction hierarchy in v1.
+instruction hierarchy in v1. The single-root `fs_*`/`git_*` provider is
+confined to the selected binding for enabled sessions.
 
 ## 6. Core types and ownership
 
@@ -154,10 +194,11 @@ context builder need:
 dispatch. In this design, submit, retry, regenerate, and continue each start a
 fresh dispatch and therefore a fresh snapshot. It contains:
 
-- selected binding identity and validated canonical root
-- validated working-directory relative path
-- dispatch start time
-- root-to-working-directory sources selected for the startup budget
+- selected binding identity, validated canonical root, and matching locator
+  fingerprint
+- dispatch wall-clock cutoff in nanoseconds, used only for filesystem-mtime
+  staleness checks (performance timing uses a separate monotonic clock)
+- the effective source selected at the binding root for the startup budget
 - byte/token budget outcomes and content-free warnings
 
 Once captured, base instruction content is pinned for the dispatch. File edits
@@ -196,23 +237,28 @@ Path awareness is an optional structural protocol on tool providers, named
 `PathAwareToolProvider`. Its operation maps a validated tool call to zero or
 more workspace-relative path targets and identifies whether each target is an
 exact path, directory/search root, or outside the selected instruction root.
-The local filesystem/git/patch provider implements it. Existing providers that
-do not implement it retain current behavior and cause no project-instruction
-discovery.
+`LocalToolProvider` implements it for its `fs_*`/`git_*` tools, and
+`BuiltinToolProvider` implements it for `read_file`, `list_directory`, and
+`write_file`. Existing providers and tools that do not implement it retain
+current behavior and cause no project-instruction discovery.
 
 The mapping must reuse the local tool provider's own argument parsing and path
 validation; the instruction layer must not maintain a second interpretation of
 tool arguments. MCP is explicitly excluded because its paths can be remote or
 provider-defined.
 
+The contract is intentionally limited to tools whose complete path targets can
+be derived before execution. Shell-like, process, skill-script, network, todo,
+and spawn tools return no path targets; the feature never guesses from command
+strings, prompts, or free-form arguments.
+
 ## 7. Resolution rules
 
 ### 7.1 Authority and traversal
 
 The canonical selected binding locator is the maximum boundary. The resolver
-never ascends above it and never substitutes a Git root. The startup chain is
-the binding root followed by each directory down to
-`working_directory_relpath`.
+never ascends above it and never substitutes a Git root. Because the selected
+binding root is the v1 working directory, startup examines only that directory.
 
 For every directory in a chain:
 
@@ -224,6 +270,13 @@ For every directory in a chain:
    UTF-8, or a symlink, warn and skip that directory. An invalid override does
    not fall back to `AGENTS.md`; otherwise an attacker or broken override could
    silently expose instructions the override was meant to replace.
+
+Candidate reads are bounded. Before decoding or testing for whitespace, the
+resolver checks descriptor metadata against the applicable configured
+per-source cap (startup cap for the root source, nested cap for a nested
+source). A larger candidate is selected but receives an `omitted_byte_budget`
+outcome without reading its body. In particular, an oversized override is not
+treated as empty and does not fall back to same-directory `AGENTS.md`.
 
 Files decode as strict UTF-8 with an optional UTF-8 BOM. Reads use standard
 library no-follow and descriptor-stat checks where supported; if Chatbook
@@ -240,15 +293,26 @@ that one sibling overrides another.
 
 ### 7.2 Lazy nested activation
 
-The startup snapshot resolves only root-to-working-directory sources, so cost
-is O(depth), not a recursive repository walk. A path-aware tool batch computes
-the additional directory chains required by its targets:
+The startup snapshot resolves only the binding-root source, so cost is O(1),
+not a recursive repository walk. A path-aware tool batch computes the
+additional root-to-target directory chains required by its targets:
 
-- `fs_read`, `fs_write`, `fs_edit`, and patch operations use the exact target's
-  parent chain.
+- `fs_read`, `fs_write`, and `fs_edit` use the exact target's parent chain.
+- Built-in `read_file` and `write_file` use the validated exact target's parent
+  chain; built-in `list_directory` uses the validated directory chain. If that
+  target belongs to another authorized workspace binding, the call remains
+  eligible under existing authorization but receives the outside-scope warning
+  instead of activating another hierarchy.
+- `fs_patch` reuses the patch tool's parser, extracts every supported `+++`
+  create/modify target, and activates the union of their parent chains before
+  either a real or `dry_run` invocation. Invalid, delete, or rename forms remain
+  the patch tool's existing errors; the instruction layer does not invent a
+  second patch grammar.
 - `fs_list` uses the listed directory chain.
-- `fs_glob` and `fs_grep` use only their declared search root. Matching or
-  mentioning a deep file does not activate every descendant instruction file.
+- `fs_glob` and `fs_grep` activate only the selected binding root because their
+  current schemas do not accept a search-root argument. A static prefix in a
+  glob pattern is not inferred as a scope. Matching or mentioning a deep file
+  does not activate every descendant instruction file.
 - `git_branches`, unfiltered `git_diff`, and unfiltered `git_log` activate only
   the discovered repository-root chain.
 - `git_status`, including `git_status(path)`, activates only the discovered
@@ -280,9 +344,9 @@ metadata.
 
 Every automatic rider and nested update carries an internal ephemeral-origin
 tag. That tag is not sent to the model, but every persistence, diagnostic,
-compaction, and **durable historical exchange-capture** boundary uses it to
-omit the body. A future or concurrently developed historical payload inspector
-must replace these bodies with a content-free marker such as
+and **durable historical exchange-capture** boundary uses it to omit the body.
+A future or concurrently developed historical payload inspector must replace
+these bodies with a content-free marker such as
 `[ephemeral project instructions omitted]` and may record only relative source
 metadata. This ADR-backed exception takes priority over durable exact
 historical payload capture. It does not redact the existing user-invoked,
@@ -300,50 +364,75 @@ receives the startup rider. The session transcript is not modified. Context
 preview uses the same pure builder against a copy; previewing must not activate
 sources, consume budgets, acknowledge notices, or mutate the live ledger.
 
-The first time an enabled session uses a selected binding, Chatbook resolves
-the immutable startup snapshot, then displays a pre-dispatch notice derived
-from that exact snapshot and naming the provider and workspace-relative
-instruction sources. It contains no file bodies. Proceed reuses the captured
-snapshot without rereading; cancel or disable discards it. Acceptance is
-remembered for that binding; changing bindings causes a new notice.
+The first time an enabled session uses a selected binding with a resolved
+provider destination, Chatbook resolves the immutable startup snapshot, then
+displays a pre-dispatch notice derived from that exact snapshot before the
+first provider request. The notice names the provider, shows a sanitized
+destination label (scheme/host/port for custom endpoints, with credentials and
+paths removed), names any binding-root source, states that its content will be
+sent, and explains that deeper
+`AGENTS.md` files may be sent later when local tools target their scopes. It is
+shown even when no binding-root file exists, so a nested-only repository cannot
+transmit guidance before consent. It contains no file bodies. Proceed reuses
+the captured snapshot without rereading; cancel or disable discards it.
+Acceptance stores a domain-separated SHA-256 key derived
+from the locator fingerprint and the resolved provider destination identity
+(provider adapter plus canonical endpoint identity, without credentials).
+Changing or retargeting the binding, switching provider destinations, or
+changing a custom endpoint causes a new notice; changing only the model at the
+same destination does not. The raw endpoint is never persisted in project
+context state.
 
-### 8.1 Compaction
+### 8.1 Existing `/rewind` compaction boundary
 
-Automatic project-context rows and context-event markers are excluded from
-summarizer input, so Chatbook never asks a compaction model to reproduce them
-and never stores them in a persisted summary. Before the first provider call
-after compaction, the context builder reconstructs the currently applicable
-startup and activated riders from the immutable snapshot and ledger; it does
-not reread the filesystem. Any chain delivery cursor whose rider was removed
-by compaction is reset and is advanced only after the rebuilt rider is placed
-in that chain's payload.
+Chatbook's current `/rewind` summary is created from the stored conversation
+before `run_reply` constructs its run-local message copy. Automatic project
+riders are never part of that stored input, and the startup rider is inserted
+only after the controller has applied the persisted summary. Therefore v1
+needs no rider filtering, delivery-cursor reset, or post-compaction rebuild.
 
-Rebuilt content is checked against the provider's current token headroom. A
-source that no longer fits receives the chain-specific
-`omitted_token_budget` terminal outcome and a one-time ephemeral warning. The
-run may then continue under the approved fail-open policy. Content that the
-model itself previously quoted, or content returned by an explicit file read,
-is ordinary conversation/tool data and is not scrubbed from compaction; doing
-so would require a separate data-loss-prevention feature.
+Mid-agent automatic compaction does not exist today and is not added by this
+feature. If such a mechanism is introduced later, it must honor ADR-069's
+ephemeral automatic-context boundary. Explicit file-tool results and
+model-authored quotations continue to follow ordinary `/rewind` semantics.
 
 ## 9. Atomic tool-batch preflight
 
-The existing full-batch review point in `run_agent_loop` is extended with a
-typed internal outcome:
+`LoopDeps` gains a separate optional `prepare_tool_calls` hook, threaded through
+`AgentService` and invoked immediately before the existing `review_tool_calls`
+hook. Its contract is
+`Callable[[list[ToolCall]], ToolBatchPreparation] | None`, where the frozen
+result carries a status plus zero or more internally tagged ephemeral context
+rows. The only statuses are:
 
 - `proceed`
-- `blocked`
 - `retry_with_context`
 
-Preflight occurs before permission prompts and before any tool in the batch is
-dispatched. It asks path-aware providers for every target, resolves the union
-of required instruction chains, and acquires the activation ledger's mutation
-guard. The complete batch is deferred if its calling model chain has not
-received any required source. No earlier call in the same batch may execute.
+The preparation hook owns optional project-context discovery only. The
+existing string-map `review_tool_calls` contract remains unchanged as the
+permission/change-review boundary, including its existing fail-closed policy
+where applicable. A preparation exception follows the feature's explicit
+fail-open-with-warning policy, produces `proceed`, and cannot silently change
+an approval verdict. Binding/setup recovery happens before runtime construction
+and therefore needs no third preparation outcome.
 
-`retry_with_context` carries two deliberately separate channels:
+`proceed` carries no context rows. `retry_with_context` carries only the
+ephemeral instruction/warning rows; it never carries review verdicts or tool
+results. `AgentRuntime` itself synthesizes the fixed deferral result for every
+original call, which keeps call IDs, ordering, cardinality, and persistence
+behavior under one owner.
 
-1. **Persistable protocol stubs** for every deferred tool call, such as
+Preparation occurs before permission prompts and before any tool in the batch
+is dispatched. It asks path-aware providers for every target, resolves the
+union of required instruction chains, and acquires the activation ledger's
+mutation guard. The complete batch is deferred if its calling model chain has
+not received any required source. No earlier call in the same batch may
+execute, and `review_tool_calls` is not invoked for the discarded batch.
+
+`retry_with_context` produces two deliberately separate channels:
+
+1. **Runtime-generated persistable protocol stubs** for every deferred tool
+   call, such as
    “Deferred because project instructions were loaded; reconsider and retry.”
    These satisfy provider tool-call grammar and may appear in existing agent
    logs.
@@ -390,15 +479,17 @@ remaining global budget and receive explicit omission outcomes if it is
 exhausted. A global cross-agent scheduler would add complexity without making
 the eventual model-call ordering deterministic.
 
-Permission review happens on the model's reconsidered tool call, not the
-discarded pre-activation call. This preserves the guarantee that approval UI
-describes the exact call that may execute.
+After a `proceed` preparation outcome, the unchanged `review_tool_calls` hook
+runs normally. Permission review therefore happens on the model's reconsidered
+tool call, not the discarded pre-activation call. This preserves the guarantee
+that approval UI describes the exact call that may execute and avoids coupling
+repository-file failures to security-review failures.
 
 ## 10. Budgets and model limits
 
 There are two independent configurable raw-content byte budgets:
 
-- startup root-to-working-directory budget: 32 KiB per dispatch
+- startup binding-root budget: 32 KiB per dispatch
 - cumulative lazy nested-activation budget: 32 KiB per dispatch
 
 The maximum selected instruction content is therefore 64 KiB before model
@@ -410,21 +501,23 @@ target batch, candidates are admitted deepest-first; admitted sources are then
 rendered broad-to-specific. A source is included whole or omitted whole—never
 silently truncated. Omitted sources generate explicit relative-path warnings.
 
-Byte limits are only the outer cap. Before the initial rider, every newly
-activated nested update, and every post-compaction rebuild, Chatbook uses the
-existing model-limit resolver and token estimator to assemble the ordinary
-system prompt, conversation payload, tool schemas, staged context, and
-response reserve, then computes the remaining safe input allowance. New or
-rebuilt project instructions must fit both their byte budget and that remaining
-token allowance. Already delivered riders are not silently evicted between
-ordinary, non-compacting calls; they count as existing payload, and the normal
-compaction trigger handles later growth. If the resolver provides no positive
-safe allowance, Chatbook records the applicable terminal omission, warns once,
-and continues rather than overflowing the context window.
+Byte limits are only the outer cap. Before the initial rider and every newly
+activated nested update, Chatbook uses the existing model-limit resolver and
+token estimator to assemble the ordinary system prompt, conversation payload,
+tool schemas, staged context, and response reserve, then computes the remaining
+safe input allowance. New project instructions must fit both their byte budget
+and that remaining token allowance. Already delivered riders are not silently
+evicted. Later tool-history growth retains the agent runtime's existing budget
+and terminal-error behavior; this feature does not introduce mid-run
+compaction. If the resolver provides no positive safe allowance, Chatbook
+records the applicable terminal omission, warns once, and continues rather
+than overflowing the context window.
 
-Configuration belongs under `[console]` and exposes only the two byte caps.
-The token allowance reuses existing model context and response-reserve
-configuration instead of adding parallel knobs.
+Configuration belongs under `[console]` and exposes only
+`project_instructions_startup_max_bytes` and
+`project_instructions_nested_max_bytes`, each defaulting to 32768. The token
+allowance reuses existing model context and response-reserve configuration
+instead of adding parallel knobs.
 
 ## 11. Failures, warnings, and security behavior
 
@@ -438,7 +531,7 @@ Failure behavior is fail-open for optional guidance but explicit to the user:
 | Condition | Behavior |
 | --- | --- |
 | Feature disabled | No instruction-file reads; ordinary agent run |
-| No instruction files | Run normally; rail shows `None` |
+| No instruction files | First-use notice still explains possible nested loading; run normally; rail shows `None` |
 | Empty override | Treat as absent and try `AGENTS.md` |
 | Unreadable/invalid/symlinked override | Warn; skip directory; do not fall back |
 | Resolver exception | Warn prominently; continue without unresolved guidance |
@@ -446,7 +539,9 @@ Failure behavior is fail-open for optional guidance but explicit to the user:
 | Byte/token budget omission | Continue with admitted, more-specific sources and warn |
 | Target in another authorized binding | Tool remains eligible; warn that it is outside instruction scope |
 | Target outside all authorized roots | Existing tool boundary rejects it |
-| Saved binding invalid or changed | Hold send for recovery; never retarget silently |
+| Binding missing or locator fingerprint changed | Hold send for re-selection; never retarget silently |
+| Selected binding is read-only | Load instructions and expose read-only local operations; omit `fs_write`, `fs_edit`, and `fs_patch` |
+| Local project-context write fails | Keep the in-memory choice, warn that it may not survive restart, and do not write through synchronized metadata |
 
 Warnings are aggregated by category and source and shown once per run to avoid
 toast storms. Persistent and diagnostic logs receive only content-free codes,
@@ -467,11 +562,11 @@ The Console rail adds one compact project-instruction status row:
 - `Warning`
 
 The row opens the existing Context surface. Its Project Instructions section
-shows enabled state, selected binding, working-directory relative path,
-source precedence, relative source paths, scopes, byte counts, active/omitted
-state, and warnings. It does not add a bespoke file viewer or editor. The
-existing exact next-send payload view may naturally show the context rider
-when the user explicitly inspects that payload.
+shows enabled state, selected binding, locator-match status, source precedence,
+relative source paths, scopes, byte counts, active/omitted state, and warnings.
+It does not add a bespoke file viewer or editor. The existing exact next-send
+payload view may naturally show the context rider when the user explicitly
+inspects that payload.
 
 Nested activation posts a normal context event naming the newly active
 relative sources and scopes. It is not styled as an error. Blocked setup offers
@@ -484,13 +579,22 @@ for the session, or cancel the send.
 
 Temporary directory trees cover:
 
-- root-to-working-directory ordering
+- binding-root selection and root-to-target nested ordering
 - override precedence, empty override fallback, and invalid override no-fallback
+- bounded candidate reads and oversized-override no-fallback behavior
 - strict UTF-8 and BOM handling
 - no global/personal discovery and no ascent above the binding root
 - refusal of symlinked files and directory traversal
 - stable-read and changed-after-dispatch behavior
 - sibling-scope isolation
+- `fs_patch` multi-file target extraction, invalid/delete/rename parity with the
+  existing parser, and identical preflight for `dry_run`
+- binding-root-only semantics for `fs_glob` and `fs_grep`, including glob
+  patterns with static-looking prefixes
+- selected-binding activation and other-binding warning behavior for built-in
+  `read_file`, `list_directory`, and `write_file`
+- read-only selected bindings never advertise `fs_write`, `fs_edit`, or
+  `fs_patch`, while instruction discovery and read-only tools still work
 - unfiltered and path-filtered semantics for every `git_*` tool, including
   `git_status(path)` as a repository selector rather than a result filter
 - deepest-first admission with broad-to-specific rendering
@@ -520,9 +624,13 @@ With a deterministic fake provider, verify:
   selection within each admitted batch
 - targets in other authorized bindings warn without activating instructions
 - non-path-aware providers and disabled sessions retain existing behavior
-- compaction excludes automatic riders from summarizer input, rebuilds active
-  guidance without filesystem reads, and reconciles each chain's delivery
-  cursor
+- opaque process/skill-script calls receive startup context but do not trigger
+  guessed nested activation
+- `prepare_tool_calls` runs before the unchanged `review_tool_calls`; discarded
+  batches never prompt for approval, and preparation failures never rewrite a
+  security verdict
+- `/rewind` constructs its summary before startup-rider injection and receives
+  no automatic project context
 
 Provider grammar tests assert valid assistant-tool-call/tool-result/context
 ordering for OpenAI-compatible, Anthropic, Gemini-style, and fenced/local
@@ -532,16 +640,19 @@ transports.
 
 Every instruction fixture contains a unique secret-like sentinel, and the fake
 provider is configured not to echo it. Across success, cancellation, provider
-failure, resolver failure, compaction, and application restart, assert the
+failure, resolver failure, `/rewind`, and application restart, assert the
 automatic loading channel never copies the sentinel into:
 
-- conversation rows and conversation metadata
+- synchronized conversation columns, generic conversation metadata, or
+  `sync_log`
+- the local `console_project_context_json` column, which may contain only the
+  versioned control fields
 - agent-run and step databases
 - run logs and ordinary application logs
 - tool review/result records
 - transcript/context event markers
 - exception text and error reports
-- persisted compaction summaries
+- persisted `/rewind` summaries
 - outbound exchange-capture records
 
 Only the test harness's in-memory outbound provider-request spy may contain it.
@@ -556,16 +667,25 @@ filter.
 ### 13.4 Session, UI, and compatibility tests
 
 - New-session, legacy-session, sole-binding, multi-binding, removed-binding,
-  and binding-change state transitions.
-- Screen-state and durable conversation metadata round trips.
-- First-load notice proceed/cancel/disable behavior.
+  binding-retarget, locator-fingerprint mismatch, and read-only-binding state
+  transitions.
+- Screen-state and local-only `console_project_context_json` round trips,
+  explicit schema-version handling, malformed/forward-version and legacy
+  screen-state fallback, temporary-to-durable promotion, migration from the
+  actual schema head, and proof that local-only writes create no sync-log row
+  or conversation version bump.
+- First-use notice proceed/cancel/disable behavior with and without a root
+  source, including disclosure that nested sources may load later and
+  re-consent on provider/custom-endpoint changes but not model-only changes.
 - Rail states, metadata-only Context section, warnings, and nested activation
   events.
 - Ordinary chat, non-agent Console paths, disabled project instructions,
-  default workspace behavior, local tool approvals, MCP tools, and existing
-  context preview remain regression-covered.
+  default workspace behavior, the disabled-session `[console] workspace_root`
+  fallback, local tool approvals, MCP tools, and existing context preview
+  remain regression-covered.
 - Small and unknown model context windows, large tool schemas, long histories,
-  and compaction paths honor token headroom.
+  and existing agent budget exhaustion honor token headroom without adding
+  mid-run compaction.
 
 ### 13.5 Performance and live verification
 
@@ -587,12 +707,15 @@ The implementation plan should decompose the work into three independently
 testable, PR-sized deliveries while preserving one design and one ADR:
 
 1. **Startup project context:** resolver, session working context, startup
-   instructions, byte/token budgets, migration-safe defaults, first-load
-   notice, persistence round trips, ephemeral-origin tagging, historical
-   exchange-capture omission, compaction exclusion/rebuild, base-rider provider
-   transport tests, and basic rail/Context visibility.
+   instructions, locator fingerprinting, local-only schema migration and
+   persistence, selected-root local-provider composition with read-only
+   capability filtering, byte/token budgets, migration-safe defaults,
+   first-use notice, ephemeral-origin tagging, historical exchange-capture
+   omission, `/rewind` boundary tests, base-rider provider transport tests, and
+   basic rail/Context visibility.
 2. **Nested path activation:** path-aware provider contract and every `git_*`
-   scope rule, typed atomic preflight, per-chain terminal outcomes and delivery
+   / `fs_*` / built-in file-tool scope rule, separate typed
+   `prepare_tool_calls` preflight, per-chain terminal outcomes and delivery
    cursors, shared subagent ledger, protocol stubs, nested-channel
    persistence-leak tests, and the full multi-tool provider-grammar suite.
 3. **Interop and rollout:** complete UX states, real-provider UAT,
@@ -608,8 +731,10 @@ polish rather than correctness prerequisites.
 
 ```text
 ADR required: yes
-ADR path: backlog/decisions/068-console-project-instruction-context-boundary.md
+ADR path: backlog/decisions/069-console-project-instruction-local-state-and-preflight.md
 Reason: This feature establishes a provider/runtime trust boundary, a new
-cross-module path-aware tool contract, and durable session UX semantics for
-repository-authored instructions.
+cross-module path-aware tool contract, and local-only durable session state for
+repository-authored instructions. Once accepted, ADR-069 will supersede
+ADR-068 after the final readiness audit corrected persistence and preflight
+ownership.
 ```
