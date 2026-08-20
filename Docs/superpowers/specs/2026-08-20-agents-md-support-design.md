@@ -138,6 +138,14 @@ keep the same fields only in live/screen state; if a session becomes a durable
 conversation, its current control state is then written through the local-only
 column.
 
+Local-only also means **preserved by inbound sync**. Remote create, update,
+delete, undelete, replay, and forced conflict-resolution code must update only
+the synchronized column allowlist and must never replace or clear an existing
+`console_project_context_json`. A remote create that collides with an existing
+local row preserves the local column; a genuinely new remote row starts with
+it null/legacy-disabled. This invariant applies across restart and is tested at
+the `ClientSyncEngine` apply boundary, not inferred only from outbound triggers.
+
 At every agent dispatch, Chatbook resolves `working_folder_binding_id` through
 the workspace registry, revalidates the canonical locator, recomputes its
 fingerprint, and compares it with the stored selection fingerprint. A removed,
@@ -247,6 +255,15 @@ validation; the instruction layer must not maintain a second interpretation of
 tool arguments. MCP is explicitly excluded because its paths can be remote or
 provider-defined.
 
+Ownership resolution is registry-owned. For each model call,
+`ToolCatalogRegistry` resolves the LLM-facing name to the same cached
+first-registrant-wins `(tool_id, provider)` owner used by `invoke_by_name`.
+Preflight asks only that resolved owner for path targets; it never scans every
+provider or consults a shadowed same-name tool. Runtime-special calls with no
+catalog owner and owners without `PathAwareToolProvider` yield no targets. The
+registry exposes one internal owner-resolution operation so preflight and
+dispatch cannot grow separate collision rules.
+
 The contract is intentionally limited to tools whose complete path targets can
 be derived before execution. Shell-like, process, skill-script, network, todo,
 and spawn tools return no path targets; the feature never guesses from command
@@ -279,12 +296,22 @@ outcome without reading its body. In particular, an oversized override is not
 treated as empty and does not fall back to same-directory `AGENTS.md`.
 
 Files decode as strict UTF-8 with an optional UTF-8 BOM. Reads use standard
-library no-follow and descriptor-stat checks where supported; if Chatbook
-cannot guarantee a non-symlinked stable read, it fails that source closed.
-Directory symlinks are not traversed for instruction discovery. This refusal
-does not independently change whether the existing local tool boundary allows
-the requested operation; it only prevents guidance from being inferred
-through the symlinked route and produces a warning.
+library descriptor identity checks on every platform. On POSIX, the resolver
+uses `os.open` with `O_NOFOLLOW` where available, then compares pre-open
+`lstat`, descriptor `fstat`, bounded-read, post-read `fstat`, and post-read
+`lstat` identity/size/mtime. It records every ancestor directory's `lstat`
+identity before opening and rechecks the chain after reading. On Windows, it
+also rejects any file or ancestor whose `st_file_attributes` contains
+`stat.FILE_ATTRIBUTE_REPARSE_POINT`, then applies the same pre/post identity
+checks; an open that followed a raced-in reparse target cannot match the
+pre-open file/ancestor identities. Every read is capped at the configured limit
+plus one byte so growth cannot allocate unbounded memory. If a platform cannot
+expose the required identity or reparse metadata, that source fails closed with
+a content-free platform warning rather than disabling the whole run. Directory
+symlinks and reparse points are not traversed for instruction discovery. This
+refusal does not independently change whether the existing local tool boundary
+allows the requested operation; it only prevents guidance from being inferred
+through the linked route and produces a warning.
 
 Selected files are composed in broad-to-specific order. A more specific file
 supersedes conflicting broader guidance for paths in its scope. Sources from
@@ -416,6 +443,16 @@ fail-open-with-warning policy, produces `proceed`, and cannot silently change
 an approval verdict. Binding/setup recovery happens before runtime construction
 and therefore needs no third preparation outcome.
 
+`LoopDeps` also gains a separate optional `on_ephemeral_runtime_warning`
+callback for nonpersistent UI/runtime warnings. If preparation raises,
+`AgentRuntime` emits only the enum-like code
+`project_instruction_preparation_failed` plus tool names/count through this
+callback, logs only the same sanitized code/metadata without exception text or
+traceback, and continues with `proceed` into the unchanged security review.
+This callback is not `on_step`: it cannot create an `AgentStep`, transcript
+row, run-log record, or database write. Callback failure is swallowed after a
+code-only log entry.
+
 `proceed` carries no context rows. `retry_with_context` carries only the
 ephemeral instruction/warning rows; it never carries review verdicts or tool
 results. `AgentRuntime` itself synthesizes the fixed deferral result for every
@@ -535,6 +572,7 @@ Failure behavior is fail-open for optional guidance but explicit to the user:
 | Empty override | Treat as absent and try `AGENTS.md` |
 | Unreadable/invalid/symlinked override | Warn; skip directory; do not fall back |
 | Resolver exception | Warn prominently; continue without unresolved guidance |
+| Preparation-hook exception | Emit content-free ephemeral UI warning and code-only log; proceed to unchanged security review |
 | Stale nested candidate | Defer it to next dispatch and warn |
 | Byte/token budget omission | Continue with admitted, more-specific sources and warn |
 | Target in another authorized binding | Tool remains eligible; warn that it is outside instruction scope |
@@ -585,6 +623,8 @@ Temporary directory trees cover:
 - strict UTF-8 and BOM handling
 - no global/personal discovery and no ascent above the binding root
 - refusal of symlinked files and directory traversal
+- POSIX no-follow/identity checks, Windows symlink/junction/reparse refusal,
+  unsupported-metadata fail-closed behavior, and bounded concurrent file growth
 - stable-read and changed-after-dispatch behavior
 - sibling-scope isolation
 - `fs_patch` multi-file target extraction, invalid/delete/rename parity with the
@@ -629,6 +669,11 @@ With a deterministic fake provider, verify:
 - `prepare_tool_calls` runs before the unchanged `review_tool_calls`; discarded
   batches never prompt for approval, and preparation failures never rewrite a
   security verdict
+- registry first-wins collisions across built-in/local/skill/MCP providers are
+  inspected only through the exact owner that dispatch would invoke
+- preparation exceptions reach only the ephemeral warning callback and
+  sanitized code-only log, then proceed to review without raw exception text,
+  instruction bodies, `AgentStep`, transcript, or database leakage
 - `/rewind` constructs its summary before startup-rider injection and receives
   no automatic project context
 
@@ -674,6 +719,9 @@ filter.
   screen-state fallback, temporary-to-durable promotion, migration from the
   actual schema head, and proof that local-only writes create no sync-log row
   or conversation version bump.
+- Inbound sync remote create/update/delete/undelete/replay and forced
+  remote-wins conflict resolution preserve an existing local project-context
+  column across restart; a genuinely new remote row starts null/disabled.
 - First-use notice proceed/cancel/disable behavior with and without a root
   source, including disclosure that nested sources may load later and
   re-consent on provider/custom-endpoint changes but not model-only changes.
