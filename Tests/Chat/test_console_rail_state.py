@@ -604,9 +604,12 @@ def test_console_rail_state_left_rail_not_collapsed_at_or_above_threshold():
 def test_console_rail_state_single_pane_below_84_columns():
     """TASK-2154.1 (LY-09): below 84 cols the workspace drops to one pane.
 
-    TASK-2154.2: the left force-collapse still applies to the never-toggled
-    default; an explicitly opened rail is honored even in single-pane mode
-    (handles stay hidden -- the rail's own collapse button is the way back).
+    TASK-2154.2 originally honored an explicitly opened rail even in
+    single-pane mode. task-18909 (2026-08-19 mobile audit) narrowed that:
+    below the width budget (single-pane floor + rail min-width) the collapse
+    is a rendering override the explicit marker cannot buy past -- at 60
+    cols an honored 30-col rail left a 14-col transcript. Above the budget
+    the marker is still honored (see the *_width_budget tests below).
     """
     key = build_console_rail_preference_key(
         workspace_id="workspace-1",
@@ -634,13 +637,13 @@ def test_console_rail_state_single_pane_below_84_columns():
     )
 
     assert explicit.single_pane is True
-    assert explicit.left_open is True
-    assert explicit.right_open is True
-    assert explicit.left_forced_collapsed is False
-    assert explicit.right_forced_collapsed is False
-    assert explicit.left_compact_override is True
-    assert explicit.right_compact_override is True
-    assert explicit.compact_override is True
+    assert explicit.left_open is False
+    assert explicit.right_open is False
+    assert explicit.left_forced_collapsed is True
+    assert explicit.right_forced_collapsed is True
+    assert explicit.left_compact_override is False
+    assert explicit.right_compact_override is False
+    assert explicit.compact_override is False
 
 
 def test_console_rail_state_no_responsive_overrides_without_width():
@@ -911,3 +914,72 @@ def test_build_console_rail_state_carries_section_flags():
     assert state.workspace_open is False
     assert state.conversations_open is True
     assert state.model_open is True
+
+
+# --- task-18909: width-budget rule (explicit toggles vs usable transcript) ---
+
+
+def test_explicit_left_open_honored_when_width_affords_it():
+    """30 + 40 = 70: exactly the left budget, explicit open is honored."""
+    key = build_console_rail_preference_key(workspace_id="w", session_id="s")
+    state = build_console_rail_state(
+        preference_key=key,
+        stored_preferences={"left_open": True, "left_open_explicit": True},
+        available_columns=70,
+    )
+    assert state.left_open is True
+    assert state.left_forced_collapsed is False
+
+
+def test_explicit_left_open_collapsed_below_width_budget():
+    """69 cols (inside the compact-collapse zone) with the explicit marker:
+    ADR-043 honored the open; task-18909 collapses it because 69 < 30+40 --
+    rail + usable transcript does not fit. At 70+ the marker is honored
+    again (the honored-at-budget test above pins that side)."""
+    key = build_console_rail_preference_key(workspace_id="w", session_id="s")
+    state = build_console_rail_state(
+        preference_key=key,
+        stored_preferences={"left_open": True, "left_open_explicit": True},
+        available_columns=69,
+    )
+    assert state.left_open is False
+    assert state.left_forced_collapsed is True
+    assert state.single_pane is True  # 69 < 84: single-pane floor applies too
+
+
+def test_explicit_right_open_collapsed_below_width_budget():
+    """73 cols: right rail open by explicit value, but 73 < 34+40 -- an
+    honored 34-col rail would leave a 39-col transcript."""
+    key = build_console_rail_preference_key(workspace_id="w", session_id="s")
+    state = build_console_rail_state(
+        preference_key=key,
+        stored_preferences={"right_open": True},
+        available_columns=73,
+    )
+    assert state.right_open is False
+    assert state.right_forced_collapsed is True
+
+
+def test_explicit_right_open_honored_at_budget():
+    key = build_console_rail_preference_key(workspace_id="w", session_id="s")
+    state = build_console_rail_state(
+        preference_key=key,
+        stored_preferences={"right_open": True},
+        available_columns=74,
+    )
+    assert state.right_open is True
+    assert state.right_forced_collapsed is False
+
+
+def test_phone_width_explicit_left_open_collapsed():
+    """The 2026-08-19 mobile-audit repro: phone width (48 cols) with the
+    explicit marker stored -- transcript must get the full width."""
+    key = build_console_rail_preference_key(workspace_id="w", session_id="s")
+    state = build_console_rail_state(
+        preference_key=key,
+        stored_preferences={"left_open": True, "left_open_explicit": True},
+        available_columns=48,
+    )
+    assert state.single_pane is True
+    assert state.left_open is False
+    assert state.left_forced_collapsed is True

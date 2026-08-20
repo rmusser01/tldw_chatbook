@@ -99,7 +99,10 @@ handle (or via the **Sources**/**Tools** chips) always works, at any width,
 and your stored open/closed preference is kept and restored at wider sizes;
 and below 84 columns the workspace switches to a single pane — both edge
 handles hide and the transcript takes the full width, so it stays usable
-even at 80x24 or 60x18.
+even at 80x24 or 60x18. An explicitly opened rail yields to this rule once
+the terminal cannot fit the rail plus a usable transcript (~70 columns for
+the Context rail, ~74 for the Inspector); the preference itself survives and
+the rail returns when the terminal widens again.
 
 ### Focus mode
 
