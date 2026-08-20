@@ -1,4 +1,4 @@
-# ADR-072: Vendor tldw_server's Chunking engine behind a compat shim
+# ADR-073: Vendor tldw_server's Chunking engine behind a compat shim
 
 - **Status:** Accepted
 - **Date:** 2026-08-20
