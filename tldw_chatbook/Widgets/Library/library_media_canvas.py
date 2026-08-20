@@ -43,6 +43,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         pager: LibraryPagerDisplay | None = None,
         type_options: tuple[str | None, ...] | None = None,
         stale_action_reason: str = "",
+        mutation_action_reason: str = "",
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -52,6 +53,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             canvas.type_options if type_options is None else type_options
         )
         self.stale_action_reason = stale_action_reason
+        self.mutation_action_reason = mutation_action_reason
         # Fill the (already 13fr) canvas host, not an independent 13fr --
         # ``LibraryMediaViewer`` documented this trap first: an `fr` width
         # here resolves against the HOST's content width per fraction, so
@@ -70,6 +72,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         pager: LibraryPagerDisplay | None = None,
         type_options: tuple[str | None, ...] | None = None,
         stale_action_reason: str = "",
+        mutation_action_reason: str = "",
     ) -> None:
         """Refresh the canvas from new state.
 
@@ -85,14 +88,24 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             canvas.type_options if type_options is None else type_options
         )
         self.stale_action_reason = stale_action_reason
+        self.mutation_action_reason = mutation_action_reason
         self.refresh(recompose=True)
 
     def _gate_stale_action(self, button: Button, base_label: str) -> Button:
         """Apply the controller's stale-page gate to one unsafe action."""
-        if self.stale_action_reason:
+        reason = self.mutation_action_reason or self.stale_action_reason
+        if reason:
             button.label = library_disabled_action_label(base_label, True)
             button.disabled = True
-            button.tooltip = self.stale_action_reason
+            button.tooltip = reason
+        return button
+
+    def _gate_mutation_action(self, button: Button, base_label: str) -> Button:
+        """Disable even recovery controls only while a write is unsettled."""
+        if self.mutation_action_reason:
+            button.label = library_disabled_action_label(base_label, True)
+            button.disabled = True
+            button.tooltip = self.mutation_action_reason
         return button
 
     def compose(self) -> ComposeResult:
@@ -127,7 +140,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         type_choices_visible = getattr(self.canvas, "type_choices_visible", False)
         toolbar.display = not type_choices_visible
         with toolbar:
-            yield Button(
+            type_filter = Button(
                 # task-14902: a chooser-opener, no longer a cycler -- press
                 # opens the direct-pick strip below instead of advancing.
                 library_choice_label(
@@ -147,6 +160,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     ),
                 ),
             )
+            yield self._gate_mutation_action(type_filter, str(type_filter.label))
             export_btn = Button(
                 "Export…",
                 id="library-media-export",
@@ -271,12 +285,13 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         compact=True,
                     )
                     yield self._gate_stale_action(confirm, "Delete")
-                    yield Button(
+                    cancel = Button(
                         "Cancel",
                         id="library-media-bulk-delete-cancel",
                         classes="library-canvas-action",
                         compact=True,
                     )
+                    yield self._gate_mutation_action(cancel, "Cancel")
                 else:
                     select_all = Button(
                         f"Select all {rendered_count} shown",
@@ -385,12 +400,13 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     compact=True,
                 )
                 yield self._gate_stale_action(undo, "Undo")
-                yield Button(
+                dismiss = Button(
                     "Dismiss",
                     id="library-media-bulk-delete-receipt-dismiss",
                     classes="library-canvas-action",
                     compact=True,
                 )
+                yield self._gate_mutation_action(dismiss, "Dismiss")
 
         status_text = (
             self.pager.status_copy
@@ -546,14 +562,15 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 )
                 if pager.previous_disabled:
                     previous.tooltip = pager.previous_reason
-                yield previous
+                yield self._gate_mutation_action(previous, "Previous")
                 if pager.retry_visible:
-                    yield Button(
+                    retry = Button(
                         "Retry",
                         id="library-media-retry",
                         classes="library-canvas-action",
                         compact=True,
                     )
+                    yield self._gate_mutation_action(retry, "Retry")
                 next_page = Button(
                     library_disabled_action_label("Next", pager.next_disabled),
                     id="library-media-next",
@@ -563,4 +580,4 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 )
                 if pager.next_disabled:
                     next_page.tooltip = pager.next_reason
-                yield next_page
+                yield self._gate_mutation_action(next_page, "Next")

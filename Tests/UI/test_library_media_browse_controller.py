@@ -331,3 +331,57 @@ def test_retain_stale_items_does_not_forge_exact_metadata() -> None:
     controller = _controller(screen, _Service(_page(1, 1)))
     with pytest.raises(ValueError, match="before"):
         controller.retain_stale_items((), stale_copy="Changed")
+
+
+@pytest.mark.asyncio
+async def test_committed_mutation_reconciles_retained_without_forging_envelope() -> (
+    None
+):
+    screen = _Screen()
+    service = _Service(_page(2, 40), RuntimeError("refresh failed"))
+    controller = _controller(screen, service)
+    scope = MediaBrowseScope(page=2)
+    controller.request(scope, focus_identity=None)
+    await screen.pending.pop()
+    applied = controller.applied_result
+
+    assert controller.begin_mutation() == scope
+    controller.reconcile_committed_mutation(
+        remove_ids=("local:media:21",),
+        upsert_items=(_item(99),),
+    )
+
+    assert controller.applied_result is applied
+    assert [item["id"] for item in controller.retained_items] == [
+        "local:media:99",
+        *(f"local:media:{media_id}" for media_id in range(22, 41)),
+    ]
+    assert controller.freshness == "stale"
+    assert controller.pager.title_count is None
+    assert controller.pager.range_copy == "List may be out of date"
+
+    controller.request(scope, focus_identity=None)
+    await screen.pending.pop()
+
+    assert service.search_calls[-1]["offset"] == 20
+    assert controller.applied_result is applied
+    assert controller.freshness == "stale"
+    assert controller.pager.retry_visible is True
+
+
+@pytest.mark.asyncio
+async def test_mutation_begin_fences_page_and_facet_results_before_write() -> None:
+    screen = _Screen()
+    service = _Service(_page(1, 1), types=("obsolete",))
+    controller = _controller(screen, service)
+    controller.request(MediaBrowseScope(), focus_identity=None)
+    late_page = screen.pending.pop()
+    controller.request_facets(fingerprint="before")
+    late_facets = screen.pending.pop()
+
+    assert controller.begin_mutation() == MediaBrowseScope()
+    await late_page
+    await late_facets
+
+    assert controller.applied_result is None
+    assert controller.type_options == ()

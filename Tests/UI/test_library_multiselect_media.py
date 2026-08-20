@@ -24,6 +24,21 @@ from tldw_chatbook.Library.library_media_state import (
 from tldw_chatbook.Widgets.Library.library_media_canvas import LibraryMediaCanvas
 
 
+def _bind_media_mutation_seams(fake):
+    """Give direct method fakes the production mutation boundary shape."""
+    fake._begin_library_media_mutation = lambda: None
+    fake._required_library_media_backing_id = types.MethodType(
+        LibraryScreen._required_library_media_backing_id, fake
+    )
+    fake._library_media_mutation_summary = types.MethodType(
+        LibraryScreen._library_media_mutation_summary, fake
+    )
+    fake._complete_library_media_mutation = lambda **_kwargs: setattr(
+        fake, "_library_media_bulk_delete_in_flight", False
+    )
+    return fake
+
+
 def _media_fake(
     select_mode, *, confirming_bulk_delete=False, bulk_delete_in_flight=False
 ):
@@ -71,7 +86,7 @@ def _media_fake(
     fake._cancel_library_media_bulk_delete = types.MethodType(
         LibraryScreen._cancel_library_media_bulk_delete, fake
     )
-    return fake
+    return _bind_media_mutation_seams(fake)
 
 
 def test_row_press_in_select_mode_toggles_not_opens():
@@ -763,7 +778,7 @@ def _bulk_delete_fake(*, db, records, counts, selected_ids):
     fake._notify_library_media_delete_warning = types.MethodType(
         LibraryScreen._notify_library_media_delete_warning, fake
     )
-    return fake
+    return _bind_media_mutation_seams(fake)
 
 
 @pytest.mark.asyncio
@@ -946,6 +961,7 @@ async def test_delete_selection_service_unavailable_keeps_selection_and_warns():
     fake._notify_library_media_delete_warning = types.MethodType(
         LibraryScreen._notify_library_media_delete_warning, fake
     )
+    _bind_media_mutation_seams(fake)
 
     await LibraryScreen._delete_library_media_selection(fake, ("1",))
 
@@ -1286,7 +1302,7 @@ def _undo_fake(*, receipt_ids, undo_in_flight=False):
         _notified=notified,
         _undo_library_media_bulk_delete=_noop_undo,
     )
-    return fake
+    return _bind_media_mutation_seams(fake)
 
 
 def test_undo_button_kicks_worker_with_receipt_ids():
@@ -1407,6 +1423,7 @@ async def test_single_item_delete_also_arms_entry_focus_on_success(tmp_path):
     fake._notify_library_media_delete_warning = types.MethodType(
         LibraryScreen._notify_library_media_delete_warning, fake
     )
+    _bind_media_mutation_seams(fake)
 
     await LibraryScreen._delete_library_media_item(fake, str(media_id))
 
@@ -1448,7 +1465,7 @@ def _single_delete_confirm_fake(
         _delete_library_media_item=_noop_delete_item,
         refresh=lambda **k: None,
     )
-    return fake
+    return _bind_media_mutation_seams(fake)
 
 
 def test_single_delete_confirm_claims_shared_flag_and_group():
@@ -1566,7 +1583,7 @@ def _single_delete_worker_fake(*, db, records, counts, selected_media_id):
     fake._notify_library_media_delete_warning = types.MethodType(
         LibraryScreen._notify_library_media_delete_warning, fake
     )
-    return fake
+    return _bind_media_mutation_seams(fake)
 
 
 @pytest.mark.asyncio

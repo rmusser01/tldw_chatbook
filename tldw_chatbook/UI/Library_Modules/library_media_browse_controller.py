@@ -25,6 +25,7 @@ _FACET_WORKER_GROUP = "library-media-types"
 _SERVICE_ERROR = "Couldn't load media. Check the local Library and retry."
 _FACET_ERROR = "Couldn't load media types. Retry."
 _SHRINK_COPY = "List changed while paging; retry to load a current page."
+_MUTATION_COPY = "Media changed; retry to load a current page."
 
 
 class LibraryMediaBrowseController:
@@ -245,6 +246,40 @@ class LibraryMediaBrowseController:
         self.freshness = "stale"
         self.error_copy = ""
         self.stale_copy = stale_copy.strip()
+
+    def begin_mutation(self) -> MediaBrowseScope:
+        """Fence reads before a durable write and preserve its applied scope."""
+        scope = self.mutation_refresh_scope
+        self.invalidate(scope)
+        return scope
+
+    def reconcile_committed_mutation(
+        self,
+        *,
+        remove_ids: tuple[str, ...] = (),
+        upsert_items: tuple[Mapping[str, Any], ...] = (),
+    ) -> None:
+        """Retain one locally known committed view without forging metadata."""
+        if type(remove_ids) is not tuple or any(
+            type(media_id) is not str or not media_id for media_id in remove_ids
+        ):
+            raise ValueError("remove_ids must be an exact tuple of non-empty ids.")
+        if type(upsert_items) is not tuple:
+            raise TypeError("upsert_items must be an exact tuple.")
+        normalized_upserts = validate_media_browse_items(upsert_items)
+        removed = set(remove_ids)
+        upsert_ids = {str(item["id"]) for item in normalized_upserts}
+        retained = normalized_upserts + tuple(
+            item
+            for item in self.retained_items
+            if item["id"] not in removed and item["id"] not in upsert_ids
+        )
+        if self.applied_result is None:
+            return
+        self.retain_stale_items(
+            retained[: self.applied_result.limit],
+            stale_copy=_MUTATION_COPY,
+        )
 
     def invalidate(self, scope: MediaBrowseScope | None = None) -> int:
         self._page_generation += 1

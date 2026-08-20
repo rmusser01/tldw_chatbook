@@ -3028,6 +3028,7 @@ class LibraryScreen(BaseAppScreen):
         # and schedules into the same exclusive worker group rather than
         # growing a flag of its own.
         self._library_media_bulk_delete_in_flight: bool = False
+        self._library_media_mutation_scope: MediaBrowseScope | None = None
         # task-4022 AC2: the ids from the most recently completed media
         # delete (bulk OR, since task-14901, the single-item viewer
         # delete), rendered as a "✓ deleted · N items" receipt (with
@@ -3155,7 +3156,6 @@ class LibraryScreen(BaseAppScreen):
             sync_view=lambda: self._sync_library_media_browse_state,
             request_is_active=lambda: (
                 self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
-                and self._library_media_view == "list"
             ),
         )
         self._library_prompt_collections_controller = (
@@ -10298,11 +10298,66 @@ class LibraryScreen(BaseAppScreen):
             "stale_action_reason": (
                 controller.stale_copy if controller.freshness == "stale" else ""
             ),
+            "mutation_action_reason": (
+                "Media change in progress."
+                if self._library_media_bulk_delete_in_flight
+                else ""
+            ),
         }
 
     def _library_media_type_options(self) -> tuple[str | None, ...]:
         """Return the unfiltered sentinel plus every complete stored facet."""
         return (None, *self._library_media_browse_controller.type_options)
+
+    def _begin_library_media_mutation(self) -> MediaBrowseScope:
+        """Fence page/facet reads before the shared durable Media write."""
+        if self._library_media_mutation_scope is None:
+            self._library_media_mutation_scope = (
+                self._library_media_browse_controller.begin_mutation()
+            )
+            self._library_media_type_choices_visible = False
+            self._sync_library_media_browse_state(None)
+        return self._library_media_mutation_scope
+
+    def _complete_library_media_mutation(
+        self,
+        *,
+        committed: bool = False,
+        remove_ids: tuple[str, ...] = (),
+        upsert_items: tuple[Mapping[str, Any], ...] = (),
+    ) -> None:
+        """Release the write interlock and refresh its full applied scope."""
+        scope = self._library_media_mutation_scope
+        self._library_media_mutation_scope = None
+        self._library_media_bulk_delete_in_flight = False
+        if not committed and not remove_ids and not upsert_items:
+            self._sync_library_media_browse_state(None)
+            return
+        controller = self._library_media_browse_controller
+        controller.reconcile_committed_mutation(
+            remove_ids=remove_ids,
+            upsert_items=upsert_items,
+        )
+        refresh_scope = scope or controller.mutation_refresh_scope
+        if self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA:
+            return
+        controller.request(refresh_scope, focus_identity=None)
+        controller.request_facets(fingerprint=refresh_scope.fingerprint)
+
+    def _library_media_mutation_summary(
+        self,
+        media_id: str,
+        record: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        """Normalize one known restored row for stale retained display."""
+        backing_id = self._required_library_media_backing_id(media_id)
+        return {
+            "id": f"local:media:{backing_id}",
+            "backing_media_id": backing_id,
+            "title": record.get("title"),
+            "media_type": record.get("media_type", record.get("type")),
+            "updated_at": record.get("updated_at", record.get("last_modified")),
+        }
 
     @staticmethod
     def _restore_library_media_scope(state: Mapping[str, Any]) -> MediaBrowseScope:
@@ -15748,7 +15803,10 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the media type chooser.
         """
         event.stop()
-        if self._library_media_confirming_bulk_delete:
+        if (
+            self._library_media_bulk_delete_in_flight
+            or self._library_media_confirming_bulk_delete
+        ):
             return
         self._library_media_type_choices_visible = (
             not self._library_media_type_choices_visible
@@ -15780,6 +15838,8 @@ class LibraryScreen(BaseAppScreen):
             event: Selection event emitted by the bounded type chooser.
         """
         event.stop()
+        if self._library_media_bulk_delete_in_flight:
+            return
         requested = getattr(event.option, "choice_value", None)
         if requested is not None and type(requested) is not str:
             return
@@ -15802,6 +15862,8 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_media_previous(self, event: Button.Pressed) -> None:
         """Request the previous exact Media page."""
         event.stop()
+        if self._library_media_bulk_delete_in_flight:
+            return
         applied = self._library_media_browse_controller.applied_scope
         if applied is None or self._library_media_browse_controller.pager.previous_disabled:
             return
@@ -15814,6 +15876,8 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_media_next(self, event: Button.Pressed) -> None:
         """Request the next exact Media page."""
         event.stop()
+        if self._library_media_bulk_delete_in_flight:
+            return
         applied = self._library_media_browse_controller.applied_scope
         if applied is None or self._library_media_browse_controller.pager.next_disabled:
             return
@@ -15826,6 +15890,8 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_media_retry(self, event: Button.Pressed) -> None:
         """Retry the latest failed Media request."""
         event.stop()
+        if self._library_media_bulk_delete_in_flight:
+            return
         self._retry_library_media_browse(
             focus_identity="#library-media-retry",
         )
@@ -15856,6 +15922,8 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by a media row button.
         """
         event.stop()
+        if self._library_media_bulk_delete_in_flight:
+            return
         media_id = str(getattr(event.button, "media_id", "") or "")
         if self._library_media_select_mode:
             if self._library_media_confirming_bulk_delete:
@@ -15874,6 +15942,8 @@ class LibraryScreen(BaseAppScreen):
         the selection [silently]" finding.
         """
         event.stop()
+        if self._library_media_bulk_delete_in_flight:
+            return
         if self._library_media_select_mode:
             self._exit_library_media_select_mode(announce_discard=True)
         else:
@@ -15927,6 +15997,8 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_media_select_all(self, event: Button.Pressed) -> None:
         """Select every media row currently rendered by the canvas."""
         event.stop()
+        if self._library_media_bulk_delete_in_flight:
+            return
         rows = self._build_library_media_state().rows
         self._library_media_row_selection.select_all(r.media_id for r in rows)
         _sync_library_canvas(self, "media")
@@ -15935,6 +16007,8 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_media_select_clear(self, event: Button.Pressed) -> None:
         """Clear the current media selection without leaving select mode."""
         event.stop()
+        if self._library_media_bulk_delete_in_flight:
+            return
         self._library_media_row_selection.clear()
         _sync_library_canvas(self, "media")
 
@@ -15942,6 +16016,8 @@ class LibraryScreen(BaseAppScreen):
     async def handle_library_media_export_selected(self, event: Button.Pressed) -> None:
         """Open the export canvas scoped to the currently selected media ids."""
         event.stop()
+        if self._library_media_bulk_delete_in_flight:
+            return
         # Defensive: an empty selection would resolve to a whole-source export
         # (empty ids == whole source); the button is disabled at 0 selected.
         if not self._library_media_row_selection.count:
@@ -15963,6 +16039,8 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by "Delete selected".
         """
         event.stop()
+        if self._library_media_bulk_delete_in_flight:
+            return
         # Defensive: the button is disabled at 0 selected (mirrors "Export
         # selected"'s own guard).
         if not self._library_media_row_selection.count:
@@ -16008,6 +16086,8 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the confirm row's "Cancel".
         """
         event.stop()
+        if self._library_media_bulk_delete_in_flight:
+            return
         self._cancel_library_media_bulk_delete()
 
     @on(Button.Pressed, "#library-media-bulk-delete-confirm")
@@ -16049,6 +16129,7 @@ class LibraryScreen(BaseAppScreen):
             _sync_library_canvas(self, "media")
             return
         self._library_media_bulk_delete_in_flight = True
+        self._begin_library_media_mutation()
         self.run_worker(
             self._delete_library_media_selection(media_ids),
             exclusive=True,
@@ -16112,10 +16193,10 @@ class LibraryScreen(BaseAppScreen):
             media_ids: The exact ids to delete, read by the caller BEFORE
                 any recompose could change the live selection.
         """
+        succeeded: list[str] = []
         try:
             service = getattr(self.app_instance, "media_reading_scope_service", None)
             delete_media_item = getattr(service, "delete_media_item", None)
-            succeeded: list[str] = []
             failed: list[str] = []
             if callable(delete_media_item):
                 for media_id in media_ids:
@@ -16123,7 +16204,7 @@ class LibraryScreen(BaseAppScreen):
                         await self._run_library_service_call(
                             delete_media_item,
                             mode="local",
-                            media_id=self._library_media_backing_id(media_id),
+                            media_id=self._required_library_media_backing_id(media_id),
                             isolate_in_worker=True,
                         )
                         succeeded.append(media_id)
@@ -16205,7 +16286,7 @@ class LibraryScreen(BaseAppScreen):
                 # no-op there and behavior is unchanged from before.
                 self._arm_library_list_entry_focus()
         finally:
-            self._library_media_bulk_delete_in_flight = False
+            self._complete_library_media_mutation(remove_ids=tuple(succeeded))
 
     @on(Button.Pressed, "#library-media-bulk-delete-undo")
     def handle_library_media_bulk_delete_undo(self, event: Button.Pressed) -> None:
@@ -16239,6 +16320,7 @@ class LibraryScreen(BaseAppScreen):
         if not media_ids:
             return
         self._library_media_bulk_delete_in_flight = True
+        self._begin_library_media_mutation()
         self.run_worker(
             self._undo_library_media_bulk_delete(media_ids),
             exclusive=True,
@@ -16283,6 +16365,7 @@ class LibraryScreen(BaseAppScreen):
             media_ids: The exact ids from the receipt being undone, read
                 by the caller before any recompose could change it.
         """
+        restored_items: list[Mapping[str, Any]] = []
         try:
             service = getattr(self.app_instance, "media_reading_scope_service", None)
             restore_media_item = getattr(service, "restore_media_item", None)
@@ -16294,11 +16377,14 @@ class LibraryScreen(BaseAppScreen):
                         result = await self._run_library_service_call(
                             restore_media_item,
                             mode="local",
-                            media_id=self._library_media_backing_id(media_id),
+                            media_id=self._required_library_media_backing_id(media_id),
                             isolate_in_worker=True,
                         )
                         if isinstance(result, Mapping):
                             restored_records.append(result)
+                            restored_items.append(
+                                self._library_media_mutation_summary(media_id, result)
+                            )
                     except Exception as exc:
                         logger.warning(
                             "Failed to restore a Library media item in bulk-delete "
@@ -16351,7 +16437,9 @@ class LibraryScreen(BaseAppScreen):
                 # AC3 review round 2).
                 self._arm_library_list_entry_focus()
         finally:
-            self._library_media_bulk_delete_in_flight = False
+            self._complete_library_media_mutation(
+                upsert_items=tuple(restored_items),
+            )
 
     # ------------------------------------------------------------------
     # task-4025: the media Trash view -- browse + restore
@@ -16546,6 +16634,7 @@ class LibraryScreen(BaseAppScreen):
         if not media_id:
             return
         self._library_media_bulk_delete_in_flight = True
+        self._begin_library_media_mutation()
         self.run_worker(
             self._restore_library_media_from_trash(media_id),
             exclusive=True,
@@ -16574,6 +16663,7 @@ class LibraryScreen(BaseAppScreen):
             media_id: The trashed item's id, read by the caller before any
                 recompose could change the selection.
         """
+        restored_item: Mapping[str, Any] | None = None
         try:
             service = getattr(self.app_instance, "media_reading_scope_service", None)
             restore_media_item = getattr(service, "restore_media_item", None)
@@ -16583,11 +16673,14 @@ class LibraryScreen(BaseAppScreen):
                     result = await self._run_library_service_call(
                         restore_media_item,
                         mode="local",
-                        media_id=media_id,
+                        media_id=self._required_library_media_backing_id(media_id),
                         isolate_in_worker=True,
                     )
                     if isinstance(result, Mapping):
                         restored_record = result
+                        restored_item = self._library_media_mutation_summary(
+                            media_id, result
+                        )
                 except Exception as exc:
                     logger.warning(
                         "Failed to restore a Library media item from the "
@@ -16637,7 +16730,9 @@ class LibraryScreen(BaseAppScreen):
                 self.refresh(recompose=True)
                 self.call_after_refresh(self._focus_library_media_trash_entry)
         finally:
-            self._library_media_bulk_delete_in_flight = False
+            self._complete_library_media_mutation(
+                upsert_items=(restored_item,) if restored_item is not None else (),
+            )
 
     @on(Button.Pressed, "#library-media-open-viewer")
     def handle_library_media_open_viewer(self, event: Button.Pressed) -> None:
@@ -16707,6 +16802,15 @@ class LibraryScreen(BaseAppScreen):
             if backing_id > 0:
                 return backing_id
         return media_id
+
+    def _required_library_media_backing_id(self, media_id: str) -> int:
+        """Return one positive local mutation id or fail before persistence."""
+        resolved = self._library_media_backing_id(media_id)
+        if type(resolved) is int and resolved > 0:
+            return resolved
+        if type(resolved) is str and resolved.isdecimal() and int(resolved) > 0:
+            return int(resolved)
+        raise ValueError("Media mutation requires a positive backing id.")
 
     @on(Button.Pressed, "#library-notes-sort")
     def handle_library_notes_sort(self, event: Button.Pressed) -> None:
@@ -28722,6 +28826,8 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the edit form's "Save" action.
         """
         event.stop()
+        if self._library_media_bulk_delete_in_flight:
+            return
         media_id = self._selected_media_id
         if not media_id:
             self._library_media_editing = False
@@ -28746,6 +28852,8 @@ class LibraryScreen(BaseAppScreen):
             for item in keywords_raw.split(",")
             if (cleaned := self._sanitize_media_field(item, max_length=200).strip())
         ]
+        self._library_media_bulk_delete_in_flight = True
+        self._begin_library_media_mutation()
         self.run_worker(
             self._save_library_media_edit(
                 media_id,
@@ -28790,24 +28898,36 @@ class LibraryScreen(BaseAppScreen):
         """
         service = getattr(self.app_instance, "media_reading_scope_service", None)
         update_media_item = getattr(service, "update_media_item", None)
-        service_media_id = self._library_media_backing_id(media_id)
+        updated_item: Mapping[str, Any] | None = None
+        committed = False
         if callable(update_media_item):
             try:
                 await self._run_library_service_call(
                     update_media_item,
                     mode="local",
-                    media_id=service_media_id,
+                    media_id=self._required_library_media_backing_id(media_id),
                     title=title,
                     author=author,
                     url=url,
                     keywords=keywords,
                     isolate_in_worker=True,
                 )
+                committed = True
                 # Keep the broad landing/rail cache in step; the exact Media
                 # page remains controller-owned.
                 self._patch_local_media_record(
                     media_id, title=title, author=author, url=url, keywords=keywords
                 )
+                current = next(
+                    (
+                        item
+                        for item in self._library_media_browse_controller.retained_items
+                        if item["id"] == media_id
+                    ),
+                    None,
+                )
+                if current is not None:
+                    updated_item = dict(current, title=title)
             except Exception:
                 logger.opt(exception=True).warning(
                     f"Failed to save Library media edit for {media_id!r}."
@@ -28817,6 +28937,10 @@ class LibraryScreen(BaseAppScreen):
                 )
         else:
             self._notify_library_media_edit_warning("Media editing is unavailable.")
+        self._complete_library_media_mutation(
+            committed=committed,
+            upsert_items=(updated_item,) if updated_item is not None else (),
+        )
         self._library_media_editing = False
         await self._refresh_library_media_detail(media_id)
 
@@ -28930,6 +29054,7 @@ class LibraryScreen(BaseAppScreen):
             self.refresh(recompose=True)
             return
         self._library_media_bulk_delete_in_flight = True
+        self._begin_library_media_mutation()
         self.run_worker(
             self._delete_library_media_item(media_id),
             exclusive=True,
@@ -28973,13 +29098,13 @@ class LibraryScreen(BaseAppScreen):
         Args:
             media_id: The Library media item id to delete.
         """
+        deleted = False
         try:
             service = getattr(
                 self.app_instance, "media_reading_scope_service", None
             )
             delete_media_item = getattr(service, "delete_media_item", None)
-            service_media_id = self._library_media_backing_id(media_id)
-            deleted = False
+            service_media_id = self._required_library_media_backing_id(media_id)
             if callable(delete_media_item):
                 try:
                     await self._run_library_service_call(
@@ -29035,7 +29160,9 @@ class LibraryScreen(BaseAppScreen):
                     # delete's own completion tail fixes just above.
                     self._arm_library_list_entry_focus()
         finally:
-            self._library_media_bulk_delete_in_flight = False
+            self._complete_library_media_mutation(
+                remove_ids=(media_id,) if deleted else (),
+            )
 
     def _notify_library_media_delete_warning(self, message: str) -> None:
         """Surface a quiet warning notice for a failed media-delete attempt.

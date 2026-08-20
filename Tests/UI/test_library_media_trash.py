@@ -12,7 +12,6 @@ import types
 from types import SimpleNamespace
 
 import pytest
-from textual.app import App
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -444,6 +443,24 @@ async def test_confirm_copies_and_receipt_point_at_trash():
 # ---------------------------------------------------------------------------
 
 
+def _bind_trash_mutation_seams(fake):
+    """Give direct restore fakes the production mutation boundary shape."""
+    fake._begin_library_media_mutation = lambda: None
+    fake._library_media_backing_id = types.MethodType(
+        LibraryScreen._library_media_backing_id, fake
+    )
+    fake._required_library_media_backing_id = types.MethodType(
+        LibraryScreen._required_library_media_backing_id, fake
+    )
+    fake._library_media_mutation_summary = types.MethodType(
+        LibraryScreen._library_media_mutation_summary, fake
+    )
+    fake._complete_library_media_mutation = lambda **_kwargs: setattr(
+        fake, "_library_media_bulk_delete_in_flight", False
+    )
+    return fake
+
+
 def _trash_view_fake(
     *,
     records=None,
@@ -496,7 +513,7 @@ def _trash_view_fake(
     fake._exit_library_media_trash = types.MethodType(
         LibraryScreen._exit_library_media_trash, fake
     )
-    return fake
+    return _bind_trash_mutation_seams(fake)
 
 
 def test_trash_open_enters_view_resets_state_and_kicks_fetch():
@@ -705,7 +722,7 @@ def _restore_fake(*, db, trash_records, media_records, media_count):
     fake._notify_library_media_delete_warning = types.MethodType(
         LibraryScreen._notify_library_media_delete_warning, fake
     )
-    return fake
+    return _bind_trash_mutation_seams(fake)
 
 
 @pytest.mark.asyncio

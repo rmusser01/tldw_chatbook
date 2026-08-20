@@ -376,6 +376,38 @@ class DoubleShrinkLibraryMediaScopeService(StaticLibraryMediaScopeService):
         }
 
 
+class GatedMutationLibraryMediaScopeService(StaticLibraryMediaScopeService):
+    """Hold one durable delete so mounted mutation gates are observable."""
+
+    def __init__(self, media_items, *, fail_refresh: bool = False):
+        super().__init__(media_items)
+        self.delete_entered = threading.Event()
+        self.delete_release = threading.Event()
+        self.fail_refresh = fail_refresh
+        self._refresh_should_fail = False
+
+    async def search_media(self, **kwargs):
+        if self._refresh_should_fail:
+            self._refresh_should_fail = False
+            self.search_calls.append(dict(kwargs))
+            raise RuntimeError("private-mutation-refresh-failure")
+        return await super().search_media(**kwargs)
+
+    async def delete_media_item(self, *, media_id, **kwargs):
+        self.delete_calls.append({"media_id": media_id, **kwargs})
+        self.delete_entered.set()
+        await asyncio.to_thread(
+            self.delete_release.wait, _GATED_RELEASE_TIMEOUT_SECONDS
+        )
+        self.media_items = [
+            item
+            for index, item in enumerate(self.media_items)
+            if self._backing_id(item, index) != media_id
+        ]
+        self._refresh_should_fail = self.fail_refresh
+        return True
+
+
 def _open_source_test_app() -> SimpleNamespace:
     """Return the smallest mutable app seam needed by open-source tests."""
 
@@ -4753,8 +4785,8 @@ async def _open_media_edit_and_save_title(screen, pilot, new_title):
 
 
 @pytest.mark.asyncio
-async def test_library_shell_media_edit_save_does_not_overwrite_applied_page():
-    """A broad-cache mutation cannot forge a new authoritative Media page."""
+async def test_library_shell_media_edit_save_refreshes_authoritative_page():
+    """A saved edit refreshes the exact page instead of forging its envelope."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
     host = LibraryHarness(app)
@@ -4765,11 +4797,15 @@ async def test_library_shell_media_edit_save_does_not_overwrite_applied_page():
 
         await _open_media_edit_and_save_title(screen, pilot, "Renamed In List")
 
-        # The exact retained page remains authoritative until its own refresh;
-        # a broad snapshot patch cannot forge a successful page response.
+        service = screen.app_instance.media_reading_scope_service
+        assert service.search_calls[-1]["offset"] == 0
         screen.query_one("#library-media-back").press()
-        await _wait_for_selector(screen, pilot, "#library-media-row-1")
-        assert "Interview Recording" in _visible_text(screen)
+        await _wait_for_condition(
+            pilot,
+            lambda: "Renamed In List" in _visible_text(screen),
+            message="Saved Media edit never reached the authoritative page.",
+        )
+        assert "Renamed In List" in _visible_text(screen)
 
 
 @pytest.mark.asyncio
@@ -7092,6 +7128,148 @@ async def test_library_media_stale_page_disables_actions_across_recompose() -> N
             assert action.disabled, selector
             assert str(action.label).startswith("○"), selector
             assert str(action.tooltip) == stale_reason, selector
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("refresh_fails", [False, True])
+async def test_library_media_durable_mutation_gates_and_refreshes_applied_scope(
+    refresh_fails: bool,
+) -> None:
+    media = [
+        {
+            "id": f"media-{index}",
+            "title": f"Media {index:02d}",
+            "type": "document" if index == 5 else "video",
+            "last_modified": f"2026-08-{index:02d}T00:00:00Z",
+        }
+        for index in range(1, 26)
+    ]
+    app = _build_test_app()
+    _seed_conversations(app, [], media=media)
+    service = GatedMutationLibraryMediaScopeService(media, fail_refresh=refresh_fails)
+    app.media_reading_scope_service = service
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=(100, 30)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            screen.query_one("#library-row-browse-media", Button).press()
+            controller = screen._library_media_browse_controller
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    controller.applied_scope == MediaBrowseScope()
+                    and bool(controller.type_options)
+                    and bool(screen.query("#library-media-next"))
+                ),
+                message="Initial Media page and facets never settled.",
+            )
+            screen.query_one("#library-media-next", Button).press()
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    controller.applied_scope == MediaBrowseScope(page=2)
+                    and len(screen.query(".library-media-row")) == 5
+                ),
+                message="Media page 2 never applied.",
+            )
+            initial_searches = len(service.search_calls)
+            initial_facets = len(service.type_calls)
+
+            screen.query_one("#library-media-select-toggle", Button).press()
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    bool(screen.query("#library-media-delete-selected"))
+                    and bool(screen.query("#library-media-row-0"))
+                ),
+                message="Media Select controls never settled.",
+            )
+            screen.query_one("#library-media-row-0", Button).press()
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    not screen.query_one(
+                        "#library-media-delete-selected", Button
+                    ).disabled
+                ),
+                message="Selected Media row never enabled bulk delete.",
+            )
+            screen.query_one("#library-media-delete-selected", Button).press()
+            await _wait_for_condition(
+                pilot,
+                lambda: bool(screen.query("#library-media-bulk-delete-confirm")),
+                message="Media bulk confirmation never settled.",
+            )
+            screen.query_one("#library-media-bulk-delete-confirm", Button).press()
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    service.delete_entered.is_set()
+                    and screen._library_media_bulk_delete_in_flight
+                    and screen.query_one(
+                        "#library-media-bulk-delete-confirm", Button
+                    ).disabled
+                    and bool(screen.query("#library-media-previous"))
+                ),
+                message="Durable Media write never exposed its action gate.",
+            )
+
+            reason = "Media change in progress."
+            for selector in (
+                "#library-media-type-filter",
+                "#library-media-row-0",
+                "#library-media-bulk-delete-confirm",
+                "#library-media-bulk-delete-cancel",
+                "#library-media-previous",
+                "#library-media-next",
+            ):
+                action = screen.query_one(selector, Button)
+                assert action.disabled, selector
+                assert str(action.label).startswith("○"), selector
+                assert str(action.tooltip) == reason, selector
+            assert controller.requested_scope == MediaBrowseScope(page=2)
+            assert controller.applied_scope == MediaBrowseScope(page=2)
+
+            service.delete_release.set()
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    not screen._library_media_bulk_delete_in_flight
+                    and controller.freshness == ("stale" if refresh_fails else "fresh")
+                    and len(service.search_calls) == initial_searches + 1
+                    and len(service.type_calls) == initial_facets + 1
+                    and (
+                        not refresh_fails or bool(screen.query("#library-media-retry"))
+                    )
+                ),
+                message="Committed Media mutation never refreshed page and facets.",
+            )
+
+            assert service.delete_calls[-1]["media_id"] == 5
+            assert service.search_calls[-1]["offset"] == 20
+            assert controller.type_options == ("video",)
+            if refresh_fails:
+                assert controller.stale_copy == (
+                    "Media changed; retry to load a current page."
+                )
+                assert screen.query_one("#library-media-row-0", Button).disabled
+                assert not screen.query_one(
+                    "#library-media-type-filter", Button
+                ).disabled
+                assert not screen.query_one("#library-media-retry", Button).disabled
+                screen.query_one("#library-media-retry", Button).press()
+                await _wait_for_condition(
+                    pilot,
+                    lambda: controller.freshness == "fresh",
+                    message="Retry never cleared committed mutation staleness.",
+                )
+            assert controller.applied_scope == MediaBrowseScope(page=2)
+            assert controller.applied_result is not None
+            assert controller.applied_result.total == 24
+    finally:
+        service.delete_release.set()
 
 
 @pytest.mark.asyncio
