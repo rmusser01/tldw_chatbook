@@ -270,3 +270,19 @@ def test_distinct_types_are_complete_for_active_media_only(media_db):
     connection.commit()
 
     assert database.get_distinct_media_types() == ["article", "audio", "video"]
+
+
+def test_distinct_types_exclude_whitespace_only_and_preserve_nonblank_verbatim(
+    media_db,
+):
+    database, _path = media_db
+    for index, media_type in enumerate(("   ", " pdf ")):
+        media_id, _uuid, _message = database.add_media_with_keywords(
+            title=f"Type edge {index}",
+            media_type=media_type,
+            content=f"type-edge-{index}",
+            keywords=[],
+        )
+        assert media_id is not None
+
+    assert database.get_distinct_media_types() == [" pdf "]

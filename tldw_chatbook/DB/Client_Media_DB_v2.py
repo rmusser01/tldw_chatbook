@@ -6649,7 +6649,7 @@ class MediaDatabase:
         Raises:
             DatabaseError: If a database query error occurs.
         """
-        conditions = ["type IS NOT NULL AND type != ''"]
+        conditions = ["type IS NOT NULL AND TRIM(type) != ''"]
         if not include_deleted:
             conditions.append("deleted = 0")
         if not include_trash:
