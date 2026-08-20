@@ -16,9 +16,11 @@ empty-equal: Textual's ``Reactive._set`` only stores the new object when
 ``[]`` default is a complete no-op and the instance keeps aliasing the shared
 object (verified against Textual 8.2.8).
 
-These tests demonstrate the cross-instance leak on the three most user-facing
-live cases found by the task's sweep, driving the same mutations the
-production handlers perform. They were born red against the pre-fix tree
+These tests demonstrate the cross-instance leak on the most user-facing live
+cases found by the task's sweep, driving the same mutations the production
+handlers perform. (The sweep's third case, the media keyword manager's
+``selected_keywords``, lost its test when task-19046 retired that widget as
+dead code.) They were born red against the pre-fix tree
 (instance B observed instance A's mutation) and are green once the defaults
 are callables (``reactive(list)`` / ``reactive(dict)``).
 
@@ -45,7 +47,6 @@ handled by documentation + the guard's allowlist instead of a leak test; see
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import MagicMock
 
 import pytest
 from textual.app import App, ComposeResult
@@ -58,7 +59,6 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.TTS.audiobook_generator import Chapter
 from tldw_chatbook.UI.Watchlists_Modules.overview_pane import OverviewPane
-from tldw_chatbook.Widgets.collections_tag_window import CollectionsTagWindow
 from tldw_chatbook.Widgets.Console.console_context_modal import ConsoleContextModal
 from tldw_chatbook.Widgets.TTS.chapter_editor_widget import ChapterEditorWidget
 from tldw_chatbook.Widgets.TTS.character_voice_widget import CharacterVoiceWidget
@@ -137,24 +137,6 @@ def test_chapter_editor_widgets_do_not_share_chapters() -> None:
     assert editor_b.chapters is not editor_a.chapters
     assert list(editor_b.chapters) == []
     assert len(editor_a.chapters) == 1
-
-
-def test_collections_tag_windows_do_not_share_selected_keywords() -> None:
-    """Two CollectionsTagWindows must not share keyword selection state.
-
-    ``handle_keyword_selection`` appends the selected keyword in place
-    (``self.selected_keywords.append(keyword)``); pre-fix that mutated the
-    class-shared default, so a selection made in one window instance appeared
-    pre-selected in any other (including a remounted screen's new instance).
-    """
-    window_a = CollectionsTagWindow(app_instance=MagicMock())
-    window_b = CollectionsTagWindow(app_instance=MagicMock())
-
-    window_a.selected_keywords.append({"id": 1, "keyword": "leak", "usage_count": 0})
-
-    assert window_b.selected_keywords is not window_a.selected_keywords
-    assert list(window_b.selected_keywords) == []
-    assert len(window_a.selected_keywords) == 1
 
 
 class _OverviewPaneApp(App[None]):
