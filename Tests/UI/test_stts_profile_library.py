@@ -1103,9 +1103,17 @@ async def test_voice_profiles_view_mounts_focused_library_without_hiding_other_v
 
     async with app.run_test(size=(150, 55)) as pilot:
         await pilot.pause()
-        assert isinstance(
-            app.query_one(".stts-content").children[0],
-            SpeechPlaygroundPane,
+        # Settle, don't sample: `watch_current_view` swaps the body in a
+        # worker, so `.children[0]` one-shots here sit in 19047's
+        # raising-predicate/empty-window class (task-19196). The playground
+        # settles fold in the generate button's existence so the plain
+        # asserts below read settled structure, not a mid-mount pane.
+        await _wait_until(
+            pilot,
+            lambda: (
+                isinstance(_stts_content_first_child(app), SpeechPlaygroundPane)
+                and bool(app.query("#tts-generate-btn"))
+            ),
         )
         assert app.query_one("#tts-generate-btn", Button)
 
@@ -1114,27 +1122,32 @@ async def test_voice_profiles_view_mounts_focused_library_without_hiding_other_v
         assert app.query_one(STTSProfileLibrary)
 
         await _open_stts_view(app, pilot, "settings")
-        assert isinstance(
-            app.query_one(".stts-content").children[0],
-            SpeechSettingsPane,
+        await _wait_until(
+            pilot,
+            lambda: isinstance(_stts_content_first_child(app), SpeechSettingsPane),
         )
 
         await _open_stts_view(app, pilot, "audiobook")
-        assert isinstance(
-            app.query_one(".stts-content").children[0],
-            AudioBookGenerationWidget,
+        await _wait_until(
+            pilot,
+            lambda: isinstance(
+                _stts_content_first_child(app), AudioBookGenerationWidget
+            ),
         )
 
         await _open_stts_view(app, pilot, "dictation")
-        assert isinstance(
-            app.query_one(".stts-content").children[0],
-            ImprovedDictationWindow,
+        await _wait_until(
+            pilot,
+            lambda: isinstance(_stts_content_first_child(app), ImprovedDictationWindow),
         )
 
         await _open_stts_view(app, pilot, "playground")
-        assert isinstance(
-            app.query_one(".stts-content").children[0],
-            SpeechPlaygroundPane,
+        await _wait_until(
+            pilot,
+            lambda: (
+                isinstance(_stts_content_first_child(app), SpeechPlaygroundPane)
+                and bool(app.query("#tts-generate-btn"))
+            ),
         )
         assert app.query_one("#tts-generate-btn", Button)
 
