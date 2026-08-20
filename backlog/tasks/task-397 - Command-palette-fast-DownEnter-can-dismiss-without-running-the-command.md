@@ -19,5 +19,5 @@ Observed during live TUI verification (2026-07-20, tmux-driven session): open th
 <!-- AC:BEGIN -->
 - [ ] #1 Reproduced (or ruled out) under a pilot-driven test: type a multi-hit query, Down+Enter while results are still refreshing
 - [ ] #2 If ours: highlighted command runs even when selection races the result refresh; if upstream: issue filed/linked and any feasible mitigation noted on this task
-- [ ] #3 A narrow app-side mitigation freezes the visible command list when the user navigates or selects it, so the acted-on command runs exactly once while provider results are still arriving
+- [ ] #3 A narrow app-side mitigation freezes an actionable visible command list on keyboard navigation or Enter/go-button selection, so the acted-on command runs exactly once while provider results are still arriving without blocking initial or replacement-query results
 <!-- AC:END -->

@@ -11,10 +11,12 @@ the user acted on.
 
 TASK-397 will first reproduce or rule out the reported failure under a deterministic
 pilot harness. Regardless of whether the exact live symptom is repeatable, the app
-will add a narrow compatibility shim that stops result gathering as soon as the
-user navigates or selects the visible list. The displayed options then remain stable
-for the remainder of that selection gesture. The underlying framework behavior will
-also be reported upstream with a minimal reproduction.
+will add a narrow compatibility shim that stops result gathering when keyboard
+navigation or Enter/go-button selection acts on an actionable visible list. The
+displayed options then remain stable for the remainder of that selection gesture.
+Navigation before any result appears, or while only Textual's stale disabled
+“No matches” placeholder is visible, continues waiting normally. The underlying
+framework behavior will also be reported upstream with a minimal reproduction.
 
 ## Context and Evidence
 
@@ -47,6 +49,9 @@ When command results are visible:
 6. Opening the palette, typing a query, settled-result selection, provider matching,
    command ordering before interaction, and mouse selection retain their existing
    behavior.
+7. Navigation keys pressed before an actionable result list is visible do not cancel
+   provider gathering, including when a replacement query has started while the old
+   disabled “No matches” placeholder remains visible.
 
 The mitigation intentionally prefers predictable selection over including results
 that arrive after the user begins navigating. The user can change the query or reopen
@@ -59,10 +64,13 @@ the palette to obtain a new result set.
 Add a small app-owned subclass of `textual.command.CommandPalette`, named
 `StableCommandPalette`.
 
-Override the palette's `_action_command_list(action)` compatibility seam. Before
-delegating any command-list action to Textual, cancel the palette's current gather
-worker via the existing `_cancel_gather_commands()` method. Delegation then uses the
-base implementation unchanged.
+Override the palette's `_action_command_list(action)` compatibility seam. Query the
+real `CommandList`; when `_list_visible` is true, at least one option exists, and the
+first option is not Textual's `_NO_MATCHES` placeholder, cancel the palette's current
+gather worker via the existing `_cancel_gather_commands()` method. Then delegate every
+action to the base implementation unchanged. If no actionable visible snapshot
+exists, delegate without cancellation so early navigation or a stale disabled
+placeholder cannot strand the palette without replacement results.
 
 This one interception point covers:
 
@@ -74,8 +82,9 @@ No provider is changed. No Textual source is copied. No timing constants, sleeps
 debounces are added to production behavior.
 
 The subclass is an explicit compatibility boundary around protected Textual methods.
-That dependency is acceptable because Textual is exactly pinned and the focused tests
-will fail at the upgrade boundary if the internal contract changes.
+That dependency is acceptable because Textual is exactly pinned. Any upgrade must
+explicitly review both protected seams even if behavioral tests remain green because
+upstream may have made the compatibility override redundant.
 
 ### Application integration
 
@@ -149,12 +158,20 @@ Focused tests will prove:
 - a multi-hit Down+Enter sequence while a provider is pending runs the visible
   highlighted callback exactly once;
 - the gather worker is cancelled before a late result can rebuild the list;
-- repeated deterministic iterations do not produce a lucky pass;
+- a passing stock-palette characterization proves the forced late refresh resets the
+  acted-on highlight, while the stable palette prevents that refresh;
+- navigation before the first visible result leaves gathering active and eventually
+  displays the gated results;
+- a new query followed immediately by navigation while the old disabled “No matches”
+  placeholder is visible leaves replacement gathering active;
 - settled multi-hit selection still works;
 - Escape still closes without running a callback; and
 - the existing command-provider and basic palette tests remain green.
 
-Tests must assert callback identity and count, not merely that the palette closed.
+The gate/clock tests must assert that the late provider reached its gate before
+navigation, that the stock palette performed the post-navigation refresh/reset, and
+that the stable palette's provider or gather worker observed cancellation. Tests must
+assert callback identity and count, not merely that the palette closed.
 
 ## Upstream Report
 
@@ -174,8 +191,9 @@ the narrower confirmed race honestly if that is all the harness proves.
 
 ## Error and Compatibility Handling
 
-- If protected Textual methods change, focused tests should fail rather than silently
-  bypass the mitigation.
+- A Textual upgrade requires explicit review of `_action_command_list()` and
+  `_cancel_gather_commands()`. Behavioral tests remain authoritative because an
+  upstream fix may legitimately make the compatibility override redundant.
 - Provider exceptions continue to be handled by Textual.
 - Cancellation uses Textual's existing worker-group mechanism and does not cancel
   command callbacks.
