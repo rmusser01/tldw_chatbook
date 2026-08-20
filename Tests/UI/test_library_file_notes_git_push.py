@@ -1543,20 +1543,28 @@ async def test_workspace_preflight_review_rechecks_candidate_after_trust_aba(
         assert workspace._git_panel_widget.push_phase == "result"
         assert _text(
             workspace.query_one("#file-notes-git-push-result-title")
-        ) == "Blocked"
+        ) == "Push review expired"
         assert workspace.query_one(
             "#file-notes-git-push-result-copy",
             TextArea,
         ).text == (
-            "The configured destination could not be proved ready for this "
-            "reviewed commit."
+            "The reviewed push candidate changed or expired. Return to the "
+            "current Session Git list and review it again."
         )
-        review_again = workspace.query_one(
-            "#file-notes-git-push-review-again",
+        back_to_session = workspace.query_one(
+            "#file-notes-git-push-back-session",
             Button,
         )
-        assert review_again.display
-        assert str(review_again.label) == "Review again"
+        assert back_to_session.display
+        assert str(back_to_session.label) == "Back to session"
+        back_to_session.press()
+        await _until(
+            pilot,
+            lambda: workspace._git_panel_widget.push_phase == "list",
+            "expired review recovery did not return to Session Git",
+        )
+        assert workspace.query_one("#file-notes-git-list-surface").display
+        assert workspace.query_one("#file-notes-git-back", Button).has_focus
 
     await workspace.shutdown()
     owner.shutdown()

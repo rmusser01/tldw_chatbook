@@ -2662,6 +2662,22 @@ class LibraryFileNotesWorkspace(Vertical):
             if result.state == "cancelled":
                 self._return_push_to_list()
                 return
+            if (
+                snapshot.push_candidate != operation.candidate
+                and result.outcome is None
+            ):
+                self._set_push_result_projection(
+                    PushPanelResultProjection(
+                        title="Push review expired",
+                        message=(
+                            "The reviewed push candidate changed or expired. "
+                            "Return to the current Session Git list and review "
+                            "it again."
+                        ),
+                        action="back_to_session",
+                    )
+                )
+                return
             if result.outcome is not None:
                 self._set_push_result_projection(
                     self._push_outcome_result_projection(
