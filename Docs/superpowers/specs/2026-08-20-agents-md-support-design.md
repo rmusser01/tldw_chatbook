@@ -1,0 +1,505 @@
+# Console AGENTS.md Project Instructions — Design
+
+- **Date:** 2026-08-20
+- **Status:** Owner-approved; pending independent spec review
+- **Scope:** Console agent runs only
+- **Decision record:** [ADR-068](../../../backlog/decisions/068-console-project-instruction-context-boundary.md)
+
+## 1. Problem
+
+Chatbook's Console agents can work inside workspace-bound folders, but they do
+not read repository-authored operating guidance. Projects that already explain
+their conventions in `AGENTS.md` therefore behave differently in Chatbook than
+they do in Codex, and agents can miss narrower instructions when they move into
+a subdirectory.
+
+The feature must add that compatibility without turning repository text into
+privileged policy, leaking instruction contents into Chatbook persistence, or
+weakening the existing workspace and tool-approval boundaries.
+
+## 2. Ecosystem model and chosen direction
+
+Chatbook will use a deliberate hybrid of the two established behaviors:
+
+- [Codex](https://learn.chatgpt.com/docs/agent-configuration/agents-md) supplies
+  the filename and precedence model: `AGENTS.override.md` before `AGENTS.md`,
+  one effective file per directory, and broad-to-specific composition.
+- [Claude Code](https://code.claude.com/docs/en/memory) supplies the useful
+  path-sensitive behavior: nested project guidance becomes relevant when the
+  agent works in that part of the tree. Claude Code does not natively use
+  `AGENTS.md`; it uses `CLAUDE.md`, with `AGENTS.md` available only through an
+  import or symlink.
+
+Chatbook differs from both where its own trust model requires it:
+
+- The selected workspace folder binding, not a Git root or process cwd, is the
+  discovery and authority boundary.
+- Repository instructions are untrusted user-level project context. They are
+  never system policy and cannot override sandboxing, path confinement,
+  approvals, provider safety, or Chatbook's operating prompt.
+- Instruction contents are ephemeral provider context and never durable
+  conversation or agent-run data.
+- Symlinked instruction files and symlinked directory traversal are refused in
+  v1.
+
+The rejected alternatives were:
+
+1. **Codex parity only:** load root-to-cwd once and ignore deeper scopes. This
+   is simpler but fails the requested path-aware behavior.
+2. **Prompt-only convention:** tell the model to search for `AGENTS.md`. This
+   makes correctness depend on model initiative, cannot guarantee discovery
+   before a tool action, and is difficult to audit.
+3. **Universal interception of every tool provider:** this would overreach
+   into remote MCP semantics. V1 limits path awareness to Chatbook's local
+   filesystem/git/patch provider contract.
+
+## 3. Goals
+
+1. Give each Console agent run an explicit working folder and working
+   directory within an authorized workspace binding.
+2. Resolve `AGENTS.override.md` / `AGENTS.md` from the working-folder root to
+   the working directory, then activate narrower instructions before local
+   operations in deeper paths.
+3. Apply the same rules to parent agents and subagents, including concurrent
+   subagents.
+4. Keep instruction contents out of the conversation transcript, run database,
+   agent steps, persisted logs, and diagnostic logs.
+5. Make the feature visible and controllable through a per-session toggle,
+   folder selection, compact rail state, pre-send notice, and Context
+   diagnostics.
+6. Continue safely, with explicit warnings, when optional project guidance is
+   missing, unreadable, invalid, stale, or over budget.
+
+## 4. Non-goals
+
+- Global or personal instruction files outside the selected workspace folder.
+- Codex fallback filenames configured through `project_doc_fallback_filenames`.
+- `CLAUDE.md`, `.cursorrules`, or other repository-memory conventions.
+- Project-instruction discovery for ordinary chat, non-Console surfaces, or
+  non-agent provider calls.
+- Interpreting MCP or other remote tool paths as local workspace paths.
+- A dedicated source-file viewer/editor. The Context surface reports metadata
+  and the existing file tools remain the way to open files.
+- Enforcement of repository prose as a security policy. It is guidance to the
+  model; existing runtime controls remain enforcement.
+- Persisting instruction bodies, digests, absolute paths, timestamps, or a
+  history of prior instruction versions.
+
+## 5. Session working context and rollout defaults
+
+`ConsoleChatSession` owns project-instruction state because it is conversation
+working context, not a provider preference. The session adds:
+
+- `project_instructions_enabled: bool`
+- `working_folder_binding_id: str | None`
+- `working_directory_relpath: str`, default `"."`
+- `project_instruction_notice_binding_id: str | None`, recording that the
+  user accepted the first-load notice for the currently selected binding
+
+These fields round-trip through both Console screen-state restoration and the
+durable conversation metadata path. They do not require a database schema
+change. `working_folder_binding_id` stores stable binding identity rather than
+a raw path. At every agent dispatch, Chatbook resolves that binding through
+the workspace registry and revalidates its canonical locator. A removed,
+retargeted, unavailable, or unauthorized binding enters recovery; Chatbook
+never silently selects a different folder.
+
+Defaults are migration-safe:
+
+- Sessions created after this feature ships explicitly set project
+  instructions enabled.
+- Restored conversations without the new metadata field are treated as legacy
+  and default disabled. Merely upgrading Chatbook cannot block an old send or
+  transmit newly discovered repository text.
+- When an enabled session has exactly one folder binding, it is selected
+  automatically. With several bindings and no selection, the agent send is
+  held at a chooser. With none, the user may disable project instructions or
+  cancel the send.
+- Enabling the feature later uses the same sole-binding/chooser behavior.
+- Changing the selected binding clears the notice acknowledgement and resets
+  `working_directory_relpath` to `"."` unless the caller supplies and validates
+  a directory in the new binding.
+
+Other folders bound to the same workspace remain available to existing local
+tools. They are outside the selected project's instruction scope and generate
+one explicit warning per run when targeted. They do not acquire their own
+instruction hierarchy in v1.
+
+## 6. Core types and ownership
+
+The implementation adds one focused module,
+`tldw_chatbook/Agents/project_instructions.py`, containing pure resolution,
+selection, and context-building logic.
+
+### 6.1 Immutable source and turn snapshot
+
+`InstructionSource` is immutable and contains only what the resolver and
+context builder need:
+
+- canonical source path, retained in memory only
+- workspace-relative display path
+- workspace-relative scope directory
+- kind (`override` or `standard`)
+- decoded content
+- raw byte count
+- content digest, retained in memory only for deduplication and delivery
+
+`InstructionSnapshot` is immutable for one user-initiated Console agent
+dispatch. In this design, submit, retry, regenerate, and continue each start a
+fresh dispatch and therefore a fresh snapshot. It contains:
+
+- selected binding identity and validated canonical root
+- validated working-directory relative path
+- dispatch start time
+- root-to-working-directory sources selected for the startup budget
+- byte/token budget outcomes and content-free warnings
+
+Once captured, base instruction content is pinned for the dispatch. File edits
+apply to the next user-initiated dispatch, not midway through the current one.
+
+### 6.2 Mutable activation ledger
+
+`InstructionActivationLedger` is a run-local, concurrency-safe object shared
+by the parent and all subagents. It contains:
+
+- activated nested sources and a monotonic activation revision
+- the remaining global nested byte budget for the dispatch
+- warning/deduplication state
+- per-model-chain delivery cursors identifying which source revisions that
+  parent or subagent has actually received
+
+The delivery cursor is essential: one subagent loading a source does not mean
+another model conversation has seen it. A tool batch may proceed only when all
+instructions required by its paths are both activated in the shared ledger and
+delivered to that calling model chain. New subagents receive the currently
+active snapshot in their spawn context and begin with the matching delivery
+cursor. If another chain activates guidance concurrently, each affected chain
+must receive its own ephemeral context update before executing under it.
+
+The ledger and snapshot die with the dispatch. Neither is serialized.
+
+### 6.3 Path-aware provider contract
+
+Path awareness is an optional structural protocol on tool providers, named
+`PathAwareToolProvider`. Its operation maps a validated tool call to zero or
+more workspace-relative path targets and identifies whether each target is an
+exact path, directory/search root, or outside the selected instruction root.
+The local filesystem/git/patch provider implements it. Existing providers that
+do not implement it retain current behavior and cause no project-instruction
+discovery.
+
+The mapping must reuse the local tool provider's own argument parsing and path
+validation; the instruction layer must not maintain a second interpretation of
+tool arguments. MCP is explicitly excluded because its paths can be remote or
+provider-defined.
+
+## 7. Resolution rules
+
+### 7.1 Authority and traversal
+
+The canonical selected binding locator is the maximum boundary. The resolver
+never ascends above it and never substitutes a Git root. The startup chain is
+the binding root followed by each directory down to
+`working_directory_relpath`.
+
+For every directory in a chain:
+
+1. Examine `AGENTS.override.md`.
+2. If it is a regular, non-symlinked, non-empty file, select it and do not
+   examine `AGENTS.md` for that directory.
+3. If the override is absent or whitespace-only, examine `AGENTS.md`.
+4. If the selected candidate is unreadable, unstable during the read, invalid
+   UTF-8, or a symlink, warn and skip that directory. An invalid override does
+   not fall back to `AGENTS.md`; otherwise an attacker or broken override could
+   silently expose instructions the override was meant to replace.
+
+Files decode as strict UTF-8 with an optional UTF-8 BOM. Reads use standard
+library no-follow and descriptor-stat checks where supported; if Chatbook
+cannot guarantee a non-symlinked stable read, it fails that source closed.
+Directory symlinks are not traversed for instruction discovery. This refusal
+does not independently change whether the existing local tool boundary allows
+the requested operation; it only prevents guidance from being inferred
+through the symlinked route and produces a warning.
+
+Selected files are composed in broad-to-specific order. A more specific file
+supersedes conflicting broader guidance for paths in its scope. Sources from
+different sibling directories are labeled as separate scopes and never imply
+that one sibling overrides another.
+
+### 7.2 Lazy nested activation
+
+The startup snapshot resolves only root-to-working-directory sources, so cost
+is O(depth), not a recursive repository walk. A path-aware tool batch computes
+the additional directory chains required by its targets:
+
+- `fs_read`, `fs_write`, `fs_edit`, and patch operations use the exact target's
+  parent chain.
+- `fs_list` uses the listed directory chain.
+- `fs_glob`, `fs_grep`, and repository-wide read-only git operations use only
+  their declared search/repository root. Matching or mentioning a deep file
+  does not activate every descendant instruction file.
+- A later concrete action on a matched file activates that file's directory
+  chain.
+
+When a nested source is first encountered, the resolver performs a stable
+read and pins the content for the dispatch. A candidate whose metadata shows
+it was created or changed after dispatch start is marked stale, omitted, and
+deferred to the next dispatch. An already pinned source remains in force even
+if the file is subsequently edited or deleted.
+
+## 8. Provider-context construction
+
+Project instructions are a clearly labeled user-level context rider, separate
+from `compose_agent_system_prompt`. The wrapper states that the files are
+untrusted project guidance, gives only workspace-relative paths and scopes,
+and reminds the model that system instructions and runtime controls remain
+authoritative. It excludes absolute paths, timestamps, hashes, and other host
+metadata.
+
+One pure context-rider builder handles text, multimodal submit, retry,
+regenerate, and continue. It produces provider-safe message ordering and a
+synthetic user row where a run path has no natural new user row. It must not
+leave a user context message between an assistant `tool_calls` row and the
+required tool-result rows.
+
+Before the first provider request in a dispatch, the run-local message copy
+receives the startup rider. The session transcript is not modified. Context
+preview uses the same pure builder against a copy; previewing must not activate
+sources, consume budgets, acknowledge notices, or mutate the live ledger.
+
+The first time an enabled session uses a selected binding, Chatbook displays a
+pre-dispatch notice naming the provider and workspace-relative instruction
+sources. It contains no file bodies. The user can proceed, cancel, or disable
+project instructions for the session. Acceptance is remembered for that
+binding; changing bindings causes a new notice.
+
+## 9. Atomic tool-batch preflight
+
+The existing full-batch review point in `run_agent_loop` is extended with a
+typed internal outcome:
+
+- `proceed`
+- `blocked`
+- `retry_with_context`
+
+Preflight occurs before permission prompts and before any tool in the batch is
+dispatched. It asks path-aware providers for every target, resolves the union
+of required instruction chains, and acquires the activation ledger's mutation
+guard. The complete batch is deferred if its calling model chain has not
+received any required source. No earlier call in the same batch may execute.
+
+`retry_with_context` carries two deliberately separate channels:
+
+1. **Persistable protocol stubs** for every deferred tool call, such as
+   “Deferred because project instructions were loaded; reconsider and retry.”
+   These satisfy provider tool-call grammar and may appear in existing agent
+   logs.
+2. **Ephemeral context updates** containing the actual newly required
+   instructions. These are appended only to the run-local provider message
+   copy after all tool-result stubs, then the model loop continues normally.
+
+Actual instruction contents must never appear in a review verdict string,
+tool result, `AgentStep`, run log, transcript marker, exception, or database
+row. User-visible activation events name only relative sources and scopes.
+
+The ledger marks a source delivered to a model chain only when that chain's
+provider payload receives the context update. Each batch may cause at most one
+activation deferral per chain for a given ledger revision. If nested resolution
+itself fails, the chain receives one ephemeral content-free warning and one
+deferral; that failure is then marked handled so an identical retry can proceed
+under the previously delivered guidance rather than loop forever.
+
+Permission review happens on the model's reconsidered tool call, not the
+discarded pre-activation call. This preserves the guarantee that approval UI
+describes the exact call that may execute.
+
+## 10. Budgets and model limits
+
+There are two independent configurable raw-content byte budgets:
+
+- startup root-to-working-directory budget: 32 KiB per dispatch
+- cumulative lazy nested-activation budget: 32 KiB per dispatch
+
+The maximum selected instruction content is therefore 64 KiB before model
+limits. Wrapper labels count toward token estimates but not raw-content byte
+budgets. The UTF-8 BOM, when present, counts as file bytes.
+
+Budget selection prioritizes more specific sources. Within startup or one new
+target batch, candidates are admitted deepest-first; admitted sources are then
+rendered broad-to-specific. A source is included whole or omitted whole—never
+silently truncated. Omitted sources generate explicit relative-path warnings.
+
+Byte limits are only the outer cap. Before every provider request, Chatbook
+uses the existing model-limit resolver and token estimator to assemble the
+ordinary system prompt, conversation payload, tool schemas, staged context,
+and response reserve, then computes the remaining safe input allowance.
+Project instructions must fit both their byte budget and that remaining token
+allowance. The calculation is repeated before nested context updates because
+tool history grows during a run. If the resolver provides no positive safe
+allowance, Chatbook omits additional instruction content and warns rather than
+overflowing the context window.
+
+Configuration belongs under `[console]` and exposes only the two byte caps.
+The token allowance reuses existing model context and response-reserve
+configuration instead of adding parallel knobs.
+
+## 11. Failures, warnings, and security behavior
+
+Project files are untrusted inputs. They can guide model behavior but do not
+grant capabilities. Existing workspace authorization, local-tool confinement,
+risk tags, permission prompts, provider policy, and Chatbook system prompts are
+unchanged and remain authoritative.
+
+Failure behavior is fail-open for optional guidance but explicit to the user:
+
+| Condition | Behavior |
+| --- | --- |
+| Feature disabled | No instruction-file reads; ordinary agent run |
+| No instruction files | Run normally; rail shows `None` |
+| Empty override | Treat as absent and try `AGENTS.md` |
+| Unreadable/invalid/symlinked override | Warn; skip directory; do not fall back |
+| Resolver exception | Warn prominently; continue without unresolved guidance |
+| Stale nested candidate | Defer it to next dispatch and warn |
+| Byte/token budget omission | Continue with admitted, more-specific sources and warn |
+| Target in another authorized binding | Tool remains eligible; warn that it is outside instruction scope |
+| Target outside all authorized roots | Existing tool boundary rejects it |
+| Saved binding invalid or changed | Hold send for recovery; never retarget silently |
+
+Warnings are aggregated by category and source and shown once per run to avoid
+toast storms. Persistent and diagnostic logs receive only content-free codes,
+relative paths where safe, counts, and sizes. They never receive source bodies.
+
+## 12. UX
+
+The Console rail adds one compact project-instruction status row:
+
+- `Off`
+- `Choose folder`
+- `None`
+- `<N> loaded`
+- `Warning`
+
+The row opens the existing Context surface. Its Project Instructions section
+shows enabled state, selected binding, working-directory relative path,
+source precedence, relative source paths, scopes, byte counts, active/omitted
+state, and warnings. It does not add a bespoke file viewer or editor. The
+existing exact next-send payload view may naturally show the context rider
+when the user explicitly inspects that payload.
+
+Nested activation posts a normal context event naming the newly active
+relative sources and scopes. It is not styled as an error. Blocked setup offers
+the directly relevant actions: select a folder, disable project instructions
+for the session, or cancel the send.
+
+## 13. Testing and verification
+
+### 13.1 Pure resolver tests
+
+Temporary directory trees cover:
+
+- root-to-working-directory ordering
+- override precedence, empty override fallback, and invalid override no-fallback
+- strict UTF-8 and BOM handling
+- no global/personal discovery and no ascent above the binding root
+- refusal of symlinked files and directory traversal
+- stable-read and changed-after-dispatch behavior
+- sibling-scope isolation
+- deepest-first admission with broad-to-specific rendering
+- whole-source omissions under startup/nested byte budgets
+
+Property tests cover canonical path confinement, deterministic precedence, and
+budget invariants. Discovery tests assert O(depth) behavior and prohibit a
+recursive repository walk.
+
+### 13.2 Runtime integration tests
+
+With a deterministic fake provider, verify:
+
+- startup guidance is present exactly once in each model chain's initial
+  provider context and absent from stored transcript state
+- text, multimodal, retry, regenerate, and continue use the same rider builder
+- a multi-call batch is atomically deferred before approval or execution when
+  any target needs new guidance
+- protocol stubs precede the ephemeral context update, after which the model
+  may issue a reconsidered call that follows the normal approval path
+- resolution failure defers once and cannot loop forever
+- parent and concurrent subagents share one activation budget while each must
+  receive unseen revisions before execution
+- targets in other authorized bindings warn without activating instructions
+- non-path-aware providers and disabled sessions retain existing behavior
+
+Provider grammar tests assert valid assistant-tool-call/tool-result/context
+ordering for OpenAI-compatible, Anthropic, Gemini-style, and fenced/local
+transports.
+
+### 13.3 Persistence-leak sentinel audit
+
+Every instruction fixture contains a unique secret-like sentinel. Across
+success, cancellation, provider failure, resolver failure, and application
+restart, assert the sentinel is absent from:
+
+- conversation rows and conversation metadata
+- agent-run and step databases
+- run logs and ordinary application logs
+- tool review/result records
+- transcript/context event markers
+- exception text and error reports
+
+Only the captured outbound fake-provider request may contain it.
+
+### 13.4 Session, UI, and compatibility tests
+
+- New-session, legacy-session, sole-binding, multi-binding, removed-binding,
+  and binding-change state transitions.
+- Screen-state and durable conversation metadata round trips.
+- First-load notice proceed/cancel/disable behavior.
+- Rail states, metadata-only Context section, warnings, and nested activation
+  events.
+- Ordinary chat, non-agent Console paths, disabled project instructions,
+  default workspace behavior, local tool approvals, MCP tools, and existing
+  context preview remain regression-covered.
+- Small and unknown model context windows, large tool schemas, long histories,
+  and compaction paths honor token headroom.
+
+### 13.5 Performance and live verification
+
+Record cold startup-resolution and first nested-activation timings against a
+deep synthetic tree. Use deterministic synchronization barriers for
+parent/subagent races rather than timing sleeps.
+
+Fake-provider tests prove payload and persistence mechanics, not real adapter
+interoperability. Before the feature is complete, run optional credentialed
+UAT with at least one native cloud provider and one fenced/local-model path;
+include multimodal input when the selected provider supports it and exercise
+nested activation followed by a successful retry. Credentials and live tests
+remain isolated from the default suite, but provider interoperability evidence
+is required for completion.
+
+## 14. Delivery sequence
+
+The implementation plan should decompose the work into three independently
+testable, PR-sized deliveries while preserving one design and one ADR:
+
+1. **Startup project context:** resolver, session working context, startup
+   instructions, byte/token budgets, migration-safe defaults, first-load
+   notice, persistence round trips, and basic rail/Context visibility.
+2. **Nested path activation:** path-aware provider contract, typed atomic
+   preflight, per-chain delivery cursors, shared subagent ledger, protocol
+   stubs, and persistence-leak protection.
+3. **Interop and rollout:** complete UX states, provider grammar coverage,
+   real-provider UAT, performance/concurrency evidence, and user documentation.
+
+Each delivery includes its own tests and is safe if later deliveries do not
+land. Delivery 1 may ship with nested activation explicitly unavailable;
+delivery 2 completes the requested path-aware semantics; delivery 3 supplies
+the release evidence and polish.
+
+## 15. ADR check
+
+```text
+ADR required: yes
+ADR path: backlog/decisions/068-console-project-instruction-context-boundary.md
+Reason: This feature establishes a provider/runtime trust boundary, a new
+cross-module path-aware tool contract, and durable session UX semantics for
+repository-authored instructions.
+```
