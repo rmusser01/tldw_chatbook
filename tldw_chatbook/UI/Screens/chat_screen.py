@@ -16828,6 +16828,20 @@ class ChatScreen(BaseAppScreen):
         else:
             parse = CommandParse(kind=KIND_NOT_COMMAND)
 
+        argument_free_rewind = (
+            parse.kind == KIND_COMMAND
+            and parse.name == REWIND_COMMAND_NAME
+            and parse.args == ""
+        )
+        if argument_free_rewind:
+            self._console_unknown_send_armed = None
+            opened = await self._console_command_rewind(parse)
+            if opened and stash is None:
+                self._clear_console_composer_draft()
+            elif not opened and composer is not None:
+                composer.restore_stashed_draft(stash)
+            return False
+
         if parse.kind in (KIND_COMMAND, KIND_FALLBACK):
             # Commands operate on the live composer draft (`/prompt` replaces
             # it wholesale, unrecognized handlers leave it untouched) — put
@@ -17371,19 +17385,22 @@ class ChatScreen(BaseAppScreen):
         rows.reverse()
         return tuple(rows)
 
-    async def _console_command_rewind(self, parse: CommandParse) -> None:
+    async def _console_command_rewind(self, parse: CommandParse) -> bool:
         """Open the `/rewind` menu over the active session's prior USER prompts.
 
         Collects the active path's USER-turn rows (newest first) and pushes
         `ConsoleRewindModal`; a session with no USER turns yet (or no active
         session at all) is a no-op notify rather than an empty modal.
+
+        Returns:
+            True when the modal opened; False when no USER prompt rows exist.
         """
         store = self._ensure_console_chat_store()
         session_id = store.active_session_id
         rows = self._console_rewind_prompt_rows(session_id) if session_id else ()
         if not rows:
             self.app_instance.notify("Nothing to rewind.", severity="warning")
-            return
+            return False
 
         async def _apply_choice(choice: "ConsoleRewindChoice | None") -> None:
             await self._apply_console_rewind_choice(session_id, choice)
@@ -17392,6 +17409,7 @@ class ChatScreen(BaseAppScreen):
             ConsoleRewindModal(prompts=rows),
             callback=_apply_choice,
         )
+        return True
 
     async def _apply_console_rewind_choice(
         self, session_id: str, choice: "ConsoleRewindChoice | None"
