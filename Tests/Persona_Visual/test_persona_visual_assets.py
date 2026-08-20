@@ -151,6 +151,22 @@ def test_metadata_set_enforces_file_and_total_byte_budgets() -> None:
         )
 
 
+def test_metadata_set_bounds_a_sequence_that_lies_about_its_length() -> None:
+    item = _metadata(_image_bytes())
+
+    class LyingSequence(Sequence[PersonaVisualAssetMetadata]):
+        def __len__(self) -> int:
+            return 1
+
+        def __getitem__(self, index: int) -> PersonaVisualAssetMetadata:
+            if index >= 300:
+                raise IndexError
+            return replace(item, asset_key=f"asset-{index}")
+
+    with pytest.raises(PersonaVisualAssetError):
+        validate_persona_visual_asset_set(LyingSequence())
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
@@ -254,6 +270,25 @@ def test_load_rejects_a_symlinked_profile_root(tmp_path: Path) -> None:
         )
 
 
+def test_load_rejects_a_symlink_in_the_profile_root_ancestor_chain(
+    tmp_path: Path,
+) -> None:
+    data = _image_bytes()
+    real_parent = tmp_path / "real-parent"
+    profile_root = real_parent / "profile"
+    profile_root.mkdir(parents=True)
+    (profile_root / "idle.png").write_bytes(data)
+    alias_parent = tmp_path / "alias-parent"
+    alias_parent.symlink_to(real_parent, target_is_directory=True)
+
+    with pytest.raises(PersonaVisualAssetError):
+        load_persona_visual_asset(
+            alias_parent / "profile",
+            storage_key="idle.png",
+            metadata=_metadata(data),
+        )
+
+
 def test_load_reads_only_the_declared_bounded_size(tmp_path: Path) -> None:
     data = _image_bytes()
     (tmp_path / "idle.png").write_bytes(data + b"unexpected")
@@ -262,6 +297,36 @@ def test_load_reads_only_the_declared_bounded_size(tmp_path: Path) -> None:
         load_persona_visual_asset(
             tmp_path, storage_key="idle.png", metadata=_metadata(data)
         )
+
+
+def test_load_opens_the_target_nonblocking_before_inode_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data = _image_bytes()
+    (tmp_path / "idle.png").write_bytes(data)
+    real_open = os.open
+    target_opened = False
+
+    def checked_open(
+        path: os.PathLike[str] | str,
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        nonlocal target_opened
+        if path == "idle.png" and dir_fd is not None:
+            target_opened = True
+            assert flags & os.O_NONBLOCK
+        return real_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "open", checked_open)
+    asset = load_persona_visual_asset(
+        tmp_path, storage_key="idle.png", metadata=_metadata(data)
+    )
+
+    assert target_opened
+    assert asset.data == data
 
 
 def test_load_rejects_missing_digest_and_decode_mismatch(tmp_path: Path) -> None:

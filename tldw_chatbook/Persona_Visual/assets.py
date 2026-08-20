@@ -83,14 +83,25 @@ def validate_persona_visual_asset_set(
     try:
         if not isinstance(assets, Sequence) or isinstance(assets, (str, bytes)):
             raise ValueError
-        if not assets or len(assets) > MAX_ASSET_COUNT:
+        normalized: list[PersonaVisualAssetMetadata] = []
+        asset_keys: set[str] = set()
+        total_bytes = 0
+        iterator = iter(assets)
+        for _index in range(MAX_ASSET_COUNT + 1):
+            try:
+                asset = _metadata(next(iterator))
+            except StopIteration:
+                break
+            normalized.append(asset)
+            if asset.asset_key in asset_keys:
+                raise ValueError
+            asset_keys.add(asset.asset_key)
+            total_bytes += asset.byte_count
+            if total_bytes > MAX_ASSET_TOTAL_BYTES:
+                raise ValueError
+        if not normalized or len(normalized) > MAX_ASSET_COUNT:
             raise ValueError
-        normalized = tuple(_metadata(asset) for asset in assets)
-        if len({asset.asset_key for asset in normalized}) != len(normalized):
-            raise ValueError
-        if sum(asset.byte_count for asset in normalized) > MAX_ASSET_TOTAL_BYTES:
-            raise ValueError
-        return normalized
+        return tuple(normalized)
     except Exception:
         raise PersonaVisualAssetError() from None
 
@@ -216,7 +227,8 @@ def _read_profile_file(
 ) -> bytes:
     nofollow = getattr(os, "O_NOFOLLOW", 0)
     directory = getattr(os, "O_DIRECTORY", 0)
-    if not nofollow or not directory:
+    nonblock = getattr(os, "O_NONBLOCK", 0)
+    if not nofollow or not directory or not nonblock:
         raise ValueError
     root = os.fspath(profile_root)
     if not isinstance(root, str) or "\x00" in root:
@@ -225,12 +237,12 @@ def _read_profile_file(
     directory_flags = flags | directory
     opened: list[int] = []
     try:
-        current = os.open(root, directory_flags)
+        current = _open_profile_root(root, directory_flags)
         opened.append(current)
         for component in parts[:-1]:
             current = os.open(component, directory_flags, dir_fd=current)
             opened.append(current)
-        file_fd = os.open(parts[-1], flags, dir_fd=current)
+        file_fd = os.open(parts[-1], flags | nonblock, dir_fd=current)
         opened.append(file_fd)
         before = os.fstat(file_fd)
         if not stat.S_ISREG(before.st_mode) or before.st_size != expected_bytes:
@@ -262,6 +274,30 @@ def _read_profile_file(
                 os.close(descriptor)
             except OSError:
                 pass
+
+
+def _open_profile_root(root: str, directory_flags: int) -> int:
+    if not os.path.isabs(root):
+        raise ValueError
+    if root == os.sep:
+        components: tuple[str, ...] = ()
+    else:
+        components = tuple(root.removeprefix(os.sep).split(os.sep))
+        if root != os.sep + os.sep.join(components) or any(
+            component in {"", ".", ".."} for component in components
+        ):
+            raise ValueError
+
+    current = os.open(os.sep, directory_flags)
+    try:
+        for component in components:
+            child = os.open(component, directory_flags, dir_fd=current)
+            os.close(current)
+            current = child
+        return current
+    except Exception:
+        os.close(current)
+        raise
 
 
 def _decode_selected_frame(
