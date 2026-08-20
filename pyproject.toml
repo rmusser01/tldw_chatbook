@@ -72,6 +72,8 @@ dependencies = [
     "croniter>=1.4.0",
     "textual-image",
     "anytree",
+    "tiktoken",      # engine tokens strategy (Q2: hard-required, shim-enforced)
+    "defusedxml",    # engine xml security parsing (Q9: core)
 ]
 
 # --- Optional Dependencies ---
@@ -517,6 +519,10 @@ exclude = [
 # Preserve the licenses for vendored packages
 "tldw_chatbook.Third_Party.aider" = ["LICENSE.txt"]
 "tldw_chatbook.Third_Party.textual_fspicker" = ["LICENSE"]
+# Engine is vendored from tldw_server (GPL-3.0-only): GPLv3 §4 requires the
+# licence text itself to ship, so the scope map and the GPL text both travel
+# with the package.
+"tldw_chatbook.Chunking.engine" = ["LICENSE", "LICENSES/GPL-3.0-only.txt"]
 # Include CSS files in subdirectories
 "tldw_chatbook.css.core" = ["*.tcss"]
 "tldw_chatbook.css.features" = ["*.tcss"]
@@ -553,6 +559,7 @@ markers = [
     "property: marks tests as property-based tests",
     "slow: marks tests that take a long time to run (skipped unless --run-slow)",
     "smoke: fast sanity checks of core imports and wiring",
+    "production_path: opts the test into the production sanitization path (Tests/Chunking/conftest.py disables PYTEST_CURRENT_TEST/TLDW_TEST_MODE so the engine's relaxed test-mode branch stays off, spec §10.2)",
     "benchmark: performance-measurement tests (labeling only; pytest-benchmark is not installed)",
     "snapshot: visual regression tests using snapshots",
     "notes: Notes feature tests",

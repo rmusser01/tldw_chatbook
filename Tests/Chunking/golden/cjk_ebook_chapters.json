@@ -1,0 +1,22 @@
+{
+  "chunks": [
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "6773194718d84a2a45351f3649403898",
+        "chunk_index": 1,
+        "chunk_method": "ebook_chapters",
+        "language": "zh",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 1.0,
+        "total_chunks": 1
+      },
+      "text": "这是一段中文文本。这是一段中文文本。这是一段中文文本。这是一段中文文本。这是一段中文文本。这是一段中文文本。这是一段中文文本。这是一段中文文本。这是一段中文文本。这是一段中文文本。"
+    }
+  ],
+  "outcome": "ok"
+}

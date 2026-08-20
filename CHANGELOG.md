@@ -44,6 +44,38 @@ and this project adheres to Some kind of Versioning
   `CodeRepoCopyPasteWindow` is unaffected.
 
 ### Changed
+- **Chunking engine swapped for the server's (chunking-engine-parity).** All
+  chunking — RAG ingestion, media import, summarization, the works — now runs
+  through the same engine tldw_server uses (vendored at dev@385afa95 behind a
+  compatibility shim; chunks are stamped `parity-1@385afa95`, media DB schema
+  v6). User-visible consequences:
+  - **More chunking methods everywhere.** The RAG-service entry point
+    previously accepted five methods (words, sentences, paragraphs, tokens,
+    semantic); every method the engine implements now works on ingestion
+    paths — words, sentences, paragraphs, tokens, semantic, json, xml,
+    ebook_chapters, rolling_summarize, fixed_size, code, code_ast,
+    structure_aware. `ebook_chapters` in particular now applies to PDFs and
+    other documents, not just e-book files.
+  - **Imported text is sanitized before chunking (behaviour change).** Null
+    bytes and unusual control characters are replaced with spaces, Unicode is
+    normalized to NFC where that doesn't shift character positions, and
+    bidirectional text override characters are neutralized — so the chunked,
+    searchable text can differ slightly from the raw file you imported.
+  - **`tiktoken` and `defusedxml` are core dependencies.** The `tokens`
+    method now always has a real tokenizer (previously it silently
+    approximated token counts by word count when tiktoken was missing — it
+    now raises a clear "install tiktoken" error instead), and the `xml`
+    method parses with defusedxml.
+  - **Overlap handling changed at the edges.** For words/sentences/paragraphs,
+    an overlap at or above the chunk size no longer raises an error — the
+    engine clamps it just under the size and produces more, smaller chunks.
+    The `tokens` method keeps the old strict behavior (it errors when overlap
+    ≥ size).
+  - **Chunks carry richer metadata.** Each chunk records the engine version
+    that produced it plus offsets, word counts, and the method used, and RAG
+    Admin diagnostics gained a read-only legacy-chunk report counting chunks
+    persisted before the version stamp ("Chunked by an older engine: N
+    items").
 - **Behaviour change — reranking now really calls the provider, and really spends
   (TASK-17065).** Reranking has silently no-opped since the feature existed: the
   reranker resolved credentials from a `settings["API"]` table `load_settings()`

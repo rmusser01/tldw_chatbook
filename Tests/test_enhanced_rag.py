@@ -5,8 +5,13 @@ This script demonstrates the new features:
 1. Enhanced chunking with character-level position tracking
 2. Hierarchical chunking with structure preservation
 3. Parent document retrieval
-4. PDF artifact cleaning
-5. Table serialization
+4. Table serialization
+
+Note (chunking-engine-parity task 8, Q5 ruling): the bespoke PDF-artifact
+cleaning (DocumentStructureParser.clean_text) was DELETED with the retired
+home-grown structure parser — the feature was NOT ported anywhere. The
+vendored engine performs security-oriented input sanitization only, which
+is not a replacement for it.
 """
 
 import pytest
@@ -268,38 +273,6 @@ async def test_table_serialization():
     logger.info("\nGenerated sentences:")
     for sentence in result["sentences"][:3]:
         logger.info(f"  - {sentence}")
-
-
-@pytest.mark.asyncio
-async def test_pdf_artifact_cleaning():
-    """Test PDF artifact cleaning."""
-    from tldw_chatbook.RAG_Search.enhanced_chunking_service import (
-        DocumentStructureParser,
-    )
-
-    logger.info("\n=== Testing PDF Artifact Cleaning ===")
-
-    parser = DocumentStructureParser()
-
-    # Test text with common PDF artifacts
-    pdf_text = """
-This is a test/period document with various/comma PDF artifacts/colon
-The number/five is written as text/period Also/comma we have/lparen parentheses/rparen
-Special characters like/dollar and/percent are common/period
-Sometimes we see glyph<123> or /A.cap patterns/period
-"""
-
-    cleaned_text, corrections = parser.clean_text(pdf_text)
-
-    logger.info(f"Original text length: {len(pdf_text)}")
-    logger.info(f"Cleaned text length: {len(cleaned_text)}")
-    logger.info(f"Corrections made: {len(corrections)}")
-
-    logger.info("\nFirst 5 corrections:")
-    for original, replacement in corrections[:5]:
-        logger.info(f"  '{original}' -> '{replacement}'")
-
-    logger.info(f"\nCleaned text preview:\n{cleaned_text[:200]}...")
 
 
 @pytest.mark.asyncio
