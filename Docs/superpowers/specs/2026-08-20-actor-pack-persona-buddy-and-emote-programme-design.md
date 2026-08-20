@@ -46,8 +46,11 @@ pinned server commit; server ingestion of `.tldw-actor-pack` is separate future 
 - Persona Buddy is app-wide, floating, and explicitly enabled. It is off by default.
 - Persona Buddy uses the server's `sprite_frames` baseline and required state catalog,
   with safe custom states.
-- Persona Buddy follows the currently active Persona and uses deterministic
-  application-state signals, not prose or mood classification.
+- Persona Buddy follows its explicitly selected local Buddy Persona and uses
+  deterministic application-state signals, not prose or mood classification.
+- V1 Buddy, Actor Pack create/export, and Actor Pack Update Existing operate on
+  profile-local actors only. Server-backed Personas must first be saved as a local
+  copy.
 - Character reactions match the server's standalone streaming `Emote:` directive
   contract. History restores only the final expression; beat replay is deferred.
 - Full-repository pytest is not required. Each task verifies the complete affected
@@ -123,6 +126,13 @@ Existing actors remain valid without registry rows. Export validates the actor a
 portrait first, then asks the user to assign and persist a stable portability UUID.
 A failed later archive write does not roll back that harmless identity assignment.
 
+V1 portability is deliberately local-only. New Actor Pack creates local actors;
+export accepts local Characters and local Personas; import Create New/Create Copy
+creates local actors; and Update Existing targets only a local actor of the same kind
+with the exact portable UUID. Server-backed Persona rows never receive registry
+entries and cannot be exported or updated in place. Their UI offers `Save a local
+copy first` rather than attempting a cross-source write.
+
 ### ADR boundary
 
 Two new ADRs are required:
@@ -148,7 +158,7 @@ Add a local semantic subset of the pinned server Persona Visual contract:
 - immutable versions;
 - version-bound assets;
 - active Persona bindings;
-- manifest V2-compatible state definitions;
+- the pinned `sprite_frames` manifest-version-1 contract;
 - `sprite_frames` renderer capability; and
 - validated profile-owned asset storage.
 
@@ -156,6 +166,7 @@ The required catalog is:
 
 ```text
 idle
+wake_armed
 listening
 thinking
 speaking
@@ -165,14 +176,18 @@ error
 offline
 ```
 
-Safe custom state slugs are allowed. The global catalog is required, but a pack may
-omit an asset for a non-idle baseline state. An activatable runtime pack must provide
-a renderable `idle` state. Missing states fall back through `idle` to the Persona
-portrait with an explicit reason.
+Safe custom state slugs are allowed. The nine built-in state identifiers are reserved.
+An activatable runtime pack must resolve `idle`, `listening`, `thinking`, `speaking`,
+and `error` through direct mappings or validated manifest fallback chains, matching
+the pinned server contract. Other built-ins may omit a direct mapping. Runtime misses
+follow the manifest fallback chain, then `idle`, then the Persona portrait with an
+explicit reason.
 
-`sprite_frames` supports validated PNG, JPEG, WebP, and GIF raster assets, timing,
-static fallback, and reduced-motion behavior. Unsupported renderers are rejected as
-required capabilities, not guessed or partially rendered.
+`sprite_frames` accepts only `manifest_version: 1` in V1 and supports validated PNG,
+JPEG, WebP, and GIF raster assets, timing, static fallback, and reduced-motion
+behavior. A manifest-version-2 or non-sprite renderer may be inspected only far
+enough to return a stable unsupported-capability result; it cannot be imported,
+activated, guessed, or partially rendered.
 
 ### Workbench authoring
 
@@ -196,6 +211,21 @@ Persona Buddy is disabled by default. Users enable it through Personas Workbench
 the canonical Settings screen. Geometry, open/collapsed state, and enabled state are
 profile-local UI preferences and are never exported.
 
+The app owns one explicit Buddy Persona selection, stored as the profile-local
+preference `(source = local, local_persona_id)`. It does not depend on the later Actor
+Pack portable-identity registry. Enabling Buddy requires choosing an eligible local
+Persona. Workbench highlighting, Console session actors, and server runtime-source
+switches never silently replace this selection. Selecting a different Persona is an
+explicit `Use for Buddy` action. If the selected Persona is disabled, soft-deleted,
+missing, or loses its local binding, the Buddy view hides and the controller reports a
+stable unavailable reason while preserving the enabled preference. Restoring or
+explicitly replacing that Persona re-resolves the view. With no selection, no floating
+view mounts and Settings/Workbench prompts for one.
+
+Server-backed Personas are ineligible in V1. Their Buddy and Actor Pack actions are
+disabled with `Save a local copy first`; saving a local copy creates a distinct local
+Persona that can then receive a portable identity and Buddy selection.
+
 An app-owned controller stores:
 
 - active Persona identity and binding;
@@ -210,16 +240,17 @@ mounts a lightweight view connected to the controller. Navigation replaces the v
 without resetting controller state. Splash, authentication, recovery, and modal
 surfaces hide or layer above the Buddy so it cannot intercept their input.
 
-State priority is deterministic:
+State priority matches the pinned server resolver for trusted built-in signals:
 
 ```text
-offline
 error
 approval_needed
+time-bounded explicit/custom state lease
+authored trigger
 tool_running
-speaking
-thinking
-listening
+wake_armed, only while live state is absent or idle
+trusted live voice state (idle/listening/thinking/speaking/error)
+offline
 idle
 ```
 
@@ -319,15 +350,20 @@ ownership or clearance.
 
 ### Canonicalization and versioning
 
-Paths are normalized relative POSIX paths. They may not contain empty parts,
-backslashes, drive prefixes, absolute paths, NULs, `.`/`..`, aliases, or Unicode/case
-collisions after the importer’s canonical comparison.
+V1 archive member paths are canonical lowercase ASCII relative POSIX paths. Every
+segment must match `[a-z0-9][a-z0-9._-]{0,127}`. They may not contain empty parts,
+backslashes, drive prefixes, absolute paths, NULs, `.`/`..`, trailing dots/spaces,
+platform device names, aliases, uppercase, or non-ASCII characters. Export remaps
+local filenames to canonical actor/asset identifiers, so human display names remain
+inside JSON rather than archive paths. Import rejects noncanonical paths instead of
+normalizing them; this removes Unicode and case-folding differences across filesystems.
 
 Canonical JSON uses UTF-8, sorted object keys, compact separators,
 `ensure_ascii = false`, and no trailing newline. The top-level digest excludes its own
-field and includes typed section manifests plus every declared file's normalized
-path, size, and SHA-256. Export normalizes ZIP entry order, permissions, and
-timestamps for deterministic output.
+field. `actor-pack.json` is not included in its own per-file size/SHA-256 inventory.
+The digest covers the remaining canonical top-level manifest plus every declared
+payload/portrait/license/section file's canonical path, size, and SHA-256. Export
+normalizes ZIP entry order, permissions, and timestamps for deterministic output.
 
 Unknown required features or sections are rejected. V1 does not silently discard and
 later re-export content it cannot understand.
@@ -402,7 +438,11 @@ consent:
    warnings, and differences from a UUID match;
 5. capture the actor revision, portable UUID, both bindings, and both active versions
    represented by the review; and
-6. offer Create New, Create Copy, or explicitly confirmed Update Existing as allowed.
+6. offer the allowed action from this exact matrix:
+   - no UUID match: Create New preserves the incoming UUID, while Create Copy assigns
+     a fresh UUID and records the incoming UUID only as source provenance;
+   - same-kind exact UUID match: Create Copy or explicitly confirmed Update Existing;
+   - cross-kind UUID match: reject as an identity conflict.
 
 Create Copy assigns a fresh UUID and retains the source UUID only as provenance.
 Update Existing is available only for an exact UUID match. It updates reviewed
@@ -446,8 +486,10 @@ active Shared Visual Identity version and permit standalone directives:
 Emote: annoyed
 ```
 
-The state list contains no imported display labels or text and is bounded by the
-existing 128-slot/8 KiB prompt budget.
+The list preserves the active version's stored asset order after normalization and
+deduplication, exposes the first 25 states, and appends the exact `(+N more)` suffix
+when additional states exist, matching the pinned server. It contains no imported
+display labels or arbitrary text.
 
 The streaming parser matches the server contract:
 
@@ -627,7 +669,8 @@ scratch pytest file outside `Tests/` without recreating the suite's isolation.
 
 Deliver server-aligned manifest/state models, renderer capabilities, schema,
 repository, immutable versions, validated assets, Persona bindings, resolver, and
-profile-owned storage. No UI authoring or Buddy.
+profile-owned storage. The frozen contract includes all nine built-ins, five required
+resolvable states, and `sprite_frames` manifest version 1. No UI authoring or Buddy.
 
 ### Task 2 — Author and import Persona Visual packs
 
@@ -642,6 +685,9 @@ Deliver app-owned state coordinator, active-Persona resolution, minimal native
 Textual 8 window, `sprite_frames`, deterministic state leases, preferences,
 accessibility, responsive geometry, and live verification.
 
+The Buddy follows only the explicit profile-local Buddy Persona preference; ordinary
+Workbench, Console, or server-source selection does not retarget it.
+
 Depends on Task 1.
 
 ### Task 4 — Enable Shared Visual Identity for Persona actors
@@ -655,6 +701,7 @@ Depends on the merged TASK-16319/ADR-067 foundation.
 
 Deliver `tldw.actor-pack/v1`, portable identity registry, actor-kind adapters,
 canonical digest/validation, and New Actor Pack creation through canonical editors.
+Only local actors are eligible; server-backed Personas expose Save Local Copy first.
 
 Depends on Tasks 1 and 4.
 
@@ -678,6 +725,9 @@ Depends on Tasks 1–6.
 Deliver exact directive parsing/prompting, live character portrait beats, sanitized
 text, heuristic fallback, bounded message metadata, and final-expression history
 restore.
+
+Prompting preserves canonical active-version order, exposes 25 states, and reports
+the hidden remainder with the pinned `(+N more)` suffix.
 
 Depends only on the merged TASK-16319/ADR-067 foundation and may proceed independently
 of Tasks 1–7.
