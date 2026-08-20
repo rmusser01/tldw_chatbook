@@ -214,7 +214,12 @@ def test_batch_writer_keeps_row_and_sync_payload_consistent(tmp_path):
 
 
 def test_count_chunks_by_engine_version_groups(tmp_path):
-    """The report method: NULL → 'legacy', stamped versions keyed verbatim."""
+    """The report method counts media ITEMS: NULL → 'legacy', versions verbatim.
+
+    Spec §14 AC: "how many media items were chunked by the older engine" —
+    an item with several chunk rows under one version counts once (Qodo
+    PR #1852: COUNT(*) overcounted multi-chunk items).
+    """
     from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
     from tldw_chatbook.RAG_Admin.local_rag_admin_service import LocalRAGAdminService
 
@@ -230,7 +235,18 @@ def test_count_chunks_by_engine_version_groups(tmp_path):
     )
     svc = LocalRAGAdminService.__new__(LocalRAGAdminService)
     counts = svc.count_chunks_by_engine_version(db)
-    assert counts == {"parity-1@385afa95": 2}
+    assert counts == {"parity-1@385afa95": 1}
+
+    # A second item under the same version: distinct items, not rows.
+    db.add_media_with_keywords(
+        title="t2", media_type="document", content="....", keywords=None, url=None,
+        analysis_content=None, author=None,
+        chunks=[
+            {"text": "c", "metadata": {}, "chunk_engine_version": "parity-1@385afa95"},
+        ],
+        chunk_options={},
+    )
+    assert svc.count_chunks_by_engine_version(db) == {"parity-1@385afa95": 2}
 
 
 def test_legacy_chunk_report_line(tmp_path):
@@ -255,8 +271,12 @@ def test_legacy_chunk_report_line(tmp_path):
     ).fetchone()["id"]
     db.process_unvectorized_chunks(
         media_id,
-        [{"text": "old chunk", "chunk_index": 0, "metadata": {}}],
+        [
+            {"text": "old chunk", "chunk_index": 0, "metadata": {}},
+            {"text": "old chunk 2", "chunk_index": 1, "metadata": {}},
+        ],
     )
+    # Two legacy chunk ROWS on one media item: the line counts items, not rows.
     assert svc.get_legacy_chunk_report_line() == "Chunked by an older engine: 1 items"
 
     # the line rides the diagnostics payload (the surviving read-only stats

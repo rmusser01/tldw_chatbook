@@ -160,3 +160,23 @@ def test_ecs_delegation_chunk_text_with_structure():
         ):
             assert hasattr(chunk, attr)
         assert chunk.chunk_type.value  # modal reads chunk.chunk_type.value
+
+
+def test_parent_text_is_sanitized_like_children():
+    """Parents slice the engine's sanitized text, not the raw input.
+
+    The engine neutralizes bidi-override chars (length-preserving, char →
+    space) in every child's text; slicing parents from the raw input would
+    re-introduce them (Qodo PR #1852). Bidi neutralization is NOT test-mode
+    relaxed, so this pins real behavior under pytest.
+    """
+    from tldw_chatbook.RAG_Search import parent_child_adapter as pca
+    bidi = "‮"
+    text = f"# Section A\n\nSafe text {bidi}spoofed{bidi} more text.\n"
+    result = pca.chunk_with_parent_retrieval(text, max_size=100, overlap=0)
+    assert result["chunks"], "need at least one child for the pin to mean anything"
+    for chunk in result["chunks"]:
+        assert bidi not in chunk["text"]
+    assert result["parent_chunks"]
+    for parent in result["parent_chunks"]:
+        assert bidi not in parent["text"]

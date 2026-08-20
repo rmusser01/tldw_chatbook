@@ -191,12 +191,28 @@ def _map_chunk_type(raw: Any) -> ChunkType:
     return _ENGINE_CHUNK_TYPE_MAP.get(key, ChunkType.TEXT)
 
 
-def _engine_flat(text: str, max_size: int, overlap: int) -> List[Dict[str, Any]]:
-    """Run the engine's hierarchical structure_aware path and flatten it."""
+def _engine_flat(
+    text: str, max_size: int, overlap: int
+) -> Tuple[str, List[Dict[str, Any]]]:
+    """Run the engine's hierarchical structure_aware path and flatten it.
+
+    Returns ``(clean_text, flat)``: the engine sanitizes its input once
+    (length-preserving — nulls/control/bidi-override chars become spaces)
+    and every chunk offset refers to that sanitized text, so parent slices
+    must be taken from the same text — slicing the raw input would
+    re-introduce exactly the characters the engine neutralized in the
+    children (Qodo PR #1852). ``_sanitize_input`` is a private engine seam
+    (like the shim's tokenizer probe): re-check at next sync.
+    """
     chunker = _get_chunker()
-    return chunker.chunk_text_hierarchical_flat(
+    flat = chunker.chunk_text_hierarchical_flat(
         text, method=_STRUCTURE_METHOD, max_size=max_size, overlap=overlap
     )
+    try:
+        clean_text = chunker._sanitize_input(text, suppress_security_log=True)
+    except Exception:  # pragma: no cover - defensive: raw slices, as before
+        clean_text = text
+    return clean_text, flat
 
 
 def _build_children(flat: List[Dict[str, Any]]) -> List[StructuredChunk]:
@@ -367,9 +383,9 @@ def chunk_with_parent_retrieval(
         Dictionary with ``chunks``, ``parent_chunks`` and ``metadata``.
     """
     max_size, overlap = _resolve_sizes(max_size, overlap, opts)
-    flat = _engine_flat(text, max_size, overlap)
+    clean_text, flat = _engine_flat(text, max_size, overlap)
     children, parents = _derive_parent_child(
-        text, flat, max_size, parent_size_multiplier
+        clean_text, flat, max_size, parent_size_multiplier
     )
 
     chunks: List[Dict[str, Any]] = []
@@ -442,8 +458,8 @@ def chunk_text_with_structure(
     Returns:
         List of StructuredChunk objects in document order.
     """
-    flat = _engine_flat(content, chunk_size, chunk_overlap)
+    clean_text, flat = _engine_flat(content, chunk_size, chunk_overlap)
     children, _parents = _derive_parent_child(
-        content, flat, chunk_size, parent_size_multiplier
+        clean_text, flat, chunk_size, parent_size_multiplier
     )
     return children

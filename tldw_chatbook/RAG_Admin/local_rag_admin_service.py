@@ -290,8 +290,9 @@ class LocalRAGAdminService:
         """One read-only report line for the RAG Admin stats surface.
 
         Returns ``"Chunked by an older engine: N items"`` where N is the
-        count of live chunk rows persisted before the engine-version stamp
-        (NULL ``chunk_engine_version``); an empty string when there are none
+        count of media items with live chunk rows persisted before the
+        engine-version stamp (NULL ``chunk_engine_version``); an empty
+        string when there are none
         (nothing to report -- the library is fully stamped). Read-only by
         construction (``count_chunks_by_engine_version`` is a plain SELECT;
         spec §8: stamp + report only, no re-chunk action).
@@ -474,13 +475,16 @@ class LocalRAGAdminService:
         return method(media_id, **options)
 
     def count_chunks_by_engine_version(self, db: Any) -> dict[str, int]:
-        """Count live chunk rows per chunking-engine version (read-only).
+        """Count media items per chunking-engine version (read-only).
 
-        task-12 (spec §8): the RAG Admin report surface. Rows persisted
-        before the engine-version stamp (schema v6 / task-11) carry NULL in
+        task-12 (spec §8): the RAG Admin report surface. The spec's AC counts
+        media *items*, not chunk rows — an item with many chunks counts once
+        per version it appears under. Rows persisted before the
+        engine-version stamp (schema v6 / task-11) carry NULL in
         ``UnvectorizedMediaChunks.chunk_engine_version`` and are reported
         under the ``"legacy"`` key; stamped rows are keyed by their version
-        string verbatim.
+        string verbatim. A partially stamped item counts under each version
+        it has live rows for.
 
         Deliberately dependency-light: takes the media DB explicitly (no
         ``__init__`` state -- callable on a bare ``__new__`` instance) so the
@@ -494,11 +498,11 @@ class LocalRAGAdminService:
 
         Returns:
             dict mapping engine version (``"legacy"`` for NULL) to the count
-            of non-deleted chunk rows. Empty dict when the table has no
-            live rows.
+            of media items with non-deleted chunk rows under that version.
+            Empty dict when the table has no live rows.
         """
         cursor = db.get_connection().execute(
-            "SELECT chunk_engine_version, COUNT(*) AS n "
+            "SELECT chunk_engine_version, COUNT(DISTINCT media_id) AS n "
             "FROM UnvectorizedMediaChunks WHERE deleted = 0 "
             "GROUP BY chunk_engine_version"
         )
