@@ -3590,6 +3590,34 @@ async def test_later_provider_failure_preserves_selected_managed_stage(
 
 
 @pytest.mark.asyncio
+async def test_defaults_only_save_replaces_pending_managed_preferences() -> None:
+    service, adapters, _supervisor = _managed_promotion_service()
+    await _publish_settings(
+        service,
+        _snapshot(model_id="Model/B"),
+        {"audio_cpp": _managed_config(6.0)},
+    )
+    latest = await _publish_settings(
+        service,
+        _snapshot(model_id="Model/C"),
+        {},
+    )
+    assert service.preferences_snapshot().model_id == "Model/A"
+
+    await service.shutdown_audio_cpp()
+    response = await service.synthesize_default(text="Latest defaults")
+
+    assert (adapters[0].generation, adapters[0].requests[-1].model_id) == (
+        "6.0",
+        "Model/C",
+    )
+    assert service.preferences_generation() == latest.generation
+    await response.aclose()
+    await service.close()
+    await service.wait_closed()
+
+
+@pytest.mark.asyncio
 async def test_pre_replacement_failure_changes_no_preferences_or_provider() -> None:
     adapter = _CapturingAdapter("audio_cpp", generation="one")
     old_snapshot = _snapshot(model_id="Model/One")

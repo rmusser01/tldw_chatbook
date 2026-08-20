@@ -2999,11 +2999,12 @@ class TTSService:
             pending = self._settings_staged_preferences
             if pending is not None:
                 applied_generation = self.registry.configuration_generation("audio_cpp")
+                required_generation = self.saved_configuration_revision("audio_cpp")
                 pending_generation, pending_preferences = pending
-                if applied_generation < pending_generation:
+                if applied_generation < required_generation:
                     await self.registry.seal_provider_unavailable("audio_cpp")
                 else:
-                    if applied_generation == pending_generation:
+                    if applied_generation == required_generation:
                         self._request_admission._publish_preferences(
                             pending_preferences,
                             pending_generation,
@@ -3277,9 +3278,13 @@ class TTSService:
                     )
 
                 if publish_preferences:
-                    if (
-                        preferences.provider_id == "audio_cpp"
-                        and staging_failed_provider_id == preferences.provider_id
+                    if preferences.provider_id == "audio_cpp" and (
+                        staging_failed_provider_id == preferences.provider_id
+                        or (
+                            preferences.provider_id not in provider_configs
+                            and self.saved_configuration_revision("audio_cpp")
+                            != self.applied_configuration_revision("audio_cpp")
+                        )
                     ):
                         self._settings_staged_preferences = (
                             generation,
