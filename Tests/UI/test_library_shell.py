@@ -68,6 +68,11 @@ from tldw_chatbook.Library.library_ingest_state import (
     LibraryIngestFormState,
     build_library_ingest_state,
 )
+from tldw_chatbook.Library.library_content_evidence import (
+    LibraryContentEvidence,
+    LibraryEvidenceStatus,
+)
+from tldw_chatbook.Library.library_rail_state import LibraryLifecycle
 from tldw_chatbook.Library.library_rag_state import (
     LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY,
     LibraryRagPanelState,
@@ -700,6 +705,610 @@ class LibraryHarness(ConsolidatedCSSApp):
     def on_navigate_to_screen(self, message) -> None:
         self.seen_routes.append(message.screen_name)
         self.seen_contexts.append(dict(message.screen_context or {}))
+
+
+class _AsyncLibraryEvidenceGate:
+    """One independently released source-evidence call."""
+
+    def __init__(self, outcome=LibraryContentEvidence.EMPTY):
+        self.outcome = outcome
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def run(self, **_kwargs):
+        self.entered.set()
+        await self.release.wait()
+        if isinstance(self.outcome, BaseException):
+            raise self.outcome
+        return self.outcome
+
+
+class _SyncLibraryEvidenceGate:
+    """Thread-safe Collections counterpart to the async owner gates."""
+
+    def __init__(self, outcome=LibraryContentEvidence.EMPTY):
+        self.outcome = outcome
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def run(self):
+        self.entered.set()
+        if not self.release.wait(_GATED_RELEASE_TIMEOUT_SECONDS):
+            return LibraryContentEvidence.UNKNOWN
+        if isinstance(self.outcome, BaseException):
+            raise self.outcome
+        return self.outcome
+
+
+class _LibraryEvidenceGates:
+    """Production-shaped six-owner evidence services, independently gated."""
+
+    ASYNC_OWNERS = ("notes", "media", "conversations", "prompts", "skills")
+
+    def __init__(self, rounds=1, *, outcomes=None):
+        outcomes = outcomes or {}
+        self.gates = {
+            owner: [
+                _AsyncLibraryEvidenceGate(
+                    outcomes.get(owner, [LibraryContentEvidence.EMPTY] * rounds)[index]
+                )
+                for index in range(rounds)
+            ]
+            for owner in self.ASYNC_OWNERS
+        }
+        self.gates["collections"] = [
+            _SyncLibraryEvidenceGate(
+                outcomes.get("collections", [LibraryContentEvidence.EMPTY] * rounds)[
+                    index
+                ]
+            )
+            for index in range(rounds)
+        ]
+        self.calls = {owner: 0 for owner in self.gates}
+
+    def install(self, app) -> None:
+        for owner, attribute in (
+            ("notes", "notes_scope_service"),
+            ("media", "media_reading_scope_service"),
+            ("conversations", "chat_conversation_scope_service"),
+            ("prompts", "prompt_scope_service"),
+            ("skills", "skills_scope_service"),
+        ):
+            setattr(
+                app,
+                attribute,
+                SimpleNamespace(
+                    get_library_user_content_evidence=self._async_call(owner)
+                ),
+            )
+        app.library_collections_service = SimpleNamespace(
+            get_library_user_content_evidence=self._sync_call
+        )
+
+    def _async_call(self, owner):
+        async def call(**kwargs):
+            index = self.calls[owner]
+            self.calls[owner] += 1
+            return await self.gates[owner][index].run(**kwargs)
+
+        return call
+
+    def _sync_call(self):
+        index = self.calls["collections"]
+        self.calls["collections"] += 1
+        return self.gates["collections"][index].run()
+
+    def round_entered(self, index: int) -> bool:
+        return all(gates[index].entered.is_set() for gates in self.gates.values())
+
+    def release_round(self, index: int, *owners: str) -> None:
+        selected = owners or tuple(self.gates)
+        for owner in selected:
+            self.gates[owner][index].release.set()
+
+    def release_all(self) -> None:
+        for gates in self.gates.values():
+            for gate in gates:
+                gate.release.set()
+
+
+def _new_library_onboarding_app(gates: _LibraryEvidenceGates):
+    app = _build_test_app()
+    app.app_config["_first_run"] = True
+    library = app.app_config.setdefault("library", {})
+    rail_state = library.setdefault("rail_state", {})
+    rail_state.pop("lifecycle", None)
+    gates.install(app)
+    return app
+
+
+async def _wait_for_evidence_round(pilot, gates, index=0) -> None:
+    await _wait_for_condition(
+        pilot,
+        lambda: gates.round_entered(index),
+        message=f"Library evidence round {index} did not reach all six owners.",
+    )
+
+
+@pytest.mark.asyncio
+async def test_library_onboarding_new_profile_waits_for_all_fresh_empty_evidence(
+    monkeypatch,
+) -> None:
+    saved = []
+    monkeypatch.setattr(
+        library_screen_module,
+        "save_setting_to_cli_config",
+        lambda *args: saved.append(args),
+    )
+    gates = _LibraryEvidenceGates()
+    app = _new_library_onboarding_app(gates)
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = host.screen_stack[-1]
+            await _wait_for_evidence_round(pilot, gates)
+            assert screen._library_lifecycle is LibraryLifecycle.UNKNOWN
+            assert screen._library_onboarding_status is LibraryEvidenceStatus.LOADING
+            assert screen._library_onboarding_all_empty is False
+
+            gates.release_round(
+                0, "notes", "media", "conversations", "prompts", "skills"
+            )
+            assert screen._library_lifecycle is LibraryLifecycle.UNKNOWN
+            assert screen._library_onboarding_all_empty is False
+
+            gates.release_round(0, "collections")
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_lifecycle is LibraryLifecycle.STARTER,
+                message="all six fresh empty owners did not settle Starter",
+            )
+            assert screen._library_onboarding_status is LibraryEvidenceStatus.SETTLED
+            assert screen._library_onboarding_all_empty is True
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    saved
+                    and saved[-1]
+                    == (
+                        "library.rail_state",
+                        "lifecycle",
+                        "starter",
+                    )
+                ),
+                message="Starter lifecycle was not persisted",
+            )
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+async def test_library_onboarding_cached_zero_snapshot_cannot_declare_starter() -> None:
+    gates = _LibraryEvidenceGates()
+    app = _new_library_onboarding_app(gates)
+    app._library_source_snapshot_cache = (
+        {
+            "notes": (),
+            "media": (),
+            "conversations": (),
+            "prompts": (0, ()),
+            "skills": (0, {"available_skills": [], "blocked_skills": []}),
+        },
+        {"notes": 0, "media": 0, "conversations": 0},
+        {"notes": True, "media": True, "conversations": True},
+        None,
+        None,
+        {"study_decks": 0, "flashcards_due": 0, "quizzes": 0},
+    )
+    app._library_source_snapshot_cache_stamp = time.monotonic()
+    screen = LibraryScreen(app)
+    assert screen._library_loaded is True
+    assert screen._library_lifecycle is LibraryLifecycle.UNKNOWN
+    assert screen._library_onboarding_all_empty is False
+    host = LibraryHarness(app, screen=screen)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            await _wait_for_evidence_round(pilot, gates)
+            assert screen._library_lifecycle is LibraryLifecycle.UNKNOWN
+            assert screen._library_onboarding_status is LibraryEvidenceStatus.LOADING
+            gates.release_round(0)
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_lifecycle is LibraryLifecycle.STARTER,
+                message="fresh owner evidence did not settle Starter",
+            )
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+async def test_library_onboarding_partial_failure_keeps_truthful_unknown_actions() -> (
+    None
+):
+    gates = _LibraryEvidenceGates(
+        outcomes={"prompts": [RuntimeError("prompt evidence unavailable")]}
+    )
+    app = _new_library_onboarding_app(gates)
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = host.screen_stack[-1]
+            await _wait_for_evidence_round(pilot, gates)
+            gates.release_round(0)
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen._library_onboarding_status
+                    is LibraryEvidenceStatus.PARTIAL_FAILURE
+                ),
+                message="partial owner failure did not settle truthfully",
+            )
+            assert screen._library_lifecycle is LibraryLifecycle.UNKNOWN
+            assert screen._library_onboarding_all_empty is False
+            assert screen._library_onboarding_status_copy == (
+                "Some Library sources are unavailable."
+            )
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+async def test_library_onboarding_fresh_usable_content_graduates_and_persists(
+    monkeypatch,
+) -> None:
+    saved = []
+    monkeypatch.setattr(
+        library_screen_module,
+        "save_setting_to_cli_config",
+        lambda *args: saved.append(args),
+    )
+    gates = _LibraryEvidenceGates(
+        outcomes={"notes": [LibraryContentEvidence.HAS_USER_CONTENT]}
+    )
+    app = _new_library_onboarding_app(gates)
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = host.screen_stack[-1]
+            await _wait_for_evidence_round(pilot, gates)
+            screen._set_library_lifecycle(LibraryLifecycle.EXPANDED)
+            gates.release_round(0, "notes")
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_lifecycle is LibraryLifecycle.GRADUATED,
+                message="fresh positive evidence did not graduate",
+            )
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    saved
+                    and saved[-1]
+                    == (
+                        "library.rail_state",
+                        "lifecycle",
+                        "graduated",
+                    )
+                ),
+                message="coalesced lifecycle writer did not store graduated last",
+            )
+            assert app.app_config["library"]["rail_state"]["lifecycle"] == "graduated"
+            assert screen._library_onboarding_status is LibraryEvidenceStatus.SETTLED
+            assert screen._library_onboarding_all_empty is False
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+async def test_library_onboarding_blocked_skill_and_trash_only_do_not_graduate() -> (
+    None
+):
+    gates = _LibraryEvidenceGates()
+    app = _new_library_onboarding_app(gates)
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = host.screen_stack[-1]
+            await _wait_for_evidence_round(pilot, gates)
+            gates.release_round(0)
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen._library_onboarding_status is LibraryEvidenceStatus.SETTLED
+                ),
+                message="eligible-empty owner round did not settle",
+            )
+            assert screen._library_lifecycle is LibraryLifecycle.STARTER
+            assert screen._library_onboarding_all_empty is True
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+async def test_library_onboarding_late_generation_and_unmount_cannot_apply() -> None:
+    outcomes = {
+        owner: [
+            LibraryContentEvidence.HAS_USER_CONTENT,
+            LibraryContentEvidence.EMPTY,
+            LibraryContentEvidence.HAS_USER_CONTENT,
+        ]
+        for owner in (*_LibraryEvidenceGates.ASYNC_OWNERS, "collections")
+    }
+    gates = _LibraryEvidenceGates(rounds=3, outcomes=outcomes)
+    app = _new_library_onboarding_app(gates)
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = host.screen_stack[-1]
+            await _wait_for_evidence_round(pilot, gates, 0)
+            screen._refresh_library_onboarding_evidence()
+            await _wait_for_evidence_round(pilot, gates, 1)
+            gates.release_round(0)
+            assert screen._library_lifecycle is LibraryLifecycle.UNKNOWN
+            gates.release_round(1)
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_lifecycle is LibraryLifecycle.STARTER,
+                message="current empty generation did not settle Starter",
+            )
+
+            screen._refresh_library_onboarding_evidence()
+            await _wait_for_evidence_round(pilot, gates, 2)
+            await host.switch_screen(_DummyReplacementScreen())
+            revoked_generation = screen._library_onboarding_generation
+            gates.release_round(2)
+            await _wait_for_worker_group_to_drain(
+                host, pilot, screen, "library_onboarding_evidence"
+            )
+            assert screen._library_onboarding_generation == revoked_generation
+            assert screen._library_lifecycle is LibraryLifecycle.STARTER
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stored", [None, "not-a-lifecycle"])
+async def test_library_onboarding_legacy_and_corrupt_preferences_open_expanded(
+    stored,
+) -> None:
+    gates = _LibraryEvidenceGates()
+    app = _new_library_onboarding_app(gates)
+    app.app_config["_first_run"] = False
+    if stored is None:
+        app.app_config["library"]["rail_state"].pop("lifecycle", None)
+    else:
+        app.app_config["library"]["rail_state"]["lifecycle"] = stored
+    screen = LibraryScreen(app)
+    host = LibraryHarness(app, screen=screen)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            await _wait_for_evidence_round(pilot, gates)
+            assert screen._library_lifecycle is LibraryLifecycle.EXPANDED
+            gates.release_round(0)
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen._library_onboarding_status is LibraryEvidenceStatus.SETTLED
+                ),
+                message="legacy evidence round did not settle",
+            )
+            assert screen._library_lifecycle is LibraryLifecycle.EXPANDED
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+async def test_library_onboarding_restart_after_partial_failure_restores_unknown() -> (
+    None
+):
+    gates = _LibraryEvidenceGates(
+        outcomes={"media": [RuntimeError("media evidence unavailable")]}
+    )
+    app = _new_library_onboarding_app(gates)
+    screen = LibraryScreen(app)
+    host = LibraryHarness(app, screen=screen)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            await _wait_for_evidence_round(pilot, gates)
+            gates.release_round(0)
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen._library_onboarding_status
+                    is LibraryEvidenceStatus.PARTIAL_FAILURE
+                ),
+                message="partial failure did not settle",
+            )
+            assert app.app_config["library"]["rail_state"]["lifecycle"] == "unknown"
+            app.app_config["_first_run"] = False
+            restarted = LibraryScreen(app)
+            assert restarted._library_lifecycle is LibraryLifecycle.UNKNOWN
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "lifecycle",
+    [LibraryLifecycle.STARTER, LibraryLifecycle.EXPANDED, LibraryLifecycle.GRADUATED],
+)
+async def test_library_onboarding_restart_restores_each_settled_lifecycle(
+    lifecycle,
+) -> None:
+    gates = _LibraryEvidenceGates()
+    app = _new_library_onboarding_app(gates)
+    app.app_config["_first_run"] = False
+    app.app_config["library"]["rail_state"]["lifecycle"] = lifecycle.value
+    screen = LibraryScreen(app)
+    host = LibraryHarness(app, screen=screen)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            await _wait_for_evidence_round(pilot, gates)
+            assert screen._library_lifecycle is lifecycle
+            gates.release_round(0)
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen._library_onboarding_status is LibraryEvidenceStatus.SETTLED
+                ),
+                message="restored lifecycle evidence did not settle",
+            )
+            expected = (
+                LibraryLifecycle.GRADUATED
+                if lifecycle is LibraryLifecycle.GRADUATED
+                else lifecycle
+            )
+            assert screen._library_lifecycle is expected
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+async def test_library_onboarding_explore_during_read_still_allows_graduation() -> None:
+    gates = _LibraryEvidenceGates(
+        outcomes={"collections": [LibraryContentEvidence.HAS_USER_CONTENT]}
+    )
+    app = _new_library_onboarding_app(gates)
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = host.screen_stack[-1]
+            await _wait_for_evidence_round(pilot, gates)
+            screen._set_library_lifecycle(LibraryLifecycle.EXPANDED)
+            gates.release_round(0, "collections")
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_lifecycle is LibraryLifecycle.GRADUATED,
+                message="positive evidence was rejected after Explore",
+            )
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+async def test_library_onboarding_new_generation_revokes_back_to_starter() -> None:
+    gates = _LibraryEvidenceGates(rounds=2)
+    app = _new_library_onboarding_app(gates)
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = host.screen_stack[-1]
+            await _wait_for_evidence_round(pilot, gates, 0)
+            gates.release_round(0)
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_onboarding_all_empty,
+                message="initial empty evidence did not settle",
+            )
+            screen._set_library_lifecycle(LibraryLifecycle.EXPANDED)
+            screen._refresh_library_onboarding_evidence()
+            assert screen._library_onboarding_all_empty is False
+            assert screen._library_onboarding_status is LibraryEvidenceStatus.LOADING
+            gates.release_round(1)
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+async def test_library_onboarding_persistence_failure_keeps_session_and_warns(
+    monkeypatch,
+) -> None:
+    def fail_save(*_args):
+        raise OSError("read only")
+
+    monkeypatch.setattr(library_screen_module, "save_setting_to_cli_config", fail_save)
+    gates = _LibraryEvidenceGates(
+        outcomes={"notes": [LibraryContentEvidence.HAS_USER_CONTENT]}
+    )
+    app = _new_library_onboarding_app(gates)
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = host.screen_stack[-1]
+            await _wait_for_evidence_round(pilot, gates)
+            gates.release_round(0, "notes")
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen._library_lifecycle is LibraryLifecycle.GRADUATED
+                    and bool(screen._library_onboarding_persistence_warning)
+                ),
+                message="persistence failure warning did not surface",
+            )
+            assert screen._library_lifecycle is LibraryLifecycle.GRADUATED
+            assert screen._library_onboarding_persistence_warning == (
+                "Library view is updated for this session, but the choice may not be remembered."
+            )
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+async def test_library_onboarding_positive_wins_while_another_owner_hangs() -> None:
+    gates = _LibraryEvidenceGates(
+        outcomes={"skills": [LibraryContentEvidence.HAS_USER_CONTENT]}
+    )
+    app = _new_library_onboarding_app(gates)
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = host.screen_stack[-1]
+            await _wait_for_evidence_round(pilot, gates)
+            gates.release_round(0, "skills")
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_lifecycle is LibraryLifecycle.GRADUATED,
+                timeout=1.0,
+                message="positive evidence waited for the hanging owner",
+            )
+            assert gates.gates["collections"][0].release.is_set() is False
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+async def test_library_onboarding_hanging_owner_times_out_to_retry(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        library_screen_module, "LIBRARY_ONBOARDING_EVIDENCE_TIMEOUT_SECONDS", 0.05
+    )
+    gates = _LibraryEvidenceGates()
+    app = _new_library_onboarding_app(gates)
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = host.screen_stack[-1]
+            await _wait_for_evidence_round(pilot, gates)
+            gates.release_round(
+                0, "notes", "media", "conversations", "prompts", "skills"
+            )
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen._library_onboarding_status
+                    is LibraryEvidenceStatus.PARTIAL_FAILURE
+                ),
+                timeout=1.0,
+                message="hanging owner did not time out to partial failure",
+            )
+            assert screen._library_lifecycle is LibraryLifecycle.UNKNOWN
+            assert screen._library_onboarding_all_empty is False
+    finally:
+        gates.release_all()
 
 
 class _ConversationCanvasHarness(App):

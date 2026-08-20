@@ -83,6 +83,10 @@ from ...Library.library_collections_state import (
     LibraryCollectionDeleteReceipt,
     LibraryCollectionsPanelState,
 )
+from ...Library.library_content_evidence import (
+    LibraryContentEvidence,
+    LibraryEvidenceStatus,
+)
 from ...Library.library_conversations_state import (
     build_library_conversations_state,
     validate_library_conversation_page,
@@ -290,6 +294,9 @@ from ...Library.library_rag_state import (
 )
 from ...Library.library_rail_state import (
     LIBRARY_RAIL_SECTION_IDS,
+    LibraryLifecycle,
+    aggregate_library_lifecycle,
+    coerce_library_lifecycle,
     coerce_library_rail_preferences,
     serialize_library_rail_preferences,
 )
@@ -538,6 +545,7 @@ LIBRARY_EMPTY_COPY = "No local Library content yet."
 # user-facing guidance it gestured at lives in the F-013 landing copy
 # and the F-010 landing hub.
 LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS = 5.0
+LIBRARY_ONBOARDING_EVIDENCE_TIMEOUT_SECONDS = LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS
 # Navigation composes a FRESH LibraryScreen instance per visit (PR #595
 # freeze fix), so a per-instance memo is useless -- the previous visit's
 # snapshot is cached on the APP instance instead (see `on_mount` and
@@ -2796,6 +2804,22 @@ class LibraryScreen(BaseAppScreen):
         **kwargs: Any,
     ) -> None:
         super().__init__(app_instance, "library", **kwargs)
+        self._library_new_profile_admission = bool(
+            app_instance.app_config.get("_first_run")
+        )
+        lifecycle_raw, lifecycle_stored = self._load_library_lifecycle_value()
+        self._library_lifecycle_was_stored = lifecycle_stored
+        self._library_lifecycle = coerce_library_lifecycle(
+            lifecycle_raw,
+            is_new_profile=self._library_new_profile_admission,
+        )
+        self._library_onboarding_generation = 0
+        self._library_onboarding_all_empty = False
+        self._library_onboarding_status = LibraryEvidenceStatus.LOADING
+        self._library_onboarding_status_copy = "Checking existing Library content…"
+        self._library_onboarding_persistence_warning = ""
+        self._library_lifecycle_pending_persist: LibraryLifecycle | None = None
+        self._library_lifecycle_persist_worker: Worker | None = None
         self._library_notes_source: Literal["database", "files"] = (
             LIBRARY_NOTES_SOURCE_DATABASE
         )
@@ -5560,6 +5584,11 @@ class LibraryScreen(BaseAppScreen):
         viewer) that ``apply_navigation_context`` could not run before mount.
         """
         self._register_footer_shortcuts()
+        if (
+            self._library_new_profile_admission
+            and not self._library_lifecycle_was_stored
+        ):
+            self._queue_library_lifecycle_persistence(LibraryLifecycle.UNKNOWN)
         # No super().on_mount(): the dispatcher already invokes
         # BaseAppScreen.on_mount separately for this Mount event.
         self.call_after_refresh(self._update_library_notes_responsive_state)
@@ -5715,6 +5744,7 @@ class LibraryScreen(BaseAppScreen):
         """
         # A local thread read may outlive this screen. Revoke apply authority
         # before any awaited shutdown work can yield back to its completion.
+        self._library_onboarding_generation += 1
         self._library_conversation_request_generation += 1
         self._invalidate_library_prompts_browse()
         self._library_media_lifecycle_generation += 1
@@ -6833,6 +6863,7 @@ class LibraryScreen(BaseAppScreen):
     # `exclusive=True` scopes independent.
     @work(exclusive=True, group="library_source_snapshot")
     async def _refresh_local_source_snapshot(self) -> None:
+        self._refresh_library_onboarding_evidence()
         (
             records,
             counts,
@@ -15002,6 +15033,250 @@ class LibraryScreen(BaseAppScreen):
             success=handed_off,
             failure_next_action="check Console readiness and try again",
         )
+
+    def _load_library_lifecycle_value(self) -> tuple[Any, bool]:
+        """Read lifecycle independently from the existing section preferences."""
+        app_config = self.app_instance.app_config
+        library_config = app_config.get("library")
+        if isinstance(library_config, dict):
+            rail_state = library_config.get("rail_state")
+            if isinstance(rail_state, dict) and "lifecycle" in rail_state:
+                return rail_state["lifecycle"], True
+        try:
+            cli_rail_state = get_cli_setting("library.rail_state")
+        except Exception:
+            cli_rail_state = None
+        if isinstance(cli_rail_state, dict) and "lifecycle" in cli_rail_state:
+            return cli_rail_state["lifecycle"], True
+        return None, False
+
+    def _library_onboarding_admission_key(self) -> tuple[Any, ...]:
+        """Return the profile and active-source authority for one evidence read."""
+        scope = _active_library_sync_scope(self.app_instance)
+        return (
+            id(self.app_instance.app_config),
+            getattr(self.app_instance, "notes_user_id", None) or "default_user",
+            scope["source_authority"],
+            scope["server_profile_id"],
+            scope["authenticated_principal_id"],
+            scope["workspace_scope"],
+        )
+
+    def _sync_library_onboarding_status_copy(self) -> None:
+        """Keep the Task 4/5 presentation seam in sync with evidence status."""
+        if self._library_onboarding_status is LibraryEvidenceStatus.LOADING:
+            self._library_onboarding_status_copy = "Checking existing Library content…"
+        elif self._library_onboarding_status is LibraryEvidenceStatus.PARTIAL_FAILURE:
+            self._library_onboarding_status_copy = (
+                "Some Library sources are unavailable."
+            )
+        else:
+            self._library_onboarding_status_copy = ""
+
+    def _refresh_library_onboarding_evidence(self) -> Worker | None:
+        """Start one fresh, generation-fenced six-owner evidence read."""
+        self._library_onboarding_generation += 1
+        generation = self._library_onboarding_generation
+        self._library_onboarding_all_empty = False
+        self._library_onboarding_status = LibraryEvidenceStatus.LOADING
+        self._sync_library_onboarding_status_copy()
+        if not self.is_attached:
+            return None
+        return self.run_worker(
+            self._gather_library_onboarding_evidence(
+                generation,
+                self._library_onboarding_admission_key(),
+            ),
+            group="library_onboarding_evidence",
+        )
+
+    async def _call_library_onboarding_owner(
+        self,
+        owner: str,
+        source_authority: str,
+    ) -> LibraryContentEvidence:
+        """Call one source-owned evidence seam with its active authority."""
+        service_attributes = {
+            "notes": "notes_scope_service",
+            "media": "media_reading_scope_service",
+            "conversations": "chat_conversation_scope_service",
+            "prompts": "prompt_scope_service",
+            "skills": "skills_scope_service",
+            "collections": "library_collections_service",
+        }
+        service = getattr(self.app_instance, service_attributes[owner], None)
+        evidence_call = getattr(service, "get_library_user_content_evidence", None)
+        if not callable(evidence_call):
+            return LibraryContentEvidence.UNKNOWN
+        if owner == "collections":
+            result = await self._run_library_service_call(
+                evidence_call,
+                isolate_in_worker=True,
+            )
+        elif owner == "notes":
+            result = await self._run_library_service_call(
+                evidence_call,
+                scope="server" if source_authority == "server" else "local_note",
+                user_id=(
+                    None
+                    if source_authority == "server"
+                    else getattr(self.app_instance, "notes_user_id", None)
+                    or "default_user"
+                ),
+            )
+        else:
+            result = await self._run_library_service_call(
+                evidence_call,
+                mode=source_authority,
+            )
+        return (
+            result
+            if isinstance(result, LibraryContentEvidence)
+            else LibraryContentEvidence.UNKNOWN
+        )
+
+    async def _gather_library_onboarding_evidence(
+        self,
+        generation: int,
+        admission_key: tuple[Any, ...],
+    ) -> None:
+        """Progressively settle evidence under one overall bounded deadline."""
+        source_authority = str(admission_key[2])
+        tasks = {
+            asyncio.create_task(
+                self._call_library_onboarding_owner(owner, source_authority)
+            )
+            for owner in (
+                "notes",
+                "media",
+                "conversations",
+                "prompts",
+                "skills",
+                "collections",
+            )
+        }
+        pending = set(tasks)
+        evidence: list[LibraryContentEvidence] = []
+        deadline = (
+            asyncio.get_running_loop().time()
+            + LIBRARY_ONBOARDING_EVIDENCE_TIMEOUT_SECONDS
+        )
+        try:
+            while pending:
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    break
+                done, pending = await asyncio.wait(
+                    pending,
+                    timeout=remaining,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if not done:
+                    break
+                for task in done:
+                    try:
+                        result = task.result()
+                    except Exception:
+                        result = LibraryContentEvidence.UNKNOWN
+                    evidence.append(result)
+                    if result is LibraryContentEvidence.HAS_USER_CONTENT:
+                        self._apply_library_onboarding_evidence(
+                            generation,
+                            admission_key,
+                            [result],
+                        )
+                        return
+            evidence.extend(LibraryContentEvidence.UNKNOWN for _task in pending)
+            self._apply_library_onboarding_evidence(
+                generation,
+                admission_key,
+                evidence,
+            )
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+
+    def _apply_library_onboarding_evidence(
+        self,
+        generation: int,
+        admission_key: tuple[Any, ...],
+        evidence: Sequence[LibraryContentEvidence],
+    ) -> None:
+        """Apply accepted evidence against the lifecycle current at settlement."""
+        if (
+            generation != self._library_onboarding_generation
+            or not self.is_attached
+            or admission_key != self._library_onboarding_admission_key()
+        ):
+            return
+        if LibraryContentEvidence.HAS_USER_CONTENT in evidence:
+            self._library_onboarding_all_empty = False
+            self._library_onboarding_status = LibraryEvidenceStatus.SETTLED
+            self._set_library_lifecycle(LibraryLifecycle.GRADUATED)
+        elif len(evidence) == 6 and all(
+            item is LibraryContentEvidence.EMPTY for item in evidence
+        ):
+            self._library_onboarding_all_empty = True
+            self._library_onboarding_status = LibraryEvidenceStatus.SETTLED
+            self._set_library_lifecycle(
+                aggregate_library_lifecycle(self._library_lifecycle, evidence)
+            )
+        else:
+            self._library_onboarding_all_empty = False
+            self._library_onboarding_status = LibraryEvidenceStatus.PARTIAL_FAILURE
+        self._sync_library_onboarding_status_copy()
+
+    def _mirror_library_lifecycle(self, lifecycle: LibraryLifecycle) -> None:
+        app_config = self.app_instance.app_config
+        library_config = app_config.get("library")
+        if not isinstance(library_config, dict):
+            library_config = {}
+            app_config["library"] = library_config
+        rail_state = library_config.get("rail_state")
+        if not isinstance(rail_state, dict):
+            rail_state = {}
+            library_config["rail_state"] = rail_state
+        rail_state["lifecycle"] = lifecycle.value
+
+    def _set_library_lifecycle(self, lifecycle: LibraryLifecycle) -> None:
+        """Accept and queue persistence for one lifecycle transition."""
+        if lifecycle is self._library_lifecycle:
+            return
+        self._library_lifecycle = lifecycle
+        self._queue_library_lifecycle_persistence(lifecycle)
+
+    def _queue_library_lifecycle_persistence(
+        self,
+        lifecycle: LibraryLifecycle,
+    ) -> None:
+        """Mirror immediately and coalesce disk writes to the latest value."""
+        self._mirror_library_lifecycle(lifecycle)
+        self._library_lifecycle_pending_persist = lifecycle
+        worker = self._library_lifecycle_persist_worker
+        if not self.is_attached or (worker is not None and not worker.is_finished):
+            return
+        self._library_lifecycle_persist_worker = self.run_worker(
+            self._drain_library_lifecycle_persistence(),
+            group="library_lifecycle_persistence",
+        )
+
+    async def _drain_library_lifecycle_persistence(self) -> None:
+        """Serialize lifecycle writes while retaining the latest request."""
+        while self._library_lifecycle_pending_persist is not None:
+            lifecycle = self._library_lifecycle_pending_persist
+            self._library_lifecycle_pending_persist = None
+            try:
+                await asyncio.to_thread(
+                    save_setting_to_cli_config,
+                    "library.rail_state",
+                    "lifecycle",
+                    lifecycle.value,
+                )
+            except Exception:
+                self._library_onboarding_persistence_warning = "Library view is updated for this session, but the choice may not be remembered."
+            else:
+                self._library_onboarding_persistence_warning = ""
 
     def _library_rail_preferences(self):
         """Read persisted Library rail section preferences, defensively.
