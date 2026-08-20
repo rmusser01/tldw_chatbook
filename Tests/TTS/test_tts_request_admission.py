@@ -3552,6 +3552,44 @@ async def test_failed_first_managed_save_stays_unavailable_after_lifecycle_retry
 
 
 @pytest.mark.asyncio
+async def test_later_provider_failure_preserves_selected_managed_stage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, adapters, _supervisor = _managed_promotion_service()
+    registry = service.registry
+
+    async def fail_begin(*_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError("provider begin failed")
+
+    monkeypatch.setattr(registry, "begin_reconfigure_provider", fail_begin)
+    failed = await _publish_settings(
+        service,
+        _snapshot(model_id="Model/B"),
+        {
+            "audio_cpp": _managed_config(6.0),
+            "other": {"generation": "two"},
+        },
+    )
+    assert failed.provider_statuses == {
+        "audio_cpp": "unavailable",
+        "other": "unavailable",
+    }
+    with pytest.raises(TTSProviderUnavailableError):
+        await registry.acquire("audio_cpp")
+
+    await service.shutdown_audio_cpp()
+    response = await service.synthesize_default(text="Coherent promotion")
+
+    assert (adapters[0].generation, adapters[0].requests[-1].model_id) == (
+        "6.0",
+        "Model/B",
+    )
+    await response.aclose()
+    await service.close()
+    await service.wait_closed()
+
+
+@pytest.mark.asyncio
 async def test_pre_replacement_failure_changes_no_preferences_or_provider() -> None:
     adapter = _CapturingAdapter("audio_cpp", generation="one")
     old_snapshot = _snapshot(model_id="Model/One")

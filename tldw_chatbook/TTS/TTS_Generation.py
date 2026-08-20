@@ -3237,6 +3237,14 @@ class TTSService:
                         provider_statuses[provider_id] = staged_status
                         if staged_status == "pending":
                             staged_provider_ids.add(provider_id)
+                            if (
+                                publish_preferences
+                                and provider_id == preferences.provider_id
+                            ):
+                                self._settings_staged_preferences = (
+                                    generation,
+                                    preferences,
+                                )
                         continue
                     try:
                         ticket = await self.registry.begin_reconfigure_provider(
@@ -3269,7 +3277,7 @@ class TTSService:
                     )
 
                 if publish_preferences:
-                    if preferences.provider_id in staged_provider_ids or (
+                    if (
                         preferences.provider_id == "audio_cpp"
                         and staging_failed_provider_id == preferences.provider_id
                     ):
