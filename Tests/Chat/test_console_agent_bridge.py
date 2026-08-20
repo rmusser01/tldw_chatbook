@@ -167,9 +167,11 @@ class _ChunkGateway:
         )  # each entry: list of str and/or ProviderToolCalls
         self.calls = 0
         self.tools_seen = []
+        self.messages_seen = []
 
     async def stream_chat(self, resolution, messages, tools=None, **kwargs):
         self.tools_seen.append(tools)
+        self.messages_seen.append([dict(message) for message in messages])
         chunks = self._scripts[self.calls]
         self.calls += 1
         for chunk in chunks:
@@ -244,6 +246,85 @@ def _join_fleet_threads(timeout=5.0):
             thread.join(timeout)
 
 
+@pytest.mark.parametrize(
+    ("case", "agent_messages", "supersede"),
+    [
+        ("text", [{"role": "user", "content": "text"}], False),
+        (
+            "multimodal",
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "look"},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": "data:image/png;base64,AA=="},
+                        },
+                    ],
+                }
+            ],
+            False,
+        ),
+        ("retry", [{"role": "user", "content": "retry"}], True),
+        ("regenerate", [{"role": "user", "content": "regenerate"}], True),
+        ("continue", [{"role": "user", "content": "continue"}], True),
+    ],
+)
+def test_all_agent_dispatch_shapes_receive_one_startup_rider(
+    tmp_path, case, agent_messages, supersede
+):
+    from tldw_chatbook.Agents.project_instruction_resolver import (
+        InstructionSource,
+        StartupInstructionCandidate,
+    )
+    from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
+
+    gateway = _ChunkGateway([["done"]])
+    bridge, _db, store, session, assistant_id = _bridge_with_gateway(
+        tmp_path / case, gateway
+    )
+    source = InstructionSource(
+        canonical_path=tmp_path / "AGENTS.md",
+        relative_path="AGENTS.md",
+        scope=".",
+        kind="standard",
+        body="BRIDGE_STARTUP_SENTINEL",
+        byte_count=23,
+        digest="a" * 64,
+    )
+    candidate = StartupInstructionCandidate(
+        binding_id="b",
+        binding_root=tmp_path,
+        locator_fingerprint="f" * 64,
+        dispatch_started_wall_ns=1,
+        source=source,
+        outcomes=(),
+    )
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        assistant_id,
+        resolution=_NativeResolution(),
+        agent_messages=agent_messages,
+        supersede_previous=supersede,
+        startup_instruction_candidate=candidate,
+        confirm_project_instruction_dispatch=lambda _snapshot: "proceed",
+    )
+    assert outcome.status == "done", outcome.steps
+    rows = [
+        row
+        for row in gateway.messages_seen[0]
+        if "BRIDGE_STARTUP_SENTINEL" in str(row.get("content", ""))
+    ]
+    assert len(rows) == 1
+    assert rows[0][EPHEMERAL_ORIGIN_KEY] == "project_instructions"
+    assert "BRIDGE_STARTUP_SENTINEL" not in str(
+        [message.content for message in store.messages_for_session(session.id)]
+    )
+
+
 class _SignalChunkGateway(_ChunkGateway):
     """Scripted gateway that records the out-of-band signal by identity."""
 
@@ -306,6 +387,7 @@ def _bridge(tmp_path, scripts, native_tools_enabled=None):
 
 
 def _bridge_with_gateway(tmp_path, gateway, native_tools_enabled=None):
+    tmp_path.mkdir(parents=True, exist_ok=True)
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
@@ -337,6 +419,58 @@ def _run(bridge, store, session, assistant_id, **over):
     # run_reply returns (run_id, outcome); these tests assert on the outcome.
     _run_id, outcome = bridge.run_reply(**kwargs)
     return outcome
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("force_character", [False, True])
+async def test_plain_and_character_forced_plain_never_resolve_project_instructions(
+    monkeypatch, force_character
+):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents.project_instruction_resolver import (
+        ProjectInstructionResolver,
+    )
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+    gateway = _ChunkGateway([["plain done"]])
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    if force_character:
+        session.assistant_kind = "character"
+    user = store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="question"
+    )
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+
+    class ExplodingBridge:
+        def run_reply(self, **_kwargs):
+            raise AssertionError("character sessions must stay plain")
+
+    monkeypatch.setattr(
+        ProjectInstructionResolver,
+        "resolve_startup",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("plain sends must not read AGENTS.md")
+        ),
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_bridge=ExplodingBridge(),
+        agent_runtime_enabled=force_character,
+    )
+    result = await controller._stream_assistant_response_inner(
+        resolution=SimpleNamespace(
+            provider="openai", model="gpt-4o-mini", max_tokens=128
+        ),
+        provider_messages=[{"role": "user", "content": user.content}],
+        assistant_message_id=assistant.id,
+    )
+    assert result.accepted is True
+    assert gateway.calls == 1
 
 
 def test_compose_prepends_session_prompt_then_agent_prompt():

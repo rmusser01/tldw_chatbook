@@ -28,6 +28,7 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatRateLimitError,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
+from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.console_provider_endpoints import (
     effective_provider_endpoint,
     generic_endpoint_differs,
@@ -904,7 +905,14 @@ def build_llamacpp_chat_payload(
     """
     payload: dict[str, Any] = {
         "model": model,
-        "messages": list(messages),
+        "messages": [
+            {
+                key: value
+                for key, value in message.items()
+                if key != EPHEMERAL_ORIGIN_KEY
+            }
+            for message in messages
+        ],
         "stream": stream,
     }
     if temperature is not None:

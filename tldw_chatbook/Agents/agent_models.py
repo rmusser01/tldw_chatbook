@@ -517,6 +517,7 @@ class AgentConfig:
     budget: RunBudget = field(default_factory=RunBudget)
     native_tools: bool = True
     workspace_context_note: str = ""
+    response_reserve_tokens: int = 2048
 
 
 @dataclass

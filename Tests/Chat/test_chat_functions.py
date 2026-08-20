@@ -21,6 +21,8 @@ from tldw_chatbook.config import CONFIG_TOML_CONTENT, RuntimeConfigSnapshot
 import tldw_chatbook.Chat.Chat_Functions as chat_functions_module
 import tldw_chatbook.LLM_Calls.LLM_API_Calls as llm_api_calls_module
 from tldw_chatbook.Chat.Chat_Functions import (
+    API_CALL_HANDLERS,
+    EPHEMERAL_GROUPING_ENDPOINTS,
     chat_api_call,
     chat,
     save_chat_history_to_db_wrapper,
@@ -31,6 +33,7 @@ from tldw_chatbook.Chat.Chat_Functions import (
     process_user_input,
     ChatDictionary,
 )
+from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.Chat_Deps import ChatAuthenticationError, ChatAPIError
 #
 #######################################################################################################################
@@ -64,6 +67,36 @@ DUMMY_OPENAI_API_KEY = "DUMMY_OPENAI_API_KEY"
 DUMMY_ANTHROPIC_API_KEY = "DUMMY_ANTHROPIC_API_KEY"
 DUMMY_HUGGINGFACE_API_KEY = "DUMMY_HUGGINGFACE_API_KEY"
 DUMMY_HUGGINGFACE_SECRET_VALUE = "DUMMY_HUGGINGFACE_SECRET_VALUE"
+
+
+@pytest.mark.parametrize("endpoint", sorted(API_CALL_HANDLERS))
+def test_chat_api_handler_matrix_strips_or_preserves_ephemeral_marker(
+    monkeypatch, endpoint
+):
+    captured = {}
+
+    def handler(**kwargs):
+        captured.update(kwargs)
+        return "ok"
+
+    monkeypatch.setitem(chat_functions_module.API_CALL_HANDLERS, endpoint, handler)
+    messages = [
+        {
+            "role": "user",
+            "content": "context",
+            EPHEMERAL_ORIGIN_KEY: "project_instructions",
+        }
+    ]
+    chat_functions_module.chat_api_call(endpoint, messages_payload=messages)
+
+    sent = captured[
+        chat_functions_module.PROVIDER_PARAM_MAP[endpoint]["messages_payload"]
+    ]
+    if endpoint in EPHEMERAL_GROUPING_ENDPOINTS:
+        assert sent[0][EPHEMERAL_ORIGIN_KEY] == "project_instructions"
+    else:
+        assert EPHEMERAL_ORIGIN_KEY not in sent[0]
+    assert messages[0][EPHEMERAL_ORIGIN_KEY] == "project_instructions"
 
 
 def test_huggingface_chat_api_call_passes_max_tokens_to_adapter(monkeypatch):

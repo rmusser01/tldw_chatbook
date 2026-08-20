@@ -87,6 +87,7 @@ from tldw_chatbook.Utils.sensitive_llm_logging import (  # noqa: E402
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram  # noqa: E402
 from tldw_chatbook.config import load_settings  # noqa: E402
 from .chat_persistence_service import ChatPersistenceService  # noqa: E402
+from .console_project_instructions import EPHEMERAL_ORIGIN_KEY  # noqa: E402
 from .provider_continuation import (  # noqa: E402
     ProviderContinuationCheckpoint,
     dump_provider_continuation_json,
@@ -141,6 +142,21 @@ API_CALL_HANDLERS = {
     "local_vllm": chat_with_vllm,
     "local_mlx_lm": chat_with_mlx_lm,
 }
+
+EPHEMERAL_GROUPING_ENDPOINTS = frozenset({"anthropic", "google"})
+
+
+def _project_instruction_messages_for_handler(
+    endpoint: str, messages: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """Copy request rows and remove internal origin tags where not consumed."""
+    preserve = endpoint in EPHEMERAL_GROUPING_ENDPOINTS
+    return [
+        dict(message)
+        if preserve or EPHEMERAL_ORIGIN_KEY not in message
+        else {key: value for key, value in message.items() if key != EPHEMERAL_ORIGIN_KEY}
+        for message in messages
+    ]
 
 # Keep this list explicit rather than deriving it from ``API_CALL_HANDLERS``.
 # The parity test then forces every newly registered chat handler through the
@@ -1003,6 +1019,10 @@ def chat_api_call(
             f"Unsupported API endpoint: {endpoint_display}. "
             f"Valid endpoints: {', '.join(sorted(API_CALL_HANDLERS))}"
         )
+
+    messages_payload = _project_instruction_messages_for_handler(
+        endpoint_lower, messages_payload
+    )
 
     params_map = PROVIDER_PARAM_MAP.get(endpoint_lower, {})
     call_kwargs = {}

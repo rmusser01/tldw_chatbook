@@ -57,6 +57,10 @@ from tldw_chatbook.Agents.agent_models import (
 )
 from tldw_chatbook.Agents import agent_service as agent_service_module
 from tldw_chatbook.Agents.agent_service import SUBAGENT_SYSTEM_PROMPT, AgentService
+from tldw_chatbook.Agents.project_instruction_resolver import (
+    InstructionSnapshot,
+    StartupInstructionCandidate,
+)
 from tldw_chatbook.Agents.agent_stream import StreamGate
 from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator, FleetHandle
 from tldw_chatbook.Agents.tool_catalog import (
@@ -86,6 +90,7 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ProviderToolCalls,
     ProviderTurnMetadata,
 )
+from tldw_chatbook.Chat.console_history_budget import DEFAULT_RESPONSE_RESERVATION
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationOwnerGroup,
     ContinuationRestoreTarget,
@@ -2803,6 +2808,11 @@ class ConsoleAgentBridge:
         continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
         continuation_target: ContinuationRestoreTarget | None = None,
         continuation_owner_key: str | None = None,
+        startup_instruction_candidate: StartupInstructionCandidate | None = None,
+        confirm_project_instruction_dispatch: Callable[
+            [InstructionSnapshot], str
+        ]
+        | None = None,
     ) -> tuple[str, RunOutcome]:
         protocol = getattr(resolution, "continuation_protocol", None)
         if continuation_target is None and isinstance(protocol, str) and protocol:
@@ -3213,6 +3223,10 @@ class ConsoleAgentBridge:
             # shared provider falls back to the active workspace, so note and
             # enforced roots can diverge there -- test/embedding only.
             workspace_context_note=workspace_context_note(run_workspace_id),
+            response_reserve_tokens=(
+                getattr(resolution, "max_tokens", None)
+                or DEFAULT_RESPONSE_RESERVATION
+            ),
         )
         # One event loop for the whole run (PR #629 Fix 1(c)): every turn
         # this run makes -- primary tool-call turns, any sub-agent turns,
@@ -3543,6 +3557,10 @@ class ConsoleAgentBridge:
             # kill switch is on, which leaves `AgentService` to take its
             # own inline path exactly as before.
             fleet_coordinator=self._conversation_fleet_coordinator(conversation_id),
+            startup_instruction_candidate=startup_instruction_candidate,
+            confirm_project_instruction_dispatch=(
+                confirm_project_instruction_dispatch
+            ),
         )
         # PR2b Task 1: publish BEFORE `run_turn` is called (below) -- see
         # `self._fleet_services`'s own docstring in `__init__` for the

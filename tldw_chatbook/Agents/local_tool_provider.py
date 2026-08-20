@@ -201,20 +201,28 @@ class LocalToolProvider:
         on_todo_change: TodoChangeCallback | None = None,
         watchlists_service: WatchlistsToolService | None = None,
         no_callback_refusal: str | None = None,
+        allow_write: bool = True,
     ) -> None:
         self._root = workspace_root
+        selected_specs = (
+            specs
+            if specs is not None
+            else _default_specs(
+                 workspace_root,
+                 todo_store=todo_store,
+                 on_todo_change=on_todo_change,
+                 watchlists_service=watchlists_service,
+             )
+        )
+        if not allow_write:
+            selected_specs = [
+                spec
+                for spec in selected_specs
+                if spec.name not in {"fs_write", "fs_edit", "fs_patch"}
+            ]
         self._specs = {
             s.name: s
-            for s in (
-                specs
-                if specs is not None
-                else _default_specs(
-                    workspace_root,
-                    todo_store=todo_store,
-                    on_todo_change=on_todo_change,
-                    watchlists_service=watchlists_service,
-                )
-            )
+            for s in selected_specs
         }
         self._resolve_state = resolve_state or (
             lambda hub: EffectiveToolState(state="ask", origin="global_default")

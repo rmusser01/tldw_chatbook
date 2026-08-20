@@ -312,9 +312,7 @@ async def test_compaction_folds_summary_and_drops_pre_boundary_rows():
 
     # Compaction anchors the boundary by native id, so the payload must be
     # built id-annotated (as every real send path does).
-    payload = controller._provider_messages_for_session(
-        session.id, annotate_ids=True
-    )
+    payload = controller._provider_messages_for_session(session.id, annotate_ids=True)
     compacted = controller._apply_context_summary_compaction(session.id, payload)
 
     texts = _payload_texts(compacted)
@@ -344,9 +342,7 @@ async def test_compaction_creates_system_message_when_payload_has_none():
     u1, a1, u2, a2, u3, a3 = _seed_conversation(store, session.id)
     store.set_session_context_summary(session.id, "S", u3.id)
 
-    payload = controller._provider_messages_for_session(
-        session.id, annotate_ids=True
-    )
+    payload = controller._provider_messages_for_session(session.id, annotate_ids=True)
     assert payload[0]["role"] != "system"  # no system prompt set
 
     compacted = controller._apply_context_summary_compaction(session.id, payload)
@@ -372,9 +368,10 @@ async def test_leak_rule_pre_boundary_payload_is_byte_identical():
 
     store.set_session_context_summary(session.id, "S", u3.id)
     compacted = controller._apply_context_summary_compaction(
-        session.id, controller._provider_messages_for_session(
+        session.id,
+        controller._provider_messages_for_session(
             session.id, before_message_id=a1.id, annotate_ids=True
-        )
+        ),
     )
 
     # The boundary (u3) id is absent from this ancestors-only payload, so
@@ -391,9 +388,7 @@ async def test_dangling_boundary_leaves_payload_untouched():
     # A boundary id that is not a live message (branch switch / deletion).
     store.set_session_context_summary(session.id, "S", "ghost-native-id")
 
-    payload = controller._provider_messages_for_session(
-        session.id, annotate_ids=True
-    )
+    payload = controller._provider_messages_for_session(session.id, annotate_ids=True)
     compacted = controller._apply_context_summary_compaction(session.id, payload)
 
     assert compacted == payload
@@ -476,9 +471,7 @@ async def test_compaction_anchors_on_boundary_id_not_duplicate_text():
     u1, a1, u2, a2, u3, a3 = _seed_duplicate_content(store, session.id)
     store.set_session_context_summary(session.id, "S", u3.id)
 
-    payload = controller._provider_messages_for_session(
-        session.id, annotate_ids=True
-    )
+    payload = controller._provider_messages_for_session(session.id, annotate_ids=True)
     compacted = controller._apply_context_summary_compaction(session.id, payload)
 
     texts = _payload_texts(compacted)
@@ -543,13 +536,9 @@ async def test_compaction_anchors_after_skill_substitution_inline_rewrite():
     )
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="q1")
-    store.append_message(
-        session.id, role=ConsoleMessageRole.ASSISTANT, content="a1"
-    )
+    store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="a1")
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="q2")
-    store.append_message(
-        session.id, role=ConsoleMessageRole.ASSISTANT, content="a2"
-    )
+    store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="a2")
     # The boundary is the final user row, and its content resolves to a
     # skill -- the exact overlap the review finding calls out.
     u3 = store.append_message(
@@ -557,12 +546,14 @@ async def test_compaction_anchors_after_skill_substitution_inline_rewrite():
     )
     store.set_session_context_summary(session.id, "S", u3.id)
 
-    payload = controller._provider_messages_for_session(
-        session.id, annotate_ids=True
-    )
-    substituted, refuse, notes, bindings, block = (
-        await controller._apply_skill_substitution(payload)
-    )
+    payload = controller._provider_messages_for_session(session.id, annotate_ids=True)
+    (
+        substituted,
+        refuse,
+        notes,
+        bindings,
+        block,
+    ) = await controller._apply_skill_substitution(payload)
     assert refuse is None
     assert bindings == ("do-it",)
     assert substituted[-1]["content"] == "RENDERED[go]"
@@ -601,9 +592,7 @@ async def test_native_message_id_key_stripped_before_provider():
     assert result.accepted is True
 
     assert gateway.captured_messages is not None
-    assert all(
-        "_native_message_id" not in row for row in gateway.captured_messages
-    )
+    assert all("_native_message_id" not in row for row in gateway.captured_messages)
     # Sanity: compaction genuinely ran on this send (summary folded), so the
     # strip assertion above is not vacuous.
     assert any(
@@ -611,6 +600,67 @@ async def test_native_message_id_key_stripped_before_provider():
         and "[Summary of earlier conversation]" in row.get("content", "")
         for row in gateway.captured_messages
     )
+
+
+def test_compacted_summary_precedes_run_local_startup_rider(tmp_path):
+    from tldw_chatbook.Agents.agent_models import AgentConfig
+    from tldw_chatbook.Agents.agent_service import AgentService
+    from tldw_chatbook.Agents.project_instruction_resolver import (
+        InstructionSource,
+        StartupInstructionCandidate,
+    )
+    from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    calls = []
+    service = AgentService(
+        AgentRunsDB(tmp_path / "runs.db", client_id="test"),
+        ToolCatalogRegistry(),
+        chat_call=lambda **kwargs: (
+            calls.append(kwargs) or {"choices": [{"message": {"content": "done"}}]}
+        ),
+        startup_instruction_candidate=StartupInstructionCandidate(
+            binding_id="b",
+            binding_root=tmp_path,
+            locator_fingerprint="f" * 64,
+            dispatch_started_wall_ns=1,
+            source=InstructionSource(
+                canonical_path=tmp_path / "AGENTS.md",
+                relative_path="AGENTS.md",
+                scope=".",
+                kind="standard",
+                body="REWIND_RIDER_SENTINEL",
+                byte_count=21,
+                digest="d" * 64,
+            ),
+            outcomes=(),
+        ),
+        confirm_project_instruction_dispatch=lambda _snapshot: "proceed",
+    )
+    service.run_turn(
+        conversation_id="c",
+        messages=[
+            {
+                "role": "system",
+                "content": "[Summary of earlier conversation]\nCOMPACTED",
+            },
+            {"role": "user", "content": "continue"},
+        ],
+        config=AgentConfig(
+            model="gpt-4o-mini", system_prompt="system", native_tools=False
+        ),
+        api_endpoint="openai",
+    )
+    payload = calls[0]["messages_payload"]
+    summary_index = next(
+        i for i, row in enumerate(payload) if "COMPACTED" in str(row.get("content"))
+    )
+    rider_index = next(
+        i
+        for i, row in enumerate(payload)
+        if "REWIND_RIDER_SENTINEL" in str(row.get("content"))
+    )
+    assert summary_index < rider_index
 
 
 # ---------------------------------------------------------------------------
