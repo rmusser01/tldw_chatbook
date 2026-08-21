@@ -11,9 +11,10 @@
 Bound every direct named section body in the Console Context and Inspector rails to
 20 rendered content lines. Short sections use their natural height. Longer sections
 scroll internally and expose a separate one-line `▼ more — scroll` affordance while
-content remains below. Context adapts the ceiling downward when necessary to keep all
-of its section headers visible; Inspector retains its outer scroll and gains a separate
-outer fold hint for any outer content below the viewport.
+content remains below. Context adapts the ceiling downward while its headers fit; at
+heights where the headers themselves cannot fit, its outer body becomes the fallback
+scroll owner. Inspector retains its outer scroll and gains a distinct outer fold hint
+for content below the viewport.
 
 The primary usage target is a maximized, browser-like terminal. The design therefore
 optimizes 235x52 and 160x45 without abandoning the established 120x30 and 80x24
@@ -42,8 +43,9 @@ This change preserves the following accepted behavior:
 
 - Staged Sources remain first in Inspector and above Source Readiness.
 - Scope remains a compact sibling row, not a new section or source picker.
-- Context direct section headers remain visible at supported terminal heights, as
-  required by TASK-15110.
+- Context direct section headers remain simultaneously visible whenever their fixed
+  chrome fits the rail body, preserving TASK-15110. When it cannot physically fit,
+  every header remains reachable through an explicitly signaled outer Context scroll.
 - Context and Inspector rail labels, priorities, stored preferences, 70/74-column
   explicit-open floors, responsive focus handoff, and exact-100 geometry remain as
   defined by ADR-043 and TASK-19427.
@@ -87,7 +89,7 @@ The contract applies to these named Inspector sections when present:
 - World Books
 - Session Settings
 - Live Work or Live work sources (the mutually exclusive final card)
-- Other, when a visible `Review Changes` action or unrecognized run row/action exists
+- Changes, when the `Review Changes` action is visible
 
 The run-status summary and Scope row remain compact non-section rows. Disabled controls
 with zero rendered height do not consume a content line.
@@ -99,8 +101,10 @@ with zero rendered height do not consume a content line.
 - Adding a Console-native source picker.
 - Changing section open-state persistence.
 - Persisting scroll offsets across application sessions.
-- Redesigning the rail visual language, ASCII collapse controls, badges, or colors.
+- Redesigning the rail visual language, badges, colors, or ordinary collapse controls;
+  the constrained Context `[>]` state is the sole added ASCII control state.
 - Adding more nested scroll owners below a direct rail section.
+- Exposing unowned Inspector content through a generic user-facing catch-all section.
 
 ## Visual and sizing contract
 
@@ -113,8 +117,8 @@ content viewport height `A`:
 - `1 <= D <= A`: the body occupies `D` rows and has no scrollbar or hint.
 - `D > A > 0`: the body occupies `A` scrollable content rows and reserves one
   additional hint row below it.
-- `A == 0`: the body and hint occupy zero rows even when `D > 0`; its visible header
-  remains the access and recovery target.
+- `A == 0`: the body and hint occupy zero rows even when `D > 0`; normal Context mode
+  marks its visible header `· no room` and exposes transient `[>]` reprioritization.
 - A header is always outside `A` and outside the scroll viewport.
 - The hint never overlays, covers, or replaces a content row.
 - Wrapped terminal rows count physically. A logical item that wraps to three screen
@@ -136,7 +140,7 @@ there is no overflow and the entire slot is removed from layout.
 Inspector direct sections normally receive `A = min(D, 20)`. Context uses the
 adaptive allocation below. A section never reserves blank rows to reach 20.
 
-The hint copy is exactly:
+The local section hint copy is exactly:
 
 ```text
 ▼ more — scroll
@@ -144,6 +148,20 @@ The hint copy is exactly:
 
 It uses existing semantic surface/text tokens and the established one-row fold-hint
 grammar. Color is not the only continuation signal.
+
+The pinned outer-rail hint copy is exactly:
+
+```text
+▼ more sections — scroll
+```
+
+The distinct noun differentiates rail scrolling from local section scrolling while
+remaining one line inside the 26-cell narrow Context content width. The outer cue is
+used by Inspector whenever its body overflows and by Context only in the short-height
+fallback mode. When a local viewport or one of its descendants owns focus, its header
+and viewport receive the same dimensionally stable active treatment: existing focus
+background plus underlined header text. When the outer body owns focus, the rail title
+is underlined instead. These non-color signals make the active scroll owner visible.
 
 ## Shared bounded-section body
 
@@ -171,47 +189,88 @@ Fold state is derived from laid-out geometry:
 has_more_below = max_scroll_y > 0 and scroll_y < max_scroll_y
 ```
 
-The component schedules one post-refresh reconciliation after mount, resize, content
-structure changes, open/close, and allocation changes. Scroll-position changes update
-the hint without recomposing content. A missing body or hint during recompose fails
-closed and is retried on the next scheduled reconciliation.
+The component exposes an idempotent `request_reconcile()` seam that coalesces requests
+into one post-refresh reconciliation. It runs after mount, resize, content structure
+changes, open/close, and allocation changes. Scroll-position changes update the hint
+without recomposing content. A missing body or hint during recompose fails closed and
+is retried on the next scheduled reconciliation.
+
+Textual descendant Mount, Unmount, and Resize events do not bubble, so implicit
+ancestor resize observation is not sufficient. Each owning mutation path must call
+`request_reconcile()` after its existing state update:
+
+- Context workspace trays, Conversations, Model/settings rows, Agent rows/actions,
+  Details, and Character remounts;
+- Inspector Sources, Changed Files, Run groups/actions, dictionaries, World Books,
+  Session Settings, and live-work card swaps.
+
+Every Inspector section reconciliation also invalidates the outer Inspector fold state
+through the supplied outer owner. This preserves one coalesced refresh boundary even
+when multiple sections update in the same synchronization tick.
 
 ## Context height allocation
 
-Context must preserve all direct headers while using available expanded-terminal
-height efficiently. Allocation is a pure deterministic function of:
+Context preserves all direct headers simultaneously when their fixed chrome fits the
+available body height. Allocation is a pure deterministic function of:
 
 - the Context body viewport height;
 - measured visible header and inter-section chrome height;
 - each direct section's open state;
-- each open section's uncapped desired rendered content height `D`.
+- each open section's uncapped desired rendered content height `D`;
+- the session-local most recently activated section ID.
 
+### Normal header-fit mode
+
+When the complete header chrome fits the Context body, its outer body does not scroll.
 The allocator follows these rules:
 
 1. Reserve every visible direct header and required fixed inter-section chrome.
 2. Closed or empty section bodies receive zero rows and no hint.
-3. Walk open non-empty sections in DOM order and fund a base allocation only while the
-   remaining budget can represent it honestly: one row for `D == 1`, or one content
-   row plus one hint row for `D > 1`. Sections that cannot be funded receive `A = 0`
-   and no false hint; their visible header remains the discovery and recovery target.
-4. Only after that base pass, distribute remaining content rows among funded longer
-   sections by progressive water filling, never exceeding 20 content rows for a
-   section. An unfunded later section is considered before an already funded section
-   receives a second content row.
+3. Consider the most recently activated open section first, then the remaining open
+   sections in DOM order. Fund a base allocation only while the budget can represent
+   it honestly: one row for `D == 1`, or one content row plus one hint row for `D > 1`.
+4. After the base pass, distribute remaining rows by progressive water filling, never
+   exceeding 20 content rows. The activated section wins the first tie; DOM order
+   breaks all remaining ties.
 5. Derive hint cost from the uncapped predicate `D > A`, not from a value already
    capped at 20. Thus `D == 20, A == 20` has no hint, while `D == 21, A == 20` does.
 6. When increasing `A` makes `A == D <= 20`, release that section's hint row back to
    the pool and re-run distribution until stable.
-7. DOM order is the sole deterministic priority when the budget cannot fund every
-   body. The order is Sessions, Workspaces, Conversations, Model, Agent, Details,
+7. An open non-empty section that cannot receive its honest base allocation gets
+   `A = 0`, no hint, the header suffix `· no room`, and the constrained toggle `[>]`.
+   Activating `[>]` changes only the transient allocation priority, immediately
+   recomputes, and does not close the section or alter its persisted open preference.
+   Once funded, the ordinary open-state toggle returns. This makes zero allocation a
+   visible, recoverable constraint rather than an empty-body failure.
+8. The stable DOM order is Sessions, Workspaces, Conversations, Model, Agent, Details,
    Character.
-8. Headers have absolute priority over bodies. At short explicit-open heights, an
-   open section may therefore have a zero-height body; the design does not claim that
-   every open body is simultaneously readable at 80x24.
+
+### Short-height outer-scroll fallback
+
+When fixed header chrome alone exceeds the Context body viewport, normal mode is
+mathematically impossible. Context switches to a height-only outer-scroll fallback:
+
+1. The Context outer body becomes scrollable and reserves the distinct pinned
+   `▼ more sections — scroll` slot while outer content remains below.
+2. Every open non-empty section receives an honest base allocation: one row for
+   `D == 1`, or one content row plus its local hint for `D > 1`. No open section gets a
+   zero-height body in this mode.
+3. The most recently activated section may receive additional content rows up to
+   `min(D, 20, max(1, H - 3))`, where `H` is the outer Context body viewport height and
+   three rows reserve its two-row header plus a possible local hint. Other sections
+   remain at their base allocation so one active section is readable without making
+   the short rail unbounded.
+4. The outer scroll offset brings the activated section header and at least its first
+   content row into view. Switching modes preserves open preferences and clamps both
+   outer and inner offsets; it does not persist the active priority.
+5. Width-responsive visibility, explicit-open width floors, and rail priority remain
+   unchanged. This fallback is selected by measured height, not by a new width
+   breakpoint.
 
 This replaces the fixed `max-height: 20%` rule. Short open sections return unused rows
 to the pool, allowing another open section to approach the 20-line ceiling. At smaller
-heights, sections scroll sooner so later headers remain visible.
+feasible heights, sections scroll sooner so headers remain simultaneous; below that
+physical limit, the outer fallback keeps every header and body reachable.
 
 ## Inspector structure
 
@@ -221,11 +280,12 @@ The Inspector outer rail remains:
 2. the scrollable Inspector body containing direct sections in existing order;
 3. a separate pinned outer fold hint.
 
-The outer hint uses the outer body's own `scroll_y` and `max_scroll_y`. It communicates
-that any outer content remains below the rail viewport, including the remainder of a
-partially visible section, and is independent of all per-section hints. Its pinned slot
-remains one row high while the outer body overflows, becomes blank at scroll end, and
-leaves layout only when outer overflow disappears.
+The outer hint uses the exact `▼ more sections — scroll` copy and the outer body's own
+`scroll_y` and `max_scroll_y`. It communicates that any outer content remains below,
+including the remainder of a partially visible section, and is independent of all
+local `▼ more — scroll` hints. Its pinned slot remains one row high while the outer
+body overflows, becomes blank at scroll end, and leaves layout only when outer overflow
+disappears.
 
 `ConsoleRunInspector` currently emits flat headings followed by rows and actions. It
 will group each existing `_ROW_GROUPS` entry into a stable heading plus bounded body.
@@ -263,18 +323,24 @@ direct section boundary:
 | Selected Conversation | Selected conversation, Conversation source, Workspace, Resume state, both Prefill rows. |
 | Session Defaults | Session provider, model, endpoint, sampling, persona. |
 | Selected Message | Selected message, Message actions, Keyboard, Variants, Excerpt, Delete confirmation. |
-| Other | The currently unheaded `Review Changes` action plus any future or otherwise unrecognized run rows/actions. It preserves the existing tail order (rows in source order, then actions in source order) after Selected Message and before Chat Dictionaries. It mounts only when at least one owned child has nonzero rendered height; disabled zero-height actions alone do not mount it. |
+| Changes | The `Review Changes` action. It retains the existing tail position after Selected Message and before Chat Dictionaries and mounts only while the action has nonzero rendered height. |
 | Chat Dictionaries | Dictionary rows and dictionary actions. |
 | World Books | World Book rows and World Book actions. |
 | Session Settings | `ConsoleSettingsSummary` rows and Open Settings action. |
 | Live Work / Live work sources | The mutually exclusive pending-launch status card or no-launch source-readiness card, including its RAG controls and source rows. |
 
-This table replaces `_ACTION_GROUPS["Changes"]`'s unheaded fall-through with the
-bounded Other boundary at the same position. It also assigns `Send blocked`,
-`Recovery action`, and `RAG/source`, which currently fall through `_ROW_GROUPS`.
-Known row/action IDs and their relative order within each boundary remain unchanged.
-Only the new body and hint nodes receive derived IDs; compatibility wrappers retain
-the old section and header IDs.
+This table gives `_ACTION_GROUPS["Changes"]` its missing named boundary at the same
+position. It also assigns `Send blocked`, `Recovery action`, and `RAG/source`, which
+currently fall through `_ROW_GROUPS`. Known row/action IDs and their relative order
+within each boundary remain unchanged. Only the new body and hint nodes receive
+derived IDs; compatibility wrappers retain the old section and header IDs.
+
+The ownership classifier is exhaustive. Test and development builds raise an explicit
+contract error for an unknown row label or action ID; no generic `Other` section is
+rendered. Production fails closed without exposing internal labels: it retains the
+known sections, logs the stable unknown label/action identifier, and changes the
+compact run-status summary to `Status: Inspector data incomplete`. A subsequent valid
+state clears that summary and reconciles normally.
 
 ## Interaction contract
 
@@ -283,10 +349,19 @@ the old section and header IDs.
 - A section viewport joins focus order only while it overflows.
 - A short, empty, closed, or absent body adds no keyboard stop.
 - The hint is never focusable.
-- Focus styling uses the existing Console focus tokens without changing dimensions.
+- Focus traversal is `section viewport -> enabled interactive descendants in DOM
+  order -> next section`; Shift+Tab reverses the path. The outer rail body remains its
+  own stop for outer scrolling and section navigation.
+- Focusing a descendant scrolls it fully into its local viewport before fold state is
+  reconciled. It does not reset the section's stored session-local offset.
+- While a viewport or descendant owns focus, its header is underlined and its viewport
+  uses the existing Console focus background. The styles are preallocated and do not
+  change geometry. When the outer body owns focus, the rail title is underlined
+  instead, distinguishing the active scroll owner without color alone.
 - If a focused section stops overflowing, the shared body invokes its owner-supplied
-  recovery callback. Context targets the same section's toggle. Inspector first
-  targets the nearest enabled visible control in that section, then its collapse
+  recovery callback. If a focused descendant disappears, recovery first selects the
+  nearest enabled visible control in the same section. Context then targets the same
+  section's toggle; Inspector then targets the outer body and finally its collapse
   button.
 - Responsive hiding continues to hand focus to the appropriate rail reveal control.
 
@@ -301,6 +376,22 @@ While an overflowing body itself has focus:
 Existing child controls keep their established input behavior. No terminal-convention
 Ctrl binding or app-global binding is added or shadowed.
 
+### Inspector section navigation
+
+The Inspector adds rail-local `n` (next section) and `p` (previous section) commands.
+They are active only while focus is inside Inspector and not inside an editable input
+that owns printable keys. The commands:
+
+1. find the next/previous mounted direct boundary without wrapping;
+2. scroll its header fully into the outer viewport;
+3. focus its overflowing viewport, otherwise its first enabled control, otherwise the
+   outer Inspector body;
+4. preserve local scroll offsets and section open state.
+
+The context-sensitive footer/F1 help advertises `n/p Sections` only while Inspector is
+the active rail. The screen does not bind `n` or `p` globally, so transcript selection,
+composer typing, and other panes retain their existing behavior.
+
 ### Pointer scrolling and boundary handoff
 
 Pointer-wheel input over an overflowing body scrolls that body while movement remains
@@ -313,7 +404,9 @@ over a short body go directly to the outer rail.
 Section scroll offset survives in-place state synchronization and rail
 collapse/reopen. When content shrinks or allocation decreases, Textual clamps the
 offset to the new valid maximum and fold state reconciles afterward. No scroll offset
-is persisted to disk or included in rail preference saves.
+or activated-section allocation priority is persisted to disk or included in rail
+preference saves. Reopening the Console starts with ordinary DOM-order ties until the
+user activates a Context section.
 
 ## Responsive behavior
 
@@ -323,18 +416,25 @@ allocation contract permits.
 
 At 120x30 and 80x24, existing width-responsive rail behavior still decides whether a
 rail is visible. When a rail is visible, bounded sections adapt to the actual height.
-No width breakpoint, rail priority, handle label, stored intent, or exact-100 minimum
-waiver changes in this task.
+At 120x30 the normal header-fit allocator remains active when all header chrome fits.
+At 80x24 an explicitly opened all-section Context state uses the short-height outer
+fallback because the header chrome does not fit. No width breakpoint, rail priority,
+handle label, stored intent, or exact-100 minimum waiver changes in this task.
 
 ## Error and race handling
 
 - Layout-dependent state is never computed from zero-size pre-layout regions.
 - Recompose-time missing selectors cause a no-op, not an exception.
 - Multiple mount/resize/sync requests coalesce into bounded post-refresh work.
+- Each named descendant mutation seam explicitly requests reconciliation; no contract
+  depends on non-bubbling descendant layout events reaching an ancestor.
 - Content shrink clamps scroll offsets before hint visibility is asserted.
-- An allocator receiving no usable body rows prioritizes headers and returns a
-  deterministic zero allocation rather than negative dimensions.
+- A normal-mode allocator receiving too few usable body rows marks unfunded sections
+  `· no room` and supports transient reprioritization rather than silently appearing
+  empty. If header chrome itself does not fit, it switches to the outer fallback.
 - A section becoming hidden or collapsed cannot leave an invisible focused viewport.
+- Unknown Inspector row/action ownership raises in test/development and produces a
+  compact incomplete-data status plus a stable diagnostic in production.
 - No background worker or database read is introduced for layout reconciliation.
 
 ## Testing strategy
@@ -342,9 +442,12 @@ waiver changes in this task.
 ### Pure tests
 
 - Context allocator: empty, short, long, mixed, all-open, collapsed, tie, and
-  insufficient-budget cases.
+  insufficient-budget cases, activated-section priority, `· no room`, and the exact
+  transition into/out of short-height outer-scroll fallback.
 - Exact 20/21 rendered-line boundary.
 - Deterministic redistribution and hint-row accounting.
+- Exhaustive Inspector row/action ownership; known Changes content passes, and unknown
+  labels/action IDs fail the development contract with no `Other` section.
 
 ### Isolated widget tests
 
@@ -357,6 +460,12 @@ waiver changes in this task.
 - Content shrink clamps the offset and removes obsolete overflow.
 - Focusability toggles with overflow and recovers when overflow disappears.
 - Keyboard scrolling and pointer boundary handoff.
+- Tab/Shift+Tab traversal across viewport and interactive descendants, descendant
+  auto-reveal, active-owner non-color styling, and focused-descendant removal.
+- Coalesced reconciliation from every named Context/Inspector mutation owner, including
+  invalidation of the outer Inspector hint.
+- Inspector-local `n/p` next/previous section navigation, no-wrap boundaries, editable
+  input exclusion, focus target selection, and truthful context-sensitive help.
 - Recompose and in-place update paths preserve stable child and row IDs.
 
 ### Production-CSS compositor tests
@@ -364,15 +473,20 @@ waiver changes in this task.
 At 235x52 and 160x45, exercise both rails expanded with every Context section open.
 At 120x30, exercise the default responsive state and an explicitly opened, all-open
 Context rail. At 80x24, assert the default hidden-rail state and separately exercise
-an explicitly opened, all-open Context rail to prove deterministic zero-body
-allocations without overflow or lost headers. Across those states:
+an explicitly opened, all-open Context rail to prove the outer-scroll fallback keeps
+every header and body reachable. Across those states:
 
-- every visible Context header remains within the Context viewport;
+- normal header-fit states contain every Context header simultaneously; the 80x24
+  fallback reaches each complete header and its base body through outer scrolling;
 - Context short sections do not waste height and long sections receive redistributed
   rows up to 20;
 - Inspector and Context section bodies never exceed their allocation;
 - the 20 content rows and separate hint row do not overlap siblings;
-- the Inspector outer hint remains pinned and tracks outer overflow;
+- local hints use `▼ more — scroll`; Context/Inspector outer hints use the distinct
+  `▼ more sections — scroll`, remain pinned, and track their own overflow;
+- normal-mode `· no room` sections are visibly constrained and become funded when
+  reprioritized; 80x24 never silently loses a header or open non-empty body;
+- Inspector `n/p` navigation reaches every mounted direct boundary in order;
 - collapse/reopen, focus handoff, rail badges, stored preference call counts, and
   responsive geometry remain unchanged.
 
@@ -390,7 +504,8 @@ substitute the repository-wide suite for these behavior-specific tests.
 - Keep old stable IDs or provide explicit compatibility assertions wherever a wrapper
   changes nesting.
 - Update the Console user guide to explain the 20-line section ceiling, local hints,
-  and outer Inspector hint.
+  distinct outer hints, constrained Context reprioritization, short-height outer
+  fallback, focus traversal, and Inspector `n/p` section navigation.
 - Record the task-ID collision correction: the Console Phase 0 stream moves from the
   conflicting TASK-18912/TASK-18913/TASK-18915 IDs to
   TASK-19426/TASK-19427/TASK-19428.
