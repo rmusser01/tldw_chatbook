@@ -90,7 +90,7 @@ jobs:
         pytest Tests --ignore=Tests/UI \
           -n auto --dist loadscope --max-worker-restart=3 \
           --timeout=300 \
-          --json-report \
+          --json-report --json-report-omit log \
           --json-report-file=core-test-results-${{ matrix.os }}-${{ matrix.python-version }}.json
 
     - name: Upload test results
@@ -211,7 +211,7 @@ jobs:
           -n auto --dist loadscope --max-worker-restart=3 \
           --shard-id=${{ matrix.shard }} --num-shards=12 \
           --timeout=180 \
-          --json-report \
+          --json-report --json-report-omit log \
           --json-report-file=ui-test-results-${{ matrix.shard }}.json
 
     - name: Upload test results
@@ -290,7 +290,7 @@ jobs:
     - name: Run all tests
       run: |
         pytest ./Tests/ \
-          --json-report \
+          --json-report --json-report-omit log \
           --json-report-file=all-test-results.json \
           --cov=tldw_chatbook \
           --cov-report=xml:coverage-all.xml \
@@ -378,7 +378,7 @@ jobs:
         pytest ./Tests/ \
           --run-slow \
           --timeout=600 \
-          --json-report \
+          --json-report --json-report-omit log \
           --json-report-file=nightly-test-results-${{ matrix.os }}-${{ matrix.python-version }}.json \
           --cov=tldw_chatbook \
           --cov-report=xml:coverage-nightly-${{ matrix.os }}-${{ matrix.python-version }}.xml
