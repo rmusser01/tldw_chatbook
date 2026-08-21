@@ -93,14 +93,14 @@ class PersonaVisualPublicationResult:
     cleanup_candidate: str | None
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class _PinnedSource:
-    parent_fd: int
-    name: str
-    file_fd: int
+    parts: tuple[str, ...]
+    directory_identities: tuple[tuple[int, int, int, int, int], ...]
     identity: tuple[int, int, int, int, int]
+    byte_count: int
+    sha256: str
     data: bytes
-    directory_links: tuple[tuple[int, str, int], ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -364,8 +364,6 @@ def publish_persona_visual(
             os.close(staging_fd)
         if materialized_assets_fd >= 0:
             os.close(materialized_assets_fd)
-        for pinned in reversed(pinned_sources):
-            _close_pinned_source(pinned)
         _close_descriptors(source_chain)
         _close_descriptors([descriptor for _path, descriptor in profile_chain])
 
@@ -783,9 +781,11 @@ def _pin_source_asset(
     source: str,
     metadata: PersonaVisualAssetMetadata,
 ) -> _PinnedSource:
-    parts = source.split("/")
-    current = os.dup(source_root_fd)
-    directory_links: list[tuple[int, str, int]] = []
+    parts = tuple(source.split("/"))
+    current = source_root_fd
+    opened_directories: list[int] = []
+    directory_identities: list[tuple[int, int, int, int, int]] = []
+    file_fd = -1
     try:
         for component in parts[:-1]:
             child = os.open(
@@ -793,7 +793,13 @@ def _pin_source_asset(
                 os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
                 dir_fd=current,
             )
-            directory_links.append((current, component, child))
+            opened_directories.append(child)
+            named = os.stat(component, dir_fd=current, follow_symlinks=False)
+            opened = os.fstat(child)
+            identity = _file_identity(opened)
+            if not stat.S_ISDIR(named.st_mode) or _file_identity(named) != identity:
+                raise ValueError
+            directory_identities.append(identity)
             current = child
         file_fd = os.open(
             parts[-1],
@@ -811,47 +817,26 @@ def _pin_source_asset(
             raise ValueError
         data = _read_bounded(file_fd, metadata.byte_count)
         after = os.fstat(file_fd)
-        if _file_identity(after) != identity:
+        final = os.stat(parts[-1], dir_fd=current, follow_symlinks=False)
+        if (
+            _file_identity(after) != identity
+            or _file_identity(final) != identity
+            or hashlib.sha256(data).hexdigest() != metadata.sha256
+        ):
             raise ValueError
         _validate_asset_bytes(data, metadata)
         return _PinnedSource(
-            current,
-            parts[-1],
-            file_fd,
-            identity,
-            data,
-            tuple(directory_links),
+            parts=parts,
+            directory_identities=tuple(directory_identities),
+            identity=identity,
+            byte_count=metadata.byte_count,
+            sha256=metadata.sha256,
+            data=data,
         )
-    except BaseException:
-        descriptors = {
-            current,
-            *(
-                descriptor
-                for parent, _name, child in directory_links
-                for descriptor in (parent, child)
-            ),
-        }
-        _close_descriptors(list(descriptors))
-        if "file_fd" in locals():
+    finally:
+        if file_fd >= 0:
             os.close(file_fd)
-        raise
-
-
-def _close_pinned_source(pinned: _PinnedSource) -> None:
-    descriptors = {
-        pinned.file_fd,
-        pinned.parent_fd,
-        *(
-            descriptor
-            for parent, _name, child in pinned.directory_links
-            for descriptor in (parent, child)
-        ),
-    }
-    for descriptor in descriptors:
-        try:
-            os.close(descriptor)
-        except OSError:
-            pass
+        _close_descriptors(opened_directories)
 
 
 def _all_source_entries_current(
@@ -868,22 +853,62 @@ def _all_source_entries_current(
         ) != (opened_root.st_dev, opened_root.st_ino):
             return False
         for source in sources:
-            if any(
-                not _entry_matches_fd(parent, name, child)
-                for parent, name, child in source.directory_links
-            ):
-                return False
-            named = os.stat(source.name, dir_fd=source.parent_fd, follow_symlinks=False)
-            opened = os.fstat(source.file_fd)
-            if (
-                not stat.S_ISREG(named.st_mode)
-                or _file_identity(named) != source.identity
-                or _file_identity(opened) != source.identity
-            ):
+            if not _source_entry_current(source_root_fd, source):
                 return False
         return True
     except OSError:
         return False
+
+
+def _source_entry_current(source_root_fd: int, source: _PinnedSource) -> bool:
+    current = source_root_fd
+    opened_directories: list[int] = []
+    file_fd = -1
+    try:
+        for component, expected in zip(source.parts[:-1], source.directory_identities):
+            child = os.open(
+                component,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=current,
+            )
+            opened_directories.append(child)
+            named = os.stat(component, dir_fd=current, follow_symlinks=False)
+            opened = os.fstat(child)
+            if (
+                not stat.S_ISDIR(named.st_mode)
+                or _file_identity(named) != expected
+                or _file_identity(opened) != expected
+            ):
+                return False
+            current = child
+        file_fd = os.open(
+            source.parts[-1],
+            os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0),
+            dir_fd=current,
+        )
+        named = os.stat(source.parts[-1], dir_fd=current, follow_symlinks=False)
+        opened = os.fstat(file_fd)
+        if (
+            not stat.S_ISREG(named.st_mode)
+            or _file_identity(named) != source.identity
+            or _file_identity(opened) != source.identity
+        ):
+            return False
+        data = _read_bounded(file_fd, source.byte_count)
+        after = os.fstat(file_fd)
+        final = os.stat(source.parts[-1], dir_fd=current, follow_symlinks=False)
+        return bool(
+            data == source.data
+            and hashlib.sha256(data).hexdigest() == source.sha256
+            and _file_identity(after) == source.identity
+            and _file_identity(final) == source.identity
+        )
+    except (OSError, ValueError):
+        return False
+    finally:
+        if file_fd >= 0:
+            os.close(file_fd)
+        _close_descriptors(opened_directories)
 
 
 def _file_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int]:

@@ -99,7 +99,7 @@ def _snapshot(
 
 
 def _large_snapshot(
-    source_root: Path, *, asset_count: int = 100
+    source_root: Path, *, asset_count: int = 256
 ) -> PersonaVisualPublicationSnapshot:
     base = _snapshot(source_root)
     sources: list[PersonaVisualPublicationAssetSource] = []
@@ -188,7 +188,7 @@ def test_first_activation_publishes_one_private_immutable_graph(environment) -> 
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX descriptor limit regression")
-def test_publication_bounds_descriptors_for_large_valid_pack(environment) -> None:
+def test_publication_bounds_descriptors_at_contract_maximum(environment) -> None:
     import resource
 
     repository, source_root, _profile_root = environment
