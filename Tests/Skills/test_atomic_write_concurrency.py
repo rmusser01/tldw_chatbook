@@ -197,16 +197,21 @@ class TestCleanupOnFailure:
 
 
 class TestOwnerOnlyTempCreation:
-    @pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits required")
+    @pytest.mark.skipif(
+        os.name != "posix" or not hasattr(os, "fchmod"),
+        reason="POSIX permission bits and fchmod required",
+    )
     def test_owner_only_exclusively_opens_0o600_temp_before_real_replace(
         self, tmp_path, monkeypatch
     ):
         target = tmp_path / "trust.json"
         temp = aw.unique_temp_path(target, hidden=True)
         real_open = os.open
+        real_fchmod = os.fchmod
         real_replace = Path.replace
         open_calls: list[tuple[Path, int, int]] = []
         mode_during_replace: list[int] = []
+        events: list[tuple[str, int]] = []
 
         def tracking_open(path, flags, mode=0o777, *, dir_fd=None):
             open_calls.append((Path(path), flags, mode))
@@ -214,26 +219,37 @@ class TestOwnerOnlyTempCreation:
                 return real_open(path, flags, mode)
             return real_open(path, flags, mode, dir_fd=dir_fd)
 
+        def tracking_fchmod(fd, mode):
+            events.append(("fchmod", mode))
+            return real_fchmod(fd, mode)
+
+        def write(path: Path) -> None:
+            events.append(("writer", _mode(path)))
+            path.write_text("secret", encoding="utf-8")
+
         def tracking_replace(self, other):
             mode_during_replace.append(_mode(self))
             return real_replace(self, other)
 
         monkeypatch.setattr(aw.os, "open", tracking_open)
+        monkeypatch.setattr(aw.os, "fchmod", tracking_fchmod)
         monkeypatch.setattr(Path, "replace", tracking_replace)
 
         aw.replace_atomically(
             temp,
             target,
-            lambda path: path.write_text("secret", encoding="utf-8"),
+            write,
             owner_only=True,
         )
 
         temp_open_calls = [call for call in open_calls if call[0] == temp]
         assert len(temp_open_calls) == 1
         _, flags, requested_mode = temp_open_calls[0]
+        assert flags & os.O_ACCMODE == os.O_WRONLY
         assert flags & os.O_CREAT
         assert flags & os.O_EXCL
         assert requested_mode == 0o600
+        assert events == [("fchmod", 0o600), ("writer", 0o600)]
         assert mode_during_replace == [0o600]
         assert _mode(target) == 0o600
 
@@ -276,6 +292,8 @@ class TestOwnerOnlyTempCreation:
     ):
         target = tmp_path / "trust.json"
         temp = aw.unique_temp_path(target, hidden=True)
+        target_sentinel = b"existing-target-must-survive"
+        target.write_bytes(target_sentinel)
         replace_error = OSError(errno.EIO, "simulated owner-only replace failure")
 
         def fail_replace(self, other):
@@ -293,7 +311,7 @@ class TestOwnerOnlyTempCreation:
 
         assert exc_info.value is replace_error
         assert not temp.exists()
-        assert not target.exists()
+        assert target.read_bytes() == target_sentinel
 
     def test_default_replace_does_not_precreate_temp(self, tmp_path):
         target = tmp_path / "ordinary.txt"
@@ -310,7 +328,10 @@ class TestOwnerOnlyTempCreation:
         assert target.read_text(encoding="utf-8") == "ordinary"
         assert not temp.exists()
 
-    @pytest.mark.skipif(os.name != "posix", reason="POSIX file descriptors required")
+    @pytest.mark.skipif(
+        os.name != "posix" or not hasattr(os, "fchmod"),
+        reason="POSIX file descriptors and fchmod required",
+    )
     def test_owner_only_fchmod_failure_closes_fd_and_cleans_temp(
         self, tmp_path, monkeypatch
     ):
@@ -336,25 +357,32 @@ class TestOwnerOnlyTempCreation:
         monkeypatch.setattr(aw.os, "open", tracking_open)
         monkeypatch.setattr(aw.os, "fchmod", fail_fchmod)
 
-        with pytest.raises(OSError, match="simulated fchmod failure"):
-            aw.replace_atomically(
-                temp,
-                target,
-                lambda path: path.write_bytes(b"must not run"),
-                owner_only=True,
-            )
-
-        assert len(captured_fds) == 1
-        fd = captured_fds[0]
         try:
-            real_fstat(fd)
-        except OSError as exc:
-            assert exc.errno == errno.EBADF
-        else:
-            real_close(fd)
-            pytest.fail("owner-only temp file descriptor remained open")
-        assert not temp.exists()
-        assert not target.exists()
+            with pytest.raises(OSError, match="simulated fchmod failure"):
+                aw.replace_atomically(
+                    temp,
+                    target,
+                    lambda path: path.write_bytes(b"must not run"),
+                    owner_only=True,
+                )
+
+            assert len(captured_fds) == 1
+            with pytest.raises(OSError) as exc_info:
+                real_fstat(captured_fds[0])
+            assert exc_info.value.errno == errno.EBADF
+            assert not temp.exists()
+            assert not target.exists()
+        finally:
+            for fd in captured_fds:
+                try:
+                    real_fstat(fd)
+                except OSError as exc:
+                    if exc.errno == errno.EBADF:
+                        continue
+                try:
+                    real_close(fd)
+                except OSError:
+                    pass
 
 
 # ---------------------------------------------------------------------------
