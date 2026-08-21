@@ -3051,8 +3051,8 @@ class ConsoleTranscript(VerticalScroll):
             message.id for message in self._messages[:start]
         }
 
-    def _set_hidden_tail(self, start: int | None) -> None:
-        """Replace the view-only hidden tail with one contiguous suffix.
+    def _replace_hidden_tail(self, start: int | None) -> None:
+        """Replace the hidden suffix at an already unit-aligned boundary.
 
         Args:
             start: Index of the first hidden-tail message, or ``None`` (or an
@@ -3063,13 +3063,34 @@ class ConsoleTranscript(VerticalScroll):
             self._hidden_tail_ids = set()
             return
         start = max(0, start)
-        start, _end, _owner_id, _owned_ids = self._unit_span_at(
-            self._messages, start
-        )
         self._hidden_tail_start = start
         self._hidden_tail_ids = {
             message.id for message in self._messages[start:]
         }
+
+    def _hide_tail_from(self, start: int | None) -> None:
+        """Hide from ``start``, rounding backward to the containing unit."""
+        if start is None or start >= len(self._messages):
+            self._replace_hidden_tail(None)
+            return
+        start = max(0, start)
+        unit_start, _end, _owner_id, _owned_ids = self._unit_span_at(
+            self._messages, start
+        )
+        self._replace_hidden_tail(unit_start)
+
+    def _reveal_hidden_tail_through(self, end: int) -> None:
+        """Reveal through exclusive ``end``, rounding forward to unit end."""
+        end = max(0, min(end, len(self._messages)))
+        if end == 0:
+            self._replace_hidden_tail(0)
+            return
+        _start, unit_end, _owner_id, _owned_ids = self._unit_span_at(
+            self._messages, end - 1
+        )
+        self._replace_hidden_tail(
+            unit_end if unit_end < len(self._messages) else None
+        )
 
     def _hidden_tail_start_index(self) -> int:
         """Return the hidden-tail boundary index (``len`` when no tail is hidden)."""
@@ -3123,7 +3144,7 @@ class ConsoleTranscript(VerticalScroll):
         load produces. The dropped scroll-back stays in the store and
         rehydrates chunk-by-chunk if the reader scrolls up again.
         """
-        self._set_hidden_tail(None)
+        self._hide_tail_from(None)
         # A jump-to-latest between a re-center and its placement supersedes
         # the placement; do not leave upward hydration suppressed (review E).
         self._suppress_boundary_hydration = False
@@ -3278,7 +3299,7 @@ class ConsoleTranscript(VerticalScroll):
                     else None
                 )
                 if trim_start is not None:
-                    self._set_hidden_tail(trim_start)
+                    self._hide_tail_from(trim_start)
                     self.call_later(self.refresh_messages)
                 else:
                     self._schedule_prune_check()
@@ -3552,7 +3573,7 @@ class ConsoleTranscript(VerticalScroll):
                 used += self._estimated_message_lines(self._messages[end])
                 end += 1
             self._hydrating_scrollback = True
-            self._set_hidden_tail(end if end < len(self._messages) else None)
+            self._reveal_hidden_tail_through(end)
             try:
                 await self._reconcile_rows(self._transcript_rows())
             finally:
@@ -3735,7 +3756,7 @@ class ConsoleTranscript(VerticalScroll):
             for message_id in previous_hidden_tail_ids
             if message_id in index_by_id
         ]
-        self._set_hidden_tail(
+        self._hide_tail_from(
             min(surviving_tail_indices) if surviving_tail_indices else None
         )
         if self._hidden_tail_ids and self._raw_anchor_engaged():
@@ -3747,7 +3768,7 @@ class ConsoleTranscript(VerticalScroll):
             # must mount: drop the suffix and re-window onto a fresh tail
             # (``preserved_start = None`` routes the boundary computation
             # below through the same fresh-tail path a session load uses).
-            self._set_hidden_tail(None)
+            self._hide_tail_from(None)
             preserved_start = None
         if not self._windowing_enabled():
             # TASK-15455 (reconciliation): `[chat_defaults]
@@ -3771,7 +3792,7 @@ class ConsoleTranscript(VerticalScroll):
             # against the 15458 per-tick churn: no tail-creating path runs
             # with windowing off, so this clear is one-shot, and the
             # watermark-pruned PREFIX stays sticky exactly as before.
-            self._set_hidden_tail(None)
+            self._hide_tail_from(None)
             window_start = 0 if preserved_start is None else preserved_start
         elif preserved_start is None:
             window_start = self._tail_window_start(
@@ -3809,7 +3830,7 @@ class ConsoleTranscript(VerticalScroll):
             # it sets would be overwritten by ``_set_hidden_prefix`` below —
             # hence the explicit ``window_start`` recompute here.
             if self._hidden_tail_ids and self._windowing_enabled():
-                self._set_hidden_tail(None)
+                self._hide_tail_from(None)
                 window_start = self._tail_window_start(
                     self._messages,
                     line_budget=self._initial_window_line_budget(),
@@ -3838,11 +3859,7 @@ class ConsoleTranscript(VerticalScroll):
                 # TASK-15777: same contract on the other boundary — a
                 # handed-off selection inside the hidden tail extends the
                 # mounted slice down through it.
-                self._set_hidden_tail(
-                    pending_index + 1
-                    if pending_index + 1 < len(self._messages)
-                    else None
-                )
+                self._reveal_hidden_tail_through(pending_index + 1)
             self.pending_selection_id = None
         if (
             self._hidden_tail_start is not None
@@ -3850,7 +3867,7 @@ class ConsoleTranscript(VerticalScroll):
         ):
             # Degenerate reorder: the two boundaries crossed. Mounting through
             # the tail is always safe; a crossed window never is.
-            self._set_hidden_tail(None)
+            self._hide_tail_from(None)
         self._set_hidden_prefix(window_start)
         if self.selected_message_id not in message_ids:
             self.selected_message_id = None
@@ -4345,9 +4362,7 @@ class ConsoleTranscript(VerticalScroll):
             if index < first_visible:
                 self._set_hidden_prefix(revealed_start)
             else:
-                self._set_hidden_tail(
-                    revealed_end if revealed_end < len(self._messages) else None
-                )
+                self._reveal_hidden_tail_through(revealed_end)
             return True
         return False
 
@@ -4393,7 +4408,7 @@ class ConsoleTranscript(VerticalScroll):
             )
             end = included_end
         self._set_hidden_prefix(start)
-        self._set_hidden_tail(end if end < len(self._messages) else None)
+        self._reveal_hidden_tail_through(end)
         self.release_anchor()
         self._reveal_scroll_target = owner_id
         # Review E: the reconcile that realizes this window transits an
