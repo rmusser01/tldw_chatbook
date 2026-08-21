@@ -2197,7 +2197,7 @@ class AgentService:
                 runtime_schemas=runtime_schemas,
                 messages=messages,
                 active_schemas=tuple(active),
-                log_active=False,
+                log_active=log_active,
             )
             try:
                 decision = (
@@ -2228,7 +2228,7 @@ class AgentService:
                 runtime_schemas,
                 messages,
                 tuple(active),
-                False,
+                log_active,
             )
             chain_delivery = self._startup_delivery_for_request(
                 self.startup_instruction_candidate,

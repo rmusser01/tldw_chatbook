@@ -2920,7 +2920,7 @@ class ConsoleAgentBridge:
         turn_bundle_block: str = "",
         request_skill_install_enabled: bool = False,
         request_skill_script_enabled: bool = False,
-    ) -> tuple[dict[str, Any], InstructionSnapshot]:
+    ) -> tuple[dict[str, Any], InstructionSnapshot] | None:
         """Build a disposable exact first request without a run or consent."""
         context: Mapping[str, Any] = {}
         if self._skills_service is not None:
@@ -2977,6 +2977,12 @@ class ConsoleAgentBridge:
             run_skill_script_enabled=script_tool_enabled,
             agent_messages=agent_messages,
         )
+        if plan.run_log.requested:
+            # A disposable preview cannot bind a real run-log writer, so it
+            # cannot know whether live first-request history/log tools are
+            # admissible. The controller turns this content-free sentinel
+            # into an explicit unavailable preview rather than guessing.
+            return None
 
         def no_provider_call(**_kwargs):
             raise RuntimeError("preview must not call the provider")

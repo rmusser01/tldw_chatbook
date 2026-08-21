@@ -1227,7 +1227,7 @@ def test_load_tools_same_batch_name_and_id_aliases_load_once(db):
 
 def test_protocol_render_memoized_across_unchanged_turns(db, monkeypatch):
     """AC #1: three fence turns with an unchanged active set must render the
-    protocol exactly once; later run-log activation only appends its prompt."""
+    protocol exactly once; the payload text stays byte-identical per turn."""
     import tldw_chatbook.Agents.agent_service as svc
 
     real_render = svc.render_tool_protocol
@@ -1258,11 +1258,8 @@ def test_protocol_render_memoized_across_unchanged_turns(db, monkeypatch):
     assert outcome.status == RUN_DONE
     assert len(calls) == 1  # rendered once, reused twice
     first_system = chat.calls[0]["messages_payload"][0]["content"]
-    assert agent_service.RUN_LOG_PROMPT_SECTION not in first_system
     for later in chat.calls[1:]:
-        later_system = later["messages_payload"][0]["content"]
-        assert later_system.startswith(first_system)
-        assert agent_service.RUN_LOG_PROMPT_SECTION in later_system
+        assert later["messages_payload"][0]["content"] == first_system  # byte-stable
 
 
 def test_protocol_rerenders_when_load_tools_admits_new_schema(db, monkeypatch):

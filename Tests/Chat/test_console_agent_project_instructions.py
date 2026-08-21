@@ -558,10 +558,7 @@ def test_eviction_settings_are_frozen_before_consent(monkeypatch, tmp_path):
         api_endpoint="openai",
     )
     assert seen
-    # The frozen eviction shape keeps its configured minimum, but the first
-    # request is deliberately log-neutral until the writer has survived a
-    # request and is known active.
-    assert set(seen) == {(False, 7)}
+    assert set(seen) == {(True, 7)}
 
 
 def test_safe_project_instruction_tokens_counts_tools_rows_and_reserve(

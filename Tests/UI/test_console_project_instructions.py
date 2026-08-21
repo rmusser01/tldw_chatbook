@@ -29,7 +29,6 @@ from tldw_chatbook.Agents.agent_service import (
     RUN_LOG_PROMPT_SECTION,
     AgentService,
     RunLogRequestPlan,
-    build_first_request_schema_plan,
 )
 from tldw_chatbook.Agents.project_instruction_resolver import (
     InstructionOutcome,
@@ -46,8 +45,9 @@ from tldw_chatbook.Chat.console_chat_controller import (
     ProjectInstructionDispatchNotice,
 )
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+import tldw_chatbook.Chat.console_agent_bridge as bridge_module
 import tldw_chatbook.Chat.console_chat_controller as controller_module
-from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, MessageAttachment
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
@@ -442,117 +442,91 @@ def test_disposable_preview_matches_live_exact_request_when_source_is_omitted(
     preview_consent.assert_not_called()
 
 
-def test_run_log_bind_failure_keeps_preview_live_first_request_log_neutral(
+@pytest.mark.asyncio
+async def test_preview_fails_closed_when_run_log_binding_is_uncertain(
     tmp_path, monkeypatch
 ):
-    class BindFailureWriter:
-        is_active = False
-        log_dir = None
-
-        def bind(self, _run_id):
-            return None
-
-        def append(self, **_kwargs):
-            return None
-
-        def write_manifest(self, _manifest):
-            return None
-
-        def close(self):
-            return None
-
     candidate = _candidate(tmp_path)
-    registry = ToolCatalogRegistry()
-    registry.register_provider(BuiltinToolProvider())
-    config = AgentConfig(
-        model="gpt-4o-mini",
-        system_prompt="system",
-        allowed_tools=("calculator",),
-        budget=RunBudget(max_subagents=0),
-        native_tools=True,
-        response_reserve_tokens=10,
+    control = ProjectInstructionControlState(True, "binding-1", "f" * 64, None)
+    store = ConsoleChatStore()
+    session = store.create_session(project_instruction_state=control)
+    store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="question"
     )
-    run_log = RunLogRequestPlan(
-        requested=True, eviction_enabled=True, min_recent_rounds=1
+    resolution = SimpleNamespace(
+        ready=True,
+        provider="openai",
+        execution_key="openai",
+        model="model",
+        max_tokens=20,
     )
-    schemas = build_first_request_schema_plan(
-        registry,
-        config.allowed_tools,
-        config.budget,
-        skill_file_enabled=False,
-        install_skill_enabled=False,
-        run_skill_script_enabled=False,
-        run_log_active=run_log.requested,
+    gateway = SimpleNamespace(resolve_for_send=AsyncMock(return_value=resolution))
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=AgentRunsDB(tmp_path / "uncertain-log.db", client_id="test"),
+        store=store,
+        provider_gateway=gateway,
     )
-    bound_calls = []
-
-    def bound(messages, **kwargs):
-        bound_calls.append((kwargs["enabled"], kwargs["min_recent_rounds"]))
-        rows = list(messages)
-        return [rows[0], rows[-1]] if kwargs["enabled"] else rows
-
-    monkeypatch.setattr(agent_service, "bound_history_for_send", bound)
-    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a, **_k: 200)
-    monkeypatch.setattr(agent_service, "_count_model_messages", lambda *_a, **_k: 20)
-    monkeypatch.setattr(agent_service, "count_tokens_messages", lambda *_a, **_k: 5)
-    monkeypatch.setattr(agent_service, "estimate_tokens", lambda *_a, **_k: 0)
-    messages = [
-        {"role": "user", "content": "old round"},
-        {"role": "assistant", "content": "old reply"},
-        {"role": "user", "content": "question"},
-    ]
-    preview_service = AgentService(
-        AgentRunsDB(tmp_path / "runlog-preview.db", client_id="test"),
-        registry,
-        chat_call=Mock(side_effect=AssertionError("preview called provider")),
-        run_log_request_plan=run_log,
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        model="model",
+        agent_bridge=bridge,
+        agent_runtime_enabled=True,
     )
-    preview_request, preview_snapshot = preview_service.build_project_instruction_request(
-        candidate=candidate,
-        config=config,
-        api_endpoint="openai",
-        runtime_schemas=list(schemas.runtime_schemas),
-        messages=messages,
-        active_schemas=schemas.active_schemas,
-        log_active=False,
+    selection = SimpleNamespace(
+        binding=SimpleNamespace(binding_id="binding-1"),
+        root=tmp_path,
+        locator_fingerprint="f" * 64,
+        allow_write=True,
+        root_identity=controller_module._capture_project_root_identity(tmp_path),
     )
-    provider_calls = []
-
-    def chat_call(**kwargs):
-        provider_calls.append(kwargs)
-        return {"choices": [{"message": {"content": "done"}}]}
-
-    writer = BindFailureWriter()
-    live_service = AgentService(
-        AgentRunsDB(tmp_path / "runlog-live.db", client_id="test"),
-        registry,
-        chat_call=chat_call,
-        run_log_writer=writer,
-        run_log_request_plan=run_log,
-        startup_instruction_candidate=candidate,
-        confirm_project_instruction_dispatch=lambda _snapshot: "proceed",
+    controller.app = SimpleNamespace(
+        workspace_registry_service=SimpleNamespace(
+            get_runtime_binding=lambda _binding_id: selection.binding
+        ),
+        unified_mcp_service=None,
     )
-    live_service.run_turn(
-        conversation_id="conversation",
-        messages=messages,
-        config=config,
-        api_endpoint="openai",
+    monkeypatch.setattr(
+        bridge_module,
+        "build_run_log_request_plan",
+        lambda: RunLogRequestPlan(True, True, 1),
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "resolve_project_instruction_binding",
+        lambda _session, _registry: selection,
+    )
+    monkeypatch.setattr(
+        controller_module.ProjectInstructionResolver,
+        "resolve_startup",
+        lambda _resolver, **_kwargs: candidate,
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "project_instruction_authority_snapshot_is_current",
+        lambda **_kwargs: True,
     )
 
-    assert writer.is_active is False
-    assert list(preview_request.messages) == provider_calls[0]["messages_payload"]
-    assert list(preview_request.tools) == provider_calls[0]["tools"]
-    assert RUN_LOG_PROMPT_SECTION not in preview_request.messages[0]["content"]
-    assert preview_snapshot.primary_delivery.source_digests == (
-        candidate.source.digest,
+    snapshot = await controller.build_context_snapshot("", session_id=session.id)
+
+    preview = snapshot.project_instruction_preview
+    assert preview is not None
+    assert preview.outcomes == ("preview_uncertain_run_log_binding",)
+    assert preview.warning_codes == ("preview_uncertain_run_log_binding",)
+    assert "AUTOMATIC_BODY_ONLY_IN_EXPLICIT_PREVIEW" not in str(
+        preview.next_send_payload
     )
-    assert bound_calls and set(bound_calls) == {(False, 1)}
 
 
 @pytest.mark.asyncio
 async def test_controller_preview_uses_live_destination_fresh_tools_and_raw_admission(
     tmp_path, monkeypatch
 ):
+    monkeypatch.setattr(
+        bridge_module,
+        "build_run_log_request_plan",
+        lambda: RunLogRequestPlan(False, True, 1),
+    )
     secret = "api_key=" + "s" * 80
     candidate = _candidate(tmp_path)
     control = ProjectInstructionControlState(
@@ -601,7 +575,7 @@ async def test_controller_preview_uses_live_destination_fresh_tools_and_raw_admi
         root=tmp_path,
         locator_fingerprint="f" * 64,
         allow_write=True,
-        root_identity=None,
+        root_identity=controller_module._capture_project_root_identity(tmp_path),
     )
     controller.app = SimpleNamespace(
         workspace_registry_service=SimpleNamespace(
@@ -653,7 +627,8 @@ async def test_controller_preview_uses_live_destination_fresh_tools_and_raw_admi
     native_names = {
         item["function"]["name"] for item in preview.next_send_payload["tools"]
     }
-    assert {"fs_read", "mcp__srv__search", "search_run_log"} <= native_names
+    assert {"fs_read", "mcp__srv__search"} <= native_names
+    assert "search_run_log" not in native_names
     assert "install_skill" not in native_names
     assert "run_skill_script" not in native_names
     assert (
@@ -672,6 +647,11 @@ async def test_controller_preview_applies_live_skill_turn_before_admission(
     tmp_path, monkeypatch
 ):
     """A triggering skill must change the disposable request exactly as live."""
+    monkeypatch.setattr(
+        bridge_module,
+        "build_run_log_request_plan",
+        lambda: RunLogRequestPlan(False, True, 1),
+    )
 
     class Skills:
         async def get_context(self, *, mode="local"):
@@ -733,7 +713,7 @@ async def test_controller_preview_applies_live_skill_turn_before_admission(
         root=tmp_path,
         locator_fingerprint="f" * 64,
         allow_write=True,
-        root_identity=None,
+        root_identity=controller_module._capture_project_root_identity(tmp_path),
     )
     controller.app = SimpleNamespace(
         workspace_registry_service=SimpleNamespace(
@@ -784,7 +764,9 @@ async def test_controller_preview_applies_live_skill_turn_before_admission(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("race", ["disable", "remove", "retarget"])
+@pytest.mark.parametrize(
+    "race", ["disable", "remove", "retarget", "replace_root"]
+)
 async def test_preview_revalidates_authority_after_awaited_composition(
     tmp_path, monkeypatch, race
 ):
@@ -865,8 +847,11 @@ async def test_preview_revalidates_authority_after_awaited_composition(
             )
         elif race == "remove":
             registry.current = None
-        else:
+        elif race == "retarget":
             registry.current = replace(binding, locator=str(other))
+        else:
+            root.rmdir()
+            other.rename(root)
 
     def authority_check(**_kwargs):
         loop.call_soon_threadsafe(mutate_after_authority_check)
@@ -940,7 +925,7 @@ async def test_parked_session_preview_does_not_publish_global_mcp_counts(
         root=tmp_path,
         locator_fingerprint="f" * 64,
         allow_write=True,
-        root_identity=None,
+        root_identity=controller_module._capture_project_root_identity(tmp_path),
     )
     monkeypatch.setattr(
         controller_module,
@@ -1133,7 +1118,7 @@ async def test_controller_preview_does_not_advance_live_session_state(
         root=tmp_path,
         locator_fingerprint="f" * 64,
         allow_write=True,
-        root_identity=None,
+        root_identity=controller_module._capture_project_root_identity(tmp_path),
     )
     controller.app = SimpleNamespace(
         workspace_registry_service=SimpleNamespace(
@@ -1319,16 +1304,21 @@ async def test_context_snapshot_stays_on_captured_session_after_active_switch():
 async def test_captured_context_uses_own_session_destination_model_system_and_reserve(
     tmp_path, monkeypatch
 ):
+    monkeypatch.setattr(
+        bridge_module,
+        "build_run_log_request_plan",
+        lambda: RunLogRequestPlan(False, True, 1),
+    )
     candidate = _candidate(tmp_path)
     control = ProjectInstructionControlState(True, "binding-1", "f" * 64, None)
     captured_settings = ConsoleSessionSettings(
-        provider="captured-provider",
+        provider="openrouter",
         model="captured-model",
         max_tokens=70,
         system_prompt="CAPTURED SYSTEM",
     )
     active_settings = ConsoleSessionSettings(
-        provider="active-provider",
+        provider="openai",
         model="active-model",
         max_tokens=10,
         system_prompt="ACTIVE SYSTEM",
@@ -1368,7 +1358,7 @@ async def test_captured_context_uses_own_session_destination_model_system_and_re
     controller = ConsoleChatController(
         store=store,
         provider_gateway=gateway,
-        provider="active-provider",
+        provider="openai",
         model="active-model",
         max_tokens=10,
         system_prompt="ACTIVE SYSTEM",
@@ -1380,7 +1370,7 @@ async def test_captured_context_uses_own_session_destination_model_system_and_re
         root=tmp_path,
         locator_fingerprint="f" * 64,
         allow_write=True,
-        root_identity=None,
+        root_identity=controller_module._capture_project_root_identity(tmp_path),
     )
     controller.app = SimpleNamespace(
         workspace_registry_service=SimpleNamespace(
@@ -1412,12 +1402,142 @@ async def test_captured_context_uses_own_session_destination_model_system_and_re
 
     preview = snapshot.project_instruction_preview
     assert preview is not None
-    assert gateway.selections[0].provider == "captured-provider"
+    assert gateway.selections[0].provider == "openrouter"
     assert gateway.selections[0].explicit_model == "captured-model"
     assert gateway.selections[0].max_tokens == 70
     assert preview.next_send_payload["model"] == "captured-model"
     assert "CAPTURED SYSTEM" in preview.next_send_payload["messages"][0]["content"]
     assert "ACTIVE SYSTEM" not in str(preview.next_send_payload)
+    assert "omitted_token_budget" in preview.outcomes
+
+
+@pytest.mark.asyncio
+async def test_captured_context_uses_provider_fallbacks_for_images_and_admission(
+    tmp_path, monkeypatch
+):
+    candidate = _candidate(tmp_path)
+    control = ProjectInstructionControlState(True, "binding-1", "f" * 64, None)
+    captured_settings = ConsoleSessionSettings(provider="llama_cpp")
+    active_settings = ConsoleSessionSettings(
+        provider="openai", model="active-text", max_tokens=10
+    )
+    store = ConsoleChatStore()
+    captured = store.create_session(
+        settings=captured_settings, project_instruction_state=control
+    )
+    attachment = MessageAttachment(b"old-image", "image/png", "old.png", 0)
+    store.append_message(
+        captured.id,
+        role=ConsoleMessageRole.USER,
+        content="captured question",
+        attachments=(attachment,),
+    )
+    store.create_session(
+        settings=active_settings,
+        project_instruction_state=ProjectInstructionControlState.legacy_disabled(),
+    )
+    app_config = {
+        "api_settings": {
+            "llama_cpp": {
+                "api_url": "http://127.0.0.1:9191/v1/chat/completions",
+                "model": "captured-vision",
+                "max_tokens": 70,
+            }
+        },
+        "console": {},
+    }
+
+    class Gateway:
+        def __init__(self):
+            self.selections = []
+
+        async def resolve_for_send(self, selection):
+            self.selections.append(selection)
+            return SimpleNamespace(
+                ready=True,
+                provider=selection.provider,
+                execution_key=selection.provider,
+                model=selection.explicit_model or selection.configured_model,
+                max_tokens=selection.max_tokens,
+                base_url=selection.base_url,
+            )
+
+    gateway = Gateway()
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=AgentRunsDB(tmp_path / "fallback-preview.db", client_id="test"),
+        store=store,
+        provider_gateway=gateway,
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        provider="openai",
+        model="active-text",
+        max_tokens=10,
+        agent_bridge=bridge,
+        agent_runtime_enabled=True,
+        provider_config=lambda: app_config,
+    )
+    selection = SimpleNamespace(
+        binding=SimpleNamespace(binding_id="binding-1"),
+        root=tmp_path,
+        locator_fingerprint="f" * 64,
+        allow_write=True,
+        root_identity=controller_module._capture_project_root_identity(tmp_path),
+    )
+    controller.app = SimpleNamespace(
+        workspace_registry_service=SimpleNamespace(
+            get_runtime_binding=lambda _binding_id: selection.binding
+        ),
+        unified_mcp_service=None,
+    )
+    monkeypatch.setattr(
+        bridge_module,
+        "build_run_log_request_plan",
+        lambda: RunLogRequestPlan(False, True, 1),
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "resolve_project_instruction_binding",
+        lambda _session, _registry: selection,
+    )
+    monkeypatch.setattr(
+        controller_module.ProjectInstructionResolver,
+        "resolve_startup",
+        lambda _resolver, **_kwargs: candidate,
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "project_instruction_authority_snapshot_is_current",
+        lambda **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "is_vision_capable",
+        lambda provider, model: (provider, model)
+        == ("llama_cpp", "captured-vision"),
+    )
+    monkeypatch.setattr(controller_module, "max_history_images", lambda *_a: 2)
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a, **_k: 100)
+    monkeypatch.setattr(agent_service, "_count_model_messages", lambda *_a, **_k: 20)
+    monkeypatch.setattr(agent_service, "count_tokens_messages", lambda *_a, **_k: 15)
+    monkeypatch.setattr(agent_service, "estimate_tokens", lambda *_a, **_k: 0)
+
+    snapshot = await controller.build_context_snapshot(
+        "draft",
+        attachments=(MessageAttachment(b"new-image", "image/png", "new.png", 0),),
+        session_id=captured.id,
+    )
+
+    preview = snapshot.project_instruction_preview
+    assert preview is not None
+    captured_selection = gateway.selections[0]
+    assert captured_selection.provider == "llama_cpp"
+    assert captured_selection.configured_model == "captured-vision"
+    assert captured_selection.base_url == "http://127.0.0.1:9191"
+    assert captured_selection.max_tokens == 70
+    assert str(preview.next_send_payload).count("[image: data redacted for preview]") == 2
+    assert "[image omitted]" not in str(preview.next_send_payload)
     assert "omitted_token_budget" in preview.outcomes
 
 

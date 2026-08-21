@@ -130,7 +130,12 @@ from tldw_chatbook.Chat.console_visual_transcript import (
     render_visual_transcript,
     resolve_effective_compaction_representation,
 )
-from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_session_settings import (
+    ConsoleSessionSettings,
+    build_default_console_session_settings,
+    normalize_llamacpp_base_url,
+)
+from tldw_chatbook.Chat.console_provider_endpoints import first_configured_endpoint
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
     fingerprint_canonical_locator,
@@ -276,6 +281,82 @@ _WINDOWS = os.name == "nt"
 _REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", None)
 
 
+def build_console_provider_selection_from_settings(
+    settings: ConsoleSessionSettings,
+    *,
+    app_config: Mapping[str, Any],
+    workspace_context: Any,
+    legacy_model: Any = None,
+) -> ConsoleProviderSelection:
+    """Reconstruct the effective selection from one session snapshot."""
+
+    def section(value: Any, key: str) -> Mapping[str, Any]:
+        child = value.get(key, {}) if isinstance(value, Mapping) else {}
+        return child if isinstance(child, Mapping) else {}
+
+    def selected(value: Any) -> str | None:
+        text = str(value).strip() if value is not None else ""
+        return text if text and text.lower() not in {"none", "null"} else None
+
+    provider = provider_config_key(settings.provider) or "llama_cpp"
+    explicit_model = selected(settings.model)
+    provider_config = section(section(app_config, "api_settings"), provider)
+    configured_model = selected(
+        provider_config.get("model")
+        or provider_config.get("api_model")
+        or provider_config.get("default_model")
+    )
+    if selected(legacy_model) is None and explicit_model == configured_model:
+        explicit_model = None
+
+    base_url: str | None = None
+    if provider in {"llama_cpp", "local_llamacpp"}:
+        console_config = section(app_config, "console")
+        fallback_url = (
+            os.environ.get("TLDW_CONSOLE_LLAMA_CPP_BASE_URL")
+            or console_config.get("llama_cpp_base_url_override")
+            or first_configured_endpoint(provider_config)
+        )
+        base_url = normalize_llamacpp_base_url(
+            selected(settings.base_url) or selected(fallback_url)
+        )
+    elif selected(settings.base_url) is not None:
+        base_url = selected(settings.base_url)
+
+    defaults = build_default_console_session_settings(app_config, provider, None)
+    return ConsoleProviderSelection(
+        provider=provider,
+        base_url=base_url,
+        explicit_model=explicit_model,
+        configured_model=configured_model,
+        temperature=settings.temperature,
+        top_p=settings.top_p,
+        min_p=settings.min_p,
+        top_k=settings.top_k,
+        max_tokens=(
+            settings.max_tokens
+            if settings.max_tokens is not None
+            else defaults.max_tokens
+        ),
+        seed=settings.seed,
+        presence_penalty=settings.presence_penalty,
+        frequency_penalty=settings.frequency_penalty,
+        reasoning_effort=settings.reasoning_effort,
+        reasoning_summary=settings.reasoning_summary,
+        verbosity=settings.verbosity,
+        thinking_effort=settings.thinking_effort,
+        thinking_budget_tokens=settings.thinking_budget_tokens,
+        streaming=settings.streaming,
+        system_prompt=settings.system_prompt,
+        workspace_context=workspace_context,
+    )
+
+
+#: Fallback used when no `mcp_approval_timeout_seconds` seam is injected --
+#: mirrors `UnifiedMCPControlPlaneService.approval_timeout_seconds`'s own
+#: default (task-201/T2), read directly here since the controller has no
+#: dependency on that service (T6 wires the service into `MCPToolProvider`,
+#: not into this controller).
 #:
 #: The PRE-ADR default was 120.0, kept strictly below
 #: ``RunBudget.max_tool_call_seconds`` (300s at defaults,
@@ -1600,6 +1681,7 @@ class ConsoleChatController:
         context_repository: ConsoleContextRepository | None = None,
         turn_context_provider: "Callable[[str], ConsoleTurnExecutionContext] | None" = None,
         queued_staged_rider_provider: "Callable[[str], bool] | None" = None,
+        provider_config: "Callable[[], Mapping[str, Any]] | None" = None,
         confirm_project_instruction_dispatch: Callable[
             [ProjectInstructionDispatchNotice], Literal["proceed", "cancel", "disable"]
         ]
@@ -1638,6 +1720,7 @@ class ConsoleChatController:
         self._chat_dictionary_applier = chat_dictionary_applier
         self._world_info_applier = world_info_applier
         self._rag_capture_provider = rag_capture_provider
+        self._provider_config = provider_config
         #: Task 4 (D2 fix wave, "bonus race"): screen-owned callable that
         #: builds a fresh default `ConsoleSessionSettings` snapshot (mirrors
         #: `ChatScreen._default_console_session_settings`, wired by
@@ -7671,7 +7754,9 @@ class ConsoleChatController:
             # below can anchor by identity, exactly like the real dispatch path
             # (the keys are stripped again before the snapshot is returned).
             provider_messages = self._provider_messages_for_session(
-                session_id, annotate_ids=True
+                session_id,
+                annotate_ids=True,
+                provider_selection=provider_selection,
             )
 
             # Append a synthetic user turn for the draft so the preview matches what would be sent.
@@ -7960,7 +8045,7 @@ class ConsoleChatController:
             )
         )
         try:
-            exact_payload, snapshot = await asyncio.to_thread(
+            preview_result = await asyncio.to_thread(
                 bridge.build_project_instruction_preview_request,
                 candidate=candidate,
                 session_id=session_id,
@@ -7984,6 +8069,18 @@ class ConsoleChatController:
             )
         except Exception:  # noqa: BLE001 - preview failure stays content-free
             return None
+        if preview_result is None:
+            source = candidate.source
+            code = "preview_uncertain_run_log_binding"
+            return ProjectInstructionPreview(
+                relative_source=source.relative_path if source else None,
+                scope=source.scope if source else ".",
+                byte_count=source.byte_count if source else 0,
+                outcomes=(code,),
+                warning_codes=(code,),
+                next_send_payload=copy.deepcopy(base_payload),
+            )
+        exact_payload, snapshot = preview_result
         current_session = next(
             (item for item in self.store.sessions() if item.id == session_id), None
         )
@@ -8018,6 +8115,10 @@ class ConsoleChatController:
         except Exception:  # noqa: BLE001 - in-memory registry doubt fails closed
             return None
         if current_binding != selection.binding:
+            return None
+        if not _project_root_identity_matches(
+            selection.root, selection.root_identity
+        ):
             return None
         payload = copy.deepcopy(base_payload)
         payload.pop("tools", None)

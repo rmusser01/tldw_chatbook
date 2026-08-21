@@ -625,6 +625,14 @@ def test_flag_on_and_log_unavailable_still_sends_full_history(db, tmp_path, monk
         ),
         api_endpoint="llama_cpp",
     )
+    assert all(
+        RUN_LOG_PROMPT_SECTION not in str(call["messages_payload"])
+        for call in chat.calls
+    )
+    assert all(
+        SEARCH_RUN_LOG_TOOL_NAME not in str(call.get("tools", ()))
+        for call in chat.calls
+    )
     last_payload = chat.calls[-1]["messages_payload"]
     assert any("MARK1_" in str(m.get("content", "")) for m in last_payload), (
         "logging unavailable must suppress eviction even with the flag on"
@@ -654,7 +662,7 @@ def test_flag_on_and_log_active_fence_protocol_drops_old_rounds_intact(
     assert outcome.final_text == "done."
     first_payload = chat.calls[0]["messages_payload"]
     last_payload = chat.calls[-1]["messages_payload"]
-    assert RUN_LOG_PROMPT_SECTION not in str(first_payload[0].get("content", ""))
+    assert RUN_LOG_PROMPT_SECTION in str(first_payload[0].get("content", ""))
     assert RUN_LOG_PROMPT_SECTION in str(last_payload[0].get("content", ""))
     assert not any("MARK1_" in str(m.get("content", "")) for m in last_payload), (
         "the earliest round should have been evicted under this tiny window"

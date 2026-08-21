@@ -243,7 +243,6 @@ from ...Chat.console_provider_endpoints import (
     normalize_generic_endpoint_for_compare,
     safe_endpoint_display,
 )
-
 from ...Chat.console_voice_input import (
     acoustic_barge_in_enabled,
     realtime_idle_timeout_seconds,
@@ -5476,6 +5475,7 @@ class ChatScreen(BaseAppScreen):
                 turn_context_provider=(
                     self._session._build_console_turn_execution_context
                 ),
+                provider_config=self._provider_readiness_app_config,
             )
         # task-15860: every screen-owned slot on the controller, the store
         # and the wake coordinator is (re)bound HERE, through the single
