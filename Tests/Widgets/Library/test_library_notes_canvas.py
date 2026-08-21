@@ -21,6 +21,9 @@ from tldw_chatbook.Library.library_note_import_state import (
     project_library_note_import_snapshot,
 )
 from tldw_chatbook.Library.library_notes_sync_state import LibraryNotesSyncState
+from tldw_chatbook.Library.library_notes_lasting_sync_state import (
+    initial_lasting_sync_snapshot,
+)
 from tldw_chatbook.Library.library_notes_tree_state import (
     LibraryNotesTreeProjection,
     LibraryNotesTreeRow,
@@ -254,6 +257,63 @@ async def test_cancelled_partial_import_offers_retry_without_calling_it_a_failur
 
         assert str(retry.label) == "Retry unfinished items"
         assert "failure" not in str(retry.label).casefold()
+
+
+async def test_lasting_setup_retained_wrapper_preserves_input_and_pins_action_at_60x20():
+    snapshot = replace(
+        initial_lasting_sync_snapshot(lasting_available=True), phase="configure"
+    )
+
+    class LastingSetupApp(ConsolidatedCSSApp):
+        def compose(self) -> ComposeResult:
+            yield LibraryNotesCanvas(
+                mode="lasting_add",
+                lasting_sync_snapshot=snapshot,
+                compact=True,
+            )
+
+    app = LastingSetupApp()
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        canvas = app.query_one(LibraryNotesCanvas)
+        name = app.query_one("#notes-sync-display-name")
+        assert app.focused is name
+        await pilot.press(*"Research[2026]")
+        folder = app.query_one("#notes-sync-folder-choose", Button)
+        folder.focus()
+        canvas.sync_state(
+            list_state=None,
+            sort_mode="newest",
+            filter_value="",
+            mode="lasting_add",
+            presentation_state=None,
+            sync_panel_state=None,
+            import_snapshot=None,
+            import_receipt_available=False,
+            tree_projection=None,
+            tree_selected_placement_id="",
+            tree_deleted_folder_available=False,
+            title_placeholder_only=False,
+            compact=True,
+            create_running=False,
+            create_status="",
+            load_state="loading",
+            load_message="",
+            lasting_sync_snapshot=replace(snapshot, status_line="Folder selected."),
+        )
+        await pilot.pause()
+
+        assert app.query_one("#notes-sync-display-name") is name
+        assert name.value == "Research[2026]"
+        assert app.focused is folder
+        primary = app.query_one("#notes-sync-check", Button)
+        primary.scroll_visible(immediate=True)
+        await pilot.pause()
+        assert primary in app.screen._compositor.visible_widgets
+        hint = app.query_one("#notes-sync-fold-hint", Static)
+        assert "Additional setup content is scrollable" in str(hint.renderable)
+        assert hint in app.screen._compositor.visible_widgets
+        assert canvas.region.right <= 60 and canvas.region.bottom <= 20
 
 
 async def test_import_selection_summary_bounds_many_long_names(widget_pilot):  # noqa: F811

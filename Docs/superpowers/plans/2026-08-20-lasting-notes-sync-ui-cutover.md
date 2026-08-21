@@ -53,17 +53,17 @@ TASK-19001 + TASK-19002 + TASK-19011 -> TASK-19012 final evidence
 - Modify: `Tests/Widgets/Library/test_library_notes_canvas.py`
 - Modify: `Tests/UI/test_library_shell.py`
 
-- [ ] Start TASK-19010 and write RED pure-state tests.
+- [x] Start TASK-19010 and write RED pure-state tests.
 
   Cover relationship choice, local/server destination capability, direction, setup validation, checking, reviewed action groups, stale review, activation receipt, root list/status, manual reconciliation, attention choices, pause/resume, retarget, disconnect, pagination, redacted diagnostics, and explicit next actions.
 
   The pure state must reject global conflict-winner fields and an auto-sync-every-N-minutes field.
 
-- [ ] Implement frozen UI projections and a narrow controller port only.
+- [x] Implement frozen UI projections and a narrow controller port only.
 
   Define a structural `LastingSyncRuntimePort` in `library_notes_sync_controller.py` with only the `snapshot`, `check_root`, `apply_reviewed`, `activate_root`, `pause_root`, `resume_root`, `retarget_root`, and `disconnect_root` methods the UI needs. `LibraryNotesSyncController` receives that port plus `LibraryNoteImportController`, owns chooser/root-review task state, and publishes immutable snapshots. Translate public sync models into bounded presentation rows. Keep absolute paths bounded to the explicit root-detail surface; ordinary status uses display name and opaque IDs. Do not import the concrete runtime, private store, filesystem, coordinator, executor, legacy engine, or ChaChaNotes. Do not add a generic controller base class.
 
-- [ ] Write RED canvas/message tests for all phases.
+- [x] Write RED canvas/message tests for all phases.
 
   `library_notes_add_from_files_canvas.py` is the single authoritative relationship chooser and lasting setup surface. It renders:
 
@@ -73,19 +73,19 @@ TASK-19001 + TASK-19002 + TASK-19011 -> TASK-19012 final evidence
 
   `library_notes_sync_roots_canvas.py` renders decorated roots, contextual root actions, manual `Check changes`, attention review, recovery, pause/resume, retarget, and disconnect. Test physical button messages, safe initial focus, disabled reasons, text/glyph states, bracket-safe copy, paging, and 60x20 compositor containment.
 
-- [ ] Keep server-backed setup visibly unavailable.
+- [x] Keep server-backed setup visibly unavailable.
 
   Render `Unavailable - server sync-folder capability not installed`. The disabled control has readable contrast and the nearest valid action. Do not add a server adapter, feature-flag fallback, fake capability, claim token, or flat server write.
 
-- [ ] Integrate the inert UI behind an explicit availability gate.
+- [x] Integrate the inert UI behind an explicit availability gate.
 
   Add route/view projection and forward typed child messages to `LibraryNotesSyncController`. Until TASK-19011, the existing toolbar still shows legacy `Sync` and `Import`; expose the new surfaces only through a test-only/inert gate or direct widget mounting. The production `Keep a folder synced` path must remain unavailable and cannot activate roots. The chooser's `Import once` branch hands off to the existing TASK-19003 `LibraryNoteImportController`; do not implement a second import workflow or chooser.
 
-- [ ] Prove manual and attention semantics against a fake runtime.
+- [x] Prove manual and attention semantics against a fake runtime.
 
   Test exact safe/attention/skip counts, reviewed observation token, stale review -> `Check again`, note-implied filesystem move preview, Keep file/note/both, bounded deletion choices, partial/recovery actions, retarget no-deletion inference, and disconnect no-delete copy. Canvas code emits messages only; fake runtime records calls.
 
-- [ ] Regenerate CSS, run, and commit.
+- [x] Regenerate CSS, run, and commit.
 
   ```bash
   ../../.venv/bin/python tldw_chatbook/css/build_css.py

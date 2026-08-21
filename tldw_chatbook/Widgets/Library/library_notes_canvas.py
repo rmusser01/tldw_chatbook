@@ -18,6 +18,9 @@ from tldw_chatbook.Library.library_notes_state import (
     ellipsize_note_title_cells,
 )
 from tldw_chatbook.Library.library_note_import_state import LibraryNoteImportSnapshot
+from tldw_chatbook.Library.library_notes_lasting_sync_state import (
+    LibraryNotesLastingSyncSnapshot,
+)
 from tldw_chatbook.Library.library_notes_sync_state import (
     LibraryNotesSyncState,
     auto_sync_label,
@@ -40,6 +43,12 @@ from tldw_chatbook.Widgets.Library.library_choice_strip import (
 )
 from tldw_chatbook.Widgets.Library.library_note_import_canvas import (
     LibraryNoteImportCanvas,
+)
+from tldw_chatbook.Widgets.Library.library_notes_add_from_files_canvas import (
+    LibraryNotesAddFromFilesCanvas,
+)
+from tldw_chatbook.Widgets.Library.library_notes_sync_roots_canvas import (
+    LibraryNotesSyncRootsCanvas,
 )
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
@@ -137,6 +146,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         sync_panel_state: LibraryNotesSyncState | None = None,
         import_snapshot: LibraryNoteImportSnapshot | None = None,
         import_receipt_available: bool = False,
+        lasting_sync_snapshot: LibraryNotesLastingSyncSnapshot | None = None,
         tree_projection: LibraryNotesTreeProjection | None = None,
         tree_selected_placement_id: str = "",
         tree_deleted_folder_available: bool = False,
@@ -180,6 +190,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.sync_panel_state = sync_panel_state
         self.import_snapshot = import_snapshot
         self.import_receipt_available = import_receipt_available
+        self.lasting_sync_snapshot = lasting_sync_snapshot
         self.tree_projection = tree_projection
         self.tree_selected_placement_id = tree_selected_placement_id
         self.tree_deleted_folder_available = tree_deleted_folder_available
@@ -240,6 +251,20 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 compact=True,
             )
             return
+        if self.mode == "lasting_add":
+            if self.lasting_sync_snapshot is not None:
+                yield LibraryNotesAddFromFilesCanvas(
+                    self.lasting_sync_snapshot,
+                    id="library-notes-lasting-add-canvas",
+                )
+            return
+        if self.mode == "lasting_roots":
+            if self.lasting_sync_snapshot is not None:
+                yield LibraryNotesSyncRootsCanvas(
+                    self.lasting_sync_snapshot,
+                    id="library-notes-lasting-roots-canvas",
+                )
+            return
         yield from self._compose_list()
 
     def _authority_copy(self) -> str:
@@ -299,6 +324,15 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             return (
                 f"{prefix} · Import once · {status} · Next: Review the import workflow."
             )
+        if self.mode in {"lasting_add", "lasting_roots"}:
+            state = self.lasting_sync_snapshot
+            status = "Unavailable" if state is None else state.status_line
+            next_action = (
+                "Use Import once."
+                if state is None or not state.lasting_available
+                else "Review the current lasting-sync step."
+            )
+            return f"{prefix} · Lasting sync · {status} · Next: {next_action}"
         state = self.list_state
         status = state.operation_status if state is not None else ""
         running = state is not None and state.operation_running
@@ -321,6 +355,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         sync_panel_state: LibraryNotesSyncState | None,
         import_snapshot: LibraryNoteImportSnapshot | None = None,
         import_receipt_available: bool = False,
+        lasting_sync_snapshot: LibraryNotesLastingSyncSnapshot | None = None,
         tree_projection: LibraryNotesTreeProjection | None,
         tree_selected_placement_id: str,
         tree_deleted_folder_available: bool,
@@ -366,6 +401,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.sync_panel_state = sync_panel_state
         self.import_snapshot = import_snapshot
         self.import_receipt_available = import_receipt_available
+        self.lasting_sync_snapshot = lasting_sync_snapshot
         self.tree_projection = tree_projection
         self.tree_selected_placement_id = tree_selected_placement_id
         self.tree_deleted_folder_available = tree_deleted_folder_available
@@ -396,6 +432,19 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 child.queue_after_recompose(None)
                 if callback is not None:
                     self.call_after_refresh(callback)
+            return
+        lasting_canvases = self.query("#library-notes-lasting-add-canvas")
+        if (
+            previous_mode == mode == "lasting_add"
+            and lasting_sync_snapshot is not None
+            and lasting_canvases
+        ):
+            authority = self.query("#library-notes-authority")
+            if authority:
+                authority.first(Static).update(self._authority_copy())
+            lasting_canvases.first(LibraryNotesAddFromFilesCanvas).sync_state(
+                lasting_sync_snapshot
+            )
             return
         self.refresh(recompose=True)
 
@@ -1171,6 +1220,15 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
     def on_mount(self) -> None:
         """Apply initial visibility after the stable editor subtree mounts."""
         self._apply_post_compose_state()
+        if self.mode == "lasting_add":
+            self.call_after_refresh(self._focus_initial_lasting_sync_control)
+
+    def _focus_initial_lasting_sync_control(self) -> None:
+        """Focus the safe first control once, after the wrapper initially mounts."""
+
+        canvases = self.query("#library-notes-lasting-add-canvas")
+        if canvases:
+            canvases.first(LibraryNotesAddFromFilesCanvas).focus_first_safe_control()
 
     def _apply_post_compose_state(self) -> None:
         """Post-compose wiring shared by ``on_mount`` and ``_after_recompose``.

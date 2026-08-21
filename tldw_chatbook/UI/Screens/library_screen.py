@@ -185,6 +185,9 @@ from ...Library.library_note_import_state import (
     LibraryNoteImportSnapshot,
     NoteImportPhase,
 )
+from ...Library.library_notes_lasting_sync_state import (
+    LibraryNotesLastingSyncSnapshot,
+)
 from ...Notes.note_folder_repository import LocalNoteFolderRepository
 from ...Notes.note_import_discovery import discover_import_sources
 from ...Notes.note_import_execution_models import approve_note_import_plan
@@ -478,6 +481,12 @@ from ...Widgets.Library.library_note_folder_dialog import (
 from ...Widgets.Library.library_canvas_sync import PostRecomposeCallback
 from ...Widgets.Library.library_notes_canvas import LibraryNotePresentationState
 from ...Widgets.Library.library_note_import_canvas import LibraryNoteImportCanvas
+from ...Widgets.Library.library_notes_add_from_files_canvas import (
+    LibraryNotesAddFromFilesCanvas,
+)
+from ...Widgets.Library.library_notes_sync_roots_canvas import (
+    LibraryNotesSyncRootsCanvas,
+)
 from ...Widgets.ModelArtifacts import (
     InstallProgressed,
     ModelInstallModal,
@@ -496,6 +505,10 @@ from ..Library_Modules.library_media_browse_controller import (
 )
 from ..Library_Modules.library_note_import_controller import (
     LibraryNoteImportController,
+)
+from ..Library_Modules.library_notes_sync_controller import (
+    InertLastingSyncRuntime,
+    LibraryNotesSyncController,
 )
 from ..Library_Modules.library_snapshot_cache import (
     clone_library_source_snapshot,
@@ -3273,6 +3286,21 @@ class LibraryScreen(BaseAppScreen):
         )
         self._library_note_import_snapshot: LibraryNoteImportSnapshot = (
             self._library_note_import_controller.presentation_snapshot
+        )
+        # TASK-19010 is presentation-only. The app owns runtime lifecycle;
+        # harnesses without it receive an honest inert structural adapter.
+        lasting_runtime = (
+            getattr(app_instance, "notes_sync_runtime_owner", None)
+            or InertLastingSyncRuntime()
+        )
+        self._library_notes_sync_controller = LibraryNotesSyncController(
+            runtime=lasting_runtime,
+            import_controller=self._library_note_import_controller,
+            lasting_available=False,
+            publish_snapshot=self._publish_library_notes_lasting_sync_snapshot,
+        )
+        self._library_notes_lasting_sync_snapshot = (
+            self._library_notes_sync_controller.snapshot
         )
         self._library_prompts_debounce_timer: Timer | None = None
         self._library_prompts_filter_cursor_context: tuple[int, int] | None = None
@@ -12321,6 +12349,7 @@ class LibraryScreen(BaseAppScreen):
             "import_receipt_available": (
                 self._library_note_import_controller.snapshot.can_revisit_receipt
             ),
+            "lasting_sync_snapshot": self._library_notes_lasting_sync_snapshot,
             "tree_projection": self._build_library_notes_tree_projection(),
             "tree_selected_placement_id": getattr(
                 self, "_library_notes_tree_selected_placement_id", ""
@@ -12343,6 +12372,10 @@ class LibraryScreen(BaseAppScreen):
             values["sync_panel_state"] = self._build_library_notes_sync_state()
         elif self._library_notes_view == "import":
             values["mode"] = "import"
+        elif self._library_notes_view == "lasting_add":
+            values["mode"] = "lasting_add"
+        elif self._library_notes_view == "lasting_roots":
+            values["mode"] = "lasting_roots"
         elif self._library_notes_view == "editor":
             presentation_state = self._library_note_editor_state()
             if presentation_state is None:
@@ -26225,6 +26258,19 @@ class LibraryScreen(BaseAppScreen):
         self._refresh_local_source_snapshot()
         self._request_library_notes_tree_refresh(refresh_root=True)
 
+    def _publish_library_notes_lasting_sync_snapshot(
+        self, snapshot: LibraryNotesLastingSyncSnapshot
+    ) -> None:
+        """Retain one typed projection and patch only a visible inert route."""
+
+        self._library_notes_lasting_sync_snapshot = snapshot
+        if (
+            self.is_mounted
+            and self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
+            and self._library_notes_view in {"lasting_add", "lasting_roots"}
+        ):
+            _sync_library_canvas(self, "notes")
+
     def _notify_library_note_import_failure(self) -> None:
         """Show one bounded recovery notification without leaking backend detail."""
         notify = getattr(self.app_instance, "notify", None)
@@ -26259,6 +26305,11 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_notes_import(self, event: Button.Pressed) -> None:
         """Enter reviewed import selection and open the existing picker."""
         event.stop()
+        self._begin_library_notes_import_once()
+
+    def _begin_library_notes_import_once(self) -> None:
+        """Route every one-time branch into the one reviewed import owner."""
+
         snapshot = self._library_note_import_controller.snapshot
         if snapshot.phase in {
             NoteImportPhase.DESTINATION,
@@ -26275,6 +26326,142 @@ class LibraryScreen(BaseAppScreen):
         self._apply_library_notes_footer_context()
         _sync_library_canvas(self, "notes")
         self._push_library_note_import_picker()
+
+    @on(LibraryNotesAddFromFilesCanvas.RelationshipRequested)
+    def handle_library_notes_relationship_choice(
+        self, event: LibraryNotesAddFromFilesCanvas.RelationshipRequested
+    ) -> None:
+        """Keep the inert chooser honest and reuse the incumbent import flow."""
+
+        event.stop()
+        route = self._library_notes_sync_controller.choose_relationship(
+            event.relationship
+        )
+        if route == "import":
+            self._library_notes_view = "import"
+            self._apply_library_notes_footer_context()
+            _sync_library_canvas(self, "notes")
+            self._push_library_note_import_picker()
+            return
+        _sync_library_canvas(self, "notes")
+
+    @on(LibraryNotesAddFromFilesCanvas.SetupChanged)
+    def handle_library_notes_lasting_setup_changed(
+        self, event: LibraryNotesAddFromFilesCanvas.SetupChanged
+    ) -> None:
+        event.stop()
+        self._library_notes_sync_controller.set_setup(event.field, event.value)
+
+    @on(LibraryNotesAddFromFilesCanvas.FolderRequested)
+    def handle_library_notes_lasting_folder_requested(
+        self, event: LibraryNotesAddFromFilesCanvas.FolderRequested
+    ) -> None:
+        event.stop()
+
+        async def selected(path: Path | None) -> None:
+            if path is None or not path.is_dir():
+                return
+            controller = self._library_notes_sync_controller
+            controller.set_setup("folder", str(path))
+            if not controller.snapshot.setup.display_name:
+                controller.set_setup("display_name", path.name)
+
+        self.app.push_screen(
+            FileOpen(title="Choose a folder to keep synced", offer_select_folder=True),
+            selected,
+        )
+
+    @on(LibraryNotesAddFromFilesCanvas.CheckRequested)
+    async def handle_library_notes_lasting_check(
+        self, event: LibraryNotesAddFromFilesCanvas.CheckRequested
+    ) -> None:
+        event.stop()
+        root_id = self._library_notes_sync_controller.snapshot.review.root_id
+        await self._library_notes_sync_controller.check_setup(root_id or "pending-root")
+
+    @on(LibraryNotesAddFromFilesCanvas.ApplyRequested)
+    async def handle_library_notes_lasting_apply(
+        self, event: LibraryNotesAddFromFilesCanvas.ApplyRequested
+    ) -> None:
+        event.stop()
+        await self._library_notes_sync_controller.apply_reviewed()
+
+    @on(LibraryNotesAddFromFilesCanvas.ActivateRequested)
+    async def handle_library_notes_lasting_activate(
+        self, event: LibraryNotesAddFromFilesCanvas.ActivateRequested
+    ) -> None:
+        event.stop()
+        root_id = self._library_notes_sync_controller.snapshot.review.root_id
+        if root_id:
+            await self._library_notes_sync_controller.activate_root(root_id)
+
+    @on(LibraryNotesAddFromFilesCanvas.AttentionChoiceRequested)
+    def handle_library_notes_lasting_attention_choice(
+        self, event: LibraryNotesAddFromFilesCanvas.AttentionChoiceRequested
+    ) -> None:
+        event.stop()
+        self._library_notes_sync_controller.stage_attention_choice(
+            event.item_id, event.choice
+        )
+
+    @on(LibraryNotesAddFromFilesCanvas.PageRequested)
+    def handle_library_notes_lasting_review_page(
+        self, event: LibraryNotesAddFromFilesCanvas.PageRequested
+    ) -> None:
+        event.stop()
+        page = self._library_notes_sync_controller.snapshot.review.page + event.delta
+        self._library_notes_sync_controller.set_review_page(page)
+
+    @on(LibraryNotesSyncRootsCanvas.PageRequested)
+    def handle_library_notes_lasting_root_page(
+        self, event: LibraryNotesSyncRootsCanvas.PageRequested
+    ) -> None:
+        event.stop()
+        page = self._library_notes_sync_controller.snapshot.root_page + event.delta
+        self._library_notes_sync_controller.set_root_page(page)
+
+    @on(LibraryNotesSyncRootsCanvas.RootActionRequested)
+    async def handle_library_notes_lasting_root_action(
+        self, event: LibraryNotesSyncRootsCanvas.RootActionRequested
+    ) -> None:
+        event.stop()
+        controller = self._library_notes_sync_controller
+        if event.action == "check":
+            await controller.sync_now(event.root_id)
+        elif event.action == "review":
+            await controller.check_root(event.root_id)
+        elif event.action == "pause":
+            await controller.pause_root(event.root_id)
+        elif event.action == "resume":
+            await controller.resume_root(event.root_id)
+        elif event.action == "recover":
+            root = next(
+                (
+                    row
+                    for row in controller.snapshot.roots
+                    if row.root_id == event.root_id
+                ),
+                None,
+            )
+            if root is not None and root.action_id is not None:
+                await controller.resolve_cleanup(event.root_id, root.action_id)
+            else:
+                controller.stage_root_action(event.root_id, "recover")
+        elif event.action == "disconnect":
+            await controller.disconnect_root(
+                event.root_id, keep_folder_organization=True
+            )
+        else:
+            controller.stage_root_action(event.root_id, "retarget")
+
+    @on(LibraryNotesAddFromFilesCanvas.BackRequested)
+    @on(LibraryNotesSyncRootsCanvas.BackRequested)
+    def handle_library_notes_lasting_back(self, event: Any) -> None:
+        """Return from a directly mounted inert surface without mutation."""
+
+        event.stop()
+        self._library_notes_view = "list"
+        _sync_library_canvas(self, "notes", then=self._focus_library_notes_filter_input)
 
     @on(Button.Pressed, "#library-notes-import-receipt")
     def handle_library_notes_import_receipt(self, event: Button.Pressed) -> None:
