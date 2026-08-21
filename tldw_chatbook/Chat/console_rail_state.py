@@ -23,7 +23,7 @@ CONSOLE_RAIL_SECTION_IDS = (
     "character",
 )
 CONSOLE_RAIL_RIGHT_COMPACT_COLLAPSE_COLUMNS = 150
-# TASK-2154.1/TASK-18913: default Context stays open at exactly 100 columns,
+# TASK-2154.1/TASK-19639 (formerly TASK-18913): default Context stays open at exactly 100 columns,
 # where the framed grid has 96 content columns and resolves as Context 30 +
 # main outer 55 + the horizontal Inspector handle 11. The existing main
 # min-width waiver permits that one-column yield; below 100, default Context

@@ -3,7 +3,7 @@ id: TASK-19573
 title: >-
   Seven duplicate backlog task ids on dev, one of them a live In Progress
   ambiguity
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-21 20:26'
 labels:
@@ -84,3 +84,11 @@ more than 14 days and three carry no date at all.
       reconciled
 - [ ] The 13 stale In Progress tasks are triaged — closed, reassigned, or
       returned to To Do
+
+## Implementation Notes (2026-08-21)
+
+Resolved by TASK-19601's owner rule (older keeps the id; younger
+renumbers with provenance). The "live In Progress ambiguity" was
+task-18913 Keep-Console-workspace-geometry — the younger side; it
+renumbered to TASK-19639 and continues there under its In Progress state.
+All seven collisions cleared; see TASK-19601 notes for the full map.

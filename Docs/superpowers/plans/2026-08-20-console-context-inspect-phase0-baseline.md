@@ -70,7 +70,7 @@ Disposition vocabulary: **implement now** means a reproduced, decision-compatibl
 - Modify: `Docs/User_Guide/console/sessions-tabs-workspaces.md`
 - Modify: `Docs/User_Guide/console/chat-basics.md`
 - Modify: `backlog/tasks/task-14810 - Separate-Console-rail-Sessions-Workspaces-and-Conversations.md`
-- Modify: `backlog/tasks/task-18912 - Reconcile-Console-Context-and-Inspect-UX-baseline-before-remediation.md`
+- Modify: `backlog/tasks/task-19638 - Reconcile-Console-Context-and-Inspect-UX-baseline-before-remediation.md`
 
 1. Replace the obsolete single Session block description with the current Sessions, Workspaces, and Conversations sections.
 2. Replace obsolete glyph-only rail controls with the exact current full-width and collapsed labels.
@@ -80,11 +80,11 @@ Disposition vocabulary: **implement now** means a reproduced, decision-compatibl
 ### Task 2: File the two confirmed implementation slices
 
 **Files:**
-- Create: `backlog/tasks/task-18913 - Keep-Console-workspace-geometry-inside-the-viewport-at-exactly-100-columns.md`
-- Create: `backlog/tasks/task-18915 - Add-an-Inspector-overflow-fold-hint.md`
+- Create: `backlog/tasks/task-19639 - Keep-Console-workspace-geometry-inside-the-viewport-at-exactly-100-columns.md`
+- Create: `backlog/tasks/task-19640 - Add-an-Inspector-overflow-fold-hint.md`
 
 1. Re-sweep all remote refs, worktrees, and local task files immediately before filing.
-2. Make each task depend on TASK-18912.
+2. Make each task depend on TASK-19638.
 3. Keep the geometry task terminal-specific and aligned with ADR-043.
 4. Keep the hint task limited to overflow discovery; do not reorder Inspector content.
 
@@ -94,7 +94,7 @@ Disposition vocabulary: **implement now** means a reproduced, decision-compatibl
 2. Run documentation link or formatting checks available in the repository.
 3. Run `git diff --check`.
 4. Re-run the focused Console rail tests to prove documentation/task edits did not alter the baseline.
-5. Record verification in TASK-18912 and close only if its completion gates are honest.
+5. Record verification in TASK-19638 and close only if its completion gates are honest.
 
 ## Decision gate before structural IA work
 

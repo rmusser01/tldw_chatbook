@@ -1,5 +1,5 @@
 ---
-id: TASK-16322
+id: TASK-19635
 title: Add nested AGENTS.md activation before Console tools
 status: Done
 assignee:
@@ -54,3 +54,14 @@ Implemented registry-owned first-wins path targeting, lazy nested resolution wit
 
 Verification: the exact Task12 aggregate produced 748 passed plus only the two loopback-bind PermissionError setup nodes in test_console_provider_gateway; the identical two-node command produced the exact same errors on clean base 5047b6962 after escalation was unavailable. Runtime/concurrency ran 20 clean iterations of 65 tests (1,300 passes). All 17 new files pass Ruff check and format; the existing-file scan matches the clean-base 28 non-F821 diagnostics and sole RunLogWriter F821 baseline. Sentinel QA passed and only /tmp/chatbook-agents-md-delivery2/provider-spy.json contains the automatic body; SQLite dump, pytest XML, and run log are clean. git diff --check and the Delivery2 scope scan are clean. Complete UX/docs/performance/live UAT remain intentionally outside Delivery2 under Task12 and are owned by Delivery3.
 <!-- SECTION:NOTES:END -->
+
+## Renumbering provenance
+
+This task previously held id TASK-16322, colliding with the older
+"Add-nested-AGENTS.md-activation-before-Console-tools" task that arrived on dev first.
+Per the owner rule decided 2026-08-21 in TASK-19601 (**older id keeps it;
+the younger task renumbers with a provenance note, regardless of Done
+status**), it renumbered to TASK-19635. Citations to TASK-16322
+in already-merged commit messages, ADRs, or code comments written before
+2026-08-21 refer to THIS task; the other TASK-16322 holder is the
+older arrival and keeps the id.

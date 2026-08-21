@@ -14,7 +14,7 @@
 
 - Approved design: `Docs/superpowers/specs/2026-08-20-agents-md-support-design.md`
 - Accepted decision: `backlog/decisions/069-console-project-instruction-local-state-and-preflight.md`
-- Delivery tasks: `TASK-16320`, `TASK-16322` (depends on 16320), and `TASK-16323` (depends on 16322).
+- Delivery tasks: `TASK-19634`, `TASK-19635` (depends on 19634), and `TASK-19636` (depends on 19635).
 - ADR required: **yes**.
 - ADR path: `backlog/decisions/069-console-project-instruction-local-state-and-preflight.md`.
 - Reason: this changes provider/runtime trust boundaries, cross-module tool contracts, and local-only durable session state.
@@ -27,7 +27,7 @@ python -m pytest Tests/Agents/test_tool_catalog_owner_cache.py Tests/Agents/test
 ```
 - Do not launch Chatbook against the real profile during the schema delivery. Use `tmp_path`/in-memory databases until the schema-changing branch is integrated everywhere that shares the real data directory.
 - Before each delivery, repeat the open-PR/branch collision check from `backlog/docs/lessons-backlog-hygiene.md` and rebase onto the intended integration branch. If the ChaChaNotes schema head is no longer v32, allocate the next migration from the actual head and update every v32/v33 path below consistently.
-- Do not start TASK-16322 until TASK-16320 is integrated or rebased as its exact base; do not start TASK-16323 until TASK-16322 is integrated or rebased as its exact base.
+- Do not start TASK-19635 until TASK-19634 is integrated or rebased as its exact base; do not start TASK-19636 until TASK-19635 is integrated or rebased as its exact base.
 
 ## File responsibility map
 
@@ -60,21 +60,21 @@ python -m pytest Tests/Agents/test_tool_catalog_owner_cache.py Tests/Agents/test
 
 Keep these boundaries. In particular, do not put Textual calls into the resolver/runtime modules, do not put instruction bodies into `ConsoleChatSession`, and do not introduce a second tool-argument parser.
 
-## Delivery 1 — Startup project context (`TASK-16320`)
+## Delivery 1 — Startup project context (`TASK-19634`)
 
 ### Task 1: Claim the delivery and pin the current schema/base
 
 **Files:**
-- Modify: `backlog/tasks/task-16320 - Add-startup-AGENTS.md-project-context-to-Console.md`
+- Modify: `backlog/tasks/task-19634 - Add-startup-AGENTS.md-project-context-to-Console.md`
 - Read: `backlog/docs/lessons-testing-evidence.md`
 - Read: `backlog/docs/lessons-live-verification.md`
 - Read: `backlog/docs/lessons-backlog-hygiene.md`
 
 - [ ] **Step 1: Recheck in-flight work and the branch base.** Run `git branch -a --format='%(refname:short)' | rg -i 'agents-md|project-instruction'` and `gh api -X GET /search/issues -f q='repo:rmusser01/tldw_chatbook is:pr is:open AGENTS.md'`. Expected: no competing implementation; otherwise stop and reconcile.
 - [ ] **Step 2: Confirm the schema head.** Run `rg -n '_CURRENT_SCHEMA_VERSION' tldw_chatbook/DB/ChaChaNotes_DB.py`. Expected on this plan's base: `32`. If different, rename and renumber the planned migration/tests before coding.
-- [ ] **Step 3: Put the task in progress.** Run `backlog task edit 16320 -s "In Progress"` and add an Implementation Plan that links this file, TASK-16320, the accepted spec, and ADR-069. Re-read with `backlog task 16320 --plain`.
+- [ ] **Step 3: Put the task in progress.** Run `backlog task edit 19634 -s "In Progress"` and add an Implementation Plan that links this file, TASK-19634, the accepted spec, and ADR-069. Re-read with `backlog task 19634 --plain`.
 - [ ] **Step 4: Record the scoped baseline.** Re-run the six-file 71-test command from the plan preamble. Expected: all pass before feature edits.
-- [ ] **Step 5: Commit task metadata only.** Commit message: `docs: start TASK-16320 AGENTS.md startup context`.
+- [ ] **Step 5: Commit task metadata only.** Commit message: `docs: start TASK-19634 AGENTS.md startup context`.
 
 ### Task 2: Add versioned control state, fingerprints, and config limits
 
@@ -268,21 +268,21 @@ The canonical path and digest are memory-only and must have no serializer/displa
 ### Task 7: Verify and close Delivery 1
 
 **Files:**
-- Modify: `backlog/tasks/task-16320 - Add-startup-AGENTS.md-project-context-to-Console.md`
+- Modify: `backlog/tasks/task-19634 - Add-startup-AGENTS.md-project-context-to-Console.md`
 
 - [ ] **Step 1: Run `python -m pytest Tests/Agents/test_project_instruction_resolver.py Tests/Agents/test_project_instruction_resolver_properties.py Tests/Chat/test_console_project_instructions.py Tests/Chat/test_console_chat_store_project_instructions.py Tests/Chat/test_console_agent_project_instructions.py Tests/Chat/test_console_local_review_hook.py Tests/Chat/test_console_agent_bridge.py Tests/Chat/test_console_provider_gateway.py Tests/Chat/test_anthropic_native_tools.py Tests/Chat/test_google_native_tools.py Tests/Chat/test_console_rewind_summarize.py Tests/DB/test_chachanotes_console_project_context_migration.py Tests/Chatbooks/test_chatbook_importer.py Tests/Workspaces/test_workspace_folder_bindings.py Tests/UI/test_console_project_instructions.py Tests/UI/test_console_context_modal.py Tests/UI/test_console_right_rail.py Tests/UI/test_console_native_chat_flow.py Tests/test_config_console_defaults.py -q`.** Expected: all pass.
 - [ ] **Step 2: Apply the repository's verified formatter policy.** This repository has no whole-repo formatter gate, and the existing large seams already fail `ruff format --check`; do not normalize them in this feature. Set `CHATBOOK_AGENTS_NEW_PY=(tldw_chatbook/Chat/console_project_instructions.py tldw_chatbook/Agents/project_instruction_resolver.py tldw_chatbook/Widgets/Console/console_project_instructions.py Tests/Chat/test_console_project_instructions.py Tests/Agents/test_project_instruction_resolver.py Tests/Agents/test_project_instruction_resolver_properties.py Tests/DB/test_chachanotes_console_project_context_migration.py Tests/Chat/test_console_chat_store_project_instructions.py Tests/Chat/test_console_agent_project_instructions.py Tests/UI/test_console_project_instructions.py)` and run `python -m ruff check ${CHATBOOK_AGENTS_NEW_PY[@]}` plus `python -m ruff format --check ${CHATBOOK_AGENTS_NEW_PY[@]}`. Set `CHATBOOK_AGENTS_EXISTING_PY=(tldw_chatbook/config.py tldw_chatbook/DB/ChaChaNotes_DB.py tldw_chatbook/Chat/chat_persistence_service.py tldw_chatbook/Chat/console_chat_store.py tldw_chatbook/Chat/console_chat_controller.py tldw_chatbook/Chat/console_agent_bridge.py tldw_chatbook/Chat/console_provider_gateway.py tldw_chatbook/Chat/Chat_Functions.py tldw_chatbook/LLM_Calls/LLM_API_Calls.py tldw_chatbook/Agents/local_tool_provider.py tldw_chatbook/Agents/agent_models.py tldw_chatbook/Agents/agent_service.py tldw_chatbook/Chat/console_chat_models.py tldw_chatbook/Chat/console_display_state.py tldw_chatbook/UI/Console_Modules/right_rail.py tldw_chatbook/UI/Console_Modules/session.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/Widgets/Console/console_context_modal.py Tests/test_config_console_defaults.py Tests/Chatbooks/test_chatbook_importer.py Tests/Agents/test_agent_service.py Tests/Chat/test_console_local_review_hook.py Tests/Chat/test_console_agent_bridge.py Tests/Chat/test_console_provider_gateway.py Tests/Chat/test_chat_functions.py Tests/Chat/test_anthropic_native_tools.py Tests/Chat/test_google_native_tools.py Tests/Chat/test_console_rewind_summarize.py Tests/UI/test_console_context_modal.py Tests/UI/test_console_right_rail.py Tests/UI/test_console_native_chat_flow.py)`; run `python -m ruff check ${CHATBOOK_AGENTS_EXISTING_PY[@]} --ignore F821`, then `python -m ruff check ${CHATBOOK_AGENTS_EXISTING_PY[@]} --select F821 --output-format=concise`. The latter must contain exactly the pre-existing `agent_service.py: RunLogWriter` finding and no addition. Run `git diff --check 5047b6962...HEAD`. Expected: new files pass both gates, existing files add no lint diagnostic, and whitespace is clean.
 - [ ] **Step 3: Set `CHATBOOK_AGENTS_QA_DIR=/tmp/chatbook-agents-md-delivery1`, create its `pytest`, `sqlite`, and `runlog` children, and run the sentinel cases from Step 1 with fixture value `CHATBOOK_AGENTS_SENTINEL_7d1e9c` and that artifact root. Dump each temporary SQLite database through the test helper, then run `rg -n 'CHATBOOK_AGENTS_SENTINEL_7d1e9c' /tmp/chatbook-agents-md-delivery1`.** Expected: the test's allowlisted provider-spy artifact is the only body-bearing match; SQLite dumps, ordinary pytest capture, and run logs contain none.
-- [ ] **Step 4: Review the diff against TASK-16320 only.** Delivery 1 must not contain `prepare_tool_calls`, nested path mapping, or subagent ledger code.
-- [ ] **Step 5: Complete the Backlog task.** Check every AC, add concise Implementation Notes including ADR-069 and exact verification, then `backlog task edit 16320 -s Done`. Re-read the task after the CLI mutation.
-- [ ] **Step 6: Commit closeout.** `git commit -m "docs: close TASK-16320 startup project context"`.
+- [ ] **Step 4: Review the diff against TASK-19634 only.** Delivery 1 must not contain `prepare_tool_calls`, nested path mapping, or subagent ledger code.
+- [ ] **Step 5: Complete the Backlog task.** Check every AC, add concise Implementation Notes including ADR-069 and exact verification, then `backlog task edit 19634 -s Done`. Re-read the task after the CLI mutation.
+- [ ] **Step 6: Commit closeout.** `git commit -m "docs: close TASK-19634 startup project context"`.
 
-## Delivery 2 — Nested path activation (`TASK-16322`)
+## Delivery 2 — Nested path activation (`TASK-19635`)
 
 ### Task 8: Add registry-owned path-target mapping
 
 **Files:**
-- Modify: `backlog/tasks/task-16322 - Add-nested-AGENTS.md-activation-before-Console-tools.md`
+- Modify: `backlog/tasks/task-19635 - Add-nested-AGENTS.md-activation-before-Console-tools.md`
 - Modify: `tldw_chatbook/Agents/tool_catalog.py:343-350,821-1015`
 - Modify: `tldw_chatbook/Agents/local_tool_provider.py`
 - Modify: `tldw_chatbook/Tools/patch_tool_impls.py:105-178,370-450`
@@ -291,7 +291,7 @@ The canonical path and digest are memory-only and must have no serializer/displa
 - Create: `Tests/Agents/test_project_instruction_path_targets.py`
 - Modify: `Tests/Tools/test_patch_tool_impls.py`
 
-- [ ] **Step 1: Recheck base/in-flight work, mark TASK-16322 In Progress, and add its task Implementation Plan.** Re-read with `--plain`.
+- [ ] **Step 1: Recheck base/in-flight work, mark TASK-19635 In Progress, and add its task Implementation Plan.** Re-read with `--plain`.
 - [ ] **Step 2: Write first-wins owner tests.** Register colliding builtin/local/skill/MCP fakes in different orders. `resolve_owner_for_name(name)` must return the exact `(tool_id, provider)` used by `invoke_by_name`; preflight must never call shadowed providers.
 - [ ] **Step 3: Write the complete local mapping matrix.** Assert: `fs_read`/`fs_write`/`fs_edit` use the exact target's parent chain; `fs_list` uses the listed-directory chain; `fs_glob`/`fs_grep` use only the binding root regardless of pattern prefixes; `fs_patch` uses the union of parsed create/modify parent chains for real and `dry_run` calls while invalid/delete/rename forms preserve existing parser errors; `git_branches`, unfiltered `git_diff`, unfiltered `git_log`, and every `git_status` call (including `path`) use only the discovered repository-root chain; path-filtered `git_diff(path)`/`git_log(path)` use repository root through the directory target or lexical parent for file/deleted targets, while `commit_range`, `staged`, and `stat` do not alter scope; `git_blame(path)` uses repository root through the file parent; web/todo/spawn/process/skill-script/MCP/opaque tools return no targets.
 - [ ] **Step 4: Write built-in mapping tests.** `read_file`/`write_file` exact parent and `list_directory` directory scope inside the selected binding; another authorized binding returns an outside-instruction-scope target, not a second hierarchy. Disabled built-ins report no targets.
@@ -393,21 +393,21 @@ class ToolBatchPreparation:
 ### Task 12: Verify and close Delivery 2
 
 **Files:**
-- Modify: `backlog/tasks/task-16322 - Add-nested-AGENTS.md-activation-before-Console-tools.md`
+- Modify: `backlog/tasks/task-19635 - Add-nested-AGENTS.md-activation-before-Console-tools.md`
 
 - [ ] **Step 1: Run `python -m pytest Tests/Agents/test_tool_catalog.py Tests/Agents/test_tool_catalog_owner_cache.py Tests/Agents/test_project_instruction_path_targets.py Tests/Agents/test_project_instruction_resolver.py Tests/Agents/test_project_instruction_resolver_properties.py Tests/Agents/test_project_instruction_runtime.py Tests/Agents/test_project_instruction_concurrency.py Tests/Agents/test_agent_runtime_review_hook.py Tests/Agents/test_agent_runtime_preparation.py Tests/Agents/test_agent_service.py Tests/Agents/test_agent_service_review_state_scope.py Tests/Tools/test_patch_tool_impls.py Tests/Chat/test_console_agent_project_instructions.py Tests/Chat/test_console_agent_bridge.py Tests/Chat/test_console_agent_bridge_local.py Tests/Chat/test_console_provider_gateway.py Tests/Chat/test_anthropic_native_tools.py Tests/Chat/test_google_native_tools.py Tests/Chat/test_console_project_instruction_provider_grammar.py Tests/Chat/test_console_project_instruction_persistence_boundary.py -q`.** Expected: pass.
 - [ ] **Step 2: Run property and concurrency tests repeatedly.** If `pytest-repeat` is installed, run `pytest Tests/Agents/test_project_instruction_concurrency.py Tests/Agents/test_project_instruction_runtime.py -q -x --count=20`. Otherwise run `for i in {1..20}; do pytest Tests/Agents/test_project_instruction_concurrency.py Tests/Agents/test_project_instruction_runtime.py -q -x || break; done`. Expected: twenty clean runs with no flakes.
 - [ ] **Step 3: Repeat Task 7 Step 2's exact lint/format policy, appending Delivery-2-created files `tldw_chatbook/Agents/project_instruction_runtime.py Tests/Agents/test_project_instruction_path_targets.py Tests/Agents/test_project_instruction_runtime.py Tests/Agents/test_project_instruction_concurrency.py Tests/Agents/test_agent_runtime_preparation.py Tests/Chat/test_console_project_instruction_provider_grammar.py Tests/Chat/test_console_project_instruction_persistence_boundary.py` to `CHATBOOK_AGENTS_NEW_PY`, and appending modified existing files `tldw_chatbook/Agents/tool_catalog.py tldw_chatbook/Tools/patch_tool_impls.py tldw_chatbook/Agents/agent_runtime.py Tests/Agents/test_tool_catalog.py Tests/Agents/test_tool_catalog_owner_cache.py Tests/Tools/test_patch_tool_impls.py Tests/Agents/test_agent_runtime_review_hook.py Tests/Agents/test_agent_service_review_state_scope.py Tests/Chat/test_console_agent_bridge_local.py` to `CHATBOOK_AGENTS_EXISTING_PY`. Run the same no-new-diagnostic assertion and `git diff --check 5047b6962...HEAD`. Set `CHATBOOK_AGENTS_QA_DIR=/tmp/chatbook-agents-md-delivery2`, direct the sentinel tests' pytest capture/SQLite dumps/run logs there, then run `rg -n 'CHATBOOK_AGENTS_SENTINEL_7d1e9c' /tmp/chatbook-agents-md-delivery2`.** Expected: new files pass Ruff check/format, existing files add no lint diagnostic, and only the allowlisted fake provider-request spy contains the body.
 - [ ] **Step 4: Review scope.** No complete UX/docs/performance/UAT work belongs in this delivery beyond metadata needed for correctness.
-- [ ] **Step 5: Complete TASK-16322 AC/notes/status and re-read the file.** Link ADR-069 and both delivery commits.
-- [ ] **Step 6: Commit closeout.** `git commit -m "docs: close TASK-16322 nested project context"`.
+- [ ] **Step 5: Complete TASK-19635 AC/notes/status and re-read the file.** Link ADR-069 and both delivery commits.
+- [ ] **Step 6: Commit closeout.** `git commit -m "docs: close TASK-19635 nested project context"`.
 
-## Delivery 3 — Interoperability and rollout (`TASK-16323`)
+## Delivery 3 — Interoperability and rollout (`TASK-19636`)
 
 ### Task 13: Complete UX states and documentation
 
 **Files:**
-- Modify: `backlog/tasks/task-16323 - Verify-and-roll-out-Console-AGENTS.md-support.md`
+- Modify: `backlog/tasks/task-19636 - Verify-and-roll-out-Console-AGENTS.md-support.md`
 - Modify: `tldw_chatbook/Widgets/Console/console_project_instructions.py`
 - Modify: `tldw_chatbook/Widgets/Console/console_context_modal.py`
 - Modify: `tldw_chatbook/Chat/console_display_state.py`
@@ -420,7 +420,7 @@ class ToolBatchPreparation:
 - Modify: `Docs/User_Guide/console/sessions-tabs-workspaces.md`
 - Modify: `AGENTS.md`
 
-- [ ] **Step 1: Recheck base/in-flight work, mark TASK-16323 In Progress, and add its task Implementation Plan.** Re-read with `--plain`.
+- [ ] **Step 1: Recheck base/in-flight work, mark TASK-19636 In Progress, and add its task Implementation Plan.** Re-read with `--plain`.
 - [ ] **Step 2: Extend UI tests for every final state.** Cover Off, Choose folder, None, loaded count, Warning, removed/retargeted recovery, override precedence, scope/outcome rows, and a nested activation event. Verify modal focus, Escape/cancel behavior, implemented key hints, and untrusted markup handling at 80x24/100x30/140x40.
 - [ ] **Step 3: Implement the tested final-state mapping only.** `Off` exposes Enable; `Choose folder` exposes the chooser; `None` reports an eligible selected binding with no effective source; `<N> loaded` opens source/scope/outcome metadata; `Warning` opens deduplicated content-free codes and recovery actions. Aggregate identical warning category/source pairs once per run, keep the rail row to one line at 80 columns, and expose bodies only through the explicit nonpersistent exact Next Send view. Do not add an editor or another settings surface.
 - [ ] **Step 4: Update user docs.** Explain discovery, precedence, selected binding/cwd, no global files, lazy nested scope, untrusted status, first-use destination consent, read-only behavior, budgets/config, warnings, legacy defaults, and explicit-read persistence.
@@ -434,7 +434,7 @@ class ToolBatchPreparation:
 **Files:**
 - Create: `Tests/Agents/test_project_instruction_performance.py`
 - Create: `Docs/superpowers/qa/agents-md-support-2026-08/README.md`
-- Modify: `backlog/tasks/task-16323 - Verify-and-roll-out-Console-AGENTS.md-support.md`
+- Modify: `backlog/tasks/task-19636 - Verify-and-roll-out-Console-AGENTS.md-support.md`
 - Modify if a real reusable incident occurs: `backlog/docs/lessons-testing-evidence.md` or `backlog/docs/lessons-live-verification.md`
 
 - [ ] **Step 1: Add deterministic performance tests.** Instrument directory visits in a deep synthetic tree. Startup must inspect one directory (O(1)); first nested activation must visit only root-to-target depth (O(depth)); no recursive walk. Record timings as evidence, but assert operation counts rather than fragile wall-clock thresholds.
@@ -445,7 +445,7 @@ class ToolBatchPreparation:
 - [ ] **Step 6: Run fenced/local-model UAT.** Repeat root + nested activation and successful retry against a local/fenced transport. Verify the tool-results fence closes before the labeled context section.
 - [ ] **Step 7: Inspect the user-visible TUI.** Capture 80x24/100x30/140x40 evidence for compact row, chooser/notice, Context metadata, warning/recovery, and activation event. Confirm top-to-bottom reading order and actual actions, not just rendering.
 - [ ] **Step 8: Perform final sentinel audit.** Search scratch database tables, AgentRunsDB, run logs, Textual logs, captured requests, and exported Context JSON. The sentinel may exist only in explicit next-send inspection and the actual provider request spy; explicit user/tool/model echoes are documented exceptions.
-- [ ] **Step 9: Complete documentation/task hygiene.** Check every TASK-16323 AC, add Implementation Notes with exact evidence and ADR-069, decide whether a real incident merits a lessons entry, and set Done via CLI. Audit TASK-16320/16322/16323 statuses from the board.
+- [ ] **Step 9: Complete documentation/task hygiene.** Check every TASK-19636 AC, add Implementation Notes with exact evidence and ADR-069, decide whether a real incident merits a lessons entry, and set Done via CLI. Audit TASK-19634/16322/16323 statuses from the board.
 - [ ] **Step 10: Commit closeout.** `git commit -m "docs: close Console AGENTS.md rollout"`.
 
 ## Final acceptance matrix

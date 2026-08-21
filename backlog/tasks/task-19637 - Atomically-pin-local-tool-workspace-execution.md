@@ -1,5 +1,5 @@
 ---
-id: TASK-16324
+id: TASK-19637
 title: Atomically pin local-tool workspace execution
 status: To Do
 assignee: []
@@ -28,3 +28,14 @@ Prevent workspace-root rename or replacement races from retargeting local filesy
 - [ ] #5 An ADR records the helper-process or alternative runtime boundary and its lifecycle failure and performance trade-offs
 - [ ] #6 Existing configured-workspace and selected-binding tool behavior remains compatible when no drift occurs
 <!-- AC:END -->
+
+## Renumbering provenance
+
+This task previously held id TASK-16324, colliding with the older
+"Atomically-pin-local-tool-workspace-execution" task that arrived on dev first.
+Per the owner rule decided 2026-08-21 in TASK-19601 (**older id keeps it;
+the younger task renumbers with a provenance note, regardless of Done
+status**), it renumbered to TASK-19637. Citations to TASK-16324
+in already-merged commit messages, ADRs, or code comments written before
+2026-08-21 refer to THIS task; the other TASK-16324 holder is the
+older arrival and keeps the id.

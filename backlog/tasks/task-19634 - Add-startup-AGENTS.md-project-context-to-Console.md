@@ -1,5 +1,5 @@
 ---
-id: TASK-16320
+id: TASK-19634
 title: Add startup AGENTS.md project context to Console
 status: Done
 assignee:
@@ -58,3 +58,14 @@ Baseline evidence (2026-08-20):
 <!-- SECTION:NOTES:BEGIN -->
 Implemented ADR-069 Delivery 1: secure selected-root AGENTS.override.md/AGENTS.md resolution, local-only control persistence, exact ephemeral provider delivery with consent and leak boundaries, selected-root read-only-aware tools, and metadata-only Console rail/Context recovery UI. The original delivery allocated schema v33 from its v32 base; the PR replay onto current `dev` renumbered the same guarded migration to v41→v42 because `dev` now owns v33→v41. Verification: the exact 19-file suite produced 988 passed and only two unrelated baseline failures—Tests/UI/test_console_native_chat_flow.py::test_console_save_as_savers_confirm_at_success_severity (missing _save_console_message_as_media) and ::test_console_settings_save_fires_success_toast (missing _ensure_active_console_session_settings); the identical two-node command at clean base 5047b6962 reproduced both exact failures. New-file Ruff check/format pass; existing-file diagnostics match the clean base exactly, including the sole F821 RunLogWriter finding; git diff --check passes. Sentinel QA at /tmp/chatbook-agents-md-delivery1 passed and CHATBOOK_AGENTS_SENTINEL_7d1e9c appears only in the allowlisted provider-spy artifact, not SQLite dumps, pytest output, or run logs. Delivery-1 scope scan found no prepare_tool_calls, nested path mapping, or subagent ledger additions.
 <!-- SECTION:NOTES:END -->
+
+## Renumbering provenance
+
+This task previously held id TASK-16320, colliding with the older
+"Add-startup-AGENTS.md-project-context-to-Console" task that arrived on dev first.
+Per the owner rule decided 2026-08-21 in TASK-19601 (**older id keeps it;
+the younger task renumbers with a provenance note, regardless of Done
+status**), it renumbered to TASK-19634. Citations to TASK-16320
+in already-merged commit messages, ADRs, or code comments written before
+2026-08-21 refer to THIS task; the other TASK-16320 holder is the
+older arrival and keeps the id.

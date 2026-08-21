@@ -56,7 +56,7 @@ jobs:
             done <<< "$fm_dupes"
           fi
           if [ "$fail" -ne 0 ]; then
-            echo "Renumber the batch that has not started (rename files, update frontmatter id:, dependencies:, and doc references)."
+            echo "Resolve per the 2026-08-21 owner rule (TASK-19601): the OLDER arrival keeps the id; the younger task(s) renumber — regardless of Done status — with a Renumbering provenance section, updating dependencies: and doc/code references."
             exit 1
           fi
           echo "No duplicate task IDs across $(ls backlog/tasks | grep -c '^task-') task files (filenames + frontmatter)."

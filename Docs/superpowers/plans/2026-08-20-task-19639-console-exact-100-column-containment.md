@@ -10,9 +10,9 @@
 
 **Required skills:** `@superpowers:test-driven-development`, `@textual-tui`, `@ponytail`, and `@superpowers:verification-before-completion`.
 
-**Design:** `Docs/superpowers/specs/2026-08-20-task-18913-console-exact-100-column-containment-design.md`
+**Design:** `Docs/superpowers/specs/2026-08-20-task-19639-console-exact-100-column-containment-design.md`
 
-**Backlog task:** `backlog/tasks/task-18913 - Keep-Console-workspace-geometry-inside-the-viewport-at-exactly-100-columns.md`
+**Backlog task:** `backlog/tasks/task-19639 - Keep-Console-workspace-geometry-inside-the-viewport-at-exactly-100-columns.md`
 
 **ADR required:** no
 
@@ -28,7 +28,7 @@
 - Modify `tldw_chatbook/UI/Screens/chat_screen.py`: correct compose/live-sync comments and exact-width arithmetic only; existing consumers remain behaviorally unchanged.
 - Modify `Tests/Chat/test_console_rail_state.py`: pure 99/100/101 state table and exact-width band contract.
 - Modify `Tests/UI/test_console_shell_regions.py`: production-CSS four-state geometry matrix, readable-width assertions, adjacent live-resize transitions, focus/reading-state continuity, and zero-save oracle.
-- Modify `backlog/tasks/task-18913 - Keep-Console-workspace-geometry-inside-the-viewport-at-exactly-100-columns.md`: check acceptance criteria and add implementation notes only after verification succeeds.
+- Modify `backlog/tasks/task-19639 - Keep-Console-workspace-geometry-inside-the-viewport-at-exactly-100-columns.md`: check acceptance criteria and add implementation notes only after verification succeeds.
 - No CSS source or generated bundle changes are expected.
 
 ### Task 1: Pin the pure state and resize boundary in red
@@ -368,10 +368,10 @@ git add tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/Chat/console_rail_
 git commit -m "docs(console): clarify compact width authority"
 ```
 
-### Task 6: Verify, document, and close TASK-18913
+### Task 6: Verify, document, and close TASK-19639
 
 **Files:**
-- Modify: `backlog/tasks/task-18913 - Keep-Console-workspace-geometry-inside-the-viewport-at-exactly-100-columns.md`
+- Modify: `backlog/tasks/task-19639 - Keep-Console-workspace-geometry-inside-the-viewport-at-exactly-100-columns.md`
 - Test: focused Console and repository governance suites
 
 - [ ] **Step 1: Run import provenance before behavior suites**
@@ -445,6 +445,6 @@ Confirm the change contains only the inclusive override, exact resize band, test
 - [ ] **Step 8: Commit task completion**
 
 ```bash
-git add 'backlog/tasks/task-18913 - Keep-Console-workspace-geometry-inside-the-viewport-at-exactly-100-columns.md'
-git commit -m "docs(backlog): complete TASK-18913"
+git add 'backlog/tasks/task-19639 - Keep-Console-workspace-geometry-inside-the-viewport-at-exactly-100-columns.md'
+git commit -m "docs(backlog): complete TASK-19639"
 ```

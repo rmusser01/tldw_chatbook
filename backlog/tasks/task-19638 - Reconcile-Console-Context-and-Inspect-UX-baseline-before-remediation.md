@@ -1,5 +1,5 @@
 ---
-id: TASK-18912
+id: TASK-19638
 title: Reconcile Console Context and Inspect UX baseline before remediation
 status: Done
 assignee:
@@ -88,3 +88,14 @@ behavior changed.
 ADR required: no. ADR path: N/A. This was evidence, documentation, and Backlog
 reconciliation only.
 <!-- SECTION:NOTES:END -->
+
+## Renumbering provenance
+
+This task previously held id TASK-18912, colliding with the older
+"Reconcile-Console-Context-and-Inspect-UX-baseline-before-remediation" task that arrived on dev first.
+Per the owner rule decided 2026-08-21 in TASK-19601 (**older id keeps it;
+the younger task renumbers with a provenance note, regardless of Done
+status**), it renumbered to TASK-19638. Citations to TASK-18912
+in already-merged commit messages, ADRs, or code comments written before
+2026-08-21 refer to THIS task; the other TASK-18912 holder is the
+older arrival and keeps the id.

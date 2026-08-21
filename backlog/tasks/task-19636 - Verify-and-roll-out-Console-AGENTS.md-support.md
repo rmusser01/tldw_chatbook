@@ -1,5 +1,5 @@
 ---
-id: TASK-16323
+id: TASK-19636
 title: Verify and roll out Console AGENTS.md support
 status: Done
 assignee:
@@ -53,3 +53,14 @@ Completed the Console AGENTS.md rollout UX, documentation, deterministic O(1)/O(
 
 Plan deviation: at the user's direction, verification was limited to tests related to modified functionality and changed code; a partially completed broad repository run was stopped and is not evidence. Live fenced/local UAT passes against the actual `llama_cpp` listener: consent, root delivery, nested activation, atomic deferral/retry, fenced-close ordering, explicit file read, and automatic-body persistence exclusion were verified under an isolated scratch profile. Credentialed native-cloud UAT passes against OpenAI `gpt-4.1-mini` with native streaming tools and a synthetic multimodal PNG; a normal nested activation run and a separate invalid-override warning/recovery run each completed three provider calls, one reviewed/executed `fs_read`, and exact final text. Related responsive Console checks passed at 80x24, 100x30, and 140x40. The combined sentinel audit found automatic bodies only in provider request captures, retained explicit read results normally, and found no API key in evidence or the git diff. `pip check` remains red only for the shared environment's pre-existing `textual-web` constraints. Full evidence is in `Docs/superpowers/qa/agents-md-support-2026-08/README.md`. The stale-helper incident is recorded in `backlog/docs/lessons-testing-evidence.md`; the rejected multimodal fixture incident is recorded in `backlog/docs/lessons-live-verification.md`.
 <!-- SECTION:NOTES:END -->
+
+## Renumbering provenance
+
+This task previously held id TASK-16323, colliding with the older
+"Verify-and-roll-out-Console-AGENTS.md-support" task that arrived on dev first.
+Per the owner rule decided 2026-08-21 in TASK-19601 (**older id keeps it;
+the younger task renumbers with a provenance note, regardless of Done
+status**), it renumbered to TASK-19636. Citations to TASK-16323
+in already-merged commit messages, ADRs, or code comments written before
+2026-08-21 refer to THIS task; the other TASK-16323 holder is the
+older arrival and keeps the id.
