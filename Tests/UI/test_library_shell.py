@@ -78,7 +78,10 @@ from tldw_chatbook.Library.library_rag_state import (
     LibraryRagPanelState,
 )
 from tldw_chatbook.Library.library_notes_state import LibraryNotesFocusIdentity
-from tldw_chatbook.Library.library_media_state import MediaBrowseScope
+from tldw_chatbook.Library.library_media_state import (
+    MediaBrowseResult,
+    MediaBrowseScope,
+)
 from tldw_chatbook.Library.library_prompts_state import (
     PromptSelectionBasket,
     PromptSelectionEntry,
@@ -5580,8 +5583,17 @@ async def test_library_shell_rail_preferences_prefers_app_config_over_cli_config
         assert screen._library_rail_preferences().details_open is True
 
     # Recorded, not raised -- see the sibling search-history test for why.
-    assert ("library", "rail_state") not in cli_reads, (
-        f"rail preferences fell back to the CLI config despite app_config: {cli_reads}"
+    # TASK-19602: the blanket "no rail_state CLI reads" form predates
+    # `_load_library_lifecycle_value` (11b2fa700), whose own by-design
+    # app_config-first/CLI-fallback reads library.rail_state for the
+    # lifecycle key. The contract under test is narrower: the SECTIONS
+    # reader must not fall back while app_config carries sections -- proven
+    # by a fresh resolution adding no reads.
+    reads_before_resolved = len(cli_reads)
+    assert screen._library_rail_preferences().details_open is True
+    assert len(cli_reads) == reads_before_resolved, (
+        "rail sections fell back to the CLI config despite app_config: "
+        f"{cli_reads[reads_before_resolved:]}"
     )
 
 
@@ -10825,6 +10837,11 @@ async def test_library_conversation_canvas_sync_preserves_intrinsic_action_gates
             and not screen.query(".library-conversation-row"),
             message="Fresh empty Conversation page never applied.",
         )
+        # TASK-19602: a FRESH filtered-empty now renders the distilled
+        # CTA branch ("Clear filter") with no action row (3aef9bcd1) --
+        # the gates contract needs the STALE empty path, where the status
+        # copy keeps the action row composed with disabled controls.
+        screen._library_conversation_freshness = "stale"
         empty_sync_finished = asyncio.Event()
         screen._sync_library_conversation_canvas(then=empty_sync_finished.set)
         await _wait_for_condition(
@@ -10836,7 +10853,11 @@ async def test_library_conversation_canvas_sync_preserves_intrinsic_action_gates
         select = screen.query_one("#library-conversations-select-toggle", Button)
         assert select.label.plain == f"{LIBRARY_DISABLED_ACTION_MARKER} Select"
         assert select.disabled is True
-        assert str(select.tooltip) == LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP
+        # TASK-19602: on the STALE empty path the stale reason outranks the
+        # empty-count reason for the disabled tooltip (the list may be
+        # wrong, not merely empty) -- the empty tooltip itself is covered
+        # by the fresh-empty matrix above.
+        assert str(select.tooltip) == "List may be out of date"
         select.press()
         await pilot.pause()
         assert screen._library_conversations_select_mode is False
@@ -14472,12 +14493,19 @@ async def test_library_shell_prompts_rail_row_shows_exact_count():
         assert "Prompts (2)" in rail_label
 
         button.press()
-        error = await _wait_for_selector(screen, pilot, "#library-prompts-error")
+        # TASK-19602: with the pager always composed (3aef9bcd1 pagination)
+        # the service-failure copy renders in the pager status line -- the
+        # legacy pager-None "#library-prompts-error" node no longer mounts.
+        error = await _wait_for_selector(
+            screen, pilot, "#library-prompts-page-status"
+        )
 
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
         assert screen.query_one("#library-prompts-canvas")
         header = screen.query_one("#library-prompts-header", Static)
-        assert str(header.renderable) == "Prompts (…)"
+        # TASK-19602: the count comes from the pager's own total, unknown
+        # on a service failure -- the header now renders the bare title.
+        assert str(header.renderable) == "Prompts"
         assert "unavailable" in str(error.renderable)
         assert screen.query_one("#library-prompts-retry", Button)
     assert app.prompt_scope_service.count_calls
@@ -23785,7 +23813,17 @@ def test_library_shell_restore_state_sets_per_pane_filter_attrs_on_fresh_unmount
     """
     app = _build_test_app()
     original = LibraryScreen(app)
-    original._library_media_type_filter = "audio"
+    # TASK-19602: c9ac43eff moved media-filter persistence out of the bare
+    # attr and into the browse controller's applied scope -- seed an applied
+    # result whose scope carries the filter; save_state serializes that
+    # scope and restore republishes it onto the attr.
+    original._library_media_browse_controller.applied_result = MediaBrowseResult(
+        scope=MediaBrowseScope(media_type="audio"),
+        items=(),
+        total=0,
+        limit=20,
+        offset=0,
+    )
     original._library_notes_sort = "oldest"
     original._library_notes_filter = "retro"
     original._library_notes_filter_records = ["must never be persisted"]
@@ -23834,7 +23872,11 @@ def test_library_shell_restore_state_defaults_per_pane_filters_on_garbage_values
         }
     )
 
-    assert screen._library_media_type_filter == "All"
+    # TASK-19602: c9ac43eff's scope-era default is None (no filter), not
+    # the legacy sentinel "All" -- garbage under the retired
+    # library_media_type_filter key is ignored, and the scope parser's
+    # own defaults apply.
+    assert screen._library_media_type_filter is None
     assert screen._library_notes_sort == "newest"
     assert screen._library_notes_filter == ""
     assert screen._library_conversation_query == ""
@@ -30874,7 +30916,12 @@ async def test_library_note_recompose_and_fifty_route_cycles_return_to_baseline(
         LibraryNotesCanvas, "on_unmount", counted_canvas_unmount, raising=False
     )
     app = _build_test_app()
-    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    # TASK-19602: a pristine-empty Media canvas now renders the distilled
+    # empty CTA (3aef9bcd1) instead of #library-media-list -- seed media
+    # so the fifty-route cycle visits the real list canvas.
+    _seed_conversations(
+        app, _two_conversations(), notes=_two_notes(), media=_two_media_items()
+    )
     host = LibraryHarness(app)
 
     async with host.run_test(size=(60, 20)) as pilot:
