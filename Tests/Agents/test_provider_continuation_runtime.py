@@ -295,6 +295,20 @@ def test_finished_failure_emits_no_result_record_step_history_or_next_model() ->
         ("run_log_slice", {}, "run_log_slice"),
         ("generic_tool", {}, "invoke_tool"),
     ],
+    ids=[
+        "spawn-subagent",
+        "wait-agents",
+        "check-agents",
+        "find-tools",
+        "load-schemas",
+        "read-skill-file",
+        "install-skill",
+        "run-skill-script",
+        "search-run-log",
+        "run-log-stats",
+        "run-log-slice",
+        "generic-tool",
+    ],
 )
 def test_common_executing_barrier_dominates_every_dispatch_branch(
     tool_name: str, args: dict, dependency: str
@@ -1109,7 +1123,17 @@ def test_restore_target_mismatch_stops_before_translation_or_model(field: str) -
     assert order == ["step:error"]
 
 
-def test_restore_forwards_only_injected_history_rows_byte_exact() -> None:
+@pytest.mark.parametrize(
+    "restore_endpoint",
+    (
+        "https://api.deepseek.com/v1",
+        "https://api.deepseek.com/v1/chat/completions",
+    ),
+    ids=("configured-endpoint", "canonical-endpoint"),
+)
+def test_restore_forwards_only_injected_history_rows_byte_exact(
+    restore_endpoint: str,
+) -> None:
     order: list[str] = []
     rows = [{"role": "opaque-provider-row", "private": {"exact": [1, True]}}]
     seen = []
@@ -1144,7 +1168,7 @@ def test_restore_forwards_only_injected_history_rows_byte_exact() -> None:
         deps,
         restore_provider_continuation=checkpoint,
         restore_provider_target=ContinuationRestoreTarget(
-            "deepseek", "deepseek-v4-flash", "responses", "https://api.deepseek.com/v1"
+            "deepseek", "deepseek-v4-flash", "responses", restore_endpoint
         ),
         resume_provider_continuation=True,
     )
@@ -1184,13 +1208,14 @@ def _kimi_checkpoint(
     revision: int,
     state: str,
     rounds: tuple[ContinuationRound, ...],
+    model: str = "kimi-k3",
 ) -> ProviderContinuationCheckpoint:
     return ProviderContinuationCheckpoint(
         schema_version=1,
         checkpoint_revision=revision,
         provider="moonshot",
         protocol="chat_completions",
-        model="kimi-k3",
+        model=model,
         api_base_url="https://api.moonshot.ai/v1",
         state=state,  # type: ignore[arg-type]
         rounds=rounds,
@@ -1340,6 +1365,155 @@ def test_cycle_4d_post_tool_k3_final_uses_exact_current_revision() -> None:
     final_event = events[-1]
     assert isinstance(final_event, FinalContinuation)
     assert final_event.expected_checkpoint_revision == 3
+
+
+def test_cycle_4d_tool_free_family_first_create_accepts_versioned_kimi() -> None:
+    """TASK-19170: the first-create preserved-thinking checkpoint is a
+    versioned-kimi family shape (k2.6 returns reasoning_content on plain
+    turns, chatcmpl-6a8768a9b5c429b466fbc42f), not a kimi-k3 literal."""
+    order: list[str] = []
+    checkpoint = _kimi_checkpoint(
+        revision=1,
+        state="complete",
+        model="kimi-k2.6",
+        rounds=(
+            ContinuationRound(
+                assistant_content="visible answer",
+                reasoning_blocks=("private",),
+                calls=(),
+            ),
+        ),
+    )
+    events = []
+    outcome = run_agent_loop(
+        CONFIG,
+        [{"role": "user", "content": "go"}],
+        [CALCULATOR],
+        _deps(
+            [ModelTurn(text="visible answer", provider_continuation=checkpoint)],
+            order=order,
+            persist=events.append,
+            invoke=lambda call: pytest.fail("no tool expected"),
+        ),
+    )
+
+    assert outcome.status == RUN_DONE
+    assert isinstance(events[-1], FinalContinuation)
+    assert events[-1].expected_checkpoint_revision is None
+
+
+def test_cycle_4d_post_tool_family_final_appends_reasoning_round_off_k3() -> None:
+    """TASK-19170: a kimi-k2.6 loop-completing turn carries reasoning_content
+    (probe D1/D2), so its final checkpoint appends the k3-style final
+    reasoning round and the runtime must accept it."""
+    order: list[str] = []
+    call = ToolCall("calculator", {"expression": "2+2"}, "a", '{"expression":"2+2"}')
+    tool_round_pending = ContinuationRound(
+        assistant_content="",
+        reasoning_blocks=("tool reasoning",),
+        calls=(ContinuationCall("a", "calculator", '{"expression":"2+2"}', "pending"),),
+    )
+    tool_round_complete = ContinuationRound(
+        assistant_content="",
+        reasoning_blocks=("tool reasoning",),
+        calls=(
+            ContinuationCall(
+                "a",
+                "calculator",
+                '{"expression":"2+2"}',
+                "completed",
+                ContinuationResult("4"),
+            ),
+        ),
+    )
+    initial = _kimi_checkpoint(
+        revision=1, state="active", model="kimi-k2.6", rounds=(tool_round_pending,)
+    )
+    final = _kimi_checkpoint(
+        revision=4,
+        state="complete",
+        model="kimi-k2.6",
+        rounds=(
+            tool_round_complete,
+            ContinuationRound(
+                assistant_content="visible answer",
+                reasoning_blocks=("final reasoning",),
+                calls=(),
+            ),
+        ),
+    )
+    events = []
+    outcome = run_agent_loop(
+        CONFIG,
+        [{"role": "user", "content": "go"}],
+        [CALCULATOR],
+        _deps(
+            [
+                _native_turn((call,), initial),
+                ModelTurn(text="visible answer", provider_continuation=final),
+            ],
+            order=order,
+            persist=events.append,
+            invoke=lambda actual: ToolResult(ok=True, content="4"),
+        ),
+    )
+
+    assert outcome.status == RUN_DONE
+    final_event = events[-1]
+    assert isinstance(final_event, FinalContinuation)
+    assert final_event.expected_checkpoint_revision == 3
+
+
+def test_cycle_4d_post_tool_family_final_without_reasoning_keeps_rounds() -> None:
+    """Durable-shape control: a family completion with no appended reasoning
+    round (the pre-19170 stored shape) must stay accepted."""
+    order: list[str] = []
+    call = ToolCall("calculator", {"expression": "2+2"}, "a", '{"expression":"2+2"}')
+    tool_round_pending = ContinuationRound(
+        assistant_content="",
+        reasoning_blocks=("tool reasoning",),
+        calls=(ContinuationCall("a", "calculator", '{"expression":"2+2"}', "pending"),),
+    )
+    tool_round_complete = ContinuationRound(
+        assistant_content="",
+        reasoning_blocks=("tool reasoning",),
+        calls=(
+            ContinuationCall(
+                "a",
+                "calculator",
+                '{"expression":"2+2"}',
+                "completed",
+                ContinuationResult("4"),
+            ),
+        ),
+    )
+    initial = _kimi_checkpoint(
+        revision=1, state="active", model="kimi-k2.6", rounds=(tool_round_pending,)
+    )
+    final = _kimi_checkpoint(
+        revision=4,
+        state="complete",
+        model="kimi-k2.6",
+        rounds=(tool_round_complete,),
+    )
+    events = []
+    outcome = run_agent_loop(
+        CONFIG,
+        [{"role": "user", "content": "go"}],
+        [CALCULATOR],
+        _deps(
+            [
+                _native_turn((call,), initial),
+                ModelTurn(text="visible answer", provider_continuation=final),
+            ],
+            order=order,
+            persist=events.append,
+            invoke=lambda actual: ToolResult(ok=True, content="4"),
+        ),
+    )
+
+    assert outcome.status == RUN_DONE
+    assert isinstance(events[-1], FinalContinuation)
 
 
 def test_cycle_4d_raised_final_persistence_stops_safely() -> None:

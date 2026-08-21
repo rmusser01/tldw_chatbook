@@ -14,7 +14,6 @@ from textual.widgets import (
     Input,
     Static,
     ListView,
-    Tree,
 )
 from textual.widget import Widget
 from textual.reactive import reactive
@@ -388,34 +387,23 @@ class QuizzesWidget(Widget):
 
 
 class MindmapsWidget(Widget):
-    """Widget for creating and viewing mindmaps"""
+    """Placeholder pane: mindmaps have no working editor in this build."""
 
     DEFAULT_CSS = """
     MindmapsWidget {
         height: 100%;
         width: 100%;
     }
-    
+
     .mindmaps-container {
         padding: 1;
         height: 100%;
     }
-    
-    .mindmap-tree {
-        height: 1fr;
-        width: 70%;
+
+    .mindmaps-empty-state {
         border: round $surface;
-        margin-right: 1;
-    }
-    
-    .mindmap-controls {
-        width: 30%;
         padding: 1;
-    }
-    
-    .form-row {
-        height: 3;
-        margin-bottom: 1;
+        color: $text-muted;
     }
     """
 
@@ -424,61 +412,48 @@ class MindmapsWidget(Widget):
         with ScrollableContainer(classes="mindmaps-container"):
             yield Label("🧠 Mindmaps", classes="section-title")
 
-            with Horizontal():
-                # Mindmap display
-                yield Tree("Root Topic", id="mindmap-tree", classes="mindmap-tree")
-
-                # Controls
-                with Vertical(classes="mindmap-controls"):
-                    yield Label("Add Node:", classes="subsection-title")
-                    yield Input(placeholder="Node text...", id="node-text")
-                    # task-16845: "Add Child" (#add-child-btn) had no
-                    # dispatcher anywhere, and ChaChaNotes_DB's
-                    # create_mindmap/add_mindmap_node are write-only (no
-                    # read/list method exists) while #mindmap-tree has no
-                    # population code -- a written node could never be
-                    # displayed. Removed; #node-text stays for Add Sibling,
-                    # which is a separate, equally-undispatched button out
-                    # of this task's scope.
-                    yield Button("Add Sibling", id="add-sibling-btn", variant="default")
-
-                    yield Label("Actions:", classes="subsection-title")
-                    yield Button("Delete Node", id="delete-node-btn", variant="error")
-                    yield Button("Edit Node", id="edit-node-btn", variant="default")
-
-                    yield Label("Import/Export:", classes="subsection-title")
-                    yield Button("Import from Notes", id="import-notes-btn")
-                    yield Button("Export to Markdown", id="export-md-btn")
-                    yield Button(
-                        "Generate from LLM",
-                        id="generate-mindmap-btn",
-                        variant="success",
-                    )
+            # task-16845 removed #add-child-btn; task-19041 removed the rest
+            # of the pane's chrome for the same reasons: every remaining
+            # button (#add-sibling-btn, #delete-node-btn, #edit-node-btn,
+            # #import-notes-btn, #export-md-btn, #generate-mindmap-btn) had
+            # no dispatcher anywhere (StudyWindow.on_button_pressed
+            # early-returned, so each press was a silent no-op),
+            # ChaChaNotes_DB's create_mindmap/add_mindmap_node are
+            # write-only (no read/list method exists anywhere), and the
+            # #mindmap-tree was a static "Root Topic" skeleton with no
+            # population code -- nothing added, edited, imported, or
+            # generated could ever be displayed or exported. #node-text fed
+            # only the dead add buttons and went with them. Replaced with an
+            # honest notice. (The orphaned mindmap SUBSYSTEM -- Tools/
+            # Mind_Map, MindmapViewer -- is task-19042's scope; this pane
+            # never composed it.)
+            yield Static(
+                "Mindmaps do not have a working editor yet in this build. "
+                "There is currently no way to create, edit, or export a "
+                "mindmap from this screen.",
+                id="mindmaps-empty-state",
+                classes="mindmaps-empty-state",
+            )
 
 
 class CourseCreationWidget(Widget):
-    """Widget for creating and managing courses"""
+    """Placeholder pane: course creation is not available in this build."""
 
     DEFAULT_CSS = """
     CourseCreationWidget {
         height: 100%;
         width: 100%;
     }
-    
+
     .course-creation-container {
         padding: 1;
         height: 100%;
     }
 
-    .module-list {
-        height: 15;
+    .course-creation-empty-state {
         border: round $surface;
-        margin-bottom: 1;
-    }
-    
-    .form-row {
-        height: 3;
-        margin-bottom: 1;
+        padding: 1;
+        color: $text-muted;
     }
     """
 
@@ -487,63 +462,44 @@ class CourseCreationWidget(Widget):
         with ScrollableContainer(classes="course-creation-container"):
             yield Label("📖 Course Creation", classes="section-title")
 
-            # task-16845: the "Course Details" form (title/description/
-            # level/prerequisites feeding "Create Course", #create-course-btn)
-            # was removed here. #create-course-btn had no dispatcher
-            # anywhere, and unlike the other three panes' buttons there is
-            # no schema support to remove-to-write-only either -- no
-            # `course`/`courses` table exists anywhere in ChaChaNotes_DB.
-            # Those four fields fed only this one dead button, so they were
-            # removed with it rather than left as an orphaned dead-end form
-            # (worse UX than the button alone, per the task-16195 finding).
-
-            # Module management
-            yield Label("Course Modules:", classes="subsection-title")
-            yield ListView(id="module-list", classes="module-list")
-
-            with Horizontal(classes="form-row"):
-                yield Input(placeholder="Module name...", id="module-name")
-                yield Button("Add Module", id="add-module-btn")
-
-            # Export options
-            yield Label("Export Options:", classes="subsection-title")
-            with Horizontal(classes="form-row"):
-                yield Button("Export to PDF", id="export-pdf-btn")
-                yield Button("Export to Markdown", id="export-md-btn")
-                yield Button("Export to SCORM", id="export-scorm-btn")
+            # task-16845 removed the "Course Details" form and
+            # #create-course-btn (no `course`/`courses` table exists
+            # anywhere in ChaChaNotes_DB); task-19041 removed the rest of
+            # the pane for the same reasons: #add-module-btn had no
+            # dispatcher anywhere and no module concept exists in any
+            # schema (#module-list was never populated, #module-name fed
+            # only that dead button), and the export row (#export-pdf-btn,
+            # #export-md-btn -- which also duplicated the Mindmaps pane's
+            # button id -- and #export-scorm-btn) had no exportable course
+            # to act on and no SCORM code exists anywhere in the tree.
+            # Replaced with an honest notice.
+            yield Static(
+                "Course creation is not available yet in this build. "
+                "There is currently no way to build, import, or export a "
+                "course from this screen.",
+                id="course-creation-empty-state",
+                classes="course-creation-empty-state",
+            )
 
 
 class StudyGuideWidget(Widget):
-    """Widget for creating and managing study guides"""
+    """Placeholder pane: study guides are not available in this build."""
 
     DEFAULT_CSS = """
     StudyGuideWidget {
         height: 100%;
         width: 100%;
     }
-    
+
     .study-guide-container {
         padding: 1;
         height: 100%;
     }
-    
-    .guide-content {
+
+    .study-guide-empty-state {
         border: round $surface;
         padding: 1;
-        height: 20;
-        margin-bottom: 1;
-    }
-    
-    .key-concepts {
-        height: 10;
-        border: round $surface;
-        margin-bottom: 1;
-    }
-    
-    .practice-questions {
-        height: 10;
-        border: round $surface;
-        margin-bottom: 1;
+        color: $text-muted;
     }
     """
 
@@ -552,77 +508,48 @@ class StudyGuideWidget(Widget):
         with ScrollableContainer(classes="study-guide-container"):
             yield Label("📋 Study Guide", classes="section-title")
 
-            # Topic selection
-            with Horizontal(classes="form-row"):
-                yield Label("Topic:", classes="form-label")
-                yield Select(options=[("New Topic", "new")], id="guide-topic-select")
-
-            yield Label("Guide Title:")
-            yield Input(placeholder="Enter guide title...", id="guide-title")
-
-            # Guide content
-            yield Label("Guide Content:")
-            yield TextArea(
-                "Enter or generate study guide content...",
-                id="guide-content",
-                classes="guide-content",
+            # task-16845 removed #generate-guide-btn (no topic to generate
+            # from: the topics table is write-only); task-19041 removed the
+            # rest of the pane for the same reasons: no guide or concept
+            # schema exists anywhere in ChaChaNotes_DB or Study_Interop, so
+            # #save-guide-btn had no destination, #add-concept-btn could
+            # only feed an in-session #key-concepts-list nothing persists
+            # or reads, and #generate-questions-btn had no generation
+            # service (#practice-questions-list was never populated). The
+            # dead-end form around them (#guide-topic-select -- one static
+            # option, its .value consumer-less per the TASK-16841 sweep --
+            # #guide-title, #guide-content, #concept-input) existed solely
+            # to feed those buttons and went with them. Replaced with an
+            # honest notice. (Chat/document_generator.py's study-guide
+            # export is a different, conversation-scoped feature -- see
+            # task-16845's evidence.)
+            yield Static(
+                "Study guides are not available yet in this build. "
+                "There is currently no way to create, generate, or save a "
+                "study guide from this screen.",
+                id="study-guide-empty-state",
+                classes="study-guide-empty-state",
             )
-
-            # Key concepts section
-            yield Label("Key Concepts:", classes="subsection-title")
-            yield ListView(id="key-concepts-list", classes="key-concepts")
-
-            with Horizontal(classes="form-row"):
-                yield Input(placeholder="Add key concept...", id="concept-input")
-                yield Button("Add", id="add-concept-btn")
-
-            # Practice questions
-            yield Label("Practice Questions:", classes="subsection-title")
-            yield ListView(id="practice-questions-list", classes="practice-questions")
-
-            # Action buttons
-            # task-16845: "Generate from Topic" (#generate-guide-btn) had no
-            # dispatcher anywhere, and #guide-topic-select above is
-            # hard-coded to a single static "New Topic" option -- nothing
-            # populates it from the topics table (write-only, no read
-            # method), so there was no topic it could ever generate from.
-            # Removed; the remaining two buttons are separate,
-            # equally-undispatched buttons out of this task's scope.
-            with Horizontal(classes="form-row"):
-                yield Button("Generate Questions", id="generate-questions-btn")
-                yield Button("Save Guide", id="save-guide-btn", variant="primary")
 
 
 class LearningMapWidget(Widget):
-    """Widget for visualizing and managing learning paths"""
+    """Placeholder pane: the learning map is not available in this build."""
 
     DEFAULT_CSS = """
     LearningMapWidget {
         height: 100%;
         width: 100%;
     }
-    
+
     .learning-map-container {
         padding: 1;
         height: 100%;
     }
-    
-    .map-tree {
-        height: 1fr;
-        width: 70%;
-        border: round $surface;
-        margin-right: 1;
-    }
-    
-    .map-controls {
-        width: 30%;
-        padding: 1;
-    }
-    
-    .progress-display {
+
+    .learning-map-empty-state {
         border: round $surface;
         padding: 1;
-        margin-bottom: 1;
+        color: $text-muted;
     }
     """
 
@@ -631,41 +558,26 @@ class LearningMapWidget(Widget):
         with ScrollableContainer(classes="learning-map-container"):
             yield Label("🗺️ Learning Map", classes="section-title")
 
-            with Horizontal():
-                # Learning path visualization
-                yield Tree("Learning Path", id="learning-map-tree", classes="map-tree")
-
-                # Controls and info
-                with Vertical(classes="map-controls"):
-                    # Progress display
-                    with Vertical(classes="progress-display"):
-                        yield Label("Overall Progress:", classes="subsection-title")
-                        yield Static("0% Complete", id="overall-progress")
-                        yield Label("Current Topic:", classes="subsection-title")
-                        yield Static("None selected", id="current-topic")
-
-                    yield Label("Path Actions:", classes="subsection-title")
-                    # task-16845: "Add Milestone" (#add-milestone-btn) had
-                    # no dispatcher anywhere, no `milestone` concept exists
-                    # in ChaChaNotes_DB's schema at all, and #learning-map-tree
-                    # above has no population code (same shape as the
-                    # Structured Learning pane's topic tree) -- there was no
-                    # path to add or ever display one. Removed; the
-                    # remaining buttons are separate, equally-undispatched
-                    # buttons out of this task's scope.
-                    yield Button(
-                        "Mark Complete", id="mark-complete-btn", variant="success"
-                    )
-                    yield Button("Set Dependencies", id="set-dependencies-btn")
-
-                    yield Label("Import/Export:", classes="subsection-title")
-                    yield Button("Import from Course", id="import-course-btn")
-                    yield Button("Export Path", id="export-path-btn")
-                    yield Button(
-                        "Generate Suggestions",
-                        id="generate-suggestions-btn",
-                        variant="success",
-                    )
+            # task-16845 removed #add-milestone-btn (no milestone concept
+            # exists in any schema); task-19041 removed the rest of the
+            # pane for the same reasons: every remaining button had no
+            # dispatcher anywhere -- #mark-complete-btn's only conceivable
+            # sink is the write-only update_topic_progress (nothing reads
+            # topic progress back), #set-dependencies-btn and
+            # #generate-suggestions-btn have no backing concept or service,
+            # #import-course-btn has no course to import (no course table
+            # exists), and #export-path-btn has nothing to export
+            # (learning_paths is write-only). #learning-map-tree was a
+            # static "Learning Path" skeleton nothing populates, and
+            # #overall-progress/#current-topic were hard-coded statics
+            # nothing ever updated. Replaced with an honest notice.
+            yield Static(
+                "The learning map is not available yet in this build. "
+                "There is currently no way to view a learning path or "
+                "track progress from this screen.",
+                id="learning-map-empty-state",
+                classes="learning-map-empty-state",
+            )
 
 
 class StudyWindow(Container):

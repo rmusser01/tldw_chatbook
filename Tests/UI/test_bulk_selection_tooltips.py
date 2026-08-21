@@ -1,8 +1,4 @@
-from types import SimpleNamespace
-from unittest.mock import Mock
-
 import pytest
-from textual.app import App, ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -10,7 +6,6 @@ from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button
 
 from tldw_chatbook.Widgets.Note_Widgets.note_selection_dialog import NoteSelectionDialog
-from tldw_chatbook.Widgets.collections_tag_window import CollectionsTagWindow
 
 
 class _ScreenHost(ConsolidatedCSSApp):
@@ -42,27 +37,5 @@ async def test_note_selection_bulk_controls_have_tooltips(monkeypatch):
             {
                 "select-all-btn": "Select every visible note for audio generation.",
                 "clear-all-btn": "Clear every selected note.",
-            },
-        )
-
-
-@pytest.mark.asyncio
-async def test_tag_management_bulk_controls_have_tooltips():
-    app_instance = SimpleNamespace(media_db=None, notify=Mock())
-
-    class TagWindowApp(ConsolidatedCSSApp):
-        def compose(self) -> ComposeResult:
-            yield CollectionsTagWindow(app_instance=app_instance)
-
-    app = TagWindowApp()
-
-    async with app.run_test() as pilot:
-        await pilot.pause()
-
-        _assert_button_tooltips(
-            app.query_one(CollectionsTagWindow),
-            {
-                "select-all-keywords": "Select every visible keyword or tag.",
-                "clear-selection": "Clear every selected keyword or tag.",
             },
         )

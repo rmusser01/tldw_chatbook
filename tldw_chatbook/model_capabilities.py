@@ -429,6 +429,226 @@ def openai_model_requires_max_completion_tokens(model: object) -> bool:
 #
 #######################################################################################################################
 #
+# Moonshot (Kimi) per-model request capabilities
+#
+# Same design as the Anthropic (TASK-18414) and OpenAI (TASK-18802) predicates
+# above: facts about what api.moonshot.ai *accepts*, kept as immutable
+# module-level functions outside the config-driven tables, replacing the
+# hand-maintained name checks the chat request builder used to carry
+# (TASK-18803).
+#
+# Probe-verified against api.moonshot.ai on 2026-08-20 (TASK-18803) with the
+# real project key. ``GET /v1/models`` served kimi-k2.5, kimi-k2.6,
+# kimi-k2.7-code, kimi-k2.7-code-highspeed, kimi-k3, kimi-latest and the
+# moonshot-v1 family. Acceptance:
+#
+#   * Versioned kimi (kimi-k3, kimi-k2.6, kimi-k2.5) + non-default sampling
+#     -> 400 value-level rejections: ``invalid temperature: only 1 is allowed
+#     for this model`` / ``invalid top_p: only 0.95 is allowed`` /
+#     ``invalid presence_penalty: only 0 is allowed``; ``temperature: 1``
+#     -> 200 (chatcmpl-6a872afa62f375d4129446c7).
+#   * kimi-latest + the full five-parameter sampling set -> 200
+#     (chatcmpl-6a872b9816ceb0c0ae780b1e; serves as kimi-latest-8k), and
+#     moonshot-v1-8k likewise (chatcmpl-6a872ac1fe949ba3ecc8b094) -- neither
+#     rejects sampling.
+#   * ``reasoning_effort`` -> 200 on kimi-k3
+#     (chatcmpl-6a872abcc8d3fc4c055ea030), kimi-k2.6
+#     (chatcmpl-6a872abe6dd71293f91e1d59), kimi-k2.7-code
+#     (chatcmpl-6a872b01a06896e50a1ab394) and kimi-latest
+#     (chatcmpl-6a872ac016ceb0c0ae780b0c) -- the whole kimi series, not the
+#     single literal ``kimi-k3`` the builder used to allow.
+#
+# Boundary-safe: ``kimi`` / ``kimi-k<major>`` must sit at a token boundary,
+# so ``kimiko-7b`` never matches, and the legacy accepting family
+# (``moonshot-v1-*``) is never parsed into the kimi series.
+_MOONSHOT_KIMI_SERIES_RE = re.compile(r"^kimi(?=$|[-_.@\[])")
+_MOONSHOT_KIMI_VERSIONED_RE = re.compile(r"^kimi[-_.]k(?P<major>\d+)(?=$|[-_.@\[])")
+_MOONSHOT_LEGACY_V1_RE = re.compile(r"^moonshot[-_.]v1(?=$|[-_.@\[])")
+
+
+def _moonshot_normalized_model(model: object) -> Optional[str]:
+    if not isinstance(model, str):
+        return None
+    normalized = model.strip().lower()
+    if "/" in normalized:
+        normalized = normalized.rsplit("/", 1)[-1]
+    return normalized or None
+
+
+def moonshot_model_supports_reasoning_effort(model: object) -> bool:
+    """Return whether ``model`` accepts the ``reasoning_effort`` parameter.
+
+    Args:
+        model: A Moonshot model identifier (any prefixed or suffixed form).
+
+    Returns:
+        True for the whole kimi series -- versioned ids (``kimi-k3``,
+        ``kimi-k2.6``, ``kimi-k3-turbo``) and unversioned aliases
+        (``kimi-latest``) alike, all probe-verified to answer 200. False for
+        the legacy ``moonshot-v1`` family and unrecognisable ids, which keep
+        the historical client-side rejection.
+    """
+    normalized = _moonshot_normalized_model(model)
+    if normalized is None:
+        return False
+    return _MOONSHOT_KIMI_SERIES_RE.match(normalized) is not None
+
+
+def moonshot_model_rejects_sampling_params(model: object) -> bool:
+    """Return whether ``model`` rejects non-default sampling parameters.
+
+    Args:
+        model: A Moonshot model identifier (any prefixed or suffixed form).
+
+    Returns:
+        True when sending a non-default ``temperature``/``top_p``/``n``/
+        ``presence_penalty``/``frequency_penalty`` would be answered with a
+        value-level 400 (``invalid temperature: only 1 is allowed for this
+        model``) -- the versioned kimi reasoning family (``kimi-k<major>``,
+        any suffix). False for ``kimi-latest`` and the ``moonshot-v1``
+        family, which accept them (probe-verified), and for unrecognisable
+        ids, which pass the caller's values through for the server to
+        adjudicate.
+    """
+    normalized = _moonshot_normalized_model(model)
+    if normalized is None:
+        return False
+    return _MOONSHOT_KIMI_VERSIONED_RE.match(normalized) is not None
+
+
+def moonshot_model_requires_min_temperature_for_multiple_choices(
+    model: object,
+) -> bool:
+    """Return whether ``model`` documents the n>1 minimum-temperature rule.
+
+    The legacy ``moonshot-v1`` family documents that requesting multiple
+    choices (``n > 1``) requires ``temperature >= 0.3``. This is a
+    value-interplay constraint of that family, not a capability gate, but it
+    is still a per-model fact and lives here so the request builder carries
+    no model-name checks at all (TASK-18803).
+
+    Args:
+        model: A Moonshot model identifier (any prefixed or suffixed form).
+
+    Returns:
+        True for the ``moonshot-v1`` family only.
+    """
+    normalized = _moonshot_normalized_model(model)
+    if normalized is None:
+        return False
+    return _MOONSHOT_LEGACY_V1_RE.match(normalized) is not None
+
+
+def moonshot_model_returns_reasoning_content(model: object) -> bool:
+    """Return whether ``model`` returns ``reasoning_content`` in responses.
+
+    This is a RESPONSE-side fact -- which models emit private reasoning that
+    the preserved-thinking checkpoint machinery should capture and replay --
+    distinct from the request-side question of which models *accept* the
+    ``reasoning_effort`` parameter (the whole kimi series, including
+    ``kimi-latest``, per :func:`moonshot_model_supports_reasoning_effort`).
+
+    Probe-verified against api.moonshot.ai on 2026-08-20 (TASK-19170) with
+    the real project key:
+
+    * Every versioned kimi id probed returns ``reasoning_content`` on every
+      turn, with AND without ``reasoning_effort``: kimi-k2.5
+      (chatcmpl-6a8768d3666d8454604d8b5f), kimi-k2.6
+      (chatcmpl-6a8768a3b5c429b466fbc42d with effort,
+      chatcmpl-6a8768a9b5c429b466fbc42f without), kimi-k2.7-code
+      (chatcmpl-6a8768d705f910ba798aeca0), kimi-k3
+      (chatcmpl-6a8768a7659da119063ca38f).
+    * ``kimi-latest`` (served as ``kimi-latest-8k``) returns none
+      (chatcmpl-6a8768a616ceb0c0ae780f2c) -- hence versioned-family, not
+      whole-series.
+    * Replaying the prior turn's ``reasoning_content`` is accepted and never
+      required: multi-turn and tool-loop follow-ups answered 200 both with
+      and without it (chatcmpl-6a8768cb.../6a8768cc... plain,
+      chatcmpl-6a876916.../6a876918... tool loop), so widening k3-style
+      preserved-thinking replay to the family cannot 400.
+
+    Args:
+        model: A Moonshot model identifier (any prefixed or suffixed form).
+
+    Returns:
+        True for the versioned kimi reasoning family (``kimi-k<major>``, any
+        suffix). False for ``kimi-latest``, the legacy ``moonshot-v1``
+        family and unrecognisable ids.
+    """
+    normalized = _moonshot_normalized_model(model)
+    if normalized is None:
+        return False
+    return _MOONSHOT_KIMI_VERSIONED_RE.match(normalized) is not None
+
+
+#
+#######################################################################################################################
+#
+# Z.ai (GLM) per-model request capabilities
+#
+# Same design as above. No Z.ai key is available to this repo, so unlike the
+# Anthropic/OpenAI/Moonshot predicates this one is NOT wire-verified
+# (recorded in TASK-18803): it conservatively liberalises the builder's
+# exact-id pin (``reasoning_effort`` only on the literal ``glm-5.2``), which
+# client-side-rejected every other GLM release before a request was ever
+# made. The floor is the version the pin already proved supported; newer
+# releases in the family (``glm-5.3``, ``glm-6``, ``glm-5.2-air``) are no
+# longer rejected on release day, and anything older or unrecognisable keeps
+# the historical rejection.
+_ZAI_GLM_FAMILY_RE = re.compile(
+    r"^glm[-_.](?P<major>\d+)(?:\.(?P<minor>\d+))?(?=$|[-_.@\[])"
+)
+
+# The oldest (major, minor) known to accept ``reasoning_effort``.
+_ZAI_REASONING_EFFORT_VERSION_FLOOR = (5, 2)
+
+
+def _zai_glm_family(model: object) -> Optional[Tuple[int, int]]:
+    """Parse a Z.ai model id into ``(major, minor)``.
+
+    Args:
+        model: A model identifier in any form the codebase passes through --
+            bare (``glm-5.2``, ``glm-6``), suffixed (``glm-5.2-air``) or
+            provider-prefixed (``zai/glm-5.2``).
+
+    Returns:
+        ``(major, minor)`` with a missing minor as 0, or ``None`` when the id
+        is not a recognisable GLM family name. The version must sit at a
+        token boundary, so e.g. ``glm-5x`` never parses.
+    """
+    if not isinstance(model, str):
+        return None
+    normalized = model.strip().lower()
+    if "/" in normalized:
+        normalized = normalized.rsplit("/", 1)[-1]
+    match = _ZAI_GLM_FAMILY_RE.match(normalized)
+    if match is None:
+        return None
+    minor = match.group("minor")
+    return (int(match.group("major")), int(minor) if minor is not None else 0)
+
+
+def zai_model_supports_reasoning_effort(model: object) -> bool:
+    """Return whether ``model`` accepts the ``reasoning_effort`` parameter.
+
+    Args:
+        model: A Z.ai model identifier (any prefixed or suffixed form).
+
+    Returns:
+        True for the GLM family at or above the 5.2 version floor
+        (``glm-5.2``, ``glm-5.2-air``, ``glm-5.3``, ``glm-6``). False for
+        older GLM releases and unrecognisable ids, which keep the historical
+        client-side rejection.
+    """
+    family = _zai_glm_family(model)
+    if family is None:
+        return False
+    return family >= _ZAI_REASONING_EFFORT_VERSION_FLOOR
+
+
+#
+#######################################################################################################################
+#
 # ModelCapabilities Class
 #
 class ModelCapabilities:

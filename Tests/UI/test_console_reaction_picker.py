@@ -821,21 +821,21 @@ async def test_preview_updates_only_the_current_highlighted_reaction() -> None:
 def test_manual_reaction_keys_are_session_actor_scoped_and_nonpersistent() -> None:
     """Manual reactions live only on one controller, keyed by session + actor."""
 
-    first = ConsoleSessionController.__new__(ConsoleSessionController)
-    first._manual_reaction_overrides = {}
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+    controller._manual_reaction_overrides = {}
     samira = ("session-a", "character", "7")
     other_session = ("session-b", "character", "7")
     other_actor = ("session-a", "character", "8")
 
-    first._set_manual_reaction(samira, "custom:relief")
+    controller._set_manual_reaction(samira, "custom:relief")
 
-    assert first._manual_reaction_key(samira) == "custom:relief"
-    assert first._manual_reaction_key(other_session) is None
-    assert first._manual_reaction_key(other_actor) is None
+    assert controller._manual_reaction_key(samira) == "custom:relief"
+    assert controller._manual_reaction_key(other_session) is None
+    assert controller._manual_reaction_key(other_actor) is None
 
-    restarted = ConsoleSessionController.__new__(ConsoleSessionController)
-    restarted._manual_reaction_overrides = {}
-    assert restarted._manual_reaction_key(samira) is None
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+    controller._manual_reaction_overrides = {}
+    assert controller._manual_reaction_key(samira) is None
 
 
 def test_clear_reaction_removes_only_the_current_actor_override() -> None:
@@ -1152,7 +1152,7 @@ async def test_new_screen_waits_for_cancelled_old_screen_preview_to_drain(
     barrier = _BlockedPreviewDecode()
     app = SimpleNamespace()
     coordinator_accessor = lambda: get_console_reaction_preview_coordinator(app)
-    first, first_screen = _preview_controller(
+    controller, first_screen = _preview_controller(
         monkeypatch,
         (option,),
         barrier,
@@ -1160,18 +1160,18 @@ async def test_new_screen_waits_for_cancelled_old_screen_preview_to_drain(
     )
     first_picker = _PreviewSink(option.expression_key)
 
-    first._dispatch_console_reaction_preview(option, first_picker)
+    controller._dispatch_console_reaction_preview(option, first_picker)
     assert await asyncio.to_thread(barrier.started.wait, 5)
     first_screen.unmount()
 
-    second, second_screen = _preview_controller(
+    controller, second_screen = _preview_controller(
         monkeypatch,
         (option,),
         barrier,
         coordinator_accessor=coordinator_accessor,
     )
     second_picker = _PreviewSink(option.expression_key)
-    second._dispatch_console_reaction_preview(option, second_picker)
+    controller._dispatch_console_reaction_preview(option, second_picker)
 
     assert not await asyncio.to_thread(barrier.second_started.wait, 0.05)
     assert barrier.max_active == 1

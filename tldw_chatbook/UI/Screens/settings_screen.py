@@ -187,7 +187,12 @@ from .settings_context_memory import (
     ratio_from_percent,
     resolve_model_context_window,
 )
-from ...model_capabilities import reload_capabilities
+from ...model_capabilities import (
+    moonshot_model_returns_reasoning_content,
+    moonshot_model_supports_reasoning_effort,
+    reload_capabilities,
+    zai_model_supports_reasoning_effort,
+)
 from .settings_endpoint_probe import (
     SettingsEndpointProbeOutcome,
     SettingsEndpointProbePurpose,
@@ -516,8 +521,13 @@ THINKING_EFFORT_OPTIONS = frozenset(
 # ordered option lists (blank = inherit/not set), so invalid values are
 # impossible by construction instead of rejected at save.
 REASONING_EFFORT_SELECT_OPTIONS = ("none", "minimal", "low", "medium", "high", "xhigh")
-KIMI_K3_REASONING_EFFORT_SELECT_OPTIONS = ("low", "high", "max")
-GLM_5_2_REASONING_EFFORT_SELECT_OPTIONS = (
+# "medium" probe-verified accepted on the wire (TASK-18803,
+# chatcmpl-6a872b62bea2d202c1d3f6fa) and allowed by the request builder.
+# TASK-19170: these curated lists apply per FAMILY (the 18803 request-side
+# predicates), not per exact model id, so a new kimi/GLM release gets the
+# values its builder accepts without a code edit.
+KIMI_REASONING_EFFORT_SELECT_OPTIONS = ("low", "medium", "high", "max")
+GLM_REASONING_EFFORT_SELECT_OPTIONS = (
     "none",
     "minimal",
     "low",
@@ -9073,12 +9083,18 @@ class SettingsScreen(BaseAppScreen):
     def _model_profile_reasoning_effort_options(
         provider: object, model: object
     ) -> tuple[str, ...]:
+        # TASK-19170: derive the curated lists from the 18803 request-side
+        # family predicates -- the same gates the builders enforce -- so a
+        # release-day kimi/GLM id is offered the values its request would
+        # actually accept instead of the generic list the builder rejects.
         provider_key = provider_config_key(str(provider or ""))
         model_key = str(model or "").strip().lower()
-        if provider_key == "moonshot" and model_key == "kimi-k3":
-            return KIMI_K3_REASONING_EFFORT_SELECT_OPTIONS
-        if provider_key == "zai" and model_key == "glm-5.2":
-            return GLM_5_2_REASONING_EFFORT_SELECT_OPTIONS
+        if provider_key == "moonshot" and moonshot_model_supports_reasoning_effort(
+            model_key
+        ):
+            return KIMI_REASONING_EFFORT_SELECT_OPTIONS
+        if provider_key == "zai" and zai_model_supports_reasoning_effort(model_key):
+            return GLM_REASONING_EFFORT_SELECT_OPTIONS
         return REASONING_EFFORT_SELECT_OPTIONS
 
     @staticmethod
@@ -10256,11 +10272,21 @@ class SettingsScreen(BaseAppScreen):
         provider_key = provider_config_key(str(provider or ""))
         model_key = str(model or "").strip().lower()
         if provider_key == "moonshot":
-            if model_key == "kimi-k3":
+            # TASK-19170: preserved thinking is a versioned-kimi family fact
+            # (probe-verified reasoning_content across the family), not a
+            # kimi-k3 exclusive.
+            if moonshot_model_returns_reasoning_content(model_key):
                 return (
-                    "Moonshot Kimi K3: choose the international, China, or custom "
-                    "endpoint. Preserved Thinking is always on; retained reasoning "
-                    "and tool state is private and consumes context."
+                    "Moonshot Kimi reasoning family: choose the international, "
+                    "China, or custom endpoint. Preserved Thinking is always on; "
+                    "retained reasoning and tool state is private and consumes "
+                    "context."
+                )
+            if moonshot_model_supports_reasoning_effort(model_key):
+                return (
+                    "Moonshot Kimi: choose the international, China, or custom "
+                    "endpoint. Reasoning effort is supported; this model does "
+                    "not return preserved thinking."
                 )
             return (
                 "Moonshot: choose the international, China, or custom endpoint. "
@@ -10269,8 +10295,8 @@ class SettingsScreen(BaseAppScreen):
             )
         if provider_key == "zai":
             qualifier = (
-                "GLM 5.2 supports the reasoning choices shown."
-                if model_key == "glm-5.2"
+                "This GLM release supports the reasoning choices shown."
+                if zai_model_supports_reasoning_effort(model_key)
                 else "Verify reasoning support for this historical or unknown model."
             )
             return (
@@ -12058,7 +12084,7 @@ class SettingsScreen(BaseAppScreen):
         if not getattr(self, "is_mounted", False):
             return
         self._set_static_text(
-            "#settings-overview-sync-summary",
+            "#settings-overview-sync",
             f"Sync: {_fold_long_tokens(self._overview_sync_summary())}",
         )
         presentation = self._settings_overview_presentation()

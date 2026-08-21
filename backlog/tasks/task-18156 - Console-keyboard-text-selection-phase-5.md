@@ -1,5 +1,5 @@
 ---
-id: task-18156
+id: TASK-18156
 title: Console keyboard text selection phase 5
 status: Done
 assignee: ['@Robert']

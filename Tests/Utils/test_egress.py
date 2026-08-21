@@ -266,6 +266,7 @@ def test_log_origin_ipv6_host_is_bracketed():
         "http://",
         "://bad",
     ],
+    ids=lambda url: "token-query" if "?token=" in url else None,
 )
 def test_log_origin_never_raises_for_non_http_or_unparseable_input(url):
     """Non-http(s) scheme, hostless, and unparseable input all redact to a fixed

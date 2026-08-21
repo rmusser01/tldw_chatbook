@@ -87,6 +87,7 @@ def _expected_qwen_sections(
             "model": "qwen3.8-max",
             "api_base_url": endpoint,
             "api_key_env_var": env_var,
+            "credential_source": "environment",
             **({"api_mode": mode} if provider_section == "qwencloud" else {}),
         },
         "chat_defaults": {"provider": "qwencloud", "model": "qwen3.8-max"},
@@ -936,6 +937,7 @@ async def test_qwencloud_malformed_alias_never_becomes_save_owner_when_canonical
                         "model": "qwen3.8-max",
                         "api_base_url": "https://new.example.test/compatible-mode/v1",
                         "api_key_env_var": "CANONICAL_ENV",
+                        "credential_source": "environment",
                     },
                     "chat_defaults": {
                         "provider": "qwencloud",

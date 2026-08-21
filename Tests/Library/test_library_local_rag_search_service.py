@@ -553,18 +553,33 @@ async def test_erroring_notes_seam_contributes_zero_rows_without_raising(
     assert all(row["provenance"]["source_type"] != "note" for row in result["results"])
 
 
-# An erroring seam that is the ONLY queried seam is still "available" (attribute
-# present), so the result is empty results, not a blocked outcome.
+# An erroring seam that is the ONLY queried seam must NOT report `blocked`:
+# the seam is configured, so "configure retrieval" is the wrong advice. That
+# intent is preserved. What changed (TASK-18903) is the rest of the sentence.
+#
+# This test used to assert the search returned a plain dict with zero results
+# -- i.e. a SUCCESSFUL search that matched nothing. It reasoned that an
+# erroring seam "is still available (attribute present)", which is exactly the
+# conflation that task removed: a seam that RAN AND THREW contributed nothing,
+# and its empty rows mean nothing. Worse, empty rows normalize to
+# `status="empty"`, which IS in `LIBRARY_RAG_ANSWERABLE_RETRIEVAL_STATUSES`, so
+# the old behaviour let a total outage reach the RAG answer path and answer
+# from no context at all.
+#
+# Now: `failed` -- not `blocked` (the original intent), and not a silent
+# success (the defect).
 @pytest.mark.asyncio
-async def test_erroring_only_seam_returns_empty_results_not_blocked():
+async def test_erroring_only_seam_reports_failed_not_blocked_and_not_empty_success():
     notes_service = FakeNotesScopeService(error=RuntimeError("notes index unavailable"))
     app = SimpleNamespace(notes_scope_service=notes_service)
     service = LibraryLocalRagSearchService(app)
 
     result = await service.search("credential", ("notes",), "search", top_k=5)
 
-    assert not isinstance(result, LibraryRagSearchOutcome)
-    assert result["results"] == []
+    assert isinstance(result, LibraryRagSearchOutcome)
+    assert result.status == "failed", "a thrown seam is not a zero-row success"
+    assert result.status != "blocked", "the seam IS configured; setup advice is wrong"
+    assert result.recovery_state is not None
 
 
 # Unknown scope types are ignored quietly rather than raising or matching a seam.

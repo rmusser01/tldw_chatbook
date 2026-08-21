@@ -85,7 +85,6 @@ from textual.containers import Container
 from textual.reactive import reactive
 from textual.worker import Worker, WorkerCancelled, WorkerState
 from textual.binding import Binding
-from textual.message import Message
 from textual.timer import Timer
 from textual.css.query import NoMatches, QueryError
 from textual.command import Hit, Hits, Provider
@@ -467,6 +466,7 @@ from .UI.Navigation.screen_registry import (
 from .UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 from .UI.Workbench.help import WorkbenchHelpPanel, WorkbenchHelpState
 from .UI.Screens.study_scope_models import StudyScopeContext
+from .UI.stable_command_palette import StableCommandPalette
 from .Prompt_Management.prompt_variables import PromptVariableApplication
 
 from .UI.Tools_Settings_Window import ToolsSettingsWindow  # noqa: E402
@@ -5187,6 +5187,11 @@ class TldwCli(
     """A Textual app for interacting with LLMs."""
 
     _runtime_policy_projection_snapshot: tuple[str, str | None] = ("local", None)
+
+    def action_command_palette(self) -> None:
+        """Open the app's stable Textual command palette."""
+        if self.use_command_palette and not StableCommandPalette.is_open(self):
+            self.push_screen(StableCommandPalette(id="--command-palette"))
 
     @property
     def current_runtime_backend(self) -> str:
@@ -11434,15 +11439,6 @@ class TldwCli(
             return
         await handler.play_current_audio()
 
-    async def export_current_audio(self, target_path: Path) -> None:
-        """Export the current S/TT/S audio after lazy service initialization."""
-
-        handler = await self._ensure_stts_handler()
-        if handler is None:
-            self.notify("S/TT/S service not available", severity="error")
-            return
-        await handler.export_current_audio(target_path)
-
     async def on_shutdown_request(self) -> None:  # Use the imported ShutdownRequest
         logging.info("--- App Shutdown Requested ---")
 
@@ -11969,19 +11965,6 @@ class TldwCli(
     #
     ########################################################################
     # Notes editor changes are handled inside the Library screen, not dispatched here.
-
-    # Collections/Tags event handlers
-    @on(Message)
-    async def on_collections_tag_message(self, event: Message) -> None:
-        """Handle Collections/Tag events."""
-        from .Event_Handlers import collections_tag_events
-
-        if event.__class__.__name__ == "KeywordRenameEvent":
-            await collections_tag_events.handle_keyword_rename(self, event)
-        elif event.__class__.__name__ == "KeywordMergeEvent":
-            await collections_tag_events.handle_keyword_merge(self, event)
-        elif event.__class__.__name__ == "KeywordDeleteEvent":
-            await collections_tag_events.handle_keyword_delete(self, event)
 
     @on(SplashScreen.Closed)
     async def on_splash_screen_closed(self, event: SplashScreen.Closed) -> None:

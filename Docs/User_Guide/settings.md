@@ -204,10 +204,10 @@ Choose **Moonshot** or **ZAI** without changing their saved provider identity.
 They use Chat Completions only, so neither provider shows an **API mode**
 selector.
 
-| Provider | Fresh default | Credential | General endpoint | Reasoning for the default model |
+| Provider | Fresh default | Credential | General endpoint | Reasoning effort values |
 |---|---|---|---|---|
-| Moonshot / Kimi | `kimi-k3` | `MOONSHOT_API_KEY` | `https://api.moonshot.ai/v1` | exactly `low`, `high`, or `max` |
-| Z.ai / GLM | `glm-5.2` | `ZAI_API_KEY` | `https://api.z.ai/api/paas/v4` | exactly `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` |
+| Moonshot / Kimi | `kimi-k3` | `MOONSHOT_API_KEY` | `https://api.moonshot.ai/v1` | exactly `low`, `medium`, `high`, or `max` — accepted for the whole Kimi series (`kimi-k3-turbo`, `kimi-k2.6`, `kimi-latest`, …), not just the default; the Settings selector offers this curated list for every Kimi-series id |
+| Z.ai / GLM | `glm-5.2` | `ZAI_API_KEY` | `https://api.z.ai/api/paas/v4` | exactly `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` — accepted for GLM 5.2 and newer family releases; the Settings selector offers this curated list for every such release |
 
 Moonshot can instead use the China base `https://api.moonshot.cn/v1` or a
 validated custom compatible base. Z.ai's coding-only
@@ -217,16 +217,19 @@ Explicit historical IDs such as `moonshot-v1-128k` and `glm-4.5` remain
 selected and editable. Settings does not guess their capabilities: its help
 asks you to verify reasoning support instead of silently replacing the model.
 
-The provider/model profile owns the visible reasoning selector. Kimi K3 does
-not receive legacy sampler fields; its request uses the documented common
-output/stop/format/function-tool subset. Historical Moonshot families retain
-their curated sampler surface. GLM 5.2 accepts its documented sampler and
-reasoning fields. For function tools, Moonshot accepts an unset choice,
+The provider/model profile owns the visible reasoning selector. Versioned
+Kimi models (K3, K2.x) do not receive legacy sampler fields — the API
+rejects non-default values for them; their requests use the documented
+common output/stop/format/function-tool subset. `kimi-latest` and the
+historical Moonshot families retain their curated sampler surface. GLM 5.2
+and newer accept their documented sampler and reasoning fields. For function tools, Moonshot accepts an unset choice,
 `auto`, `none`, `required`, or an exact configured function selection; Z.ai
 accepts only an unset choice or `auto`. Unsupported choices and values block
 before network I/O.
 
-Kimi K3 Preserved Thinking is always on. Required Kimi reasoning and active or
+Preserved Thinking is always on for the versioned Kimi reasoning family
+(K3, K2.x — every member returns private reasoning; `kimi-latest` does not
+and is excluded). Required Kimi reasoning and active or
 restored GLM function-tool reasoning are kept in bounded assistant-owned
 private continuation checkpoints. They are excluded from visible transcripts,
 logs, summaries, ordinary text/Markdown exports, and usage records, but their
@@ -691,4 +694,12 @@ page's content unchanged from the prior stamp).*
 (task-18705: a bound folder containing `.SKILLS/` now annotates its row
 "— contains N project skill(s)" in the creation dialog, followed by a
 chained import prompt after Create; the rest of this page's content
+unchanged from the prior stamp).*
+*Providers & Models — Moonshot Kimi / Z.ai GLM rows updated against
+TASK-19170 — 2026-08-20 (the reasoning-effort selector and the Preserved
+Thinking note now follow the family predicates: any Kimi-series id gets the
+curated `low/medium/high/max` list and any GLM ≥ 5.2 release the full GLM
+list, verified by mounted-settings tests driving `kimi-k2.6` and `glm-5.3`;
+preserved thinking is documented for the versioned Kimi family per wire
+probes, with `kimi-latest` excluded; the rest of this page's content
 unchanged from the prior stamp).*

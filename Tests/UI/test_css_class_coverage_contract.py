@@ -130,6 +130,10 @@ KNOWN_UNSTYLED: dict[str, str] = {
         "(`ConsoleMarkdownMessage > Static`), so the class carries no "
         "style of its own by design."
     ),
+    "console-markdown-selection-strip": (
+        "query-selector handle used to update the reusable selection strip; "
+        "visibility is driven directly by styles.display."
+    ),
     "console-save-as-context": (
         "plain descriptive Static (role/excerpt text) with no visual "
         "treatment of its own; not queried by class anywhere."
@@ -166,6 +170,10 @@ KNOWN_UNSTYLED: dict[str, str] = {
         "button` (companion to console-send-button, but not itself test-"
         "pinned); no distinct rule, not queried."
     ),
+    "console-tool-diff-selection-strip": (
+        "query-selector handle used to update the reusable diff selection "
+        "strip; visibility is driven directly by styles.display."
+    ),
     "console-transcript-original-attempt": (
         "plain descriptive Static for a repaired citation's original text; "
         "no distinct rule, not queried."
@@ -174,6 +182,14 @@ KNOWN_UNSTYLED: dict[str, str] = {
         "query-selector handle pinned by test_console_native_transcript.py"
         ":1853,1860 (transcript.query('.console-transcript-summary-"
         "banner')), not a style hook."
+    ),
+    "console-turn-file-note-delete": (
+        "event-routing and test-query handle on an otherwise standard "
+        "compact Button; it carries no distinct visual rule."
+    ),
+    "console-turn-file-rows": (
+        "query-selector handle for the file-card rows container; child rows "
+        "carry their own styles."
     ),
     "console-workspace-recovery": (
         "plain descriptive recovery-copy Static shared across four compose "

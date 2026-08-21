@@ -12,7 +12,7 @@ from loguru import logger
 from rich.console import Console, ConsoleOptions, RenderableType, RenderResult
 from rich.style import Style
 from rich.table import Table
-from textual import events, on, work
+from textual import events, on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -1324,7 +1324,6 @@ class EnhancedFileDialog(BaseFileDialog):
             pass
         return None
 
-    @work(thread=True)
     def _persist_recent_and_last_directory(
         self, last_directory: Optional[Path]
     ) -> None:
@@ -1344,29 +1343,35 @@ class EnhancedFileDialog(BaseFileDialog):
         hand off here, which does both writes as one atomic
         ``save_settings_to_cli_config`` mutation instead of two separate
         ones. ``EnhancedFileDialog`` is a ``ModalScreen``, so
-        ``self.app``/``run_worker`` are always available while it is open.
+        ``self.app``/``run_worker`` are always available while it is open;
+        app ownership keeps dismissal from cancelling the pending write.
         """
-        try:
-            section_values: dict[str, dict[str, object]] = {
-                "filepicker": {
-                    f"recent_{self.context}": self.recent_locations.get_recent(),
-                }
+        section_values: dict[str, dict[str, object]] = {
+            "filepicker": {
+                f"recent_{self.context}": self.recent_locations.get_recent(),
             }
-            if last_directory is not None:
-                dir_path = (
-                    last_directory
-                    if last_directory.is_dir()
-                    else last_directory.parent
-                )
-                section_values["filepicker"][f"last_dir_{self.context}"] = str(
-                    dir_path
-                )
-            save_settings_to_cli_config(section_values)
-        except Exception as e:
-            logger.error(
-                "Failed to persist file-picker recent/last-dir state: {}",
-                type(e).__name__,
+        }
+        if last_directory is not None:
+            dir_path = (
+                last_directory if last_directory.is_dir() else last_directory.parent
             )
+            section_values["filepicker"][f"last_dir_{self.context}"] = str(dir_path)
+
+        def persist() -> None:
+            try:
+                save_settings_to_cli_config(section_values)
+            except Exception as e:
+                logger.error(
+                    "Failed to persist file-picker recent/last-dir state: {}",
+                    type(e).__name__,
+                )
+
+        self.app.run_worker(
+            persist,
+            thread=True,
+            exit_on_error=False,
+            group="file-picker-persist",
+        )
 
     def compose(self) -> ComposeResult:
         """Compose the enhanced file picker UI.

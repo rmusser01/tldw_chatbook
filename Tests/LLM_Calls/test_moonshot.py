@@ -341,9 +341,113 @@ def test_kimi_k3_payload_omits_legacy_sampler_fields() -> None:
 
 
 @pytest.mark.parametrize(
+    "model",
+    ["kimi-k3-turbo", "kimi-k4", "kimi-k2.5", "kimi-k2.6", "kimi-latest"],
+)
+def test_kimi_family_accepts_reasoning_effort(model: str) -> None:
+    """TASK-18803: the wire accepts ``reasoning_effort`` across the kimi
+    series (probe-verified 200s on kimi-k2.6, kimi-k2.7-code and
+    kimi-latest), so the builder must not client-side-reject a release-day
+    kimi id the way the old literal ``kimi-k3`` pin did."""
+    payload = build_moonshot_chat_payload(
+        resolution=_resolution(model=model),
+        messages_payload=[{"role": "user", "content": "hello"}],
+        reasoning_effort="high",
+    )
+    assert payload["reasoning_effort"] == "high"
+
+
+def test_kimi_k3_accepts_medium_reasoning_effort() -> None:
+    """``reasoning_effort: "medium"`` answers 200 on kimi-k3
+    (chatcmpl-6a872b62bea2d202c1d3f6fa); the old value set client-side
+    rejected it."""
+    payload = build_moonshot_chat_payload(
+        resolution=_resolution(),
+        messages_payload=[{"role": "user", "content": "hello"}],
+        reasoning_effort="medium",
+    )
+    assert payload["reasoning_effort"] == "medium"
+
+
+def test_moonshot_v1_still_rejects_reasoning_effort() -> None:
+    """Control: the legacy family keeps its historical client-side check."""
+    with pytest.raises(ChatBadRequestError):
+        build_moonshot_chat_payload(
+            resolution=_resolution(model="moonshot-v1-32k"),
+            messages_payload=[{"role": "user", "content": "hello"}],
+            reasoning_effort="high",
+        )
+
+
+def test_versioned_kimi_family_drops_sampling() -> None:
+    """The value-level sampling rejection covers the whole versioned kimi
+    family (probe-verified 400s on kimi-k2.5/k2.6/k3), not just kimi-k3."""
+    payload = build_moonshot_chat_payload(
+        resolution=_resolution(model="kimi-k2.6"),
+        messages_payload=[{"role": "user", "content": "hello"}],
+        streaming=False,
+        temperature=0.4,
+        top_p=0.9,
+        n=1,
+        presence_penalty=0.1,
+        frequency_penalty=0.1,
+    )
+    assert set(payload) == {"model", "messages", "stream"}
+
+
+def test_kimi_latest_passes_sampling_through() -> None:
+    """kimi-latest accepts the full sampling set on the wire
+    (chatcmpl-6a872b9816ceb0c0ae780b1e); the old ``moonshot-v1-`` allowlist
+    silently discarded the user's settings for it."""
+    payload = build_moonshot_chat_payload(
+        resolution=_resolution(model="kimi-latest"),
+        messages_payload=[{"role": "user", "content": "hello"}],
+        streaming=False,
+        temperature=0.4,
+        top_p=0.9,
+        n=1,
+        presence_penalty=0.1,
+        frequency_penalty=0.1,
+    )
+    assert payload["temperature"] == 0.4
+    assert payload["top_p"] == 0.9
+    assert payload["n"] == 1
+    assert payload["presence_penalty"] == 0.1
+    assert payload["frequency_penalty"] == 0.1
+
+
+def test_unrecognized_model_passes_sampling_through() -> None:
+    """A future non-kimi family must not have its settings silently dropped
+    by a frozen allowlist -- the server adjudicates them."""
+    payload = build_moonshot_chat_payload(
+        resolution=_resolution(model="moonshot-v2-8k"),
+        messages_payload=[{"role": "user", "content": "hello"}],
+        streaming=False,
+        temperature=0.4,
+        top_p=0.9,
+    )
+    assert payload["temperature"] == 0.4
+    assert payload["top_p"] == 0.9
+
+
+def test_min_temperature_interplay_scoped_to_v1_family() -> None:
+    """The documented n>1/temperature>=0.3 interplay belongs to the
+    moonshot-v1 family; kimi-latest must not inherit it."""
+    payload = build_moonshot_chat_payload(
+        resolution=_resolution(model="kimi-latest"),
+        messages_payload=[{"role": "user", "content": "hello"}],
+        streaming=False,
+        temperature=0.2,
+        n=2,
+    )
+    assert payload["temperature"] == 0.2
+    assert payload["n"] == 2
+
+
+@pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("reasoning_effort", "medium"),
+        ("reasoning_effort", "extreme"),
         ("reasoning_effort", {}),
         ("max_tokens", True),
         ("temperature", 3),
@@ -453,6 +557,275 @@ def test_kimi_k3_replays_validated_reasoning_from_complete_checkpoint() -> None:
         "content": "Visible answer",
         "reasoning_content": "PRIVATE-REASONING",
     }
+
+
+@pytest.mark.parametrize("model", ["kimi-k2.6", "kimi-k3-turbo"])
+def test_kimi_family_replays_validated_reasoning_from_complete_checkpoint(
+    model: str,
+) -> None:
+    """TASK-19170: preserved-thinking replay is a versioned-kimi family shape.
+
+    Wire probes: kimi-k2.6 returns reasoning_content on every turn
+    (chatcmpl-6a8768a3b5c429b466fbc42d) and accepts the replayed
+    reasoning_content on a follow-up turn (chatcmpl-6a8768cbb5c429b466fbc43a),
+    so the k3-only replay gate was a real gap, not a wire constraint."""
+    checkpoint = parse_provider_continuation_json(
+        {
+            "schema_version": 1,
+            "checkpoint_revision": 1,
+            "provider": "moonshot",
+            "protocol": "chat_completions",
+            "model": model,
+            "api_base_url": "https://api.moonshot.ai/v1",
+            "state": "complete",
+            "rounds": [
+                {
+                    "assistant_content": "Visible answer",
+                    "reasoning_blocks": ["PRIVATE-REASONING"],
+                    "calls": [],
+                }
+            ],
+        }
+    )
+    payload = build_moonshot_chat_payload(
+        resolution=_resolution(model=model),
+        messages_payload=[
+            {"role": "user", "content": "first"},
+            {"role": "assistant", "content": "Visible answer"},
+            {"role": "user", "content": "next"},
+        ],
+        provider_continuations=[checkpoint],
+    )
+
+    assert payload["messages"][1] == {
+        "role": "assistant",
+        "content": "Visible answer",
+        "reasoning_content": "PRIVATE-REASONING",
+    }
+
+
+def test_kimi_family_complete_tool_checkpoint_expands_private_rounds_off_k3() -> None:
+    """A k3-style complete checkpoint (tool rounds + final reasoning round)
+    must expand its private rounds for every family member that produces the
+    shape, not only the exact kimi-k3 id."""
+    checkpoint = parse_provider_continuation_json(
+        {
+            "schema_version": 1,
+            "checkpoint_revision": 1,
+            "provider": "moonshot",
+            "protocol": "chat_completions",
+            "model": "kimi-k2.6",
+            "api_base_url": "https://api.moonshot.ai/v1",
+            "state": "complete",
+            "rounds": [
+                {
+                    "assistant_content": "",
+                    "reasoning_blocks": ["tool reasoning"],
+                    "calls": [
+                        _call_payload(
+                            "call_1", state="completed", result="4"
+                        )
+                    ],
+                },
+                {
+                    "assistant_content": "Visible answer",
+                    "reasoning_blocks": ["final reasoning"],
+                    "calls": [],
+                },
+            ],
+        }
+    )
+    payload = build_moonshot_chat_payload(
+        resolution=_resolution(model="kimi-k2.6"),
+        messages_payload=[
+            {"role": "user", "content": "Calculate."},
+            {"role": "assistant", "content": "Visible answer"},
+            {"role": "user", "content": "next"},
+        ],
+        provider_continuations=[checkpoint],
+    )
+
+    messages = payload["messages"]
+    assert [message["role"] for message in messages] == [
+        "user",
+        "assistant",
+        "tool",
+        "assistant",
+        "user",
+    ]
+    assert messages[1]["reasoning_content"] == "tool reasoning"
+    assert messages[1]["tool_calls"][0]["id"] == "call_1"
+    assert messages[2] == {
+        "role": "tool",
+        "tool_call_id": "call_1",
+        "content": "4",
+    }
+    assert messages[3] == {
+        "role": "assistant",
+        "content": "Visible answer",
+        "reasoning_content": "final reasoning",
+    }
+
+
+def test_kimi_family_old_style_complete_checkpoint_annotates_tool_rounds() -> None:
+    """Durable-data control: pre-19170 non-k3 complete checkpoints (no final
+    reasoning round) keep the annotate-in-place replay they always had."""
+    checkpoint = parse_provider_continuation_json(
+        {
+            "schema_version": 1,
+            "checkpoint_revision": 1,
+            "provider": "moonshot",
+            "protocol": "chat_completions",
+            "model": "kimi-k2.6",
+            "api_base_url": "https://api.moonshot.ai/v1",
+            "state": "complete",
+            "rounds": [
+                {
+                    "assistant_content": "",
+                    "reasoning_blocks": ["tool reasoning"],
+                    "calls": [
+                        _call_payload(
+                            "call_1", state="completed", result="4"
+                        )
+                    ],
+                }
+            ],
+        }
+    )
+    history = _tool_history()
+    payload = build_moonshot_chat_payload(
+        resolution=_resolution(model="kimi-k2.6"),
+        messages_payload=history,
+        provider_continuations=[checkpoint],
+    )
+
+    assert payload["messages"][1]["reasoning_content"] == "tool reasoning"
+    assert payload["messages"][3] == {
+        "role": "assistant",
+        "content": "The answer is 4.",
+    }
+
+
+def _call_payload(
+    call_id: str,
+    *,
+    state: str = "pending",
+    result: str | None = None,
+) -> dict[str, object]:
+    value: dict[str, object] = {
+        "call_id": call_id,
+        "name": "calculator",
+        "arguments": '{"expression":"2+2"}',
+        "state": state,
+    }
+    if result is not None:
+        value["result"] = result
+    return value
+
+
+def _turn(
+    *,
+    text: str = "Visible answer",
+    reasoning_content: str | None = "PRIVATE-REASONING",
+    tool_calls: tuple = (),
+) -> HostedChatTurn:
+    return HostedChatTurn(
+        text=text,
+        tool_calls=tool_calls,
+        assistant_message={"role": "assistant", "content": text},
+        finish_reason="tool_calls" if tool_calls else "stop",
+        reasoning_content=reasoning_content,
+        usage=None,
+    )
+
+
+def test_kimi_family_plain_turn_preserves_reasoning_checkpoint() -> None:
+    """kimi-k2.6 returns reasoning_content on plain turns (TASK-19170 probe
+    B, chatcmpl-6a8768a9b5c429b466fbc42f): the preserved-thinking checkpoint
+    must be created exactly as it is for kimi-k3."""
+    candidate = moonshot._moonshot_continuation_candidate(
+        _turn(),
+        resolution=_resolution(model="kimi-k2.6"),
+        provider_continuations=[],
+    )
+
+    assert candidate is not None
+    assert candidate.state == "complete"
+    assert candidate.model == "kimi-k2.6"
+    assert candidate.rounds[-1].calls == ()
+    assert candidate.rounds[-1].reasoning_blocks == ("PRIVATE-REASONING",)
+
+
+def test_kimi_latest_plain_turn_produces_no_checkpoint() -> None:
+    """kimi-latest returned NO reasoning_content on the wire (TASK-19170
+    probe A, chatcmpl-6a8768a616ceb0c0ae780f2c): even a crafted reasoning
+    payload must not mint a preserved-thinking checkpoint for it."""
+    candidate = moonshot._moonshot_continuation_candidate(
+        _turn(),
+        resolution=_resolution(model="kimi-latest"),
+        provider_continuations=[],
+    )
+
+    assert candidate is None
+
+
+def _active_family_checkpoint(model: str):
+    return parse_provider_continuation_json(
+        {
+            "schema_version": 1,
+            "checkpoint_revision": 2,
+            "provider": "moonshot",
+            "protocol": "chat_completions",
+            "model": model,
+            "api_base_url": "https://api.moonshot.ai/v1",
+            "state": "active",
+            "rounds": [
+                {
+                    "assistant_content": "",
+                    "reasoning_blocks": ["tool reasoning"],
+                    "calls": [
+                        _call_payload(
+                            "call_1", state="completed", result="4"
+                        )
+                    ],
+                }
+            ],
+        }
+    )
+
+
+def test_kimi_family_tool_loop_completion_appends_final_reasoning_round() -> None:
+    """The loop-completing kimi-k2.6 turn returns reasoning_content on the
+    wire (TASK-19170 probe D1/D2, chatcmpl-6a876916/6a876918...): completion
+    must preserve it as the k3-style final reasoning round."""
+    candidate = moonshot._moonshot_continuation_candidate(
+        _turn(reasoning_content="FINAL-REASONING"),
+        resolution=_resolution(model="kimi-k2.6"),
+        provider_continuations=[_active_family_checkpoint("kimi-k2.6")],
+    )
+
+    assert candidate is not None
+    assert candidate.state == "complete"
+    assert candidate.rounds[-1].calls == ()
+    assert candidate.rounds[-1].reasoning_blocks == ("FINAL-REASONING",)
+    assert candidate.rounds[0].calls[0].state == "completed"
+
+
+def test_kimi_family_tool_loop_completion_without_reasoning_keeps_stored_shape() -> (
+    None
+):
+    """Durable-shape control: a family completion turn with no reasoning
+    keeps the pre-19170 complete shape instead of failing canonical parse."""
+    candidate = moonshot._moonshot_continuation_candidate(
+        _turn(reasoning_content=None),
+        resolution=_resolution(model="kimi-k2.6"),
+        provider_continuations=[_active_family_checkpoint("kimi-k2.6")],
+    )
+
+    assert candidate is not None
+    assert candidate.state == "complete"
+    assert len(candidate.rounds) == 1
+    assert candidate.rounds[-1].calls[0].state == "completed"
 
 
 def test_moonshot_finish_policy_accepts_mixed_tools_and_rejects_contradictions() -> (

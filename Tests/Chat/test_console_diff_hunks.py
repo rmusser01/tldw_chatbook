@@ -619,6 +619,151 @@ def test_format_diff_feedback_disclosure_empty_notes_returns_empty_string():
     assert format_diff_feedback_disclosure([]) == ""
 
 
+# --------------------------------------------------------------------------
+# Kind-aware rendering (TASK-18060 Task 8, spec §5): `file` and `diff_line`
+# anchor kinds get their own block-entry and disclosure-line shapes; `hunk`
+# stays byte-unchanged (every test above this section is the byte-parity
+# proof and must stay green UNMODIFIED).
+# --------------------------------------------------------------------------
+
+
+def _file_note(**over) -> dict:
+    """A `file`-kind note row: `hunk_index=-1`, `hunk_header=''`,
+    `hunk_excerpt=''` sentinels (spec §4) so it can never match a real
+    hunk."""
+    note = _note(hunk_index=-1, hunk_header="", hunk_excerpt="", **over)
+    note["anchor_kind"] = "file"
+    return note
+
+
+def _diff_line_note(*, diff_line_index: int = 6, diff_line_text: str = "+line6", **over) -> dict:
+    """A `diff_line`-kind note row: hunk fields ALSO populated (spec §4 --
+    the hunk the line falls in), plus the line-specific fields."""
+    note = _note(**over)
+    note.update(
+        anchor_kind="diff_line",
+        diff_line_index=diff_line_index,
+        diff_line_text=diff_line_text,
+    )
+    return note
+
+
+def test_render_diff_feedback_block_exact_format_for_file_note():
+    note = _file_note(
+        id=3,
+        run_id="12345678-abcd-4a4a-9a9a-abcdefabcdef",
+        path="c.py",
+        note="please clean this whole file",
+    )
+    block, included_ids = render_diff_feedback_block([note])
+    expected = (
+        "## Diff feedback from the user (on your earlier file changes)\n"
+        "### c.py — whole file   [run 12345678]\n"
+        "> please clean this whole file"
+    )
+    assert block == expected
+    assert included_ids == [3]
+    assert "@@" not in block
+    assert "````" not in block
+
+
+def test_render_diff_feedback_block_exact_format_for_diff_line_note():
+    note = _diff_line_note(
+        id=4,
+        run_id="12345678-abcd-4a4a-9a9a-abcdefabcdef",
+        path="b.py",
+        hunk_header="@@ -5,3 +5,4 @@",
+        hunk_excerpt="+line5\n+line6",
+        note="fix line 6",
+        diff_line_index=6,
+        diff_line_text="+line6",
+    )
+    block, included_ids = render_diff_feedback_block([note])
+    expected = (
+        "## Diff feedback from the user (on your earlier file changes)\n"
+        "### b.py — @@ -5,3 +5,4 @@   [run 12345678]\n"
+        "> on line: +line6\n"
+        "> fix line 6\n"
+        "````\n"
+        "+line5\n+line6\n"
+        "````"
+    )
+    assert block == expected
+    assert included_ids == [4]
+
+
+def test_render_diff_feedback_block_mixed_kinds_all_render_correctly_in_one_block():
+    hunk_note = _note(id=1, path="a.py", hunk_header="@@ -1,2 +1,2 @@", hunk_excerpt="+x", note="hunk note")
+    file_note = _file_note(id=2, path="c.py", note="file note")
+    line_note = _diff_line_note(
+        id=3, path="b.py", hunk_header="@@ -5,3 +5,4 @@", hunk_excerpt="+line5\n+line6", note="line note"
+    )
+
+    block, included_ids = render_diff_feedback_block(
+        [hunk_note, file_note, line_note], cap_bytes=1_000_000
+    )
+
+    assert included_ids == [1, 2, 3]
+    assert block.count("## Diff feedback from the user") == 1
+    assert "### a.py — @@ -1,2 +1,2 @@   [run" in block
+    assert "### c.py — whole file   [run" in block
+    assert "### b.py — @@ -5,3 +5,4 @@   [run" in block
+    assert "> on line: +line6" in block
+    assert block.index("a.py") < block.index("c.py") < block.index("b.py")
+
+
+def test_render_diff_feedback_block_file_note_empty_excerpt_never_gets_truncated_to_fit_tail():
+    """A `file` note's excerpt is always `''` (spec §4) -- with a huge cap
+    (nothing excluded), it must never grow a phantom '... truncated to
+    fit' tail or a fence, since there is no excerpt to truncate."""
+    note = _file_note(id=1, path="notes.md", note="please tidy this whole file")
+    block, included_ids = render_diff_feedback_block([note], cap_bytes=1_000_000)
+    assert included_ids == [1]
+    assert "excerpt truncated to fit" not in block
+    assert "````" not in block
+
+
+def test_render_diff_feedback_block_file_note_empty_excerpt_cap_never_produces_negative_truncation():
+    """Cap sanity (brief): a `file` note has `hunk_excerpt == ''` by
+    construction. When it's the oldest (only) note and doesn't fit under a
+    tiny cap, the queue-blocker excerpt-truncation guard must handle an
+    EMPTY excerpt sanely -- no exception, no negative-length truncation
+    artifact -- and fall back to the ordinary clean exclusion with the
+    holdover line, exactly like the pre-existing metadata-alone-overflows
+    case for hunk notes."""
+    note = _file_note(id=1, path="notes.md", note="please tidy this whole file")
+    block, included_ids = render_diff_feedback_block([note], cap_bytes=1)
+    assert included_ids == []
+    assert block.startswith("## Diff feedback from the user (on your earlier file changes)")
+    assert block.endswith("… 1 more notes held for the next message")
+    assert "notes.md" not in block
+
+
+def test_format_diff_feedback_disclosure_exact_format_for_file_note():
+    note = _file_note(path="c.py", note="please clean this whole file")
+    text = format_diff_feedback_disclosure([note])
+    assert text == '\U0001F4DD Diff feedback attached — c.py (whole file): "please clean this whole file"'
+
+
+def test_format_diff_feedback_disclosure_exact_format_for_diff_line_note():
+    note = _diff_line_note(path="b.py", hunk_header="@@ -5,3 +5,4 @@", note="fix line 6")
+    text = format_diff_feedback_disclosure([note])
+    assert text == '\U0001F4DD Diff feedback attached — b.py @@ -5,3 +5,4 @@ line: "fix line 6"'
+
+
+def test_format_diff_feedback_disclosure_mixed_kinds_one_line_each():
+    hunk_note = _note(id=1, path="a.py", hunk_header="@@ -1,2 +1,2 @@", note="hunk note")
+    file_note = _file_note(id=2, path="c.py", note="file note")
+    line_note = _diff_line_note(id=3, path="b.py", hunk_header="@@ -5,3 +5,4 @@", note="line note")
+
+    text = format_diff_feedback_disclosure([hunk_note, file_note, line_note])
+    lines = text.splitlines()
+    assert len(lines) == 3
+    assert lines[0].endswith('a.py @@ -1,2 +1,2 @@: "hunk note"')
+    assert lines[1].endswith('c.py (whole file): "file note"')
+    assert lines[2].endswith('b.py @@ -5,3 +5,4 @@ line: "line note"')
+
+
 # -- middle_elide_path (Task 7, spec §5: row-label path elision) ----------
 
 

@@ -39,22 +39,6 @@ known, expensive to rediscover. Every entry states the incident that produced it
   **never pass a "next safe id" between tasks in a brief** — an ID is only safe at the
   instant it is derived, so re-derive it at filing time.
 
-- **2026-08-17, TASK-17385 (the seventh collision, and the second one *caused by a
-  renumber* landing on an already-taken ID).** Two **Done** tasks shared `TASK-16812`
-  on dev — a Console thinking-controls task and a research category-lane baselines
-  task — so Backlog Guard was red on dev itself and every PR inherited it. Both being
-  Done, "never move a Done task" could not break the tie; the later claimant (baselines)
-  moved to `17385`, verified free above the true all-branch max of **17384**. The
-  renumber was trivial; finding its references was the trap. A first sweep of `backlog/`
-  + `Docs/` looked complete but **MISSED three live references in CODE** — a source
-  comment (`Research_Interop/academic_providers.py`), a test section header
-  (`Tests/Research/test_academic_providers.py`), and a benchmark comment
-  (`Helper_Scripts/Benchmarks/record_research_baseline.py`). Merging that partial fix
-  would have shipped three pointers resolving to the WRONG task. Only a whole-repo grep
-  caught them. **Lesson: a renumber's references are not confined to `backlog/`+`Docs/`
-  — task IDs are cited from source, test, and benchmark comments too; grep the ENTIRE
-  tree (`grep -rIn "task-<id>" .`) before you believe the reference set is complete.**
-
 Checking `origin/dev` *feels* like diligence. It is not: parallel agents hold IDs on
 unmerged branches. And a *green* Backlog Guard at branch time proves nothing later —
 a duplicate can arrive from dev moving underneath you, in which case rebasing is the
@@ -69,10 +53,7 @@ carried a bad number.
 **What to do.** Before filing, sweep **every remote ref** plus every worktree, and
 re-check at merge time — dev moves under you. Never trust the CLI's auto-assignment.
 When a collision is found after both tasks have started, use add-commit provenance:
-the later claimant moves, and every reference in its shipped slice moves with it —
-and that slice includes **source, test, and benchmark comments**, not just `backlog/`
-and `Docs/`. Grep the whole repo (`grep -rIn "task-<id>" .`), or a partial rename ships
-dangling pointers to the wrong task.
+the later claimant moves, and every reference in its shipped slice moves with it.
 
 ```bash
 git for-each-ref --format='%(refname)' refs/remotes/ | while read -r b; do
@@ -286,31 +267,6 @@ leading hypothesis* before it saw the first session's profile, so it shipped as 
 corroboration commit on top of the existing tip (PR #1640) instead of a competing
 fix. Independent evidence is worth keeping; a second fix for the same defect is
 not.
-
-**TASK-15764, 2026-08-15 — fourth instance, and this time the duplicate was
-already MERGED before the second session even started.** A Codex session
-implemented the task on `codex/task-15764-urlmonitor-offloop` (commits
-`8f638f815` + `8fbd1426d`, eleven minutes from first commit to PR #1650
-merging at 2026-08-14 17:38) and marked the task file Done on dev. The second
-session, launched by a burn-down controller with a base pinned to `bb91fef73`
-(cut 2026-08-13 20:14 -0700 — ~21 hours BEFORE the incumbent merged, and a
-further ~21 hours before the second session implemented on 2026-08-15), read
-the task file AT ITS BASE — where it still said `To Do` — and re-implemented
-the whole task:
-three hops, born-red tests, latency probes, an independent review with verdict
-MERGE. Nobody ran the two cheap commands above against the REMOTES, and a
-pinned base makes the board check worse than useless: it faithfully shows the
-world as of the pin, so `git fetch && git log origin/dev --grep=<id>` (plus
-`git branch -a | grep -i <id>` — the Codex branch name carried the id) is the
-check that would have caught it in seconds, before implementation rather than
-at reconciliation. Two mitigations with teeth: (1) a pinned-base session must
-run its staleness check against `origin/dev`, not its own checkout; (2) the
-recovery was again contribution, not competition — the incumbent stood
-(byte-identical semantics, verified across 11 full-cycle cases), and the
-second implementation's delta ported on top: the url_list-through-
-`launch_run`/`execute_run` coverage the incumbent's ticked AC#3 never had a
-test for, plus the review-corrected latency lesson (the 16.2 s headline
-figure did not survive the reviewer re-running it).
 
 ---
 
@@ -547,26 +503,21 @@ ledger-creation time; by cleanup time it is too late.
 
 ---
 
-## A checkout-based baseline round silently discards uncommitted work on that file
+## `backlog task create -p <priority>` corrupts the assigned ID
 
-**TASK-15777, 2026-08-15.** To attribute test failures, the standard baseline
-round is: `git checkout <base> -- <file>` → run the failing tests → `git
-checkout HEAD -- <file>`. During the two-sided-windowing work this round was
-run twice; between the two runs an uncommitted improvement (the reveal-segment
-recenter criterion) had been made to that same file on top of the last WIP
-commit. The second round's `git checkout HEAD -- <file>` restored the WIP
-commit and silently discarded the improvement — no error, no prompt, working
-tree "clean". It was only caught because `git status --porcelain` in the same
-command's output listed fewer modified files than expected; the edit had to be
-re-applied from the conversation's diff and every suite re-run on the
-re-committed state.
+**What happened.** 2026-08-19, filing the Chunking Parity phase tasks: `backlog task
+create "…" -d "…" --ac "…" -l chunking -p high` produced a task whose ID was
+`TASK-HIGH.1` — the priority flag's value was parsed into the ID slot. The CLI
+printed no error (`No Definition of Done items defined`, as usual), and the malformed
+file landed as `task-high.1 - ….md` with `id: TASK-HIGH.1` in its frontmatter.
 
-**What to do.** `git checkout ... -- <file>` is a mutation of the working
-tree, exactly like the `git checkout HEAD --` restore trap in
-`lessons-testing-evidence.md`. Before ANY checkout-based baseline round,
-commit the current state first — the round's restore step is then provably a
-no-op. If the file was touched after the last commit, the restore step
-destroys that delta unconditionally.
+**What to do.** Never pass `-p`/`--priority` to `backlog task create`. Set priority by
+editing the task file's `priority:` frontmatter field directly (the CLI reads it fine),
+or via `backlog task edit <id> --priority high` after creation. Combined with the two
+known quirks above — CLI auto-assignment ignoring remote-held IDs, and `--ac` joining
+commas into one run-on criterion — the reliable filing path is: sweep remotes for the
+true max ID, write the task file directly with a safe ID and a hand-authored AC block,
+then verify with `backlog task <id> --plain`.
 
 ---
 

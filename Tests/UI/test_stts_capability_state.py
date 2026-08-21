@@ -3,6 +3,7 @@ from textual.app import App
 from textual.widgets import Button, Static
 
 from Tests.UI.app_factory import _build_test_app
+from tldw_chatbook.app import TldwCli
 from tldw_chatbook.UI.Lab_Modules.lab_speech_status import speech_capability_detail
 from tldw_chatbook.UI.Screens.stts_screen import STTSScreen
 from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
@@ -21,6 +22,8 @@ from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
 
 
 class _SpeechHarness(App):
+    CSS_PATH = TldwCli.CSS_PATH
+
     def __init__(self, app_instance):
         super().__init__()
         self._app_instance = app_instance

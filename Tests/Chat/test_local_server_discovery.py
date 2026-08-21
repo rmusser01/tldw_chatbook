@@ -620,6 +620,7 @@ async def test_probe_rejects_unusable_url_without_network() -> None:
             ("\ud800", "secret"),
         ),
     ),
+    ids=("credential-bearing-url", "bidi-control-url", "surrogate-url"),
 )
 async def test_invalid_probe_input_never_retains_raw_endpoint_or_secrets(
     entered: str,

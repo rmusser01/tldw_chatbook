@@ -4493,6 +4493,20 @@ assert them absent), and bootstrap-at-vN measured FASTER than
 bootstrap-current-then-rollback (~80-130ms vs ~220-255ms + replay) — the
 registry was never even a perf win.
 
+**Coda (task-19045, 2026-08-20): the disclosed escape is closed the same way
+tables were.** The MUT-INDEX shape the 16840 review left open (delete a
+`CREATE INDEX` from a migration step; nothing reds — 84 of 94 named indexes
+had zero Tests/ references) is now pinned by an absolute census
+(`Tests/ChaChaNotesDB/test_index_census.py`): a hand-maintained literal of
+all index names + UNIQUE flags + column tuples, asserted both directions
+against a live DB, on both a fresh and a chain-migrated bootstrap — the
+VALID_TABLES/TASK-864 pattern generalized. The mutation re-run confirmed the
+division of labor: under the seeded index deletion the parity sweep stayed
+green 36/36 (identity, as documented) while the census redded by name on
+both variants. The trap to preserve: such a census only works as an
+EXPLICIT literal — derive it from the same schema code it checks and it
+becomes the identity too.
+
 ## A silently-shadowed upstream sentinel is a defect class, not a file-local bug (task-16502, 2026-08-15)
 
 Textual 8.x removed `Select.BLANK` (the blank-selection sentinel, renamed
@@ -5335,3 +5349,143 @@ design has a cliff no threshold placement can fix; the durable resolution is
 one semantic at every size (the fix round retired the alignment tier and made
 the order-insensitive ratio the sole mechanism, with "a moved segment is not a
 change" as the documented decision), not a relocated boundary.
+
+## A probe left red on a stale trivial pin stops guarding — the real regression ships behind it (task-19044, 2026-08-20)
+
+The installed-migration probe (`Tests/Packaging/test_installed_distribution.py`,
+`INSTALLED_MIGRATION_PROBE`) proves a v35 ChaChaNotes DB migrates to the current
+schema under the *installed wheel*. It had been red since `4a2d48046` on pure
+test-health noise: a hand-bumped `assert current_schema_version == 39` pin plus
+a sentinel pair that same commit left self-inconsistent (probe printed
+`...-v35-to-v39-ok`, the outer test asserted `...-v35-to-v38-ok`, function named
+`..._to_v38`). Because the gate was already red on the pin, nobody could see
+what arrived behind it: the v39→v40 bump (`46945ebbe`) never added
+`chachanotes_v39_to_v40_transcript_annotations.sql` to
+`[tool.setuptools.package-data]` (`include-package-data = false`, explicit
+list), so **shipped wheels could not migrate an existing DB past v39 at all** —
+`_migrate_from_v39_to_v40` reads that SQL file from the installed package and
+died `FileNotFoundError → SchemaError`. The fix round proved this with a
+control: pyproject line reverted → probe red through the real chain
+(`Migration from V39 to V40 failed ... No such file or directory`); restored →
+green (`installed-wheel-v35-to-v38` run: 2 failed at the pin; fixed run:
+7 passed incl. both wheel sources and the release-checker mutation params).
+
+Two rules, both incident-backed here:
+
+1. **Every hand-bumped copy of a moving constant is a miss waiting for the
+   next bump — compare against the constant in the environment where the
+   assertion runs.** The probe already read
+   `CharactersRAGDB._CURRENT_SCHEMA_VERSION` *inside the child process against
+   the installed distribution* and asserted the migrated version equals it;
+   the literal pin added nothing but staleness. The same class hid in the
+   sentinel string pair and the test name (now version-agnostic
+   `..._to_current`). Sibling class to watch: a schema bump's packaging
+   contract spans four hand lists (pyproject package-data, both
+   `Packaging/check_manifest.py` sets, the test's `RUNTIME_MIGRATION_PATHS`)
+   — `46945ebbe` missed all four.
+2. **A known-red gate is a masked gate.** "That test is just stale on the
+   version pin" was true AND the reason a production bug (any install built
+   from this tree could not migrate an existing DB past v39) sat undetected
+   from the v40 bump until this task. Re-greening a trivially-red probe is
+   not cosmetics; until it runs green, everything it guards is unguarded.
+
+## A "pristine" probe worktree cut from `origin/dev` is not pinned to your base (task-19043, 2026-08-20)
+
+Attributing a red test to my-change-vs-pre-existing, the standard move is a
+throwaway pristine worktree. First attempt: `git worktree add --detach probe
+origin/dev`. The probe PASSED the test my tree failed -- which read as "my
+change broke it" and burned a diagnostic round chasing a regression that did
+not exist, complete with a module-identity probe whose results contradicted
+the pytest run (the assert was statically false in BOTH trees' source, yet
+"passed pristine"). The resolution: the shared checkout's `origin/dev` ref had
+MOVED between my branch's creation and the probe's creation (base `25500ad87`
+-> `fa0268519`, hours apart, another session's fetch), and the newer dev had
+already FIXED the red by rewriting the test (`ab468a4a2`). A second probe
+pinned to the exact base SHA (`git worktree add --detach probe 25500ad87`)
+showed the test red on pristine base code: pre-existing, fixed upstream, not
+mine. Two rules with teeth: (1) a baseline probe must be cut at the **base
+SHA your branch was cut from**, never at a moving ref name -- in a checkout
+other sessions fetch into, `origin/dev` at probe time is routinely not
+`origin/dev` at branch time; (2) `git log --oneline -1` inside the probe is
+part of the probe -- a comparison whose two arms' commits were never printed
+has not established which code either arm ran.
+
+## A validator over durable data cannot be widened the way a request gate can (TASK-19170, 2026-08-20)
+
+TASK-18803 converted exact-id REQUEST gates (`model == "kimi-k3"`) to family
+predicates; TASK-19170 did the response side, where the same conversion runs
+through the strict parser for PERSISTED private checkpoints. One of the two
+k3 pins there is a shape invariant -- "a complete checkpoint must END with a
+final no-calls reasoning round" -- and mechanically widening it to the family
+would have made every pre-19170 versioned-kimi (non-k3) complete checkpoint
+already stored in ChaChaNotes/exports/chatbooks UNPARSEABLE: those were
+written complete with all-calls rounds, because only the k3 pipeline appended
+the final round. The rule: before widening a validation predicate, enumerate
+what every OLD pipeline actually persisted under the old predicate --
+acceptance-widening (admit new shapes) is backward-safe, but
+requirement-widening (demand a shape of more models) invalidates history
+unless every covered writer always produced it. The fix kept the must-end
+invariant pinned to the literal id, accepted both complete shapes for the
+rest of the family, branched replay on checkpoint SHAPE instead of model id,
+and pinned the old stored shape with its own test plus a shape-guard
+mutation (M9b/M10b) at each import surface -- the guard-dropped mutants are
+exactly the "old data wrongly discarded" bug.
+
+## A settle whose predicate can RAISE is still a one-shot sample — and a value flip is not its message cascade (task-19047, 2026-08-20)
+
+Follow-up to the pilot.pause() entry above: `_wait_until`-style condition polls
+only settle what their predicate can *survive observing*. Two incidents from
+the same file, both reproduced under CPU-burner load before patching:
+
+1. **Raising predicates.** `test_switching_stts_view_dismisses_owned_profile_
+   modal_and_worker` polled `app.query_one("#stts-profile-table").row_count
+   == 1` right after assigning `current_view` — but `STTSWindow.watch_current_
+   view` swaps the body in a `speech-view-mount` worker, so the table's
+   *existence* is part of the condition, and the unguarded query raised
+   `NoMatches` straight out of the FIRST poll (13/13 failing instances under
+   load). Same class one step later: `.children[0]` in a predicate raised
+   `IndexError` inside the observable empty window between `await
+   remove_children()` and `await mount(...)` (3 reproductions at 20 burners —
+   which only fired AFTER the first shape was fixed; catalogue shapes by
+   re-running the load loop after each repair, since the first raise masks
+   everything behind it). A predicate that throws mid-transition is a one-shot
+   structural sample wearing a settle's clothes: predicates must return False
+   while the structure is absent (guard the query, index only non-empty).
+2. **Value-flip settles under-wait their cascade.** The kokoro-blend audiobook
+   test settled on `provider_select.value == "openai"` — but that flips inside
+   the timer callback, while the narrator-options rewrite rides the queued
+   `Select.Changed` message. Under load the queued rewrite landed AFTER the
+   test's own `_update_voice_options("kokoro")` and silently restored the
+   openai list; the keyboard walk then honestly selected `shimmer`, the LAST
+   OPENAI option — a failure that *looks* like broken key handling and is
+   actually a wiped precondition. Trap on top: the cascade's output (openai
+   options) was byte-identical to the compose-time options, so the watched
+   widget itself could never witness the cascade landing; the settle had to
+   target a DIFFERENT observable of the same dispatch step (a sibling
+   `@on(Select.Changed)` handler's attribute write on a test-faked widget).
+   When a reactive assignment's effects arrive by message, settle on the
+   cascade's own output — and if that output is indistinguishable from the
+   initial state, find any other observable the same dispatch step produces.
+
+## Deleting a diagnostic-bearing call obliges the inventory hand-edit — and two reviewers missed it in one wave (tasks 19042/19043, 2026-08-20)
+
+Companion to "Adding a resource of a GUARDED KIND obliges you to run that
+kind's inventory suite" above — the DELETION direction, which proved harder to
+see. The persistent diagnostic inventory
+(`Docs/security/production-diagnostic-inventory.json`, gated by
+`Tests/Architecture/test_persistent_diagnostic_inventory.py`) keys rows on
+each file's diagnostic CONTENT, so removing a `logger.*` call changes that
+file's row and the playbook requires a hand-edit in the same PR. In the
+third-wave burn-down this was missed twice by implementers and twice by
+reviewers: task-19042 initially skipped it, and its reviewer asserted the
+inventory JSON "had zero consumers" — refuted by the controller's
+rebuild-diff, which showed the architecture gate consuming it; then
+task-19043's deletion (stts_events 30→29) shipped with BOTH implementer and
+reviewer missing the step, leaving the gate red on dev (folded into
+task-19191's per-row regeneration). Two rules with teeth: (1) any PR that
+deletes or moves diagnostic-bearing code must run
+`scripts/check_persistent_diagnostic_inventory.py` and hand-review its row
+diff before merging — a deletion feels like it needs no review precisely
+because nothing new was added; (2) a reviewer claim that a guarded artifact is
+"unconsumed" is an untested claim until checked against the gate that
+consumes it — grep for the artifact's path in `Tests/` before agreeing.

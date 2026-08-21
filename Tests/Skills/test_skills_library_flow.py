@@ -1219,8 +1219,12 @@ async def test_orphaned_manifest_is_one_click_resetup(tmp_path):
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-skills").press()
-        await pilot.pause(); await pilot.pause()
-        header = screen.query_one("#library-skills-trust-header", Static)
+        header = await _wait_for_selector(
+            screen,
+            pilot,
+            "#library-skills-trust-header",
+        )
+        assert isinstance(header, Static)
         assert "again after an update" in str(header.renderable)
         action = screen.query_one("#library-skills-trust-action", Button)
         assert action.trust_action == "resetup"

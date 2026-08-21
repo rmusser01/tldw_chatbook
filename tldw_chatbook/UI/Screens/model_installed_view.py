@@ -842,7 +842,7 @@ class InstalledView(Widget):
             except NoMatches:
                 continue
             if not control.disabled:
-                control.focus()
+                self.screen.set_focus(control)
                 return
 
     def on_descendant_focus(self, event: DescendantFocus) -> None:

@@ -196,8 +196,14 @@ def _round_is_claimable(controller, session_id) -> bool:
     """
     if not _armed_round_ids(controller, session_id):
         return False
-    with controller._approval_state_lock:
-        return controller._parked_approval_payloads.get(session_id) is not None
+    # PR0 (task-15661): the map is keyed by ROUND now, so "this session has
+    # a retained payload" is a head lookup, not a `.get(session_id)`.
+    return (
+        controller._head_round_payload(
+            controller._parked_approval_payloads, session_id
+        )
+        is not None
+    )
 
 
 async def _wait_for_round(controller, session_id, *, seconds: float = 3.0) -> bool:
@@ -506,26 +512,26 @@ async def test_attaching_a_view_with_no_armed_round_mounts_nothing():
 
 
 # ---------------------------------------------------------------------------
-# The two-round limitation -- asserted AGAINST, not around (task-15661)
+# Two same-session rounds each get their turn (task-15661, FIXED in PR0)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_two_headless_rounds_share_one_payload_slot_and_only_one_mounts():
-    """KNOWN LIMITATION, pinned: `_parked_approval_payloads` is per-SESSION.
+async def test_two_headless_rounds_each_mount_in_turn():
+    """`_parked_approval_payloads` is keyed by ROUND: no round is stranded.
 
-    Both rounds are independently registered (the badge and the verdicts
-    are round-keyed), and both stay claimable in the sense that neither is
-    denied -- but the retained payload slot holds only the LAST-armed
-    round, so an attach can only ever mount ONE card. That is
-    `console_chat_controller.py`'s own documented "accepted scope
-    limitation" on that slot, filed as task-15661.
+    Pre-PR0 this slot was per-SESSION and last-armed-wins, so of two rounds
+    armed while detached only the newest had a surviving payload and an
+    attach could mount only ONE card -- the older round stayed registered,
+    badge lit, with no way to answer it until its own timeout. That was
+    `console_chat_controller.py`'s documented "accepted scope limitation",
+    filed as task-15661, and this test pinned it as a measured fact.
 
-    **This task does NOT fix it.** Per-round payload storage changes the
-    card's mount/park contract for every caller (mounted rounds included),
-    which is a wider change than making the headless case surfaceable.
-    Pinned here so the limitation is a measured fact with a failing test
-    the day someone fixes it, rather than folklore in a comment.
+    task-15661 is now FIXED. Each round retains its own payload, and the
+    mounted card is the session's FIFO HEAD -- the oldest-armed round.
+    Attaching mounts round A; once A resolves, B is promoted and mounts in
+    its turn. Everything above the mount assertions is unchanged: both
+    rounds still register independently and both still announce.
     """
     runtime, controller, _store, session, app = _detached_rig()
     await _leave(runtime)
@@ -553,27 +559,47 @@ async def test_two_headless_rounds_share_one_payload_slot_and_only_one_mounts():
     # Both announced: a sibling round must never silence a new one.
     assert len(app.notifications) == 2, app.notifications
 
+    round_b = [
+        r for r in _armed_round_ids(controller, session.id) if r != round_a
+    ][0]
+
+    # Attaching mounts the FIFO HEAD -- round A, armed FIRST. Pre-PR0 this
+    # was round B, because B's arm had overwritten A's payload.
     mounted: list[dict | None] = []
     runtime.attach_view(_View({"set_pending_approval": mounted.append}))
     assert mounted and mounted[-1] is not None, "attach mounted nothing at all"
     names = [c["llm_name"] for c in mounted[-1]["calls"]]
-    assert names == ["builtin__delete_note"], (
-        "THE LIMITATION: the single per-session payload slot means the "
-        f"LAST-armed round is the only one an attach can mount; got {names}"
+    assert names == ["builtin__write_file"], (
+        f"attach must mount the oldest-armed round's card; got {names}"
     )
-    assert mounted[-1]["round_id"] != round_a, (
-        "round A's payload was overwritten by B's -- that IS the limitation"
-    )
+    assert mounted[-1]["round_id"] == round_a
 
-    for round_id, name in (
-        (round_a, "builtin__write_file"),
-        (mounted[-1]["round_id"], "builtin__delete_note"),
-    ):
-        controller.resolve_pending_approval({name: "deny"}, round_id=round_id)
+    # Resolving the head promotes B. Round A's own teardown re-derives the
+    # card from the session's remaining head, so B mounts without anyone
+    # asking -- and a fresh remount (the attach path) agrees.
+    controller.resolve_pending_approval(
+        {"builtin__write_file": "deny"}, round_id=round_a
+    )
     thread_a.join(timeout=5)
+    assert await _settle(
+        lambda: bool(mounted) and (mounted[-1] or {}).get("round_id") == round_b,
+        seconds=3.0,
+    ), f"round B was never promoted after the head resolved: {mounted[-1]}"
+
+    mounted.clear()
+    assert controller.remount_pending_approval_for_active_session() is True
+    assert mounted[-1]["round_id"] == round_b
+    assert [c["llm_name"] for c in mounted[-1]["calls"]] == ["builtin__delete_note"]
+
+    controller.resolve_pending_approval(
+        {"builtin__delete_note": "deny"}, round_id=round_b
+    )
     thread_b.join(timeout=5)
     assert box_a["decisions"] == {"builtin__write_file": "deny"}
     assert box_b["decisions"] == {"builtin__delete_note": "deny"}
+
+    # Nothing left armed -> the card clears rather than showing a corpse.
+    assert await _settle(lambda: mounted[-1] is None, seconds=3.0), mounted[-1]
 
 
 # ---------------------------------------------------------------------------
@@ -972,7 +998,9 @@ async def test_the_risk_floor_still_raises_a_card_in_a_headless_turn(
     with controller._approval_state_lock:
         state = controller._pending_approval_rounds[round_id]
     assert state["names"] == ("read_file",), state["names"]
-    payload = controller._parked_approval_payloads[session.id]
+    payload = controller._head_round_payload(
+        controller._parked_approval_payloads, session.id
+    )
     assert payload["calls"][0]["server_key"] == BUILTIN_TOOL_SERVER_KEY
     assert payload["calls"][0]["reason"] == "risk_floored"
 

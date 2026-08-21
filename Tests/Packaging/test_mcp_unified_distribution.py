@@ -63,6 +63,8 @@ LOCAL_TOOL_NAMES = {
     "web_fetch",
     "web_search",
     "web_crawl",
+    "watchlists_search_items",
+    "watchlists_get_item",
 }
 RESOURCE_TEMPLATES = {
     "conversation://{conversation_id}",

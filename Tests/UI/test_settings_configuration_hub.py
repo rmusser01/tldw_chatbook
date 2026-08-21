@@ -451,6 +451,21 @@ async def _click_scrolled_settings_button(screen, pilot, selector: str) -> Butto
     return button
 
 
+async def _click_scrolled_settings_checkbox(screen, pilot, selector: str) -> Checkbox:
+    checkbox = screen.query_one(selector, Checkbox)
+    detail_pane = screen.query_one("#settings-detail-pane-body", VerticalScroll)
+    detail_pane.scroll_to_widget(
+        checkbox,
+        animate=False,
+        immediate=True,
+        top=True,
+        force=True,
+    )
+    await pilot.pause()
+    await pilot.click(selector)
+    return checkbox
+
+
 async def _wait_for_settings_search_focus(
     screen, pilot, *, timeout: float = 2.0
 ) -> None:
@@ -4411,7 +4426,10 @@ async def test_settings_overview_paste_summary_updates_after_toggle(monkeypatch)
 
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-console-behavior")
-        await pilot.click("#settings-console-collapse-large-pastes-toggle")
+        screen = _active_destination_screen(host)
+        await _click_scrolled_settings_checkbox(
+            screen, pilot, "#settings-console-collapse-large-pastes-toggle"
+        )
         await _open_settings_category(pilot, "#settings-category-overview")
         screen = _active_destination_screen(host)
 
@@ -4547,8 +4565,10 @@ async def test_settings_console_behavior_stages_save_and_revert(monkeypatch):
 
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-console-behavior")
-        await pilot.click("#settings-console-collapse-large-pastes-toggle")
         screen = _active_destination_screen(host)
+        await _click_scrolled_settings_checkbox(
+            screen, pilot, "#settings-console-collapse-large-pastes-toggle"
+        )
 
         assert "Unsaved" in _visible_text(screen)
         assert app.app_config["console"]["collapse_large_pastes"] is True
@@ -5754,8 +5774,10 @@ async def test_settings_console_behavior_revert_discards_draft(monkeypatch):
 
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-console-behavior")
-        await pilot.click("#settings-console-collapse-large-pastes-toggle")
         screen = _active_destination_screen(host)
+        await _click_scrolled_settings_checkbox(
+            screen, pilot, "#settings-console-collapse-large-pastes-toggle"
+        )
 
         assert "Unsaved" in _visible_text(screen)
 
@@ -5815,7 +5837,9 @@ async def test_settings_console_guided_save_revert_enable_only_when_dirty():
         assert screen.query_one("#settings-revert-category", Button).disabled is True
         assert "Guided edits: change a field first." in _visible_text(screen)
 
-        await pilot.click("#settings-console-collapse-large-pastes-toggle")
+        await _click_scrolled_settings_checkbox(
+            screen, pilot, "#settings-console-collapse-large-pastes-toggle"
+        )
 
         assert screen.query_one("#settings-save-category", Button).disabled is False
         assert screen.query_one("#settings-revert-category", Button).disabled is False

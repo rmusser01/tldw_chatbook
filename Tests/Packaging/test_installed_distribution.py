@@ -67,9 +67,16 @@ PROVIDER_CONTINUATION_MIGRATION_PATH = (
 VISUAL_IDENTITY_MIGRATION_PATH = (
     "tldw_chatbook/DB/migrations/chachanotes_v38_to_v39_visual_identity.sql"
 )
+TRANSCRIPT_ANNOTATIONS_MIGRATION_PATH = (
+    "tldw_chatbook/DB/migrations/chachanotes_v39_to_v40_transcript_annotations.sql"
+)
 MESSAGE_TRAJECTORY_MIGRATION_PATH = (
     "tldw_chatbook/DB/migrations/"
     "chachanotes_v37_to_v38_message_trajectory_metadata.sql"
+)
+TRANSCRIPT_ANNOTATIONS_MIGRATION_PATH = (
+    "tldw_chatbook/DB/migrations/"
+    "chachanotes_v39_to_v40_transcript_annotations.sql"
 )
 SAMIRA_RESOURCE_ROOT = "tldw_chatbook/assets/characters/samira"
 SAMIRA_REACTION_LABELS = (
@@ -130,6 +137,7 @@ RUNTIME_MIGRATION_PATHS = {
     PROVIDER_CONTINUATION_MIGRATION_PATH,
     MESSAGE_TRAJECTORY_MIGRATION_PATH,
     VISUAL_IDENTITY_MIGRATION_PATH,
+    TRANSCRIPT_ANNOTATIONS_MIGRATION_PATH,
 }
 _PRIVATE_CHILD_BASELINE_ENV_KEYS = (
     "PATH",
@@ -803,8 +811,12 @@ assert package_file.is_relative_to(expected_target), (package_file, expected_tar
 
 home_path = Path(os.environ["HOME"]).resolve(strict=True)
 migration_path = validate_path("installed-migration-probe.sqlite", home_path)
+# The migration target is read from the installed distribution inside this
+# child process -- never a hand-maintained literal (task-19044; the pinned
+# number went stale on two consecutive schema bumps). The only guard needed
+# is that the fixed v35 baseline below remains a genuine downgrade.
 current_schema_version = CharactersRAGDB._CURRENT_SCHEMA_VERSION
-assert current_schema_version == 39
+assert current_schema_version > 35
 CharactersRAGDB._CURRENT_SCHEMA_VERSION = 35
 try:
     legacy_db = CharactersRAGDB(migration_path, client_id="installed-probe-v35")
@@ -829,8 +841,9 @@ assert {
     "visual_identity_assets",
     "visual_identity_bindings",
 } <= installed_tables
+assert "transcript_annotations" in installed_tables
 upgraded_db.close_connection()
-print("installed-wheel-v35-to-v39-ok")
+print(f"installed-wheel-v35-to-current-ok v{current_schema_version}")
 """
 
 INSTALLED_SAMIRA_PROBE = r"""
@@ -1518,7 +1531,7 @@ def test_built_artifacts_match_distribution_contract(
 
 
 @pytest.mark.parametrize("wheel_source", ["source", "sdist"])
-def test_installed_distribution_migrates_v35_database_to_v38(
+def test_installed_distribution_migrates_v35_database_to_current(
     built_distributions: BuiltDistributions,
     sdist_wheel: SdistWheel,
     tmp_path: Path,
@@ -1548,7 +1561,7 @@ def test_installed_distribution_migrates_v35_database_to_v38(
             env,
         )
 
-    assert "installed-wheel-v35-to-v38-ok" in result.stdout
+    assert "installed-wheel-v35-to-current-ok" in result.stdout
 
 
 def test_installed_wheel_loads_pinned_audio_cpp_artifact_manifest(

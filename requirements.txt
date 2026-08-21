@@ -43,7 +43,6 @@ markdownify
 prometheus_client
 aiofiles
 yt_dlp
-anytree
 croniter>=1.4.0
 #pytest  # In dev group
 

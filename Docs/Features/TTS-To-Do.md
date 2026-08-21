@@ -16,7 +16,9 @@ This document tracks the remaining tasks and future enhancements for the TTS/S/T
 - [x] **Audio export from the Speech playground** (the per-message
   `TTSExportEvent` path that once backed this line was never reachable from
   any UI and was retired in task-16837; export lives on
-  `STTSEventHandler.export_current_audio`)
+  `UI/Speech/speech_playback_mixin.py::_export_audio`/`_handle_audio_export`,
+  driven by `#audio-export-btn` — the orphaned `STTSEventHandler` export
+  method once cited here was removed in task-19043)
 - [x] **Progress tracking for TTS generation** (NEW)
 - [x] **Cost tracking and usage statistics** (NEW)
 

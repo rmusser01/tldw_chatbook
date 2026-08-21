@@ -56,11 +56,31 @@ def _hosted_app(provider: str, model: str):
             "kimi-k3",
             "https://api.moonshot.ai/v1",
             "MOONSHOT_API_KEY",
-            {"low", "high", "max"},
+            # "medium" wire-verified in TASK-18803
+            # (chatcmpl-6a872b62bea2d202c1d3f6fa); this pin predates that
+            # constant change and was red on dev until TASK-19170.
+            {"low", "medium", "high", "max"},
+        ),
+        # TASK-19170 AC #2: a non-literal family member gets the curated
+        # list without a code edit -- the options follow the 18803 family
+        # predicates, not exact-id pins.
+        (
+            "Moonshot",
+            "kimi-k2.6",
+            "https://api.moonshot.ai/v1",
+            "MOONSHOT_API_KEY",
+            {"low", "medium", "high", "max"},
         ),
         (
             "ZAI",
             "glm-5.2",
+            "https://api.z.ai/api/paas/v4",
+            "ZAI_API_KEY",
+            {"none", "minimal", "low", "medium", "high", "xhigh", "max"},
+        ),
+        (
+            "ZAI",
+            "glm-5.3",
             "https://api.z.ai/api/paas/v4",
             "ZAI_API_KEY",
             {"none", "minimal", "low", "medium", "high", "xhigh", "max"},
@@ -144,6 +164,48 @@ async def test_settings_hosted_provider_switch_isolates_drafts_and_keeps_old_mod
         assert "Verify reasoning support" in str(
             screen.query_one("#settings-hosted-provider-guidance", Static).renderable
         )
+
+
+@pytest.mark.parametrize(
+    ("provider", "model", "expected"),
+    [
+        # Curated Kimi list follows the 18803 request-side family predicate
+        # (the values build_moonshot_chat_payload accepts), so any kimi-series
+        # release gets it without a code edit (TASK-19170 AC #2).
+        ("Moonshot", "kimi-k3", ("low", "medium", "high", "max")),
+        ("Moonshot", "kimi-k2.6", ("low", "medium", "high", "max")),
+        ("Moonshot", "kimi-k3-turbo", ("low", "medium", "high", "max")),
+        # reasoning_effort answers 200 on kimi-latest
+        # (TASK-18803, chatcmpl-6a872ac016ceb0c0ae780b0c) and the builder
+        # accepts it: the curated list applies even though kimi-latest
+        # returns no reasoning_content.
+        ("Moonshot", "kimi-latest", ("low", "medium", "high", "max")),
+        # The builder client-side-rejects reasoning_effort for moonshot-v1:
+        # outside the kimi series the generic list is unchanged behavior.
+        ("Moonshot", "moonshot-v1-8k", None),
+        ("ZAI", "glm-5.2", ("none", "minimal", "low", "medium", "high", "xhigh", "max")),
+        ("ZAI", "glm-5.3", ("none", "minimal", "low", "medium", "high", "xhigh", "max")),
+        (
+            "ZAI",
+            "glm-5.2-air",
+            ("none", "minimal", "low", "medium", "high", "xhigh", "max"),
+        ),
+        ("ZAI", "glm-4.6", None),
+        ("OpenAI", "gpt-5", None),
+    ],
+)
+def test_model_profile_reasoning_effort_options_follow_family_predicates(
+    provider, model, expected
+):
+    from tldw_chatbook.UI.Screens.settings_screen import (
+        REASONING_EFFORT_SELECT_OPTIONS,
+        SettingsScreen,
+    )
+
+    options = SettingsScreen._model_profile_reasoning_effort_options(provider, model)
+    assert options == (
+        expected if expected is not None else REASONING_EFFORT_SELECT_OPTIONS
+    )
 
 
 @pytest.mark.asyncio

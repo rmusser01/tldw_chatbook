@@ -211,6 +211,12 @@ def test_qwencloud_discovery_matches_runtime_base_contract(endpoint, expected_ba
         "https://workspace.example/api/v2#secret-canary",
         "https://[fe80::1%25eth0]:8000/api/v2",
     ],
+    ids=(
+        "credential-userinfo",
+        "api-key-query",
+        "fragment-secret",
+        "ipv6-zone",
+    ),
 )
 def test_qwencloud_discovery_rejects_runtime_invalid_endpoint_without_secret_output(
     endpoint,

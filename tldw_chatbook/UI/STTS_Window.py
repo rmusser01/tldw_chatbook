@@ -2320,7 +2320,7 @@ class STTSWindow(Container):
         except QueryError:
             return
 
-    def _restore_destination_focus(self, focus_id: str, attempts: int = 4) -> None:
+    def _restore_destination_focus(self, focus_id: str, attempts: int = 20) -> None:
         try:
             self.query_one(f"#{focus_id}").focus()
         except QueryError:

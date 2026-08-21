@@ -50,10 +50,10 @@ This is architecture-first work: an ADR defining the client↔server execution c
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes.
-ADR path: backlog/decisions/072-server-offloaded-scheduled-agent-tasks.md (DRAFTED 2026-08-19 — review before implementation; amends ADR-018's "execution remains execution_unavailable until server-side automation execution is integrated" clause).
+ADR path: backlog/decisions/076-server-offloaded-scheduled-agent-tasks.md (renumbered from 072 at merge time — dev's 072/073/074/075 were claimed by concurrent branches; DRAFTED 2026-08-19 — review before implementation; amends ADR-018's "execution remains execution_unavailable until server-side automation execution is integrated" clause).
 Reason: cross-system service contract (client↔server execution ownership, result delivery, approval policy for server-side tool use) — squarely in ADR-required territory, and the owner has stated the long-term direction this task exists to realize.
 
-1. Draft ADR-071: execution contract, result-delivery channels, approval policy, reconciliation semantics
+1. Draft ADR-076: execution contract, result-delivery channels, approval policy, reconciliation semantics
 2. Server client + service layer: definition submission, execution status polling/push, result retrieval
 3. Client UI: health/lifecycle honesty for server owners; result row/notification/Console handoff per ADR
 4. Audit trail wiring (AutomationAuditEvent end-to-end)

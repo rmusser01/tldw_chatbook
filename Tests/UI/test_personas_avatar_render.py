@@ -30,7 +30,12 @@ def test_avatar_pixels_fallback_renders_visible_half_block_cells():
     pixels = PersonasScreen._build_avatar_pixels(cache, "avatar-test")
 
     assert pixels is not None
-    console = Console(width=60, record=True, force_terminal=True)
+    console = Console(
+        width=60,
+        record=True,
+        force_terminal=True,
+        color_system="truecolor",
+    )
     console.print(pixels)
     # A solid-color image bakes to background-painted cells; the color
     # carries in the styled stream (blank text output would mean nothing

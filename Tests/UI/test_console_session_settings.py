@@ -4156,12 +4156,14 @@ async def test_console_settings_modal_refreshes_readiness_after_returning_to_mod
         )
         await pilot.pause()
 
-        await pilot.click("#console-settings-model-custom")
-        await pilot.pause()
-
+        app.screen.query_one("#console-settings-model-custom", Button).press()
         picker = app.screen.query_one(
             "#console-settings-model-picker", ModelSearchPicker
         )
+        for _ in range(500):
+            if picker.custom_mode:
+                break
+            await pilot.pause(0.01)
         assert picker.custom_mode is True
         model_input = app.screen.query_one("#console-settings-model-input", Input)
         readiness = app.screen.query_one("#console-settings-readiness", Static)

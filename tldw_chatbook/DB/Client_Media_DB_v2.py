@@ -223,7 +223,7 @@ class MediaDatabase:
     Requires client_id on initialization. Includes schema versioning.
     """
 
-    _CURRENT_SCHEMA_VERSION = 5  # Define the version this code supports
+    _CURRENT_SCHEMA_VERSION = 6  # Define the version this code supports
     # task-261: idle window within which the per-call `SELECT 1` liveness
     # ping is skipped for a recently-used thread-local connection (see
     # `_get_thread_connection`).
@@ -256,12 +256,32 @@ class MediaDatabase:
             "function": "_apply_migration_v4_to_v5",
             "description": "Add persisted STT provenance",
         },
+        5: {
+            "to_version": 6,
+            "function": "_apply_migration_v5_to_v6",
+            "description": "Add chunk engine version stamp to UnvectorizedMediaChunks",
+        },
     }
 
     _TRANSCRIPTION_PROVENANCE_MIGRATION_SQL = """
         ALTER TABLE Media
         ADD COLUMN transcription_provenance_json TEXT DEFAULT NULL;
         UPDATE schema_version SET version = 5;
+    """
+
+    # task-11 (chunking engine parity, spec §8): stamp + report only —
+    # existing rows stay NULL; there is deliberately NO re-chunk backfill.
+    # Like every migration-added column before it (see v1->v2's
+    # chunking_template / chunking_params and v4->v5's
+    # transcription_provenance_json), the column lives ONLY here, not in
+    # _TABLES_SQL_V1: fresh databases run every migration from version 0
+    # (see _initialize_schema), so the ALTER is what creates it on both
+    # fresh and upgraded databases. Adding it to the base CREATE TABLE as
+    # well would make fresh-DB init die on "duplicate column name".
+    _CHUNK_ENGINE_VERSION_MIGRATION_SQL = """
+        ALTER TABLE UnvectorizedMediaChunks
+        ADD COLUMN chunk_engine_version TEXT DEFAULT NULL;
+        UPDATE schema_version SET version = 6;
     """
 
     # <<< Schema Definition (Version 1) >>>
@@ -1405,6 +1425,28 @@ class MediaDatabase:
         except Exception as error:
             raise DatabaseError(
                 f"Unexpected error during migration v4->v5: {error}"
+            ) from error
+
+    def _apply_migration_v5_to_v6(self, conn: sqlite3.Connection):
+        """Add the nullable chunk-engine version stamp to UnvectorizedMediaChunks.
+
+        Existing rows keep ``chunk_engine_version = NULL`` — the version is
+        a stamp written at chunking time (Task 12's stamper), never a
+        backfilled value: pre-parity chunks were not produced by the
+        versioned engine, so any non-NULL value here would be a lie.
+        """
+
+        try:
+            with self.transaction():
+                self._execute_transactional_script(
+                    conn,
+                    self._CHUNK_ENGINE_VERSION_MIGRATION_SQL,
+                )
+        except sqlite3.Error as error:
+            raise DatabaseError(f"Migration v5->v6 failed: {error}") from error
+        except Exception as error:
+            raise DatabaseError(
+                f"Unexpected error during migration v5->v6: {error}"
             ) from error
 
     def _initialize_schema(self):
@@ -3655,9 +3697,9 @@ class MediaDatabase:
                 cnx.execute(
                     """INSERT INTO UnvectorizedMediaChunks (media_id, chunk_text, chunk_index, start_char, end_char,
                                                             chunk_type, creation_date, last_modified_orig, is_processed,
-                                                            metadata, uuid, last_modified, version, client_id, deleted,
+                                                            metadata, chunk_engine_version, uuid, last_modified, version, client_id, deleted,
                                                             prev_version, merge_parent_uuid)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         media_id,
                         ch["text"],
@@ -3671,6 +3713,10 @@ class MediaDatabase:
                         json.dumps(ch.get("metadata"), cls=DateTimeEncoder)
                         if isinstance(ch.get("metadata"), dict)
                         else None,
+                        # task-11 (spec §8): stamp-only column. Callers that
+                        # don't stamp (everything until Task 12's stamper
+                        # lands) persist NULL — never a guessed version.
+                        ch.get("chunk_engine_version"),
                         chunk_uuid,
                         created,
                         1,
@@ -5886,6 +5932,15 @@ class MediaDatabase:
                             )
                             if chunk_dict.get("metadata")
                             else None,
+                            # task-12 (spec §8): engine-version stamp. Unlike
+                            # _persist_chunks (which spreads ``**ch`` into the
+                            # sync payload), this writer builds insert_data
+                            # EXPLICITLY -- the column must be added here AND
+                            # to the SQL below, or the row is stamped while
+                            # the sync event silently drops it.
+                            "chunk_engine_version": chunk_dict.get(
+                                "chunk_engine_version"
+                            ),
                             "uuid": chunk_uuid,
                             "last_modified": current_time,  # Set sync last_modified
                             "version": new_sync_version,
@@ -5906,6 +5961,7 @@ class MediaDatabase:
                             ],  # Pass last_modified_orig
                             insert_data["is_processed"],
                             insert_data["metadata"],
+                            insert_data["chunk_engine_version"],
                             insert_data["uuid"],
                             insert_data["last_modified"],  # Pass sync last_modified
                             insert_data["version"],
@@ -5922,8 +5978,8 @@ class MediaDatabase:
                         continue
                     # Ensure columns match params order
                     sql = """INSERT INTO UnvectorizedMediaChunks (media_id, chunk_text, chunk_index, start_char, end_char, chunk_type,
-                               creation_date, last_modified_orig, is_processed, metadata, uuid,
-                               last_modified, version, client_id, deleted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+                               creation_date, last_modified_orig, is_processed, metadata, chunk_engine_version, uuid,
+                               last_modified, version, client_id, deleted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
                     cursor = conn.cursor()
                     cursor.executemany(sql, chunk_params)
                     actual_inserted = len(

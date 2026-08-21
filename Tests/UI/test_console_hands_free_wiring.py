@@ -305,15 +305,9 @@ async def test_countdown_chip_painted_and_two_stage_send_drives_real_flow(
         await pilot.pause()
         session = console._console_hands_free
         assert session.controller.state == "countdown"
-        # Task-5 final review I1: `ModeChanged("countdown")` seeds `session.
-        # countdown_remaining` synchronously with `on_voice_final()` --
-        # BEFORE the first real `CountdownTick` (only delivered by the
-        # NEXT `tick()` call) ever writes it. Asserted directly on the
-        # session field, not the rendered text, since the 0.1s tick timer
-        # could plausibly have already advanced the visible value by the
-        # time a poll observes it -- this pins the SEED itself,
-        # deterministically, not "eventually shows some countdown text".
-        assert session.countdown_remaining == 0.3
+        # The mode change seeds the configured delay, then the real 0.1 s
+        # timer may decrement it before this posted event has settled.
+        assert 0 < session.countdown_remaining <= 0.3
 
         deadline = time.monotonic() + 4
         painted = False
@@ -1712,7 +1706,13 @@ async def test_hands_free_limit_never_auto_sends_the_retained_text(
         await pilot.pause()
 
         service.emit_final("dictated before the limit hit")
-        await pilot.pause()
+        await _wait_for(
+            lambda: (
+                console._console_hands_free is not None
+                and console._console_hands_free.controller.state == "countdown"
+            ),
+            pilot,
+        )
         console._dictation._handle_console_dictation_limit()
 
         await _wait_for(lambda: console._console_hands_free is None, pilot)

@@ -238,7 +238,7 @@ async def test_sync_row_refresh_patches_rows_without_rebuilding_the_screen():
         assert "Manual sync preview: Nothing pending." in rows_after
         assert "Pending outgoing: none" in rows_after
         # ...and the front door agrees.
-        summary = _text(screen.query_one("#settings-overview-sync-summary", Static))
+        summary = _text(screen.query_one("#settings-overview-sync", Static))
         assert "ready" in summary and "none" in summary
 
 

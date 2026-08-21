@@ -1215,7 +1215,12 @@ async def test_console_reaction_picker_selects_and_clears_session_override(
     screen.query_one("#console-character-reaction-open").press()
     for _ in range(50):
         await asyncio.sleep(0.01)
-        if isinstance(screen.app.screen, ConsoleReactionPickerModal):
+        modal = screen.app.screen
+        if (
+            isinstance(modal, ConsoleReactionPickerModal)
+            and modal.is_mounted
+            and modal.query("#console-reaction-picker-select")
+        ):
             break
     assert isinstance(screen.app.screen, ConsoleReactionPickerModal)
     first_modal = screen.app.screen

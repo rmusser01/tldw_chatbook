@@ -15,6 +15,7 @@ inert feature through five review gates).
 
 import os
 from contextlib import contextmanager
+from types import SimpleNamespace
 
 
 import tldw_chatbook.config as config_mod
@@ -246,8 +247,8 @@ class TestDottedFormStringDefaultRegression:
         unambiguous 3-arg traditional form).
 
         Drives the real method (not a re-derivation of its call shape): the
-        method touches no other screen/app state, so it can be invoked
-        unbound with a throwaway `self`.
+        method only needs the current ingest path field, so it can be invoked
+        unbound with a minimal empty-form receiver.
         """
         from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
@@ -258,6 +259,9 @@ class TestDottedFormStringDefaultRegression:
             monkeypatch,
             f'[library.ingest]\nlast_directory = "{remembered_dir}"\nbackend = "local"\n',
         ):
-            result = LibraryScreen._library_ingest_browse_location(None)
+            receiver = SimpleNamespace(
+                _library_ingest_form=SimpleNamespace(path="")
+            )
+            result = LibraryScreen._library_ingest_browse_location(receiver)
 
         assert result == str(remembered_dir)

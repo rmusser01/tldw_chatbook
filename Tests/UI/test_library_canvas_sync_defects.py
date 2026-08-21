@@ -414,6 +414,7 @@ async def test_notes_row_press_to_editor_keeps_focus_inside_the_canvas(monkeypat
             "#library-skills-filter",
         ),
     ],
+    ids=("conversations", "media", "prompts", "skills"),
 )
 async def test_entry_canvas_sync_restores_portable_focus_and_scroll(
     kind,

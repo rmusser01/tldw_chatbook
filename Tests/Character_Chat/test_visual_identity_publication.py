@@ -1493,6 +1493,8 @@ def test_post_rename_fifo_asset_is_rejected_without_blocking(
 ) -> None:
     if not hasattr(os, "mkfifo"):
         pytest.skip("FIFO contract requires os.mkfifo")
+    if not forced_fallback and os.mkfifo not in os.supports_dir_fd:
+        pytest.skip("descriptor-relative FIFO replacement is unavailable")
     environment = publication_environment
     before = _active_identity(environment)
     candidate = create_visual_identity_candidate(

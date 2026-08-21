@@ -7,7 +7,7 @@ import json
 import logging
 import traceback
 import tracemalloc
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from typing import Any
 
 import pytest
@@ -438,10 +438,16 @@ def test_invalid_arguments_must_be_exact_finite_json_objects(arguments: str) -> 
     [
         ("deepseek", "deepseek-v4", "complete", 0, ["reasoning"]),
         ("zai", "glm-5", "complete", 0, ["reasoning"]),
-        ("moonshot", "kimi-k2", "complete", 0, ["reasoning"]),
+        # kimi-latest returned no reasoning_content on the wire
+        # (TASK-19170, chatcmpl-6a8768a616ceb0c0ae780f2c): outside the
+        # reasoning family, no-call rounds stay invalid.
+        ("moonshot", "kimi-latest", "complete", 0, ["reasoning"]),
+        ("moonshot", "moonshot-v1-8k", "complete", 0, ["reasoning"]),
         ("moonshot", "kimi-k3", "active", 0, ["reasoning"]),
         ("moonshot", "kimi-k3", "complete", 0, []),
         ("moonshot", "kimi-k3", "complete", 0, ["   "]),
+        ("moonshot", "kimi-k2.6", "complete", 0, []),
+        ("moonshot", "kimi-k2.6", "complete", 0, ["   "]),
         ("moonshot", "kimi-k3", "complete", 0, ["reasoning"]),
     ],
 )
@@ -560,15 +566,14 @@ def test_invalid_complete_k3_tool_only_checkpoint_requires_final_reasoning_round
     "model",
     [
         "not-kimi-k3-fake",
-        "kimi-k3-fake",
         "not-kimi-k3",
-        "moonshot/kimi-k3",
-        "KIMI-K3",
-        "kimi_k3",
-        "kimi-k30",
+        "kimi-latest",  # no reasoning_content on the wire (TASK-19170 probe A)
+        "kimi",
+        "moonshot-v1-8k",
+        "kimik3",
     ],
 )
-def test_invalid_k3_reasoning_only_exception_requires_exact_model_id(
+def test_invalid_reasoning_only_exception_requires_versioned_kimi_family(
     model: str,
 ) -> None:
     value = _checkpoint(
@@ -590,11 +595,34 @@ def test_invalid_k3_reasoning_only_exception_requires_exact_model_id(
         parse_provider_continuation_json(value)
 
 
-def test_schema_k3_reasoning_only_exception_accepts_exact_model_id() -> None:
+@pytest.mark.parametrize(
+    "model",
+    [
+        "kimi-k3",
+        # TASK-19170 probes: every versioned kimi id returns reasoning_content
+        # (kimi-k2.5 chatcmpl-6a8768d3666d8454604d8b5f, kimi-k2.6
+        # chatcmpl-6a8768a3b5c429b466fbc42d, kimi-k2.7-code
+        # chatcmpl-6a8768d705f910ba798aeca0), so the reasoning-only final
+        # round is a family shape, not a kimi-k3 exception.
+        "kimi-k2",
+        "kimi-k2.6",
+        "kimi-k2.5",
+        "kimi-k2.7-code",
+        "kimi-k3-turbo",
+        "kimi-k4",
+        "moonshot/kimi-k3",
+        "KIMI-K3",
+        "kimi_k3",
+        "kimi-k30",
+    ],
+)
+def test_schema_reasoning_only_exception_accepts_versioned_kimi_family(
+    model: str,
+) -> None:
     value = _checkpoint(
         provider="moonshot",
         protocol="chat_completions",
-        model="kimi-k3",
+        model=model,
         api_base_url="https://api.moonshot.ai/v1",
         state="complete",
         rounds=[
@@ -606,7 +634,85 @@ def test_schema_k3_reasoning_only_exception_accepts_exact_model_id() -> None:
         ],
     )
 
-    assert parse_provider_continuation_json(value).model == "kimi-k3"
+    assert parse_provider_continuation_json(value).model == model
+
+
+def test_schema_family_complete_tool_only_checkpoint_stays_valid_off_k3() -> None:
+    """Durable-data pin (TASK-19170): pre-19170 versioned-kimi (non-k3)
+    tool-loop checkpoints were persisted complete WITHOUT a final reasoning
+    round. That stored shape must keep parsing forever; only the exact
+    kimi-k3 id carries the must-end-with-reasoning-round invariant."""
+    value = _checkpoint(
+        provider="moonshot",
+        protocol="chat_completions",
+        model="kimi-k2.6",
+        api_base_url="https://api.moonshot.ai/v1",
+        state="complete",
+        rounds=[
+            {
+                "assistant_content": "",
+                "reasoning_blocks": ["tool reasoning"],
+                "calls": [_call("tool", state="completed", result="ok")],
+            }
+        ],
+    )
+
+    parsed = parse_provider_continuation_json(value)
+
+    assert parsed.model == "kimi-k2.6"
+    assert parsed.rounds[-1].calls[0].state == "completed"
+
+
+def test_schema_family_complete_tool_round_then_final_reasoning_round_off_k3() -> None:
+    value = _checkpoint(
+        provider="moonshot",
+        protocol="chat_completions",
+        model="kimi-k2.6",
+        api_base_url="https://api.moonshot.ai/v1",
+        state="complete",
+        rounds=[
+            {
+                "assistant_content": "",
+                "reasoning_blocks": ["tool reasoning"],
+                "calls": [_call("tool", state="completed", result="ok")],
+            },
+            {
+                "assistant_content": "Visible final answer",
+                "reasoning_blocks": ["final reasoning"],
+                "calls": [],
+            },
+        ],
+    )
+
+    parsed = parse_provider_continuation_json(value)
+
+    assert parsed.rounds[-1].calls == ()
+    assert parsed.rounds[-1].reasoning_blocks == ("final reasoning",)
+
+
+def test_invalid_family_reasoning_only_round_still_must_be_final() -> None:
+    value = _checkpoint(
+        provider="moonshot",
+        protocol="chat_completions",
+        model="kimi-k2.6",
+        api_base_url="https://api.moonshot.ai/v1",
+        state="complete",
+        rounds=[
+            {
+                "assistant_content": "Visible final answer",
+                "reasoning_blocks": ["final reasoning"],
+                "calls": [],
+            },
+            {
+                "assistant_content": "",
+                "reasoning_blocks": [],
+                "calls": [_call("later", state="completed", result="ok")],
+            },
+        ],
+    )
+
+    with pytest.raises(ContinuationValidationError):
+        parse_provider_continuation_json(value)
 
 
 @pytest.mark.parametrize(
@@ -925,6 +1031,10 @@ def test_restore_target_requires_all_four_exact_frozen_fields(
     )
 
     validate_continuation_restore(checkpoint, target)
+    validate_continuation_restore(
+        checkpoint,
+        replace(target, api_base_url="https://api.deepseek.com/v1/chat/completions"),
+    )
     with pytest.raises(FrozenInstanceError):
         target.model = "changed"  # type: ignore[misc]
 

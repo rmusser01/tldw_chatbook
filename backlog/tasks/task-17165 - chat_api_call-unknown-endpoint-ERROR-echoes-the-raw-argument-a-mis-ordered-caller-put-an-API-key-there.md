@@ -1,5 +1,5 @@
 ---
-id: taREDACTED-17165
+id: TASK-17165
 title: >-
   chat_api_call unknown-endpoint ERROR echoes the raw argument — a mis-ordered
   caller put an API key there

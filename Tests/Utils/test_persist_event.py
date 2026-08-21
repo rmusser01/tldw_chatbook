@@ -85,6 +85,16 @@ def test_unknown_fields_are_still_rejected(sink):
         None,
         object(),
     ],
+    ids=(
+        "path-like",
+        "provider-like",
+        "empty",
+        "whitespace-only",
+        "contains-spaces",
+        "multiline",
+        "none",
+        "object",
+    ),
 )
 def test_non_token_component_raises_and_writes_nothing(sink, component):
     """`component` is used raw to build the logger name, so it must be a token.

@@ -42,8 +42,8 @@ class TwoSidedHarness(App):
     def __init__(
         self,
         *,
-        low: int = 600,
-        high: int = 900,
+        low: int = 300,
+        high: int = 450,
         window_lines: int | None = None,
     ) -> None:
         super().__init__()

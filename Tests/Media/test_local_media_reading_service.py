@@ -1290,10 +1290,11 @@ def test_local_service_processes_text_like_files_without_persisting(
     assert plaintext["processed_count"] == 1
     assert plaintext["results"][0]["media_type"] == "plaintext"
     assert plaintext["results"][0]["content"] == "Plain text body"
+    # task 9 (chunking-engine-parity): _chunk_text now routes through the
+    # engine (words method), so chunks are whole-word slices of the original
+    # text instead of the legacy raw-char slices ("Plain ", "text b", "ody").
     assert [chunk["text"] for chunk in plaintext["results"][0]["chunks"]] == [
-        "Plain ",
-        "text b",
-        "ody",
+        "Plain text body",
     ]
     assert document["results"][0]["title"] == "doc.md"
     assert document["results"][0]["media_type"] == "document"
@@ -1325,9 +1326,11 @@ def test_local_service_processes_pdf_and_ebook_files_without_persisting(
     assert pdf["processed_count"] == 1
     assert pdf["results"][0]["media_type"] == "pdf"
     assert "PDF body text" in pdf["results"][0]["content"]
+    # task 9 (chunking-engine-parity): engine (words method) yields one
+    # whole-text chunk here instead of the legacy raw-char slices
+    # ("PDF body", " text\n").
     assert [chunk["text"] for chunk in pdf["results"][0]["chunks"][:2]] == [
-        "PDF body",
-        " text\n",
+        "PDF body text",
     ]
     assert ebook["processed_count"] == 1
     assert ebook["results"][0]["media_type"] == "ebook"

@@ -389,8 +389,11 @@ class TestTTSEventHandler:
         construction. The export half -- event, both handlers, the
         `_exporting_audio_refcounts` claim machinery, and the shutdown
         sweep's claim snapshot/union -- was deleted. The user-reachable
-        audio export lives on the S/TT/S playground path
-        (`STTSEventHandler.export_current_audio`). This pin keeps the dead
+        audio export lives on the Speech playground path
+        (`UI/Speech/speech_playback_mixin.py::_export_audio` /
+        `_handle_audio_export`, driven by `#audio-export-btn`); the
+        `STTSEventHandler` export method this docstring once cited was
+        itself orphaned and removed in task-19043. This pin keeps the dead
         surface from being reintroduced without a real dispatch path and
         the concurrency review (F6/F4 of the task-16199 review) it would
         then owe.

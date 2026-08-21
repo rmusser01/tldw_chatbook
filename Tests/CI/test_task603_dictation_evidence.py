@@ -328,6 +328,14 @@ def test_junit_duration_is_finite_and_bounded(
         ("note", "prefix:/Users/example/private"),
         ("note", "note(C:\\Users\\example\\private)"),
     ],
+    ids=(
+        "private-path-key",
+        "traceback-key",
+        "posix-private-path",
+        "windows-private-path",
+        "prefixed-posix-private-path",
+        "wrapped-windows-private-path",
+    ),
 )
 def test_validation_rejects_recursive_private_keys_and_paths(
     key: str,

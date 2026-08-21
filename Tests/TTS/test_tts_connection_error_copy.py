@@ -76,7 +76,10 @@ async def test_openai_backend_raises_the_typed_error_on_connection_failure(
     from tldw_chatbook.TTS.backends.openai import OpenAITTSBackend
 
     backend = OpenAITTSBackend(
-        {"OPENAI_BASE_URL": "http://127.0.0.1:1/v1/audio/speech"}
+        {
+            "OPENAI_BASE_URL": "http://127.0.0.1:1/v1/audio/speech",
+            "OPENAI_AUTH_MODE": "none",
+        }
     )
     # The constructor builds a real AsyncClient; close it before swapping in
     # the stub so the test leaks no client.

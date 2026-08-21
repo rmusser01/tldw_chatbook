@@ -22,6 +22,7 @@ Two test styles are used, matching existing repo conventions:
   more fragile than just mounting the real screen.
 """
 
+import asyncio
 import inspect
 from types import SimpleNamespace
 
@@ -1112,7 +1113,12 @@ async def test_library_rag_index_status_worker_updates_the_static(
         await _open_settings_category(pilot, "#settings-category-library-rag")
         screen = _active_destination_screen(host)
         await pilot.app.workers.wait_for_complete()
-        await pilot.pause()
+        await _wait_for_settings_text(
+            screen,
+            pilot,
+            "Index: built · 42 vectors · built with mxbai-embed-large-v1 / "
+            "chunk 400·100",
+        )
 
         expected = (
             "Index: built · 42 vectors · built with mxbai-embed-large-v1 / "
@@ -2931,6 +2937,27 @@ def _wire_rag_profile_adapter_no_user_profiles(
     return mgr, state
 
 
+async def _wait_for_starter_panel(
+    screen: SettingsScreen,
+    pilot,
+    *,
+    displayed: bool,
+    timeout: float = 10.0,
+):
+    """Wait for the starter panel's projected display state."""
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        panels = list(screen.query("#settings-library-rag-starter-panel"))
+        if panels and panels[0].display is displayed:
+            await pilot.pause()
+            return panels[0]
+        await pilot.pause(0.01)
+    raise AssertionError(
+        f"Starter panel display never became {displayed}. "
+        f"Visible text: {_visible_text(screen)}"
+    )
+
+
 @pytest.mark.asyncio
 async def test_starter_panel_shown_when_builtin_active_no_users_and_index_absent(
     monkeypatch, tmp_path
@@ -2949,7 +2976,7 @@ async def test_starter_panel_shown_when_builtin_active_no_users_and_index_absent
         await _open_settings_category(pilot, "#settings-category-library-rag")
         screen = _active_destination_screen(host)
         await pilot.app.workers.wait_for_complete()
-        await pilot.pause()
+        await _wait_for_starter_panel(screen, pilot, displayed=True)
 
         panel = screen.query_one("#settings-library-rag-starter-panel")
         assert panel.display is True
@@ -3068,8 +3095,7 @@ async def test_starter_panel_disappears_after_a_clone_completes(monkeypatch, tmp
     async with host.run_test(size=(190, 55)) as pilot:
         await _open_settings_category(pilot, "#settings-category-library-rag")
         screen = _active_destination_screen(host)
-        await pilot.app.workers.wait_for_complete()
-        await pilot.pause()
+        await _wait_for_starter_panel(screen, pilot, displayed=True)
         assert screen.query_one("#settings-library-rag-starter-panel").display is True
         assert (
             screen.query_one(
@@ -3111,8 +3137,7 @@ async def test_starter_panel_disappears_after_backfill_completes(monkeypatch, tm
     async with host.run_test(size=(190, 55)) as pilot:
         await _open_settings_category(pilot, "#settings-category-library-rag")
         screen = _active_destination_screen(host)
-        await pilot.app.workers.wait_for_complete()
-        await pilot.pause()
+        await _wait_for_starter_panel(screen, pilot, displayed=True)
         assert screen.query_one("#settings-library-rag-starter-panel").display is True
         assert (
             screen.query_one(
@@ -3265,8 +3290,7 @@ async def test_preview_started_while_starter_panel_visible_leaves_panel_state_co
     async with host.run_test(size=(190, 55)) as pilot:
         await _open_settings_category(pilot, "#settings-category-library-rag")
         screen = _active_destination_screen(host)
-        await pilot.app.workers.wait_for_complete()
-        await pilot.pause()
+        await _wait_for_starter_panel(screen, pilot, displayed=True)
         assert screen.query_one("#settings-library-rag-starter-panel").display is True
 
         select = screen.query_one("#settings-library-rag-profile-select", Select)
@@ -3303,8 +3327,7 @@ async def test_set_active_to_another_first_run_eligible_builtin_keeps_panel_visi
     async with host.run_test(size=(190, 55)) as pilot:
         await _open_settings_category(pilot, "#settings-category-library-rag")
         screen = _active_destination_screen(host)
-        await pilot.app.workers.wait_for_complete()
-        await pilot.pause()
+        await _wait_for_starter_panel(screen, pilot, displayed=True)
         assert screen.query_one("#settings-library-rag-starter-panel").display is True
 
         screen._rag_after_set_active(

@@ -176,10 +176,10 @@ and the warning never quotes the rejected data.
 | Inert (grayed) options | Any option whose precondition isn't met renders dimmed on a darker field AND says why at its label — "Local Parakeet model folder — needs the parakeet-onnx provider", "Maximum pages — single-page fetch selected", "Chunk size — needs Chunk content on", "OCR language — needs Enable OCR on"; a missing optional package reads "— needs <package> installed". Flip the named gate and the field wakes up. |
 | "Translate to English" | Transcribes audio/video into English regardless of the spoken language. Runs via faster-whisper — the toggle is inert under parakeet-onnx and transcribe-cpp, which cannot translate. |
 | Image imports | An image's imported content is the text OCR finds in it, so OCR needs a backend installed (any one of docling, tesseract, easyocr, paddleocr, or docext — the pre-check "⚠" warning carries an install command when none is present). An image with OCR off, or in which OCR finds no text, fails its row honestly ("No text was found in …") instead of storing an empty, unsearchable entry. Images import locally only — a server-mode submission refuses them, since the server's ingest API has no image type. The Images fold applies to image FILES: a link to an image (`https://…/chart.png`) is pre-checked and imported as a web page, because the URL pipeline fetches and clips pages and has no image-download step. |
-| E-book "Chunking method" | "chapters" (the default) stores one retrieval chunk per chapter; sentences / words / paragraphs chunk by that unit using the Chunk size/overlap values. |
+| E-book "Chunking method" | "chapters" (the default) stores one retrieval chunk per chapter; sentences / words / paragraphs chunk by that unit using the Chunk size/overlap values. Chapter chunking now works for PDFs and other documents too, not just e-book files — the same engine method underlies both, so a PDF imported with the chapter scheme is split by its headings/chapters rather than rejected or silently re-split. |
 | Web "What to fetch" on a local import | The multi-page methods (sitemap / url_level / recursive_scraping) run only on the server. Selecting one while importing on this machine shows "Multi-page fetch runs on the server — this local import fetches one page." right under the control. |
 | "Analyze after import" | Runs an LLM summary of each imported item, stored alongside it (visible from the media viewer's analysis panel). The whole `[analysis_defaults]` section travels — provider, model, temperature, top_p, min_p, max_tokens, system_prompt — so the stored analysis matches what the Media analysis panel would produce under the same config; the key comes from `[api_settings.<provider>]` or the provider's usual environment variable. When the option is on but no provider is callable — including a configured provider the analysis pipeline cannot dispatch ("provider 'X' is not supported for ingest analysis") — a line above Start says so ("Analyze after import is on, but … Imports will run without analysis.") and finished rows read "Imported name — analysis skipped: <reason>". If the analysis call itself fails (provider error), the import still succeeds and the row reads "Imported name — analysis failed: <reason>" instead of silently storing nothing (or worse, the error text). |
-| "Chunk content" | Governs every type: off means no retrieval chunks are stored at all; on chunks plain text / documents / HTML too (not just PDF/e-book/audio), using "Chunk size" and "Chunk overlap" — both measured in words. |
+| "Chunk content" | Governs every type: off means no retrieval chunks are stored at all; on chunks plain text / documents / HTML too (not just PDF/e-book/audio), using "Chunk size" and "Chunk overlap" — both measured in words. (The import forms expose the handful of methods that make sense per type; the chunking engine underneath implements the full roster — words, sentences, paragraphs, tokens, semantic, json, xml, ebook_chapters, rolling_summarize, fixed_size, code, code_ast, structure_aware — for anything that calls it directly, including `ebook_chapters` for PDFs and documents.) |
 | "Encoding" | How plain text and HTML files are decoded: "Auto-detect (UTF-8 first)" (strict UTF-8, then detection) or an explicit UTF-8 / UTF-16 / "Latin-1 (ISO-8859-1)" / "Windows-1252 (Western)". A wrong explicit choice shows up as replacement characters rather than failing the import. |
 | "Install verified Parakeet v2 INT8 (630.6 MiB)…" | In the Audio & video fold, enabled when the provider is parakeet-onnx (under any other provider the button is inert and its label ends "— needs the parakeet-onnx provider"). Opens a consent dialog listing Source, Revision, License, Download size, and Destination, ending "All four files are checked against pinned sizes and SHA-256 digests before the bundle becomes usable." Buttons: "Cancel" / "Install". |
 | "Start import" | Queues everything the pre-check found. If "⚠" tooling warnings are outstanding, the first press doesn't submit — the line beside Start turns into "⚠ Press Start again to import anyway — N files will fail without more tooling." (or "… N files may fail." when the missing package is only an optional enhancement) and a second press (or a second Enter in the path field) starts the import. See "Consent for risky imports" below. Start is unavailable, with the reason stated at the button, when the selection has nothing importable: "This folder is empty — there's nothing to import. Choose a folder with files, or a single file." for a folder that really is empty, "Nothing in this folder could be scanned — 2 entries were skipped: folder imports pass over hidden files, links, and folders they can't read. Import a file directly, or choose another folder." for a folder whose entries the scan passed over, and "Nothing in this selection can be imported — N unsupported files." when nothing in it has a handler. Importing on the server adds one more: a selection this machine reads perfectly well but that backend will not take at all (a folder of nothing but images) gates Start with "Nothing in this selection can be sent to the server — 3 files unsupported by the server. Switch to importing on this machine, or choose video, audio, document, PDF or e-book files." — a different sentence from the one above, because the files are fine and the destination is the problem. None of these leaves a failed row behind: the import never starts. |
@@ -305,6 +305,21 @@ the Parakeet install dialog. Global keys live in the
 range are pulled back to the nearest bound when the import starts. An
 untouched form submits the defaults the panel displays (size 1000,
 overlap 100), identically on the local and server paths.
+
+One thing to know about what chunking does to your text: imported text is
+**sanitized before it's chunked and stored** — null bytes and unusual
+control characters are turned into spaces, Unicode is normalized to NFC
+where that doesn't shift character positions, and bidirectional text
+override characters (a known display-spoofing trick) are neutralized. The
+chunked, searchable text can therefore differ slightly from the raw file
+you fed in. Every stored chunk is also stamped with the chunking engine
+version that produced it (visible to the RAG Admin diagnostics report), and
+carries richer metadata — offsets into the source, word counts, and the
+method used — which is what makes precise citations possible. `tiktoken`
+and `defusedxml` now ship as core dependencies, so the `tokens` chunking
+method counts real tokens (and says plainly to install tiktoken if it's
+missing, instead of silently approximating by word count) and the `xml`
+method parses safely by default.
 
 Deep dives: [TRANSCRIPTION.md](../../Features/TRANSCRIPTION.md) covers the
 audio/video transcription providers and their optional extras. See also
@@ -650,3 +665,21 @@ three values under the still-visible button with ✓ on the active one; a
 pick applies directly and updates the helper line, a second press or
 Escape cancels (Escape never leaves the form while the strip is open),
 and the footer/F1 read "enter choose quality / esc cancel" meanwhile.)*
+
+*Verified against the chunking-engine-parity worktree — 2026-08-19
+(chunking-engine-parity, doc-only on this page): the chunking engine behind
+every import path is now the server's engine (vendored at dev@385afa95
+behind a compatibility shim). The sanitization behavior (null bytes →
+spaces, length-preserving NFC normalization, control-character and
+bidirectional-override neutralization) is the engine's `_sanitize_input`
+(`tldw_chatbook/Chunking/engine/chunker.py`), the full method roster is the
+shim's `_LEGACY_METHOD_MAP` plus engine-native pass-throughs
+(`tldw_chatbook/Chunking/Chunk_Lib.py`), `tiktoken`/`defusedxml` are core
+dependencies (`pyproject.toml`), and the engine-version stamp
+(`parity-1@385afa95`, media DB schema v6) plus the RAG Admin legacy-chunk
+report are Phase C — pinned by
+`Tests/DB/test_media_db_schema_v6.py`,
+`Tests/Local_Ingestion/test_engine_version_stamp.py`, and
+`Tests/Chunking/test_callsite_characterization.py`. The import form's own
+controls are unchanged; only what the chunking layer does underneath
+moved.*

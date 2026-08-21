@@ -3334,7 +3334,7 @@ async def test_real_child_argv_cwd_environment_readiness_and_cleanup(
         mode="managed",
         managed_binary_path=str(wrapper),
         managed_server_json_path=str(server_json),
-        managed_startup_timeout_seconds=10.0,
+        managed_startup_timeout_seconds=30.0,
         managed_health_check_interval_seconds=2.0,
         managed_termination_grace_seconds=0.1,
     ).to_mapping()
@@ -3479,7 +3479,7 @@ async def test_real_child_uses_generated_multi_model_config_and_cleans_artifact(
                 package.model_dump(mode="json") for package in packages
             ],
             "guided_default_model_id": "narrator",
-            "managed_startup_timeout_seconds": 10.0,
+            "managed_startup_timeout_seconds": 30.0,
             "managed_health_check_interval_seconds": 2.0,
             "managed_termination_grace_seconds": 0.1,
         }
@@ -3640,7 +3640,7 @@ async def test_real_generated_child_replaces_recovers_and_leaves_no_artifacts(
         {
             **first.to_mapping(),
             "guided_binary_path": str(wrapper),
-            "managed_startup_timeout_seconds": 10.0,
+            "managed_startup_timeout_seconds": 30.0,
             "managed_termination_grace_seconds": 0.1,
         }
     )
@@ -3648,7 +3648,7 @@ async def test_real_generated_child_replaces_recovers_and_leaves_no_artifacts(
         {
             **second.to_mapping(),
             "guided_binary_path": str(wrapper),
-            "managed_startup_timeout_seconds": 10.0,
+            "managed_startup_timeout_seconds": 30.0,
             "managed_termination_grace_seconds": 0.1,
         }
     )

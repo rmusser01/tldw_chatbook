@@ -932,6 +932,25 @@ async def test_non_qwen_structural_rejection_stops_before_discovery_client(endpo
         "https://[fe80::1%25eth0]:8000/api/v2",
         f"https://workspace.example/{'a' * 2000}",
     ],
+    ids=(
+        "double-slash",
+        "parent-segment",
+        "repeated-models",
+        "models-responses",
+        "invalid-host-percent",
+        "backslash-authority",
+        "encoded-slash",
+        "double-encoded-parent",
+        "encoded-responses",
+        "encoded-completions",
+        "double-encoded-responses",
+        "triple-encoded-responses",
+        "credential-userinfo",
+        "api-key-query",
+        "fragment-secret",
+        "ipv6-zone",
+        "oversized-path",
+    ),
 )
 async def test_qwencloud_structural_rejection_stops_before_discovery_client(endpoint):
     discovery_client = AsyncMock()

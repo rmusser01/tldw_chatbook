@@ -31,12 +31,16 @@ Honest scope — what this sweep catches and what it cannot:
   chain, so no chain-derived oracle can see it. Those defects are caught
   only where a CONSUMER test pins the artifact (the marks-shape assertions,
   the note-folder suite, the dictionary backfill test — verified born-red in
-  task-16840); an artifact no consumer asserts is pinned by NOTHING, here or
-  anywhere — the 16840 review seeded an index deletion into the chain and
-  everything stayed green (18 of 28 migration-created indexes are
-  unreferenced in Tests/). The retired registry was equally blind to this
-  class (its removals were DROP IF EXISTS), so nothing was lost — but the
-  hole is real and disclosed, not covered.
+  task-16840); an artifact no consumer asserts is pinned by NOTHING here —
+  the 16840 review seeded an index deletion into the chain and everything
+  stayed green (18 of 28 migration-created indexes were unreferenced in
+  Tests/). The retired registry was equally blind to this class (its
+  removals were DROP IF EXISTS), so nothing was lost. For INDEXES that
+  disclosed hole is now covered elsewhere: ``test_index_census.py``
+  (task-19045) pins the absolute index-name set, UNIQUE flags, and column
+  tuples against a hand-maintained literal, which reds on exactly the
+  seeded-deletion shape this sweep must stay green on. Other chain-seeded
+  artifact classes still rely on consumer tests.
 """
 
 from __future__ import annotations

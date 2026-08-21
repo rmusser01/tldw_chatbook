@@ -191,6 +191,7 @@ async def test_an_unexpected_exception_in_the_fetch_path_logs_above_debug():
             level="DEBUG",
         )
         try:
+
             async def boom(**kwargs):
                 raise ValueError("invalid literal for int() with base 10")
 
@@ -299,8 +300,7 @@ def test_source_row_cells_render_the_normalizer_status_summary():
         f"Status column rendered {cells[2].plain!r} for an errored source"
     )
     assert cells[3].plain == humane_timestamp("2026-07-28T09:00:00+00:00"), (
-        f"Last checked column rendered {cells[3].plain!r}, not through "
-        "humane_timestamp"
+        f"Last checked column rendered {cells[3].plain!r}, not through humane_timestamp"
     )
 
 
@@ -317,6 +317,8 @@ def test_source_row_cells_render_the_normalizer_status_summary():
 # at debug and showed nothing, so a denied `items.list` policy rendered
 # byte-identically to "this run produced no items". `LOADERS_THAT_MUST_NOTIFY`
 # below turns the price into a contract, so the next loader cannot do the same.
+# Item delete gestures now converge on ``_update_item_status``; keep the former
+# logical action name so its baseline node identity remains stable.
 USER_INITIATED_MUTATIONS = (
     "_start_tree_write",
     "_run_tree_write",
@@ -333,7 +335,9 @@ USER_INITIATED_MUTATIONS = (
     "_delete_run",
     "_delete_rule",
     "handle_delete_requested",
+    "_delete_item",
 )
+USER_INITIATED_MUTATION_OWNERS = {"_delete_item": "_update_item_status"}
 
 
 def _method_source(module_source: str, name: str) -> str:
@@ -343,7 +347,7 @@ def _method_source(module_source: str, name: str) -> str:
     match = re.search(rf"^(\s*)(?:async )?def {re.escape(name)}\(", module_source, re.M)
     assert match, f"{name} is not defined on the Watchlists screen any more"
     indent = match.group(1)
-    rest = module_source[match.end():]
+    rest = module_source[match.end() :]
     end = re.search(rf"^{indent}(?:async )?def |^{indent}@", rest, re.M)
     return rest[: end.start()] if end else rest
 
@@ -492,7 +496,8 @@ def test_user_initiated_actions_do_not_swallow_failures_into_debug(method_name):
         / "watchlists_collections_screen.py"
     ).read_text(encoding="utf-8")
 
-    body = _method_source(screen_source, method_name)
+    owner_name = USER_INITIATED_MUTATION_OWNERS.get(method_name, method_name)
+    body = _method_source(screen_source, owner_name)
     assert ".debug(" not in body, (
         f"{method_name} logs a failure at debug. It is behind a control the "
         "user pressed, so a swallowed failure there is invisible: the action "

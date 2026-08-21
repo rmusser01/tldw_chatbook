@@ -740,13 +740,6 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 10,
-      "diagnostic_digest": "131ef39f5e96239ecc9d",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/Event_Handlers/collections_tag_events.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
       "call_count": 9,
       "diagnostic_digest": "77776fe18b4a34a2910d",
       "owner": "TASK-494",
@@ -1916,48 +1909,6 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 4,
-      "diagnostic_digest": "817195c667f92a6e9b85",
-      "owner": "TASK-492",
-      "path": "tldw_chatbook/Tools/Mind_Map/jsoncanvas_handler.py",
-      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
-    },
-    {
-      "call_count": 1,
-      "diagnostic_digest": "41797b8f9db3b8dbcb9d",
-      "owner": "TASK-492",
-      "path": "tldw_chatbook/Tools/Mind_Map/mermaid_parser.py",
-      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
-    },
-    {
-      "call_count": 1,
-      "diagnostic_digest": "887c0aac42287ec319bd",
-      "owner": "TASK-492",
-      "path": "tldw_chatbook/Tools/Mind_Map/mindmap_exporter.py",
-      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
-    },
-    {
-      "call_count": 2,
-      "diagnostic_digest": "5de4d80001ef93450480",
-      "owner": "TASK-492",
-      "path": "tldw_chatbook/Tools/Mind_Map/mindmap_integration.py",
-      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
-    },
-    {
-      "call_count": 9,
-      "diagnostic_digest": "8c63d70d823e21b4aba6",
-      "owner": "TASK-492",
-      "path": "tldw_chatbook/Tools/Mind_Map/mindmap_model.py",
-      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
-    },
-    {
-      "call_count": 2,
-      "diagnostic_digest": "44b65efe1068de4682d4",
-      "owner": "TASK-492",
-      "path": "tldw_chatbook/Tools/Mind_Map/mindmap_renderer.py",
-      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
-    },
-    {
       "call_count": 1,
       "diagnostic_digest": "1ace6c7573a9c080a918",
       "owner": "TASK-492",
@@ -2707,13 +2658,6 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 2,
-      "diagnostic_digest": "f969a5e2074331ed224c",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/UI/Widgets/MindmapViewer.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
       "call_count": 1,
       "diagnostic_digest": "79438ba03fa0b785e937",
       "owner": "TASK-494",
@@ -2868,8 +2812,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 66,
-      "diagnostic_digest": "200520a8c1cc673d5653",
+      "call_count": 64,
+      "diagnostic_digest": "0f7e2c6195b8b3b6c373",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Utils/optional_deps.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -3243,13 +3187,6 @@
       "diagnostic_digest": "d96391a0cd2d8dabc444",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Widgets/chunk_preview_modal.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
-      "call_count": 3,
-      "diagnostic_digest": "2ac93bd77a2a2f7e5bd7",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/Widgets/collections_tag_window.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
@@ -3700,9 +3637,9 @@
   "schema_version": 2,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 503,
+    "owner_files": 494,
     "persistent_sink_files": 6,
-    "task_492_calls": 1228,
-    "task_494_calls": 6991
+    "task_492_calls": 1209,
+    "task_494_calls": 6974
   }
 }

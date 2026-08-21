@@ -386,7 +386,7 @@ async def test_production_css_ordinary_voice_states_restore_normal_padding():
         assert chip.styles.padding.left == 1
         assert chip.styles.padding.right == 1
         assert chip.styles.margin.left == 0
-        assert chip.styles.margin.right == 1
+        assert chip.styles.margin.right == 0
 
         composer.set_voice_status(STATE_ERROR, message="No microphone access.")
         await pilot.pause()
@@ -394,7 +394,7 @@ async def test_production_css_ordinary_voice_states_restore_normal_padding():
         assert chip.styles.padding.left == 1
         assert chip.styles.padding.right == 1
         assert chip.styles.margin.left == 0
-        assert chip.styles.margin.right == 1
+        assert chip.styles.margin.right == 0
 
         composer.set_voice_status(
             STATE_LISTENING,
@@ -407,7 +407,7 @@ async def test_production_css_ordinary_voice_states_restore_normal_padding():
         assert chip.styles.padding.left == 1
         assert chip.styles.padding.right == 1
         assert chip.styles.margin.left == 0
-        assert chip.styles.margin.right == 1
+        assert chip.styles.margin.right == 0
 
 
 @pytest.mark.asyncio

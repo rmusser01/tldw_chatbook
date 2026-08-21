@@ -104,10 +104,20 @@ def _validated_provider_continuation(value: object) -> tuple[Any, str]:
 
 
 def _validate_continuation_owner_content(checkpoint: Any, content: str) -> None:
-    """Keep complete Kimi K3 final content on its exact assistant owner."""
+    """Keep complete Kimi preserved-thinking content on its exact owner.
+
+    TASK-19170: the rule follows the versioned kimi reasoning family (whose
+    complete checkpoints may end with a final reasoning round), not the
+    kimi-k3 literal. Pre-19170 family checkpoints ending with a tool round
+    are exempt via the no-calls shape guard.
+    """
+    from tldw_chatbook.model_capabilities import (
+        moonshot_model_returns_reasoning_content,
+    )
+
     if (
         checkpoint.provider == "moonshot"
-        and checkpoint.model == "kimi-k3"
+        and moonshot_model_returns_reasoning_content(checkpoint.model)
         and checkpoint.state == "complete"
         and not checkpoint.rounds[-1].calls
         and checkpoint.rounds[-1].assistant_content != content
@@ -9779,7 +9789,7 @@ UPDATE db_schema_version
             order_by_timestamp: "ASC" or "DESC".
             include_image_data: When False, the ``image_data`` BLOB column is
                 returned as None (key still present) so text-only callers --
-                snippet builders, mindmaps -- skip the BLOB I/O (task-260).
+                snippet builders -- skip the BLOB I/O (task-260).
                 ``image_mime_type`` is always returned, so callers can still
                 tell an image exists.
 
@@ -16100,51 +16110,13 @@ UPDATE db_schema_version
 
             cursor.execute(query, params)
 
-    def create_mindmap(self, title: str) -> str:
-        """Create a new mindmap."""
-        mindmap_id = self._generate_uuid()
-
-        with self.transaction() as cursor:
-            cursor.execute(
-                """
-                INSERT INTO mindmaps (
-                    id, title, created_by, last_modified_by
-                ) VALUES (?, ?, ?, ?)
-            """,
-                (mindmap_id, title, self.client_id, self.client_id),
-            )
-
-        return mindmap_id
-
-    def add_mindmap_node(
-        self,
-        mindmap_id: str,
-        text: str,
-        parent_id: Optional[str] = None,
-        position: Optional[Tuple[float, float]] = None,
-    ) -> str:
-        """Add a node to a mindmap."""
-        node_id = self._generate_uuid()
-
-        with self.transaction() as cursor:
-            cursor.execute(
-                """
-                INSERT INTO mindmap_nodes (
-                    id, mindmap_id, parent_id, text,
-                    position_x, position_y
-                ) VALUES (?, ?, ?, ?, ?, ?)
-            """,
-                (
-                    node_id,
-                    mindmap_id,
-                    parent_id,
-                    text,
-                    position[0] if position else 0,
-                    position[1] if position else 0,
-                ),
-            )
-
-        return node_id
+    # NOTE (task-19042): the write-only mindmap accessors (`create_mindmap`,
+    # `add_mindmap_node`) were retired with the orphaned mindmap subsystem —
+    # they had zero read counterparts, so nothing written could ever be
+    # displayed. The `mindmaps`/`mindmap_nodes` tables (and their FTS mirror,
+    # triggers, and index) deliberately remain in the schema, dormant, so
+    # this retirement needs no schema-version bump; dropping them is a future
+    # migration's job.
 
     def search_flashcards(
         self, query: str, deck_id: Optional[str] = None

@@ -62,6 +62,8 @@ from tldw_chatbook.LLM_Calls.zai import chat_with_zai as _strict_chat_with_zai
 from tldw_chatbook.model_capabilities import (
     anthropic_model_rejects_fixed_thinking_budget,
     anthropic_model_rejects_sampling_params,
+    openai_model_rejects_sampling_params,
+    openai_model_requires_max_completion_tokens,
 )
 from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.sensitive_llm_logging import (
@@ -240,33 +242,6 @@ def _openai_use_responses_api(
         normalized_reasoning_effort is not None
         and (normalized_reasoning_effort != "none" or not is_gpt_5_6_model)
     ) or (_is_present_setting(reasoning_summary) or _is_present_setting(verbosity))
-
-
-_OPENAI_REASONING_MODEL_FAMILIES = ("o1", "o3", "o4", "gpt-5")
-
-
-def _is_openai_reasoning_model(model: object) -> bool:
-    """Return True for OpenAI reasoning-family models (o-series, gpt-5).
-
-    These models reject classic sampling parameters (``temperature``,
-    ``top_p``) with HTTP 400 on both the Chat Completions and Responses
-    APIs, so the handler must not inject its config-backed defaults for
-    them (task-404). Family names match exactly or at a ``-``/``.``
-    boundary so e.g. ``o365-copilot`` or ``olmo-7b`` never match.
-
-    Args:
-        model: Model identifier as passed to the OpenAI handler.
-
-    Returns:
-        True when the model belongs to a reasoning family.
-    """
-    normalized = str(model or "").strip().lower()
-    return any(
-        normalized == family
-        or normalized.startswith(family + "-")
-        or normalized.startswith(family + ".")
-        for family in _OPENAI_REASONING_MODEL_FAMILIES
-    )
 
 
 def _extract_openai_responses_text(response_data: Dict[str, Any]) -> str:
@@ -676,9 +651,15 @@ def chat_with_openai(
         payload["stream_options"] = {"include_usage": True}
     # Add optional parameters if they have a value. Reasoning-family models
     # (and therefore every Responses-API request, which this handler only
-    # builds for reasoning params) reject temperature/top_p with HTTP 400,
-    # so the config-backed defaults must not be injected there (task-404).
-    omit_sampling_params = use_responses_api or _is_openai_reasoning_model(final_model)
+    # builds for reasoning params) reject non-default temperature/top_p with
+    # HTTP 400 (value-level: the default is accepted, so omitting is always
+    # safe), so the config-backed defaults must not be injected there
+    # (task-404). The per-model fact is a `model_capabilities` predicate, not
+    # a hand-maintained name list, so a new release in a covered family never
+    # needs a marker added here (TASK-18803).
+    omit_sampling_params = use_responses_api or openai_model_rejects_sampling_params(
+        final_model
+    )
     if omit_sampling_params:
         if temp is not None or maxp is not None:
             logger.warning(
@@ -692,7 +673,14 @@ def chat_with_openai(
             payload["top_p"] = final_top_p  # OpenAI uses top_p
     if final_max_tokens is not None and use_responses_api:
         payload["max_output_tokens"] = final_max_tokens
-    elif final_max_tokens is not None and is_gpt_5_6_model:
+    elif final_max_tokens is not None and openai_model_requires_max_completion_tokens(
+        final_model
+    ):
+        # Modern chat-completions surface: `max_tokens` is HTTP 400
+        # `unsupported_parameter` for these families (probe-verified with the
+        # exact built gpt-5 payload, TASK-18803) -- gpt-5/o-series with no
+        # reasoning effort configured used to fall through to `max_tokens`
+        # here because only gpt-5.6 was special-cased.
         payload["max_completion_tokens"] = final_max_tokens
     elif final_max_tokens is not None:
         payload["max_tokens"] = final_max_tokens

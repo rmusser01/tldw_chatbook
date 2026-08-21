@@ -472,7 +472,12 @@ async def test_background_approval_parks_with_badge_and_single_toast() -> None:
         # Seed the retained round payload `request_mcp_approvals` would
         # have stored before parking, then drive the UI-thread park seam
         # directly.
-        controller._parked_approval_payloads[background] = {
+        controller._parked_approval_payloads["seeded-round"] = {
+            # PR0: the map is keyed by ROUND, and every payload carries its
+            # own `round_id`/`session_id` -- the invariant `_park_round_
+            # payload` maintains in production.
+            "round_id": "seeded-round",
+            "session_id": background,
             "calls": [
                 {
                     "llm_name": "mcp__srv__tool",
@@ -581,7 +586,9 @@ async def test_park_toast_survives_a_viewed_run_completion_re_invocation() -> No
 
         approval_toasts = [n for n in notifications if "needs approval" in n]
         assert len(approval_toasts) == 1
-        round_id = controller._parked_approval_payloads[background]["round_id"]
+        round_id = controller._head_round_payload(
+            controller._parked_approval_payloads, background
+        )["round_id"]
 
         # A's own real terminal transition -- A stays active/viewed
         # throughout, so `_set_run_state`'s non-active toast branch never
@@ -601,7 +608,12 @@ async def test_park_toast_survives_a_viewed_run_completion_re_invocation() -> No
         # SAME, still-outstanding round (round_id unchanged) -- the
         # hazard TASK-1141 guards against regardless of which real
         # trigger UAT actually hit.
-        assert controller._parked_approval_payloads[background]["round_id"] == round_id
+        assert (
+            controller._head_round_payload(
+                controller._parked_approval_payloads, background
+            )["round_id"]
+            == round_id
+        )
         console._park_console_approval(background)
         await pilot.pause(0.1)
 
@@ -641,7 +653,7 @@ async def test_park_toast_fires_again_for_a_genuinely_new_round_same_session() -
         app.notify = lambda message, **kwargs: notifications.append(str(message))
 
         controller.add_pending_round(background, "round-1")
-        controller._parked_approval_payloads[background] = {
+        controller._parked_approval_payloads["round-1"] = {
             "round_id": "round-1",
             "session_id": background,
             "calls": [],
@@ -653,11 +665,11 @@ async def test_park_toast_fires_again_for_a_genuinely_new_round_same_session() -
 
         # Round 1 resolves and clears completely.
         controller.discard_pending_round(background, "round-1")
-        controller._parked_approval_payloads.pop(background, None)
+        controller._parked_approval_payloads.pop("round-1", None)
 
         # A genuinely new round (different id) parks for the same session.
         controller.add_pending_round(background, "round-2")
-        controller._parked_approval_payloads[background] = {
+        controller._parked_approval_payloads["round-2"] = {
             "round_id": "round-2",
             "session_id": background,
             "calls": [],
@@ -703,7 +715,7 @@ async def test_park_toast_survives_a_post_teardown_re_invocation_for_the_same_ro
         app.notify = lambda message, **kwargs: notifications.append(str(message))
 
         controller.add_pending_round(background, "round-1")
-        controller._parked_approval_payloads[background] = {
+        controller._parked_approval_payloads["round-1"] = {
             "round_id": "round-1",
             "session_id": background,
             "calls": [],
@@ -716,10 +728,11 @@ async def test_park_toast_survives_a_post_teardown_re_invocation_for_the_same_ro
         # Tear down round-1 exactly like `request_mcp_approvals`'s own
         # `finally` does once it resolves: discard the round id, then pop
         # the retained payload (no sibling round left, so the pop fires
-        # -- mirrors the real "not still_armed_same_session" branch).
+        # -- mirrors the real teardown, where `_remount_head`'s FIFO-head
+        # re-derive finds no sibling payload left to re-mount).
         controller.discard_pending_round(background, "round-1")
-        controller._parked_approval_payloads.pop(background, None)
-        assert background not in controller._parked_approval_payloads
+        controller._parked_approval_payloads.pop("round-1", None)
+        assert "round-1" not in controller._parked_approval_payloads
 
         # A stray re-invocation of the shared park seam landing AFTER
         # teardown -- the exact hazard the reviewer reproduced live.
@@ -755,7 +768,7 @@ async def test_park_toast_fires_once_for_a_new_round_arriving_after_teardown() -
         app.notify = lambda message, **kwargs: notifications.append(str(message))
 
         controller.add_pending_round(background, "round-1")
-        controller._parked_approval_payloads[background] = {
+        controller._parked_approval_payloads["round-1"] = {
             "round_id": "round-1",
             "session_id": background,
             "calls": [],
@@ -766,12 +779,12 @@ async def test_park_toast_fires_once_for_a_new_round_arriving_after_teardown() -
         assert len([n for n in notifications if "needs approval" in n]) == 1
 
         controller.discard_pending_round(background, "round-1")
-        controller._parked_approval_payloads.pop(background, None)
+        controller._parked_approval_payloads.pop("round-1", None)
 
         # A genuinely NEW round (different id) parks for the same session
         # AFTER the previous one's full teardown.
         controller.add_pending_round(background, "round-2")
-        controller._parked_approval_payloads[background] = {
+        controller._parked_approval_payloads["round-2"] = {
             "round_id": "round-2",
             "session_id": background,
             "calls": [],
@@ -1525,7 +1538,9 @@ async def test_mounted_round_survives_switch_away_and_switch_back() -> None:
         # retained payload to re-derive from).
         assert console.query_one("#chat-approval-card").display
 
-        round_id = controller._parked_approval_payloads[session_a]["round_id"]
+        round_id = controller._head_round_payload(
+            controller._parked_approval_payloads, session_a
+        )["round_id"]
         controller.resolve_pending_approval(
             {"mcp__srv__tool": "approve_once"}, round_id=round_id
         )
@@ -1578,7 +1593,9 @@ async def test_new_session_clears_a_mounted_card_from_the_session_being_left() -
         await pilot.pause(0.2)
         assert console.query_one("#chat-approval-card").display
 
-        round_id = controller._parked_approval_payloads[session_a]["round_id"]
+        round_id = controller._head_round_payload(
+            controller._parked_approval_payloads, session_a
+        )["round_id"]
         controller.resolve_pending_approval(
             {"mcp__srv__tool": "deny"}, round_id=round_id
         )
@@ -1652,7 +1669,9 @@ async def test_background_skill_install_confirm_parks_badges_toasts_and_mounts_o
         assert console.query_one("#chat-skill-install-card").display
         assert len([n for n in notifications if "needs approval" in n]) == 1
 
-        request_id = controller._parked_skill_install_payloads[background]["request_id"]
+        request_id = controller._head_round_payload(
+            controller._parked_skill_install_payloads, background
+        )["request_id"]
         controller.resolve_pending_skill_install(True, request_id=request_id)
         allowed = await asyncio.wait_for(decision_task, timeout=2.0)
         assert allowed is True
@@ -1712,7 +1731,9 @@ async def test_background_skill_script_confirm_parks_badges_toasts_and_mounts_on
         assert console.query_one("#chat-skill-script-card").display
         assert len([n for n in notifications if "needs approval" in n]) == 1
 
-        request_id = controller._parked_skill_script_payloads[background]["request_id"]
+        request_id = controller._head_round_payload(
+            controller._parked_skill_script_payloads, background
+        )["request_id"]
         controller.resolve_pending_skill_script(True, False, request_id=request_id)
         decision = await asyncio.wait_for(decision_task, timeout=2.0)
         assert decision == {"allow": True, "remember": False}
@@ -1752,7 +1773,9 @@ async def test_skill_install_park_toast_survives_a_re_invocation_for_the_same_ro
         )
         await pilot.pause(0.3)
         assert len([n for n in notifications if "needs approval" in n]) == 1
-        request_id = controller._parked_skill_install_payloads[background]["request_id"]
+        request_id = controller._head_round_payload(
+            controller._parked_skill_install_payloads, background
+        )["request_id"]
 
         # Re-invoke the shared park seam for the SAME, still-outstanding
         # skill-install round.
@@ -1794,7 +1817,9 @@ async def test_skill_script_park_toast_survives_a_re_invocation_for_the_same_rou
         )
         await pilot.pause(0.3)
         assert len([n for n in notifications if "needs approval" in n]) == 1
-        request_id = controller._parked_skill_script_payloads[background]["request_id"]
+        request_id = controller._head_round_payload(
+            controller._parked_skill_script_payloads, background
+        )["request_id"]
 
         # Re-invoke the shared park seam for the SAME, still-outstanding
         # skill-script round.
@@ -1931,14 +1956,15 @@ async def test_navigating_away_with_busy_fleet_confirms_and_records_teardown() -
         # only finishes when `handle_screen_navigation`'s own `await
         # self.switch_screen(...)` completes. `app.screen` can therefore
         # already read "HomeScreen" before that recording has happened;
-        # wait for the OLD screen to actually finish tearing down
-        # (`_console_chat_controller` cleared in `on_unmount`) rather than
-        # racing it.
+        # wait for the OLD screen to actually finish detaching from the
+        # app-owned runtime rather than racing it. The controller deliberately
+        # survives screen unmount since task-15860.
+        runtime = app.console_runtime
         for _ in range(150):
-            if console._console_chat_controller is None:
+            if runtime.view is None:
                 break
             await asyncio.sleep(0.02)
-        assert console._console_chat_controller is None, (
+        assert runtime.view is None, (
             "outgoing Console screen never finished on_unmount"
         )
         assert app._console_fleet_teardown_notice == 1
@@ -1963,6 +1989,14 @@ async def test_navigating_away_with_busy_fleet_confirms_and_records_teardown() -
         assert "1 agent run" in teardown_toasts[0]
 
         # A second mount with nothing new killed stays silent.
+        # This harness created only a synthetic STREAMING marker, not a real
+        # task whose cancellation would publish its terminal state. The
+        # app-owned controller survives navigation now, so settle that test
+        # double explicitly before asserting the next idle leave.
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.IDLE, ""),
+            session_id=session_id,
+        )
         app.post_message(NavigateToScreen("home"))
         await _wait_for_screen("HomeScreen")
         notifications.clear()
@@ -2138,13 +2172,14 @@ async def test_navigation_guard_survives_stay_then_renavigate_then_leave_by_coor
         await _real_click(x2, y2)
 
         await asyncio.wait_for(_wait_for_screen("HomeScreen"), timeout=5)
-        # See the sibling test's comment on why this polls for on_unmount
-        # to actually finish rather than racing `app.screen`'s sync update.
+        # See the sibling test's comment on why this polls for the app-owned
+        # runtime to detach rather than racing `app.screen`'s sync update.
+        runtime = app.console_runtime
         for _ in range(150):
-            if console._console_chat_controller is None:
+            if runtime.view is None:
                 break
             await asyncio.sleep(0.02)
-        assert console._console_chat_controller is None, (
+        assert runtime.view is None, (
             "Leave must tear the outgoing Console's fleet down"
         )
         assert app._console_fleet_teardown_notice == 1

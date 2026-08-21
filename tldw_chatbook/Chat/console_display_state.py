@@ -15,6 +15,7 @@ from tldw_chatbook.Chat.console_ephemeral import blocked_reason
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Chat.rag_scope import EffectiveScope, RagScope
 from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
+from tldw_chatbook.Workspaces.change_tracking import ChangedFile
 
 CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID = "console-inspector-review-approval"
 CONSOLE_INSPECTOR_REVIEW_APPROVAL_LABEL = "Review approval"
@@ -1167,6 +1168,103 @@ def turn_file_entries(
     return paired
 
 
+@dataclass(frozen=True)
+class ConversationFileEntry:
+    """One file's cross-turn latest state in a conversation (review rail, TASK-18060 spec §1).
+
+    ``label`` follows :class:`TurnFileEntry`'s exact convention: the bare
+    relpath when every contributing row shares one root, ``<root-name>/
+    <relpath>`` when they span several. ``run_id``/``snapshot_id`` name the
+    NEWEST clean row that still covers this ``(root, path)`` -- the row
+    whose diff the file's ``status``/``adds``/``dels`` come from, and the
+    identity :func:`conversation_file_summary`'s caller (the rail's
+    click-through) opens the Review screen against.
+
+    **Counts honesty** (spec §1): ``adds``/``dels`` are that NEWEST row's
+    own deltas for this file, not a sum across every turn that touched
+    it -- callers must present them as "latest turn deltas", never as a
+    cumulative total.
+    """
+
+    root: str
+    path: str
+    label: str
+    status: str
+    adds: int
+    dels: int
+    run_id: str
+    snapshot_id: int
+    note_count: int
+
+
+def conversation_file_summary(
+    rows_with_files: "Sequence[tuple[Mapping[str, Any], Sequence[ChangedFile]]]",
+    note_counts: "Mapping[tuple[str, str], int]",
+) -> "list[ConversationFileEntry]":
+    """Cross-turn latest-state summary of a conversation's changed files.
+
+    Pure assembly -- no I/O, no git, no DB. The caller (the provider's
+    ``conversation_changed_files``) is responsible for filtering to CLEAN
+    rows before calling this (``tracking_error`` falsy, ``end_sha``
+    truthy -- the same guard :meth:`AgentRunsChangeReviewProvider.
+    changed_files` applies) and for skipping any row whose diff raised
+    ``ChangeTrackingError`` (retention-pruned history); a row that made it
+    into ``rows_with_files`` is assumed to be fully readable.
+
+    Latest-wins per ``(root, path)`` (spec §1): ``rows_with_files`` arrives
+    OLDEST first (mirrors ``ORDER BY cs.id``), and each row's files simply
+    overwrite whatever an earlier row recorded for the same path -- so a
+    path deleted in an early turn and recreated in a later one correctly
+    ends up "A", not "D", with no special-casing. A rename (``status
+    "R"``) keys its entry by the NEW path (``changed.path``) and deletes
+    any existing entry for the OLD path (``changed.old_path``) -- the old
+    path stops existing as of that row.
+
+    Args:
+        rows_with_files: ``(row, changed_files)`` pairs, one per CLEAN
+            snapshot row, oldest first. ``changed_files`` is whatever
+            :meth:`AgentRunsChangeReviewProvider.changed_files` returned
+            for that exact row.
+        note_counts: ``{(root, path): count}`` from
+            :meth:`AgentRunsDB.change_note_counts_for_conversation`,
+            joined onto each surviving entry's CURRENT path (a rename's
+            note count follows the note's own ``(root, path)`` key, which
+            is unaffected by later renames -- callers accept that a note
+            recorded against a path before it was renamed away no longer
+            joins to the renamed entry).
+
+    Returns:
+        One :class:`ConversationFileEntry` per ``(root, path)`` still
+        alive at the end of history, ordered NEWEST first by owning
+        snapshot id, then by path.
+    """
+    multi_root = len({str(row["root"]) for row, _ in rows_with_files}) > 1
+    latest: dict[tuple[str, str], ConversationFileEntry] = {}
+    for row, files in rows_with_files:
+        root = str(row["root"])
+        run_id = str(row["run_id"])
+        snapshot_id = int(row["id"])
+        prefix = f"{PurePath(root).name}/" if multi_root else ""
+        for changed in files:  # ChangedFile
+            if changed.status == "R" and changed.old_path:
+                latest.pop((root, str(changed.old_path)), None)
+            path = str(changed.path)
+            latest[(root, path)] = ConversationFileEntry(
+                root=root,
+                path=path,
+                label=f"{prefix}{path}",
+                status=str(changed.status),
+                adds=int(changed.adds),
+                dels=int(changed.dels),
+                run_id=run_id,
+                snapshot_id=snapshot_id,
+                note_count=int(note_counts.get((root, path), 0)),
+            )
+    return sorted(
+        latest.values(), key=lambda entry: (-entry.snapshot_id, entry.path)
+    )
+
+
 def _cell_trim_prefix(text: str, budget: int) -> str:
     """Keep as much of ``text``'s START as fits ``budget`` display cells.
 
@@ -1537,7 +1635,25 @@ def hunk_excerpt(hunk: DiffHunk, cap: int = 40, byte_cap: int = _EXCERPT_BYTE_CA
 
 
 def _diff_feedback_note_entry(note: Mapping[str, Any]) -> str:
-    """Render one note's block entry (spec §4), sans the shared heading.
+    """Render one note's block entry (spec §5), sans the shared heading.
+
+    Kind-aware (TASK-18060 Task 8, spec §5): ``note["anchor_kind"]`` picks
+    the shape. Every existing caller's dict predates this column and
+    lacks the key entirely, so a missing/falsy value defaults to
+    ``"hunk"`` -- the same "every existing row reads as hunk truthfully"
+    contract the DB migration itself makes (spec §4).
+
+    - ``"file"``: ``### <path> — whole file   [run <short-id>]`` + the
+      ``> note`` quote -- NO fence, NO ``@@`` (a file row's
+      ``hunk_header``/``hunk_excerpt`` are always the ``''`` sentinels
+      and are never rendered).
+    - ``"diff_line"``: the standard hunk heading, plus
+      ``> on line: <diff_line_text>`` ABOVE the ``> note`` quote, plus
+      the fenced excerpt exactly as a hunk note (the hunk fields are
+      ALSO populated for a line note -- spec §4).
+    - ``"hunk"`` (default): byte-unchanged from before this method
+      learned kinds -- this is the byte-parity contract every pre-Task-8
+      exact-format test pins.
 
     The excerpt is fenced with FOUR backticks, not the usual three
     (final-review fix wave): the excerpt is a verbatim hunk body, and a
@@ -1550,6 +1666,16 @@ def _diff_feedback_note_entry(note: Mapping[str, Any]) -> str:
     used for exactly this nesting problem.
     """
     short_id = str(note["run_id"])[:8]
+    kind = str(note.get("anchor_kind") or "hunk")
+    if kind == "file":
+        return f"### {note['path']} — whole file   [run {short_id}]\n" f"> {note['note']}"
+    if kind == "diff_line":
+        return (
+            f"### {note['path']} — {note['hunk_header']}   [run {short_id}]\n"
+            f"> on line: {note['diff_line_text']}\n"
+            f"> {note['note']}\n"
+            f"````\n{note['hunk_excerpt']}\n````"
+        )
     return (
         f"### {note['path']} — {note['hunk_header']}   [run {short_id}]\n"
         f"> {note['note']}\n"
@@ -1711,18 +1837,31 @@ def format_diff_feedback_disclosure(notes: Sequence[dict]) -> str:
     """Render the disclosure text for delivered diff-feedback notes.
 
     Shared verbatim by live emission at run completion and by resume
-    re-derivation from delivered ``change_notes`` rows (spec §4) -- both
-    callers must render identical text for the same notes.
+    re-derivation from delivered ``change_notes`` rows (spec §4/§5) --
+    both callers must render identical text for the same notes, and that
+    byte-parity contract now holds PER KIND (TASK-18060 Task 8): each
+    caller renders the same rows through this one function, so a mixed
+    batch resumes byte-identical to how it was disclosed live.
 
     Args:
         notes: ``change_notes`` row dicts to disclose, one line each.
 
     Returns:
-        One "📝 Diff feedback attached — ``<path>`` ``<hunk_header>``:
-        ``"<note>"``" line per note, newline-joined. Empty ``notes``
-        returns ``""``.
+        One "📝 Diff feedback attached — ``<location>``: ``"<note>"``"
+        line per note, newline-joined, where ``<location>`` is
+        ``<path> <hunk_header>`` for a ``"hunk"`` note (default, byte-
+        unchanged), ``<path> (whole file)`` for a ``"file"`` note, or
+        ``<path> <hunk_header> line`` for a ``"diff_line"`` note. Empty
+        ``notes`` returns ``""``.
     """
-    return "\n".join(
-        f'📝 Diff feedback attached — {note["path"]} {note["hunk_header"]}: "{note["note"]}"'
-        for note in notes
-    )
+    lines = []
+    for note in notes:
+        kind = str(note.get("anchor_kind") or "hunk")
+        if kind == "file":
+            location = f'{note["path"]} (whole file)'
+        elif kind == "diff_line":
+            location = f'{note["path"]} {note["hunk_header"]} line'
+        else:
+            location = f'{note["path"]} {note["hunk_header"]}'
+        lines.append(f'📝 Diff feedback attached — {location}: "{note["note"]}"')
+    return "\n".join(lines)

@@ -238,6 +238,7 @@ async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(
             "skills-error",
         ),
     ],
+    ids=("library", "watchlists", "skills"),
 )
 @pytest.mark.asyncio
 async def test_service_unavailable_states_disable_false_console_handoffs(

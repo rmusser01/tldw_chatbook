@@ -1,5 +1,5 @@
 ---
-id: task-18315
+id: TASK-18315
 title: Keyboard selection mode follow-ups from the whole-branch review
 status: To Do
 assignee: ['@Robert']

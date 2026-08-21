@@ -221,11 +221,12 @@ async def test_transcript_region_keeps_its_inline_sizing_and_topless_frame():
         # The main column really is the dominant pane at this width.
         assert main_column.region.width > left_rail.region.width
 
-        # `_frame_console_region(..., top=False)`: three solid edges, no top.
+        # TASK-17651 closes the frame at the workspace grid: the transcript
+        # keeps its side edges while suppressing both shared horizontal edges.
         border = transcript_region.styles.border
         assert border.top[0] in {"", "none"}
         assert border.right[0] == "solid"
-        assert border.bottom[0] == "solid"
+        assert border.bottom[0] in {"", "none"}
         assert border.left[0] == "solid"
         assert transcript_region.has_class("console-frame-solid")
 

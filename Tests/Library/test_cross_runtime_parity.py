@@ -574,7 +574,9 @@ GET_CASES = [
 
 
 @pytest.mark.parametrize(
-    "tool_name,arguments,case", GET_CASES, ids=[case[2] for case in GET_CASES]
+    "tool_name,arguments,case",
+    GET_CASES,
+    ids=["manifest" if case[2] == "skill-manifest" else case[2] for case in GET_CASES],
 )
 def test_get_parity(tool_name, arguments, case):
     payload = _assert_parity(_service(StubLibraryBackend()), tool_name, arguments)

@@ -90,18 +90,6 @@
     }
     
 
-/* ===== WIDGET: DeleteConfirmationModal (Widgets/collections_tag_window.py) ===== */
-
-            DeleteConfirmationModal #delete-dialog {
-                align: center middle;
-                width: 60;
-                height: 12;
-                padding: 1 2;
-                background: $surface;
-                border: thick $primary;
-            }
-            
-
 /* ===== WIDGET: ConversationSelectionDialog (Widgets/conversation_selection_dialog.py) ===== */
 
 

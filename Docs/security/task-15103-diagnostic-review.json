@@ -2743,37 +2743,37 @@
   "integration_checkpoint": {
     "post_rebase": {
       "aggregate": {
-        "call_count": 839,
-        "semantic_digest": "194d581e049b97a1a6d9c98ee3ccecbcc10eb9460b5a085cdb9bdeebc297e360"
+        "call_count": 871,
+        "semantic_digest": "9150af5da3fb382e6ad7861f0636feeef3f520f543b25a39d4eda5e30d682d8b"
       },
       "base": "537451cb883420590603096d32f7f5c30aa465fc",
-      "head": "05030541bb734b1ab6e0a7fa513907ae7cafa370",
+      "head": "2dffafa57bf523057a77ee181e783ae4c3806086",
       "owners": [
         {
           "evidence": {
-            "call_count": 9,
-            "semantic_digest": "96375bf06eaf460bfe3bf7fe71f2a14c2e61848fc3746b6e6b6af3783b1c63ed"
+            "call_count": 13,
+            "semantic_digest": "acf640cccae00a0d3b7a3d0f04899980b7fb08269589ff2f50b39a99fa1203e3"
           },
           "path": "tldw_chatbook/Agents/agent_service.py"
         },
         {
           "evidence": {
-            "call_count": 12,
-            "semantic_digest": "12214d1810eedc0f87169169bb25c509e762ef68e410bf3677f33ad1a1dc42e5"
+            "call_count": 14,
+            "semantic_digest": "8f54dcf949947f66ed47d50d0324aef428ce4325b72e5331b76c912bf7a1d542"
           },
           "path": "tldw_chatbook/Chat/console_agent_bridge.py"
         },
         {
           "evidence": {
-            "call_count": 35,
-            "semantic_digest": "011be3a153a7ebb886878c8f089cc33d485ebf1f0e7e023c676f88f69e25328b"
+            "call_count": 36,
+            "semantic_digest": "fba0c747b8e758b2099681347ac983dcb3c41baf6c344eb2a493779c5abf6fd0"
           },
           "path": "tldw_chatbook/Chat/console_chat_controller.py"
         },
         {
           "evidence": {
-            "call_count": 40,
-            "semantic_digest": "1eeb0b190917bf14031811043f321a743906ee93b6131015dbbd67196cfadf05"
+            "call_count": 45,
+            "semantic_digest": "f58e29ff47fdce330d9d001446ba3d49f2bdfa92751efdfc1ced29165bc6d973"
           },
           "path": "tldw_chatbook/Chat/console_chat_store.py"
         },
@@ -2828,8 +2828,8 @@
         },
         {
           "evidence": {
-            "call_count": 66,
-            "semantic_digest": "07ff1b353aca71faa0ee96335ad229aa92eecf3a1bdec184451b4295ca066c65"
+            "call_count": 67,
+            "semantic_digest": "a679e6fa4735382e8a786b58e21cf28cf3b87e1084b6bc17420e6d75b60a5915"
           },
           "path": "tldw_chatbook/RAG_Search/simplified/rag_service.py"
         },
@@ -2842,36 +2842,36 @@
         },
         {
           "evidence": {
-            "call_count": 9,
-            "semantic_digest": "8bb2f652d81a40d2d90f5f47037af7d19f26f91796d314e5eac2b13819ce3849"
+            "call_count": 10,
+            "semantic_digest": "a84f7c7426a5f7dc54456a893adc9e51a69769a58cd951bcfee1319f4e61d1b2"
           },
           "path": "tldw_chatbook/UI/Console_Modules/session.py"
         },
         {
           "evidence": {
-            "call_count": 169,
-            "semantic_digest": "13f94c76d1e919787055ad5151a73d2bd95c1df19e278775d84d2372d96348f5"
+            "call_count": 170,
+            "semantic_digest": "63f4fa9a16c98bba0cd14ef97045cd54375e51c169b3e9234d472a5c0e47c63b"
           },
           "path": "tldw_chatbook/UI/Screens/chat_screen.py"
         },
         {
           "evidence": {
-            "call_count": 86,
-            "semantic_digest": "43752366283a21676eaf8c5753963c7c1cf974f01b29bc36849f053f8570bc2a"
+            "call_count": 98,
+            "semantic_digest": "a1fc491fbb09b5d1933b23825cf3c7313df11df1a4d2e592711a52d6183ab7b5"
           },
           "path": "tldw_chatbook/UI/Screens/library_screen.py"
         },
         {
           "evidence": {
-            "call_count": 306,
-            "semantic_digest": "273b71f01268808019d98becae648ef5a2d57146f4cc0d17dfb9ab3df47d1e43"
+            "call_count": 308,
+            "semantic_digest": "30d468a87e7e9caf479a75aac08b84e277a8b7bdc32bdd3ce0cdb6dbe41fea0e"
           },
           "path": "tldw_chatbook/app.py"
         },
         {
           "evidence": {
-            "call_count": 31,
-            "semantic_digest": "44f3b8d8543aba4b457fc51bce8e6804bb8fd50a4639b7bc5302709056e71b04"
+            "call_count": 34,
+            "semantic_digest": "b975da1b89d584c1f269d62349b2e61ec4e3827ac35880576f765daabdfba633"
           },
           "path": "tldw_chatbook/UI/Screens/settings_screen.py"
         },
@@ -3033,8 +3033,8 @@
     {
       "path": "tldw_chatbook/Agents/agent_service.py",
       "reviewed_final": {
-        "call_count": 9,
-        "diagnostic_digest": "c26d6259980ee1423134"
+        "call_count": 13,
+        "diagnostic_digest": "77fa73b46097353ed1fb"
       },
       "starting": {
         "call_count": 9,
@@ -3044,8 +3044,8 @@
     {
       "path": "tldw_chatbook/Chat/console_agent_bridge.py",
       "reviewed_final": {
-        "call_count": 12,
-        "diagnostic_digest": "7caa9d8c2694081e94e9"
+        "call_count": 14,
+        "diagnostic_digest": "ee9921349e5a07651d59"
       },
       "starting": {
         "call_count": 12,
@@ -3055,8 +3055,8 @@
     {
       "path": "tldw_chatbook/Chat/console_chat_controller.py",
       "reviewed_final": {
-        "call_count": 35,
-        "diagnostic_digest": "3fe98a6ceaea040d40d0"
+        "call_count": 36,
+        "diagnostic_digest": "88970d9db93c669f03aa"
       },
       "starting": {
         "call_count": 35,
@@ -3066,8 +3066,8 @@
     {
       "path": "tldw_chatbook/Chat/console_chat_store.py",
       "reviewed_final": {
-        "call_count": 40,
-        "diagnostic_digest": "fa7c38a237c70af496f0"
+        "call_count": 45,
+        "diagnostic_digest": "457eaabe08ac4de827fd"
       },
       "starting": {
         "call_count": 40,
@@ -3154,8 +3154,8 @@
     {
       "path": "tldw_chatbook/RAG_Search/simplified/rag_service.py",
       "reviewed_final": {
-        "call_count": 66,
-        "diagnostic_digest": "290b1051d9e7c4c444ff"
+        "call_count": 67,
+        "diagnostic_digest": "706e6fa2290e4780d91c"
       },
       "starting": {
         "call_count": 57,
@@ -3176,8 +3176,8 @@
     {
       "path": "tldw_chatbook/UI/Console_Modules/session.py",
       "reviewed_final": {
-        "call_count": 9,
-        "diagnostic_digest": "0b1335167a73055b1007"
+        "call_count": 10,
+        "diagnostic_digest": "14f2fcd932871d099c1d"
       },
       "starting": {
         "call_count": 9,
@@ -3187,8 +3187,8 @@
     {
       "path": "tldw_chatbook/UI/Screens/chat_screen.py",
       "reviewed_final": {
-        "call_count": 169,
-        "diagnostic_digest": "d071321775ae1e145528"
+        "call_count": 170,
+        "diagnostic_digest": "ecbae47b5f681ffe86fc"
       },
       "starting": {
         "call_count": 158,
@@ -3198,8 +3198,8 @@
     {
       "path": "tldw_chatbook/UI/Screens/library_screen.py",
       "reviewed_final": {
-        "call_count": 86,
-        "diagnostic_digest": "61a06caa0e6395465287"
+        "call_count": 98,
+        "diagnostic_digest": "f023e5f1ed1a4c24c40b"
       },
       "starting": {
         "call_count": 86,
@@ -3209,8 +3209,8 @@
     {
       "path": "tldw_chatbook/app.py",
       "reviewed_final": {
-        "call_count": 306,
-        "diagnostic_digest": "1aebf6c2eaa935e6c051"
+        "call_count": 308,
+        "diagnostic_digest": "c3d6f1154bc175678f12"
       },
       "starting": {
         "call_count": 305,
@@ -3220,8 +3220,8 @@
     {
       "path": "tldw_chatbook/UI/Screens/settings_screen.py",
       "reviewed_final": {
-        "call_count": 31,
-        "diagnostic_digest": "62ea61e3ba363d516a6e"
+        "call_count": 34,
+        "diagnostic_digest": "e6997e585e856c0a5a6a"
       },
       "starting": {
         "call_count": 31,

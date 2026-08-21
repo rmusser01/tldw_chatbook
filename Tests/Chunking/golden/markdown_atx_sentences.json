@@ -1,0 +1,22 @@
+{
+  "chunks": [
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "1de2c74709d918534a7ccd45bd688918",
+        "chunk_index": 1,
+        "chunk_method": "sentences",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 1.0,
+        "total_chunks": 1
+      },
+      "text": "# Title\n\n## Section A\n\nPara one. ## Section B\n\nPara two."
+    }
+  ],
+  "outcome": "ok"
+}

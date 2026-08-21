@@ -2042,6 +2042,9 @@ async def test_rapid_away_back_reclaims_request_after_old_operation_drains(
         assert await _wait_for(lambda: replacement_view._loaded, pilot)
         assert replacement_view._consumer_filter == "audio_cpp"
         assert replacement_view.display
+        assert await _wait_for(
+            lambda: bool(replacement_view.query(".curated-install")), pilot
+        )
         assert any(
             not button.disabled
             for button in replacement_view.query(".curated-install").results(Button)

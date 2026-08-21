@@ -263,13 +263,53 @@ class LocalRAGAdminService:
 
     def get_template_diagnostics(self) -> dict[str, Any]:
         service = self._require_chunking_service()
-        return {
+        diagnostics = {
             "db_class": f"{service.__class__.__module__}.{service.__class__.__name__}",
             "capability": "native",
             "missing_methods": [],
             "fallback_enabled": False,
             "hint": "Local chunking templates use the bundled chunking interop service.",
         }
+        # task-12 (spec §8): the read-only legacy-chunk report rides this
+        # diagnostics payload -- the surviving RAG Admin stats surface (the
+        # legacy UI was deleted with PR #669; the scope service routes this
+        # as the local admin "observe" action). Rendered only when legacy
+        # chunks exist (N > 0): a fully stamped library shows nothing
+        # (report-only-when-actionable choice; no pre-existing omit-empty
+        # convention on this dict). Guarded so a media DB the
+        # report can't query never breaks template diagnostics.
+        try:
+            report = self.get_legacy_chunk_report_line()
+        except Exception:  # pragma: no cover - unmigrated/read-only media DB
+            report = ""
+        if report:
+            diagnostics["legacy_chunk_report"] = report
+        return diagnostics
+
+    def get_legacy_chunk_report_line(self) -> str:
+        """One read-only report line for the RAG Admin stats surface.
+
+        Returns ``"Chunked by an older engine: N items"`` where N is the
+        count of media items with live chunk rows persisted before the
+        engine-version stamp (NULL ``chunk_engine_version``); an empty
+        string when there are none
+        (nothing to report -- the library is fully stamped). Read-only by
+        construction (``count_chunks_by_engine_version`` is a plain SELECT;
+        spec §8: stamp + report only, no re-chunk action).
+
+        Raises:
+            Whatever ``db.get_connection().execute`` raises (e.g. a media DB
+            too old to have the column) -- callers composing this into a
+            larger surface should guard, as ``get_template_diagnostics`` does.
+        """
+        if self.media_db is None:
+            return ""
+        legacy = self.count_chunks_by_engine_version(self.media_db).get(
+            "legacy", 0
+        )
+        if legacy <= 0:
+            return ""
+        return f"Chunked by an older engine: {legacy} items"
 
     def apply_template(
         self,
@@ -433,3 +473,41 @@ class LocalRAGAdminService:
         if not callable(method):
             raise ValueError("Local media reprocess backend is unavailable.")
         return method(media_id, **options)
+
+    def count_chunks_by_engine_version(self, db: Any) -> dict[str, int]:
+        """Count media items per chunking-engine version (read-only).
+
+        task-12 (spec §8): the RAG Admin report surface. The spec's AC counts
+        media *items*, not chunk rows — an item with many chunks counts once
+        per version it appears under. Rows persisted before the
+        engine-version stamp (schema v6 / task-11) carry NULL in
+        ``UnvectorizedMediaChunks.chunk_engine_version`` and are reported
+        under the ``"legacy"`` key; stamped rows are keyed by their version
+        string verbatim. A partially stamped item counts under each version
+        it has live rows for.
+
+        Deliberately dependency-light: takes the media DB explicitly (no
+        ``__init__`` state -- callable on a bare ``__new__`` instance) so the
+        report never needs the chunking service or vector store backends,
+        and never mutates anything (a plain SELECT; stamp + report only,
+        there is no re-chunk action).
+
+        Args:
+            db: The ``MediaDatabase`` (or compatible) holding
+                ``UnvectorizedMediaChunks``.
+
+        Returns:
+            dict mapping engine version (``"legacy"`` for NULL) to the count
+            of media items with non-deleted chunk rows under that version.
+            Empty dict when the table has no live rows.
+        """
+        cursor = db.get_connection().execute(
+            "SELECT chunk_engine_version, COUNT(DISTINCT media_id) AS n "
+            "FROM UnvectorizedMediaChunks WHERE deleted = 0 "
+            "GROUP BY chunk_engine_version"
+        )
+        counts: dict[str, int] = {}
+        for row in cursor.fetchall():
+            version = row["chunk_engine_version"]
+            counts[version if version is not None else "legacy"] = int(row["n"])
+        return counts

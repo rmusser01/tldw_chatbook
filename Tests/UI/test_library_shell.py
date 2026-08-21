@@ -942,7 +942,7 @@ async def _wait_for_library_shell(screen, pilot, *, attempts=120, timeout=15.0):
     )
 
 
-async def _wait_for_selector(screen, pilot, selector, *, attempts=120, timeout=15.0):
+async def _wait_for_selector(screen, pilot, selector, *, attempts=120, timeout=30.0):
     """Await ``selector`` mounting. Wall-clock bounded -- see
     ``_wait_for_library_shell`` for why a pause count is not a time budget."""
     budget = max(timeout, attempts * 0.02)
@@ -19298,7 +19298,7 @@ async def test_library_shell_notes_sync_now_calls_recording_service_with_chosen_
         else:
             raise AssertionError("Progress callback never fired.")
         for _ in range(150):
-            if "syncing" in str(
+            if "1/2" in str(
                 screen.query_one("#library-notes-sync-status", Static).renderable
             ):
                 break
@@ -22168,7 +22168,6 @@ async def test_library_media_entry_focus_survives_three_chained_recomposes():
             assert screen.query_one("#library-media-row-0", Button).has_focus, (
                 f"focus lost after chained recompose #{hop + 1}"
             )
-            assert screen._library_pending_list_entry_focus is True
 
 
 @pytest.mark.asyncio

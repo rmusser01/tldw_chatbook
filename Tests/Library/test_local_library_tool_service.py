@@ -480,7 +480,11 @@ _RAW_ID_KEYS = {
 }
 
 
-@pytest.mark.parametrize("tool_name, service_attr, method, item_type", LIST_CASES)
+@pytest.mark.parametrize(
+    "tool_name, service_attr, method, item_type",
+    LIST_CASES,
+    ids=[case[3] for case in LIST_CASES],
+)
 def test_list_routes_and_normalizes(tool_name, service_attr, method, item_type):
     factory = _ITEM_FACTORIES[item_type]
     raw_items = [factory(1), factory(2)]
@@ -602,7 +606,11 @@ SEARCH_CASES = [
 ]
 
 
-@pytest.mark.parametrize("tool_name, service_attr, method, item_type", SEARCH_CASES)
+@pytest.mark.parametrize(
+    "tool_name, service_attr, method, item_type",
+    SEARCH_CASES,
+    ids=[case[3] for case in SEARCH_CASES],
+)
 def test_search_routes_and_preserves_match_evidence(
     tool_name, service_attr, method, item_type
 ):
@@ -1309,6 +1317,7 @@ def test_unexpected_failure_is_scrubbed():
         ("conversation_service", "library_list_conversations"),
         ("collections_service", "library_list_collections"),
     ],
+    ids=["media", "notes", "prompts", "skills", "conversations", "collections"],
 )
 def test_every_missing_backend_maps_to_feature_unavailable(service_attr, tool_name):
     backends = _backends()
