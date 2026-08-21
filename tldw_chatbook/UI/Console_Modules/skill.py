@@ -34,7 +34,16 @@ class ConsoleSkillController:
         set_task_resume_state: Callable[[TaskResumeState], None],
         current_chat_controller: Callable[[], Any | None],
     ) -> None:
-        """Bind the live app and narrow screen/controller callbacks."""
+        """Bind the live app and narrow screen/controller callbacks.
+
+        Args:
+            app_instance: Application object exposing ``skills_scope_service``.
+            append_native_console_system_message: Append one Console system row.
+            sync_console_command_popup: Refresh the open command popup, if any.
+            task_resume_state: Return the current immutable resume state.
+            set_task_resume_state: Replace the current resume state.
+            current_chat_controller: Return the active chat controller, if any.
+        """
         self.app_instance = app_instance
         self._append_native_console_system_message = (
             append_native_console_system_message
@@ -179,7 +188,12 @@ class ConsoleSkillController:
     def handle_console_skill_install_decided(
         self, allow: bool, request_id: str | None
     ) -> None:
-        """Forward an install decision to the current chat controller."""
+        """Forward an install decision to the current chat controller.
+
+        Args:
+            allow: Whether the user approved installation.
+            request_id: Identifier of the pending confirmation round.
+        """
         controller = self._current_chat_controller()
         if controller is not None:
             controller.resolve_pending_skill_install(allow, request_id=request_id)
@@ -187,7 +201,13 @@ class ConsoleSkillController:
     def handle_console_skill_script_decided(
         self, allow: bool, remember: bool, request_id: str | None
     ) -> None:
-        """Forward a script decision to the current chat controller."""
+        """Forward a script decision to the current chat controller.
+
+        Args:
+            allow: Whether the user approved script execution.
+            remember: Whether to persist the approval decision.
+            request_id: Identifier of the pending confirmation round.
+        """
         controller = self._current_chat_controller()
         if controller is not None:
             controller.resolve_pending_skill_script(

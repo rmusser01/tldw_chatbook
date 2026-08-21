@@ -1164,7 +1164,7 @@ def test_wave6_inventory_matches_the_implementation_base() -> None:
         if target_path.exists():
             methods_to_scan = (
                 target_methods[method_name]
-                for method_name in group.moved
+                for method_name in group.moved | group.delegates
                 if method_name in target_methods
             )
             _assert_no_dom_access(methods_to_scan)
