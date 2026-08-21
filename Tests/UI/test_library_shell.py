@@ -996,7 +996,7 @@ async def test_library_unknown_landing_is_truthful_and_actionable_while_loading(
             assert "Get started" in _visible_text(screen)
             assert str(
                 screen.query_one("#library-hub-lifecycle-status", Static).renderable
-            ) == "Checking your Library…"
+            ) == "Checking existing Library content…"
             assert screen.query_one("#library-hub-action-import", Button)
             assert screen.query_one("#library-hub-action-new-note", Button)
             assert not screen.query("#library-hub-counts")
@@ -1101,6 +1101,63 @@ async def test_library_partial_failure_landing_offers_one_contextual_retry() -> 
             await pilot.pause()
 
             assert screen._library_onboarding_status is LibraryEvidenceStatus.LOADING
+            assert not screen.query("#library-hub-retry-evidence")
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+async def test_library_restored_starter_partial_failure_stays_truthful_and_retries() -> (
+    None
+):
+    gates = _LibraryEvidenceGates(
+        rounds=2,
+        outcomes={
+            "prompts": [
+                RuntimeError("prompt evidence unavailable"),
+                LibraryContentEvidence.EMPTY,
+            ]
+        },
+    )
+    app = _new_library_onboarding_app(gates)
+    app.app_config["_first_run"] = False
+    app.app_config["library"]["rail_state"]["lifecycle"] = "starter"
+    screen = LibraryScreen(app)
+    host = LibraryHarness(app, screen=screen)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            await _wait_for_evidence_round(pilot, gates, 0)
+            assert str(
+                screen.query_one("#library-hub-lifecycle-status", Static).renderable
+            ) == "Checking existing Library content…"
+            gates.release_round(0)
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen._library_onboarding_status
+                    is LibraryEvidenceStatus.PARTIAL_FAILURE
+                ),
+                message="restored Starter partial failure did not settle",
+            )
+            await pilot.pause()
+
+            assert screen._library_lifecycle is LibraryLifecycle.STARTER
+            assert str(
+                screen.query_one("#library-hub-lifecycle-status", Static).renderable
+            ) == "Some Library sources are unavailable."
+            assert len(screen.query("#library-hub-retry-evidence")) == 1
+
+            previous_generation = screen._library_onboarding_generation
+            screen.query_one("#library-hub-retry-evidence", Button).press()
+            await _wait_for_evidence_round(pilot, gates, 1)
+            await pilot.pause()
+
+            assert screen._library_onboarding_generation == previous_generation + 1
+            assert screen._library_onboarding_status is LibraryEvidenceStatus.LOADING
+            assert str(
+                screen.query_one("#library-hub-lifecycle-status", Static).renderable
+            ) == "Checking existing Library content…"
             assert not screen.query("#library-hub-retry-evidence")
     finally:
         gates.release_all()
@@ -1701,9 +1758,54 @@ async def test_library_onboarding_graduation_preserves_rail_focus_and_announces(
                 "Library tools are now available.",
                 {"severity": "information"},
             )
-            assert str(
-                screen.query_one("#library-hub-lifecycle-status", Static).renderable
-            ) == "Library tools are now available."
+            assert "Library tools are now available." in str(
+                screen.query_one("#library-header-line", Static).renderable
+            )
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+async def test_library_graduation_announcement_persists_on_note_creation_canvas() -> (
+    None
+):
+    gates = _LibraryEvidenceGates(
+        outcomes={"notes": [LibraryContentEvidence.HAS_USER_CONTENT]}
+    )
+    app = _new_library_onboarding_app(gates)
+    app.app_config["_first_run"] = False
+    app.app_config["library"]["rail_state"]["lifecycle"] = "starter"
+    screen = LibraryScreen(app)
+    host = LibraryHarness(app, screen=screen)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            await _wait_for_evidence_round(pilot, gates)
+            screen.query_one("#library-hub-action-new-note", Button).press()
+            await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+            creation_action = screen.query_one("#library-notes-create-blank", Button)
+            creation_action.focus()
+            await pilot.pause()
+
+            gates.release_round(0, "notes")
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_lifecycle is LibraryLifecycle.GRADUATED,
+                message="note evidence did not graduate from the creation canvas",
+            )
+            await pilot.pause()
+
+            assert screen.query_one("#library-notes-canvas")
+            assert creation_action.has_focus
+            header = screen.query_one("#library-header-line", Static)
+            assert "Library tools are now available." in str(header.renderable)
+            assert header in screen._compositor.visible_widgets
+            painted = "\n".join(
+                "".join(segment.text for segment in strip)
+                for strip in screen._compositor.render_strips()
+            )
+            assert "Library tools are now available." in painted
+            assert not screen.query("#library-landing-canvas")
     finally:
         gates.release_all()
 
@@ -1939,14 +2041,17 @@ async def test_library_starter_production_geometry_and_focus_order(size) -> None
             await pilot.pause()
 
             selectors = (
+                "#library-rail-collapse",
                 f"#library-row-{LIBRARY_ROW_INGEST_MEDIA}",
                 f"#library-row-{LIBRARY_ROW_CREATE_NOTE}",
                 "#library-rail-explore-all",
                 "#library-hub-lifecycle-status",
             )
+            visible_widgets = screen._compositor.visible_widgets
             for selector in selectors:
                 widget = screen.query_one(selector)
                 assert widget.region.width > 0 and widget.region.height > 0
+                assert widget in visible_widgets
             assert screen.query_one(
                 f"#library-row-{LIBRARY_ROW_INGEST_MEDIA}"
             ).region.bottom <= size[1]
@@ -1968,6 +2073,20 @@ async def test_library_starter_production_geometry_and_focus_order(size) -> None
                 f"library-row-{LIBRARY_ROW_CREATE_NOTE}",
                 "library-rail-explore-all",
             ]
+            collapse = screen.query_one("#library-rail-collapse", Button)
+            collapse.focus()
+            await pilot.pause()
+            assert collapse.has_focus
+            for expected_id in (
+                f"library-row-{LIBRARY_ROW_INGEST_MEDIA}",
+                f"library-row-{LIBRARY_ROW_CREATE_NOTE}",
+                "library-rail-explore-all",
+            ):
+                await pilot.press("tab")
+                await pilot.pause()
+                assert screen.focused is not None
+                assert screen.focused.id == expected_id
+                assert screen.focused in visible_widgets
             assert len(screen.query("#library-rail-explore-all")) == 1
             assert not screen.query("#library-hub-explore-all")
             painted = "\n".join(
@@ -1977,7 +2096,7 @@ async def test_library_starter_production_geometry_and_focus_order(size) -> None
             assert "Media (0)" not in painted
             assert "Page 0" not in painted
             assert "No recent" not in painted
-            assert "Checking your Library…" in painted
+            assert "Checking existing Library content…" in painted
 
             screen.query_one("#library-rail-explore-all", Button).press()
             await _wait_for_condition(

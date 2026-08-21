@@ -174,7 +174,7 @@ async def test_library_landing_syncs_unknown_to_starter_without_duplicate_action
     app = _LandingCanvasHarness(
         _landing_state(
             LibraryLifecycle.UNKNOWN,
-            status="Checking your Library…",
+            status="Checking existing Library content…",
         )
     )
 
@@ -187,7 +187,7 @@ async def test_library_landing_syncs_unknown_to_starter_without_duplicate_action
         assert not app.query(".library-hub-recent")
         assert str(
             app.query_one("#library-hub-lifecycle-status", Static).renderable
-        ) == "Checking your Library…"
+        ) == "Checking existing Library content…"
 
         landing.sync_state(_landing_state(LibraryLifecycle.STARTER))
         await pilot.pause()

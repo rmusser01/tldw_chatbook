@@ -2828,7 +2828,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_onboarding_generation = 0
         self._library_onboarding_all_empty = False
         self._library_onboarding_status = LibraryEvidenceStatus.LOADING
-        self._library_onboarding_status_copy = "Checking your Library…"
+        self._library_onboarding_status_copy = "Checking existing Library content…"
         self._library_onboarding_persistence_warning = ""
         self._library_lifecycle_pending_persist: LibraryLifecycle | None = None
         self._library_lifecycle_persist_worker: Worker | None = None
@@ -8838,11 +8838,9 @@ class LibraryScreen(BaseAppScreen):
             LibraryLifecycle.UNKNOWN,
             LibraryLifecycle.STARTER,
         )
-        lifecycle_status = ""
-        if self._library_lifecycle is LibraryLifecycle.UNKNOWN:
-            lifecycle_status = self._library_onboarding_status_copy
-        elif self._library_lifecycle is LibraryLifecycle.GRADUATED:
-            lifecycle_status = "Library tools are now available."
+        lifecycle_status = (
+            self._library_onboarding_status_copy if get_started else ""
+        )
         return LibraryLandingCanvasState(
             purpose=(
                 "Add useful material now; find and use it as your Library grows."
@@ -8865,7 +8863,7 @@ class LibraryScreen(BaseAppScreen):
             lifecycle_status=lifecycle_status,
             persistence_warning=self._library_onboarding_persistence_warning,
             show_retry=(
-                self._library_lifecycle is LibraryLifecycle.UNKNOWN
+                get_started
                 and self._library_onboarding_status
                 is LibraryEvidenceStatus.PARTIAL_FAILURE
             ),
@@ -8892,6 +8890,12 @@ class LibraryScreen(BaseAppScreen):
             }.get(kind, "library-open-study"),
             action_label=copy["action_label"],
         )
+
+    def _library_header_line(self, header_line: str) -> str:
+        """Keep the persistent graduation announcement on every canvas route."""
+        if self._library_lifecycle is LibraryLifecycle.GRADUATED:
+            return f"{header_line} · Library tools are now available."
+        return header_line
 
     @classmethod
     def _source_record_id(cls, record: Mapping[str, Any]) -> str | None:
@@ -9444,7 +9448,7 @@ class LibraryScreen(BaseAppScreen):
         preferences = self._library_rail_preferences()
 
         yield Static(
-            shell.header_line,
+            self._library_header_line(shell.header_line),
             id="library-header-line",
             classes="destination-status-row",
         )
@@ -15146,7 +15150,7 @@ class LibraryScreen(BaseAppScreen):
     def _sync_library_onboarding_status_copy(self) -> None:
         """Keep the Task 4/5 presentation seam in sync with evidence status."""
         if self._library_onboarding_status is LibraryEvidenceStatus.LOADING:
-            self._library_onboarding_status_copy = "Checking your Library…"
+            self._library_onboarding_status_copy = "Checking existing Library content…"
         elif self._library_onboarding_status is LibraryEvidenceStatus.PARTIAL_FAILURE:
             self._library_onboarding_status_copy = (
                 "Some Library sources are unavailable."
@@ -15206,7 +15210,20 @@ class LibraryScreen(BaseAppScreen):
             onboarding_all_empty=self._library_onboarding_all_empty,
         )
         self._sync_library_landing_lifecycle_presentation()
+        self._sync_library_lifecycle_announcement()
         self._register_footer_shortcuts()
+
+    def _sync_library_lifecycle_announcement(self) -> None:
+        """Patch the screen-owned status seam without replacing canvas focus."""
+        try:
+            header = self.query_one("#library-header-line", Static)
+        except (NoMatches, QueryError):
+            return
+        shell = build_library_shell_state(
+            self._build_library_shell_input(),
+            selected_row_id=self._library_selected_row_id,
+        )
+        header.update(self._library_header_line(shell.header_line))
 
     def _sync_library_landing_lifecycle_presentation(self) -> None:
         """Sync the retained landing, preserving a still-current focused action."""
