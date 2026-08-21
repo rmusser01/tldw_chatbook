@@ -32,6 +32,14 @@
     min-width: 8;
     margin-left: 1;
 }
+/* TASK-16801 arc B (spec §5): the commit affordance, beside the comment
+   button. Hidden outside `current` mode by the screen itself (its `display`
+   starts False in `compose`), so no rule here needs to hide it. */
+.change-review-git-commit-btn {
+    width: auto;
+    min-width: 8;
+    margin-left: 1;
+}
 .change-review-banner {
     height: auto;
     padding: 0 1;
@@ -141,6 +149,54 @@ ChangeRevertConfirmModal {
     color: $ds-status-warning;
 }
 #change-revert-buttons {
+    height: auto;
+    min-height: 1;
+    margin-top: 1;
+}
+
+/* TASK-16801 arc B (spec §5): the commit confirm modal. Same centered,
+   bordered discipline as the revert modal above; the file checklist is the
+   only scrolling region (it can hold a whole working tree), and every
+   container carries an explicit height for the same fr-inside-flex reason
+   the top of this file records. */
+ChangeGitCommitModal {
+    align: center middle;
+}
+#change-git-commit {
+    width: 80;
+    height: auto;
+    max-height: 32;
+    padding: 1 2;
+    background: $ds-surface-panel;
+    border: round $ds-status-approval-required;
+}
+#change-git-commit-target {
+    height: auto;
+    text-style: bold;
+}
+#change-git-commit-warnings {
+    height: auto;
+    margin: 1 0 0 0;
+    color: $ds-status-warning;
+}
+#change-git-commit-files {
+    height: auto;
+    max-height: 12;
+    margin: 1 0;
+    border: solid $ds-grid-line;
+}
+.change-git-commit-file {
+    height: auto;
+    min-height: 1;
+    width: 1fr;
+    border: none;
+    background: transparent;
+}
+#change-git-commit-error {
+    height: auto;
+    color: $ds-status-error;
+}
+#change-git-commit-buttons {
     height: auto;
     min-height: 1;
     margin-top: 1;

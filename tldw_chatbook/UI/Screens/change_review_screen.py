@@ -41,7 +41,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.events import Key
 from textual.geometry import Region
 from textual.screen import ModalScreen, Screen
-from textual.widgets import Button, Input, Select, Static, Tree
+from textual.widgets import Button, Checkbox, Input, Select, Static, Tree
 
 from tldw_chatbook.Chat.console_display_state import (
     ConversationFileEntry,
@@ -82,6 +82,41 @@ CURRENT_MODE_LABEL = "Working tree (current)"
 #: refuse with copy instead of acting on the pseudo row.
 CURRENT_MODE_REVERT_REFUSAL = "revert works on recorded turns — select a turn"
 CURRENT_MODE_COMMENT_REFUSAL = "comments attach to recorded turns"
+
+#: TASK-16801 arc B (spec §5): commit/push/PR share ONE worker group,
+#: deliberately NOT ``"change-review-current"`` (the status-read group). An
+#: exclusive re-dispatch cancels the worker TASK but a queued
+#: ``call_from_thread`` still lands, so a mutation and a status read sharing
+#: a group could cancel each other mid-flight (Task 6's carry-forward).
+GIT_ACTION_WORKER_GROUP = "change-review-git-action"
+
+#: The run-active refusal shown BEFORE any modal (spec §5 step 1). The same
+#: sentence :class:`~tldw_chatbook.Workspaces.git_workspace.CommitRefusedError`
+#: carries, so the screen's early refusal and the engine's own last-moment
+#: one can never read differently to the user.
+COMMIT_RUN_ACTIVE_REFUSAL = (
+    "a run is active on this workspace — finish or stop the run first"
+)
+
+#: Why the `Commit…` button is disabled, as tooltip AND notify copy -- spec
+#: §8: every disabled action carries its reason, never a dead control.
+COMMIT_CLEAN_TREE_REASON = "working tree clean — nothing to commit"
+COMMIT_BUSY_REASON = "a git action is already running"
+COMMIT_TURN_MODE_REFUSAL = (
+    "commit works on the working tree — select “Working tree (current)”"
+)
+
+#: The footer's key legend, per mode. In `current` mode the snapshot-only
+#: keys stop being advertised and the line says WHY (T6 re-review finding
+#: (a): the affordances must present as unavailable rather than looking live
+#: and failing on press).
+FOOTER_TURN_MODE = (
+    "j/k files · Enter diff · c comment line · C comment file · Esc back"
+)
+FOOTER_CURRENT_MODE = (
+    "j/k files · Enter diff · g commit · Esc back · revert (u/U) and "
+    "comments (c/C) need a recorded turn"
+)
 
 #: Group headings in display order. "Other" carries the rare git letters
 #: (T typechange, C copy) that pass through verbatim rather than being
@@ -941,6 +976,102 @@ def _head_label(info: "GitWorkspaceInfo") -> str:
     return info.branch
 
 
+def _land_on_ui(app, callback: Callable, *args) -> None:
+    """Hand a worker result to the UI thread, tolerating ONLY teardown.
+
+    ``RuntimeError`` and nothing else, deliberately (the Task 6 re-review's
+    binding ruling, mirrored here for the git-action workers): Textual
+    signals teardown as ``RuntimeError("App is not running")`` (both raise
+    sites in ``App.call_from_thread`` are ``RuntimeError``, and a closed
+    loop reports one too), while ``call_from_thread`` ALSO re-raises
+    whatever the landing callback itself raised. The commit landings do
+    real work (notify, affordance refresh, a full current-mode reload), so
+    a bare ``except Exception`` would downgrade a genuine bug in them to
+    one debug line whose text would be an outright lie, instead of the loud
+    ``WorkerFailed`` traceback Textual gives it.
+
+    Args:
+        app: The running app (captured at dispatch, never re-read off the
+            worker thread).
+        callback: The UI-thread callable to run.
+        *args: Its positional arguments.
+    """
+    try:
+        app.call_from_thread(callback, *args)
+    except RuntimeError:
+        logger.debug(
+            "change_review: git-action landing skipped -- the app is no "
+            "longer accepting callbacks"
+        )
+
+
+def _commit_warnings(info: "GitWorkspaceInfo") -> list[str]:
+    """The commit modal's WARNINGS (spec §5 step 3) -- these never block.
+
+    Args:
+        info: The freshly detected repository state the commit will run
+            against.
+
+    Returns:
+        Zero or more warning lines. Detached HEAD and main/master are
+        mutually exclusive by construction (a detached HEAD has no branch),
+        so at most one is ever produced today.
+    """
+    if info.detached or not info.branch:
+        return ["⚠ detached HEAD — this commit will not be on any branch"]
+    if info.branch in ("main", "master"):
+        return [f"⚠ committing directly to {info.branch}"]
+    return []
+
+
+def _commit_entries(
+    files: "Sequence[ChangedFile]",
+) -> list[tuple[str, tuple[str, ...]]]:
+    """One checklist row per changed file: ``(label, pathspec)``.
+
+    A RENAME carries BOTH paths in its ONE row's pathspec. Verified against
+    real git (T7), because the alternative is worse in a way that is not
+    obvious:
+
+    - both paths ⇒ ``git commit -m … -- <new> <old>`` records the WHOLE
+      rename (HEAD loses the old path, gains the new one);
+    - new path only ⇒ the commit ADDS the new path while leaving the old
+      one in HEAD, and a staged deletion behind in the index -- a commit
+      that does not match what the checkbox promised, and one the user may
+      well push before noticing.
+
+    **Known limitation, deliberately loud (see the T7 report):** a rename
+    that is already RECORDED IN THE INDEX (``git mv``, i.e. porcelain
+    ``R``) has its old path in neither the worktree nor the index, so the
+    engine's ``git add -A -- <paths>`` step -- which shares this one
+    pathspec with the commit -- exits fatal ("pathspec … did not match any
+    files") and the commit is refused with git's own message. Nothing is
+    staged or committed; the user's staged rename is untouched and is
+    committable from a terminal. Splitting the engine's add/commit
+    pathspecs is the fix, and it belongs in ``git_workspace.py``, not
+    here. An UNSTAGED rename is unaffected: git reports it as a separate
+    deletion and untracked add, which commit exactly as expected.
+
+    Args:
+        files: The fresh status read's changed files, in porcelain order.
+
+    Returns:
+        ``(display label, paths)`` pairs in the same order.
+    """
+    entries: list[tuple[str, tuple[str, ...]]] = []
+    for change in files:
+        if change.status == "R" and change.old_path:
+            entries.append(
+                (
+                    f"{change.old_path} → {change.path}",
+                    (change.path, change.old_path),
+                )
+            )
+        else:
+            entries.append((change.path, (change.path,)))
+    return entries
+
+
 def _root_summary_line(
     info: "GitWorkspaceInfo", *, name_root: bool
 ) -> str:
@@ -1111,6 +1242,12 @@ class ChangeReviewScreen(Screen):
         # acts on `self._focused_leaf` (the file whose diff is showing),
         # not on which widget currently holds keyboard focus.
         Binding("C", "comment_file", "Comment file", show=False),
+        # TASK-16801 arc B (spec §5): the confirmed, file-picked commit. A
+        # plain letter (nothing else on this screen or in the diff pane
+        # claims `g`), and it refuses with copy outside `current` mode
+        # rather than being conditionally unbound -- see
+        # `_refresh_mode_affordances` for why `check_action` is NOT used.
+        Binding("g", "git_commit", "Commit…", show=False),
     ]
 
     def __init__(
@@ -1224,6 +1361,16 @@ class ChangeReviewScreen(Screen):
         #: Banner lines for detection refusals (root inside a repository).
         #: Live truth about the workspace, so they survive turn switches.
         self._git_refusal_banners: list[str] = []
+        #: TASK-16801 arc B (spec §5): a git ACTION (the commit preflight or
+        #: the commit itself) is in flight. Every git affordance is disabled
+        #: while it is True, so nothing can be double-dispatched. Task 8's
+        #: push/PR buttons consume the same flag.
+        self._git_busy: bool = False
+        #: Dispatch identity for the in-flight git action -- the same
+        #: token-guard shape as ``_current_load_token``, in its OWN worker
+        #: group (``GIT_ACTION_WORKER_GROUP``) so a mutation and a
+        #: current-mode status read can never cancel each other.
+        self._git_action_token: "object | None" = None
 
     # -- compose -----------------------------------------------------------
 
@@ -1254,6 +1401,18 @@ class ChangeReviewScreen(Screen):
                     classes="change-review-comment-file-btn",
                     compact=True,
                 )
+                # TASK-16801 arc B (spec §5): the commit affordance. Hidden
+                # until `_refresh_mode_affordances` decides otherwise --
+                # the screen OPENS on a recorded turn, where committing is
+                # meaningless, so it must never flash into view first.
+                commit_button = Button(
+                    "Commit…",
+                    id="change-review-git-commit-btn",
+                    classes="change-review-git-commit-btn",
+                    compact=True,
+                )
+                commit_button.display = False
+                yield commit_button
             yield Static(
                 "",
                 id="change-review-banner",
@@ -1282,8 +1441,7 @@ class ChangeReviewScreen(Screen):
                         classes="change-review-notes-strip",
                     )
             yield Static(
-                "j/k files · Enter diff · c comment line · C comment file "
-                "· Esc back",
+                FOOTER_TURN_MODE,
                 id="change-review-footer",
                 markup=False,
             )
@@ -1319,6 +1477,7 @@ class ChangeReviewScreen(Screen):
             select.value = wanted or self._turns[0].run_id
         else:
             self._show_empty("No file changes recorded for this conversation.")
+        self._refresh_mode_affordances()
         # TASK-16801 arc B: the `current` mode is OFFERED (never opened on)
         # -- so detection runs AFTER the turn view is already up, keeping
         # this open path byte-compatible, and off-thread because probing a
@@ -1662,6 +1821,9 @@ class ChangeReviewScreen(Screen):
         # A turn view carries no current-mode per-root failures.
         self._current_root_errors = []
         self._update_banner()
+        # TASK-16801 arc B: a snapshot turn is showing -- commit goes away,
+        # the snapshot-only affordances come back.
+        self._refresh_mode_affordances()
 
         totals = self.query_one("#change-review-totals", Static)
         adds = sum(int(r["adds"] or 0) for r in turn.rows)
@@ -1804,6 +1966,86 @@ class ChangeReviewScreen(Screen):
             return False
         return select.value == CURRENT_MODE_SENTINEL
 
+    def _commit_target_root(self) -> "str | None":
+        """The root a commit would act on (spec §6: the focused leaf's).
+
+        Returns:
+            The focused leaf's RESOLVED root string, or ``None`` when there
+            is no `current`-mode leaf to take one from.
+
+        Note:
+            ``None`` here means the tree is EMPTY (``_focus_leaf`` always
+            focuses leaf 0 when any leaf exists), i.e. every root is clean
+            or unreadable -- which is exactly when commit is disabled. Spec
+            §6's ">1 detected root and no focused leaf ⇒ root ``Select``"
+            fallback is therefore unreachable for COMMIT, and no root
+            selector is built here. It stays relevant for Task 8's
+            push/PR, which ARE offered on a clean tree (unpushed commits
+            are the whole point right after committing).
+        """
+        if not self._leaves or self._focused_leaf < 0:
+            return None
+        row, _change = self._leaves[self._focused_leaf]
+        if row.get("kind") != "git_current":
+            return None
+        return str(row.get("root") or "") or None
+
+    def _refresh_mode_affordances(self) -> None:
+        """Make every mode-scoped control LOOK like what it will actually do.
+
+        Spec §5 (commit is offered only in `current` mode, disabled with a
+        reason when there is nothing to commit or a git action is already
+        running) and §8 (a disabled action carries its reason as copy,
+        never a dead control). The Task 6 re-review's finding (a) adds the
+        other half: in `current` mode the SNAPSHOT-only affordances must
+        present as unavailable instead of looking live and failing on
+        press.
+
+        Textual's ``check_action`` is the canonical way to dim a binding,
+        and it is deliberately NOT used here: it makes the key a SILENT
+        no-op, which is precisely the failure mode Task 6 fixed for
+        ``action_undo_all`` (a gate below the `_active_turn is None` early
+        return left `U` silently dead). The refusals stay live and audible;
+        what changes is the PRESENTATION -- the disabled button plus a
+        mode-aware footer legend that stops advertising the keys it cannot
+        honor and says why.
+        """
+        try:
+            commit_btn = self.query_one("#change-review-git-commit-btn", Button)
+            comment_btn = self.query_one(
+                "#change-review-comment-file-btn", Button
+            )
+            footer = self.query_one("#change-review-footer", Static)
+        except Exception:  # noqa: BLE001 -- screen dismissed / not composed
+            return
+        current = self._current_mode_active()
+        comment_btn.disabled = current
+        comment_btn.tooltip = CURRENT_MODE_COMMENT_REFUSAL if current else None
+        footer.update(FOOTER_CURRENT_MODE if current else FOOTER_TURN_MODE)
+        commit_btn.display = current
+        if not current:
+            commit_btn.disabled = False
+            commit_btn.tooltip = None
+            return
+        if self._git_busy:
+            commit_btn.disabled = True
+            commit_btn.tooltip = COMMIT_BUSY_REASON
+        elif self._commit_target_root() is None:
+            commit_btn.disabled = True
+            commit_btn.tooltip = COMMIT_CLEAN_TREE_REASON
+        else:
+            commit_btn.disabled = False
+            commit_btn.tooltip = None
+
+    def _set_git_busy(self, busy: bool) -> None:
+        """Flip the git-action busy flag and re-render what it gates.
+
+        Args:
+            busy: Whether a git action (preflight or commit) is in flight.
+        """
+        self._git_busy = busy
+        self._refresh_mode_affordances()
+
     def _load_current_mode(self) -> None:
         """Read the real working tree off-thread and land it.
 
@@ -1839,6 +2081,9 @@ class ChangeReviewScreen(Screen):
             return
         self._refresh_notes_strip()
         self._show_empty("Loading working tree…")
+        # Nothing is listed yet, so commit has no target: this renders it
+        # disabled-with-a-reason for the duration of the read.
+        self._refresh_mode_affordances()
 
         token = self._current_load_token = object()
         roots = list(self._current_infos)
@@ -2020,6 +2265,273 @@ class ChangeReviewScreen(Screen):
                 else "working tree unavailable — see above"
             )
             self._refresh_notes_strip()
+        # After the leaves exist (or provably don't): commit's target root
+        # comes from the focused leaf, so this must run AFTER `_focus_leaf`.
+        self._refresh_mode_affordances()
+
+    # -- commit (TASK-16801 arc B, spec §5) --------------------------------
+
+    @on(Button.Pressed, "#change-review-git-commit-btn")
+    def _on_commit_button(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.action_git_commit()
+
+    def action_git_commit(self) -> None:
+        """`g` / `Commit…`: confirm and commit the real working tree.
+
+        Spec §5's order is load-bearing and preserved literally: the
+        run-active refusal comes FIRST (a notify, never a modal), and the
+        modal is only reached through a FRESH status read -- the rendered
+        view can be arbitrarily stale, and a commit must list what git
+        will actually see.
+        """
+        if not self._current_mode_active():
+            self.notify(COMMIT_TURN_MODE_REFUSAL, severity="warning")
+            return
+        if self._git_busy:
+            self.notify(COMMIT_BUSY_REASON, severity="warning")
+            return
+        root = self._commit_target_root()
+        if root is None:
+            self.notify(COMMIT_CLEAN_TREE_REASON, severity="warning")
+            return
+        try:
+            refused = bool(self._provider.run_active())
+        except Exception:  # noqa: BLE001 -- a broken probe must not block work
+            logger.opt(exception=True).warning(
+                "change_review: run_active probe failed; deferring to the "
+                "engine's own refusal"
+            )
+            refused = False
+        if refused:
+            # Spec §5 step 1. The engine re-checks immediately before it
+            # runs anything (an injected probe), so this early exit is the
+            # UX half of the guard, never the only one.
+            self.notify(COMMIT_RUN_ACTIVE_REFUSAL, severity="warning")
+            return
+        self._dispatch_commit_preflight(root)
+
+    def _dispatch_commit_preflight(self, root: str) -> None:
+        """Read ``root``'s working tree FRESH, then open the commit modal.
+
+        Args:
+            root: The resolved root the commit will act on.
+        """
+        token = self._git_action_token = object()
+        self._set_git_busy(True)
+        provider = self._provider
+        app = self.app
+
+        def _preflight() -> None:
+            from tldw_chatbook.Workspaces.git_workspace import GitWorkspaceError
+
+            # ONE root, so ONE try/except -- never a batch guard (the T5
+            # review's binding instruction): `current_status` re-detects and
+            # raises `GitWorkspaceError` when the root is no longer a usable
+            # repository, and `_current_infos` is never pruned, so a cached
+            # info can name a repository that has since moved or vanished.
+            # Git's own error is what the user sees, not our stale belief.
+            try:
+                status = provider.current_status(root)
+            except GitWorkspaceError as exc:
+                _land_on_ui(
+                    app, self._land_commit_preflight_failure, token, root, str(exc)
+                )
+                return
+            except Exception as exc:  # noqa: BLE001 -- the worker must live
+                logger.opt(exception=True).warning(
+                    f"change_review: commit preflight failed for {root!r}"
+                )
+                _land_on_ui(
+                    app, self._land_commit_preflight_failure, token, root, str(exc)
+                )
+                return
+            _land_on_ui(app, self._land_commit_preflight, token, status)
+
+        self.run_worker(
+            _preflight,
+            thread=True,
+            exclusive=True,
+            group=GIT_ACTION_WORKER_GROUP,
+        )
+
+    def _git_action_is_live(self, token: object) -> bool:
+        """Whether a landing from ``token``'s git-action dispatch still applies.
+
+        Deliberately narrower than :meth:`_current_load_is_live`: it checks
+        the dispatch token ONLY. A commit that already ran has MUTATED the
+        user's repository, so its outcome must be reported even if the user
+        moved the selector back to a recorded turn while it was in flight
+        -- silence there would be the dishonest option. The mode is
+        re-checked separately by the callers that need it (opening a modal
+        over a turn view, and reloading the current-mode view).
+
+        Args:
+            token: The identity captured at dispatch time.
+
+        Returns:
+            True when this is still the live git action.
+        """
+        if token is not self._git_action_token:
+            logger.debug("change_review: dropping a superseded git-action landing")
+            return False
+        return True
+
+    def _land_commit_preflight_failure(
+        self, token: object, root: str, message: str
+    ) -> None:
+        """Report a fresh-read failure honestly instead of opening a modal.
+
+        Args:
+            token: The dispatch identity of the failed preflight.
+            root: The root whose status read failed.
+            message: The engine's (already excerpt-capped) error text.
+        """
+        if not self._git_action_is_live(token):
+            return
+        self._set_git_busy(False)
+        from pathlib import Path as _P
+
+        self.notify(
+            f"Could not read the working tree at {_P(root).name}: {message}",
+            severity="error",
+        )
+
+    def _land_commit_preflight(
+        self, token: object, status: "CurrentRootStatus"
+    ) -> None:
+        """Open the commit modal over the FRESH read (spec §5 steps 2-3).
+
+        Args:
+            token: The dispatch identity of this preflight.
+            status: The fresh :class:`CurrentRootStatus` for the target root.
+        """
+        if not self._git_action_is_live(token):
+            return
+        self._set_git_busy(False)
+        if not self._current_mode_active():
+            # The user left the mode while the fresh read ran; a commit
+            # modal over a recorded-turn view would be a lie about context.
+            return
+        entries = _commit_entries(status.files)
+        if not entries:
+            # The tree went clean between the button and the read.
+            self.notify(COMMIT_CLEAN_TREE_REASON, severity="warning")
+            return
+        root = str(status.root)
+
+        def _apply(result: "dict | None") -> None:
+            if not result:
+                return
+            self._dispatch_commit(result)
+
+        self.app.push_screen(
+            ChangeGitCommitModal(root=root, info=status.info, entries=entries),
+            callback=_apply,
+        )
+
+    def _dispatch_commit(self, request: dict) -> None:
+        """Run the confirmed commit off-thread.
+
+        Args:
+            request: The modal's result --
+                ``{"message", "new_branch", "files", "root"}``.
+        """
+        root = str(request["root"])
+        files = list(request["files"])
+        message = str(request["message"])
+        new_branch = request["new_branch"]
+        token = self._git_action_token = object()
+        self._set_git_busy(True)
+        provider = self._provider
+        app = self.app
+
+        def _commit() -> None:
+            from tldw_chatbook.Workspaces.git_workspace import (
+                CommitRefusedError,
+                GitWorkspaceError,
+            )
+
+            # ASYMMETRIC by contract (the T5 seam comment): `commit_selected`
+            # RAISES for a refusal and for the two preconditions, but a
+            # failing git STEP comes back as a returned `CommitResult`. Both
+            # shapes are handled; neither is wrapped as the other.
+            try:
+                result = provider.commit_selected(root, files, message, new_branch)
+            except CommitRefusedError as exc:
+                _land_on_ui(app, self._land_commit_refused, token, str(exc))
+                return
+            except GitWorkspaceError as exc:
+                _land_on_ui(app, self._land_commit_refused, token, str(exc))
+                return
+            except Exception as exc:  # noqa: BLE001 -- the worker must live
+                logger.opt(exception=True).warning(
+                    f"change_review: commit failed for {root!r}"
+                )
+                _land_on_ui(app, self._land_commit_refused, token, str(exc))
+                return
+            _land_on_ui(app, self._land_commit_result, token, result, len(files))
+
+        self.run_worker(
+            _commit,
+            thread=True,
+            exclusive=True,
+            group=GIT_ACTION_WORKER_GROUP,
+        )
+
+    def _land_commit_refused(self, token: object, message: str) -> None:
+        """A commit that never ran: report the reason, change nothing.
+
+        Args:
+            token: The dispatch identity of the refused commit.
+            message: The refusal text (the engine's own sentence).
+        """
+        if not self._git_action_is_live(token):
+            return
+        self._set_git_busy(False)
+        self.notify(message, severity="warning")
+
+    def _land_commit_result(
+        self, token: object, result: "CommitResult", file_count: int
+    ) -> None:
+        """Report the commit's outcome, then reload the working tree.
+
+        Failure copy names the blocking STEP plus git's own excerpt (spec
+        §5 step 5) -- never a rolled-up "git failed". ``outcomes[-1]`` IS
+        the blocking step by the engine's contract: a guard that passes
+        appends nothing, and every action step appends win or lose, so the
+        last row is always the one that stopped the run.
+
+        Args:
+            token: The dispatch identity of this commit.
+            result: The engine's :class:`CommitResult`.
+            file_count: How many paths were sent to the engine.
+        """
+        if not self._git_action_is_live(token):
+            return
+        self._set_git_busy(False)
+        last = result.outcomes[-1] if result.outcomes else None
+        if last is not None and not last.ok:
+            detail = last.detail or "git reported no detail"
+            self.notify(
+                f"Commit failed at {last.step}: {detail}", severity="error"
+            )
+        elif result.short_sha:
+            self.notify(f"Committed {file_count} file(s) as {result.short_sha}")
+        else:
+            # The commit landed but its sha could not be resolved -- say
+            # both halves rather than claiming success or failure alone.
+            self.notify(
+                f"Committed {file_count} file(s) — could not resolve the new "
+                "commit's sha",
+                severity="warning",
+            )
+        # Reload on EVERY outcome, not just success: a failure can still
+        # have moved the repository (a created branch, a staged index), and
+        # the view must show disk truth either way. `_load_current_mode`
+        # bumps the diff-cache generation, so no pre-commit diff survives.
+        if self._current_mode_active():
+            self._load_current_mode()
 
     @staticmethod
     def _leaf_label(
@@ -2962,3 +3474,175 @@ class ChangeRevertConfirmModal(SafeModalDismissMixin, ModalScreen[bool]):
     async def _perform_safe_cancel(self, *, source: str) -> None:
         del source
         self.dismiss_safe_once(False)
+
+
+class ChangeGitCommitModal(SafeModalDismissMixin, ModalScreen["dict | None"]):
+    """Confirm a file-picked commit into the user's REAL repository (spec §5).
+
+    Same modal discipline as :class:`ChangeRevertConfirmModal` (the
+    ``SafeModalDismissMixin``, escape-cancels, one content container), with
+    the commit-specific payload: a checklist of the files the FRESH status
+    read found (all pre-checked -- unchecking excludes), a required
+    message, an optional "create branch first" name, the branch the commit
+    will land on, and WARNINGS that never block (detached HEAD, committing
+    straight to main/master).
+
+    Dismisses with ``{"message", "new_branch", "files", "root"}`` on
+    confirm, or ``None`` on any cancellation (escape, the Cancel button, a
+    backdrop click) -- the mixin's default cancel result.
+    """
+
+    BINDINGS = [Binding("escape", "request_safe_cancel", "Cancel")]
+    SAFE_MODAL_CONTENT = "#change-git-commit"
+
+    def __init__(
+        self,
+        *,
+        root: str,
+        info: "GitWorkspaceInfo",
+        entries: "Sequence[tuple[str, tuple[str, ...]]]",
+    ) -> None:
+        """Args are stored; the checklist is built in ``compose``.
+
+        Args:
+            root: The resolved repository root this commit acts on. Named
+                in full in the dialog (spec §6: the modal always says which
+                repository it will touch).
+            info: The FRESH detection this modal was opened over -- the
+                branch line and the warnings both read from it, so they can
+                never describe a state the preflight did not just observe.
+            entries: ``(label, pathspec)`` pairs from
+                :func:`_commit_entries`. A rename's pathspec carries BOTH
+                paths under one checkbox.
+        """
+        super().__init__()
+        self._root = root
+        self._info = info
+        self._entries = list(entries)
+
+    def compose(self) -> ComposeResult:
+        """Target + warnings + checklist + message/branch inputs + buttons.
+
+        Returns:
+            The modal's widget tree.
+        """
+        with Vertical(id="change-git-commit"):
+            # Rich `Text`, never a plain string: a repository path or a
+            # branch name can contain brackets, and `Static`'s markup would
+            # eat them as a tag (this screen's own leaf-label scar).
+            yield Static(
+                Text(f"Commit in {self._root}  ·  {_head_label(self._info)}"),
+                id="change-git-commit-target",
+                markup=False,
+            )
+            warnings = _commit_warnings(self._info)
+            if warnings:
+                yield Static(
+                    Text("\n".join(warnings)),
+                    id="change-git-commit-warnings",
+                    markup=False,
+                )
+            with VerticalScroll(id="change-git-commit-files"):
+                for label, paths in self._entries:
+                    # `Checkbox` labels are markup-PARSED exactly like
+                    # `Button`'s: `Checkbox("a[b].txt")` renders "a.txt"
+                    # with a bold span (verified). A `Text` is verbatim.
+                    box = Checkbox(
+                        Text(label), value=True, classes="change-git-commit-file"
+                    )
+                    box.file_paths = paths
+                    yield box
+            yield Input(
+                placeholder="Commit message (required)",
+                id="change-git-commit-message",
+            )
+            yield Input(
+                placeholder="Create branch first (optional)",
+                id="change-git-commit-branch",
+            )
+            yield Static("", id="change-git-commit-error", markup=False)
+            with Horizontal(id="change-git-commit-buttons"):
+                yield Button(
+                    "Commit", id="change-git-commit-yes", variant="primary"
+                )
+                yield Button("Cancel", id="change-git-commit-no")
+
+    def on_mount(self) -> None:
+        """Focus the required field, keeping the mixin's own mount work.
+
+        ``super().on_mount()`` is mandatory, not politeness: Textual
+        resolves ``on_mount`` by ordinary attribute lookup, so defining one
+        here SHADOWS :class:`SafeModalDismissMixin`'s -- which is what
+        records the mount generation and the opener's focus for the
+        restore-on-dismiss contract.
+        """
+        super().on_mount()
+        try:
+            self.query_one("#change-git-commit-message", Input).focus()
+        except Exception:  # noqa: BLE001 -- focus is never load-bearing
+            logger.opt(exception=True).warning(
+                "change_review: commit modal focus failed"
+            )
+
+    def _show_error(self, message: str) -> None:
+        """Render an inline validation error without dismissing.
+
+        Args:
+            message: Why the submit was refused.
+        """
+        try:
+            self.query_one("#change-git-commit-error", Static).update(
+                Text(message)
+            )
+        except Exception:  # noqa: BLE001 -- never raise out of a handler
+            logger.opt(exception=True).warning(
+                "change_review: commit modal error render failed"
+            )
+
+    def _submit(self) -> None:
+        """Validate the form and dismiss with the commit request."""
+        try:
+            message = self.query_one(
+                "#change-git-commit-message", Input
+            ).value.strip()
+            if not message:
+                self._show_error("a commit message is required")
+                return
+            files = [
+                path
+                for box in self.query(Checkbox)
+                if box.value
+                for path in getattr(box, "file_paths", ())
+            ]
+            if not files:
+                self._show_error("select at least one file to commit")
+                return
+            branch = self.query_one(
+                "#change-git-commit-branch", Input
+            ).value.strip()
+            self.dismiss(
+                {
+                    "message": message,
+                    "new_branch": branch or None,
+                    "files": files,
+                    "root": self._root,
+                }
+            )
+        except Exception:  # noqa: BLE001 -- never raise out of a handler
+            logger.opt(exception=True).warning(
+                "change_review: commit modal submit failed"
+            )
+
+    @on(Button.Pressed, "#change-git-commit-yes")
+    def _confirm(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._submit()
+
+    @on(Input.Submitted, "#change-git-commit-message")
+    def _submit_from_message(self, event: Input.Submitted) -> None:
+        event.stop()
+        self._submit()
+
+    @on(Button.Pressed, "#change-git-commit-no")
+    async def _cancel_button(self) -> None:
+        await self.request_safe_cancel(source="button")
