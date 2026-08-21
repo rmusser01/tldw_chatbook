@@ -25,6 +25,7 @@ from tldw_chatbook.Library.library_shell_state import (
     LibraryRailSectionState,
     LibraryShellState,
 )
+from tldw_chatbook.Widgets.Library.library_canvas_sync import PostRecomposeCallback
 from tldw_chatbook.Widgets.destination_rail import (
     DestinationRailHandle,
     DestinationRailSectionHeader,
@@ -296,7 +297,7 @@ class LibraryNavigationRailHandle(DestinationRailHandle):
         return "N\na\nv"
 
 
-class LibraryRail(RecomposeCaptureGuard, Vertical):
+class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
     """Render the Library shell rail: search, source sections, and Details.
 
     Attributes:

@@ -2026,7 +2026,12 @@ class LibraryScreen(BaseAppScreen):
         ),
         WorkbenchPaneTarget(
             "library-rail",
-            ("library-search-input", "library-rail-collapse"),
+            (
+                "library-search-input",
+                f"library-row-{LIBRARY_ROW_INGEST_MEDIA}",
+                "library-rail-explore-all",
+                "library-rail-collapse",
+            ),
         ),
         WorkbenchPaneTarget(
             "library-canvas",
@@ -3696,7 +3701,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_entry_focus_capture: _LibraryEntryFocusCapture | None = None
         self._seed_local_source_snapshot_from_cache()
 
-    def _library_footer_shortcuts_for_current_state(
+    def _library_route_shortcuts_for_current_state(
         self,
     ) -> tuple[tuple[str, str], ...]:
         """The per-mode shortcut set for whichever Library surface is live.
@@ -3812,6 +3817,24 @@ class LibraryScreen(BaseAppScreen):
         if self._library_list_canvas_showing_list():
             return self.LIBRARY_LIST_SHORTCUTS
         return self.LIBRARY_GENERAL_SHORTCUTS
+
+    def _library_footer_shortcuts_for_current_state(
+        self,
+    ) -> tuple[tuple[str, str], ...]:
+        """Hide rail-search hints while the compact rail has no search box."""
+        shortcuts = self._library_route_shortcuts_for_current_state()
+        if self._library_lifecycle not in (
+            LibraryLifecycle.UNKNOWN,
+            LibraryLifecycle.STARTER,
+        ):
+            return shortcuts
+        return tuple(
+            pair
+            for pair in shortcuts
+            if not (
+                pair[0] == "/" and pair[1].casefold() in {"focus search", "search"}
+            )
+        )
 
     @property
     def _library_note_detail(self) -> Mapping[str, Any] | None:
@@ -5524,6 +5547,11 @@ class LibraryScreen(BaseAppScreen):
                 self.action_library_notes_focus_filter()
                 event.stop()
                 event.prevent_default()
+                return
+            if self._library_lifecycle in (
+                LibraryLifecycle.UNKNOWN,
+                LibraryLifecycle.STARTER,
+            ):
                 return
             try:
                 self.query_one("#library-search-input", Input).focus()
@@ -15100,11 +15128,17 @@ class LibraryScreen(BaseAppScreen):
         """Start one fresh, generation-fenced six-owner evidence read."""
         self._library_onboarding_generation += 1
         generation = self._library_onboarding_generation
+        back_was_admitted = (
+            self._library_lifecycle is LibraryLifecycle.EXPANDED
+            and self._library_onboarding_all_empty
+        )
         self._library_onboarding_all_empty = False
         self._library_onboarding_status = LibraryEvidenceStatus.LOADING
         self._sync_library_onboarding_status_copy()
         if not self.is_attached:
             return None
+        if back_was_admitted:
+            self._sync_library_rail_lifecycle_presentation()
         return self.run_worker(
             self._gather_library_onboarding_evidence(
                 generation,
@@ -15112,6 +15146,39 @@ class LibraryScreen(BaseAppScreen):
             ),
             group="library_onboarding_evidence",
         )
+
+    def _sync_library_rail_lifecycle_presentation(self) -> None:
+        """Recompose the retained rail and safely restore semantic rail focus."""
+        try:
+            rail = self.query_one("#library-rail", LibraryRail)
+        except (NoMatches, QueryError):
+            return
+        focused = self.focused
+        focus_selector = ""
+        if (
+            focused is not None
+            and rail in focused.ancestors_with_self
+            and focused.id
+        ):
+            focus_selector = f"#{focused.id}"
+            self.set_focus(None)
+        if focus_selector:
+            rail.queue_after_recompose(
+                lambda: self._restore_library_lifecycle_focus(focus_selector)
+            )
+        rail.sync_state(
+            rail.shell,
+            rail.preferences,
+            query=self._library_rag_query,
+            lifecycle=self._library_lifecycle,
+            onboarding_all_empty=self._library_onboarding_all_empty,
+        )
+        self._register_footer_shortcuts()
+
+    def _restore_library_lifecycle_focus(self, selector: str) -> None:
+        """Restore settlement focus only while the user has not moved it."""
+        if self.focused is None:
+            self._focus_library_rail_action(selector)
 
     async def _call_library_onboarding_owner(
         self,
@@ -15263,7 +15330,17 @@ class LibraryScreen(BaseAppScreen):
             self._library_lifecycle is not previous_lifecycle
             or current_back_admitted != previous_back_admitted
         ):
-            self.refresh(recompose=True)
+            self._sync_library_rail_lifecycle_presentation()
+        if (
+            previous_lifecycle is not LibraryLifecycle.GRADUATED
+            and self._library_lifecycle is LibraryLifecycle.GRADUATED
+        ):
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(
+                    "Library tools are now available.",
+                    severity="information",
+                )
 
     def _mirror_library_lifecycle(self, lifecycle: LibraryLifecycle) -> None:
         app_config = self.app_instance.app_config
@@ -15526,13 +15603,14 @@ class LibraryScreen(BaseAppScreen):
         )
         if not self.is_mounted or single_stage:
             return
-        selector = "#library-rail-open" if collapsed else "#library-search-input"
+        if not collapsed:
+            self._focus_library_rail_action("#library-search-input")
+            return
         try:
-            target = self.query_one(selector)
+            target = self.query_one("#library-rail-open")
         except (NoMatches, QueryError):
             return
         self.set_focus(target, scroll_visible=False)
-        self.call_after_refresh(target.focus)
 
     @on(Button.Pressed, "#library-rail-collapse")
     def _collapse_library_rail(self, event: Button.Pressed) -> None:
@@ -15547,14 +15625,19 @@ class LibraryScreen(BaseAppScreen):
         self._set_library_rail_collapsed(False)
 
     def _focus_library_rail_action(self, selector: str) -> None:
-        """Focus a preferred rail action, falling back to its first row."""
-        try:
-            target = self.query_one(selector)
-        except (NoMatches, QueryError):
-            target = next(iter(self.query(".library-rail-row")), None)
-        if target is not None:
-            self.set_focus(target, scroll_visible=False)
-            self.call_after_refresh(target.focus)
+        """Focus a preferred rail action, then compact Import or Explore."""
+        for candidate in (
+            selector,
+            f"#library-row-{LIBRARY_ROW_INGEST_MEDIA}",
+            "#library-rail-explore-all",
+        ):
+            try:
+                target = self.query_one(candidate, Widget)
+            except (NoMatches, QueryError):
+                continue
+            if target.display and not getattr(target, "disabled", False):
+                self.set_focus(target, scroll_visible=False)
+                return
 
     @on(Button.Pressed, "#library-rail-explore-all")
     async def _explore_library_rail(self, event: Button.Pressed) -> None:
@@ -22621,10 +22704,7 @@ class LibraryScreen(BaseAppScreen):
         """
         if self._close_open_library_choice_strip():
             return
-        try:
-            self.query_one("#library-search-input", Input).focus()
-        except (NoMatches, QueryError):
-            pass
+        self._focus_library_rail_action("#library-search-input")
 
     @on(Button.Pressed, "#library-prompt-export")
     async def handle_library_prompt_export(self, event: Button.Pressed) -> None:
