@@ -66,6 +66,7 @@ from .prompts import ConsolePromptsController
 from .reaction_preview import get_console_reaction_preview_coordinator
 from .retrieval import ConsoleRetrievalController
 from .session import ConsoleSessionController
+from .skill import ConsoleSkillController
 from .video import ConsoleVideoController
 from .workspace import ConsoleWorkspaceController
 
@@ -81,11 +82,11 @@ def build_console_controllers(
     rag_source_types_accessor: Callable[[], tuple[str, ...]],
     rag_top_k_accessor: Callable[[], int],
 ) -> None:
-    """Construct the Console screen's eleven controllers and attach them.
+    """Construct the Console screen's thirteen controllers and attach them.
 
-    Assigns, in this order, `screen._image`, `screen._retrieval`,
-    `screen._workspace`, `screen._character`,
-    `screen._session`, `screen._dictation`, `screen._hands_free`,
+    Assigns, in this order, `screen._image`, `screen._video`,
+    `screen._retrieval`, `screen._skill`, `screen._workspace`,
+    `screen._character`, `screen._session`, `screen._dictation`, `screen._hands_free`,
     `screen._message`, `screen._prompts`, `screen._agent`, and
     `screen._prompt_queue`. The order is documentation, not a constraint:
     every cross-controller dependency below is resolved at call time (see the
@@ -95,9 +96,9 @@ def build_console_controllers(
     `ChatScreen.__init__` calls this at exactly the point the first
     construction used to occupy. That position matters: the ~250 attribute
     assignments around it in `__init__` include names these lambdas read, and
-    none of the eleven constructors reads anything off `screen` eagerly (each
-    stores `screen` and its callables and nothing else), so the call needs to
-    sit where it can see everything the pre-move constructions could.
+    none of the thirteen constructors reads mutable state off `screen` eagerly
+    (each stores its inputs and callables), so the call needs to sit where it
+    can see everything the pre-move constructions could.
 
     Args:
         screen: The Console screen (`ChatScreen`) to wire. Mutated in place;
@@ -218,6 +219,17 @@ def build_console_controllers(
         ),
         refresh_screen=lambda: screen.refresh(recompose=True),
         has_staged_evidence=lambda: screen._has_staged_console_evidence(),
+    )
+
+    screen._skill = ConsoleSkillController(
+        app_instance=screen.app_instance,
+        append_native_console_system_message=(
+            lambda message: screen._append_native_console_system_message(message)
+        ),
+        sync_console_command_popup=lambda: screen._sync_console_command_popup(),
+        task_resume_state=lambda: screen._task_resume_state,
+        set_task_resume_state=lambda state: screen.set_task_resume_state(state),
+        current_chat_controller=lambda: screen._console_chat_controller,
     )
 
     #: Workspace policy, lifecycle, resume, scope, and conversation-browser

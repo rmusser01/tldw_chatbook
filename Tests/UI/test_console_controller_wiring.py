@@ -42,6 +42,7 @@ from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
 from tldw_chatbook.UI.Console_Modules.prompts import ConsolePromptsController
 from tldw_chatbook.UI.Console_Modules.retrieval import ConsoleRetrievalController
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
+from tldw_chatbook.UI.Console_Modules.skill import ConsoleSkillController
 from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
@@ -91,6 +92,21 @@ def test_retrieval_controller_is_constructed_with_late_bound_screen_edges():
     sentinel = object()
     screen._current_console_rail_conversation_id = lambda: sentinel
     assert screen._retrieval._current_conversation_id() is sentinel
+
+
+def test_skill_controller_is_constructed_with_late_bound_screen_edges():
+    """Wave 6 wires `_skill` without changing the original six-slot contract."""
+    screen = _unmounted_console()
+
+    assert isinstance(screen._skill, ConsoleSkillController)
+    sentinel = object()
+    screen._task_resume_state = sentinel
+    assert screen._skill._task_resume_state() is sentinel
+
+    calls: list[str] = []
+    screen._sync_console_command_popup = lambda: calls.append("replacement")
+    screen._skill._sync_console_command_popup()
+    assert calls == ["replacement"]
 
 
 def test_controllers_are_built_in_the_documented_order():

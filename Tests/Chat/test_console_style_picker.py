@@ -1,10 +1,9 @@
 """Tests for ``ConsoleStylePickerModal`` and its Console palette wiring
 (image-gen P2b, Task 4).
 
-Modal-level tests mirror ``Tests/UI/test_console_skill_picker.py``'s
-``ModalHarness`` (bare ``App[None]`` subclass + ``push_screen(...,
-callback=...)``), since this picker is a deliberate structural copy of
-``ConsoleSkillPickerModal`` -- filter ``Input``, synthetic Up/Down
+Modal-level tests use a bare ``App[None]`` harness with ``push_screen(...,
+callback=...)``. The picker follows the shared Console picker interaction
+shape -- filter ``Input``, synthetic Up/Down
 highlight, Enter-selects, Escape-cancels -- minus the injected async
 search callable (the searched set is the small, static, in-memory
 ``BUILTIN_TEMPLATES`` table, so filtering is synchronous with no debounce).

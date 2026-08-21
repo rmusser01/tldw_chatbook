@@ -61,12 +61,10 @@ SKILLS_EMPTY_LIST_ROW = "No skills yet — create them in Library ▸ Skills."
 class SkillCommandCandidate:
     """One skill eligible for bare-word resolution via `resolve_skill_command`.
 
-    ``resolve_skill_command`` is sigil-agnostic -- its live caller is
+    ``resolve_skill_command`` is sigil-agnostic. Its live caller is
     `ConsoleChatController._apply_skill_substitution`'s leading `$skill-
-    name` mention form; `ChatScreen._console_command_run_skill` (formerly
-    reached via a bare ``/skill-name`` composer fallback, hard-removed in
-    Task 4 of the `$`-mention migration) still calls it too but has no live
-    caller of its own -- see that method's docstring.
+    name` mention form; the former bare ``/skill-name`` composer fallback
+    and picker path were removed.
 
     Args:
         name: Canonical skill name (already scoped to whatever population

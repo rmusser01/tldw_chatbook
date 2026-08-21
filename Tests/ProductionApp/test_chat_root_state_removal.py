@@ -225,15 +225,15 @@ async def test_native_console_owns_rails_sessions_and_snapshot_without_root_mirr
                 "request_id": "task-650-script",
                 "skill_name": "example",
             }
-            chat._set_console_pending_skill_install(install_payload)
+            chat._skill._set_console_pending_skill_install(install_payload)
             assert chat._task_resume_state.pending_skill_install == install_payload
-            chat._set_console_pending_skill_script(script_payload)
+            chat._skill._set_console_pending_skill_script(script_payload)
             assert chat._task_resume_state.pending_skill_install == install_payload
             assert chat._task_resume_state.pending_skill_script == script_payload
-            chat._set_console_pending_skill_install(None)
+            chat._skill._set_console_pending_skill_install(None)
             assert chat._task_resume_state.pending_skill_install is None
             assert chat._task_resume_state.pending_skill_script == script_payload
-            chat._set_console_pending_skill_script(None)
+            chat._skill._set_console_pending_skill_script(None)
             assert chat._task_resume_state.pending_skill_script is None
 
             await pilot.press("ctrl+t")

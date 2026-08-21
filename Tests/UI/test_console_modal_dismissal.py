@@ -127,9 +127,6 @@ from tldw_chatbook.Widgets.Console.console_scope_picker_modal import (
     TagCount,
     ConsoleScopePickerModal,
 )
-from tldw_chatbook.Widgets.Console.console_skill_picker_modal import (
-    ConsoleSkillPickerModal,
-)
 from tldw_chatbook.Widgets.Console.console_style_picker_modal import (
     ConsoleStylePickerModal,
 )
@@ -469,16 +466,6 @@ TASK2_MODAL_CONTRACTS = (
         "#console-scope-picker-modal",
         None,
         "Console RAG scope action",
-        None,
-        "none",
-        _RESTORE_OPENER,
-    ),
-    _Task2ModalContract(
-        ConsoleSkillPickerModal,
-        lambda: ConsoleSkillPickerModal(skill_search=_empty_records),
-        "#console-skill-picker-modal",
-        None,
-        "Console composer skill command",
         None,
         "none",
         _RESTORE_OPENER,
@@ -1252,9 +1239,9 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
         for node in reachable
         if inspect.isclass(node) and issubclass(node, ModalScreen)
     }
-    # 44 since task-18810 declared the two launches this walk used to
-    # abort on: WorkspaceCreateModal and its SelectDirectory picker.
-    assert len(reachable_modal_types) == 44
+    # 43 after TASK-3070.6 removed the unreachable Console skill picker;
+    # task-18810's WorkspaceCreateModal/SelectDirectory launches remain.
+    assert len(reachable_modal_types) == 43
     all_contract_types = console_contract_types | {
         contract.modal_type for contract in TASK4_MODAL_CONTRACTS
     } | {TrajectoryScreen}
@@ -1384,7 +1371,7 @@ class _SyntheticDeclaredOwner:
 
 
 def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
-    assert len(TASK2_MODAL_CONTRACTS) == 16
+    assert len(TASK2_MODAL_CONTRACTS) == 15
     assert {contract.modal_type.__name__ for contract in TASK2_MODAL_CONTRACTS} == {
         "AutoSpeakConsentModal",
         "ConsoleCharacterPickerModal",
@@ -1400,7 +1387,6 @@ def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
         "ConsoleRunLogModal",
         "ConsoleScopePickerModal",
         "ConsoleSideChatModal",
-        "ConsoleSkillPickerModal",
         "ConsoleStylePickerModal",
     }
     expected_hooks = {
