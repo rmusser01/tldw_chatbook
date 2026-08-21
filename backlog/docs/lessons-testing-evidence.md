@@ -5678,3 +5678,36 @@ the defect. When a test asserts the shape of a bug, rewrite it to assert the
 property that actually matters — here, that the rewound database still opens
 and migrates on the next attempt — and say in the docstring why the
 expectation moved.
+
+## A green test validates the assertion, not the story you told about it (TASK-19553, 2026-08-21)
+
+**What happened.** Porting the ChaChaNotes v4 base-schema apply off
+`executescript`, I wrote a permanent code comment explaining WHY it mattered:
+the script's 42 `CREATE TRIGGER` statements have no `IF NOT EXISTS`, so an
+interrupted apply "died on 'trigger already exists'" on the next launch. I
+shipped a test alongside it that passed. The comment was **false**. The script
+also ships 42 matching `DROP TRIGGER IF EXISTS` — zero creates without a
+preceding drop — plus `IF NOT EXISTS` on every table/index and
+`INSERT OR IGNORE` on both inserts. Sweeping all 120 interruption points of
+the script on the pre-fix code, the retry succeeded **120 out of 120 times**.
+The failure mode I described could not occur.
+
+The review caught it; the mechanism that let it through is worth naming. My
+test asserted *leftovers are zero after a failed apply* — which the pre-fix
+code genuinely fails — so it went red at the leftovers check and returned
+green after the fix, **without ever reaching the retry the comment was about**.
+The test proved a real (and worthwhile) property: 111 committed
+`sqlite_master` rows before versus 0 after. It never touched the claim.
+
+**What to do.** When you write down a failure mode as the justification for a
+change, run *that* failure mode, not a neighbouring one — and prefer a sweep
+over a single anecdote (all 120 interruption points here, which is what turned
+a plausible story into a measured 120/120). If the property your test actually
+asserts is narrower than the story in the comment, either widen the test or
+narrow the prose to what you measured. Two smells that should trigger this
+check: a comment whose claim your test would still pass without, and any
+sentence about a mechanism (`no IF NOT EXISTS`, `no guard`, `always commits`)
+that you inferred from reading rather than from running. In a P0 data-integrity
+file, a false incident in a comment is worse than no comment — future
+maintainers will trust it, and this repo's own standard is "state the incident,
+not just the rule", which only works if the incident is real.

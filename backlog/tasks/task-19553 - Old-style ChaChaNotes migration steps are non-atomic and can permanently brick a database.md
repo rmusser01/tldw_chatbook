@@ -3,7 +3,7 @@ id: TASK-19553
 title: >-
   Old-style ChaChaNotes migration steps are non-atomic and can permanently brick
   a database
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-21 20:03'
 labels:
@@ -118,6 +118,37 @@ stale version stamp. No step was renumbered or merged and
   `IF NOT EXISTS` are deliberately left alone so SQLite's keep-the-existing-one
   semantics are not overridden).
 
+**What porting `_apply_schema_v4` did and did NOT buy** (corrected in the fix
+round — the first version of this note claimed a brick that does not exist).
+The v4 base script is already re-enterable on its own terms: 42
+`CREATE TRIGGER` but 42 matching `DROP TRIGGER IF EXISTS` (zero creates
+without a preceding drop), every `CREATE TABLE`/`VIRTUAL TABLE`/`INDEX`
+carrying `IF NOT EXISTS`, both top-level inserts `INSERT OR IGNORE`. Sweeping
+all 120 interruption points of the script at the merge base, the retry reached
+version 42 in **120 of 120** cases. The real, measured benefit is leftover
+state: at the worst point the pre-fix path committed **111 `sqlite_master`
+rows** into a file the caller was told had failed to initialize (119 of 120
+points left something), versus **0 at every point** after. It also removes the
+last `executescript` from the schema path, making "no step commits"
+unconditional. The genuine bare-trigger hazard is in the MIGRATION steps, and
+it is exactly two of them: V7→V8 (8) and V8→V9 (13), 21 unprotected
+`CREATE TRIGGER`s in total — reproduced red on the pre-fix code by
+`test_interrupted_trigger_step_recovers`.
+
+**Trade-off worth knowing: one long write transaction.** Because no step
+commits any more, an upgrade is a single transaction spanning the whole chain
+instead of dev's ~38 per-step commits. On a very large v4-era database that
+means more WAL growth before the single commit, and the write lock is held for
+the whole upgrade rather than released between steps. That is the right price
+for atomicity — partial progress through a migration chain has no value, since
+a database stranded at an intermediate version is unusable by current code
+either way — but it is a real change in resource profile, not a free win, and
+the WAL only checkpoints back down after the commit. Contention is not a
+practical concern here (this runs inside `CharactersRAGDB.__init__`, before
+the app has any other user of the connection), and `_initialize_schema`'s
+`BEGIN` is DEFERRED exactly as before, so the read-then-write upgrade window
+is unchanged from dev.
+
 **One statement deliberately left outside a transaction.**
 `_FULL_SCHEMA_SQL_V4` opens with `PRAGMA foreign_keys = ON`, which SQLite
 silently IGNORES inside a transaction. It is not forced: the guarantee is
@@ -151,6 +182,35 @@ database still opens and migrates on the next attempt.
   — identical to `origin/dev`'s 1045/9. Focused consumer sweep (12 files
   incl. packaging + notes sync + chatbooks): 488 passed / 5 failed on BOTH.
   Repo-wide `pytest --collect-only -q`: 53,650 collected, exit 0.
+
+**Fix round (post-review).** The reviewer endorsed the code change and
+adjudicated the whole-run-atomicity behaviour change in its favour, but caught
+a **false incident recorded as fact** in a permanent code comment: the claim
+that the v4 base apply's bare `CREATE TRIGGER`s made a retry die on "trigger
+already exists". I re-measured and confirmed the reviewer: it never happens
+(120/120 retries recovered pre-fix). Corrected at all three sites
+(`ChaChaNotes_DB.py:_apply_schema_v4`, and the test's docstring and assertion
+message) to state the measured leftover-state benefit instead. Why it survived
+is the instructive part: the test asserts *leftovers are zero*, which the
+pre-fix code genuinely fails, so it reds before ever reaching the retry — the
+claimed failure mode was never actually observed, and a green test validated
+the assertion, not the story told about it.
+
+Also in the fix round: `test_every_shipped_migration_script_splits_cleanly`
+now asserts each chunk holds **exactly one** statement (359 statements across
+all embedded scripts plus the base script), with its own mutation control
+proving the detector reds on two statements sharing a line; and the eleven
+file-backed steps' inline splitter copies were de-duplicated onto
+`_split_sql_statements` via `_migration_file_statements`, preserving both
+monkeypatch seams (`_execute_citation_migration_statement`,
+`_execute_character_authority_migration_statement`) and V36→V37's
+already-has-the-column skip. Verified a no-op, not assumed: the byte-identity
+oracle re-run after the de-duplication is still 0 divergences against the
+golden taken before any edit, and `Tests/ChaChaNotesDB/` + `Tests/DB/` is
+1344 passed / 12 failed — the same 12 pre-existing failures the merge base has.
+The only intentional behaviour delta is that a malformed migration file is now
+rejected before any statement executes rather than after; both paths roll back
+inside the step's transaction.
 
 **Scoped out, deliberately.** 15 of the `DB/migrations/*.sql` files are
 decorative twins of the embedded constants (never opened by any code path);

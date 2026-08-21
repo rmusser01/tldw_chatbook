@@ -3596,10 +3596,14 @@ UPDATE db_schema_version
     ) -> None:
         """Drop a same-named trigger before a bare ``CREATE TRIGGER``.
 
-        Several historical steps (V7→V8, V8→V9) create triggers without
-        ``IF NOT EXISTS`` and without a preceding ``DROP``; replaying such a
-        step over a half-applied database would raise ``trigger ... already
-        exists``. Dropping first makes the step re-enterable and leaves the
+        Exactly two historical steps create triggers with neither
+        ``IF NOT EXISTS`` nor a preceding ``DROP`` -- V7→V8 (8 of them) and
+        V8→V9 (13), 21 in total, and no other step; replaying one of those
+        over a half-applied database raises ``trigger ... already exists``
+        (reproduced in ``test_interrupted_trigger_step_recovers``, which is
+        red on the pre-fix code). Note this is NOT true of the v4 base script,
+        whose 42 creates all have a matching ``DROP TRIGGER IF EXISTS``.
+        Dropping first makes the step re-enterable and leaves the
         exact same ``sqlite_master`` row the step intended. Statements that
         already say ``IF NOT EXISTS`` are left alone -- SQLite's own
         keep-the-existing-one semantics are not overridden.
@@ -3628,6 +3632,30 @@ UPDATE db_schema_version
             "dropping it so the step's definition is re-applied."
         )
         cursor.execute(f'DROP TRIGGER IF EXISTS "{name}"')
+
+    @staticmethod
+    def _migration_file_statements(migration_path: Path) -> List[str]:
+        """Read an on-disk migration file and split it into statements.
+
+        The file-backed steps each carried their own copy of this
+        accumulate-lines-until-``complete_statement`` loop (task-19553
+        de-duplicated eleven of them onto ``_split_sql_statements``). Note the
+        tail check now happens BEFORE anything executes rather than after the
+        loop; both roll back inside the step's transaction, so the only
+        difference is that a malformed file is rejected before it touches the
+        database.
+
+        Args:
+            migration_path: Path to a ``DB/migrations/*.sql`` file.
+
+        Returns:
+            The file's statements in source order.
+
+        Raises:
+            OSError: If the file cannot be read.
+            SchemaError: If the file ends with an incomplete statement.
+        """
+        return _split_sql_statements(migration_path.read_text(encoding="utf-8"))
 
     def _execute_migration_statements(
         self,
@@ -3682,13 +3710,29 @@ UPDATE db_schema_version
         try:
             # task-19553: this used to run through ``conn.executescript``,
             # which COMMITS the caller's transaction and autocommits each
-            # statement. An interrupted base-schema apply therefore left a
-            # half-built database that the next launch could not finish -- the
-            # 42 bare ``CREATE TRIGGER`` statements here have no
-            # ``IF NOT EXISTS``, so a retry died on "trigger already exists".
-            # Running through the shared statement runner keeps the whole
-            # apply inside ``_initialize_schema``'s transaction and makes a
-            # retry safe.
+            # statement, so an interrupted base-schema apply left its
+            # already-executed DDL on disk.
+            #
+            # Be precise about what that did and did not cost, because the
+            # answer is NOT the same as for the migration steps. This script
+            # is already fully re-enterable on its own terms -- measured, not
+            # assumed: 42 ``CREATE TRIGGER`` statements but 42 matching
+            # ``DROP TRIGGER IF EXISTS`` (zero creates without a preceding
+            # drop), all 12 ``CREATE TABLE`` / 6 ``CREATE VIRTUAL TABLE`` /
+            # 15 ``CREATE INDEX`` carrying ``IF NOT EXISTS``, and both
+            # top-level inserts written ``INSERT OR IGNORE``. Sweeping all
+            # 120 interruption points of this script on the pre-fix code, the
+            # retry reached version 42 in 120 of 120 cases. A half-applied v4
+            # base was never a brick.
+            #
+            # What the port buys is the leftover state, not the recovery: at
+            # the worst interruption point the pre-fix path left 111
+            # ``sqlite_master`` rows committed in a file the caller believes
+            # failed to initialize (119 of the 120 points left something),
+            # versus 0 rows at every point once the apply runs inside
+            # ``_initialize_schema``'s transaction. That also removes the last
+            # ``executescript`` from the schema path, so "no step commits" is
+            # an unconditional property rather than one with an exception.
             #
             # The ONE statement that cannot participate: the script's leading
             # ``PRAGMA foreign_keys = ON``. SQLite silently IGNORES that pragma
@@ -4912,18 +4956,8 @@ UPDATE db_schema_version
         )
         try:
             with self.transaction() as cursor:
-                pending = ""
-                for line in migration_path.read_text(encoding="utf-8").splitlines(
-                    keepends=True
-                ):
-                    pending += line
-                    if sqlite3.complete_statement(pending):
-                        self._execute_citation_migration_statement(cursor, pending)
-                        pending = ""
-                if pending.strip():
-                    raise SchemaError(
-                        "Citation provenance migration contains incomplete SQL"
-                    )
+                for statement in self._migration_file_statements(migration_path):
+                    self._execute_citation_migration_statement(cursor, statement)
                 cursor.execute(
                     """
                     INSERT INTO rag_identity_context(
@@ -5018,20 +5052,10 @@ UPDATE db_schema_version
         try:
             with self.transaction() as cursor:
                 local_authority_id = self.get_local_authority_id()
-                pending = ""
-                for line in migration_path.read_text(encoding="utf-8").splitlines(
-                    keepends=True
-                ):
-                    pending += line
-                    if sqlite3.complete_statement(pending):
-                        self._execute_character_authority_migration_statement(
-                            cursor,
-                            pending,
-                        )
-                        pending = ""
-                if pending.strip():
-                    raise SchemaError(
-                        "Character authority migration contains incomplete SQL"
+                for statement in self._migration_file_statements(migration_path):
+                    self._execute_character_authority_migration_statement(
+                        cursor,
+                        statement,
                     )
                 self._backfill_conversation_character_authority(
                     cursor,
@@ -5331,18 +5355,8 @@ UPDATE db_schema_version
         )
         try:
             with self.transaction() as cursor:
-                pending = ""
-                for line in migration_path.read_text(encoding="utf-8").splitlines(
-                    keepends=True
-                ):
-                    pending += line
-                    if sqlite3.complete_statement(pending):
-                        cursor.execute(pending)
-                        pending = ""
-                if pending.strip():
-                    raise SchemaError(
-                        "Console context-memory migration contains incomplete SQL"
-                    )
+                for statement in self._migration_file_statements(migration_path):
+                    cursor.execute(statement)
                 row = cursor.execute(
                     "SELECT version FROM db_schema_version WHERE schema_name = ?",
                     (self._SCHEMA_NAME,),
@@ -5369,18 +5383,8 @@ UPDATE db_schema_version
         )
         try:
             with self.transaction() as cursor:
-                pending = ""
-                for line in migration_path.read_text(encoding="utf-8").splitlines(
-                    keepends=True
-                ):
-                    pending += line
-                    if sqlite3.complete_statement(pending):
-                        cursor.execute(pending)
-                        pending = ""
-                if pending.strip():
-                    raise SchemaError(
-                        "Visual-compaction policy migration contains incomplete SQL"
-                    )
+                for statement in self._migration_file_statements(migration_path):
+                    cursor.execute(statement)
                 row = cursor.execute(
                     "SELECT version FROM db_schema_version WHERE schema_name = ?",
                     (self._SCHEMA_NAME,),
@@ -5415,19 +5419,8 @@ UPDATE db_schema_version
         )
         try:
             with self.transaction() as cursor:
-                pending = ""
-                for line in migration_path.read_text(encoding="utf-8").splitlines(
-                    keepends=True
-                ):
-                    pending += line
-                    if sqlite3.complete_statement(pending):
-                        cursor.execute(pending)
-                        pending = ""
-                if pending.strip():
-                    raise SchemaError(
-                        "Conversation dictionary attachment migration contains "
-                        "incomplete SQL"
-                    )
+                for statement in self._migration_file_statements(migration_path):
+                    cursor.execute(statement)
                 row = cursor.execute(
                     "SELECT version FROM db_schema_version WHERE schema_name = ?",
                     (self._SCHEMA_NAME,),
@@ -5456,18 +5449,8 @@ UPDATE db_schema_version
             )
 
             with self.transaction() as cursor:
-                pending = ""
-                for line in migration_path.read_text(encoding="utf-8").splitlines(
-                    keepends=True
-                ):
-                    pending += line
-                    if sqlite3.complete_statement(pending):
-                        cursor.execute(pending)
-                        pending = ""
-                if pending.strip():
-                    raise SchemaError(
-                        "Note-folder migration contains incomplete SQL"
-                    )
+                for statement in self._migration_file_statements(migration_path):
+                    cursor.execute(statement)
                 row = cursor.execute(
                     "SELECT version FROM db_schema_version WHERE schema_name = ?",
                     (self._SCHEMA_NAME,),
@@ -5516,15 +5499,7 @@ UPDATE db_schema_version
                         "Provider continuation column is incompatible with schema V37"
                     )
             with self.transaction() as cursor:
-                pending = ""
-                for line in migration_path.read_text(encoding="utf-8").splitlines(
-                    keepends=True
-                ):
-                    pending += line
-                    if not sqlite3.complete_statement(pending):
-                        continue
-                    statement = pending
-                    pending = ""
+                for statement in self._migration_file_statements(migration_path):
                     if (
                         continuation_column is not None
                         and statement.lstrip().startswith("-- Migration:")
@@ -5532,10 +5507,6 @@ UPDATE db_schema_version
                     ):
                         continue
                     cursor.execute(statement)
-                if pending.strip():
-                    raise SchemaError(
-                        "Provider continuation migration contains incomplete SQL"
-                    )
                 row = cursor.execute(
                     "SELECT version FROM db_schema_version WHERE schema_name = ?",
                     (self._SCHEMA_NAME,),
@@ -5562,20 +5533,8 @@ UPDATE db_schema_version
         )
         try:
             with self.transaction() as cursor:
-                pending = ""
-                for line in migration_path.read_text(encoding="utf-8").splitlines(
-                    keepends=True
-                ):
-                    pending += line
-                    if not sqlite3.complete_statement(pending):
-                        continue
-                    statement = pending
-                    pending = ""
+                for statement in self._migration_file_statements(migration_path):
                     cursor.execute(statement)
-                if pending.strip():
-                    raise SchemaError(
-                        "Trajectory metadata migration contains incomplete SQL"
-                    )
                 row = cursor.execute(
                     "SELECT version FROM db_schema_version WHERE schema_name = ?",
                     (self._SCHEMA_NAME,),
@@ -5602,19 +5561,8 @@ UPDATE db_schema_version
         )
         try:
             with self.transaction() as cursor:
-                pending = ""
-                for line in migration_path.read_text(encoding="utf-8").splitlines(
-                    keepends=True
-                ):
-                    pending += line
-                    if not sqlite3.complete_statement(pending):
-                        continue
-                    cursor.execute(pending)
-                    pending = ""
-                if pending.strip():
-                    raise SchemaError(
-                        "Visual Identity migration contains incomplete SQL"
-                    )
+                for statement in self._migration_file_statements(migration_path):
+                    cursor.execute(statement)
                 row = cursor.execute(
                     "SELECT version FROM db_schema_version WHERE schema_name = ?",
                     (self._SCHEMA_NAME,),
@@ -5641,19 +5589,8 @@ UPDATE db_schema_version
         )
         try:
             with self.transaction() as cursor:
-                pending = ""
-                for line in migration_path.read_text(encoding="utf-8").splitlines(
-                    keepends=True
-                ):
-                    pending += line
-                    if not sqlite3.complete_statement(pending):
-                        continue
-                    cursor.execute(pending)
-                    pending = ""
-                if pending.strip():
-                    raise SchemaError(
-                        "Transcript annotations migration contains incomplete SQL"
-                    )
+                for statement in self._migration_file_statements(migration_path):
+                    cursor.execute(statement)
                 row = cursor.execute(
                     "SELECT version FROM db_schema_version WHERE schema_name = ?",
                     (self._SCHEMA_NAME,),
@@ -5680,19 +5617,8 @@ UPDATE db_schema_version
         )
         try:
             with self.transaction() as cursor:
-                pending = ""
-                for line in migration_path.read_text(encoding="utf-8").splitlines(
-                    keepends=True
-                ):
-                    pending += line
-                    if not sqlite3.complete_statement(pending):
-                        continue
-                    cursor.execute(pending)
-                    pending = ""
-                if pending.strip():
-                    raise SchemaError(
-                        "Persona Visual migration contains incomplete SQL"
-                    )
+                for statement in self._migration_file_statements(migration_path):
+                    cursor.execute(statement)
                 row = cursor.execute(
                     "SELECT version FROM db_schema_version WHERE schema_name = ?",
                     (self._SCHEMA_NAME,),

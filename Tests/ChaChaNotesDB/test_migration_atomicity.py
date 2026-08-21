@@ -364,12 +364,24 @@ class TestFailingStepRollsBack:
     def test_interrupted_base_schema_apply_recovers(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The v4 base apply is atomic too.
+        """The v4 base apply leaves nothing behind when it fails.
 
-        ``_FULL_SCHEMA_SQL_V4`` ships 42 ``CREATE TRIGGER`` statements with no
-        ``IF NOT EXISTS``, so a base apply interrupted after some of them had
-        been autocommitted used to make the brand-new file unopenable
-        ("trigger ... already exists") rather than merely incomplete.
+        Scope this claim carefully -- it is NOT the brick the migration steps
+        had. ``_FULL_SCHEMA_SQL_V4`` is already re-enterable on its own terms:
+        42 ``CREATE TRIGGER`` statements but 42 matching
+        ``DROP TRIGGER IF EXISTS`` (zero creates without a preceding drop),
+        every ``CREATE TABLE``/``VIRTUAL TABLE``/``INDEX`` carrying
+        ``IF NOT EXISTS``, and both top-level inserts ``INSERT OR IGNORE``.
+        Sweeping all 120 interruption points of the script on the pre-fix
+        code, the retry reached the current version 120 times out of 120.
+
+        What changed is the leftover state: pre-fix, the worst interruption
+        point left 111 ``sqlite_master`` rows committed in a file the caller
+        was told had failed to initialize, and 119 of the 120 points left
+        something. This test pins the post-fix number -- zero, at every point
+        -- which is why its assertion is about leftovers and not about the
+        retry. (The retry is checked at the end too, but it passed before the
+        fix as well and is not the property under test.)
         """
         path = tmp_path / "interrupted_base.sqlite"
         statements = _split_sql_statements(CharactersRAGDB._FULL_SCHEMA_SQL_V4)
@@ -477,6 +489,31 @@ class TestEntryVersionGuards:
         )
 
 
+def _remaining_sql_after_first_statement(chunk: str) -> str:
+    """Return the SQL left over after ``chunk``'s FIRST complete statement.
+
+    The splitter completes a chunk only at a LINE boundary, so two statements
+    written on one source line share a chunk — and ``cursor.execute`` rejects
+    that. Finding the boundary needs character granularity, which this gets by
+    testing ``sqlite3.complete_statement`` at each ``;``: SQLite reports False
+    for a ``;`` inside a string, a comment, or a ``BEGIN``/``END`` trigger
+    body, so the first True is the real end of statement one.
+
+    Args:
+        chunk: One chunk as produced by ``_split_sql_statements``.
+
+    Returns:
+        The trailing SQL after the first statement with leading whitespace and
+        comments removed, or ``""`` when the chunk holds exactly one.
+    """
+    for index, char in enumerate(chunk):
+        if char != ";":
+            continue
+        if sqlite3.complete_statement(chunk[: index + 1]):
+            return _strip_leading_sql_noise(chunk[index + 1 :])
+    return ""
+
+
 def _code_only(source: str) -> str:
     """Drop whole-line ``#`` comments so prose about the defect is not a hit."""
     return "\n".join(
@@ -517,9 +554,15 @@ class TestExecutescriptIsGone:
     def test_base_schema_apply_does_not_use_executescript(self) -> None:
         source = _code_only(inspect.getsource(CharactersRAGDB._apply_schema_v4))
         assert ".executescript(" not in source, (
-            "_apply_schema_v4 calls executescript; an interrupted base-schema "
-            "apply then leaves a half-built, unopenable new database "
-            "(task-19553)."
+            "_apply_schema_v4 calls executescript, so an interrupted "
+            "base-schema apply commits its DDL into a file the caller was "
+            "told had failed to initialize — measured at up to 111 "
+            "sqlite_master rows, on 119 of the script's 120 interruption "
+            "points (task-19553). Unlike the migration steps this is a "
+            "leftover-state defect, NOT a brick: the v4 script is internally "
+            "re-enterable and retried successfully 120/120 times even before "
+            "the fix. It also reintroduces the one commit that would make "
+            "'no step commits' conditional again."
         )
 
 
@@ -537,6 +580,37 @@ class TestStatementSplitting:
         statements = _split_sql_statements(script)
         assert len(statements) == 2, statements
         assert statements[0].count("INSERT INTO y") == 2
+
+    def test_multi_statement_chunk_detector_actually_fires(self) -> None:
+        """Mutation control for the exactly-one-statement pin above.
+
+        Two statements on ONE line share a chunk (the splitter can only break
+        at a line boundary) and `cursor.execute` rejects that — so the pin is
+        only worth anything if this detector goes red on it.
+        """
+        one_line = "CREATE INDEX a ON t(x); CREATE INDEX b ON t(y);\n"
+        chunks = _split_sql_statements(one_line)
+        assert len(chunks) == 1, "the splitter cannot break inside a line"
+        assert _remaining_sql_after_first_statement(chunks[0]).startswith(
+            "CREATE INDEX b"
+        )
+        with sqlite3.connect(":memory:") as connection:
+            connection.execute("CREATE TABLE t(x, y)")
+            with pytest.raises(sqlite3.ProgrammingError):
+                connection.execute(chunks[0])
+
+        # ...and stays quiet on the shapes that are legitimately one statement.
+        for single in (
+            "CREATE INDEX a ON t(x);\n",
+            "INSERT INTO t VALUES ('a;b');\n",
+            "CREATE TRIGGER tr AFTER INSERT ON t BEGIN\n"
+            "  INSERT INTO t VALUES (1, 2);\n"
+            "  INSERT INTO t VALUES (3, 4);\n"
+            "END;\n",
+            "-- lead\nCREATE INDEX a ON t(x); -- trail\n",
+        ):
+            chunk = _split_sql_statements(single)[0]
+            assert _remaining_sql_after_first_statement(chunk) == "", single
 
     def test_incomplete_trailing_sql_is_rejected(self) -> None:
         with pytest.raises(SchemaError, match="incomplete SQL statement"):
@@ -557,17 +631,36 @@ class TestStatementSplitting:
         assert head.startswith(expected_head)
 
     def test_every_shipped_migration_script_splits_cleanly(self) -> None:
-        """Each embedded script must be splittable into runnable statements."""
+        """Each embedded script must split into SINGLE runnable statements.
+
+        Splittability alone is not enough. ``sqlite3.complete_statement`` is
+        checked per accumulated LINE, so two statements written on one source
+        line land in the same chunk — and ``cursor.execute`` refuses a chunk
+        holding more than one statement, which would turn a formatting choice
+        in a future migration into a failed upgrade. The
+        ``sqlite3_stmt``-level count below is what actually closes that trap;
+        it holds for all statements shipped today, base script included.
+        """
         scripts = [
             name
             for name in dir(CharactersRAGDB)
             if re.fullmatch(r"_MIGRATE_V\d+_TO_V\d+_SQL", name)
-        ]
-        assert scripts, "no embedded migration scripts found"
+        ] + ["_FULL_SCHEMA_SQL_V4"]
+        assert len(scripts) > 20, scripts
+        checked = 0
         for name in scripts:
             statements = _split_sql_statements(getattr(CharactersRAGDB, name))
             assert statements, name
-            for statement in statements:
-                assert _strip_leading_sql_noise(statement), (
-                    f"{name} produced a statement with no SQL in it"
+            for index, statement in enumerate(statements):
+                head = _strip_leading_sql_noise(statement)
+                assert head, f"{name}[{index}] produced a chunk with no SQL in it"
+                remainder = _remaining_sql_after_first_statement(statement)
+                assert not remainder, (
+                    f"{name}[{index}] holds MORE THAN ONE statement, so "
+                    f"cursor.execute would reject it: trailing SQL is "
+                    f"{remainder[:120]!r}. Put each statement on its own "
+                    f"line(s) — the splitter completes a chunk only at a line "
+                    f"boundary."
                 )
+                checked += 1
+        assert checked > 300, f"expected the full corpus, counted {checked}"
