@@ -206,7 +206,7 @@ def sanitized_destination_label(
         origin for a valid custom endpoint, or a content-free invalid label.
     """
     label = provider_label.strip() or "Provider"
-    if not str(custom_endpoint or "").strip():
+    if custom_endpoint is None or not custom_endpoint.strip():
         return label
     origin = _endpoint_origin(custom_endpoint)
     return f"{label} ({origin or 'invalid endpoint'})"

@@ -576,6 +576,24 @@ necessary and not sufficient.
 
 ---
 
+## A new default invalidates legacy fixtures that never declared their mode
+
+**TASK-16323, 2026-08-20.** Console project instructions became enabled for newly
+created sessions. Three older test-helper families created real Console sessions but
+never declared whether they exercised project instructions. Their agent, controller,
+and citation tests then failed with `binding_unavailable`; two parked waiting for a
+gateway call that could never happen and hit the configured timeout. The feature's
+focused suites were green because those helpers lived in adjacent behavior suites.
+
+**What to do.** When a new per-session feature changes a constructor/default, find
+real-object test helpers that omit the new state. Fixtures for unrelated legacy
+behavior should explicitly select the legacy-disabled mode; feature tests should
+install the intended binding. Do not weaken the production default to rescue an
+ambiguous fixture, and treat a newly parked test as an upstream dispatch-gate failure
+before debugging its timeout body.
+
+---
+
 ## A re-export hides a dependency from a module-name grep
 
 **What happened.** `test_plaintext_ingest_events.py` imported a deleted function *via*

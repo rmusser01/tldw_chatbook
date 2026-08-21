@@ -11,6 +11,9 @@ from tldw_chatbook.Chat import console_chat_controller as controller_module
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunStatus
+from tldw_chatbook.Chat.console_project_instructions import (
+    ProjectInstructionControlState,
+)
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.citation_repair import CitationRepairContract
 from tldw_chatbook.Chat.citation_trace_models import MarkerNamespace
@@ -40,6 +43,21 @@ from Tests.Agents.test_mcp_tool_provider import (
     _catalog_record,
     _tool_dict,
 )
+
+
+@pytest.fixture(autouse=True)
+def _disable_project_instructions_for_legacy_agent_swap_tests(monkeypatch):
+    """Keep pre-AGENTS agent-loop fixtures focused on their original boundary."""
+    create_session = ConsoleChatStore.create_session
+
+    def create_legacy_session(store, *args, **kwargs):
+        kwargs.setdefault(
+            "project_instruction_state",
+            ProjectInstructionControlState.legacy_disabled(),
+        )
+        return create_session(store, *args, **kwargs)
+
+    monkeypatch.setattr(ConsoleChatStore, "create_session", create_legacy_session)
 
 
 def _fence(name, args):

@@ -440,7 +440,8 @@ class InstructionActivationLedger:
             pending = state.pending if state is not None else None
             if pending is None or pending.receipt != receipt:
                 raise ValueError("unknown or stale instruction delivery receipt")
-            assert state is not None
+            if state is None:
+                raise ValueError("unknown or stale instruction delivery receipt")
             matched_rows = [
                 row
                 for row in payload_rows
