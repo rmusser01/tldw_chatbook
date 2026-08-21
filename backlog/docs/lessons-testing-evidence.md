@@ -5489,3 +5489,39 @@ diff before merging — a deletion feels like it needs no review precisely
 because nothing new was added; (2) a reviewer claim that a guarded artifact is
 "unconsumed" is an untested claim until checked against the gate that
 consumes it — grep for the artifact's path in `Tests/` before agreeing.
+
+## A raw equality check on two IDs that alias the same state misfires the instant that state is the common case (TASK-18310, 2026-08-20)
+
+**What happened.** Implementing a Console resume-time reconcile that compares
+a session's `workspace_id` against the workspace registry's active workspace
+id, the first pass used `session.workspace_id == active.workspace_id` raw.
+That looked obviously correct and passed the task's SPECIFIED regression gate
+(`Tests/Workspaces/`, three named `Tests/UI/` files, a full-suite
+`--collect-only`) cleanly. It was still wrong: this codebase already encodes,
+elsewhere in the very same file (task-15120,
+`_set_active_workspace_for_console_session`), that a session's default/unset
+`workspace_id` (the `CONSOLE_GLOBAL_WORKSPACE_ID` sentinel, `"global"`) and
+the registry's built-in Default workspace row (`DEFAULT_WORKSPACE_ID`,
+`"workspace-default"`) are THE SAME state spelled two ways, not two
+different workspaces that happen to share a session. The raw comparison
+read every ordinary global/unset-workspace mounted session as "diverged"
+the instant the registry's active workspace was its ordinary resting Default
+row — which is the COMMON case, not an edge case — and tore the session down
+to rebuild a fresh one on every single resume. Two tests well outside the
+specified gate (`Tests/UI/test_console_session_settings.py`, picked up by an
+extra author-initiated sweep of every `on_screen_resume`-touching UI test
+file) caught it going from GREEN to RED; the specified gate never happened to
+mount a session with an unset `workspace_id` against a Default-active
+registry, only sessions with explicit non-default ids.
+
+**What to do.** Before comparing two identifiers that come from different
+layers of the same domain concept (a workspace id read off a session vs. one
+read off a registry; a scope key vs. a storage key; anything with a
+"no explicit value" sentinel), grep the surrounding module for an existing
+normalization convention — this codebase had ALREADY solved this exact
+equivalence once, and the second solver (this task) initially didn't reuse
+it. When a task's specified gate is narrower than the surface the change
+actually touches (here: "the three named workspace test files" vs. "every
+call site of `on_screen_resume`"), run the broader sweep anyway before
+declaring done; a gate scoped to the files the task author thought of is not
+the same as a gate scoped to the files the change can reach.

@@ -131,6 +131,12 @@ until the project's skill set changes.
 The built-in Default workspace has no "Rename" or "Archive" buttons. If you
 archive the workspace you are in, the Console switches back to Default.
 
+Activating a workspace from Settings ▸ Workspaces or Library (its "Create
+local workspace" flow, or "Set active") doesn't touch the Console screen
+directly — but the next time you visit Console, it picks up the change and
+switches its own session to match, the same as if you had switched with
+Alt+W.
+
 ### Details
 
 Open the "Details" header in the left rail to see where your chats live:
@@ -250,3 +256,9 @@ create-and-switch / create-without-switching / cancel tasks to match).*
 (task-18705: a bound folder containing `.SKILLS/` now annotates its row
 "— contains N project skill(s)" in the dialog, and a chained import prompt
 follows workspace creation).*
+*Verified against feat/task-18310-activation-seam @ c9892736f — 2026-08-20
+(task-18310: a workspace activated from Settings or Library only updates
+the registry; Console now reconciles its own session against it on the
+next resume instead of staying stale until an in-Console switch, so the
+Default-workspace paragraph above gained a one-sentence note on that; the
+rest of this page's content unchanged from the prior stamp).*

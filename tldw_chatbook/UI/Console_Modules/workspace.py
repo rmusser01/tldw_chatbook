@@ -86,6 +86,26 @@ logger = logger.bind(module="ChatScreen")
 CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS = 2.0
 
 
+def _normalized_console_workspace_id(workspace_id: str | None) -> str:
+    """Fold the "no explicit workspace" sentinels onto one identity.
+
+    A Console session's default ``workspace_id`` (unset, or the explicit
+    ``CONSOLE_GLOBAL_WORKSPACE_ID`` sentinel) and the registry's built-in
+    Default workspace row (``DEFAULT_WORKSPACE_ID`` --
+    ``ensure_default_workspace`` floors every context read to it) are THE
+    SAME state on two layers (task-15120 owner ruling, see
+    ``_set_active_workspace_for_console_session``), not two different
+    workspaces that happen to share a session. Any comparison between a
+    session's ``workspace_id`` and a registry workspace id must normalize
+    through this before comparing, or an aligned "global"/Default session
+    reads as diverged purely because of which layer's spelling it carries.
+    """
+    normalized = str(workspace_id or "").strip()
+    if not normalized or normalized == CONSOLE_GLOBAL_WORKSPACE_ID:
+        return DEFAULT_WORKSPACE_ID
+    return normalized
+
+
 class ConsoleWorkspaceController:
     """Own Workspace lifecycle, resume, scope, and conversation browsing.
 
@@ -1859,6 +1879,94 @@ class ConsoleWorkspaceController:
         # staleness risk as the switch branch above if the workspace's
         # previous session was temporary.
         self._sync_console_temporary_chip()
+
+    def _reconcile_console_session_with_registry(self) -> None:
+        """Align the Console session with the registry's active workspace.
+
+        TASK-18310: every IN-Console workspace-activation path -- the Alt+W
+        switcher (``_open_console_workspace_switcher``'s ``_switch_to``), the
+        shared create modal's Console handler
+        (``_handle_workspace_create_result``), and conversation-browser
+        row-open (``_activate_console_workspace_for_browser_row`` plus the
+        session lookup around it) -- calls ``set_active_workspace`` on the
+        registry AND ``_activate_console_session_for_workspace`` on this
+        controller together, so the registry and the Console chat store's
+        active session can never drift apart from any of those paths.
+        Cross-screen activation -- Settings' create-modal ``_done``,
+        Library's ``create_local_workspace`` ``_done``, and Settings' "Set
+        active" button (Qodo finding 5 on PR #1809) -- only calls
+        ``set_active_workspace`` on the registry, so registry/session
+        misalignment can arise EXCLUSIVELY from a cross-screen change.
+
+        Called from ``ChatScreen.on_screen_resume`` on every Console resume
+        (including the mount's own -- the store is app-level and can carry
+        a session that predates the first mount). When already aligned --
+        the overwhelmingly common case, since every in-Console path keeps
+        them in lockstep -- this is an O(1) early exit. Only on an actual
+        cross-screen divergence does it re-run the same Console-side
+        activation sequence the create handler uses, minus the registry
+        write (already done by the other surface) and the toast (the
+        originating surface already announced the switch).
+
+        Deliberately conservative: any read of the registry is guarded, and
+        a ``None`` registry, ``None`` active workspace, or ``None`` active
+        session all return quietly -- this must never break screen resume.
+
+        Comparison is normalized, not a bare ``==``: a session's default
+        ``workspace_id`` is the "no explicit workspace" sentinel
+        (``CONSOLE_GLOBAL_WORKSPACE_ID``, `""` is treated the same), while
+        the registry represents that identical state as its built-in
+        Default workspace row (``DEFAULT_WORKSPACE_ID`` --
+        ``ensure_default_workspace`` floors every context read to it). Per
+        the task-15120 owner ruling (see
+        ``_set_active_workspace_for_console_session``), those two spellings
+        are THE SAME state on two layers, not a divergence -- comparing
+        them raw here misfired on every plain/global mounted session
+        whenever the registry's active workspace was Default (its ordinary
+        resting state), tearing down a perfectly aligned session and
+        replacing it with a fresh one on every resume. Caught by two
+        existing tests going from GREEN to RED with the naive comparison
+        (`test_mounted_first_chat_ack_exception_during_resume_restores_ui`,
+        `test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_resume`).
+        """
+        registry_service = getattr(
+            self.app_instance, "workspace_registry_service", None
+        )
+        if registry_service is None:
+            return
+        try:
+            active = registry_service.get_active_workspace()
+        except Exception:
+            logger.opt(exception=True).debug(
+                "Unable to read active workspace during Console resume reconcile"
+            )
+            return
+        if active is None:
+            return
+        store = self._ensure_console_chat_store()
+        if store.active_session_id is None:
+            # Fresh-start/mount flows own creating the first session
+            # themselves -- be conservative and let them.
+            return
+        # O(1) active-session lookup (Qodo, PR #1880): with the None guard
+        # above satisfied, ensure_session() is a pure dict hit -- it only
+        # creates when active_session_id is None, which cannot be the case
+        # here. A stale id raising KeyError degrades to None, preserving the
+        # prior linear-scan semantics (treated as divergent -> reconcile).
+        try:
+            active_session = store.ensure_session()
+        except KeyError:
+            active_session = None
+        if active_session is not None and _normalized_console_workspace_id(
+            active_session.workspace_id
+        ) == _normalized_console_workspace_id(active.workspace_id):
+            return
+        self._sync_console_chat_core_state()
+        self._activate_console_session_for_workspace(active.workspace_id)
+        self._sync_console_workspace_context()
+        self.run_worker(
+            self._sync_native_console_chat_ui(), exclusive=True, group="console-sync"
+        )
 
     def _console_workspace_session_title(self, workspace_id: str) -> str:
         """Return a readable title for an auto-created workspace Console tab."""
