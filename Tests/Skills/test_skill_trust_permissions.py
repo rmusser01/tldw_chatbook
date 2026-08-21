@@ -42,9 +42,21 @@ def _store(tmp_path: Path):
     )
 
 
-def test_snapshot_first_secures_store_snapshot_manifest_and_marker(tmp_path):
+def test_snapshot_first_secures_store_snapshot_manifest_and_marker(
+    tmp_path, monkeypatch
+):
     store, marker_path = _store(tmp_path)
     keys = derive_skill_trust_keys("passphrase", salt=b"p" * 32)
+    store.store_dir.mkdir()
+    store.store_dir.chmod(0o755)
+    observed_store_modes: list[int] = []
+    original_replace = Path.replace
+
+    def inspect_then_replace(self, other):
+        observed_store_modes.append(_mode(store.store_dir))
+        return original_replace(self, other)
+
+    monkeypatch.setattr(Path, "replace", inspect_then_replace)
 
     store.save_snapshot(
         "demo-1",
@@ -52,6 +64,9 @@ def test_snapshot_first_secures_store_snapshot_manifest_and_marker(tmp_path):
         keys,
         generation=1,
     )
+
+    assert observed_store_modes
+    assert observed_store_modes[0] == 0o700
 
     snapshot_path = store.snapshots_dir / "demo-1.json"
     assert _mode(store.store_dir) == 0o700
