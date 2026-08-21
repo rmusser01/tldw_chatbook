@@ -199,17 +199,24 @@ def _anthropic_model_family(model: object) -> Optional[Tuple[str, int, Optional[
     )
 
 
-def _anthropic_is_modern_request_family(model: object) -> bool:
-    """Return whether ``model`` is in the modern Anthropic request family."""
+def _anthropic_family_matches(
+    model: object, families: frozenset  # frozenset[Tuple[str, int, Optional[int]]]
+) -> bool:
+    """Return whether ``model`` parses into one of ``families``.
+
+    A ``(tier, major, None)`` row matches every minor version in that major
+    line; a ``(tier, major, minor)`` row matches that exact minor only.
+    """
     family = _anthropic_model_family(model)
     if family is None:
         return False
     tier, major, minor = family
-    return (tier, major, None) in _ANTHROPIC_MODERN_REQUEST_FAMILIES or (
-        tier,
-        major,
-        minor,
-    ) in _ANTHROPIC_MODERN_REQUEST_FAMILIES
+    return (tier, major, None) in families or (tier, major, minor) in families
+
+
+def _anthropic_is_modern_request_family(model: object) -> bool:
+    """Return whether ``model`` is in the modern Anthropic request family."""
+    return _anthropic_family_matches(model, _ANTHROPIC_MODERN_REQUEST_FAMILIES)
 
 
 def anthropic_model_rejects_sampling_params(model: object) -> bool:
@@ -296,6 +303,94 @@ def anthropic_model_rejects_temperature_top_p_combination(model: object) -> bool
         return False
     _tier, major, _minor = family
     return major >= 4
+
+
+# How "thinking off" must be expressed, per family (TASK-18800). Two separate
+# facts about the request surface, composed by the request builder into a
+# three-way behaviour:
+#
+#   thinks_by_default=False                          -> omission already means
+#       no thinking (Opus 4.8/4.7/4.6 and earlier, Sonnet 4.6/4.5, Haiku)
+#   thinks_by_default=True, rejects_disabled=False   -> OFF needs an explicit
+#       thinking={"type": "disabled"} (Sonnet 5, Opus 5)
+#   thinks_by_default=True, rejects_disabled=True    -> OFF cannot be expressed
+#       at all; omission is the only valid move and adaptive thinking still
+#       runs (Fable 5, Mythos 5)
+#
+# Kept as two boolean predicates rather than one three-way enum because they
+# are independent questions a future model could answer in a new combination,
+# and because boolean family predicates are this module's established shape
+# (TASK-18414 / TASK-19020).
+#
+# Probe-verified against api.anthropic.com on 2026-08-20 (TASK-18800 report):
+#
+#   * claude-opus-5 + thinking={"type": "disabled"}, no effort -> 200
+#     (msg_011CeFGfHpYVXE7X7LnRmYCF, thinking_tokens 0). The effort cap on
+#     disabled thinking binds only at xhigh/max (req_011CeFGfT1wJxmsd2rRUszbc);
+#     the builder's OFF branch never pairs disabled with an effort.
+#   * claude-opus-5, thinking omitted -> 200 WITH a thinking block and 13
+#     billed thinking tokens (msg_011CeFGfkyS1LDXT46nVU5Gb) -- omission runs
+#     thinking on this family.
+#   * claude-fable-5 + thinking={"type": "disabled"} -> 400
+#     '"thinking.type.disabled" is not supported for this model.'
+#     (req_011CeFGfU3CpiKFwRigU2jRa); omitted -> 200 with a thinking block
+#     even for "Say OK." (msg_011CeFGfVjQMY6gm6SzUDpHq, thinking_tokens 7).
+#   * claude-sonnet-5 + disabled -> 200 (msg_011CeFGfvkJLz54KaEvyYXTY).
+#   * claude-sonnet-4-6 / claude-haiku-4-5, thinking omitted -> 200 with no
+#     thinking block (msg_011CeFGfzwKC4Uqtx2G7oYJW, msg_011CeFGg5DnVz6iXa22WhgRj).
+#   * claude-mythos-5 is Project Glasswing-only (404 on this key,
+#     req_011CeFGg7HZZenFq2CaQxi5A) and is included on the documented grounds
+#     that it shares Fable 5's request surface exactly -- same standing as in
+#     the TASK-18414 capability set.
+_ANTHROPIC_DEFAULT_THINKING_FAMILIES = frozenset(
+    {
+        ("sonnet", 5, None),
+        ("opus", 5, None),
+        ("fable", 5, None),
+        ("mythos", 5, None),
+    }
+)
+
+_ANTHROPIC_ALWAYS_ON_THINKING_FAMILIES = frozenset(
+    {
+        ("fable", 5, None),
+        ("mythos", 5, None),
+    }
+)
+
+
+def anthropic_model_thinks_by_default(model: object) -> bool:
+    """Return whether omitting ``thinking`` leaves thinking RUNNING on ``model``.
+
+    Args:
+        model: An Anthropic model identifier (any prefixed or suffixed form).
+
+    Returns:
+        True when a request with no ``thinking`` key runs (and bills) adaptive
+        thinking -- the Sonnet 5, Opus 5, Fable 5 and Mythos 5 families -- so
+        that turning thinking off requires more than omission. False for
+        Opus 4.8 and earlier, Sonnet 4.6 and earlier, and Haiku, where
+        omission already means no thinking, and for unrecognisable ids.
+    """
+    return _anthropic_family_matches(model, _ANTHROPIC_DEFAULT_THINKING_FAMILIES)
+
+
+def anthropic_model_rejects_disabled_thinking(model: object) -> bool:
+    """Return whether ``thinking={"type": "disabled"}`` is a 400 on ``model``.
+
+    Args:
+        model: An Anthropic model identifier (any prefixed or suffixed form).
+
+    Returns:
+        True when an explicit disabled config would be answered with
+        ``400 invalid_request_error: "thinking.type.disabled" is not supported
+        for this model.`` -- the always-on-thinking Fable 5 and Mythos 5
+        families, where omission is the only valid move and thinking runs
+        regardless. False everywhere else, including Opus 5 (which accepts
+        ``disabled`` alongside effort ``high`` or lower -- and the builder's
+        OFF branch sends no effort at all).
+    """
+    return _anthropic_family_matches(model, _ANTHROPIC_ALWAYS_ON_THINKING_FAMILIES)
 
 
 #
