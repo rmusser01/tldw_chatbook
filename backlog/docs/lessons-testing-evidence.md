@@ -6149,3 +6149,34 @@ being wired up." A negative-path test (`transport_must_not_run`,
 "assert this was never called") is the most dangerous case: it can go on
 reporting green forever while checking nothing, because a disconnected mock
 and a correctly-guarded code path are indistinguishable from the outside.
+
+---
+
+## A retained child can still lose typing when its parent recomposes it (TASK-19003, 2026-08-20)
+
+The reviewed Notes import canvas learned to patch its destination `Input` in
+place, and its bare-widget typing test passed. The production Library pilot
+still turned a burst of `i`, `n`, `b`, `o`, `x` into only `x`: the retained
+parent `LibraryNotesCanvas` recomposed the entire import child after the first
+`Input.Changed`, so the remaining key events targeted a detached widget.
+
+For live inputs, a child-level identity assertion is not enough. Drive a burst
+through the production wrapper and handler, then assert both the complete value
+and the exact `Input` identity. Every retained ancestor that synchronizes the
+field must preserve the same-mode child; one recomposing ancestor defeats all
+in-place work below it.
+
+## `exclusive=True` does not cancel work already handed to `to_thread` (TASK-19003, 2026-08-20)
+
+The first import handler scheduled an exclusive Textual worker. A repeated
+activation could cancel that worker's await while the executor already running
+in `asyncio.to_thread` continued mutating Notes. The controller then cleared its
+cancel-event reference and remained in `IMPORTING`, so the UI had lost the task
+that still owned mutation authority.
+
+Tests for off-thread mutation must gate the executor after admission, activate
+the command twice, and prove exactly one executor call reaches settlement.
+Claim authority synchronously before scheduling, reject duplicates instead of
+using cancellation as admission control, and shield/join admitted thread work
+when an outer UI task is cancelled. Cancelling the awaitable is not evidence the
+thread stopped.

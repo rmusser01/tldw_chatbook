@@ -64,7 +64,7 @@ Explicit limits:
 - Modify: `Tests/DB/test_private_sqlite_inventory.py`
 - Modify: `Tests/DB/test_private_sqlite_interop_owners.py`
 
-- [ ] Start TASK-19003 and add its implementation plan.
+- [x] Start TASK-19003 and add its implementation plan.
 
   ```bash
   backlog task edit 19003 -a @codex -s "In Progress"
@@ -72,7 +72,7 @@ Explicit limits:
   backlog task 19003 --plain
   ```
 
-- [ ] Write failing pure workflow-state tests.
+- [x] Write failing pure workflow-state tests.
 
   In `Tests/Library/test_library_note_import_state.py`, define the required phases:
 
@@ -90,17 +90,17 @@ Explicit limits:
 
   Expected: FAIL because the module does not exist.
 
-- [ ] Implement the minimal pure state projection.
+- [x] Implement the minimal pure state projection.
 
   Create frozen dataclasses and pure reducer/helpers only. Import the public types from `note_import_plan_models.py` and `note_import_execution_models.py`; do not duplicate classification, action, collision, receipt, or approval enums. Page preview items rather than mounting up to the planner ceiling. Ensure `repr` and diagnostics exclude paths, note contents, keywords, and exception text.
 
-- [ ] Write a failing no-mutation prior-observation test.
+- [x] Write a failing no-mutation prior-observation test.
 
   Add a test to `Tests/Notes/test_note_import_receipts.py` that calls a new read-only observation method when the database path is missing and when a SQLite file exists without the receipt schema. Assert the file is not created, schema/user version is unchanged, and the result is empty or a bounded typed unavailable result. Add RED private-SQLite policy/inventory tests proving the existing `notes.sync_state` owner, and only that owner, may use an SQLite-enforced read-only URI while backup remains disallowed.
 
   Expected: FAIL because `prior_observations_for_plan()` currently initializes schema inside a transaction and the current private-SQLite policy authorizes `PRIVATE_FILE` only.
 
-- [ ] Add the narrow read-only receipt lookup.
+- [x] Add the narrow read-only receipt lookup.
 
   Extend the existing `notes.sync_state` policy to `{PRIVATE_FILE, READ_ONLY_URI}` and keep `centralized_backup_allowed=False`. Keep the default `preserve_read_only_source_mode=False`: this process owns the private database, so ADR-029 permission hardening still applies on reads. Update C50 and its exact inventory/interop tests; do not add a second owner or a raw `sqlite3.connect()` URI.
 
@@ -112,15 +112,15 @@ Explicit limits:
   ../../.venv/bin/python -B -m pytest -q -p no:cacheprovider -o addopts="" Tests/Notes/test_note_import_receipts.py Tests/Notes/test_note_import_planner.py Tests/DB/test_private_sqlite.py Tests/DB/test_private_sqlite_inventory.py Tests/DB/test_private_sqlite_interop_owners.py
   ```
 
-- [ ] Write failing canvas rendering and physical-message tests.
+- [x] Write failing canvas rendering and physical-message tests.
 
   In `Tests/Widgets/Library/test_library_note_import_canvas.py`, cover accumulated file selection with `Add another file`, one-folder selection, destination input, Checking, grouped Review, collision controls, uncertain confirmation, independent replace/membership choices, Importing progress/cancel, Receipt/retry, bracket-safe filenames, disabled reasons, plain-text/glyph states, scrollability, and a 60-column compositor capture. The shared `Import once` versus `Keep a folder synced` chooser belongs only to TASK-19010/TASK-19011.
 
-- [ ] Implement the render/message-only child canvas.
+- [x] Implement the render/message-only child canvas.
 
   Follow `library_export_canvas.py` and `library_ingest_canvas.py`. The canvas receives one immutable snapshot and posts typed messages; it does not call the planner, SQLite, Notes services, or filesystem. Reuse Button/Static/Input/VerticalScroll patterns; do not introduce `Select`, a generic workflow framework, or new keybindings.
 
-- [ ] Write failing retained-shell route tests.
+- [x] Write failing retained-shell route tests.
 
   In `Tests/UI/test_library_note_import_flow.py` and existing shell tests, drive:
 
@@ -131,11 +131,11 @@ Explicit limits:
 
   Assert zero note/folder/receipt/config/private-schema mutation through review cancellation. Use a file-backed `CharactersRAGDB`; do not use `:memory:` across `execute_async()` threads. Assert the exact approved object reaches `NoteImportExecutor` and any change after approval discards that authority.
 
-- [ ] Implement the focused controller with named late-bound dependencies.
+- [x] Implement the focused controller with named late-bound dependencies.
 
   `LibraryNoteImportController` receives callables/objects for picker callbacks, `CharactersRAGDB`, `LocalNoteFolderRepository`, receipt path/repository, planner transforms, executor construction, UI snapshot publication, and post-settlement refresh. It owns the workflow state and task handles; it exposes typed methods such as `begin_selection`, `accept_selected_path`, `check`, `approve_and_execute`, `cancel`, `retry_failed`, and `snapshot`. Tests inject fakes without mounting Textual. Do not add a generic controller base class.
 
-- [ ] Replace the legacy immediate-import handler with controller delegation.
+- [x] Replace the legacy immediate-import handler with controller delegation.
 
   In `library_screen.py`, replace `_import_library_note_from_path()` and `_fail_library_note_import()` routing with dedicated import workflow state. Use:
 
@@ -152,17 +152,17 @@ Explicit limits:
 
   Repeated file selection uses the existing `FileOpen(offer_select_folder=True)` one selection at a time; do not build a new multi-file picker. Its callback returns either a file or the viewed folder, and the controller branches on `Path.is_dir()`. A folder selection terminates accumulation. Destination segments remain in workflow state and are not persisted before approval.
 
-- [ ] Preserve retained canvas, focus, footer, and hidden completion.
+- [x] Preserve retained canvas, focus, footer, and hidden completion.
 
   Add import values to `_library_notes_view` and update `_library_notes_canvas_kwargs()`, `_library_notes_focus_region()`, `_library_notes_semantic_role()`, `_library_notes_scroll_owner()`, `_library_notes_role_target()`, `_library_notes_fallback_focus_target()`, `_library_notes_footer_shortcuts()`, `action_library_notes_escape()`, and `_select_library_rail_row_after_source_admission()`. These methods delegate behavior to `LibraryNoteImportController`; do not put planner/executor branches back into `library_screen.py`.
 
   Completion updates screen-owned progress/receipt even when the canvas is hidden. Only DOM synchronization is route-gated. Navigation during admitted mutation follows the existing operation fence; navigation after settlement can revisit the latest receipt.
 
-- [ ] Prove refresh, cancellation, retry, and legacy Sync coexistence.
+- [x] Prove refresh, cancellation, retry, and legacy Sync coexistence.
 
   After settlement, call `_refresh_local_source_snapshot()` and `_request_library_notes_tree_refresh(refresh_root=True)`. Add tests for cancellation before approval, cooperative cancellation during execution, partial receipt counts, retry of failed items, stale plan/collision failure, route changes, and missing local targets. Extend `Tests/UI/test_library_canvas_scoped_sync.py` to prove Review -> Importing -> Receipt retains the same rail/canvas and then prove legacy Sync still opens, runs, and exits normally.
 
-- [ ] Run focused and established backend gates.
+- [x] Run focused and established backend gates.
 
   ```bash
   ../../.venv/bin/python -B -m pytest -q -p no:cacheprovider -o addopts="" Tests/Library/test_library_note_import_state.py Tests/UI/Library_Modules/test_library_note_import_controller.py Tests/Widgets/Library/test_library_note_import_canvas.py Tests/UI/test_library_note_import_flow.py Tests/UI/test_library_canvas_scoped_sync.py Tests/UI/test_library_modal_dismissal.py Tests/Widgets/Library/test_library_notes_canvas.py
@@ -171,7 +171,7 @@ Explicit limits:
   git diff --check
   ```
 
-- [ ] Update the guide, commit, and close TASK-19003 only after all gates pass.
+- [x] Update the guide, commit, and close TASK-19003 only after all gates pass.
 
   Document `Import once`, one-or-more-file accumulation, one-folder selection, destination semantics, review classifications, partial cancellation, retry, same-session receipt revisit, and the continuing separate legacy Sync entry.
 
