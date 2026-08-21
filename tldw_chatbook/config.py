@@ -4666,7 +4666,12 @@ _FIRST_PROFILE_CREATED_THIS_SESSION = False
 
 
 def first_profile_created_this_session() -> bool:
-    """Return whether this process created the active profile config."""
+    """Return whether this process created the active profile config.
+
+    Returns:
+        ``True`` when this process created the active profile configuration;
+        otherwise ``False``.
+    """
     return _FIRST_PROFILE_CREATED_THIS_SESSION
 
 

@@ -2739,7 +2739,9 @@ async def test_library_persistence_warning_is_screen_owned_on_non_landing_routes
 
 
 @pytest.mark.asyncio
-async def test_library_onboarding_positive_wins_while_another_owner_hangs() -> None:
+async def test_library_onboarding_positive_wins_while_another_owner_hangs(
+    monkeypatch,
+) -> None:
     gates = _LibraryEvidenceGates(
         outcomes={"skills": [LibraryContentEvidence.HAS_USER_CONTENT]}
     )
@@ -2750,6 +2752,18 @@ async def test_library_onboarding_positive_wins_while_another_owner_hangs() -> N
         async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
             screen = host.screen_stack[-1]
             await _wait_for_evidence_round(pilot, gates)
+            applied_evidence: list[tuple[LibraryContentEvidence, ...]] = []
+            original_apply = screen._apply_library_onboarding_evidence
+
+            def capture_apply(generation, admission_key, evidence):
+                applied_evidence.append(tuple(evidence))
+                return original_apply(generation, admission_key, evidence)
+
+            monkeypatch.setattr(
+                screen,
+                "_apply_library_onboarding_evidence",
+                capture_apply,
+            )
             gates.release_round(0, "skills")
             await _wait_for_condition(
                 pilot,
@@ -2758,6 +2772,12 @@ async def test_library_onboarding_positive_wins_while_another_owner_hangs() -> N
                 message="positive evidence waited for the hanging owner",
             )
             assert gates.gates["collections"][0].release.is_set() is False
+            assert len(applied_evidence) == 1
+            assert len(applied_evidence[0]) == 6
+            assert applied_evidence[0].count(
+                LibraryContentEvidence.HAS_USER_CONTENT
+            ) == 1
+            assert applied_evidence[0].count(LibraryContentEvidence.UNKNOWN) == 5
     finally:
         gates.release_all()
 

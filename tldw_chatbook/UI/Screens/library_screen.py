@@ -15630,10 +15630,14 @@ class LibraryScreen(BaseAppScreen):
                         result = LibraryContentEvidence.UNKNOWN
                     evidence.append(result)
                     if result is LibraryContentEvidence.HAS_USER_CONTENT:
+                        evidence.extend(
+                            LibraryContentEvidence.UNKNOWN
+                            for _task in range(len(tasks) - len(evidence))
+                        )
                         self._apply_library_onboarding_evidence(
                             generation,
                             admission_key,
-                            [result],
+                            evidence,
                         )
                         return
             evidence.extend(LibraryContentEvidence.UNKNOWN for _task in pending)

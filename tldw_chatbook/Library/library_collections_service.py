@@ -78,7 +78,12 @@ class LibraryCollectionsService(Protocol):
         """List active Library Collections."""
 
     def get_library_user_content_evidence(self) -> LibraryContentEvidence:
-        """Return tri-state evidence for active local Collections."""
+        """Return tri-state evidence for active local Collections.
+
+        Returns:
+            Evidence that active local Collections exist or are
+            authoritatively absent.
+        """
 
     def get_collection(self, collection_id: str) -> LibraryCollectionRecord | None:
         """Return one active Library Collection if it exists."""
@@ -202,7 +207,12 @@ class LocalLibraryCollectionsService:
         return tuple(_record_from_row(row) for row in rows)
 
     def get_library_user_content_evidence(self) -> LibraryContentEvidence:
-        """Return tri-state evidence for active local Collections."""
+        """Return tri-state evidence for active local Collections.
+
+        Returns:
+            Evidence that active local Collections exist or are
+            authoritatively absent.
+        """
         try:
             with self.db.connection() as conn:
                 total = conn.execute(

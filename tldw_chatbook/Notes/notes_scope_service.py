@@ -1280,7 +1280,16 @@ class NotesScopeService:
         scope: ScopeType | str,
         user_id: Optional[str] = None,
     ) -> LibraryContentEvidence:
-        """Return tri-state evidence for accessible active user notes."""
+        """Return tri-state evidence for accessible active user notes.
+
+        Args:
+            scope: Notes authority to inspect.
+            user_id: Local note owner identifier. Required for local notes.
+
+        Returns:
+            Evidence that the selected authority has eligible user notes,
+            is authoritatively empty, or cannot be determined.
+        """
         normalized_scope = self._normalize_scope(scope)
         if normalized_scope == ScopeType.WORKSPACE:
             return LibraryContentEvidence.UNKNOWN

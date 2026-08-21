@@ -1462,7 +1462,19 @@ class PromptScopeService:
     async def get_library_user_content_evidence(
         self, *, mode: PromptBackend | str = "local"
     ) -> LibraryContentEvidence:
-        """Return tri-state evidence for active user-owned prompts."""
+        """Return tri-state evidence for active user-owned prompts.
+
+        Server prompt summaries do not expose ownership provenance, so a
+        non-empty server page remains unknown rather than being treated as
+        user-owned content.
+
+        Args:
+            mode: Prompt backend authority to inspect.
+
+        Returns:
+            Evidence that eligible user-owned prompts exist, are
+            authoritatively absent, or cannot be determined.
+        """
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode == PromptBackend.LOCAL:
             total = await self.count_prompts(mode=normalized_mode)
