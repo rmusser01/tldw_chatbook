@@ -265,6 +265,7 @@ def test_metadata_subclasses_are_rejected_before_stateful_field_access() -> None
         "pack/../idle.png",
         "/private/idle.png",
         "C:/idle.png",
+        "safe/C:/idle.png",
         "C:\\idle.png",
         "//server/share/idle.png",
         "pack\\idle.png",
@@ -284,6 +285,22 @@ def test_load_rejects_unsafe_relative_storage_keys(
     with pytest.raises(PersonaVisualAssetError, match=f"^{ASSET_INVALID_REASON}$"):
         load_persona_visual_asset(
             tmp_path, storage_key=storage_key, metadata=_metadata(data)
+        )
+
+
+def test_load_rejects_existing_nested_windows_drive_storage_key(
+    tmp_path: Path,
+) -> None:
+    data = _image_bytes()
+    nested_drive = tmp_path / "safe" / "C:"
+    nested_drive.mkdir(parents=True)
+    (nested_drive / "idle.png").write_bytes(data)
+
+    with pytest.raises(PersonaVisualAssetError, match=f"^{ASSET_INVALID_REASON}$"):
+        load_persona_visual_asset(
+            tmp_path,
+            storage_key="safe/C:/idle.png",
+            metadata=_metadata(data),
         )
 
 

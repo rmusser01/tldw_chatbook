@@ -207,7 +207,7 @@ def _storage_parts(storage_key: object, mime_type: str) -> tuple[str, ...]:
         path.is_absolute()
         or path.as_posix() != storage_key
         or any(part in {"", ".", ".."} for part in parts)
-        or (len(parts[0]) >= 2 and parts[0][1] == ":")
+        or any(":" in part for part in parts)
     ):
         raise ValueError
     for part in parts:

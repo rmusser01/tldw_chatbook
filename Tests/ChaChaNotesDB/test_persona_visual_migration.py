@@ -301,6 +301,43 @@ def test_persona_visual_schema_enforces_immutable_graph_relationships(
         db.close_connection()
 
 
+def test_persona_visual_schema_rejects_nested_windows_drive_storage_paths(
+    tmp_path: Path,
+) -> None:
+    db = CharactersRAGDB(tmp_path / "storage-paths.db", client_id="storage-paths")
+    try:
+        connection = db.get_connection()
+        pack_id, version_id = _insert_pack_version(connection, "Storage paths")
+
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                """
+                INSERT INTO persona_visual_pack_versions(
+                    pack_id, version_number, renderer_type, manifest_version,
+                    manifest_json, manifest_sha256, storage_relpath
+                ) VALUES (?, 2, 'sprite_frames', 1, '{}', ?, ?)
+                """,
+                (pack_id, "b" * 64, "persona_visual/C:/manifest.json"),
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                """
+                INSERT INTO persona_visual_assets(
+                    pack_id, pack_version_id, asset_key, role, storage_relpath,
+                    mime_type, bytes, sha256, width, height
+                ) VALUES (?, ?, 'idle', 'frame', ?, 'image/png', 1, ?, 1, 1)
+                """,
+                (
+                    pack_id,
+                    version_id,
+                    "persona_visual/C:/idle.png",
+                    "c" * 64,
+                ),
+            )
+    finally:
+        db.close_connection()
+
+
 def test_v40_to_v41_failure_rolls_back_all_persona_visual_tables(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

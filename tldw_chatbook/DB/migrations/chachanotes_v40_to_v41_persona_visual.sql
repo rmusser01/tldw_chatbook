@@ -33,7 +33,7 @@ CREATE TABLE persona_visual_pack_versions (
         CHECK(storage_relpath <> ''
               AND substr(storage_relpath, 1, 1) <> '/'
               AND instr(storage_relpath, char(92)) = 0
-              AND storage_relpath NOT GLOB '[A-Za-z]:*'
+              AND instr(storage_relpath, ':') = 0
               AND storage_relpath <> '..'
               AND storage_relpath NOT LIKE '../%'
               AND storage_relpath NOT LIKE '%/../%'
@@ -53,7 +53,7 @@ CREATE TABLE persona_visual_assets (
         CHECK(storage_relpath <> ''
               AND substr(storage_relpath, 1, 1) <> '/'
               AND instr(storage_relpath, char(92)) = 0
-              AND storage_relpath NOT GLOB '[A-Za-z]:*'
+              AND instr(storage_relpath, ':') = 0
               AND storage_relpath <> '..'
               AND storage_relpath NOT LIKE '../%'
               AND storage_relpath NOT LIKE '%/../%'

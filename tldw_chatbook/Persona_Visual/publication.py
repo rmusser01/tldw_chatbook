@@ -128,8 +128,21 @@ def publish_persona_visual(
 ) -> PersonaVisualPublicationResult:
     """Publish one complete immutable directory and activate it atomically in SQLite.
 
-    ``authority_guard`` is checked both before and inside the repository transaction;
-    callers must provide a side-effect-free, read-only callback.
+    Args:
+        repository: Idle Persona Visual repository that owns the activation.
+        snapshot: Fully bounded manifest, provenance, asset, and authority snapshot.
+        source_root: Absolute root containing the snapshotted source assets.
+        profile_root: Absolute profile root receiving immutable pack storage.
+        authority_guard: Side-effect-free callback checked before and inside the
+            repository transaction.
+        atomic_replace: Atomic rename operation, injectable for failure testing.
+
+    Returns:
+        The old and new identities plus any cleanup capability.
+
+    Raises:
+        PersonaVisualPublicationError: If validation, authority, storage, or
+            activation fails. The exception message is always a stable category.
     """
 
     if type(repository) is not PersonaVisualRepository:

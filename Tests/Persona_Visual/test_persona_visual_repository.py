@@ -1281,6 +1281,32 @@ def test_publish_rejects_pathlike_asset_key(
         )
 
 
+@pytest.mark.parametrize("target", ("manifest", "asset"))
+def test_activate_rejects_nested_windows_drive_storage_paths(
+    repository: PersonaVisualRepository,
+    target: str,
+) -> None:
+    manifest_storage = "persona_visual/invalid/manifest.json"
+    asset_storage = "persona_visual/invalid/idle.png"
+    if target == "manifest":
+        manifest_storage = "persona_visual/C:/manifest.json"
+        category = "persona_visual_storage_invalid"
+    else:
+        asset_storage = "persona_visual/C:/idle.png"
+        category = "persona_visual_asset_invalid"
+
+    with pytest.raises(ValueError, match=f"^{category}$"):
+        repository.activate_new_pack(
+            persona_id=f"persona-invalid-{target}-storage",
+            title="Invalid storage path",
+            manifest=_valid_manifest(),
+            manifest_storage_relpath=manifest_storage,
+            assets=[_asset(storage_relpath=asset_storage)],
+            expected_persona_revision=1,
+            authority_guard=lambda: True,
+        )
+
+
 def test_corrupt_stored_pathlike_asset_key_is_never_returned(
     repository: PersonaVisualRepository,
     db: CharactersRAGDB,

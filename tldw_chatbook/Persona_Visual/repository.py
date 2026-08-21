@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import PurePosixPath
 from typing import Any
-from uuid import uuid4
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 
@@ -130,7 +129,7 @@ class PersonaVisualGraph:
 
 
 @dataclass(frozen=True, slots=True)
-class _AssetWrite:
+class AssetWrite:
     asset_key: str
     role: str
     storage_relpath: str
@@ -623,7 +622,7 @@ class PersonaVisualRepository:
         self,
         pack_id: int,
         version_id: int,
-        assets: tuple[_AssetWrite, ...],
+        assets: tuple[AssetWrite, ...],
     ) -> None:
         for asset in assets:
             self.db.execute_query(
@@ -690,7 +689,7 @@ class PersonaVisualRepository:
 
 def _manifest_json(
     manifest: object,
-    assets: tuple[_AssetWrite, ...],
+    assets: tuple[AssetWrite, ...],
 ) -> tuple[str, PersonaVisualManifest, str]:
     try:
         canonical = _json_dump(manifest)
@@ -734,10 +733,10 @@ def _validate_stored_source_context(value: object) -> None:
         raise ValueError("persona_visual_source_context_invalid") from None
 
 
-def _asset_writes(assets: object) -> tuple[_AssetWrite, ...]:
+def _asset_writes(assets: object) -> tuple[AssetWrite, ...]:
     if not isinstance(assets, Sequence) or isinstance(assets, (str, bytes)):
         raise ValueError("persona_visual_asset_invalid")
-    result: list[_AssetWrite] = []
+    result: list[AssetWrite] = []
     try:
         for candidate in assets:
             if not isinstance(candidate, Mapping):
@@ -775,7 +774,7 @@ def _asset_writes(assets: object) -> tuple[_AssetWrite, ...]:
             ):
                 raise ValueError
             result.append(
-                _AssetWrite(
+                AssetWrite(
                     asset_key=asset_key,
                     role=role,
                     storage_relpath=_storage_relpath(candidate["storage_relpath"]),
@@ -953,7 +952,7 @@ def _storage_relpath(value: object) -> str:
         path.is_absolute()
         or value != path.as_posix()
         or any(part in {"", ".", ".."} for part in parts)
-        or (len(value) > 1 and value[1] == ":")
+        or any(":" in part for part in parts)
     ):
         raise ValueError("persona_visual_storage_invalid")
     return value
@@ -990,7 +989,6 @@ def _run_authority_guard(
     if not isinstance(transaction_connection, sqlite3.Connection):
         raise ValueError("persona_visual_authority_changed")
     connection = transaction_connection
-    savepoint = f"persona_visual_guard_{uuid4().hex}"
     allowed_actions = {
         sqlite3.SQLITE_SELECT,
         sqlite3.SQLITE_READ,
@@ -1016,7 +1014,7 @@ def _run_authority_guard(
     released = False
     authorizer_installed = False
     try:
-        connection.execute(f"SAVEPOINT {savepoint}")
+        connection.execute("SAVEPOINT persona_visual_authority_guard")
         changes_before = connection.total_changes
         connection.set_authorizer(read_only_authorizer)
         authorizer_installed = True
@@ -1034,7 +1032,7 @@ def _run_authority_guard(
             and connection.total_changes == changes_before
         )
         if ownership_preserved:
-            connection.execute(f"RELEASE SAVEPOINT {savepoint}")
+            connection.execute("RELEASE SAVEPOINT persona_visual_authority_guard")
             released = True
     except (sqlite3.Error, TypeError, ValueError, OverflowError):
         valid = False
