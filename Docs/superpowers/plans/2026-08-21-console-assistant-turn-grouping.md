@@ -4,7 +4,7 @@
 
 **Goal:** Render each Console agent response as one Assistant-owned turn whose collapsed reasoning/tool activity precedes the visible final answer inside the same surface.
 
-**Architecture:** Preserve the persisted message tree and display-only TOOL marker contract. Add structured, session-only activity presentation at the bridge seam; derive Assistant turn ownership from contiguous transcript messages; and render each derived turn through a focused composite widget while the transcript retains reconciliation, selection, expansion, pruning, and export ownership. Live and resumed runs share status and Thinking helpers so their activity order cannot drift.
+**Architecture:** Preserve the persisted message tree and display-only TOOL marker contract. Carry optional structured tool outcome provenance across the internal provider/runtime step boundary, then build session-only activity presentation at the bridge seam; derive Assistant turn ownership from contiguous transcript messages; and render each derived turn through a focused composite widget while the transcript retains reconciliation, selection, expansion, pruning, and export ownership. Live and resumed runs share status and Thinking helpers so their activity order cannot drift.
 
 **Tech Stack:** Python 3.11+, Textual 8.x, Rich, dataclasses/`Literal`, pytest/pytest-asyncio, generated TCSS.
 
@@ -12,9 +12,9 @@
 
 **Task:** `backlog/tasks/task-19426 - Group-Console-tool-activity-inside-assistant-turns.md`
 
-**ADR required:** no
-**ADR path:** N/A
-**Reason:** This is presentation-only. The conversation tree, display-only marker ownership, provider/runtime contracts, run log, and database schema stay unchanged. ADR-031 still governs keybinding/footer-hint truthfulness.
+**ADR required:** yes
+**ADR path:** `backlog/decisions/078-structured-agent-tool-outcome-provenance.md`
+**Reason:** The conversation tree and session-only marker ownership stay unchanged, but collision-safe status adds optional `ToolResult.outcome`/`AgentStep.tool_outcome` facts to the internal provider/runtime contract. ADR-078 records the `asdict`-to-existing-steps-JSON persistence, legacy/malformed fallback, and why no SQLite or external provider-wire migration is required. ADR-031 still governs keybinding/footer-hint truthfulness.
 
 ---
 
@@ -22,7 +22,8 @@
 
 - Create `tldw_chatbook/Chat/console_turn_grouping.py`: pure, Textual-free grouping and visual-order helpers.
 - Create `tldw_chatbook/Widgets/Console/console_assistant_turn.py`: Assistant container and activity disclosure rendering/events.
-- Modify `tldw_chatbook/Chat/console_chat_models.py`, `console_agent_bridge.py`, and `console_chat_store.py`: structured session-only activity metadata, safe Thinking derivation, live/resume parity.
+- Modify `tldw_chatbook/Agents/agent_models.py`, `agent_runtime.py`, and policy-owning tool providers: optional structured tool outcome provenance before result flattening.
+- Modify `tldw_chatbook/Chat/console_chat_models.py`, `console_agent_bridge.py`, and `console_chat_store.py`: structured session-only activity metadata, safe legacy/malformed status fallback, safe Thinking derivation, and live/resume parity.
 - Modify `tldw_chatbook/Widgets/Console/console_transcript.py`: composite row planning/reconciliation, selection, expansion, pruning, windowing, export.
 - Modify `_agentic_terminal.tcss` and regenerate `tldw_cli_modular.tcss`.
 - Add focused Chat/UI tests and extend the existing bridge, transcript, disclosure, pruning, and CSS suites.
@@ -45,7 +46,9 @@ Preserve these invariants in every task:
 **Files:**
 - Modify: `tldw_chatbook/Chat/console_chat_models.py:536-636`
 - Modify: `tldw_chatbook/Chat/console_chat_store.py:2150-2285`
+- Modify: `tldw_chatbook/Agents/agent_models.py`, `agent_runtime.py`, `tool_catalog.py`, `local_tool_provider.py`, `mcp_tool_provider.py`
 - Modify: `tldw_chatbook/Chat/console_agent_bridge.py:500-930,3747-3845,5488-5630,5818-5850`
+- Modify: `Tests/Agents/test_agent_runtime.py`, provider-focused tests
 - Create: `Tests/Chat/test_console_activity_presentation.py`
 - Modify: `Tests/Chat/test_console_agent_bridge.py:2631-3065`
 
@@ -90,18 +93,17 @@ class ConsoleActivityPresentation:
 
 Add `activity_presentation: ConsoleActivityPresentation | None = None` to `ConsoleChatMessage` and `append_message`. Pass it only to the in-memory dataclass; do not add it to DB metadata, trajectory payloads, provider history, or restore serialization.
 
-- [ ] **Step 4: Write failing classifier tests.** Parametrize successful results, unknown `ERROR:` failures, approval timeout, `STEP_ERROR`, direct controller review-hook verdicts (`USER_DENIED_REFUSAL`, `KILL_SWITCH_REFUSAL`), and runtime-enveloped canonical refusals imported from builtin/local/MCP providers (deny, timeout, kill switch, unresolved permission, root changed).
+- [ ] **Step 4: Write failing outcome/classifier tests.** Drive the real runtime-to-bridge path with successful content beginning `ERROR:` and successful content equal to controller denial copy; both must remain `success`. Cover ordinary dispatched `ToolResult(ok=False)` as `failed`, provider policy refusal and direct controller review refusal as `blocked`, and live/persisted/resumed parity. Keep legacy steps with no fact and malformed persisted values as non-raising compatibility cases that use the conservative result-text fallback.
 
 ```python
-@pytest.mark.parametrize("refusal", BLOCKED_PROVIDER_REFUSALS)
-def test_enveloped_provider_refusals_are_blocked(refusal):
-    assert classify_activity_status(STEP_TOOL_RESULT, f"ERROR: {refusal}") == "blocked"
+def test_successful_error_looking_payload_is_success():
+    step = run_tool(ToolResult(ok=True, content="ERROR: harmless payload"))
+    assert step.tool_outcome == "success"
+    assert classify_activity_status(
+        STEP_TOOL_RESULT, step.result, tool_outcome=step.tool_outcome
+    ) == "success"
 
-@pytest.mark.parametrize("verdict", [USER_DENIED_REFUSAL.format(name="fs_list"), KILL_SWITCH_REFUSAL])
-def test_direct_controller_verdicts_are_blocked(verdict):
-    assert classify_activity_status(STEP_TOOL_RESULT, verdict) == "blocked"
-
-def test_unknown_enveloped_error_is_failed():
+def test_legacy_step_uses_safe_fallback():
     assert classify_activity_status(STEP_TOOL_RESULT, "ERROR: disk exploded") == "failed"
 ```
 
@@ -110,16 +112,24 @@ def test_unknown_enveloped_error_is_failed():
 Run: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Chat/test_console_activity_presentation.py -k status -q`
 Expected: FAIL.
 
-- [ ] **Step 6: Implement one bridge-owned classifier, step presentation builder, and explicit non-step presentation inventory.** Match direct controller review verdicts before the success path, then unwrap `ERROR:` before matching dispatched-provider refusal constants. Use exported controller/provider constants and pinned builtin prefixes only where the tool name is appended. Attach explicit structured presentations at every known non-step TOOL-marker builder: `append_todo_marker`; live diff-feedback append; live `_append_change_markers`; and resume change summary, sub-agent-post-turn summary, concurrent-sub-agent warning, change-tracking failure, and diff-feedback block construction. Use bounded literal labels such as `Tasks updated`, `Changes`, `Sub-agent changes`, `Concurrent sub-agent`, `Change tracking`, and `Feedback delivered`; use `failed` for tracking failure and `done` for informational notices.
+- [ ] **Step 6: Implement structured runtime outcome provenance, one bridge-owned compatibility classifier, the step presentation builder, and explicit non-step presentation inventory.** Add optional bounded `ToolResult.outcome` and `AgentStep.tool_outcome` facts. Providers mark policy/permission refusals with `ToolResult.blocked`. Before flattening content, runtime precedence is: non-`proceed` review verdict `blocked`; dispatched `ok=True` `success`; dispatched `ok=False` with blocked provenance `blocked`; other `ok=False` `failed`. Live and resume builders trust only the three valid facts; missing/unknown values fall back to direct-controller and `ERROR:`-envelope parsing for old records. Attach explicit structured presentations at every known non-step TOOL-marker builder: `append_todo_marker`; live diff-feedback append; live `_append_change_markers`; and resume change summary, sub-agent-post-turn summary, concurrent-sub-agent warning, change-tracking failure, and diff-feedback block construction. Use bounded literal labels such as `Tasks updated`, `Changes`, `Sub-agent changes`, `Concurrent sub-agent`, `Change tracking`, and `Feedback delivered`; use `failed` for tracking failure and `done` for informational notices.
 
 ```python
-def classify_activity_status(kind: str, result: Any = None) -> ConsoleActivityStatus:
+def classify_activity_status(
+    kind: str,
+    result: Any = None,
+    *,
+    tool_outcome: ToolOutcome | None = None,
+) -> ConsoleActivityStatus:
     if kind == STEP_APPROVAL_TIMEOUT:
         return "blocked"
     if kind == STEP_ERROR:
         return "failed"
     if kind != STEP_TOOL_RESULT:
         return "done"
+    if tool_outcome in {"success", "failed", "blocked"}:
+        return tool_outcome
+    # Compatibility floor for old/malformed persisted step dictionaries.
     text = str(result if result is not None else "")
     if _is_direct_controller_block(text):
         return "blocked"
@@ -129,7 +139,7 @@ def classify_activity_status(kind: str, result: Any = None) -> ConsoleActivitySt
     return "blocked" if _is_blocked_tool_refusal(error) else "failed"
 ```
 
-Thread presentation through live `_append_marker` and `resume_marker_messages`; derive step labels from bounded `tool_name`/step kind, never from marker text. For non-step builders, pass their explicit presentation alongside the same formatter call that creates their body.
+`AgentService._persist` already uses `dataclasses.asdict(step)` and `AgentRunsDB` stores the list as JSON in the existing SQLite field; the optional key needs no SQLite migration. Resume reads dictionaries with `.get`, so absent or unknown values remain compatible. This internal dataclass addition does not alter hosted-provider wire payloads. Thread presentation through live `_append_marker` and `resume_marker_messages`; derive step labels from bounded `tool_name`/step kind, never from marker text. For non-step builders, pass their explicit presentation alongside the same formatter call that creates their body.
 
 - [ ] **Step 7: Add live/resume presentation inventory tests.** Assert every known builder above produces the intended non-generic kind/label/status, and that live/resumed change summaries, failures, concurrent/sub-agent notices, and diff-feedback disclosures have identical presentation metadata as well as identical content. Task snapshots are live-only and should be tested as such. Keep one legacy marker-without-metadata test proving the neutral `Activity · done` fallback remains available.
 
@@ -141,7 +151,7 @@ Expected: PASS.
 - [ ] **Step 9: Commit.**
 
 ```bash
-git add tldw_chatbook/Chat/console_chat_models.py tldw_chatbook/Chat/console_chat_store.py tldw_chatbook/Chat/console_agent_bridge.py Tests/Chat/test_console_activity_presentation.py Tests/Chat/test_console_agent_bridge.py
+git add tldw_chatbook/Agents/agent_models.py tldw_chatbook/Agents/agent_runtime.py tldw_chatbook/Agents/tool_catalog.py tldw_chatbook/Agents/local_tool_provider.py tldw_chatbook/Agents/mcp_tool_provider.py tldw_chatbook/Chat/console_chat_models.py tldw_chatbook/Chat/console_chat_store.py tldw_chatbook/Chat/console_agent_bridge.py Tests/Agents/test_agent_runtime.py Tests/Chat/test_console_activity_presentation.py Tests/Chat/test_console_agent_bridge.py
 git commit -m "feat: add structured Console activity presentation"
 ```
 
@@ -450,7 +460,7 @@ git commit -m "style: group Console activity within assistant turns"
 - [ ] **Step 1: Run the complete focused feature set.**
 
 ```bash
-/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Chat/test_console_activity_presentation.py Tests/Chat/test_console_turn_grouping.py Tests/Chat/test_console_agent_bridge.py Tests/Chat/test_tool_output_disclosure.py Tests/UI/test_console_assistant_turn.py Tests/UI/test_console_native_transcript.py Tests/UI/test_console_transcript_pruning.py Tests/UI/test_console_transcript_selection_prune_bound.py Tests/UI/test_console_agent_tool_row_css.py -q
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Agents/test_agent_runtime.py Tests/Agents/test_local_tool_provider.py Tests/Agents/test_mcp_tool_provider.py Tests/Agents/test_tool_catalog.py Tests/Chat/test_console_activity_presentation.py Tests/Chat/test_console_turn_grouping.py Tests/Chat/test_console_agent_bridge.py Tests/Chat/test_tool_output_disclosure.py Tests/UI/test_console_assistant_turn.py Tests/UI/test_console_native_transcript.py Tests/UI/test_console_transcript_pruning.py Tests/UI/test_console_transcript_selection_prune_bound.py Tests/UI/test_console_agent_tool_row_css.py -q
 ```
 
 Expected: PASS.
@@ -490,7 +500,7 @@ Expected: PASS, or reproduce/document any pre-existing failure against clean `or
 7. Resume the conversation; verify identical activity order and collapsed defaults.
 8. Capture wide/narrow screenshots in a temporary/task evidence path; do not add them unless repository convention requires it.
 
-- [ ] **Step 6: Self-review the diff against the spec.** Search specifically for marker-string parsing; accidental metadata persistence; raw private reasoning; orphan/cross-branch attribution; duplicate widget ids; nested text-selection breakage; divergent expansion paths; remaining direct-child pruning assumptions; full-output/diff leaks in export; source/bundle CSS drift; and unrelated files from the original dirty checkout.
+- [ ] **Step 6: Self-review the diff against the spec and ADR-078.** Search specifically for new runtime steps classified from payload text instead of structured outcome; providers returning policy refusals without blocked provenance; malformed persisted outcome values that raise; accidental conversation metadata persistence; raw private reasoning; orphan/cross-branch attribution; duplicate widget ids; nested text-selection breakage; divergent expansion paths; remaining direct-child pruning assumptions; full-output/diff leaks in export; source/bundle CSS drift; and unrelated files from the original dirty checkout.
 
 - [ ] **Step 7: Request code review.** Use `superpowers:requesting-code-review`, address substantive findings, and rerun affected tests plus `git diff --check`.
 
