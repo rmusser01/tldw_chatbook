@@ -85,6 +85,12 @@ class _OuterScrollHarness(_Harness):
             yield Static("after", classes="outer-filler")
 
 
+class _FocusHarness(_Harness):
+    def compose(self) -> ComposeResult:
+        yield self.section
+        yield Button("Outside", id="outside")
+
+
 def _section(
     count: int,
     *,
@@ -309,6 +315,73 @@ async def test_content_and_allocation_changes_clamp_and_reconcile_state() -> Non
         assert section.viewport.scroll_y == 0
         assert section.viewport.can_focus is False
         assert section.hint.display is False
+
+
+@pytest.mark.asyncio
+async def test_viewport_focus_recovers_once_when_overflow_disappears() -> None:
+    recovered: list[None] = []
+    content = Static(_lines(21), id="shrinking-content")
+    app: _FocusHarness
+
+    def recover_focus() -> None:
+        recovered.append(None)
+        app.query_one("#outside", Button).focus()
+
+    section = ConsoleBoundedSection(
+        content,
+        section_id="focus-shrink",
+        on_focus_recovery=recover_focus,
+    )
+    app = _FocusHarness(section)
+
+    async with app.run_test(size=(60, 30)) as pilot:
+        await _settle(pilot)
+        section.viewport.focus()
+        await pilot.pause()
+        assert app.focused is section.viewport
+        assert section.viewport.can_focus is True
+
+        content.update(_lines(3))
+        section.request_reconcile()
+        await _settle(pilot)
+        assert recovered == [None]
+        assert section.viewport.can_focus is False
+        assert app.focused is app.query_one("#outside", Button)
+
+        section.request_reconcile()
+        await _settle(pilot)
+        assert recovered == [None]
+
+
+@pytest.mark.asyncio
+async def test_removed_former_descendant_does_not_steal_valid_outside_focus() -> None:
+    recovered: list[None] = []
+    focused_row = Button("Inside", id="inside")
+    section = ConsoleBoundedSection(
+        focused_row,
+        Static(_lines(20), id="inside-tail"),
+        section_id="outside-focus",
+        allocation=5,
+        on_focus_recovery=lambda: recovered.append(None),
+    )
+    app = _FocusHarness(section)
+
+    async with app.run_test(size=(60, 30)) as pilot:
+        await _settle(pilot)
+        focused_row.focus()
+        await pilot.pause()
+        assert app.focused is focused_row
+
+        outside = app.query_one("#outside", Button)
+        outside.focus()
+        await pilot.pause()
+        assert app.focused is outside
+
+        await focused_row.remove()
+        section.request_reconcile()
+        await _settle(pilot)
+        assert recovered == []
+        assert app.focused is outside
 
 
 def _wheel_down(widget: Widget) -> events.MouseScrollDown:

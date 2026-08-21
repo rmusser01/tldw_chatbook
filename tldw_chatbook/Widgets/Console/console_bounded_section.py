@@ -228,7 +228,11 @@ class ConsoleBoundedSection(Vertical):
                 viewport.scroll_y,
                 max(0, desired - target_height),
             )
-            viewport.can_focus = False
+            self._set_viewport_focusable(
+                viewport,
+                focusable=False,
+                recover_owned_focus=not (desired > target_height > 0),
+            )
             self._has_overflow = False
             self._set_hint_layout(hint, visible=False)
             self.request_reconcile()
@@ -239,8 +243,11 @@ class ConsoleBoundedSection(Vertical):
             viewport.scroll_y = max_scroll_y
 
         has_overflow = desired > current_height > 0 and max_scroll_y > 0
-        if viewport.can_focus is not has_overflow:
-            viewport.can_focus = has_overflow
+        self._set_viewport_focusable(
+            viewport,
+            focusable=has_overflow,
+            recover_owned_focus=not has_overflow,
+        )
         self._has_overflow = has_overflow
         self._set_hint_layout(hint, visible=has_overflow)
         self._recover_removed_focus_target()
@@ -272,6 +279,47 @@ class ConsoleBoundedSection(Vertical):
             return
 
         self._focused_descendant = None
+        focused = self.app.focused
+        if focused is not None and not self._owns_widget(focused):
+            outside_focus_is_valid = (
+                focused.is_mounted
+                and focused.focusable
+                and focused.display
+                and all(
+                    not isinstance(ancestor, Widget) or ancestor.display
+                    for ancestor in focused.ancestors
+                )
+            )
+            if outside_focus_is_valid:
+                return
+        self._notify_focus_recovery()
+
+    def _set_viewport_focusable(
+        self,
+        viewport: VerticalScroll,
+        *,
+        focusable: bool,
+        recover_owned_focus: bool,
+    ) -> None:
+        was_focusable = viewport.can_focus
+        if was_focusable is not focusable:
+            viewport.can_focus = focusable
+        if (
+            recover_owned_focus
+            and was_focusable
+            and not focusable
+            and self.app.focused is viewport
+        ):
+            # One owner callback covers the whole invalidated focus incident.
+            # Textual may move a removed descendant to this viewport before the
+            # geometry pass; clearing the stale target prevents a second callback.
+            self._focused_descendant = None
+            self._notify_focus_recovery()
+
+    def _owns_widget(self, widget: Widget) -> bool:
+        return widget is self._viewport or self._viewport in widget.ancestors
+
+    def _notify_focus_recovery(self) -> None:
         if self._on_focus_recovery is not None:
             self._on_focus_recovery()
 
