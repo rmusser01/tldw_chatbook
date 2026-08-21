@@ -185,7 +185,6 @@ from tldw_chatbook.Agents.builtin_tool_gate import (
     LOCAL_TOOLS_DEFAULT_ENABLED,
     build_builtin_gate,
 )
-from tldw_chatbook.Agents.human_input_wait import use_human_input_wait
 from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
 from tldw_chatbook.Agents.project_instruction_resolver import (
     InstructionSnapshot,
@@ -5481,10 +5480,14 @@ class ConsoleChatController:
         the real round (if any) stays pending and undecided; nothing is
         ever auto-approved or denied-by-accident here.
 
-        NOTE: Snapshots the round's ``decisions``/``event`` into locals to
-        avoid TOCTOU race: the worker thread's ``finally`` block pops the
-        round entry out of ``_pending_approval_rounds`` concurrently. Guard
-        and act only on the snapshots.
+        NOTE: This method's own body no longer snapshots anything -- it
+        just delegates to ``InterruptRoundHost.resolve`` (C1), which is
+        where the TOCTOU protection now lives: it snapshots the round's
+        ``decisions``/``event`` into locals under the lock before the
+        mutator runs, guarding against the worker thread's ``finally``
+        block popping the round entry out of the registry concurrently.
+        Do not "simplify" this delegation back into a direct dict write
+        here believing the protection is absent -- it would remove it.
 
         Args:
             decisions: The user's per-``llm_name`` decision strings
@@ -5559,11 +5562,14 @@ class ConsoleChatController:
         round's own teardown uses, so a sibling round's card is never
         clobbered.
 
-        Thread-safe. Each registry is swept under its own lock, and the
-        two locks are taken SEQUENTIALLY, never nested. ``discard_pending_
-        round`` and both UI clears take those (non-reentrant) locks
-        themselves, so they are deliberately called after every critical
-        section is released.
+        Thread-safe. Each registry is swept under its own critical
+        section -- both now the SAME non-reentrant lock (C1: three legacy
+        lock names alias onto one ``InterruptRoundHost.lock``), taken and
+        released SEQUENTIALLY, never nested; re-entering it from inside
+        itself is an instant self-deadlock, not merely untidy. ``discard_
+        pending_round`` and both UI clears take that lock themselves, so
+        they are deliberately called after every critical section is
+        released.
 
         Args:
             run_id: The cancelled/abandoned run whose cards must die. A
@@ -5663,7 +5669,10 @@ class ConsoleChatController:
 
         Registry work only, under ``_pending_skill_script_lock`` and then
         (sequentially, never nested) ``_approval_state_lock`` for the
-        retained-payload slot.
+        retained-payload slot -- C1: both names now alias the SAME
+        non-reentrant ``InterruptRoundHost.lock``, so "sequentially,
+        never nested" is load-bearing, not tidiness: taking it again from
+        inside itself deadlocks immediately.
 
         Args:
             run_id: The cancelled/abandoned run.
@@ -5824,7 +5833,7 @@ class ConsoleChatController:
         # (the install confirm is primary-agent only and in-loop, so no
         # per-call wrapper hosts it today, but the mark keeps every human
         # wait on one contract).
-        outcome = self._interrupt_host.run_round(
+        self._interrupt_host.run_round(
             "skill_install", request_id, payload, install_round_state,
             session_id=session_id,
             owning_session_id=owning_session_id,

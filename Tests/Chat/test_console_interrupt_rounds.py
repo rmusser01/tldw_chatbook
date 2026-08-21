@@ -7,6 +7,7 @@ the surface it is allowed to touch on the controller.
 
 from __future__ import annotations
 
+import threading
 import time
 
 import pytest
@@ -98,9 +99,6 @@ def test_missing_setter_attr_is_a_safe_no_op(host):
     delattr(seams, KIND_SETTER_ATTRS["question"])
     host.park_round_payload("question", "q1", _payload("q1"))
     host.remount_head("question", "sess-A")  # must not raise
-
-
-import threading
 
 
 class FakeSeamsFull(FakeSeams):

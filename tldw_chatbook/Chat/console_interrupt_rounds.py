@@ -27,6 +27,8 @@ from collections.abc import Callable
 from contextlib import nullcontext
 from typing import Any
 
+from loguru import logger
+
 from tldw_chatbook.Agents.human_input_wait import use_human_input_wait
 
 #: Kind -> the controller attribute holding that kind's UI setter. The
@@ -283,4 +285,6 @@ class InterruptRoundHost:
                     kind, owning_session_id if session_id is not None else None
                 )
             except Exception:  # noqa: BLE001 -- teardown must never raise
-                pass
+                logger.opt(exception=True).debug(
+                    f"Failed to marshal {kind} remount during teardown"
+                )
