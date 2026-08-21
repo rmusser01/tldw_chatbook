@@ -1459,9 +1459,14 @@ class AgentService:
                 and not initial_context_checked
             ):
                 payload_state.capture(messages, active_schemas, ())
-                initial = project_instruction_context.initial_context_for_chain(
-                    chain_id, payload_state
-                )
+                try:
+                    initial = project_instruction_context.initial_context_for_chain(
+                        chain_id, payload_state
+                    )
+                except Exception:  # noqa: BLE001 - content-free boundary
+                    raise _ProjectInstructionPayloadError(
+                        "project_instruction_delivery_failed"
+                    ) from None
                 initial_context_checked = True
                 if initial.status == "retry_with_context":
                     messages.extend(dict(row) for row in initial.ephemeral_rows)
@@ -1570,17 +1575,25 @@ class AgentService:
                 call_kwargs["continuation_groups"] = effective_groups
             receipt = staged.get("receipt")
             if receipt is not None:
+                final_headroom = self.safe_project_instruction_tokens(
+                    config, api_endpoint, request, []
+                )
                 row_keys = tuple(
                     row.get(PROJECT_INSTRUCTION_ROW_KEY)
                     for row in payload
                     if row.get(PROJECT_INSTRUCTION_ROW_KEY) in receipt.row_keys
                 )
-                if row_keys != receipt.row_keys:
+                if final_headroom <= 0 or row_keys != receipt.row_keys:
                     raise _ProjectInstructionPayloadError(
                         "project instruction context could not fit"
                     )
                 assert project_instruction_context is not None
-                project_instruction_context.mark_payload_sent(receipt, payload)
+                try:
+                    project_instruction_context.mark_payload_sent(receipt, payload)
+                except Exception:  # noqa: BLE001 - content-free boundary
+                    raise _ProjectInstructionPayloadError(
+                        "project_instruction_delivery_failed"
+                    ) from None
                 staged.pop("receipt", None)
             resp = self.chat_call(
                 api_endpoint=api_endpoint,
@@ -2344,8 +2357,12 @@ class AgentService:
             chain_delivery = snapshot.primary_delivery
 
         snapshot = self._startup_instruction_snapshot
+        legacy_delivery_enabled = (
+            agent_kind != AGENT_KIND_SUBAGENT or project_context is None
+        )
         if (
-            agent_kind == AGENT_KIND_SUBAGENT
+            legacy_delivery_enabled
+            and agent_kind == AGENT_KIND_SUBAGENT
             and self.startup_instruction_candidate is not None
             and snapshot is not None
         ):
@@ -2363,10 +2380,15 @@ class AgentService:
                 api_endpoint,
                 child_request,
             )
-        elif snapshot is not None and chain_delivery is None:
+        elif (
+            legacy_delivery_enabled
+            and snapshot is not None
+            and chain_delivery is None
+        ):
             chain_delivery = snapshot.primary_delivery
         if (
-            snapshot is not None
+            legacy_delivery_enabled
+            and snapshot is not None
             and snapshot.startup_source is not None
             and chain_delivery is not None
             and snapshot.startup_source.digest in chain_delivery.source_digests
@@ -4298,14 +4320,14 @@ class AgentService:
                     deps,
                     **continuation_kwargs,
                 )
-        except _ProjectInstructionPayloadError:
+        except _ProjectInstructionPayloadError as error:
             outcome = RunOutcome(
                 status=RUN_ERROR,
                 steps=[
                     AgentStep(
                         index=0,
                         kind=STEP_ERROR,
-                        summary="project instruction context could not fit",
+                        summary=str(error),
                     )
                 ],
             )
