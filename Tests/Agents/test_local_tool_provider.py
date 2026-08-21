@@ -602,6 +602,7 @@ def test_invoke_unknown_tool(tmp_path):
 def test_kill_switch_refuses(tmp_path):
     r = make_provider(root=tmp_path, kill=True).invoke("local:fs_list", {"path": "."})
     assert not r.ok and r.error == LOCAL_KILL_SWITCH_REFUSAL
+    assert r.outcome == "blocked"
 
 
 def test_deny_state_refuses(tmp_path):

@@ -636,10 +636,10 @@ class LocalToolProvider:
         if spec is None:
             return ToolResult(ok=False, error=f"Unknown local tool: {name}")
         if not self._root_is_valid():
-            return ToolResult(ok=False, error=LOCAL_ROOT_CHANGED_REFUSAL)
+            return ToolResult.blocked(LOCAL_ROOT_CHANGED_REFUSAL)
         if self._kill_switch_engaged():
             self._record_decision_safe(self.hub_tool_for(name), "denied")
-            return ToolResult(ok=False, error=LOCAL_KILL_SWITCH_REFUSAL)
+            return ToolResult.blocked(LOCAL_KILL_SWITCH_REFUSAL)
         # PR2a Task 5: only the DISPATCHING run's own stamp may resolve
         # this call. `ToolProvider.invoke` has no run parameter, so the run
         # id rides `run_context` (bound by `AgentService` around each
@@ -648,7 +648,7 @@ class LocalToolProvider:
         verdict = self._verdict_for(name, args, current_run_id())
         if verdict == "allow":
             if not self._root_is_valid():
-                return ToolResult(ok=False, error=LOCAL_ROOT_CHANGED_REFUSAL)
+                return ToolResult.blocked(LOCAL_ROOT_CHANGED_REFUSAL)
             try:
                 return ToolResult(ok=True, content=_fit_result(spec.handler(args)))
             except Exception as exc:  # noqa: BLE001 — never raises across the boundary
@@ -657,7 +657,7 @@ class LocalToolProvider:
                 )
         if verdict == "timeout":
             self._record_decision_safe(self.hub_tool_for(name), "denied-timeout")
-            return ToolResult(ok=False, error=LOCAL_TIMEOUT_REFUSAL)
+            return ToolResult.blocked(LOCAL_TIMEOUT_REFUSAL)
         if verdict == "no_callback":
             self._record_decision_safe(self.hub_tool_for(name), "denied-timeout")
             refusal = (
@@ -665,7 +665,7 @@ class LocalToolProvider:
                 if self._no_callback_refusal is not None
                 else LOCAL_TIMEOUT_REFUSAL
             )
-            return ToolResult(ok=False, error=refusal)
+            return ToolResult.blocked(refusal)
         if verdict == "gate_error":
             # Fix Round H, Item 1: the resolver raised rather than
             # genuinely resolving to "deny" -- still fails closed (the tool
@@ -676,10 +676,10 @@ class LocalToolProvider:
             # provider's own `record_decision` docstring); only the
             # returned TEXT distinguishes the two cases.
             self._record_decision_safe(self.hub_tool_for(name), "denied")
-            return ToolResult(ok=False, error=LOCAL_GATE_ERROR_REFUSAL)
+            return ToolResult.blocked(LOCAL_GATE_ERROR_REFUSAL)
         # "deny" and any unrecognized verdict fail closed the same way.
         self._record_decision_safe(self.hub_tool_for(name), "denied")
-        return ToolResult(ok=False, error=LOCAL_DENY_REFUSAL)
+        return ToolResult.blocked(LOCAL_DENY_REFUSAL)
 
     def _root_is_valid(self) -> bool:
         """Never raise while revalidating an optional selected-root guard."""

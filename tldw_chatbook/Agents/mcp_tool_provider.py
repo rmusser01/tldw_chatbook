@@ -687,7 +687,7 @@ class MCPToolProvider:
         # approval cannot bypass it.
         if self._kill_switch_engaged():
             self._record_decision_safe(tool, decision="denied")
-            return ToolResult(ok=False, error=KILL_SWITCH_REFUSAL)
+            return ToolResult.blocked(KILL_SWITCH_REFUSAL)
 
         # PR2a Task 5: only THIS run's own stamp may resolve this call. The
         # `ToolProvider.invoke` Protocol has no run parameter, so the
@@ -707,7 +707,7 @@ class MCPToolProvider:
 
         if state.state == "deny":
             self._record_decision_safe(tool, decision="denied")
-            return ToolResult(ok=False, error=DENY_REFUSAL)
+            return ToolResult.blocked(DENY_REFUSAL)
 
         if state.state == "allow":
             return self._execute(tool, call_args, decision="allowed")
@@ -723,7 +723,7 @@ class MCPToolProvider:
         # state == "ask"
         if self._approval_callback is None:
             self._record_decision_safe(tool, decision="denied")
-            return ToolResult(ok=False, error=DENY_REFUSAL)
+            return ToolResult.blocked(DENY_REFUSAL)
 
         pending = MCPPendingCall(
             llm_name=tool_id,
@@ -817,12 +817,12 @@ class MCPToolProvider:
             return self._execute(tool, args, decision="approved")
         if verdict == "timeout":
             self._record_decision_safe(tool, decision="denied-timeout")
-            return ToolResult(ok=False, error=TIMEOUT_REFUSAL)
+            return ToolResult.blocked(TIMEOUT_REFUSAL)
         if verdict == "deny":
             # TASK-294: an explicit card "Deny" gets USER provenance -- a
             # person said no to this call; the permissions were not Off.
             self._record_decision_safe(tool, decision="denied")
-            return ToolResult(ok=False, error=USER_DENY_REFUSAL)
+            return ToolResult.blocked(USER_DENY_REFUSAL)
         # An unrecognized or MISSING verdict fails closed -- but blaming the
         # user here would be the same provenance lie in the other direction:
         # nobody decided anything. Neutral copy, still a refusal -- and the
@@ -831,7 +831,7 @@ class MCPToolProvider:
         # views reported an explicit denial nobody made). Mirrors the
         # existing "denied-timeout" vocabulary.
         self._record_decision_safe(tool, decision="denied-unresolved")
-        return ToolResult(ok=False, error=UNRESOLVED_REFUSAL)
+        return ToolResult.blocked(UNRESOLVED_REFUSAL)
 
     def _safe_side_effect(
         self, fn: Callable[[], None], tool: HubTool, *, what: str

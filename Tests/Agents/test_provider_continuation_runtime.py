@@ -975,6 +975,12 @@ def test_cycle_4c_pending_resume_requires_fresh_review_then_barrier() -> None:
     assert events[-1].expected_checkpoint_revision == 1
     assert events[-1].target_state == "failed"
     assert events[-1].result == ContinuationResult("fresh refusal")
+    assert (
+        next(
+            step for step in outcome.steps if step.kind == STEP_TOOL_RESULT
+        ).tool_outcome
+        == "blocked"
+    )
 
 
 def test_refusal_finished_failure_leaves_pending_without_executing_or_observability() -> (

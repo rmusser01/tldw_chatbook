@@ -248,6 +248,44 @@ def test_unknown_error_wrapped_tool_failure_is_failed() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "collision",
+    [
+        "ERROR: harmless successful payload",
+        CONTROLLER_USER_DENIED_REFUSAL.format(name="fs_list"),
+    ],
+)
+def test_structured_success_outcome_overrides_payload_collision(collision: str) -> None:
+    assert (
+        classify_activity_status(
+            STEP_TOOL_RESULT,
+            collision,
+            tool_outcome="success",
+        )
+        == "success"
+    )
+
+
+def test_legacy_step_without_structured_outcome_keeps_safe_fallback() -> None:
+    refusal = f"ERROR: {LOCAL_DENY_REFUSAL}"
+
+    assert classify_activity_status(STEP_TOOL_RESULT, refusal) == "blocked"
+    assert (
+        classify_activity_status(STEP_TOOL_RESULT, "ERROR: disk exploded") == "failed"
+    )
+
+
+def test_malformed_persisted_outcome_falls_back_without_raising() -> None:
+    assert (
+        classify_activity_status(
+            STEP_TOOL_RESULT,
+            f"ERROR: {LOCAL_DENY_REFUSAL}",
+            tool_outcome="unknown",  # type: ignore[arg-type]
+        )
+        == "blocked"
+    )
+
+
 def test_safe_intermediate_thinking_summary_retains_only_safe_prefence_preamble(
     monkeypatch,
 ) -> None:

@@ -55,6 +55,7 @@ from tldw_chatbook.Agents.agent_models import (
     SkillFileBindings,
     ToolCall,
     ToolCatalogEntry,
+    ToolOutcome,
     ToolResult,
     ToolSchema,
 )
@@ -1154,7 +1155,10 @@ def _is_blocked_tool_refusal(error: str) -> bool:
 
 
 def classify_activity_status(
-    kind: str, result: Any = None
+    kind: str,
+    result: Any = None,
+    *,
+    tool_outcome: ToolOutcome | None = None,
 ) -> ConsoleActivityStatus:
     """Classify one step from protocol facts, never its formatted marker."""
     if kind == STEP_APPROVAL_TIMEOUT:
@@ -1163,6 +1167,12 @@ def classify_activity_status(
         return "failed"
     if kind != STEP_TOOL_RESULT:
         return "done"
+    if tool_outcome == "success":
+        return "success"
+    if tool_outcome == "failed":
+        return "failed"
+    if tool_outcome == "blocked":
+        return "blocked"
     text = str(result if result is not None else "")
     if _is_direct_controller_block(text):
         return "blocked"
@@ -1183,9 +1193,10 @@ def build_step_activity_presentation(
     *,
     tool_name: str | None = None,
     result: Any = None,
+    tool_outcome: ToolOutcome | None = None,
 ) -> ConsoleActivityPresentation:
     """Build bounded presentation metadata directly from an agent step."""
-    status = classify_activity_status(kind, result)
+    status = classify_activity_status(kind, result, tool_outcome=tool_outcome)
     if kind == STEP_TOOL_RESULT:
         return ConsoleActivityPresentation(
             "tool",
@@ -4150,6 +4161,7 @@ class ConsoleAgentBridge:
                             step.kind,
                             tool_name=step.tool_name,
                             result=step.result,
+                            tool_outcome=step.tool_outcome,
                         ),
                     )
             # Content-free operational logging for tool outcomes. The actual
@@ -5947,6 +5959,7 @@ class ConsoleAgentBridge:
                                 str(step.get("kind") or ""),
                                 tool_name=step.get("tool_name"),
                                 result=step.get("result"),
+                                tool_outcome=step.get("tool_outcome"),
                             ),
                             # AC#5: a resumed marker is as expandable as a
                             # live one -- the step rows carry the full result.

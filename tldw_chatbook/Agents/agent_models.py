@@ -41,6 +41,11 @@ STEP_ERROR = "error"
 # log shows WHEN each entry actually reached the model.
 STEP_STEERING = "steering"
 
+TOOL_OUTCOME_SUCCESS = "success"
+TOOL_OUTCOME_FAILED = "failed"
+TOOL_OUTCOME_BLOCKED = "blocked"
+ToolOutcome: TypeAlias = Literal["success", "failed", "blocked"]
+
 # The two steering sources (spec SS6: "two paths, one mechanism"). The label
 # the child sees is derived from the source by `format_steering_message`
 # below -- prepended by the mechanism, never trusted from input.
@@ -193,6 +198,14 @@ class ToolResult:
     ok: bool
     content: str = ""
     error: str = ""
+    # Optional refusal provenance lets the runtime distinguish a permission
+    # block from an ordinary failed dispatch without interpreting payload text.
+    outcome: ToolOutcome | None = None
+
+    @classmethod
+    def blocked(cls, error: str) -> ToolResult:
+        """Return a permission/policy refusal with structured provenance."""
+        return cls(ok=False, error=error, outcome=TOOL_OUTCOME_BLOCKED)
 
 
 @dataclass(frozen=True)
@@ -434,6 +447,9 @@ class AgentStep:
     args: dict | None = None
     result: str = ""
     created_at: str = ""
+    # Optional for backward compatibility with persisted steps written before
+    # tool outcomes were structured. Only meaningful on STEP_TOOL_RESULT.
+    tool_outcome: ToolOutcome | None = None
 
 
 @dataclass(frozen=True)

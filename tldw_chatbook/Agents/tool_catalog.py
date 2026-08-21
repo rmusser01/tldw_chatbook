@@ -857,7 +857,7 @@ class BuiltinToolProvider:
 
             reason = blocked_reason(name, ephemeral=True)
             if reason is not None:
-                return ToolResult(ok=False, error=reason)
+                return ToolResult.blocked(reason)
         # Defense in depth: the run-level review hook is the primary gate
         # (it batches approvals into one card per turn), but a caller that
         # reaches invoke() without going through it must still not execute
@@ -876,7 +876,7 @@ class BuiltinToolProvider:
         except Exception as exc:  # noqa: BLE001 — fail closed
             return ToolResult(ok=False, error=f"permission check failed: {exc}")
         if refusal is not None:
-            return ToolResult(ok=False, error=refusal)
+            return ToolResult.blocked(refusal)
         from tldw_chatbook.Tools.workspace_file_roots import run_workspace
 
         try:
@@ -1222,11 +1222,9 @@ class ToolCatalogRegistry:
         if self._ephemeral:
             from tldw_chatbook.Chat.console_ephemeral import tool_blocked_reason
 
-            reason = tool_blocked_reason(
-                name, source=record.source, ephemeral=True
-            )
+            reason = tool_blocked_reason(name, source=record.source, ephemeral=True)
             if reason is not None:
-                return ToolResult(ok=False, error=reason)
+                return ToolResult.blocked(reason)
         return provider.invoke(tool_id, args)
 
     def timeout_for(self, name: str) -> float | None:

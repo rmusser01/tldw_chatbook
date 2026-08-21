@@ -406,7 +406,7 @@ async def test_assistant_turn_reconcile_preserves_container_and_answer_identity(
         assert turn.query_one("#console-message-a-turn") is answer
 
         assistant.content = "The workspace contains two files."
-        assistant.status = "completed"
+        assistant.status = "complete"
         transcript.set_messages([user, assistant, thinking, tool, unrelated])
         await transcript.refresh_messages()
         await pilot.pause()

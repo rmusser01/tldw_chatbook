@@ -163,6 +163,18 @@ class _FakeMCPProvider:
         yield
 
 
+class _ResultMCPProvider(_FakeMCPProvider):
+    """MCP-shaped provider returning one exact structured result."""
+
+    def __init__(self, result: ToolResult):
+        super().__init__([("collision_tool", "Return the test payload")])
+        self._result = result
+
+    def invoke(self, tool_id, args):
+        self.invoke_calls.append((tool_id, dict(args or {})))
+        return self._result
+
+
 def _fence(name, args):
     return f"{FENCE_OPEN}\n{json.dumps({'name': name, 'arguments': args})}\n```"
 
@@ -3067,6 +3079,78 @@ def test_resume_marker_messages_reproduces_live_markers_after_simulated_restart(
     ]
 
 
+@pytest.mark.parametrize(
+    "content",
+    [
+        "ERROR: harmless successful payload",
+        CONTROLLER_USER_DENIED_REFUSAL.format(name="collision_tool"),
+    ],
+)
+def test_successful_tool_payload_collisions_stay_success_live_and_resumed(
+    tmp_path, content: str
+) -> None:
+    scripts = [
+        [_fence("collision_tool", {})],
+        ["done"],
+    ]
+    bridge, db, store, session, aid = _bridge(tmp_path, scripts)
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        mcp_provider=_ResultMCPProvider(ToolResult(ok=True, content=content)),
+    )
+
+    live = _tool_messages(store, session.id)
+    resumed = _resume_tool_messages(db)
+    tool_step = next(step for step in outcome.steps if step.kind == STEP_TOOL_RESULT)
+    persisted_step = next(
+        step
+        for step in db.list_runs("conv-1")[0]["steps"]
+        if step["kind"] == STEP_TOOL_RESULT
+    )
+    assert tool_step.tool_outcome == "success"
+    assert persisted_step["tool_outcome"] == "success"
+    assert live[-1].activity_presentation.status == "success"
+    assert _activity_marker_signature(resumed) == _activity_marker_signature(live)
+
+
+@pytest.mark.parametrize(
+    ("result", "expected"),
+    [
+        (ToolResult(ok=False, error="ordinary dispatch failure"), "failed"),
+        (
+            ToolResult.blocked("tool execution is disabled by the kill switch"),
+            "blocked",
+        ),
+    ],
+)
+def test_structured_tool_failure_status_has_live_resume_parity(
+    tmp_path, result: ToolResult, expected: str
+) -> None:
+    bridge, db, store, session, aid = _bridge(
+        tmp_path,
+        [[_fence("collision_tool", {})], ["done"]],
+    )
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        mcp_provider=_ResultMCPProvider(result),
+    )
+
+    live = _tool_messages(store, session.id)
+    resumed = _resume_tool_messages(db)
+    tool_step = next(step for step in outcome.steps if step.kind == STEP_TOOL_RESULT)
+    assert tool_step.tool_outcome == expected
+    assert live[-1].activity_presentation.status == expected
+    assert _activity_marker_signature(resumed) == _activity_marker_signature(live)
+
+
 def _thinking_markers_for_attributed_steps(
     events: list[tuple[AgentStep, str]],
 ) -> list[ConsoleChatMessage]:
@@ -5513,6 +5597,12 @@ def test_run_reply_forwards_review_tool_calls_hook_to_agent_service(tmp_path):
     live = _tool_messages(store, session.id)
     resumed = _resume_tool_messages(db)
     assert not any(step.kind == STEP_TOOL_CALL for step in outcome.steps)
+    assert (
+        next(
+            step for step in outcome.steps if step.kind == STEP_TOOL_RESULT
+        ).tool_outcome
+        == "blocked"
+    )
     assert [marker.activity_presentation.kind for marker in live] == [
         "thinking",
         "tool",
