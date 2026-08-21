@@ -102,6 +102,14 @@ class NestedResolutionBatch:
 
 
 @dataclass(frozen=True, slots=True)
+class BindingRootIdentity:
+    """Run-local selected-root identity pinned at dispatch construction."""
+
+    canonical_root: Path = field(repr=False)
+    ancestor_identities: tuple[tuple[int, int, int], ...] | None = field(repr=False)
+
+
+@dataclass(frozen=True, slots=True)
 class _FallbackCondition:
     kind: Literal["absent", "empty"]
     file_identity: tuple[int, int, int, int, int] | None = None
@@ -208,6 +216,7 @@ class ProjectInstructionResolver:
         pinned_by_canonical_path: Mapping[Path, InstructionSource],
         terminal_scopes: frozenset[str] = frozenset(),
         admission_bytes: int | None = None,
+        expected_binding_identity: BindingRootIdentity | None = None,
     ) -> NestedResolutionBatch:
         """Resolve effective files on the union of root-to-target chains.
 
@@ -224,6 +233,7 @@ class ProjectInstructionResolver:
             terminal_scopes: Scopes with a prior terminal no-content outcome.
             admission_bytes: Current cumulative ledger allowance. Defaults to
                 ``max_bytes`` for standalone resolver calls.
+            expected_binding_identity: Dispatch-owned selected-root identity.
 
         Returns:
             Sources in broad-to-specific order plus content-free outcomes.
@@ -236,6 +246,12 @@ class ProjectInstructionResolver:
         if admission_bytes is not None and admission_bytes < 0:
             raise ValueError("admission_bytes must be non-negative")
         root, expected_root = _canonical_binding_root(binding_root)
+        if expected_binding_identity is not None and (
+            root != expected_binding_identity.canonical_root
+            or expected_root is None
+            or expected_root != expected_binding_identity.ancestor_identities
+        ):
+            expected_root = None
         if expected_root is None:
             return NestedResolutionBatch(
                 (), (InstructionOutcome(".", ".", "resolution_failed"),)
@@ -397,6 +413,12 @@ def _canonical_binding_root(
         return lexical, _capture_ancestor_identities(lexical)
     except (OSError, RuntimeError, ValueError, _UnsafeMetadata):
         return lexical, None
+
+
+def capture_binding_root_identity(binding_root: Path) -> BindingRootIdentity:
+    """Capture the selected root and ancestor identities once for a dispatch."""
+    root, ancestors = _canonical_binding_root(binding_root)
+    return BindingRootIdentity(root, ancestors)
 
 
 def _safe_absolute(path: Path) -> Path | None:
@@ -624,6 +646,15 @@ def _valid_pinned_source(
     pinned_path: Path,
     source: InstructionSource,
 ) -> bool:
+    try:
+        encoded = source.body.encode("utf-8")
+    except (AttributeError, UnicodeEncodeError):
+        return False
+    content_matches = type(source.byte_count) is int and any(
+        len(raw) == source.byte_count
+        and hashlib.sha256(raw).hexdigest() == source.digest
+        for raw in (encoded, b"\xef\xbb\xbf" + encoded)
+    )
     expected_scope = directory.relative_to(root).as_posix()
     expected_relative = pinned_path.relative_to(root).as_posix()
     expected_kind: InstructionKind = (
@@ -637,6 +668,7 @@ def _valid_pinned_source(
         and source.relative_path == expected_relative
         and source.scope == expected_scope
         and source.kind == expected_kind
+        and content_matches
         and _safe_relative_label(source.relative_path)
         and _safe_relative_label(source.scope)
     )

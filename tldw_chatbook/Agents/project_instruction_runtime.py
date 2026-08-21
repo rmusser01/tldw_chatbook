@@ -20,6 +20,7 @@ from .project_instruction_resolver import (
     InstructionSnapshot,
     InstructionSource,
     ProjectInstructionResolver,
+    capture_binding_root_identity,
 )
 from .tool_catalog import PathAwareToolProvider, ToolCatalogRegistry
 
@@ -52,6 +53,12 @@ class InstructionDeliveryReceipt:
     row_keys: tuple[str, ...]
 
     def __post_init__(self) -> None:
+        try:
+            object.__setattr__(self, "source_digests", tuple(self.source_digests))
+            object.__setattr__(self, "outcome_keys", tuple(self.outcome_keys))
+            object.__setattr__(self, "row_keys", tuple(self.row_keys))
+        except TypeError as error:
+            raise ValueError("invalid instruction delivery receipt") from error
         if (
             not _safe_identifier(self.receipt_id)
             or not _safe_identifier(self.chain_id)
@@ -60,17 +67,20 @@ class InstructionDeliveryReceipt:
             raise ValueError("invalid instruction delivery receipt")
         if (
             not self.row_keys
-            or len(set(self.row_keys)) != len(self.row_keys)
             or any(not _safe_identifier(key) for key in self.row_keys)
+            or len(set(self.row_keys)) != len(self.row_keys)
         ):
             raise ValueError("invalid instruction receipt row keys")
         if any(
-            len(digest) != 64
+            not isinstance(digest, str)
+            or len(digest) != 64
             or any(character not in "0123456789abcdef" for character in digest)
             for digest in self.source_digests
         ):
             raise ValueError("invalid instruction receipt source digest")
         for key in self.outcome_keys:
+            if not isinstance(key, str):
+                raise ValueError("invalid instruction receipt outcome key")
             parts = key.split(_OUTCOME_SEPARATOR)
             if len(parts) != 3 or parts[0] not in _OUTCOME_CODES:
                 raise ValueError("invalid instruction receipt outcome key")
@@ -250,6 +260,9 @@ class InstructionActivationLedger:
         self._lock = threading.RLock()
         self._snapshot = snapshot
         self._resolver = resolver or ProjectInstructionResolver()
+        self._binding_root_identity = capture_binding_root_identity(
+            snapshot.binding_root
+        )
         self._nested_max_bytes = nested_max_bytes
         self._remaining_nested_bytes = nested_max_bytes
         self._activation_revision = 0
@@ -375,6 +388,7 @@ class InstructionActivationLedger:
                     pinned_by_canonical_path=self._sources,
                     terminal_scopes=frozenset(self._terminal_scopes),
                     admission_bytes=self._remaining_nested_bytes,
+                    expected_binding_identity=self._binding_root_identity,
                 )
                 changed = False
                 for source in batch.sources:
@@ -553,12 +567,10 @@ class InstructionActivationLedger:
             for path, omission in omissions.items():
                 state.token_outcomes[path] = omission
                 key = _outcome_key(omission)
-                state.delivered_outcomes.add(key)
                 self._warning_keys.add(omission.code)
-            state.delivered_outcomes.update(outcome_keys)
-            for key in outcome_keys:
-                self._warning_keys.add(key.split(_OUTCOME_SEPARATOR, 1)[0])
-            return InstructionPreparation("proceed")
+                if key not in outcome_keys and key not in state.delivered_outcomes:
+                    outcome_keys.append(key)
+            admitted_paths.clear()
 
         for path, omission in omissions.items():
             if path in admitted_paths:

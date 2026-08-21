@@ -232,6 +232,73 @@ def test_receipt_rejects_unsafe_or_unbounded_identifiers(unsafe, field_name):
         )
 
 
+def test_receipt_copies_mutable_sequences_before_validation_and_mark(tmp_path):
+    ledger = InstructionActivationLedger(_snapshot(tmp_path), nested_max_bytes=100)
+    payload, _ = _payload()
+    delivery = ledger.initial_context_for_chain("child", payload)
+    digests = list(delivery.receipt.source_digests)
+    outcomes = list(delivery.receipt.outcome_keys)
+    row_keys = list(delivery.receipt.row_keys)
+    receipt = InstructionDeliveryReceipt(
+        receipt_id=delivery.receipt.receipt_id,
+        chain_id=delivery.receipt.chain_id,
+        through_revision=delivery.receipt.through_revision,
+        source_digests=digests,  # type: ignore[arg-type]
+        outcome_keys=outcomes,  # type: ignore[arg-type]
+        row_keys=row_keys,  # type: ignore[arg-type]
+    )
+    original_hash = hash(receipt)
+
+    digests.append("f" * 64)
+    outcomes.append("invalid\x1fforged/AGENTS.md\x1fforged")
+    row_keys.append("forged-row")
+
+    assert hash(receipt) == original_hash
+    assert isinstance(receipt.source_digests, tuple)
+    assert isinstance(receipt.outcome_keys, tuple)
+    assert isinstance(receipt.row_keys, tuple)
+    assert "forged" not in repr(receipt)
+    ledger.mark_payload_sent(receipt, delivery.rows)
+
+
+def test_receipt_rejects_nested_mutable_digest():
+    mutable_digest = list("0" * 64)
+
+    with pytest.raises(ValueError, match="source digest"):
+        InstructionDeliveryReceipt(
+            receipt_id="receipt",
+            chain_id="chain",
+            through_revision=0,
+            source_digests=(mutable_digest,),  # type: ignore[arg-type]
+            outcome_keys=(),
+            row_keys=("row",),
+        )
+
+
+def test_receipt_rejects_nested_mutable_outcome_key():
+    with pytest.raises(ValueError, match="outcome key"):
+        InstructionDeliveryReceipt(
+            receipt_id="receipt",
+            chain_id="chain",
+            through_revision=0,
+            source_digests=(),
+            outcome_keys=(["invalid", "src/AGENTS.md", "src"],),  # type: ignore[arg-type]
+            row_keys=("row",),
+        )
+
+
+def test_receipt_rejects_nested_mutable_row_key():
+    with pytest.raises(ValueError, match="row keys"):
+        InstructionDeliveryReceipt(
+            receipt_id="receipt",
+            chain_id="chain",
+            through_revision=0,
+            source_digests=(),
+            outcome_keys=(),
+            row_keys=(["row"],),  # type: ignore[arg-type]
+        )
+
+
 def test_payload_capture_counts_canonical_deferral_rows_and_current_schema():
     payload, built = _payload(allowance=123)
     calls = [ToolCall("read", {"path": "src/a.py"}, "call-1")]
@@ -332,10 +399,14 @@ def test_missing_or_nonpositive_headroom_becomes_chain_token_omission_once(
     payload, _ = _payload(allowance=allowance)
 
     first = ledger.initial_context_for_chain("child", payload)
-    assert first.status == "proceed"
-    assert first.rows == ()
+    assert first.status == "retry_with_context"
+    assert any("omitted_token_budget" in row["content"] for row in first.rows)
     assert "omitted_token_budget" in ledger.warning_keys
+    assert ledger.initial_context_for_chain("child", payload).receipt == first.receipt
+    with pytest.raises(ValueError, match="payload rows"):
+        ledger.mark_payload_sent(first.receipt, [])
 
+    ledger.mark_payload_sent(first.receipt, first.rows)
     assert ledger.initial_context_for_chain("child", payload).rows == ()
 
 
@@ -348,9 +419,41 @@ def test_two_chains_have_independent_token_outcomes(tmp_path: Path):
     omitted = ledger.initial_context_for_chain("cramped", cramped)
 
     assert delivered.receipt.source_digests
-    assert omitted.status == "proceed"
-    assert omitted.rows == ()
+    assert omitted.receipt.source_digests == ()
+    assert any("omitted_token_budget" in row["content"] for row in omitted.rows)
     assert "omitted_token_budget" in ledger.warning_keys
+
+
+def test_unmeasurable_warning_only_delivery_remains_pending_until_exact_mark(
+    tmp_path,
+):
+    snapshot = _snapshot(tmp_path)
+    snapshot = InstructionSnapshot(
+        binding_id=snapshot.binding_id,
+        binding_root=snapshot.binding_root,
+        locator_fingerprint=snapshot.locator_fingerprint,
+        dispatch_started_wall_ns=snapshot.dispatch_started_wall_ns,
+        startup_source=snapshot.startup_source,
+        global_outcomes=(InstructionOutcome("bad/AGENTS.md", "bad", "invalid"),),
+        primary_delivery=snapshot.primary_delivery,
+        warning_codes=("invalid",),
+    )
+
+    def fail_estimator(_rows):
+        raise RuntimeError("estimator unavailable")
+
+    ledger = InstructionActivationLedger(snapshot, nested_max_bytes=100)
+    payload, _ = _payload(allowance=10, count_tokens=fail_estimator)
+
+    first = ledger.initial_context_for_chain("primary", payload)
+    assert first.status == "retry_with_context"
+    assert any("invalid" in row["content"] for row in first.rows)
+    assert ledger.initial_context_for_chain("primary", payload).receipt == first.receipt
+    with pytest.raises(ValueError, match="payload rows"):
+        ledger.mark_payload_sent(first.receipt, [])
+
+    ledger.mark_payload_sent(first.receipt, first.rows)
+    assert ledger.initial_context_for_chain("primary", payload).status == "proceed"
 
 
 def _wrapped_row_tokens(rows):
@@ -603,6 +706,32 @@ def test_later_batch_runs_one_deepest_first_greedy_pass_on_remaining_budget(tmp_
     assert ledger.remaining_nested_bytes == 1
 
 
+def test_ledger_rejects_old_pin_after_binding_root_replacement(tmp_path):
+    root = tmp_path / "selected"
+    nested = root / "src"
+    nested.mkdir(parents=True)
+    (nested / "AGENTS.md").write_text("OLD_PIN_SECRET")
+    ledger = InstructionActivationLedger(_snapshot(root), nested_max_bytes=100)
+    payload, _ = _payload()
+    calls = [ToolCall("read", {}, "call")]
+    registry = _registry(nested / "file.py")
+
+    first = ledger.prepare(calls, "primary", registry, payload)
+    assert any("OLD_PIN_SECRET" in row["content"] for row in first.rows)
+    ledger.mark_payload_sent(first.receipt, first.rows)
+
+    displaced = tmp_path / "displaced"
+    root.rename(displaced)
+    (root / "src").mkdir(parents=True)
+    (root / "src" / "AGENTS.md").write_text("replacement")
+
+    second = ledger.prepare(calls, "primary", registry, payload)
+    rendered = repr(second.rows)
+    assert "resolution_failed" in rendered
+    assert "OLD_PIN_SECRET" not in rendered
+    assert "replacement" not in rendered
+
+
 def test_nested_pinned_source_is_reused_by_identity_after_delete(tmp_path):
     target = tmp_path / "src"
     target.mkdir()
@@ -660,6 +789,44 @@ def test_nested_rejects_injected_pinned_source_metadata(tmp_path, relative_path,
     assert batch.sources == ()
     assert [outcome.code for outcome in batch.outcomes] == ["resolution_failed"]
     assert "PINNED_SECRET_MUST_NOT_ESCAPE" not in repr(batch)
+
+
+@pytest.mark.parametrize(
+    ("body", "byte_count", "digest"),
+    [
+        ("forged", len(b"trusted"), hashlib.sha256(b"trusted").hexdigest()),
+        ("trusted", len(b"trusted") + 1, hashlib.sha256(b"trusted").hexdigest()),
+        ("trusted", len(b"trusted"), "0" * 64),
+        ("x", True, hashlib.sha256(b"x").hexdigest()),
+    ],
+)
+def test_nested_rejects_pinned_source_with_forged_content_identity(
+    tmp_path, body, byte_count, digest
+):
+    target = tmp_path / "src"
+    target.mkdir()
+    expected_path = target / "AGENTS.md"
+    forged = InstructionSource(
+        canonical_path=expected_path,
+        relative_path="src/AGENTS.md",
+        scope="src",
+        kind="standard",
+        body=body,
+        byte_count=byte_count,
+        digest=digest,
+    )
+
+    batch = ProjectInstructionResolver().resolve_targets(
+        tmp_path,
+        [target],
+        max_bytes=100,
+        dispatch_started_wall_ns=time.time_ns() + 1_000_000_000,
+        pinned_by_canonical_path={expected_path: forged},
+    )
+
+    assert batch.sources == ()
+    assert [outcome.code for outcome in batch.outcomes] == ["resolution_failed"]
+    assert "forged" not in repr(batch)
 
 
 def test_nested_pinned_reuse_rejects_binding_root_swap(tmp_path, monkeypatch):
