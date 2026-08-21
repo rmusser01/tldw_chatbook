@@ -88,7 +88,6 @@
     NoteSelectionDialog .button-row Button {
         margin: 0 1;
     }
-    
 
 /* ===== WIDGET: ConversationSelectionDialog (Widgets/conversation_selection_dialog.py) ===== */
 
@@ -173,7 +172,6 @@
     ConversationSelectionDialog .button-row Button {
         margin: 0 1;
     }
-    
 
 /* ===== WIDGET: EmojiPickerScreen (Widgets/emoji_picker.py) ===== */
 
@@ -251,7 +249,6 @@
         color: $primary;
         margin-bottom: 1;
     }
-    
 
 /* ===== WIDGET: FileExtractionDialog (Widgets/file_extraction_dialog.py) ===== */
 
@@ -294,7 +291,6 @@
         width: 100%;
         margin: 1 0;
     }
-    
 
 /* ===== WIDGET: VoiceBlendDialog (Widgets/voice_blend_dialog.py) ===== */
 
@@ -358,4 +354,3 @@
     VoiceBlendDialog .button-row Button {
         margin: 0 1;
     }
-    
