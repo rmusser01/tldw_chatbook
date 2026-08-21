@@ -109,7 +109,7 @@ call sites (`:3265`/`:3440`/`:3509` for install, `:3266`/`:3441`/`:3510` for
 script, and the approvals equivalents). The edit is the same shape three times
 under three separate locks; attempting to unify the locking is a different and
 much riskier change that belongs to C, if anywhere.
-| **C** | Unified interrupt surface | One host and one card model for approvals, skill-install, skill-script, resume, and questions. |
+| **C** | Unified interrupt surface | One host and one card model for approvals, skill-install, skill-script, and questions. Resume was descoped at C's design review (2026-08-20): it shares `ChatTaskCards` but not the round lifecycle — no worker waits on it, nothing times it out or revokes it. See `2026-08-20-console-interrupt-host-design.md`. |
 | **A** | `ask_user` | The tool, the question card as C's first renderer, typed-answer interception. |
 | **B** | Persistent task list | A pinned surface over the existing `SessionTodoStore`. |
 | **D** | Attention when away | Bell / notification / cross-screen badge when a run blocks on the user. |
