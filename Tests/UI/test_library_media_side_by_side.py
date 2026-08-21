@@ -14,6 +14,7 @@ Select mode / bulk toolbar usability in both layouts.
 """
 
 import pytest
+from textual.containers import VerticalScroll
 from textual.widgets import Button, Static
 
 from Tests.UI.app_factory import _build_test_app
@@ -131,6 +132,117 @@ async def test_wide_media_keeps_two_line_rows_and_preview():
         assert "\n" in str(row.label)
         assert preview.region.area > 0
         assert open_viewer.can_focus is True
+
+
+@pytest.mark.asyncio
+async def test_media_resize_preserves_scope_focus_scroll_without_reads():
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    service = app.media_reading_scope_service
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=NARROW_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _wait_for_compact_class(screen, pilot, compact=True)
+        await _wait_for_selector(screen, pilot, "#library-media-row-19")
+        controller = screen._library_media_browse_controller
+        row = screen.query_one("#library-media-row-19", Button)
+        scroll = screen.query_one("#library-media-row-scroll", VerticalScroll)
+        row.focus()
+        await pilot.pause()
+        initial_scroll = scroll.scroll_y
+        initial_scope = controller.applied_scope
+        initial_selection = screen._library_media_row_selection.ids
+        initial_calls = (len(service.search_calls), len(service.type_calls))
+
+        await pilot.resize_terminal(*WIDE_SIZE)
+        await _wait_for_compact_class(screen, pilot, compact=False)
+        assert row.region.height == 2
+        assert "\n" in str(row.label)
+        assert screen.focused is row
+
+        await pilot.resize_terminal(*NARROW_SIZE)
+        await _wait_for_compact_class(screen, pilot, compact=True)
+        assert row.styles.height.value == 1
+        assert "\n" not in str(row.label)
+        assert screen.focused is row
+        assert scroll.scroll_y == initial_scroll
+        assert 0 <= scroll.scroll_y <= scroll.max_scroll_y
+        assert controller.applied_scope == initial_scope
+        assert screen._library_media_row_selection.ids == initial_selection
+        assert (len(service.search_calls), len(service.type_calls)) == initial_calls
+
+
+@pytest.mark.asyncio
+async def test_media_preview_focus_moves_to_selected_row_on_compact_resize():
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _wait_for_compact_class(screen, pilot, compact=False)
+        selected_id = screen._build_library_media_state().selected_id
+        open_viewer = screen.query_one("#library-media-open-viewer", Button)
+        open_viewer.focus()
+        await pilot.pause()
+        assert screen.focused is open_viewer
+
+        await pilot.resize_terminal(*NARROW_SIZE)
+        await _wait_for_compact_class(screen, pilot, compact=True)
+        await _wait_for_condition(
+            pilot,
+            lambda: getattr(screen.focused, "media_id", None) == selected_id,
+            message="Compact resize did not transfer preview focus to its row.",
+        )
+        assert open_viewer.can_focus is False
+
+
+@pytest.mark.asyncio
+async def test_media_resize_focus_restore_yields_to_newer_user_focus(monkeypatch):
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _wait_for_compact_class(screen, pilot, compact=False)
+        open_viewer = screen.query_one("#library-media-open-viewer", Button)
+        open_viewer.focus()
+        await pilot.pause()
+
+        pending = []
+        restore = screen._restore_library_notes_focus_identity
+
+        def hold_restore(identity, guard=None):
+            pending.append((identity, guard))
+            return False
+
+        monkeypatch.setattr(
+            screen,
+            "_restore_library_notes_focus_identity",
+            hold_restore,
+        )
+        await pilot.resize_terminal(*NARROW_SIZE)
+        await _wait_for_compact_class(screen, pilot, compact=True)
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(pending),
+            message="Resize did not queue a semantic Media focus restore.",
+        )
+
+        type_filter = screen.query_one("#library-media-type-filter", Button)
+        screen._mark_library_notes_user_interaction()
+        type_filter.focus()
+        await pilot.pause()
+        monkeypatch.setattr(
+            screen,
+            "_restore_library_notes_focus_identity",
+            restore,
+        )
+        for identity, guard in pending:
+            restore(identity, guard)
+        assert screen.focused is type_filter
 
 
 @pytest.mark.asyncio

@@ -4265,6 +4265,20 @@ class LibraryScreen(BaseAppScreen):
             if placement_id:
                 return f"note-placement:{placement_id}"
             return f"note-row:{note_id}"
+        media_id = str(getattr(focused, "media_id", "") or "")
+        if media_id and focused.has_class("library-media-row"):
+            return f"media-row:{media_id}"
+        if focused.id == "library-media-open-viewer":
+            try:
+                media_canvas = self.query_one(
+                    "#library-media-canvas", LibraryMediaCanvas
+                )
+            except (NoMatches, QueryError):
+                pass
+            else:
+                selected_id = str(media_canvas.canvas.selected_id or "")
+                if selected_id:
+                    return f"media-preview-open:{selected_id}"
         if focused.has_class("library-notes-folder-row"):
             placement_id = str(getattr(focused, "placement_id", "") or "")
             if placement_id:
@@ -4365,6 +4379,11 @@ class LibraryScreen(BaseAppScreen):
 
         owner_region = "rail" if stage == "rail" else region
         scroll_owner = self._library_notes_scroll_owner(owner_region)
+        if role.startswith(("media-row:", "media-preview-open:")):
+            try:
+                scroll_owner = self.query_one("#library-media-row-scroll", Widget)
+            except (NoMatches, QueryError):
+                scroll_owner = None
         scroll_offset = (
             (int(scroll_owner.scroll_x), int(scroll_owner.scroll_y))
             if scroll_owner is not None
@@ -4544,6 +4563,17 @@ class LibraryScreen(BaseAppScreen):
                 return workspace.query_one(f"#{widget_id}", Widget)
             except (NoMatches, QueryError):
                 return None
+        elif role.startswith(("media-row:", "media-preview-open:")):
+            media_id = role.split(":", 1)[1]
+            if role.startswith("media-preview-open:") and not self._library_notes_compact:
+                try:
+                    return self.query_one("#library-media-open-viewer", Widget)
+                except (NoMatches, QueryError):
+                    return None
+            for row in self.query(".library-media-row"):
+                if str(getattr(row, "media_id", "") or "") == media_id:
+                    return row
+            return None
         if selector is not None:
             try:
                 return self.query_one(selector, Widget)
@@ -4730,6 +4760,13 @@ class LibraryScreen(BaseAppScreen):
             "rail" if identity.stage == "rail" else self._library_notes_focus_region()
         )
         owner = self._library_notes_scroll_owner(owner_region)
+        if identity.semantic_role.startswith(
+            ("media-row:", "media-preview-open:")
+        ):
+            try:
+                owner = self.query_one("#library-media-row-scroll", Widget)
+            except (NoMatches, QueryError):
+                owner = None
         if owner is not None and identity.scroll_offset is not None:
             owner.scroll_to(
                 x=identity.scroll_offset[0],
@@ -4816,6 +4853,11 @@ class LibraryScreen(BaseAppScreen):
             return "notes"
         if identity.stage == "rail":
             return "rail"
+        if (
+            identity.stage == "notes"
+            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+        ):
+            return "notes"
         if identity.stage == "notes" and self._library_notes_compact_workflow_active():
             return "notes"
         if self._library_notes_focus_region() in {
@@ -4865,6 +4907,17 @@ class LibraryScreen(BaseAppScreen):
         else:
             if notes_canvas.compact != self._library_notes_compact:
                 notes_canvas.apply_compact_presentation(self._library_notes_compact)
+        try:
+            media_canvas = canvas.query_one(
+                "#library-media-canvas", LibraryMediaCanvas
+            )
+        except (NoMatches, QueryError):
+            pass
+        else:
+            if media_canvas.compact != self._library_notes_compact:
+                media_canvas.apply_compact_presentation(
+                    self._library_notes_compact
+                )
         compact_single_stage = (
             self._library_notes_compact and self._library_notes_compact_stage_applies()
         )
@@ -5169,6 +5222,10 @@ class LibraryScreen(BaseAppScreen):
         if (
             not self._library_notes_workflow_active()
             and self._library_notes_focus_stage(self.focused) != "rail"
+            and not (
+                self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+                and self._library_media_view == "list"
+            )
         ):
             return
         self._install_library_notes_scroll_observers()
@@ -5263,6 +5320,12 @@ class LibraryScreen(BaseAppScreen):
                 cached is not None
                 and cached.region == current.region
                 and cached.note_id == current.note_id
+                and (
+                    not current.semantic_role.startswith(
+                        ("media-row:", "media-preview-open:")
+                    )
+                    or cached.semantic_role == current.semantic_role
+                )
             ):
                 identity = dataclasses.replace(
                     cached,
@@ -5276,6 +5339,12 @@ class LibraryScreen(BaseAppScreen):
             user_scroll is not None
             and user_scroll.region == current.region
             and user_scroll.note_id == current.note_id
+            and (
+                not current.semantic_role.startswith(
+                    ("media-row:", "media-preview-open:")
+                )
+                or user_scroll.semantic_role == current.semantic_role
+            )
         ):
             identity = dataclasses.replace(
                 identity,
@@ -6533,7 +6602,14 @@ class LibraryScreen(BaseAppScreen):
         focused = event.widget
         if self.is_mounted:
             stage = self._library_notes_focus_stage(focused)
-            relevant = self._library_notes_workflow_active() or stage == "rail"
+            relevant = bool(
+                self._library_notes_workflow_active()
+                or stage == "rail"
+                or (
+                    self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+                    and self._library_media_view == "list"
+                )
+            )
             target_restore = self._library_notes_programmatic_focus_target is focused
             if target_restore:
                 self._library_notes_programmatic_focus_target = None
