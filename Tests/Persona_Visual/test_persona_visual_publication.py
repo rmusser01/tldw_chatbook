@@ -98,6 +98,36 @@ def _snapshot(
     )
 
 
+def _large_snapshot(
+    source_root: Path, *, asset_count: int = 100
+) -> PersonaVisualPublicationSnapshot:
+    base = _snapshot(source_root)
+    sources: list[PersonaVisualPublicationAssetSource] = []
+    for index in range(asset_count):
+        asset_key = "idle" if index == 0 else f"asset-{index}"
+        data = _png_bytes((index % 251, (index * 3) % 251, (index * 7) % 251))
+        source_key = f"asset-{index:03d}.png"
+        path = source_root / source_key
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        sources.append(
+            PersonaVisualPublicationAssetSource(
+                source_key,
+                PersonaVisualAssetMetadata(
+                    asset_key=asset_key,
+                    role="frame",
+                    mime_type="image/png",
+                    byte_count=len(data),
+                    sha256=hashlib.sha256(data).hexdigest(),
+                    width=4,
+                    height=5,
+                    frame_count=1,
+                ),
+            )
+        )
+    return replace(base, assets=tuple(sources))
+
+
 @pytest.fixture
 def environment(tmp_path: Path):
     source_root = tmp_path / "source-pack"
@@ -155,6 +185,30 @@ def test_first_activation_publishes_one_private_immutable_graph(environment) -> 
     assert not hasattr(result, "path")
     with pytest.raises(FrozenInstanceError):
         result.cleanup_candidate = "changed"  # type: ignore[misc]
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX descriptor limit regression")
+def test_publication_bounds_descriptors_for_large_valid_pack(environment) -> None:
+    import resource
+
+    repository, source_root, _profile_root = environment
+    snapshot = _large_snapshot(source_root)
+    original = resource.getrlimit(resource.RLIMIT_NOFILE)
+    if original[0] < 256 or (
+        original[1] != resource.RLIM_INFINITY and original[1] < 256
+    ):
+        pytest.skip("descriptor limit is below the regression threshold")
+    try:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (256, original[1]))
+        result = _publish(environment, snapshot)
+    finally:
+        resource.setrlimit(resource.RLIMIT_NOFILE, original)
+
+    assert result.old_identity is None
+    assert (
+        result.new_identity
+        == repository.get_active_persona_pack(snapshot.persona_id).identity
+    )
 
 
 def test_later_publication_returns_exact_old_new_identity_without_referenced_cleanup(

@@ -103,11 +103,10 @@ class _PinnedSource:
     directory_links: tuple[tuple[int, str, int], ...]
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class _PinnedPublicationFile:
     parent_fd: int
     name: str
-    file_fd: int
     identity: tuple[int, int, int, int, int]
     byte_count: int
     sha256: str
@@ -363,11 +362,6 @@ def publish_persona_visual(
             _delete_pinned_directory(versions_fd, staging_name, staging_fd)
         if staging_fd >= 0:
             os.close(staging_fd)
-        for pinned in materialized_files:
-            try:
-                os.close(pinned.file_fd)
-            except OSError:
-                pass
         if materialized_assets_fd >= 0:
             os.close(materialized_assets_fd)
         for pinned in reversed(pinned_sources):
@@ -925,45 +919,50 @@ def _pin_publication_file(
         return _PinnedPublicationFile(
             parent_fd=parent_fd,
             name=name,
-            file_fd=file_fd,
             identity=identity,
             byte_count=len(expected),
             sha256=hashlib.sha256(expected).hexdigest(),
         )
-    except BaseException:
+    finally:
         os.close(file_fd)
-        raise
 
 
 def _publication_files_current(files: list[_PinnedPublicationFile]) -> bool:
     try:
         for pinned in files:
-            named = os.stat(
+            file_fd = os.open(
                 pinned.name,
+                os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0),
                 dir_fd=pinned.parent_fd,
-                follow_symlinks=False,
             )
-            opened = os.fstat(pinned.file_fd)
-            if (
-                not stat.S_ISREG(named.st_mode)
-                or _file_identity(named) != pinned.identity
-                or _file_identity(opened) != pinned.identity
-            ):
-                return False
-            os.lseek(pinned.file_fd, 0, os.SEEK_SET)
-            data = _read_bounded(pinned.file_fd, pinned.byte_count)
-            after = os.fstat(pinned.file_fd)
-            final = os.stat(
-                pinned.name,
-                dir_fd=pinned.parent_fd,
-                follow_symlinks=False,
-            )
-            if (
-                hashlib.sha256(data).hexdigest() != pinned.sha256
-                or _file_identity(after) != pinned.identity
-                or _file_identity(final) != pinned.identity
-            ):
-                return False
+            try:
+                named = os.stat(
+                    pinned.name,
+                    dir_fd=pinned.parent_fd,
+                    follow_symlinks=False,
+                )
+                opened = os.fstat(file_fd)
+                if (
+                    not stat.S_ISREG(named.st_mode)
+                    or _file_identity(named) != pinned.identity
+                    or _file_identity(opened) != pinned.identity
+                ):
+                    return False
+                data = _read_bounded(file_fd, pinned.byte_count)
+                after = os.fstat(file_fd)
+                final = os.stat(
+                    pinned.name,
+                    dir_fd=pinned.parent_fd,
+                    follow_symlinks=False,
+                )
+                if (
+                    hashlib.sha256(data).hexdigest() != pinned.sha256
+                    or _file_identity(after) != pinned.identity
+                    or _file_identity(final) != pinned.identity
+                ):
+                    return False
+            finally:
+                os.close(file_fd)
         return True
     except (OSError, ValueError):
         return False
