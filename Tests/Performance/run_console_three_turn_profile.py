@@ -1871,6 +1871,7 @@ async def run_scripted_mounted_sample(
                 )
             console_runtime = console._console_runtime()
             await console_runtime.dispose()
+            console_runtime = None
     finally:
         if console_runtime is not None:
             await console_runtime.dispose()
@@ -2493,6 +2494,7 @@ async def run_mounted_sample(
             prompt_loss_count = abs(3 - user_count) + queue_snapshot.total_count
             console_runtime = console._console_runtime()
             await console_runtime.dispose()
+            console_runtime = None
 
         heartbeat_stop.set()
         await heartbeat_task
@@ -2728,7 +2730,9 @@ def run_child_mode(args: argparse.Namespace) -> int:
                 raise RuntimeError("child_sample_privacy_violation")
             write_boundary_event(evidence, sample)
             return 0
-        except Exception as exc:
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException as exc:
             write_boundary_event(
                 evidence,
                 {

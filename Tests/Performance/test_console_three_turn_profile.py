@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import io
 import json
@@ -995,6 +996,67 @@ def test_child_spec_round_trip_rejects_unknown_fields(tmp_path: Path) -> None:
     path.write_text(json.dumps({**spec, "api_key": "forbidden"}))
     with pytest.raises(RuntimeError, match="child_spec_invalid"):
         read_child_spec(path)
+
+
+def test_child_mode_preserves_async_cancellation_as_terminal_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_root = tmp_path / "run"
+    sample_root = run_root / "sample"
+    target_root = tmp_path / "target"
+    evidence = run_root / "raw.jsonl"
+    sample_root.mkdir(parents=True)
+    target_root.mkdir()
+    config_path = sample_root / "config" / "tldw_cli" / "config.toml"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text("", encoding="utf-8")
+    spec_path = sample_root / "child-spec.json"
+    profile.write_child_spec(
+        spec_path,
+        {
+            "sample_id": "measured-0-enabled",
+            "phase": "measured",
+            "iteration": 0,
+            "arm": "enabled",
+            "target_root": str(target_root),
+            "sample_root": str(sample_root),
+            "run_root": str(run_root),
+            "evidence_path": str(evidence),
+        },
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(profile, "assert_child_environment", lambda *_args: None)
+    monkeypatch.setattr(profile, "install_target_root", lambda *_args: None)
+    monkeypatch.setattr(
+        profile,
+        "assert_target_modules",
+        lambda *_args: {name: str(target_root / "fixture.py") for name in profile.TARGET_MODULES},
+    )
+    monkeypatch.setattr(
+        profile.TargetAdapter,
+        "for_arm",
+        classmethod(
+            lambda _cls, _root, _arm: SimpleNamespace(revision_kind="candidate")
+        ),
+    )
+
+    async def cancelled(*_args, **_kwargs):
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(profile, "run_mounted_sample", cancelled)
+    args = SimpleNamespace(
+        child_spec=spec_path,
+        output_root=run_root,
+        endpoint="http://127.0.0.1:9099",
+        model="fixture.gguf",
+    )
+
+    assert profile.run_child_mode(args) == 1
+    rows = [json.loads(line) for line in evidence.read_text().splitlines()]
+    assert [row["event"] for row in rows] == ["child_start", "child_failure"]
+    assert rows[-1]["error_type"] == "CancelledError"
+    assert rows[-1]["error_code"] == "unclassified"
 
 
 def test_main_dispatches_nonpreflight_modes(
