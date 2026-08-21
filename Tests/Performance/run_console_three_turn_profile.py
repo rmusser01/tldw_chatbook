@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import argparse
 import math
 import json
+import importlib
 import random
 import re
+import os
+import signal
 import statistics
+import subprocess
+import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,6 +20,7 @@ from typing import IO, Any, Mapping
 
 
 ARMS = ("control", "disabled", "enabled")
+CONTROL_SHA = "5f720a40417eaa78f33619d5cbc82effc470104b"
 EXPECTED_ROUND_COUNTS = {"1": 1, "2": 3, "3": 1}
 ALL_REVIEW_EVENTS = frozenset(
     {
@@ -73,6 +80,37 @@ REQUIRED_METRICS = NON_REGRESSION_METRICS + APPLICATION_CRITICAL_PATH_METRICS + 
     "conversation_wall_ns",
 )
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+TARGET_MODULES = (
+    "tldw_chatbook",
+    "Tests.UI.test_destination_shells",
+    "Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation",
+)
+_SAFE_INHERITED_ENVIRONMENT = (
+    "PATH",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TERM",
+    "TZ",
+)
+
+
+@dataclass(frozen=True)
+class SamplePlan:
+    """One warmup or measured arm invocation owned by the parent."""
+
+    phase: str
+    arm: str
+    iteration: int
+
+
+@dataclass(frozen=True)
+class ChildResult:
+    """Bounded child-process outcome with its last durable evidence event."""
+
+    status: str
+    returncode: int | None
+    last_event: dict[str, Any] | None
 
 
 def balanced_arm_order(iteration: int) -> tuple[str, str, str]:
@@ -292,10 +330,17 @@ def validate_run(
 ) -> tuple[str, ...]:
     """Validate measured sample cardinality, identity, blocks, and contracts."""
     errors: list[str] = []
+    warmups = [row for row in rows if row.get("phase") == "warmup"]
+    if (
+        len(warmups) != len(ARMS)
+        or {row.get("arm") for row in warmups} != set(ARMS)
+        or any(validate_sample(row) for row in warmups)
+    ):
+        _append_error(errors, "warmup_contract")
     measured = [row for row in rows if row.get("phase") == "measured"]
     if len(measured) != expected_iterations * len(ARMS):
         _append_error(errors, "sample_count")
-    sample_ids = [row.get("sample_id") for row in measured]
+    sample_ids = [row.get("sample_id") for row in rows]
     if len(sample_ids) != len(set(sample_ids)):
         _append_error(errors, "sample_id_duplicate")
     for iteration in range(expected_iterations):
@@ -494,3 +539,245 @@ def write_terminal_sample(
     terminal = dict(sample)
     terminal["heartbeat_lateness_ns"] = heartbeat.values()
     write_boundary_event(destination, terminal)
+
+
+def build_child_environment(
+    base_environment: Mapping[str, str], sample_root: Path
+) -> dict[str, str]:
+    """Construct a credential-free child environment rooted in one sample."""
+    root = sample_root.resolve()
+    environment = {
+        key: base_environment[key]
+        for key in _SAFE_INHERITED_ENVIRONMENT
+        if base_environment.get(key)
+    }
+    environment.update(
+        {
+            "HOME": str(root / "home"),
+            "XDG_CONFIG_HOME": str(root / "config"),
+            "XDG_DATA_HOME": str(root / "data"),
+            "XDG_CACHE_HOME": str(root / "cache"),
+            "TMPDIR": str(root / "tmp"),
+            "TLDW_CONFIG_PATH": str(root / "config" / "tldw_cli" / "config.toml"),
+            "TLDW_TEST_MODE": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONUNBUFFERED": "1",
+        }
+    )
+    return environment
+
+
+def write_child_config(sample_root: Path, *, endpoint: str, model: str) -> Path:
+    """Write the minimal isolated config before any target application import."""
+    root = sample_root.resolve()
+    for relative in ("home", "config", "data", "cache", "tmp"):
+        (root / relative).mkdir(parents=True, exist_ok=True)
+    config_path = root / "config" / "tldw_cli" / "config.toml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        "\n".join(
+            (
+                "[first_run]",
+                "setup_completed = true",
+                "",
+                "[splash_screen]",
+                "enabled = false",
+                "",
+                "[model_catalog]",
+                "auto_refresh_enabled = false",
+                "refresh_consent_recorded = false",
+                "",
+                "[subscriptions]",
+                "enable_background_checking = false",
+                "",
+                "[console]",
+                "local_tools_enabled = true",
+                'workspace_root = ""',
+                "",
+                "[api_settings.llama_cpp]",
+                f"api_url = {json.dumps(endpoint)}",
+                f"model = {json.dumps(model)}",
+                "temperature = 0.0",
+                "max_tokens = 512",
+                "timeout = 120",
+                "retries = 0",
+                "streaming = true",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    return config_path
+
+
+def sample_schedule(iterations: int) -> tuple[SamplePlan, ...]:
+    """Return fail-fast warmups followed by complete rotated measured blocks."""
+    if iterations < 1:
+        raise ValueError("iterations must be positive")
+    schedule = [SamplePlan("warmup", arm, -1) for arm in ARMS]
+    for iteration in range(iterations):
+        schedule.extend(
+            SamplePlan("measured", arm, iteration)
+            for arm in balanced_arm_order(iteration)
+        )
+    return tuple(schedule)
+
+
+def install_target_root(target_root: Path) -> None:
+    """Clear candidate modules and make one immutable target import-first."""
+    resolved = target_root.resolve()
+    if not resolved.is_dir():
+        raise RuntimeError("target_import_mismatch: target root does not exist")
+    sys.dont_write_bytecode = True
+    for name in tuple(sys.modules):
+        if name == "tldw_chatbook" or name.startswith("tldw_chatbook."):
+            sys.modules.pop(name, None)
+        elif name == "Tests" or name.startswith("Tests."):
+            sys.modules.pop(name, None)
+    resolved_text = str(resolved)
+    sys.path[:] = [entry for entry in sys.path if entry != resolved_text]
+    sys.path.insert(0, resolved_text)
+    importlib.invalidate_caches()
+
+
+def assert_target_modules(
+    modules: Sequence[str] | Mapping[str, Path], target_root: Path
+) -> dict[str, str]:
+    """Import or inspect modules and require every file below ``target_root``."""
+    target = target_root.resolve()
+    paths: dict[str, Path] = {}
+    if isinstance(modules, Mapping):
+        paths = {str(name): Path(path).resolve() for name, path in modules.items()}
+    else:
+        for name in modules:
+            module = importlib.import_module(name)
+            module_file = getattr(module, "__file__", None)
+            if module_file is None:
+                raise RuntimeError(f"target_import_mismatch: {name} has no file")
+            paths[name] = Path(module_file).resolve()
+    mismatches = {
+        name: path for name, path in paths.items() if not path.is_relative_to(target)
+    }
+    if mismatches:
+        names = ", ".join(sorted(mismatches))
+        raise RuntimeError(f"target_import_mismatch: {names}")
+    return {name: str(path) for name, path in paths.items()}
+
+
+def _last_jsonl_event(path: Path) -> dict[str, Any] | None:
+    if not path.is_file():
+        return None
+    lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line]
+    if not lines:
+        return None
+    try:
+        value = json.loads(lines[-1])
+    except json.JSONDecodeError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def run_child_with_watchdog(
+    command: Sequence[str],
+    *,
+    evidence_path: Path,
+    timeout_seconds: float,
+    term_grace_seconds: float = 5.0,
+    environment: Mapping[str, str] | None = None,
+    cwd: Path | None = None,
+) -> ChildResult:
+    """Run one child in its own process group with TERM/KILL deadlines."""
+    process = subprocess.Popen(
+        list(command),
+        cwd=cwd,
+        env=dict(environment) if environment is not None else None,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    status: str
+    try:
+        process.communicate(timeout=timeout_seconds)
+        status = "complete" if process.returncode == 0 else "failed"
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGTERM)
+        try:
+            process.communicate(timeout=term_grace_seconds)
+            status = "timed_out_terminated"
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.communicate()
+            status = "timed_out_killed"
+    return ChildResult(
+        status=status,
+        returncode=process.returncode,
+        last_event=_last_jsonl_event(evidence_path),
+    )
+
+
+def resolve_benchmark_revisions(
+    repository_root: Path,
+    *,
+    control_ref: str,
+    candidate_ref: str,
+    run_command: Any = subprocess.run,
+) -> dict[str, str]:
+    """Resolve and freeze the exact control and candidate commit hashes."""
+    resolved: dict[str, str] = {}
+    for arm, revision in (("control", control_ref), ("candidate", candidate_ref)):
+        completed = run_command(
+            ["git", "rev-parse", "--verify", f"{revision}^{{commit}}"],
+            cwd=repository_root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        value = completed.stdout.strip() if completed.returncode == 0 else ""
+        if not re.fullmatch(r"[0-9a-f]{40}", value):
+            raise RuntimeError(f"revision_resolution_failed:{arm}")
+        resolved[arm] = value
+    if resolved["control"] != CONTROL_SHA:
+        raise RuntimeError("control_revision_mismatch")
+    return resolved
+
+
+def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespace:
+    """Parse the application-import-free parent/child benchmark CLI."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--endpoint", required=True)
+    parser.add_argument("--model", required=True)
+    parser.add_argument("--iterations", type=int, default=30)
+    parser.add_argument("--output-root", required=True, type=Path)
+    parser.add_argument("--control-sha", default=CONTROL_SHA)
+    parser.add_argument("--candidate-sha", default="HEAD")
+    parser.add_argument("--sample-timeout", type=float, default=900.0)
+    parser.add_argument("--preflight-only", action="store_true")
+    parser.add_argument("--child-spec", type=Path)
+    return parser.parse_args(arguments)
+
+
+def prepare_control_worktree(
+    repository_root: Path,
+    run_root: Path,
+    *,
+    control_sha: str,
+    run_command: Any = subprocess.run,
+) -> Path:
+    """Create one detached control worktree beneath the explicit run root."""
+    target = (run_root / "control-worktree").resolve()
+    if target.exists():
+        raise RuntimeError("control_worktree_failed: target already exists")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    command = ["git", "worktree", "add", "--detach", str(target), control_sha]
+    completed = run_command(
+        command,
+        cwd=repository_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0 or not target.is_dir():
+        detail = completed.stderr.strip()
+        raise RuntimeError(f"control_worktree_failed:{detail}")
+    return target

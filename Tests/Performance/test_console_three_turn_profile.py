@@ -5,6 +5,12 @@ from __future__ import annotations
 import copy
 import io
 import json
+import os
+import subprocess
+import sys
+import textwrap
+import tomllib
+from pathlib import Path
 
 import pytest
 
@@ -297,11 +303,18 @@ def test_validate_sample_rejects_incoherent_review_timing() -> None:
 
 
 def _valid_run(iterations: int = 30) -> list[dict[str, object]]:
-    return [
+    warmups = []
+    for arm in profile.ARMS:
+        row = _valid_sample(arm, iteration=-1)
+        row["sample_id"] = f"warmup-{arm}"
+        row["phase"] = "warmup"
+        warmups.append(row)
+    measured = [
         _valid_sample(arm, iteration=iteration)
         for iteration in range(iterations)
         for arm in profile.ARMS
     ]
+    return warmups + measured
 
 
 def test_validate_run_requires_thirty_complete_unique_rotation_blocks() -> None:
@@ -317,6 +330,16 @@ def test_validate_run_requires_thirty_complete_unique_rotation_blocks() -> None:
     wrong_block = copy.deepcopy(rows)
     wrong_block[-1]["iteration"] = 0
     assert "rotation_block_contract" in validate_run(wrong_block)
+
+
+def test_validate_run_requires_one_successful_warmup_per_arm() -> None:
+    validate_run = getattr(profile, "validate_run", None)
+    rows = _valid_run()
+
+    assert callable(validate_run)
+    assert "warmup_contract" in validate_run(rows[1:])
+    rows[0]["status"] = "failed"
+    assert "warmup_contract" in validate_run(rows)
 
 
 def test_build_summary_requires_both_non_regression_gates() -> None:
@@ -410,3 +433,299 @@ def test_boundary_writer_flushes_but_heartbeat_buffer_never_writes() -> None:
     assert destination.flush_count == 2
     records = [json.loads(line) for line in destination.getvalue().splitlines()]
     assert records[-1]["heartbeat_lateness_ns"] == [4, 5]
+
+
+def test_build_child_environment_is_strictly_allowlisted(tmp_path: Path) -> None:
+    build_child_environment = getattr(profile, "build_child_environment", None)
+    base = {
+        "PATH": "/usr/bin",
+        "LANG": "en_US.UTF-8",
+        "TERM": "xterm-256color",
+        "OPENAI_API_KEY": "secret",
+        "HTTPS_PROXY": "http://proxy.invalid",
+        "NO_PROXY": "localhost",
+        "PYTHONPATH": "/candidate/that/must/not/leak",
+        "HOME": "/Users/alice",
+        "UNRELATED": "host-state",
+    }
+
+    assert callable(build_child_environment)
+    environment = build_child_environment(base, tmp_path / "sample")
+
+    assert environment["PATH"] == "/usr/bin"
+    assert environment["LANG"] == "en_US.UTF-8"
+    assert environment["TERM"] == "xterm-256color"
+    assert environment["HOME"] == str(tmp_path / "sample" / "home")
+    assert environment["XDG_CONFIG_HOME"] == str(tmp_path / "sample" / "config")
+    assert environment["XDG_DATA_HOME"] == str(tmp_path / "sample" / "data")
+    assert environment["XDG_CACHE_HOME"] == str(tmp_path / "sample" / "cache")
+    assert environment["TMPDIR"] == str(tmp_path / "sample" / "tmp")
+    assert environment["TLDW_TEST_MODE"] == "1"
+    assert environment["PYTHONDONTWRITEBYTECODE"] == "1"
+    assert environment["PYTHONUNBUFFERED"] == "1"
+    assert set(environment).isdisjoint(
+        {"OPENAI_API_KEY", "HTTPS_PROXY", "NO_PROXY", "PYTHONPATH", "UNRELATED"}
+    )
+
+
+def test_sample_schedule_has_unmeasured_warmups_then_complete_rotations() -> None:
+    sample_schedule = getattr(profile, "sample_schedule", None)
+
+    assert callable(sample_schedule)
+    schedule = sample_schedule(4)
+    assert [(item.phase, item.arm) for item in schedule[:3]] == [
+        ("warmup", "control"),
+        ("warmup", "disabled"),
+        ("warmup", "enabled"),
+    ]
+    assert [item.arm for item in schedule[3:6]] == list(profile.balanced_arm_order(0))
+    assert [item.arm for item in schedule[6:9]] == list(profile.balanced_arm_order(1))
+    assert sum(item.phase == "measured" for item in schedule) == 12
+
+
+def _write_target_package(root: Path, marker: str) -> None:
+    for relative in (
+        "tldw_chatbook/__init__.py",
+        "Tests/__init__.py",
+        "Tests/UI/__init__.py",
+        "Tests/UI/test_destination_shells.py",
+        "Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py",
+    ):
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"MARKER = {marker!r}\n", encoding="utf-8")
+
+
+def test_target_imports_resolve_only_below_selected_root(tmp_path: Path) -> None:
+    target_a = tmp_path / "target-a"
+    target_b = tmp_path / "target-b"
+    _write_target_package(target_a, "A")
+    _write_target_package(target_b, "B")
+    runner = Path(profile.__file__).resolve()
+    program = textwrap.dedent(
+        f"""
+        import importlib.util, json, pathlib, sys
+        sys.path.insert(0, {str(target_a)!r})
+        import tldw_chatbook
+        spec = importlib.util.spec_from_file_location("benchmark_runner", {str(runner)!r})
+        runner = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = runner
+        spec.loader.exec_module(runner)
+        runner.install_target_root(pathlib.Path({str(target_b)!r}))
+        resolved = runner.assert_target_modules(runner.TARGET_MODULES, pathlib.Path({str(target_b)!r}))
+        print(json.dumps(resolved, sort_keys=True))
+        """
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-c", program],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={"PATH": os.environ.get("PATH", ""), "PYTHONDONTWRITEBYTECODE": "1"},
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    resolved = json.loads(completed.stdout)
+    assert all(Path(path).is_relative_to(target_b) for path in resolved.values())
+
+
+def test_assert_target_modules_rejects_an_import_outside_target(tmp_path: Path) -> None:
+    assert_target_modules = getattr(profile, "assert_target_modules", None)
+    outside = tmp_path / "outside.py"
+    outside.write_text("", encoding="utf-8")
+
+    assert callable(assert_target_modules)
+    with pytest.raises(RuntimeError, match="target_import_mismatch"):
+        assert_target_modules({"fake": outside}, tmp_path / "target")
+
+
+def test_watchdog_preserves_last_event_on_nonzero_exit(tmp_path: Path) -> None:
+    run_child_with_watchdog = getattr(profile, "run_child_with_watchdog", None)
+    evidence = tmp_path / "events.jsonl"
+    program = (
+        "import json,pathlib,sys; "
+        f"p=pathlib.Path({str(evidence)!r}); "
+        "p.write_text(json.dumps({'event':'before_failure'})+'\\n'); sys.exit(7)"
+    )
+
+    assert callable(run_child_with_watchdog)
+    result = run_child_with_watchdog(
+        [sys.executable, "-c", program], evidence_path=evidence, timeout_seconds=2
+    )
+    assert result.status == "failed"
+    assert result.returncode == 7
+    assert result.last_event == {"event": "before_failure"}
+
+
+def test_watchdog_reports_normal_exit(tmp_path: Path) -> None:
+    run_child_with_watchdog = getattr(profile, "run_child_with_watchdog", None)
+    evidence = tmp_path / "events.jsonl"
+
+    assert callable(run_child_with_watchdog)
+    result = run_child_with_watchdog(
+        [sys.executable, "-c", "pass"],
+        evidence_path=evidence,
+        timeout_seconds=2,
+    )
+    assert result.status == "complete"
+    assert result.returncode == 0
+    assert result.last_event is None
+
+
+def test_watchdog_terminates_then_kills_a_term_resistant_child(tmp_path: Path) -> None:
+    run_child_with_watchdog = getattr(profile, "run_child_with_watchdog", None)
+    evidence = tmp_path / "events.jsonl"
+    program = textwrap.dedent(
+        f"""
+        import json, pathlib, signal, time
+        signal.signal(signal.SIGTERM, lambda *_: None)
+        path = pathlib.Path({str(evidence)!r})
+        with path.open('w') as stream:
+            stream.write(json.dumps({{'event': 'waiting'}}) + '\\n')
+            stream.flush()
+            while True:
+                time.sleep(0.1)
+        """
+    )
+
+    assert callable(run_child_with_watchdog)
+    result = run_child_with_watchdog(
+        [sys.executable, "-c", program],
+        evidence_path=evidence,
+        timeout_seconds=0.2,
+        term_grace_seconds=0.1,
+    )
+    assert result.status == "timed_out_killed"
+    assert result.last_event == {"event": "waiting"}
+
+
+def test_write_child_config_pins_local_provider_and_disables_background_work(
+    tmp_path: Path,
+) -> None:
+    write_child_config = getattr(profile, "write_child_config", None)
+
+    assert callable(write_child_config)
+    path = write_child_config(
+        tmp_path / "sample",
+        endpoint="http://127.0.0.1:9099",
+        model="fixture-model.gguf",
+    )
+    config = tomllib.loads(path.read_text(encoding="utf-8"))
+    assert config["first_run"]["setup_completed"] is True
+    assert config["splash_screen"]["enabled"] is False
+    assert config["model_catalog"]["auto_refresh_enabled"] is False
+    assert config["subscriptions"]["enable_background_checking"] is False
+    assert config["console"] == {"local_tools_enabled": True, "workspace_root": ""}
+    assert config["api_settings"]["llama_cpp"] == {
+        "api_url": "http://127.0.0.1:9099",
+        "model": "fixture-model.gguf",
+        "temperature": 0.0,
+        "max_tokens": 512,
+        "timeout": 120,
+        "retries": 0,
+        "streaming": True,
+    }
+
+
+def test_resolve_revision_requires_exact_control_and_full_candidate_hash(
+    tmp_path: Path,
+) -> None:
+    resolve_benchmark_revisions = getattr(profile, "resolve_benchmark_revisions", None)
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        ref = command[-1]
+        value = profile.CONTROL_SHA if ref.startswith(profile.CONTROL_SHA) else "c" * 40
+        return subprocess.CompletedProcess(command, 0, stdout=value + "\n", stderr="")
+
+    assert callable(resolve_benchmark_revisions)
+    revisions = resolve_benchmark_revisions(
+        tmp_path,
+        control_ref=profile.CONTROL_SHA,
+        candidate_ref="HEAD",
+        run_command=fake_run,
+    )
+    assert revisions == {"control": profile.CONTROL_SHA, "candidate": "c" * 40}
+    assert len(calls) == 2
+
+
+def test_resolve_revision_rejects_a_different_control_hash(tmp_path: Path) -> None:
+    resolve_benchmark_revisions = getattr(profile, "resolve_benchmark_revisions", None)
+
+    def fake_run(command, **kwargs):
+        return subprocess.CompletedProcess(command, 0, stdout="d" * 40 + "\n", stderr="")
+
+    assert callable(resolve_benchmark_revisions)
+    with pytest.raises(RuntimeError, match="control_revision_mismatch"):
+        resolve_benchmark_revisions(
+            tmp_path,
+            control_ref=profile.CONTROL_SHA,
+            candidate_ref="HEAD",
+            run_command=fake_run,
+        )
+
+
+def test_parse_arguments_pins_safe_benchmark_defaults(tmp_path: Path) -> None:
+    parse_arguments = getattr(profile, "parse_arguments", None)
+
+    assert callable(parse_arguments)
+    arguments = parse_arguments(
+        [
+            "--endpoint",
+            "http://127.0.0.1:9099",
+            "--model",
+            "fixture.gguf",
+            "--output-root",
+            str(tmp_path),
+        ]
+    )
+    assert arguments.iterations == 30
+    assert arguments.control_sha == profile.CONTROL_SHA
+    assert arguments.candidate_sha == "HEAD"
+    assert arguments.sample_timeout == 900.0
+    assert arguments.child_spec is None
+
+
+def test_prepare_control_worktree_uses_detached_exact_hash(tmp_path: Path) -> None:
+    prepare_control_worktree = getattr(profile, "prepare_control_worktree", None)
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        Path(command[-2]).mkdir(parents=True)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    assert callable(prepare_control_worktree)
+    target = prepare_control_worktree(
+        tmp_path / "repository",
+        tmp_path / "run",
+        control_sha=profile.CONTROL_SHA,
+        run_command=fake_run,
+    )
+    assert target == (tmp_path / "run" / "control-worktree").resolve()
+    assert calls[0][0] == [
+        "git",
+        "worktree",
+        "add",
+        "--detach",
+        str(target),
+        profile.CONTROL_SHA,
+    ]
+
+
+def test_prepare_control_worktree_preserves_command_failure(tmp_path: Path) -> None:
+    prepare_control_worktree = getattr(profile, "prepare_control_worktree", None)
+
+    def fake_run(command, **kwargs):
+        return subprocess.CompletedProcess(command, 2, stdout="", stderr="busy")
+
+    assert callable(prepare_control_worktree)
+    with pytest.raises(RuntimeError, match="control_worktree_failed"):
+        prepare_control_worktree(
+            tmp_path / "repository",
+            tmp_path / "run",
+            control_sha=profile.CONTROL_SHA,
+            run_command=fake_run,
+        )
