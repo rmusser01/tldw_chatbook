@@ -46,6 +46,36 @@ and defence-in-depth argues for owner-only bits regardless.
 - [ ] #5 Windows/non-POSIX behavior is considered — the change must not break on platforms where `chmod` bits are advisory
 <!-- AC:END -->
 
+## Implementation Plan
+
+1. Add RED tests for an explicit owner-only mode on the shared atomic replace
+   primitive: `0o600` before replacement, exclusive-create collision ownership,
+   descriptor and temp cleanup, and unchanged default behavior.
+2. Implement owner-only exclusive temp pre-creation in
+   `Skills_Interop/atomic_write.py` while preserving existing callers and error
+   propagation.
+3. Add RED production-path tests for manifest, snapshot, generation-marker, and
+   manifest-rollback bytes; cover snapshot-first directory creation, pre-replace
+   modes, and tightening of legacy files/directories.
+4. Opt only trust-store JSON/bytes writers into owner-only creation, normalize
+   trust-owned directories to `0o700` on POSIX, and secure the trust root before
+   snapshot-first creation.
+5. Mutation-check both file and directory guards, run the complete Skills and
+   full repository suites plus static checks, obtain independent code review,
+   then record evidence and close this five-digit task by editing its source file
+   directly.
+
+Detailed plan:
+`Docs/superpowers/plans/2026-08-21-task-19520-skill-trust-permissions.md`.
+
+ADR required: no
+
+ADR path: `backlog/decisions/009-local-skill-trust-boundary.md`
+
+Reason: direct hardening of ADR-009's existing persistence boundary; storage
+ownership, trust policy, cryptography, authentication, and ACL contracts do not
+change.
+
 
 
 ## Notes
