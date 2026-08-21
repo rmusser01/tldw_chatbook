@@ -49,6 +49,8 @@ def _controller(**overrides: Any) -> ConsoleCharacterController:
 
 
 def test_character_picker_projection_is_bounded_and_fail_closed() -> None:
+    long_description = "b" * 201
+
     class CharacterDb:
         def list_character_cards(self, *, limit: int) -> list[dict[str, object]]:
             assert limit == 500
@@ -56,7 +58,7 @@ def test_character_picker_projection_is_bounded_and_fail_closed() -> None:
                 {"id": "7", "name": "  Alraune  ", "description": "forest"},
                 {"id": None, "name": "Missing identity"},
                 {"id": 8, "name": ""},
-                {"id": 9, "name": "Brynn", "description": None},
+                {"id": 9, "name": "Brynn", "description": long_description},
             ]
 
         def get_character_card_by_id(self, character_id: int) -> dict[str, object]:
@@ -70,7 +72,7 @@ def test_character_picker_projection_is_bounded_and_fail_closed() -> None:
         ConsoleCharacterOption(
             character_id=9,
             name="Brynn",
-            description="",
+            description="b" * 200,
         ),
     )
     assert controller._fetch_character_card_for_avatar(7) == {
@@ -216,7 +218,7 @@ async def test_current_character_choice_uses_named_swap_edge() -> None:
         ConsoleCharacterChoice(
             character_id=8,
             name="Brynn",
-            placement="current",
+            placement="swap",
         )
     )
 

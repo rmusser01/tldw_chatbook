@@ -36,7 +36,8 @@
 - Already controller-owned: `_refresh_active_character_avatar_if_scope_changed`
 - Already deleted: `_fetch_expression_image_bytes`
 - Focused baseline: 2 failed, 21 passed, 2 warnings. Both failures are the inherited `ChatScreen.__new__` avatar fixture reaching `console_view_hooks()` without `_skill`; all character production and architecture nodes in that command passed.
-- Current RED slice: 1 failed, 6 passed, 1 warning. The failure is the exact ownership assertion listing the six methods still on `ChatScreen`; controller-policy and oracle tests collect and pass.
+- Clean test-commit RED at `ba58442d8`: 6 failed, 1 passed, 1 warning. The four no-mount policy tests fail because the new constructor/API is absent, the dependency contract fails on the old constructor shape, and ownership fails on the six methods still on `ChatScreen`; only the synthetic oracle passes.
+- Preserved dirty continuity checkpoint after the pre-existing partial controller additions: 1 failed, 6 passed, 1 warning. The sole failure is the ownership assertion listing those same six `ChatScreen` methods; controller-policy, dependency, and oracle nodes collect and pass.
 
 ## File map
 
@@ -72,7 +73,8 @@ inspect existing dirty bytes; never overwrite them merely to obtain a clean tree
 - [ ] Add plain, no-mount controller tests for picker option projection/error containment, active rail conversation/character identity, card fetch containment, and new/swap character choice behavior.
 - [ ] Extend the Wave 6 inventory so all seven current M methods exist only on `ConsoleCharacterController`, the already-deleted expression helper stays absent, four compatibility descriptors remain controller-backed, and the controller has only named non-DOM dependencies.
 - [ ] Add a non-vacuity mutation/oracle proving a synthetic screen-owned moved method or DOM access fails the architecture contract.
-- [ ] Run only the new controller/architecture nodes and confirm RED comes from missing controller ownership, not an unrelated fixture failure.
+- [ ] On the clean production base, run only the new controller/architecture nodes and confirm the expected policy/API, dependency-shape, and ownership RED set, with no unrelated collection/fixture failure.
+- [ ] On the preserved dirty continuity state after partial controller additions, confirm only the six-method ownership assertion remains RED.
 
 **Files:**
 
@@ -89,16 +91,20 @@ Run:
   Tests/Architecture/test_console_wave6_inventory.py::test_character_controller_has_only_named_non_dom_dependencies
 ```
 
-Expected before screen extraction: the ownership node fails and names exactly the six
-remaining screen methods; the no-mount policy and structural-oracle nodes pass. A
-collection/fixture error is not acceptable RED evidence.
+Expected on the clean production base: the four policy nodes fail on the absent
+controller API, the dependency node fails on the old constructor shape, ownership names
+the six remaining screen methods, and the synthetic oracle passes. On the preserved
+dirty continuity state after the partial controller additions, only that ownership node
+fails; the six other nodes pass. A collection/fixture error is not acceptable RED
+evidence in either state.
 
 Commit the reviewed RED contract before completing production movement:
 
 ```bash
-git add Tests/UI/test_console_character_controller.py \
+git add Docs/superpowers/plans/2026-08-21-task-3070-7-console-character-controller.md \
+  Tests/UI/test_console_character_controller.py \
   Tests/Architecture/test_console_wave6_inventory.py
-git commit -m "test(console): lock character controller extraction"
+git commit -m "test(console): harden character extraction contract"
 ```
 
 ### Task 2: Move character policy into the controller
