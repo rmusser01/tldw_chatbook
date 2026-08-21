@@ -932,20 +932,27 @@ def test_notes_sync_state_inventory_row_is_exact_and_backup_excluded() -> None:
 
     assert row == {
         "id": "C50",
-        "module": "tldw_chatbook/Notes/note_import_receipts",
-        "symbol": "NoteImportReceiptRepository._connect",
+        "module": "tldw_chatbook/Notes/notes_device_state_store",
+        "symbol": "NotesDeviceStateStore._connect",
         "owner_id": "notes.sync_state",
         "classification": "private_file, read_only_uri",
-        "intent": "device-private import receipts and future lasting-sync state",
+        "intent": "device-private import receipts and lasting-sync state",
         "disposition": (
-            "Migrated via `connect_private_sqlite`. The profile-local ledger stores "
-            "only opaque identifiers, private digests, bounded lifecycle state, and "
-            "reconciliation metadata; read-only planning cannot create or migrate "
-            "the ledger, and it is excluded from portable export and centralized "
-            "backup."
+            "Migrated via `connect_private_sqlite`. The profile-local owner stores "
+            "private import receipts plus bounded roots, bindings, cursors, journals, "
+            "recovery, migration, and settings; public projections omit paths, "
+            "content, hashes, recovery bytes, cursors, and exception text, read-only "
+            "planning cannot create or migrate the owner, and it is excluded from "
+            "portable export and centralized backup."
         ),
     }
-    assert SQLITE_OWNER_REGISTRY["notes.sync_state"].centralized_backup_allowed is False
+    policy = SQLITE_OWNER_REGISTRY["notes.sync_state"]
+    assert {kind.value for kind in policy.allowed_target_kinds} == {
+        "private_file",
+        "read_only_uri",
+    }
+    assert policy.centralized_backup_allowed is False
+    assert policy.preserve_read_only_source_mode is False
     assert "notes.sync_state" not in {
         backup_row["owner_id"] for backup_row in _inventory_rows("B")
     }

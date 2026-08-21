@@ -48,6 +48,10 @@ from tldw_chatbook.Notes.note_import_receipts import (
     ItemTransition,
     NoteImportReceiptRepository,
 )
+from tldw_chatbook.Notes.notes_device_state_schema import (
+    HISTORICAL_V1_IMPORT_LEDGER_DDL,
+    LATEST_NOTES_DEVICE_SCHEMA_VERSION,
+)
 
 _APPROVAL_ID = "00000000-0000-4000-8000-000000000011"
 _PRIVATE_SOURCE = Path("/private/alice/Project/notes.json")
@@ -207,7 +211,7 @@ def test_effect_transition_loads_only_the_affected_dependency_subgraph(
     original = repository._load_dependency_snapshot
     observed: list[tuple[int, int, int, int]] = []
     statements: list[str] = []
-    original_connect = repository._connect
+    original_connect = repository._store._connect
 
     def capture(*args, **kwargs):
         snapshot = original(*args, **kwargs)
@@ -228,7 +232,7 @@ def test_effect_transition_loads_only_the_affected_dependency_subgraph(
         connection.set_trace_callback(statements.append)
         return connection
 
-    monkeypatch.setattr(repository, "_connect", traced_connect)
+    monkeypatch.setattr(repository._store, "_connect", traced_connect)
     repository.transition_effects(
         _APPROVAL_ID,
         (
@@ -263,14 +267,14 @@ def test_effect_transition_loads_only_the_affected_dependency_subgraph(
     small.transition_session(small_id, ImportSessionState.RUNNING)
     small_target = small.load_session_snapshot(small_id).payload_effects[0]
     small_statements: list[str] = []
-    small_connect = small._connect
+    small_connect = small._store._connect
 
     def traced_small_connect():
         connection = small_connect()
         connection.set_trace_callback(small_statements.append)
         return connection
 
-    monkeypatch.setattr(small, "_connect", traced_small_connect)
+    monkeypatch.setattr(small._store, "_connect", traced_small_connect)
     small.transition_effects(
         small_id,
         (
@@ -503,7 +507,7 @@ def test_notes_sync_state_path_is_profile_local_and_not_a_generic_database_path(
         assert "tldw_chatbook_notes_sync_state.db" not in source
 
 
-def test_receipt_repository_creates_v1_normalized_schema_without_private_text(
+def test_receipt_repository_creates_current_normalized_schema_without_private_text(
     tmp_path: Path,
 ) -> None:
     repository = _repository(tmp_path)
@@ -512,7 +516,7 @@ def test_receipt_repository_creates_v1_normalized_schema_without_private_text(
     schema = repository._test_schema_snapshot()
 
     assert snapshot.batch_size == 25
-    assert schema.user_version == 1
+    assert schema.user_version == LATEST_NOTES_DEVICE_SCHEMA_VERSION
     assert set(schema.tables) == {
         "import_sessions",
         "import_items",
@@ -700,14 +704,14 @@ def test_prior_observation_lookup_uses_bounded_large_input_query_count(
     )
     repository = _repository(tmp_path)
     statements: list[str] = []
-    original_connect = repository._connect
+    original_connect = repository._store._connect
 
     def traced_connect():
         connection = original_connect()
         connection.set_trace_callback(statements.append)
         return connection
 
-    monkeypatch.setattr(repository, "_connect", traced_connect)
+    monkeypatch.setattr(repository._store, "_connect", traced_connect)
 
     assert repository.prior_observations_for_plan(plan) == ()
 
@@ -759,7 +763,7 @@ def test_prior_observation_lookup_respects_a_lowered_sqlite_variable_limit(
     )
     repository = _repository(tmp_path)
     statements: list[str] = []
-    original_connect = repository._connect
+    original_connect = repository._store._connect
 
     def limited_connect():
         connection = original_connect()
@@ -767,7 +771,7 @@ def test_prior_observation_lookup_respects_a_lowered_sqlite_variable_limit(
         connection.set_trace_callback(statements.append)
         return connection
 
-    monkeypatch.setattr(repository, "_connect", limited_connect)
+    monkeypatch.setattr(repository._store, "_connect", limited_connect)
 
     assert repository.prior_observations_for_plan(plan) == ()
     lookup_statements = tuple(
@@ -806,7 +810,6 @@ def test_read_only_prior_observation_lookup_leaves_schema_less_database_unchange
         raise AssertionError("read-only lookup entered a mutating schema path")
 
     monkeypatch.setattr(repository, "transaction", reject_mutating_path)
-    monkeypatch.setattr(repository, "_initialize_schema", reject_mutating_path)
 
     assert repository.prior_observations_for_plan_read_only(_plan()) == ()
     assert database.read_bytes() == before
@@ -818,6 +821,32 @@ def test_read_only_prior_observation_lookup_leaves_schema_less_database_unchange
         ).fetchone() == (0,)
 
 
+def test_read_only_prior_observation_lookup_never_migrates_or_repairs_v1(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "notes-sync.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.executescript(HISTORICAL_V1_IMPORT_LEDGER_DDL)
+        connection.execute("DROP INDEX idx_import_items_target")
+        connection.commit()
+    database.chmod(0o600)
+    before = database.read_bytes()
+
+    assert (
+        NoteImportReceiptRepository(database).prior_observations_for_plan_read_only(
+            _plan()
+        )
+        == ()
+    )
+
+    assert database.read_bytes() == before
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone() == (1,)
+        assert connection.execute(
+            "SELECT 1 FROM sqlite_schema WHERE name = 'idx_import_items_target'"
+        ).fetchone() is None
+
+
 def test_read_only_prior_observation_lookup_uses_sqlite_enforced_read_only_mode(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -825,7 +854,7 @@ def test_read_only_prior_observation_lookup_uses_sqlite_enforced_read_only_mode(
     repository = _repository(tmp_path)
     repository.begin(_approved(), batch_size=25)
     calls: list[tuple[bool, bool]] = []
-    original_connect = repository._connect
+    original_connect = repository._store._connect
 
     def traced_connect(*, read_only: bool = False, must_exist: bool = False):
         calls.append((read_only, must_exist))
@@ -904,7 +933,9 @@ def test_read_only_prior_observation_lookup_bounds_invalid_database_failures(
         database.write_bytes(b"private corrupt sqlite payload")
     else:
         with sqlite3.connect(database) as connection:
-            connection.execute("PRAGMA user_version = 2")
+            connection.execute(
+                f"PRAGMA user_version = {LATEST_NOTES_DEVICE_SCHEMA_VERSION + 1}"
+            )
     database.chmod(0o600)
 
     with pytest.raises(ImportReceiptError) as caught:
@@ -3606,14 +3637,14 @@ def test_shared_folder_transition_respects_a_lowered_sqlite_variable_limit(
     )
     repository.transition_session(_APPROVAL_ID, ImportSessionState.RUNNING)
     root = repository.load_session_snapshot(_APPROVAL_ID).folder_effects[0]
-    original_connect = repository._connect
+    original_connect = repository._store._connect
 
     def limited_connect():
         connection = original_connect()
         connection.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 40)
         return connection
 
-    monkeypatch.setattr(repository, "_connect", limited_connect)
+    monkeypatch.setattr(repository._store, "_connect", limited_connect)
     repository.transition_effects(
         _APPROVAL_ID,
         (

@@ -17,6 +17,10 @@ from tldw_chatbook.Notifications import (
     event_state_repository,
 )
 from tldw_chatbook.Notes import note_import_receipts
+from tldw_chatbook.Notes import notes_device_state_store
+from tldw_chatbook.Notes.notes_device_state_schema import (
+    LATEST_NOTES_DEVICE_SCHEMA_VERSION,
+)
 from tldw_chatbook.Research_Interop import local_research_service
 from tldw_chatbook.Sync_Interop import notes_mirror, sync_state_repository
 from tldw_chatbook.Utils.private_paths import PrivatePathError
@@ -295,7 +299,7 @@ def test_research_path_memory_reuses_connection_and_supports_crud() -> None:
         service.close()
 
 
-def test_notes_receipt_owner_routes_write_and_read_only_modes_through_one_seam(
+def test_notes_device_owner_routes_receipt_write_and_read_only_modes_through_one_seam(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -320,13 +324,15 @@ def test_notes_receipt_owner_routes_write_and_read_only_modes_through_one_seam(
         )
 
     monkeypatch.setattr(
-        note_import_receipts, "connect_private_sqlite", tracking_connect
+        notes_device_state_store, "connect_private_sqlite", tracking_connect
     )
     database = tmp_path / "notes-sync.sqlite3"
     repository = note_import_receipts.NoteImportReceiptRepository(database)
 
-    writable = repository._connect()
-    writable.close()
+    with repository.transaction() as writable:
+        assert writable.execute("PRAGMA user_version").fetchone() == (
+            LATEST_NOTES_DEVICE_SCHEMA_VERSION,
+        )
     read_only = repository._connect(read_only=True, must_exist=True)
     try:
         with pytest.raises(sqlite3.OperationalError):
@@ -338,3 +344,4 @@ def test_notes_receipt_owner_routes_write_and_read_only_modes_through_one_seam(
         ("notes.sync_state", database, False, False),
         ("notes.sync_state", database, True, True),
     ]
+    assert not hasattr(note_import_receipts, "connect_private_sqlite")
