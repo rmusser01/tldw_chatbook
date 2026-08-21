@@ -995,8 +995,8 @@ _TOOL_CALL_SHAPE_RE = re.compile(
         |
         \[\s*/?\s*(?:tool_(?:calls?|use)|function_call)\s*\]
         |
-        \b(?:calling|invoking)\s+(?:the\s+)?(?:tool|function)\s+
-        [A-Za-z_][\w.-]*[^{}\n]{0,80}\{
+        \b(?:calling|invoking)\b[\s\S]*?
+        \b(?:tool|function)\b[\s\S]*?\{
     )
     """,
     re.IGNORECASE | re.VERBOSE,

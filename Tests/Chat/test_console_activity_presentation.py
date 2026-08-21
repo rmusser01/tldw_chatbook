@@ -368,6 +368,61 @@ def test_safe_intermediate_thinking_summary_rejects_explicit_call_shapes(
     assert bridge_module.safe_intermediate_thinking_summary(summary) is None
 
 
+@pytest.mark.parametrize(
+    "separator",
+    ["\n", "\r", "\r\n", "\u2028", "\u2029"],
+    ids=["lf", "cr", "crlf", "line-separator", "paragraph-separator"],
+)
+@pytest.mark.parametrize(
+    "signal",
+    [
+        "Invoking function fs_read with args",
+        "Calling tool fs_read with arguments",
+    ],
+    ids=["invoking-function", "calling-tool"],
+)
+def test_safe_intermediate_thinking_summary_rejects_multiline_call_payloads(
+    signal: str,
+    separator: str,
+) -> None:
+    summary = f'{signal}{separator}{{"path":"PRIVATE"}}'
+
+    assert bridge_module.safe_intermediate_thinking_summary(summary) is None
+
+
+@pytest.mark.parametrize("gap_kind", ["over-old-limit", "near-display-cap"])
+def test_safe_intermediate_thinking_summary_rejects_long_call_payload_gaps(
+    monkeypatch,
+    gap_kind: str,
+) -> None:
+    from tldw_chatbook.config import MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS
+
+    cap = MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS
+    monkeypatch.setenv("TLDW_CONSOLE_TOOL_RESULT_DISPLAY_CHARS", str(cap))
+    signal = "Calling tool fs_read with arguments "
+    payload = '{"path":"PRIVATE"}'
+    gap = 81 if gap_kind == "over-old-limit" else cap - len(signal) - len(payload) - 1
+    summary = f"{signal}{'x' * gap}{payload}"
+
+    assert gap > 80
+    assert len(summary) < cap
+    assert bridge_module.safe_intermediate_thinking_summary(summary) is None
+
+
+@pytest.mark.parametrize(
+    "summary",
+    [
+        "Calling attention to the tool selection without a payload object.",
+        "Invoking a function can be useful after validation.",
+        "Calling the tool fs_read later remains a possible option.",
+    ],
+)
+def test_safe_intermediate_thinking_summary_allows_call_prose_without_object(
+    summary: str,
+) -> None:
+    assert bridge_module.safe_intermediate_thinking_summary(summary) == summary
+
+
 def test_safe_intermediate_thinking_summary_allows_non_call_shaped_tool_prose() -> None:
     summary = "I will use the fs_read tool after checking the path."
 
