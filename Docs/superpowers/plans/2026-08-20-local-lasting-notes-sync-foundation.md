@@ -215,19 +215,19 @@ Tasks 19006, 19007, and 19008 may run concurrently after their prerequisites bec
 - Create: `tldw_chatbook/Notes/notes_sync_legacy.py`
 - Create: `Tests/Notes/test_notes_sync_legacy_migration.py`
 
-- [ ] Write RED migration matrices.
+- [x] Write RED migration matrices.
 
   Cover multiple roots, config-only and row-only roots, missing roots, overlap, duplicate identity/path, out-of-root relative paths, unsafe rows, invalid values, repeated migration, and a crash between private writes. Assert every output root is paused and no mock note/file/folder/watcher mutation is called.
 
-- [ ] Implement snapshot, pure plan, and one private write.
+- [x] Implement snapshot, pure plan, and one private write.
 
   Read legacy `[notes]` keys, per-note disk metadata columns, and `sync_sessions` as historical evidence only. Create one paused candidate per distinct canonical safe root, recognizable candidate bindings, a bounded report, and a source fingerprint in `notes_sync_legacy_migrations`. Do not carry `newer_wins`, `disk_wins`, `db_wins`, or `auto_sync` into new policy.
 
-- [ ] Require a fresh check before activation.
+- [x] Require a fresh check before activation.
 
   Candidate roots have no watcher/lease admission and cannot become active until current observations pass TASK-19005 planning and a user-approved activation in the UI/cutover tasks. Absence in a missing or retargeted root never becomes deletion.
 
-- [ ] Run and commit.
+- [x] Run and commit.
 
   ```bash
   ../../.venv/bin/python -B -m pytest -q -p no:cacheprovider -o addopts="" Tests/Notes/test_notes_sync_legacy_migration.py Tests/Notes/test_notes_device_state_store.py

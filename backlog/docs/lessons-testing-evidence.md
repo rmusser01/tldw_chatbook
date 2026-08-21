@@ -6230,3 +6230,18 @@ pathname equality alone does not preserve authority. Model release explicitly
 as running, committed, or failed. Clearing a shared handle is not release
 completion, and every concurrent close/release caller must wait for the same OS
 unlock/close outcome before reporting that ownership ended.
+
+## Canonical spelling is not filesystem identity on case-insensitive roots (TASK-19008, 2026-08-21)
+
+The legacy Notes migrator resolved candidate and private paths before comparing
+them. On the actual APFS volume, a case-variant spelling of the application data
+directory resolved successfully and referred to the same inode, but the
+sensitive-path string comparison returned no conflict. The private directory was
+then accepted as a paused sync candidate.
+
+When path ownership is a security boundary, test real aliases on the supported
+filesystem and compare existing objects with filesystem identity (`samefile` or
+verified device/inode), including ancestor relationships. Resolution removes
+`..` and symlink spellings; it does not guarantee case, mount, or lexical aliases
+have one string representation. Identity-comparison failures must also reject,
+not fall back to a spelling-based allow decision.
