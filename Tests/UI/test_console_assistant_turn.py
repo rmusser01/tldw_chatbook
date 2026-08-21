@@ -13,6 +13,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
+from tldw_chatbook.Chat.console_roleplay_identity import ConsolePresentationContext
 from tldw_chatbook.Widgets.Console.console_assistant_turn import (
     ConsoleActivityActivated,
     ConsoleActivityDisclosure,
@@ -23,6 +24,60 @@ from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
 
 _CSS_DIR = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
+
+
+def _painted_background(app: App, widget) -> object:
+    """Return the compositor-painted background near a widget's right edge."""
+    strips = app.screen._compositor.render_strips()
+    y = widget.region.y
+    x = widget.region.x + max(0, widget.region.width - 2)
+    cursor = 0
+    for segment in strips[y]:
+        next_cursor = cursor + segment.cell_length
+        if cursor <= x < next_cursor:
+            return None if segment.style is None else segment.style.bgcolor
+        cursor = next_cursor
+    raise AssertionError(f"no painted segment at ({x}, {y})")
+
+
+def _relative_luminance(color) -> float:
+    """Return WCAG relative luminance for one compositor-painted color."""
+    triplet = color.get_truecolor()
+
+    def _channel(value: int) -> float:
+        srgb = value / 255
+        return srgb / 12.92 if srgb <= 0.04045 else ((srgb + 0.055) / 1.055) ** 2.4
+
+    return (
+        0.2126 * _channel(triplet.red)
+        + 0.7152 * _channel(triplet.green)
+        + 0.0722 * _channel(triplet.blue)
+    )
+
+
+def _contrast(first, second) -> float:
+    """Return WCAG contrast between two compositor-painted colors."""
+    lighter, darker = sorted(
+        (_relative_luminance(first), _relative_luminance(second)), reverse=True
+    )
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def _painted_foreground_and_background(app: App, widget) -> tuple[object, object]:
+    """Return the first visible glyph's compositor foreground/background."""
+    strips = app.screen._compositor.render_strips()
+    for y in range(widget.region.y, widget.region.bottom):
+        cursor = 0
+        for segment in strips[y]:
+            next_cursor = cursor + segment.cell_length
+            overlaps = cursor < widget.region.right and next_cursor > widget.region.x
+            if overlaps and segment.text.strip() and segment.style is not None:
+                foreground = segment.style.color
+                background = segment.style.bgcolor
+                if foreground is not None and background is not None:
+                    return foreground, background
+            cursor = next_cursor
+    raise AssertionError(f"no painted glyph colors inside {widget.region!r}")
 
 
 class ActivityHarness(App[None]):
@@ -440,3 +495,108 @@ async def test_narrow_activity_label_ellipsizes_before_fixed_status() -> None:
         assert status.region.right <= header.content_region.right
         assert "…" in screenshot
         assert "success" in screenshot
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+async def test_composite_retains_roleplay_and_failed_answer_backgrounds(
+    theme: str,
+) -> None:
+    """The shared surface must not erase answer-level semantic fills."""
+    app = StyledTranscriptHarness()
+    app.app_config = {"chat_defaults": {"assistant_markdown": False}}
+
+    async with app.run_test(size=(90, 30)) as pilot:
+        app.theme = theme
+        transcript = app.transcript
+        transcript.set_presentation_context(
+            ConsolePresentationContext(
+                assistant_kind="character",
+                character_name="Alraune",
+            )
+        )
+        transcript.set_messages(
+            [
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.ASSISTANT,
+                    content="character answer",
+                    id="roleplay-answer",
+                ),
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.TOOL,
+                    content="roleplay tool",
+                    id="roleplay-tool",
+                    activity_presentation=ConsoleActivityPresentation(
+                        "tool", "fs_list", "success"
+                    ),
+                ),
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.ASSISTANT,
+                    content="failed answer",
+                    id="failed-answer",
+                    status="failed",
+                ),
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.TOOL,
+                    content="failed tool",
+                    id="failed-tool",
+                    activity_presentation=ConsoleActivityPresentation(
+                        "tool", "fs_write", "failed"
+                    ),
+                ),
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.SYSTEM,
+                    content="neutral",
+                    id="neutral-system",
+                ),
+            ]
+        )
+        await transcript.refresh_messages()
+        await pilot.pause(0.2)
+
+        roleplay = transcript.query_one("#console-message-roleplay-answer")
+        failed = transcript.query_one("#console-message-failed-answer")
+        neutral = transcript.query_one("#console-message-neutral-system")
+        roleplay_background = _painted_background(app, roleplay)
+        failed_background = _painted_background(app, failed)
+        neutral_background = _painted_background(app, neutral)
+
+        assert roleplay_background != neutral_background
+        assert failed_background != neutral_background
+        assert failed_background != roleplay_background
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+@pytest.mark.parametrize("status", ["success", "failed", "blocked", "done"])
+@pytest.mark.parametrize("state", ["rest", "focus", "selected"])
+async def test_activity_status_compositor_contrast(
+    theme: str,
+    status: str,
+    state: str,
+) -> None:
+    """Every terminal status remains ordinary-text readable in every state."""
+    disclosure = _disclosure(
+        f"contrast-{theme}-{status}-{state}",
+        label="fs_list",
+        status=status,
+        selected=state == "selected",
+        details=(Static("detail"),),
+    )
+    app = StyledActivityHarness(disclosure)
+    app.theme = theme
+
+    async with app.run_test(size=(48, 12)) as pilot:
+        if state == "focus":
+            disclosure.header.focus()
+        else:
+            app.set_focus(None)
+        await pilot.pause(0.2)
+
+        status_widget = disclosure.header.status_widget
+        foreground, background = _painted_foreground_and_background(app, status_widget)
+        ratio = _contrast(foreground, background)
+        assert ratio >= 4.5, (
+            f"{status} status contrast is {ratio:.2f}:1 under {theme}/{state}; "
+            f"foreground={foreground}, background={background}"
+        )

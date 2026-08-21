@@ -4341,11 +4341,11 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 .-dark-mode .console-assistant-turn {
-    border: tall $ds-chat-assistant-accent-dark;
+    border-left: tall $ds-chat-assistant-accent-dark;
 }
 
 .-light-mode .console-assistant-turn {
-    border: tall $ds-chat-assistant-accent-light;
+    border-left: tall $ds-chat-assistant-accent-light;
 }
 
 .console-assistant-turn > .console-message-header,
@@ -4369,7 +4369,6 @@ with stray left-edge border fragments), and padding 0 1 so the full
     width: 100%;
     height: auto;
     margin: 1 0 0 0;
-    background: transparent;
 }
 
 /* Selection belongs to the answer, not its entire ownership surface. */
@@ -4420,19 +4419,23 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 .console-activity-status-success {
-    color: $ds-status-ready;
+    background: $ds-status-ready 16%;
+    color: $ds-text-primary;
 }
 
 .console-activity-status-blocked {
-    color: $ds-status-blocked;
+    background: $ds-status-blocked 16%;
+    color: $ds-text-primary;
 }
 
 .console-activity-status-failed {
-    color: $ds-status-error-readable;
+    background: $ds-status-error 16%;
+    color: $ds-text-primary;
 }
 
 .console-activity-status-done {
-    color: $ds-text-muted;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
 }
 
 /* These height-one headers opt out of the global outline because it would
@@ -4449,6 +4452,13 @@ with stray left-edge border fragments), and padding 0 1 so the full
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold;
+}
+
+.console-activity-header:focus > .console-activity-status,
+.console-activity-header-selected > .console-activity-status {
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+    text-style: bold underline;
 }
 
 .console-activity-disclosure-selected > .console-activity-action-stack {

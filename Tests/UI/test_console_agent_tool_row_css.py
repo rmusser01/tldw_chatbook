@@ -110,10 +110,10 @@ def test_assistant_turn_stylesheet_contract_in_source_and_bundle() -> None:
         ),
     }
     status_contract = {
-        ".console-activity-status-success": "$ds-status-ready",
-        ".console-activity-status-blocked": "$ds-status-blocked",
-        ".console-activity-status-failed": "$ds-status-error-readable",
-        ".console-activity-status-done": "$ds-text-muted",
+        ".console-activity-status-success": "$ds-status-ready 16%",
+        ".console-activity-status-blocked": "$ds-status-blocked 16%",
+        ".console-activity-status-failed": "$ds-status-error 16%",
+        ".console-activity-status-done": "$ds-surface-panel",
     }
 
     for path in _STYLESHEETS:
@@ -124,9 +124,23 @@ def test_assistant_turn_stylesheet_contract_in_source_and_bundle() -> None:
                 assert declaration in block, f"{path}: {selector} lacks {declaration}"
         for selector, token in status_contract.items():
             block = _css_block(text, selector)
-            assert f"color: {token};" in block
+            assert f"background: {token};" in block
+            assert "color: $ds-text-primary;" in block
+
+        focused_status = _css_block(
+            text, ".console-activity-header:focus > .console-activity-status"
+        )
+        selected_status = _css_block(
+            text, ".console-activity-header-selected > .console-activity-status"
+        )
+        for block in (focused_status, selected_status):
+            assert "background: $ds-surface-panel;" in block
+            assert "color: $ds-text-primary;" in block
+            assert "text-style: bold underline;" in block
 
         dark = _css_block(text, ".-dark-mode .console-assistant-turn")
         light = _css_block(text, ".-light-mode .console-assistant-turn")
-        assert "border: tall $ds-chat-assistant-accent-dark;" in dark
-        assert "border: tall $ds-chat-assistant-accent-light;" in light
+        assert "border-left: tall $ds-chat-assistant-accent-dark;" in dark
+        assert "border-left: tall $ds-chat-assistant-accent-light;" in light
+        assert "border:" not in dark
+        assert "border:" not in light
