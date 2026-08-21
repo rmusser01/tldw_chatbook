@@ -11,7 +11,7 @@ import sqlite3
 import stat
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -42,14 +42,19 @@ _SUFFIXES = {
     "image/webp": ".webp",
     "image/gif": ".gif",
 }
-_CLEANUP_TOKEN = re.compile(
+_CLEANUP_PATH = re.compile(
     r"\Apersona_visual/packs/[0-9a-f]{32}/versions/"
     r"(?:[0-9a-f]{32}|\.staging-[0-9a-f]{32})\Z"
 )
+_CLEANUP_CAPABILITY = re.compile(
+    r"\Apv1:([0-9a-f]{64}):(persona_visual/packs/[0-9a-f]{32}/versions/"
+    r"(?:[0-9a-f]{32}|\.staging-[0-9a-f]{32}))\Z"
+)
+_CLEANUP_MARKER_NAME = ".persona-visual-cleanup"
 
 
 class PersonaVisualPublicationError(ValueError):
-    """A stable path-free publication failure with an optional cleanup token."""
+    """A stable path-free publication failure with an optional cleanup capability."""
 
     __slots__ = ("category", "cleanup_candidate")
 
@@ -86,7 +91,7 @@ class PersonaVisualPublicationSnapshot:
 
 @dataclass(frozen=True, slots=True)
 class PersonaVisualPublicationResult:
-    """Exact identity transition plus an opaque, profile-relative orphan token."""
+    """Exact identity transition plus an opaque orphan-cleanup capability."""
 
     old_identity: PersonaVisualIdentity | None
     new_identity: PersonaVisualIdentity
@@ -134,13 +139,10 @@ def publish_persona_visual(
 
     source_path, profile_path = _publication_roots(source_root, profile_root)
     current = _preflight_identity(repository, snapshot)
-    if current is not None:
-        # Re-attest the old private storage row under the exact public identity.
-        # Immutable historical rows remain references, so they are not orphans.
-        _cleanup_token_for_identity(repository, current.identity)
 
     pack_token = uuid4().hex
     version_token = uuid4().hex
+    cleanup_secret = os.urandom(32).hex()
     versions_relpath = f"persona_visual/packs/{pack_token}/versions"
     staging_name = f".staging-{version_token}"
     final_name = version_token
@@ -165,7 +167,7 @@ def publish_persona_visual(
             and staging_fd >= 0
             and _entry_matches_fd(versions_fd, final_name, staging_fd)
         ):
-            return final_token
+            return _cleanup_capability(final_token, cleanup_secret)
         if (
             versions_fd >= 0
             and staging_fd >= 0
@@ -173,7 +175,7 @@ def publish_persona_visual(
         ):
             staging_cleanup_attempted = True
             if not _delete_pinned_directory(versions_fd, staging_name, staging_fd):
-                return staging_token
+                return _cleanup_capability(staging_token, cleanup_secret)
         return None
 
     try:
@@ -207,6 +209,8 @@ def publish_persona_visual(
             os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
             dir_fd=versions_fd,
         )
+        marker_raw = _cleanup_marker(cleanup_secret, final_token)
+        _write_private_file(staging_fd, _CLEANUP_MARKER_NAME, marker_raw)
         assets_fd = -1
         try:
             os.mkdir("assets", mode=0o700, dir_fd=staging_fd)
@@ -241,6 +245,13 @@ def publish_persona_visual(
             dir_fd=staging_fd,
         )
         materialized_files.append(
+            _pin_publication_file(
+                staging_fd,
+                _CLEANUP_MARKER_NAME,
+                marker_raw,
+            )
+        )
+        materialized_files.append(
             _pin_publication_file(staging_fd, "manifest.json", manifest_raw)
         )
         for index, pinned in enumerate(pinned_sources):
@@ -265,16 +276,20 @@ def publish_persona_visual(
             raise PermissionError
         _sync_directory(versions_fd)
 
+        try:
+            caller_current = authority_guard() is True
+        except Exception:
+            caller_current = False
+        if not caller_current:
+            raise PersonaVisualPublicationError(
+                "persona_visual_authority_changed",
+                cleanup_candidate=retained_candidate(),
+            )
+
         guard_failure: str | None = None
 
         def final_guard() -> bool:
             nonlocal guard_failure
-            # Caller authority is evaluated before the final filesystem check so
-            # any mutation it triggers is fenced by the last operation in guard.
-            try:
-                caller_current = authority_guard() is True
-            except Exception:
-                caller_current = False
             filesystem_current = bool(
                 _all_source_entries_current(
                     source_path, source_chain[-1], pinned_sources
@@ -285,13 +300,7 @@ def publish_persona_visual(
                 and _publication_files_current(materialized_files)
             )
             guard_failure = (
-                None
-                if caller_current and filesystem_current
-                else (
-                    "persona_visual_authority_changed"
-                    if not caller_current
-                    else "persona_visual_publication_denied"
-                )
+                None if filesystem_current else "persona_visual_publication_denied"
             )
             return guard_failure is None
 
@@ -340,6 +349,19 @@ def publish_persona_visual(
             new_identity=graph.identity,
             cleanup_candidate=None,
         )
+    except KeyboardInterrupt as interruption:
+        if renamed and _entry_matches_fd(versions_fd, final_name, staging_fd):
+            try:
+                deleted = _delete_pinned_directory(versions_fd, final_name, staging_fd)
+                if deleted:
+                    _sync_directory(versions_fd)
+            except BaseException:
+                deleted = False
+            if not deleted:
+                interruption.cleanup_candidate = _cleanup_capability(
+                    final_token, cleanup_secret
+                )
+        raise
     except PersonaVisualPublicationError:
         raise
     except PermissionError:
@@ -374,21 +396,24 @@ def cleanup_persona_visual_publication_candidate(
     *,
     profile_root: os.PathLike[str] | str,
 ) -> bool:
-    """Synchronously delete one unreferenced, identity-pinned owned directory."""
+    """Use one issued capability to delete an unreferenced pinned directory."""
 
     if (
         type(repository) is not PersonaVisualRepository
         or type(cleanup_candidate) is not str
-        or _CLEANUP_TOKEN.fullmatch(cleanup_candidate) is None
         or not _posix_guards_available()
     ):
         raise PersonaVisualPublicationError("persona_visual_cleanup_denied")
+    capability = _parse_cleanup_capability(cleanup_candidate)
+    if capability is None:
+        raise PersonaVisualPublicationError("persona_visual_cleanup_denied")
+    cleanup_path, cleanup_secret = capability
     _require_idle_repository(repository)
     try:
         profile_path = _canonical_root(profile_root, must_exist=True)
     except (OSError, TypeError, ValueError):
         raise PersonaVisualPublicationError("persona_visual_cleanup_denied") from None
-    candidate_path = profile_path / cleanup_candidate
+    candidate_path = profile_path / cleanup_path
     versions_path = candidate_path.parent
     chain: list[int] = []
     candidate_fd = -1
@@ -419,17 +444,23 @@ def cleanup_persona_visual_publication_candidate(
         )
         if not _owned_private_directory(candidate_fd):
             raise PermissionError
+        if not _cleanup_marker_current(
+            candidate_fd,
+            cleanup_path,
+            cleanup_secret,
+        ):
+            raise PermissionError
         connection = repository.db.get_connection()
         connection.execute("BEGIN IMMEDIATE")
         reservation = True
-        if _storage_reference_exists(connection, cleanup_candidate):
+        if _storage_reference_exists(connection, cleanup_path):
             raise PersonaVisualPublicationError("persona_visual_cleanup_referenced")
         if not _entry_matches_fd(versions_fd, candidate_path.name, candidate_fd):
             raise PermissionError
         if not _delete_pinned_directory(versions_fd, candidate_path.name, candidate_fd):
             raise PermissionError
         _sync_directory(versions_fd)
-        if _storage_reference_exists(connection, cleanup_candidate):
+        if _storage_reference_exists(connection, cleanup_path):
             raise PersonaVisualPublicationError("persona_visual_cleanup_referenced")
         connection.commit()
         reservation = False
@@ -568,55 +599,20 @@ def _preflight_identity(
     snapshot: PersonaVisualPublicationSnapshot,
 ):
     expected = snapshot.expected_identity
-    if expected is not None:
-        try:
-            row = (
-                repository.db.get_connection()
-                .execute(
-                    """
-                SELECT binding.persona_id, binding.persona_revision,
-                       binding.id, binding.version, pack.id, pack.version,
-                       version_row.id, version_row.version_number,
-                       version_row.manifest_sha256
-                  FROM persona_visual_bindings AS binding
-                  JOIN persona_visual_packs AS pack ON pack.id = binding.pack_id
-                  JOIN persona_visual_pack_versions AS version_row
-                    ON version_row.id = binding.active_version_id
-                 WHERE binding.persona_id = ? AND binding.status = 'active'
-                   AND pack.status = 'active'
-                   AND pack.active_version_id = binding.active_version_id
-                """,
-                    (snapshot.persona_id,),
-                )
-                .fetchone()
-            )
-        except sqlite3.Error:
-            raise PersonaVisualPublicationError(
-                "persona_visual_database_failed"
-            ) from None
-        observed = None if row is None else tuple(row)
-        expected_tuple = (
-            expected.persona_id,
-            expected.persona_revision,
-            expected.binding_id,
-            expected.binding_version,
-            expected.pack_id,
-            expected.pack_revision,
-            expected.pack_version_id,
-            expected.version_number,
-            expected.manifest_sha256,
-        )
-        if observed != expected_tuple:
-            raise PersonaVisualPublicationError("persona_visual_identity_changed")
     try:
         current = repository.get_active_persona_pack(snapshot.persona_id)
+    except ValueError:
+        raise PersonaVisualPublicationError(
+            "persona_visual_identity_changed"
+            if expected is not None
+            else "persona_visual_database_failed"
+        ) from None
     except (
         CharactersRAGDBError,
         sqlite3.Error,
         OSError,
         RuntimeError,
         TypeError,
-        ValueError,
     ):
         raise PersonaVisualPublicationError("persona_visual_database_failed") from None
     if expected is None:
@@ -651,53 +647,78 @@ def _repository_error_category(category: str) -> str:
     return "persona_visual_database_failed"
 
 
-def _cleanup_token_for_identity(
-    repository: PersonaVisualRepository, identity: PersonaVisualIdentity
-) -> str | None:
-    try:
-        row = (
-            repository.db.get_connection()
-            .execute(
-                """
-            SELECT version_row.storage_relpath
-              FROM persona_visual_bindings AS binding
-              JOIN persona_visual_packs AS pack ON pack.id = binding.pack_id
-              JOIN persona_visual_pack_versions AS version_row
-                ON version_row.id = binding.active_version_id
-             WHERE binding.id = ? AND binding.persona_id = ?
-               AND binding.persona_revision = ? AND binding.version = ?
-               AND binding.pack_id = ? AND binding.active_version_id = ?
-               AND pack.id = ? AND pack.version = ?
-               AND pack.active_version_id = ? AND version_row.id = ?
-               AND version_row.version_number = ?
-               AND version_row.manifest_sha256 = ?
-            """,
-                (
-                    identity.binding_id,
-                    identity.persona_id,
-                    identity.persona_revision,
-                    identity.binding_version,
-                    identity.pack_id,
-                    identity.pack_version_id,
-                    identity.pack_id,
-                    identity.pack_revision,
-                    identity.pack_version_id,
-                    identity.pack_version_id,
-                    identity.version_number,
-                    identity.manifest_sha256,
-                ),
-            )
-            .fetchone()
+def _cleanup_capability(cleanup_path: str, secret: str) -> str:
+    if (
+        _CLEANUP_PATH.fullmatch(cleanup_path) is None
+        or re.fullmatch(r"[0-9a-f]{64}", secret) is None
+    ):
+        raise ValueError
+    return f"pv1:{secret}:{cleanup_path}"
+
+
+def _parse_cleanup_capability(value: str) -> tuple[str, str] | None:
+    match = _CLEANUP_CAPABILITY.fullmatch(value)
+    if match is None:
+        return None
+    secret, cleanup_path = match.groups()
+    return cleanup_path, secret
+
+
+def _cleanup_marker(secret: str, cleanup_path: str) -> bytes:
+    parent, name = cleanup_path.rsplit("/", 1)
+    final_path = f"{parent}/{name.removeprefix('.staging-')}"
+    if _CLEANUP_PATH.fullmatch(final_path) is None:
+        raise ValueError
+    return (
+        hashlib.blake2b(
+            f"persona-visual-cleanup-v1\0{final_path}".encode("ascii"),
+            key=bytes.fromhex(secret),
+            digest_size=32,
         )
-    except sqlite3.Error:
-        raise PersonaVisualPublicationError("persona_visual_database_failed") from None
-    if row is None:
-        raise PersonaVisualPublicationError("persona_visual_identity_changed")
-    value = row[0]
-    if type(value) is not str:
-        raise PersonaVisualPublicationError("persona_visual_database_failed")
-    token = str(PurePosixPath(value).parent)
-    return token if _CLEANUP_TOKEN.fullmatch(token) else None
+        .hexdigest()
+        .encode("ascii")
+    )
+
+
+def _cleanup_marker_current(
+    candidate_fd: int,
+    cleanup_path: str,
+    secret: str,
+) -> bool:
+    expected = _cleanup_marker(secret, cleanup_path)
+    marker_fd = -1
+    try:
+        marker_fd = os.open(
+            _CLEANUP_MARKER_NAME,
+            os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0),
+            dir_fd=candidate_fd,
+        )
+        named = os.stat(
+            _CLEANUP_MARKER_NAME,
+            dir_fd=candidate_fd,
+            follow_symlinks=False,
+        )
+        opened = os.fstat(marker_fd)
+        identity = _file_identity(opened)
+        if (
+            not stat.S_ISREG(named.st_mode)
+            or _file_identity(named) != identity
+            or opened.st_size != len(expected)
+            or _read_bounded(marker_fd, len(expected)) != expected
+        ):
+            return False
+        after = os.fstat(marker_fd)
+        final = os.stat(
+            _CLEANUP_MARKER_NAME,
+            dir_fd=candidate_fd,
+            follow_symlinks=False,
+        )
+        return _file_identity(after) == identity == _file_identity(final)
+    except (OSError, ValueError):
+        return False
+    finally:
+        if marker_fd >= 0:
+            os.close(marker_fd)
 
 
 def _publication_roots(
@@ -1122,9 +1143,9 @@ def _owned_private_directory(descriptor: int) -> bool:
 
 
 def _storage_reference_exists(
-    connection: sqlite3.Connection, cleanup_candidate: str
+    connection: sqlite3.Connection, cleanup_path: str
 ) -> bool:
-    prefix = f"{cleanup_candidate}/%"
+    prefix = f"{cleanup_path}/%"
     return (
         connection.execute(
             """
@@ -1135,7 +1156,7 @@ def _storage_reference_exists(
              WHERE storage_relpath = ? OR storage_relpath LIKE ?
             LIMIT 1
             """,
-            (cleanup_candidate, prefix, cleanup_candidate, prefix),
+            (cleanup_path, prefix, cleanup_path, prefix),
         ).fetchone()
         is not None
     )

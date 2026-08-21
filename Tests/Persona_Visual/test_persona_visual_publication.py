@@ -154,6 +154,10 @@ def _publish(environment, snapshot, *, guard=lambda: True, **kwargs):
     )
 
 
+def _publication_directories(profile_root: Path) -> tuple[Path, ...]:
+    return tuple(profile_root.glob("persona_visual/packs/*/versions/*"))
+
+
 def test_first_activation_publishes_one_private_immutable_graph(environment) -> None:
     repository, source_root, profile_root = environment
     snapshot = _snapshot(source_root)
@@ -287,7 +291,7 @@ def test_source_identity_aba_is_rejected_before_database_activation(
     assert not tuple((_profile_root / "persona_visual").rglob(".staging-*"))
 
 
-def test_final_authority_guard_runs_after_filesystem_publish_and_rolls_back_db(
+def test_caller_authority_guard_runs_after_filesystem_publish_before_db_transaction(
     environment,
 ) -> None:
     repository, source_root, profile_root = environment
@@ -296,8 +300,8 @@ def test_final_authority_guard_runs_after_filesystem_publish_and_rolls_back_db(
     def stale_guard() -> bool:
         observed.append(
             any(profile_root.rglob("manifest.json"))
-            and repository.db.get_connection().in_transaction
-            and getattr(repository.db._local, "transaction_depth", 0) == 1
+            and not repository.db.get_connection().in_transaction
+            and getattr(repository.db._local, "transaction_depth", 0) == 0
         )
         return False
 
@@ -308,6 +312,50 @@ def test_final_authority_guard_runs_after_filesystem_publish_and_rolls_back_db(
     assert repository.get_active_persona_pack("persona-local-1") is None
     assert caught.value.category == "persona_visual_authority_changed"
     assert caught.value.cleanup_candidate is not None
+
+
+def test_caller_guard_runs_before_repository_transaction_and_cannot_bypass_cas(
+    environment,
+) -> None:
+    repository, source_root, _profile_root = environment
+    first = _publish(environment, _snapshot(source_root))
+    snapshot = _snapshot(
+        source_root,
+        expected_identity=first.new_identity,
+        frame_rate=2,
+    )
+    connection = repository.db.get_connection()
+    observed: list[tuple[bool, int]] = []
+
+    def mutate_and_commit() -> bool:
+        observed.append(
+            (
+                connection.in_transaction,
+                getattr(repository.db._local, "transaction_depth", 0),
+            )
+        )
+        connection.set_authorizer(None)
+        connection.execute(
+            "UPDATE persona_visual_bindings SET version = version + 1 WHERE id = ?",
+            (first.new_identity.binding_id,),
+        )
+        connection.commit()
+        return True
+
+    with pytest.raises(PersonaVisualPublicationError) as caught:
+        _publish(environment, snapshot, guard=mutate_and_commit)
+
+    assert observed == [(False, 0)]
+    assert caught.value.category == "persona_visual_identity_changed"
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM persona_visual_pack_versions"
+        ).fetchone()[0]
+        == 1
+    )
+    current = repository.get_active_persona_pack(snapshot.persona_id)
+    assert current is not None
+    assert current.identity.binding_version == first.new_identity.binding_version + 1
 
 
 def test_source_name_or_inode_swap_during_replace_is_rejected(environment) -> None:
@@ -382,7 +430,7 @@ def test_final_inode_swap_inside_authority_guard_is_rejected(environment) -> Non
     assert repository.get_active_persona_pack(snapshot.persona_id) is None
 
 
-@pytest.mark.parametrize("target_kind", ("manifest", "asset"))
+@pytest.mark.parametrize("target_kind", ("manifest", "asset", "cleanup_marker"))
 def test_final_file_content_mutation_inside_authority_guard_is_rejected(
     environment, target_kind: str
 ) -> None:
@@ -395,10 +443,13 @@ def test_final_file_content_mutation_inside_authority_guard_is_rejected(
             raw = target.read_bytes()
             changed = raw.replace(b'"frame_rate":1', b'"frame_rate":9')
             assert len(changed) == len(raw) and changed != raw
-        else:
+        elif target_kind == "asset":
             target = next(profile_root.rglob("000.png"))
             changed = _png_bytes((9, 8, 7))
             assert len(changed) == target.stat().st_size
+        else:
+            target = next(profile_root.rglob(".persona-visual-cleanup"))
+            changed = b"0" * target.stat().st_size
         with target.open("r+b") as stream:
             stream.seek(0)
             stream.write(changed)
@@ -559,7 +610,8 @@ def test_atomic_replace_failure_after_rename_returns_exact_cleanup_candidate(
 
     assert caught.value.category == "persona_visual_publication_failed"
     assert caught.value.cleanup_candidate is not None
-    assert (profile_root / caught.value.cleanup_candidate).is_dir()
+    directories = _publication_directories(profile_root)
+    assert len(directories) == 1 and not directories[0].name.startswith(".staging-")
     assert repository.get_active_persona_pack("persona-local-1") is None
 
 
@@ -583,7 +635,8 @@ def test_pre_rename_failure_returns_staging_token_only_when_pinned_cleanup_fails
 
     assert caught.value.cleanup_candidate is not None
     assert "/.staging-" in caught.value.cleanup_candidate
-    assert (profile_root / caught.value.cleanup_candidate).is_dir()
+    directories = _publication_directories(profile_root)
+    assert len(directories) == 1 and directories[0].name.startswith(".staging-")
     assert repository.get_active_persona_pack("persona-local-1") is None
 
 
@@ -616,7 +669,7 @@ def test_repository_partial_write_failure_rolls_back_complete_graph(
 def test_synchronous_cancellation_cannot_leave_a_half_updated_database_graph(
     environment,
 ) -> None:
-    repository, source_root, _profile_root = environment
+    repository, source_root, profile_root = environment
 
     def interrupt_guard() -> bool:
         raise KeyboardInterrupt
@@ -625,6 +678,30 @@ def test_synchronous_cancellation_cannot_leave_a_half_updated_database_graph(
         _publish(environment, _snapshot(source_root), guard=interrupt_guard)
 
     assert repository.get_active_persona_pack("persona-local-1") is None
+    assert not tuple(profile_root.glob("persona_visual/packs/*/versions/*"))
+
+
+def test_interrupted_publication_preserves_cleanup_when_pinned_delete_fails(
+    environment, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository, source_root, profile_root = environment
+    real_delete = publication_module._delete_pinned_directory
+    monkeypatch.setattr(
+        publication_module, "_delete_pinned_directory", lambda *_args: False
+    )
+
+    def interrupt_guard() -> bool:
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt) as caught:
+        _publish(environment, _snapshot(source_root), guard=interrupt_guard)
+
+    cleanup_candidate = getattr(caught.value, "cleanup_candidate", None)
+    assert cleanup_candidate is not None
+    monkeypatch.setattr(publication_module, "_delete_pinned_directory", real_delete)
+    assert cleanup_persona_visual_publication_candidate(
+        repository, cleanup_candidate, profile_root=profile_root
+    )
 
 
 def test_cleanup_begin_immediate_reserves_against_reference_insertion(
@@ -692,7 +769,7 @@ def test_successful_cleanup_deletes_only_unreferenced_old_pinned_directory(
         _publish(environment, _snapshot(source_root), guard=lambda: False)
     cleanup_candidate = caught.value.cleanup_candidate
     assert cleanup_candidate is not None
-    old_dir = profile_root / cleanup_candidate
+    (old_dir,) = _publication_directories(profile_root)
     sentinel = old_dir.parent / "sibling"
     sentinel.mkdir()
 
@@ -706,23 +783,131 @@ def test_successful_cleanup_deletes_only_unreferenced_old_pinned_directory(
     assert sentinel.is_dir()
 
 
+def test_cleanup_refuses_forged_syntactically_valid_private_directory(
+    environment,
+) -> None:
+    repository, _source_root, profile_root = environment
+    forged = "persona_visual/packs/" + "a" * 32 + "/versions/" + "b" * 32
+    directory = profile_root
+    for component in forged.split("/"):
+        directory /= component
+        directory.mkdir(mode=0o700)
+
+    with pytest.raises(PersonaVisualPublicationError, match="cleanup_denied"):
+        cleanup_persona_visual_publication_candidate(
+            repository,
+            f"pv1:{'c' * 64}:{forged}",
+            profile_root=profile_root,
+        )
+
+    assert directory.is_dir()
+
+
+@pytest.mark.parametrize("mutation", ("content", "symlink"))
+def test_cleanup_refuses_private_marker_mutation(environment, mutation: str) -> None:
+    repository, source_root, profile_root = environment
+    with pytest.raises(PersonaVisualPublicationError) as publication:
+        _publish(environment, _snapshot(source_root), guard=lambda: False)
+    cleanup_candidate = publication.value.cleanup_candidate
+    assert cleanup_candidate is not None
+    (candidate_directory,) = _publication_directories(profile_root)
+    marker = candidate_directory / ".persona-visual-cleanup"
+    if mutation == "content":
+        marker.write_bytes(b"0" * marker.stat().st_size)
+    else:
+        original = marker.with_name("original-marker")
+        marker.rename(original)
+        marker.symlink_to(original.name)
+
+    with pytest.raises(PersonaVisualPublicationError) as cleanup:
+        cleanup_persona_visual_publication_candidate(
+            repository, cleanup_candidate, profile_root=profile_root
+        )
+
+    assert cleanup.value.category == "persona_visual_cleanup_denied"
+    assert ".persona-visual-cleanup" not in str(cleanup.value)
+    assert ".persona-visual-cleanup" not in cleanup_candidate
+    assert candidate_directory.is_dir()
+
+
+def test_cleanup_capability_marker_is_bound_to_exact_candidate(environment) -> None:
+    repository, source_root, profile_root = environment
+    with pytest.raises(PersonaVisualPublicationError) as publication:
+        _publish(environment, _snapshot(source_root), guard=lambda: False)
+    cleanup_candidate = publication.value.cleanup_candidate
+    assert cleanup_candidate is not None
+    prefix, secret, _issued_path = cleanup_candidate.split(":", 2)
+    (issued_directory,) = _publication_directories(profile_root)
+    forged_path = "persona_visual/packs/" + "a" * 32 + "/versions/" + "b" * 32
+    forged_directory = profile_root
+    for component in forged_path.split("/"):
+        forged_directory /= component
+        forged_directory.mkdir(mode=0o700, exist_ok=True)
+    (forged_directory / ".persona-visual-cleanup").write_bytes(
+        (issued_directory / ".persona-visual-cleanup").read_bytes()
+    )
+
+    with pytest.raises(PersonaVisualPublicationError, match="cleanup_denied"):
+        cleanup_persona_visual_publication_candidate(
+            repository,
+            f"{prefix}:{secret}:{forged_path}",
+            profile_root=profile_root,
+        )
+
+    assert forged_directory.is_dir()
+
+
 def test_cleanup_refuses_active_reference_invalid_tokens_and_symlink_substitution(
     environment,
 ) -> None:
     repository, source_root, profile_root = environment
-    _publish(environment, _snapshot(source_root))
-    active_token = (
+    first = _publish(environment, _snapshot(source_root))
+    with pytest.raises(PersonaVisualPublicationError) as caught:
+        _publish(
+            environment,
+            _snapshot(
+                source_root,
+                expected_identity=first.new_identity,
+                frame_rate=2,
+            ),
+            guard=lambda: False,
+        )
+    cleanup_candidate = caught.value.cleanup_candidate
+    assert cleanup_candidate is not None
+    active_storage = (
         repository.db.get_connection()
-        .execute("SELECT storage_relpath FROM persona_visual_pack_versions")
+        .execute(
+            "SELECT storage_relpath FROM persona_visual_pack_versions WHERE id = ?",
+            (first.new_identity.pack_version_id,),
+        )
         .fetchone()[0]
     )
-    active_token = str(Path(active_token).parent)
+    active_directory = profile_root / str(Path(active_storage).parent)
+    (failed_directory,) = (
+        directory
+        for directory in _publication_directories(profile_root)
+        if directory != active_directory
+    )
+    failed_relative = failed_directory.relative_to(profile_root).as_posix()
+    repository.db.get_connection().execute(
+        "UPDATE persona_visual_pack_versions SET storage_relpath = ? WHERE id = ?",
+        (
+            f"{failed_relative}/manifest.json",
+            first.new_identity.pack_version_id,
+        ),
+    )
+    repository.db.get_connection().commit()
 
     with pytest.raises(PersonaVisualPublicationError, match="cleanup_referenced"):
         cleanup_persona_visual_publication_candidate(
-            repository, active_token, profile_root=profile_root
+            repository, cleanup_candidate, profile_root=profile_root
         )
-    for token in ("../escape", ".staging-deadbeef", str(profile_root)):
+    for token in (
+        "../escape",
+        ".staging-deadbeef",
+        str(profile_root),
+        str(Path(active_storage).parent),
+    ):
         with pytest.raises(PersonaVisualPublicationError, match="cleanup_denied"):
             cleanup_persona_visual_publication_candidate(
                 repository, token, profile_root=profile_root
@@ -733,12 +918,15 @@ def test_cleanup_refuses_active_reference_invalid_tokens_and_symlink_substitutio
     candidate = (
         profile_root / "persona_visual/packs/" / ("a" * 32) / "versions" / ("b" * 32)
     )
-    candidate.parent.mkdir(parents=True)
+    directory = profile_root
+    for component in candidate.parent.relative_to(profile_root).parts:
+        directory /= component
+        directory.mkdir(mode=0o700, exist_ok=True)
     candidate.symlink_to(target, target_is_directory=True)
     with pytest.raises(PersonaVisualPublicationError, match="cleanup_denied"):
         cleanup_persona_visual_publication_candidate(
             repository,
-            candidate.relative_to(profile_root).as_posix(),
+            "pv1:" + "c" * 64 + ":" + candidate.relative_to(profile_root).as_posix(),
             profile_root=profile_root,
         )
     assert target.is_dir()
@@ -757,13 +945,28 @@ def test_cleanup_rechecks_manifest_and_asset_references_after_pinned_deletion(
         )
     cleanup_candidate = caught.value.cleanup_candidate
     assert cleanup_candidate is not None
+    active_storage = (
+        repository.db.get_connection()
+        .execute(
+            "SELECT storage_relpath FROM persona_visual_pack_versions WHERE id = ?",
+            (first.new_identity.pack_version_id,),
+        )
+        .fetchone()[0]
+    )
+    active_directory = profile_root / str(Path(active_storage).parent)
+    (failed_directory,) = (
+        directory
+        for directory in _publication_directories(profile_root)
+        if directory != active_directory
+    )
+    failed_relative = failed_directory.relative_to(profile_root).as_posix()
     real_delete = publication_module._delete_pinned_directory
 
     def delete_then_reference(parent_fd, name, pinned_fd):
         deleted = real_delete(parent_fd, name, pinned_fd)
         repository.db.get_connection().execute(
             "UPDATE persona_visual_pack_versions SET storage_relpath = ? WHERE id = ?",
-            (f"{cleanup_candidate}/manifest.json", first.new_identity.pack_version_id),
+            (f"{failed_relative}/manifest.json", first.new_identity.pack_version_id),
         )
         return deleted
 
