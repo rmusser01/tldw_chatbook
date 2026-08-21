@@ -537,8 +537,10 @@ and the owning task's plan references) mid-merge.
 as provisional until merge. At merge time, before resolving any README conflict:
 `git ls-tree --name-only origin/dev backlog/decisions/` for the authoritative taken
 list, plus a sweep of open PRs' changed files for `backlog/decisions/` claims. If
-renumbering, grep the repo for both `NNN-<slug>` and `ADR-NNN` — the owning task's
-plan section references the ADR by number and path, and stale references there
+renumbering, grep the repo for `NNN-<slug>` AND both header forms — `ADR-NNN`
+(hyphenated, ~90 files today) and `ADR NNN` (spaced, e.g. `# ADR 008 - ...`; a
+`ADR[- ]NNN` character class covers both) — the owning task's plan section
+references the ADR by number and path, and stale references in either form
 mislead the next session.
 
 ---
