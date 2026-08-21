@@ -28,6 +28,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable, Sequence
 
 from loguru import logger
 
@@ -604,3 +605,232 @@ def untracked_preview(root: Path, path: str, max_lines: int) -> str:
     if capped_read or len(lines) > max_lines:
         out.append(f"… truncated at {max_lines} lines")
     return "\n".join(out) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# Commit engine -- pathspec commit with per-step outcomes (TASK-16801 T3).
+# ---------------------------------------------------------------------------
+
+#: Refs whose existence marks an in-progress merge/rebase/cherry-pick --
+#: git refuses a partial (pathspec) commit during any of these, and the
+#: raw git error is worse copy than naming the operation ourselves.
+_IN_PROGRESS_HEAD_REFS: tuple[str, ...] = (
+    "MERGE_HEAD",
+    "REBASE_HEAD",
+    "CHERRY_PICK_HEAD",
+)
+
+
+class CommitRefusedError(GitWorkspaceError):
+    """The commit was refused before touching anything (active run).
+
+    Mirrors :class:`tldw_chatbook.Workspaces.change_revert.RevertRefusedError`
+    -- the per-root lock serializes *git* operations, but an agent's own
+    file tools do not take it, so committing under a writing agent could
+    stage/commit a half-written file. The caller injects the
+    ``run_active`` probe, and this raises BEFORE any git command runs.
+    """
+
+
+@dataclass(frozen=True)
+class GitStepOutcome:
+    """One step's outcome from :func:`commit_selected`.
+
+    Attributes:
+        step: The step's name (``"in-progress-check"``, ``"validate-branch"``,
+            ``"create-branch"``, ``"stage"``, ``"commit"``, or
+            ``"resolve-sha"``).
+        ok: Whether the step succeeded.
+        detail: Human-readable failure copy (a capped stderr excerpt, or a
+            fixed reason string for a guard) when ``ok`` is False; empty
+            on success.
+    """
+
+    step: str
+    ok: bool
+    detail: str = ""
+
+
+@dataclass(frozen=True)
+class CommitResult:
+    """The full outcome of one :func:`commit_selected` call.
+
+    Attributes:
+        outcomes: One :class:`GitStepOutcome` per step that ran and was
+            worth reporting, in execution order. A guard step
+            (``"in-progress-check"``, ``"validate-branch"``) that PASSED
+            is silent -- nothing to report -- and is only appended when it
+            BLOCKS the commit; the mutating steps that follow
+            (``"create-branch"``, ``"stage"``, ``"commit"``,
+            ``"resolve-sha"``) are always appended, success or failure,
+            since they form the audit trail of what actually happened to
+            the repository.
+        short_sha: ``rev-parse --short HEAD`` after a landed commit, or
+            ``None`` on any failure (including a failure to resolve the
+            sha of an otherwise-landed commit).
+    """
+
+    outcomes: tuple[GitStepOutcome, ...]
+    short_sha: str | None
+
+
+def _first_in_progress_ref(root: Path) -> str | None:
+    """Return the first in-progress-operation ref that exists, if any.
+
+    Args:
+        root: Workspace root.
+
+    Returns:
+        The ref name (e.g. ``"MERGE_HEAD"``), or ``None`` when none of
+        :data:`_IN_PROGRESS_HEAD_REFS` resolve.
+    """
+    for ref in _IN_PROGRESS_HEAD_REFS:
+        result = _run_user_git(root, "rev-parse", "--verify", "-q", ref, check=False)
+        if result.returncode == 0:
+            return ref
+    return None
+
+
+def commit_selected(
+    root: Path,
+    files: Sequence[str],
+    message: str,
+    new_branch: str | None,
+    *,
+    run_active: Callable[[], bool],
+) -> CommitResult:
+    """Commit exactly the selected files at ``root`` as a pathspec commit.
+
+    Runs ``git add -A -- <files>`` then ``git commit -m <message> --
+    <files>`` -- a bare ``git commit -m`` would sweep in whatever the user
+    had already staged in a terminal (spec §2 probe 1); the pathspec form
+    commits EXACTLY the selected paths and leaves any unrelated pre-staged
+    index entry staged and uncommitted.
+
+    Step order, stopping at the first failure:
+
+    1. ``run_active()`` -- refuse before touching anything.
+    2. ``in-progress-check`` -- refuse during a merge/rebase/cherry-pick.
+    3. When ``new_branch``: ``validate-branch`` (``check-ref-format``,
+       also an option-injection guard against a leading ``-``), then
+       ``create-branch`` (``checkout -b``).
+    4. ``stage`` -- ``git add -A -- <files>``.
+    5. ``commit`` -- ``git commit -m <message> -- <files>`` (user hooks
+       and gpg signing run; this is the user's repo, their rules).
+    6. ``resolve-sha`` -- ``git rev-parse --short HEAD``.
+
+    Args:
+        root: Workspace root (must be the repo toplevel).
+        files: Root-relative paths to stage and commit. Always placed
+            after ``--`` in both the ``add`` and ``commit`` argv, so a
+            path that happens to start with ``-`` is never parsed as an
+            option.
+        message: The commit message, passed as ``-m``'s argv element
+            (never shell-interpolated) -- a leading ``-`` is safe (spec
+            §2 probe 5: ``-m``'s sticky-arg consumption makes a
+            dash-leading message safe as argv, e.g. message ``"--amend"``
+            commits literally rather than amending).
+        new_branch: When set, create and check out this branch before
+            staging. ``None`` or empty commits to the current branch.
+        run_active: Probe for an active run on this root's workspace;
+            True refuses the whole commit before any git command runs
+            (mirrors :func:`tldw_chatbook.Workspaces.change_revert.revert_paths`).
+
+    Returns:
+        The :class:`CommitResult`.
+
+    Raises:
+        CommitRefusedError: A run is active -- finish or stop it first.
+        GitWorkspaceError: ``files`` is empty or ``message`` is blank
+            (the UI validates first; the engine still refuses rather
+            than run a no-op/empty-message commit).
+    """
+    if run_active():
+        raise CommitRefusedError(
+            "a run is active on this workspace — finish or stop the run first"
+        )
+    if not files:
+        raise GitWorkspaceError("no files selected to commit")
+    if not message.strip():
+        raise GitWorkspaceError("commit message must not be blank")
+
+    outcomes: list[GitStepOutcome] = []
+
+    in_progress_ref = _first_in_progress_ref(root)
+    if in_progress_ref is not None:
+        outcomes.append(
+            GitStepOutcome(
+                "in-progress-check",
+                False,
+                "finish or abort the merge/rebase/cherry-pick first",
+            )
+        )
+        return CommitResult(tuple(outcomes), None)
+
+    if new_branch:
+        validate_result = _run_user_git(
+            root, "check-ref-format", "--branch", new_branch, check=False
+        )
+        if validate_result.returncode != 0:
+            outcomes.append(
+                GitStepOutcome(
+                    "validate-branch",
+                    False,
+                    (validate_result.stderr or "").strip()[:400],
+                )
+            )
+            return CommitResult(tuple(outcomes), None)
+
+        create_result = _run_user_git(root, "checkout", "-b", new_branch, check=False)
+        create_ok = create_result.returncode == 0
+        outcomes.append(
+            GitStepOutcome(
+                "create-branch",
+                create_ok,
+                "" if create_ok else (create_result.stderr or "").strip()[:400],
+            )
+        )
+        if not create_ok:
+            return CommitResult(tuple(outcomes), None)
+
+    stage_result = _run_user_git(root, "add", "-A", "--", *files, check=False)
+    stage_ok = stage_result.returncode == 0
+    outcomes.append(
+        GitStepOutcome(
+            "stage", stage_ok, "" if stage_ok else (stage_result.stderr or "").strip()[:400]
+        )
+    )
+    if not stage_ok:
+        return CommitResult(tuple(outcomes), None)
+
+    commit_result = _run_user_git(
+        root,
+        "commit",
+        "-m",
+        message,
+        "--",
+        *files,
+        timeout=COMMIT_TIMEOUT_SECONDS,
+        check=False,
+    )
+    commit_ok = commit_result.returncode == 0
+    outcomes.append(
+        GitStepOutcome(
+            "commit",
+            commit_ok,
+            "" if commit_ok else (commit_result.stderr or "").strip()[:400],
+        )
+    )
+    if not commit_ok:
+        return CommitResult(tuple(outcomes), None)
+
+    sha_result = _run_user_git(root, "rev-parse", "--short", "HEAD", check=False)
+    short_sha = sha_result.stdout.strip() if sha_result.returncode == 0 else None
+    outcomes.append(
+        GitStepOutcome(
+            "resolve-sha",
+            short_sha is not None,
+            "" if short_sha is not None else (sha_result.stderr or "").strip()[:400],
+        )
+    )
+    return CommitResult(tuple(outcomes), short_sha)
