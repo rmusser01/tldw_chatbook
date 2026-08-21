@@ -4,22 +4,26 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import math
-import json
 import importlib
+import importlib.metadata as importlib_metadata
+import json
+import math
 import random
 import re
 import os
 import signal
+import sqlite3
 import statistics
 import subprocess
 import sys
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace as dataclass_replace
 from pathlib import Path
 from threading import Lock
 from typing import IO, Any, Mapping
+from urllib.parse import urlsplit, urlunsplit
+from urllib.request import Request
 
 
 ARMS = ("control", "disabled", "enabled")
@@ -108,6 +112,26 @@ _SAFE_INHERITED_ENVIRONMENT = (
     "TERM",
     "TZ",
 )
+_OWNED_CHILD_ENVIRONMENT = (
+    "HOME",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_CACHE_HOME",
+    "TMPDIR",
+    "TLDW_CONFIG_PATH",
+)
+_CHILD_SPEC_KEYS = frozenset(
+    {
+        "sample_id",
+        "phase",
+        "iteration",
+        "arm",
+        "target_root",
+        "sample_root",
+        "run_root",
+        "evidence_path",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -152,7 +176,6 @@ class TargetAdapter:
         has_legacy_tracker = (
             "class ChangeTurnTracker" in tracker_text
             and "def begin_turn" in tracker_text
-            and "def populate_baseline" in tracker_text
             and "def end_turn" in tracker_text
         )
         has_candidate = consent.is_file() and finalization.is_file()
@@ -301,11 +324,31 @@ class TargetAdapter:
         if self.revision_kind == "legacy":
             self._require_shape("control", "legacy")
             self._wrap_method(tracker_type, "begin_turn", before("baseline_started"))
-            self._wrap_method(tracker_type, "populate_baseline", after("baseline_ready"))
+
+            def legacy_end(
+                original: Callable[..., Any],
+            ) -> Callable[..., Any]:
+                def wrapped(*args: Any, **kwargs: Any) -> Any:
+                    handle = args[1] if len(args) > 1 else kwargs.get("handle")
+                    await_baseline = getattr(handle, "await_baseline", None)
+                    if not callable(await_baseline):
+                        raise RuntimeError(
+                            "target_fingerprint_mismatch:control:await_baseline"
+                        )
+                    await_baseline()
+                    self._record_review_event("baseline_ready")
+                    self._record_review_event("review_e_started")
+                    try:
+                        return original(*args, **kwargs)
+                    finally:
+                        self._record_review_event("review_e_completed")
+
+                return wrapped
+
             self._wrap_method(
                 tracker_type,
                 "end_turn",
-                around("review_e_started", "review_e_completed"),
+                legacy_end,
             )
             return
 
@@ -479,6 +522,23 @@ def validate_sample(row: Mapping[str, Any]) -> tuple[str, ...]:
         _append_error(errors, "terminal_third_provider_timing")
     if row.get("provider_round_counts") != EXPECTED_ROUND_COUNTS:
         _append_error(errors, "provider_round_contract")
+    provider_usage = row.get("provider_usage")
+    if not isinstance(provider_usage, list) or len(provider_usage) != 5:
+        _append_error(errors, "provider_usage_contract")
+    elif any(
+        not isinstance(usage, Mapping)
+        or set(usage) != {"prompt_tokens", "completion_tokens", "total_tokens"}
+        or any(
+            not isinstance(usage.get(key), int)
+            or isinstance(usage.get(key), bool)
+            or usage[key] < 0
+            for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+        )
+        or usage["total_tokens"]
+        != usage["prompt_tokens"] + usage["completion_tokens"]
+        for usage in provider_usage
+    ):
+        _append_error(errors, "provider_usage_contract")
     trigger = row.get("terminal_turn_2_provider_completed_ns")
     requested = row.get("third_send_requested_ns")
     released = row.get("turn_2_release_ns")
@@ -774,6 +834,12 @@ def normalize_text(text: str, roots: Mapping[str, Path]) -> str:
     return normalized
 
 
+def safe_error_code(error: BaseException) -> str:
+    """Retain a stable machine code only; discard arbitrary exception copy."""
+    value = str(error).strip()
+    return value if re.fullmatch(r"[a-z0-9_.:-]{1,120}", value) else "unclassified"
+
+
 def write_boundary_event(destination: IO[str], event: Mapping[str, Any]) -> None:
     """Write and immediately flush one low-frequency evidence boundary."""
     destination.write(json.dumps(dict(event), sort_keys=True, separators=(",", ":")))
@@ -835,6 +901,67 @@ def build_child_environment(
     return environment
 
 
+def assert_child_environment(
+    sample_root: Path, environment: Mapping[str, str]
+) -> None:
+    """Fail before target imports unless the child owns its complete environment."""
+    root = sample_root.resolve()
+    allowed = set(_SAFE_INHERITED_ENVIRONMENT) | set(_OWNED_CHILD_ENVIRONMENT) | {
+        "TLDW_TEST_MODE",
+        "PYTHONDONTWRITEBYTECODE",
+        "PYTHONUNBUFFERED",
+        # macOS inserts this locale descriptor even when subprocess.env is
+        # otherwise exact. It contains no path, credential, or user content.
+        "__CF_USER_TEXT_ENCODING",
+    }
+    if set(environment) - allowed:
+        raise RuntimeError("child_environment_mismatch:unexpected_key")
+    for key in _OWNED_CHILD_ENVIRONMENT:
+        value = environment.get(key)
+        if not value or not Path(value).resolve().is_relative_to(root):
+            raise RuntimeError(f"child_environment_mismatch:{key}")
+    expected_flags = {
+        "TLDW_TEST_MODE": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONUNBUFFERED": "1",
+    }
+    if any(environment.get(key) != value for key, value in expected_flags.items()):
+        raise RuntimeError("child_environment_mismatch:flags")
+
+
+def write_child_spec(path: Path, spec: Mapping[str, Any]) -> None:
+    """Persist one parent-owned child specification with an exact schema."""
+    if set(spec) != _CHILD_SPEC_KEYS:
+        raise RuntimeError("child_spec_invalid")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(dict(spec), sort_keys=True, separators=(",", ":")),
+        encoding="utf-8",
+    )
+
+
+def read_child_spec(path: Path) -> dict[str, Any]:
+    """Read one child specification and reject schema/type drift."""
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("child_spec_invalid") from exc
+    if not isinstance(value, dict) or set(value) != _CHILD_SPEC_KEYS:
+        raise RuntimeError("child_spec_invalid")
+    if (
+        value.get("arm") not in ARMS
+        or value.get("phase") not in {"warmup", "measured"}
+        or not isinstance(value.get("iteration"), int)
+        or not isinstance(value.get("sample_id"), str)
+        or any(
+            not isinstance(value.get(key), str)
+            for key in ("target_root", "sample_root", "run_root", "evidence_path")
+        )
+    ):
+        raise RuntimeError("child_spec_invalid")
+    return value
+
+
 def write_child_config(sample_root: Path, *, endpoint: str, model: str) -> Path:
     """Write the minimal isolated config before any target application import."""
     root = sample_root.resolve()
@@ -867,6 +994,7 @@ def write_child_config(sample_root: Path, *, endpoint: str, model: str) -> Path:
                 f"model = {json.dumps(model)}",
                 "temperature = 0.0",
                 "max_tokens = 512",
+                'reasoning_effort = "none"',
                 "timeout = 120",
                 "retries = 0",
                 "streaming = true",
@@ -876,6 +1004,277 @@ def write_child_config(sample_root: Path, *, endpoint: str, model: str) -> Path:
         encoding="utf-8",
     )
     return config_path
+
+
+def preflight_provider(
+    endpoint: str,
+    model: str,
+    *,
+    urlopen: Callable[..., Any] | None = None,
+    probe_timeout: float = 10.0,
+    completion_timeout: float = 120.0,
+) -> dict[str, Any]:
+    """Verify one credential-free loopback llama.cpp endpoint and model."""
+    parsed = urlsplit(endpoint.strip())
+    if (
+        parsed.scheme != "http"
+        or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or parsed.path.rstrip("/") not in {"", "/v1"}
+        or not model.strip()
+    ):
+        raise ValueError("preflight_endpoint_refused")
+    if urlopen is None:
+        from urllib.request import urlopen as stdlib_urlopen
+
+        urlopen = stdlib_urlopen
+    base_path = parsed.path.rstrip("/")
+    api_path = base_path if base_path == "/v1" else f"{base_path}/v1"
+    authority = parsed.netloc
+    api_base = urlunsplit((parsed.scheme, authority, api_path, "", ""))
+
+    models_request = Request(
+        f"{api_base}/models",
+        headers={"Accept": "application/json"},
+        method="GET",
+    )
+    with urlopen(models_request, timeout=probe_timeout) as response:
+        if getattr(response, "status", 200) != 200:
+            raise RuntimeError("provider_preflight_models_failed")
+        models_payload = json.loads(response.read())
+    data = models_payload.get("data") if isinstance(models_payload, Mapping) else None
+    model_ids = [
+        str(item.get("id"))
+        for item in data
+        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
+    ] if isinstance(data, list) else []
+    if model not in model_ids:
+        raise RuntimeError("provider_preflight_model_mismatch")
+
+    completion_body = json.dumps(
+        {
+            "model": model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Reply with exactly synthetic ready.",
+                }
+            ],
+            "temperature": 0.0,
+            "max_tokens": 16,
+            "stream": False,
+            "chat_template_kwargs": {"enable_thinking": False},
+        },
+        separators=(",", ":"),
+    ).encode("utf-8")
+    completion_request = Request(
+        f"{api_base}/chat/completions",
+        data=completion_body,
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    with urlopen(completion_request, timeout=completion_timeout) as response:
+        if getattr(response, "status", 200) != 200:
+            raise RuntimeError("provider_preflight_completion_failed")
+        completion_payload = json.loads(response.read())
+    choices = (
+        completion_payload.get("choices")
+        if isinstance(completion_payload, Mapping)
+        else None
+    )
+    message = (
+        choices[0].get("message")
+        if isinstance(choices, list)
+        and choices
+        and isinstance(choices[0], Mapping)
+        else None
+    )
+    content = message.get("content") if isinstance(message, Mapping) else None
+    if not isinstance(content, str) or not content.strip():
+        raise RuntimeError("provider_preflight_completion_empty")
+    return {
+        "status": "ready",
+        "model": model,
+        "model_count": len(model_ids),
+        "completion_chars": len(content),
+    }
+
+
+def extract_sse_usage(line: str) -> dict[str, int] | None:
+    """Extract only coherent aggregate token counts from one SSE line."""
+    if not line.startswith("data: {"):
+        return None
+    try:
+        payload = json.loads(line[6:])
+    except (TypeError, ValueError):
+        return None
+    usage = payload.get("usage") if isinstance(payload, Mapping) else None
+    if not isinstance(usage, Mapping):
+        return None
+    keys = ("prompt_tokens", "completion_tokens", "total_tokens")
+    values = {key: usage.get(key) for key in keys}
+    if any(
+        not isinstance(value, int) or isinstance(value, bool) or value < 0
+        for value in values.values()
+    ):
+        return None
+    if values["total_tokens"] != (
+        values["prompt_tokens"] + values["completion_tokens"]
+    ):
+        return None
+    return values
+
+
+def runtime_metadata(
+    *, version_lookup: Callable[[str], str] = importlib_metadata.version
+) -> dict[str, Any]:
+    """Return portable interpreter, SQLite, and direct dependency versions."""
+    dependencies = {
+        name: version_lookup(name)
+        for name in ("httpx", "pydantic", "rich", "textual")
+    }
+    return {
+        "python": {
+            "implementation": sys.implementation.name,
+            "version": ".".join(str(part) for part in sys.version_info[:3]),
+        },
+        "sqlite": sqlite3.sqlite_version,
+        "dependencies": dependencies,
+    }
+
+
+def host_load_snapshot() -> dict[str, Any]:
+    """Return content-free host capacity and scheduler load facts."""
+    return {
+        "logical_cpu_count": os.cpu_count(),
+        "load_average": [float(value) for value in os.getloadavg()],
+    }
+
+
+def provider_server_metadata(
+    endpoint: str,
+    model: str,
+    *,
+    urlopen: Callable[..., Any] | None = None,
+    timeout: float = 10.0,
+) -> dict[str, Any]:
+    """Read a strict allowlist of reproducibility facts from llama.cpp props."""
+    parsed = urlsplit(endpoint.strip())
+    if (
+        parsed.scheme != "http"
+        or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or parsed.path.rstrip("/") not in {"", "/v1"}
+        or not model.strip()
+    ):
+        raise ValueError("provider_metadata_endpoint_refused")
+    if urlopen is None:
+        from urllib.request import urlopen as stdlib_urlopen
+
+        urlopen = stdlib_urlopen
+    server_base = urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
+    request = Request(
+        f"{server_base}/props",
+        headers={"Accept": "application/json"},
+        method="GET",
+    )
+    with urlopen(request, timeout=timeout) as response:
+        if getattr(response, "status", 200) != 200:
+            raise RuntimeError("provider_metadata_failed")
+        payload = json.loads(response.read())
+    if not isinstance(payload, Mapping) or payload.get("model_alias") != model:
+        raise RuntimeError("provider_metadata_model_mismatch")
+    generation = payload.get("default_generation_settings")
+    modalities = payload.get("modalities")
+    result = {
+        "build_info": payload.get("build_info"),
+        "model_alias": payload.get("model_alias"),
+        "total_slots": payload.get("total_slots"),
+        "context_tokens": (
+            generation.get("n_ctx") if isinstance(generation, Mapping) else None
+        ),
+        "endpoints": {
+            "metrics": payload.get("endpoint_metrics"),
+            "slots": payload.get("endpoint_slots"),
+            "props": payload.get("endpoint_props"),
+        },
+        "is_sleeping": payload.get("is_sleeping"),
+        "modalities": {
+            "vision": modalities.get("vision") if isinstance(modalities, Mapping) else None,
+            "audio": modalities.get("audio") if isinstance(modalities, Mapping) else None,
+        },
+    }
+    if (
+        not isinstance(result["build_info"], str)
+        or not isinstance(result["total_slots"], int)
+        or not isinstance(result["context_tokens"], int)
+        or any(not isinstance(value, bool) for value in result["endpoints"].values())
+        or not isinstance(result["is_sleeping"], bool)
+        or any(not isinstance(value, bool) for value in result["modalities"].values())
+    ):
+        raise RuntimeError("provider_metadata_contract_failed")
+    return result
+
+
+def listener_resource_snapshot(
+    endpoint: str,
+    *,
+    run_command: Any = subprocess.run,
+) -> dict[str, Any]:
+    """Measure local listener RSS/CPU without retaining PID or command text."""
+    parsed = urlsplit(endpoint.strip())
+    if (
+        parsed.scheme != "http"
+        or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
+        or parsed.port is None
+    ):
+        raise ValueError("listener_endpoint_refused")
+    lookup = run_command(
+        [
+            "lsof",
+            "-nP",
+            "-t",
+            f"-iTCP:{parsed.port}",
+            "-sTCP:LISTEN",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    pids = sorted({line.strip() for line in lookup.stdout.splitlines() if line.strip()})
+    if lookup.returncode != 0 or not pids or any(not pid.isdecimal() for pid in pids):
+        raise RuntimeError("listener_inventory_failed")
+    processes = []
+    for pid in pids:
+        sample = run_command(
+            ["ps", "-o", "rss=,%cpu=", "-p", pid],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        fields = sample.stdout.split()
+        if sample.returncode != 0 or len(fields) != 2:
+            raise RuntimeError("listener_resource_sample_failed")
+        try:
+            rss_kib = int(fields[0])
+            cpu_percent = float(fields[1])
+        except ValueError as exc:
+            raise RuntimeError("listener_resource_sample_failed") from exc
+        if rss_kib < 0 or not math.isfinite(cpu_percent) or cpu_percent < 0:
+            raise RuntimeError("listener_resource_sample_failed")
+        processes.append(
+            {"rss_bytes": rss_kib * 1_024, "cpu_percent": cpu_percent}
+        )
+    return {"listener_count": len(processes), "processes": processes}
 
 
 def sample_schedule(iterations: int) -> tuple[SamplePlan, ...]:
@@ -1516,7 +1915,7 @@ class _MountedObservation:
         self.durable_count = 0
         self.provider_call_count = 0
         self.provider_round_counts = {"1": 0, "2": 0, "3": 0}
-        self.provider_calls: list[dict[str, int | None]] = []
+        self.provider_calls: list[dict[str, Any]] = []
         self.tool_calls: list[dict[str, Any]] = []
         self.conversation_started_ns: int | None = None
         self.third_send_requested_ns: int | None = None
@@ -1588,6 +1987,7 @@ class _MountedObservation:
                     "started_ns": now,
                     "first_chunk_ns": None,
                     "completed_ns": None,
+                    "usage": None,
                 }
             )
             return call_index, turn, provider_round
@@ -1605,6 +2005,14 @@ class _MountedObservation:
             self.provider_calls[call_index - 1]["completed_ns"] = now
         if call_index == 4:
             self._ui_loop.call_soon_threadsafe(self._turn_two_terminal.set)
+
+    def provider_usage(self, call_index: int, usage: Mapping[str, int]) -> None:
+        """Attach one content-free terminal usage envelope to its call."""
+        with self._lock:
+            call = self.provider_calls[call_index - 1]
+            if call["usage"] is not None:
+                raise RuntimeError("provider_usage_duplicate")
+            call["usage"] = dict(usage)
 
     def schema_loaded(self, tool_id: str) -> None:
         if tool_id != "local:fs_write":
@@ -1673,24 +2081,34 @@ class _MountedObservation:
             }
 
 
-def _target_tree_inventory(root: Path, excluded_root: Path) -> dict[str, tuple[int, int]]:
+def _target_tree_inventory(
+    root: Path, excluded_roots: Sequence[Path]
+) -> dict[str, tuple[int, int]]:
     """Return source-tree size/mtime inventory outside the owned sample root."""
     inventory: dict[str, tuple[int, int]] = {}
-    excluded = excluded_root.resolve()
-    for directory, names, files in os.walk(root.resolve()):
+    target = root.resolve()
+    excluded = tuple(
+        path.resolve()
+        for path in excluded_roots
+        if path.resolve() != target and path.resolve().is_relative_to(target)
+    )
+    for directory, names, files in os.walk(target):
         current = Path(directory)
         names[:] = [
             name
             for name in names
             if name != ".git"
-            and not (current / name).resolve().is_relative_to(excluded)
+            and not any(
+                (current / name).resolve().is_relative_to(item)
+                for item in excluded
+            )
         ]
-        if current.resolve().is_relative_to(excluded):
+        if any(current.resolve().is_relative_to(item) for item in excluded):
             names[:] = []
             continue
         for name in files:
             path = current / name
-            if path.resolve().is_relative_to(excluded):
+            if any(path.resolve().is_relative_to(item) for item in excluded):
                 continue
             stat = path.stat()
             inventory[path.relative_to(root).as_posix()] = (
@@ -1816,6 +2234,7 @@ async def run_mounted_sample(
     model: str,
     adapter: TargetAdapter,
     isolated_env: Mapping[str, str],
+    owned_run_root: Path | None = None,
 ) -> dict[str, Any]:
     """Drive one real gateway sample through the mounted composer and queue."""
     import asyncio
@@ -1832,6 +2251,7 @@ async def run_mounted_sample(
     from tldw_chatbook.Chat.console_project_instructions import (
         ProjectInstructionControlState,
     )
+    from tldw_chatbook.Chat import console_provider_gateway as gateway_module
     from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
     from tldw_chatbook.Tools import workspace_file_roots
@@ -1839,10 +2259,16 @@ async def run_mounted_sample(
 
     root = sample_root.resolve()
     root.mkdir(parents=True, exist_ok=True)
-    source_before = _target_tree_inventory(adapter.target_root, root)
+    inventory_exclusions = (root,) + (
+        (owned_run_root.resolve(),) if owned_run_root is not None else ()
+    )
+    source_before = _target_tree_inventory(
+        adapter.target_root, inventory_exclusions
+    )
     baseline_threads = {id(thread) for thread in threading.enumerate()}
     ui_loop = asyncio.get_running_loop()
     turn_two_terminal = asyncio.Event()
+    turn_two_provider_release = threading.Event()
     third_assistant_terminal = asyncio.Event()
     heartbeat_stop = asyncio.Event()
     heartbeat = HeartbeatBuffer(capacity=100_000)
@@ -1852,6 +2278,7 @@ async def run_mounted_sample(
     console_runtime: Any | None = None
     registry_factory = workspace_file_roots._registry_factory
     common_restorations: list[Callable[[], None]] = []
+    benchmark_restorations: list[Callable[[], None]] = []
     adapter.install_timing_wrappers()
 
     async def heartbeat_loop() -> None:
@@ -1869,7 +2296,7 @@ async def run_mounted_sample(
     active_session_id: str | None = None
     try:
         runtime = prepare_workspace_runtime(root, arm=arm)
-        generate_corpus(runtime.workspace_root)
+        corpus = generate_corpus(runtime.workspace_root)
         observation = _MountedObservation(
             ui_loop=ui_loop,
             turn_two_terminal=turn_two_terminal,
@@ -1900,6 +2327,7 @@ async def run_mounted_sample(
                 "model": model,
                 "temperature": 0.0,
                 "max_tokens": 512,
+                "reasoning_effort": "none",
                 "timeout": 120,
                 "retries": 0,
                 "streaming": True,
@@ -1921,17 +2349,51 @@ async def run_mounted_sample(
             config_provider=lambda: app.app_config,
             environ=dict(isolated_env),
         )
+        original_payload_builder = gateway_module.build_llamacpp_chat_payload
+
+        def usage_enabled_payload(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            payload = original_payload_builder(*args, **kwargs)
+            if payload.get("stream") is True:
+                payload["stream_options"] = {"include_usage": True}
+            return payload
+
+        gateway_module.build_llamacpp_chat_payload = usage_enabled_payload
+        benchmark_restorations.append(
+            lambda: setattr(
+                gateway_module,
+                "build_llamacpp_chat_payload",
+                original_payload_builder,
+            )
+        )
         original_stream_chat = gateway.stream_chat
+        original_sse_parser = gateway._content_from_sse_line
+        current_provider_call: int | None = None
+
+        def observed_sse_line(line: str) -> str:
+            usage = extract_sse_usage(line)
+            if usage is not None:
+                if current_provider_call is None:
+                    raise RuntimeError("provider_usage_without_call")
+                assert observation is not None
+                observation.provider_usage(current_provider_call, usage)
+            return original_sse_parser(line)
+
+        gateway._content_from_sse_line = observed_sse_line
 
         async def observed_stream_chat(*args: Any, **kwargs: Any):
+            nonlocal current_provider_call
             assert observation is not None
             call_index, _turn, _provider_round = observation.provider_started()
+            current_provider_call = call_index
             try:
                 async for chunk in original_stream_chat(*args, **kwargs):
                     observation.provider_first_chunk(call_index)
                     yield chunk
             finally:
                 observation.provider_completed(call_index)
+                current_provider_call = None
+                if call_index == 4:
+                    turn_two_provider_release.wait(timeout=30.0)
 
         gateway.stream_chat = observed_stream_chat
         app.console_provider_gateway_factory = lambda: gateway
@@ -1969,6 +2431,19 @@ async def run_mounted_sample(
                 active_session_id,
                 ProjectInstructionControlState.legacy_disabled(),
             )
+            session_settings = store.session_settings(active_session_id)
+            if session_settings is None:
+                raise RuntimeError("mounted_sample_settings_missing")
+            store.replace_session_settings(
+                active_session_id,
+                dataclass_replace(
+                    session_settings,
+                    temperature=0.0,
+                    max_tokens=512,
+                    reasoning_effort="none",
+                    streaming=True,
+                ),
+            )
 
             async def type_prompt(text: str) -> None:
                 composer.focus()
@@ -1987,7 +2462,10 @@ async def run_mounted_sample(
             if composer.draft_text() != TURN_PROMPTS[2].lower():
                 raise RuntimeError("third_prompt_draft_loss")
             await asyncio.wait_for(turn_two_terminal.wait(), timeout=180.0)
-            await pilot.press("enter")
+            try:
+                await pilot.press("enter")
+            finally:
+                turn_two_provider_release.set()
             await asyncio.wait_for(third_assistant_terminal.wait(), timeout=180.0)
             await wait_until(lambda: observation.snapshot()["provider_call_count"] >= 5)
             await wait_review_idle(console)
@@ -2038,6 +2516,9 @@ async def run_mounted_sample(
             raise RuntimeError("mounted_queue_contract_failed")
         if len(provider_calls) != 5:
             raise RuntimeError("provider_round_contract_failed")
+        provider_usage = [call["usage"] for call in provider_calls]
+        if any(not isinstance(usage, Mapping) for usage in provider_usage):
+            raise RuntimeError("provider_usage_contract_failed")
         required_times = (
             snapshot["conversation_started_ns"],
             snapshot["third_send_requested_ns"],
@@ -2058,6 +2539,7 @@ async def run_mounted_sample(
         result = {
             "status": "complete",
             "provider_round_counts": snapshot["provider_round_counts"],
+            "provider_usage": provider_usage,
             "terminal_turn_2_provider_completed_ns": provider_calls[3][
                 "completed_ns"
             ],
@@ -2071,6 +2553,7 @@ async def run_mounted_sample(
             "terminal_third_assistant_ns": snapshot[
                 "terminal_third_assistant_ns"
             ],
+            "heartbeat_lateness_ns": heartbeat.values(),
             "prompt_loss_count": prompt_loss_count,
             "selected_binding_access": runtime.binding.metadata["access"],
             "expected_payload_sha256": hashlib.sha256(FIXED_MUTATION).hexdigest(),
@@ -2084,6 +2567,7 @@ async def run_mounted_sample(
                 "success": mutation_success,
             },
             "review_events": adapter.review_events(),
+            "workspace_content_tree_digest": corpus["content_tree_digest"],
             "metrics": {
                 "third_send_to_worker_ns": (
                     int(snapshot["third_worker_started_ns"])
@@ -2108,6 +2592,7 @@ async def run_mounted_sample(
             },
         }
     finally:
+        turn_two_provider_release.set()
         heartbeat_stop.set()
         if not heartbeat_task.done():
             await heartbeat_task
@@ -2130,8 +2615,13 @@ async def run_mounted_sample(
         workspace_file_roots._registry_factory = registry_factory
         for restore in reversed(common_restorations):
             restore()
+        for restore in reversed(benchmark_restorations):
+            restore()
         adapter.close()
 
+    # asyncio.run() would close these one frame after this coroutine returns,
+    # but terminal evidence is emitted only after ownership is already zero.
+    await ui_loop.shutdown_default_executor()
     deadline = time.monotonic() + 2.0
     while True:
         survivors = [
@@ -2143,8 +2633,20 @@ async def run_mounted_sample(
             break
         await asyncio.sleep(0.01)
     if survivors:
-        raise RuntimeError("benchmark_owned_thread_survivor")
-    if _target_tree_inventory(adapter.target_root, root) != source_before:
+        names = ":".join(
+            sorted(
+                {
+                    re.sub(r"[^a-z0-9_-]+", "-", thread.name.lower())[:40]
+                    or "unnamed"
+                    for thread in survivors
+                }
+            )
+        )
+        raise RuntimeError(f"benchmark_owned_thread_survivor:{names}")
+    if (
+        _target_tree_inventory(adapter.target_root, inventory_exclusions)
+        != source_before
+    ):
         raise RuntimeError("target_source_write_detected")
     result["final_ownership"] = {
         "live_threads": 0,
@@ -2154,3 +2656,328 @@ async def run_mounted_sample(
         "target_source_writes": 0,
     }
     return result
+
+
+def run_child_mode(args: argparse.Namespace) -> int:
+    """Bootstrap one isolated target revision and emit one terminal sample."""
+    import asyncio
+
+    spec = read_child_spec(args.child_spec)
+    sample_root = Path(spec["sample_root"]).resolve()
+    run_root = Path(spec["run_root"]).resolve()
+    target_root = Path(spec["target_root"]).resolve()
+    evidence_path = Path(spec["evidence_path"]).resolve()
+    if (
+        not sample_root.is_relative_to(run_root)
+        or not evidence_path.is_relative_to(run_root)
+        or args.output_root.resolve() != run_root
+        or not target_root.is_dir()
+    ):
+        raise RuntimeError("child_spec_invalid")
+    evidence_path.parent.mkdir(parents=True, exist_ok=True)
+    with evidence_path.open("a", encoding="utf-8") as evidence:
+        write_boundary_event(
+            evidence,
+            {
+                "event": "child_start",
+                "sample_id": spec["sample_id"],
+                "phase": spec["phase"],
+                "iteration": spec["iteration"],
+                "arm": spec["arm"],
+            },
+        )
+        try:
+            assert_child_environment(sample_root, os.environ)
+            if Path(os.environ["TLDW_CONFIG_PATH"]).resolve() != (
+                sample_root / "config" / "tldw_cli" / "config.toml"
+            ).resolve():
+                raise RuntimeError("child_environment_mismatch:config")
+            adapter = TargetAdapter.for_arm(target_root, str(spec["arm"]))
+            install_target_root(target_root)
+            imported = assert_target_modules(TARGET_MODULES, target_root)
+            target_modules = {
+                name: Path(path).relative_to(target_root).as_posix()
+                for name, path in imported.items()
+            }
+            sample = asyncio.run(
+                run_mounted_sample(
+                    sample_root,
+                    arm=str(spec["arm"]),
+                    endpoint=args.endpoint,
+                    model=args.model,
+                    adapter=adapter,
+                    isolated_env=os.environ,
+                    owned_run_root=run_root,
+                )
+            )
+            sample.update(
+                {
+                    "event": "sample",
+                    "sample_id": spec["sample_id"],
+                    "phase": spec["phase"],
+                    "iteration": spec["iteration"],
+                    "arm": spec["arm"],
+                    "target_revision_kind": adapter.revision_kind,
+                    "target_modules": target_modules,
+                }
+            )
+            validation_errors = validate_sample(sample)
+            if validation_errors:
+                raise RuntimeError("child_sample_invalid")
+            if privacy_violations(sample):
+                raise RuntimeError("child_sample_privacy_violation")
+            write_boundary_event(evidence, sample)
+            return 0
+        except Exception as exc:
+            write_boundary_event(
+                evidence,
+                {
+                    "event": "child_failure",
+                    "sample_id": spec["sample_id"],
+                    "phase": spec["phase"],
+                    "iteration": spec["iteration"],
+                    "arm": spec["arm"],
+                    "error_type": type(exc).__name__,
+                    "error_code": safe_error_code(exc),
+                },
+            )
+            return 1
+
+
+def _write_json(path: Path, value: Mapping[str, Any]) -> None:
+    path.write_text(
+        json.dumps(dict(value), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _remove_control_worktree(repository_root: Path, target: Path) -> None:
+    completed = subprocess.run(
+        ["git", "worktree", "remove", "--force", str(target)],
+        cwd=repository_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError("control_worktree_cleanup_failed")
+
+
+def prepare_output_root(path: Path) -> None:
+    """Create an output root or preserve its sole documentation README."""
+    if path.exists():
+        existing = list(path.iterdir())
+        if any(item.name != "README.md" or not item.is_file() for item in existing):
+            raise RuntimeError("output_root_not_empty")
+    path.mkdir(parents=True, exist_ok=True)
+
+
+def run_parent_mode(args: argparse.Namespace) -> int:
+    """Own revisions, child lifecycles, validation, and retained smoke evidence."""
+    repository_root = Path(__file__).resolve().parents[2]
+    run_root = args.output_root.resolve()
+    prepare_output_root(run_root)
+    raw_path = run_root / "real-provider-three-turn.raw.jsonl"
+    raw_path.write_text("", encoding="utf-8")
+    revisions = resolve_benchmark_revisions(
+        repository_root,
+        control_ref=args.control_sha,
+        candidate_ref=args.candidate_sha,
+    )
+    preflight = preflight_provider(args.endpoint, args.model)
+    server_metadata = provider_server_metadata(args.endpoint, args.model)
+    runtime = runtime_metadata()
+    host_before = host_load_snapshot()
+    listener_before = listener_resource_snapshot(args.endpoint)
+    control_root = prepare_control_worktree(
+        repository_root,
+        run_root,
+        control_sha=revisions["control"],
+    )
+    rows: list[dict[str, Any]] = []
+    runner = Path(__file__).resolve()
+    try:
+        for index, plan in enumerate(sample_schedule(args.iterations)):
+            sample_id = f"{plan.phase}-{plan.iteration}-{plan.arm}"
+            sample_root = run_root / "samples" / f"{index:03d}-{sample_id}"
+            target_root = control_root if plan.arm == "control" else repository_root
+            environment = build_child_environment(os.environ, sample_root)
+            write_child_config(sample_root, endpoint=args.endpoint, model=args.model)
+            spec_path = sample_root / "child-spec.json"
+            write_child_spec(
+                spec_path,
+                {
+                    "sample_id": sample_id,
+                    "phase": plan.phase,
+                    "iteration": plan.iteration,
+                    "arm": plan.arm,
+                    "target_root": str(target_root.resolve()),
+                    "sample_root": str(sample_root.resolve()),
+                    "run_root": str(run_root),
+                    "evidence_path": str(raw_path),
+                },
+            )
+            command = [
+                sys.executable,
+                str(runner),
+                "--endpoint",
+                args.endpoint,
+                "--model",
+                args.model,
+                "--iterations",
+                str(args.iterations),
+                "--output-root",
+                str(run_root),
+                "--control-sha",
+                revisions["control"],
+                "--candidate-sha",
+                revisions["candidate"],
+                "--sample-timeout",
+                str(args.sample_timeout),
+                "--child-spec",
+                str(spec_path),
+            ]
+            child = run_child_with_watchdog(
+                command,
+                evidence_path=raw_path,
+                timeout_seconds=args.sample_timeout,
+                environment=environment,
+                cwd=target_root,
+            )
+            last = child.last_event
+            if (
+                child.status != "complete"
+                or child.returncode != 0
+                or not isinstance(last, dict)
+                or last.get("event") != "sample"
+                or last.get("sample_id") != sample_id
+            ):
+                write_boundary_event(
+                    sys.stdout,
+                    {
+                        "event": "sample_failed",
+                        "sample_id": sample_id,
+                        "child_status": child.status,
+                        "returncode": child.returncode,
+                    },
+                )
+                return 1
+            errors = validate_sample(last)
+            if errors or privacy_violations(last):
+                raise RuntimeError("parent_sample_validation_failed")
+            rows.append(last)
+            write_boundary_event(
+                sys.stdout,
+                {
+                    "event": "sample_complete",
+                    "sample_id": sample_id,
+                    "completed": len(rows),
+                    "scheduled": len(sample_schedule(args.iterations)),
+                },
+            )
+    finally:
+        _remove_control_worktree(repository_root, control_root)
+
+    validation_errors = validate_run(rows, expected_iterations=args.iterations)
+    if validation_errors:
+        raise RuntimeError("parent_run_validation_failed")
+    corpus_digests = {
+        str(row.get("workspace_content_tree_digest", "")) for row in rows
+    }
+    if len(corpus_digests) != 1 or not _SHA256.fullmatch(next(iter(corpus_digests))):
+        raise RuntimeError("workspace_corpus_mismatch")
+    permission_hashes_by_arm: dict[str, str] = {}
+    for arm in ARMS:
+        arm_hashes = {
+            str(row.get("expected_permission_definition_hash", ""))
+            for row in rows
+            if row.get("arm") == arm
+        }
+        if len(arm_hashes) != 1 or not _SHA256.fullmatch(next(iter(arm_hashes))):
+            raise RuntimeError("tool_schema_fixture_mismatch")
+        permission_hashes_by_arm[arm] = next(iter(arm_hashes))
+    host_after = host_load_snapshot()
+    listener_after = listener_resource_snapshot(args.endpoint)
+    manifest = {
+        "schema": 1,
+        "revisions": revisions,
+        "model": args.model,
+        "provider": "llama_cpp",
+        "temperature": 0.0,
+        "max_tokens": 512,
+        "reasoning_effort": "none",
+        "stream_options": {"include_usage": True},
+        "fixture_ids": {
+            "turn_prompts": "task-19641-three-turn-prompts-v1",
+            "tool_schema": "local:fs_write-target-definition-v1",
+            "mutation": "task-19641-confined-fs-write-v1",
+            "workspace_corpus": "task-19641-workspace-corpus-v1",
+        },
+        "fixture_hashes": {
+            "turn_prompts_sha256": hashlib.sha256(
+                json.dumps(TURN_PROMPTS, separators=(",", ":")).encode("utf-8")
+            ).hexdigest(),
+            "mutation_sha256": hashlib.sha256(FIXED_MUTATION).hexdigest(),
+            "workspace_content_tree_digest": next(iter(corpus_digests)),
+            "tool_definition_sha256_by_arm": permission_hashes_by_arm,
+        },
+        "sample_schedule": [
+            {
+                "phase": item.phase,
+                "arm": item.arm,
+                "iteration": item.iteration,
+            }
+            for item in sample_schedule(args.iterations)
+        ],
+        "preflight": preflight,
+        "runtime": runtime,
+        "provider_server": server_metadata,
+        "host_load": {
+            "before": host_before,
+            "after": host_after,
+        },
+        "listener_resources": {
+            "before": listener_before,
+            "after": listener_after,
+        },
+    }
+    summary = (
+        build_summary(rows)
+        if args.iterations >= 2
+        else {
+            "overall_verdict": "smoke",
+            "validation_errors": [],
+            "sample_count": len(rows),
+            "arms": {},
+            "critical_path_improvement_claims": {},
+        }
+    )
+    if privacy_violations(manifest) or privacy_violations(summary):
+        raise RuntimeError("retained_evidence_privacy_violation")
+    _write_json(run_root / "real-provider-three-turn.manifest.json", manifest)
+    _write_json(run_root / "real-provider-three-turn.summary.json", summary)
+    write_boundary_event(
+        sys.stdout,
+        {
+            "event": "run_complete",
+            "sample_count": len(rows),
+            "verdict": summary["overall_verdict"],
+        },
+    )
+    return 0
+
+
+def main(arguments: Sequence[str] | None = None) -> int:
+    """Run the import-free preflight or dispatch parent/child benchmark mode."""
+    args = parse_arguments(arguments)
+    if args.preflight_only:
+        preflight = preflight_provider(args.endpoint, args.model)
+        write_boundary_event(sys.stdout, {"event": "preflight", **preflight})
+        return 0
+    if args.child_spec is not None:
+        return run_child_mode(args)
+    return run_parent_mode(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

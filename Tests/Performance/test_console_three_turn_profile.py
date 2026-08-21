@@ -12,6 +12,7 @@ import textwrap
 import tomllib
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.request import Request
 
 import pytest
 
@@ -144,6 +145,14 @@ def _valid_sample(arm: str, *, iteration: int = 0) -> dict[str, object]:
         "arm": arm,
         "status": "complete",
         "provider_round_counts": {"1": 1, "2": 3, "3": 1},
+        "provider_usage": [
+            {
+                "prompt_tokens": 100 + index,
+                "completion_tokens": 10,
+                "total_tokens": 110 + index,
+            }
+            for index in range(5)
+        ],
         "terminal_turn_2_provider_completed_ns": 100,
         "third_send_requested_ns": 115,
         "turn_2_release_ns": 120,
@@ -208,6 +217,7 @@ def test_validate_sample_accepts_complete_arm_contracts(arm: str) -> None:
         (("terminal_third_provider_completed_ns", None), "terminal_third_provider_missing"),
         (("third_provider_started_ns", None), "third_provider_missing"),
         (("provider_round_counts", {"1": 1, "2": 2, "3": 1}), "provider_round_contract"),
+        (("provider_usage", []), "provider_usage_contract"),
         (("third_send_requested_ns", 120), "third_send_not_queued"),
         (("heartbeat_lateness_ns", []), "heartbeat_missing"),
         (("heartbeat_lateness_ns", [1, "late"]), "heartbeat_contract"),
@@ -623,6 +633,7 @@ def test_write_child_config_pins_local_provider_and_disables_background_work(
         "model": "fixture-model.gguf",
         "temperature": 0.0,
         "max_tokens": 512,
+        "reasoning_effort": "none",
         "timeout": 120,
         "retries": 0,
         "streaming": True,
@@ -687,6 +698,338 @@ def test_parse_arguments_pins_safe_benchmark_defaults(tmp_path: Path) -> None:
     assert arguments.candidate_sha == "HEAD"
     assert arguments.sample_timeout == 900.0
     assert arguments.child_spec is None
+
+
+def test_prepare_output_root_allows_only_retained_readme(tmp_path: Path) -> None:
+    prepare_output_root = getattr(profile, "prepare_output_root", None)
+    output = tmp_path / "evidence"
+    output.mkdir()
+    (output / "README.md").write_text("instructions\n", encoding="utf-8")
+
+    assert callable(prepare_output_root)
+    prepare_output_root(output)
+    assert (output / "README.md").is_file()
+
+    (output / "stale.jsonl").write_text("stale\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="output_root_not_empty"):
+        prepare_output_root(output)
+
+
+def test_preflight_provider_verifies_exact_model_without_credentials() -> None:
+    preflight_provider = getattr(profile, "preflight_provider", None)
+    requests: list[Request] = []
+
+    class Response:
+        def __init__(self, payload: dict[str, object]) -> None:
+            self.status = 200
+            self._payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(self._payload).encode("utf-8")
+
+    def fake_open(request: Request, timeout: float):
+        requests.append(request)
+        assert timeout > 0
+        if request.full_url.endswith("/v1/models"):
+            return Response({"data": [{"id": "fixture.gguf"}]})
+        return Response(
+            {"choices": [{"message": {"content": "synthetic-ok"}}]}
+        )
+
+    assert callable(preflight_provider)
+    result = preflight_provider(
+        "http://127.0.0.1:9099",
+        "fixture.gguf",
+        urlopen=fake_open,
+    )
+
+    assert result == {
+        "status": "ready",
+        "model": "fixture.gguf",
+        "model_count": 1,
+        "completion_chars": 12,
+    }
+    assert [request.full_url for request in requests] == [
+        "http://127.0.0.1:9099/v1/models",
+        "http://127.0.0.1:9099/v1/chat/completions",
+    ]
+    assert all("Authorization" not in request.headers for request in requests)
+    payload = json.loads(requests[1].data)
+    assert payload["model"] == "fixture.gguf"
+    assert payload["temperature"] == 0.0
+    assert payload["stream"] is False
+    assert payload["chat_template_kwargs"] == {"enable_thinking": False}
+
+
+def test_extract_sse_usage_retains_only_exact_token_counts() -> None:
+    extract_sse_usage = getattr(profile, "extract_sse_usage", None)
+
+    assert callable(extract_sse_usage)
+    assert extract_sse_usage(
+        'data: {"usage":{"prompt_tokens":17,"completion_tokens":4,'
+        '"total_tokens":21,"prompt_tokens_details":{"cached_tokens":2}},'
+        '"choices":[],"secret":"drop-me"}'
+    ) == {
+        "prompt_tokens": 17,
+        "completion_tokens": 4,
+        "total_tokens": 21,
+    }
+    assert extract_sse_usage("data: [DONE]") is None
+    assert extract_sse_usage(
+        'data: {"usage":{"prompt_tokens":17,"completion_tokens":4,'
+        '"total_tokens":20}}'
+    ) is None
+
+
+def test_runtime_and_host_metadata_are_content_free(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_metadata = getattr(profile, "runtime_metadata", None)
+    host_load_snapshot = getattr(profile, "host_load_snapshot", None)
+
+    assert callable(runtime_metadata)
+    assert callable(host_load_snapshot)
+    monkeypatch.setattr(profile.os, "cpu_count", lambda: 8)
+    monkeypatch.setattr(profile.os, "getloadavg", lambda: (1.25, 2.5, 3.75))
+
+    runtime = runtime_metadata(version_lookup=lambda name: f"fixture-{name}")
+    host = host_load_snapshot()
+
+    assert runtime["dependencies"] == {
+        name: f"fixture-{name}"
+        for name in ("httpx", "pydantic", "rich", "textual")
+    }
+    assert isinstance(runtime["sqlite"], str)
+    assert host == {"logical_cpu_count": 8, "load_average": [1.25, 2.5, 3.75]}
+    assert not profile.privacy_violations({"runtime": runtime, "host": host})
+
+
+def test_provider_server_metadata_is_sanitized_and_model_pinned() -> None:
+    provider_server_metadata = getattr(profile, "provider_server_metadata", None)
+    requests: list[Request] = []
+
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "build_info": "b8795-c0de6eda7",
+                    "model_alias": "fixture.gguf",
+                    "model_path": "/private/secret/model.gguf",
+                    "total_slots": 1,
+                    "default_generation_settings": {"n_ctx": 64_000},
+                    "endpoint_metrics": False,
+                    "endpoint_slots": True,
+                    "endpoint_props": False,
+                    "is_sleeping": False,
+                    "modalities": {"vision": False, "audio": False},
+                    "chat_template": "private template body",
+                }
+            ).encode("utf-8")
+
+    def fake_open(request: Request, timeout: float):
+        requests.append(request)
+        assert timeout > 0
+        return Response()
+
+    assert callable(provider_server_metadata)
+    result = provider_server_metadata(
+        "http://127.0.0.1:9099/v1",
+        "fixture.gguf",
+        urlopen=fake_open,
+    )
+
+    assert requests[0].full_url == "http://127.0.0.1:9099/props"
+    assert result == {
+        "build_info": "b8795-c0de6eda7",
+        "model_alias": "fixture.gguf",
+        "total_slots": 1,
+        "context_tokens": 64_000,
+        "endpoints": {"metrics": False, "slots": True, "props": False},
+        "is_sleeping": False,
+        "modalities": {"vision": False, "audio": False},
+    }
+    assert "model_path" not in json.dumps(result)
+
+
+def test_listener_resource_snapshot_retains_counts_not_process_identity() -> None:
+    listener_resource_snapshot = getattr(profile, "listener_resource_snapshot", None)
+    commands: list[list[str]] = []
+
+    def fake_run(command, **_kwargs):
+        commands.append(command)
+        if command[0] == "lsof":
+            return SimpleNamespace(returncode=0, stdout="42\n84\n", stderr="")
+        values = {"42": " 1024  7.5\n", "84": " 2048  2.25\n"}
+        return SimpleNamespace(returncode=0, stdout=values[command[-1]], stderr="")
+
+    assert callable(listener_resource_snapshot)
+    result = listener_resource_snapshot(
+        "http://127.0.0.1:9099", run_command=fake_run
+    )
+
+    assert result == {
+        "listener_count": 2,
+        "processes": [
+            {"rss_bytes": 1_048_576, "cpu_percent": 7.5},
+            {"rss_bytes": 2_097_152, "cpu_percent": 2.25},
+        ],
+    }
+    assert commands[0] == [
+        "lsof",
+        "-nP",
+        "-t",
+        "-iTCP:9099",
+        "-sTCP:LISTEN",
+    ]
+    assert all("42" not in row and "84" not in row for row in result["processes"])
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    (
+        "https://example.com",
+        "http://user:secret@127.0.0.1:9099",
+        "http://127.0.0.1:9099?token=secret",
+    ),
+)
+def test_preflight_provider_rejects_nonlocal_or_credential_bearing_urls(
+    endpoint: str,
+) -> None:
+    preflight_provider = getattr(profile, "preflight_provider", None)
+
+    assert callable(preflight_provider)
+    with pytest.raises(ValueError, match="preflight_endpoint_refused"):
+        preflight_provider(endpoint, "fixture.gguf", urlopen=lambda *_a, **_k: None)
+
+
+def test_main_preflight_only_emits_safe_json_and_stops(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    main = getattr(profile, "main", None)
+    calls = []
+
+    def fake_preflight(endpoint: str, model: str) -> dict[str, object]:
+        calls.append((endpoint, model))
+        return {
+            "status": "ready",
+            "model": model,
+            "model_count": 1,
+            "completion_chars": 12,
+        }
+
+    monkeypatch.setattr(profile, "preflight_provider", fake_preflight)
+    assert callable(main)
+    exit_code = main(
+        [
+            "--endpoint",
+            "http://127.0.0.1:9099",
+            "--model",
+            "fixture.gguf",
+            "--output-root",
+            str(tmp_path),
+            "--preflight-only",
+        ]
+    )
+
+    assert exit_code == 0
+    assert calls == [("http://127.0.0.1:9099", "fixture.gguf")]
+    emitted = json.loads(capsys.readouterr().out)
+    assert emitted["event"] == "preflight"
+    assert emitted["status"] == "ready"
+    assert not profile.privacy_violations(emitted)
+
+
+def test_assert_child_environment_requires_sample_owned_paths(tmp_path: Path) -> None:
+    assert_child_environment = getattr(profile, "assert_child_environment", None)
+    sample_root = tmp_path / "sample"
+    environment = profile.build_child_environment({}, sample_root)
+
+    assert callable(assert_child_environment)
+    assert_child_environment(sample_root, environment)
+    with_platform_key = dict(environment)
+    with_platform_key["__CF_USER_TEXT_ENCODING"] = "0x1F5:0x0:0x0"
+    assert_child_environment(sample_root, with_platform_key)
+
+    escaped = dict(environment)
+    escaped["XDG_DATA_HOME"] = str(tmp_path / "outside")
+    with pytest.raises(RuntimeError, match="child_environment_mismatch"):
+        assert_child_environment(sample_root, escaped)
+
+
+def test_child_spec_round_trip_rejects_unknown_fields(tmp_path: Path) -> None:
+    write_child_spec = getattr(profile, "write_child_spec", None)
+    read_child_spec = getattr(profile, "read_child_spec", None)
+    spec = {
+        "sample_id": "measured-0-disabled",
+        "phase": "measured",
+        "iteration": 0,
+        "arm": "disabled",
+        "target_root": str((tmp_path / "target").resolve()),
+        "sample_root": str((tmp_path / "sample").resolve()),
+        "run_root": str(tmp_path.resolve()),
+        "evidence_path": str((tmp_path / "raw.jsonl").resolve()),
+    }
+
+    assert callable(write_child_spec)
+    assert callable(read_child_spec)
+    path = tmp_path / "spec.json"
+    write_child_spec(path, spec)
+    assert read_child_spec(path) == spec
+
+    path.write_text(json.dumps({**spec, "api_key": "forbidden"}))
+    with pytest.raises(RuntimeError, match="child_spec_invalid"):
+        read_child_spec(path)
+
+
+def test_main_dispatches_nonpreflight_modes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    child_spec = tmp_path / "child.json"
+    base = [
+        "--endpoint",
+        "http://127.0.0.1:9099",
+        "--model",
+        "fixture.gguf",
+        "--output-root",
+        str(tmp_path),
+    ]
+    monkeypatch.setattr(profile, "run_child_mode", lambda _args: 7, raising=False)
+    monkeypatch.setattr(profile, "run_parent_mode", lambda _args: 9, raising=False)
+
+    assert profile.main([*base, "--child-spec", str(child_spec)]) == 7
+    assert profile.main(base) == 9
+
+
+def test_safe_error_code_retains_only_stable_body_free_tokens() -> None:
+    safe_error_code = getattr(profile, "safe_error_code", None)
+
+    assert callable(safe_error_code)
+    assert safe_error_code(RuntimeError("mounted_sample_timeout")) == (
+        "mounted_sample_timeout"
+    )
+    assert safe_error_code(
+        RuntimeError("benchmark_owned_thread_survivor:change-review-baseline")
+    ) == "benchmark_owned_thread_survivor:change-review-baseline"
+    assert safe_error_code(RuntimeError("failed at /Users/person/secret")) == (
+        "unclassified"
+    )
 
 
 def test_prepare_control_worktree_uses_detached_exact_hash(tmp_path: Path) -> None:
@@ -795,24 +1138,24 @@ def test_target_adapter_accepts_only_the_expected_revision_shape(tmp_path: Path)
 def test_target_adapter_wraps_and_restores_legacy_review_boundaries(
     tmp_path: Path,
 ) -> None:
-    class Tracker:
-        def begin_turn(self):
-            return object()
-
-        def populate_baseline(self):
+    class Handle:
+        def await_baseline(self):
             return None
 
-        def end_turn(self):
+    class Tracker:
+        def begin_turn(self):
+            return Handle()
+
+        def end_turn(self, _handle):
             return []
 
-    originals = (Tracker.begin_turn, Tracker.populate_baseline, Tracker.end_turn)
+    originals = (Tracker.begin_turn, Tracker.end_turn)
     adapter = profile.TargetAdapter(tmp_path, "control", "legacy")
 
     adapter.install_timing_wrappers(tracker_type=Tracker)
     tracker = Tracker()
-    tracker.begin_turn()
-    tracker.populate_baseline()
-    tracker.end_turn()
+    handle = tracker.begin_turn()
+    tracker.end_turn(handle)
 
     events = adapter.review_events()
     assert set(events) == {
@@ -825,7 +1168,7 @@ def test_target_adapter_wraps_and_restores_legacy_review_boundaries(
     assert events["review_e_started"] <= events["review_e_completed"]
 
     adapter.close()
-    assert (Tracker.begin_turn, Tracker.populate_baseline, Tracker.end_turn) == originals
+    assert (Tracker.begin_turn, Tracker.end_turn) == originals
 
 
 def test_target_adapter_candidate_schedule_precedes_worker_review_e(
