@@ -1,4 +1,4 @@
-"""v41 message_exchanges: local-only, idempotent upsert, cascade delete
+"""v43 message_exchanges: local-only, idempotent upsert, cascade delete
 (Console Conversation Inspector, task-5).
 
 Local-only means: no sync_log rows are ever written for this table (same
@@ -96,48 +96,48 @@ def test_hard_delete_cascades(db):
     assert count == 0
 
 
-def test_schema_version_is_41(db):
+def test_schema_version_is_43(db):
     # Mirrors the house sibling-version test pattern (a local `_version()`
     # helper against db_schema_version -- there is no public accessor).
-    assert _version(db.get_connection()) == 41
+    assert _version(db.get_connection()) == 43
 
 
-def test_migrate_from_v40_to_v41_requires_version_40(tmp_path):
+def test_migrate_from_v42_to_v43_requires_version_42(tmp_path):
     # Mirrors the version pre-check idiom in
     # test_chachanotes_default_assistant_enrichment_migration.py::
     # test_migrate_from_v31_to_v32_requires_version_31: a fresh database
-    # lands on the current (41) schema, so calling the v40->v41 step
+    # lands on the current (43) schema, so calling the v42->v43 step
     # directly against it must reject rather than silently re-run.
     from tldw_chatbook.DB.ChaChaNotes_DB import SchemaError
 
     db = CharactersRAGDB(tmp_path / "fresh.db", client_id="version-test")
     conn = db.get_connection()
     with pytest.raises(SchemaError):
-        db._migrate_from_v40_to_v41(conn)
+        db._migrate_from_v42_to_v43(conn)
     db.close_connection()
 
 
-def test_upgrade_path_from_v40_recreates_the_table(tmp_path):
-    """A database stamped back to v40 (with message_exchanges dropped, so
+def test_upgrade_path_from_v42_recreates_the_table(tmp_path):
+    """A database stamped back to v42 (with message_exchanges dropped, so
     the migration's CREATE TABLE genuinely has work to do rather than
     no-op against an already-existing table) must, on reopen, re-run
-    _migrate_from_v40_to_v41 and land on v41 with the table back."""
+    _migrate_from_v42_to_v43 and land on v43 with the table back."""
     db_path = tmp_path / "chachanotes.db"
     db = CharactersRAGDB(db_path, client_id="upgrade-test")
     connection = db.get_connection()
-    assert _version(connection) == 41
+    assert _version(connection) == 43
 
     with db.transaction() as cursor:
         cursor.execute("DROP TABLE message_exchanges")
         cursor.execute(
-            "UPDATE db_schema_version SET version = 40 WHERE schema_name = ?",
+            "UPDATE db_schema_version SET version = 42 WHERE schema_name = ?",
             (SCHEMA_NAME,),
         )
     db.close_connection()
 
     reopened = CharactersRAGDB(db_path, client_id="upgrade-test-reopen")
     reopened_connection = reopened.get_connection()
-    assert _version(reopened_connection) == 41
+    assert _version(reopened_connection) == 43
     tables = {
         row[0]
         for row in reopened_connection.execute(

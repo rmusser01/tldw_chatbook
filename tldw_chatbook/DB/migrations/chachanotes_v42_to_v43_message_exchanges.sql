@@ -11,7 +11,7 @@
 -- message_attachments and v29/v30 usage_json.
 --
 -- DDL only. The schema-version bump is done separately in the runner
--- (`CharactersRAGDB._migrate_from_v40_to_v41`), guarded by a rowcount
+-- (`CharactersRAGDB._migrate_from_v42_to_v43`), guarded by a rowcount
 -- check on the UPDATE, matching the v29->v30 usage_json precedent.
 
 CREATE TABLE IF NOT EXISTS message_exchanges(
