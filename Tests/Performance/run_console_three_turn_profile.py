@@ -12,6 +12,7 @@ import random
 import re
 import os
 import signal
+import shutil
 import sqlite3
 import statistics
 import subprocess
@@ -2797,6 +2798,15 @@ def prepare_output_root(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
+def remove_successful_sample_root(run_root: Path, sample_root: Path) -> None:
+    """Remove only a completed child root directly below ``run_root/samples``."""
+    samples_root = run_root.resolve() / "samples"
+    target = sample_root.resolve()
+    if target.parent != samples_root or not target.is_dir():
+        raise RuntimeError("sample_cleanup_refused")
+    shutil.rmtree(target)
+
+
 def run_parent_mode(args: argparse.Namespace) -> int:
     """Own revisions, child lifecycles, validation, and retained smoke evidence."""
     repository_root = Path(__file__).resolve().parents[2]
@@ -2891,6 +2901,7 @@ def run_parent_mode(args: argparse.Namespace) -> int:
             if errors or privacy_violations(last):
                 raise RuntimeError("parent_sample_validation_failed")
             rows.append(last)
+            remove_successful_sample_root(run_root, sample_root)
             write_boundary_event(
                 sys.stdout,
                 {
@@ -2902,6 +2913,10 @@ def run_parent_mode(args: argparse.Namespace) -> int:
             )
     finally:
         _remove_control_worktree(repository_root, control_root)
+
+    samples_root = run_root / "samples"
+    if samples_root.is_dir():
+        samples_root.rmdir()
 
     validation_errors = validate_run(rows, expected_iterations=args.iterations)
     if validation_errors:

@@ -716,6 +716,26 @@ def test_prepare_output_root_allows_only_retained_readme(tmp_path: Path) -> None
         prepare_output_root(output)
 
 
+def test_remove_successful_sample_root_is_confined_to_run_samples(tmp_path: Path) -> None:
+    remove_successful_sample_root = getattr(
+        profile, "remove_successful_sample_root", None
+    )
+    run_root = tmp_path / "run"
+    sample_root = run_root / "samples" / "000-measured-0-control"
+    sample_root.mkdir(parents=True)
+    (sample_root / "synthetic.bin").write_bytes(b"fixture")
+
+    assert callable(remove_successful_sample_root)
+    remove_successful_sample_root(run_root, sample_root)
+    assert not sample_root.exists()
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    with pytest.raises(RuntimeError, match="sample_cleanup_refused"):
+        remove_successful_sample_root(run_root, outside)
+    assert outside.is_dir()
+
+
 def test_preflight_provider_verifies_exact_model_without_credentials() -> None:
     preflight_provider = getattr(profile, "preflight_provider", None)
     requests: list[Request] = []
