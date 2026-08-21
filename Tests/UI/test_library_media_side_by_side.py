@@ -20,6 +20,7 @@ from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
     LibraryHarness,
+    LibraryProductionCSSHarness,
     _active_library_screen,
     _seed_conversations,
     _two_conversations,
@@ -40,6 +41,21 @@ def _build_media_test_app():
     app = _build_test_app()
     app.library_new_profile_admission = False
     return app
+
+
+def _many_media_items(count: int = 45) -> list[dict[str, object]]:
+    """Return deterministic production-shaped rows for paging/geometry."""
+    return [
+        {
+            "id": f"media-{index + 1}",
+            "title": f"Media item {index + 1:02d}",
+            "type": ("video", "audio", "PDF")[index % 3],
+            "last_modified": f"2026-07-{(index % 28) + 1:02d}T10:00:00Z",
+            "content": f"Transcript for media item {index + 1}.",
+            "version": 1,
+        }
+        for index in range(count)
+    ]
 
 
 async def _open_media_list(host, pilot):
@@ -68,6 +84,53 @@ async def _wait_for_compact_class(screen, pilot, *, compact: bool):
 # ---------------------------------------------------------------------------
 # AC#1: side-by-side at wide widths; stacked below the breakpoint.
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_compact_media_paints_five_one_line_rows_and_hides_preview():
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=NARROW_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _wait_for_compact_class(screen, pilot, compact=True)
+        await _wait_for_selector(screen, pilot, "#library-media-row-19")
+
+        rows = list(screen.query(".library-media-row"))
+        painted = [row for row in rows if row.region.area > 0]
+        assert len(painted) >= 5
+        assert all(row.region.height == 1 for row in painted[:5])
+        assert all(" · " in str(row.label) for row in painted[:5])
+        assert all("\n" not in str(row.label) for row in painted[:5])
+        assert all("▸" not in str(row.label) for row in painted[:5])
+        assert not any(
+            row.has_class("library-media-row-selected") for row in painted[:5]
+        )
+
+        preview = screen.query_one("#library-media-preview")
+        open_viewer = screen.query_one("#library-media-open-viewer", Button)
+        assert preview.region.area == 0
+        assert open_viewer.can_focus is False
+
+
+@pytest.mark.asyncio
+async def test_wide_media_keeps_two_line_rows_and_preview():
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _wait_for_compact_class(screen, pilot, compact=False)
+
+        row = screen.query_one("#library-media-row-0", Button)
+        preview = screen.query_one("#library-media-preview")
+        open_viewer = screen.query_one("#library-media-open-viewer", Button)
+        assert row.region.height == 2
+        assert "\n" in str(row.label)
+        assert preview.region.area > 0
+        assert open_viewer.can_focus is True
 
 
 @pytest.mark.asyncio
@@ -100,9 +163,8 @@ async def test_media_list_and_preview_side_by_side_at_wide_width():
 
 
 @pytest.mark.asyncio
-async def test_media_list_and_preview_stacked_below_breakpoint():
-    """At 100 cols the current stacked layout is preserved: the preview sits
-    strictly BELOW the list at the same left edge, full canvas width."""
+async def test_media_list_hides_preview_below_breakpoint():
+    """At 100 cols the list owns the canvas and the preview is unpainted."""
     app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
     host = LibraryHarness(app)
@@ -113,16 +175,15 @@ async def test_media_list_and_preview_stacked_below_breakpoint():
 
         media_list = screen.query_one("#library-media-list")
         preview = screen.query_one("#library-media-preview")
-        assert preview.display is True
+        assert preview.display is False
 
         list_region = media_list.region
         preview_region = preview.region
-        assert list_region.width > 0 and preview_region.width > 0
-        assert preview_region.x == list_region.x
-        assert preview_region.y >= list_region.y + list_region.height
-        # Stacked: the preview spans (at least almost) the same width as the
-        # list -- no half-width pane leaked into the compact regime.
-        assert preview_region.width >= list_region.width - 2
+        assert list_region.width > 0
+        assert preview_region.area == 0
+        assert list_region.width >= int(
+            screen.query_one("#library-media-workbench").region.width * 0.9
+        )
 
 
 @pytest.mark.asyncio
@@ -178,21 +239,25 @@ async def _assert_keyboard_traversal_and_viewer_entry(size):
         await pilot.press("up")
         assert screen.focused is row_0
 
-        # Preview actions: Tab from the last row reaches "Open in viewer".
-        row_1.focus()
-        await pilot.pause()
-        await pilot.press("tab")
         open_viewer = screen.query_one("#library-media-open-viewer", Button)
-        assert screen.focused is open_viewer
-
-        # Viewer entry: Enter on the preview action opens the in-canvas
-        # viewer for the PREVIEWED (selected) item -- the first row in the
-        # recency sort ("Product Demo Video" has the newer last_modified),
-        # never the merely-focused row.
         previewed_title = str(
             screen.query_one("#library-media-preview-lines", Static).renderable
         ).splitlines()[0]
-        await pilot.press("enter")
+        if size[0] >= 120:
+            # Wide: Tab from the last row reaches the preview action, whose
+            # activation opens the preview-selected item.
+            row_1.focus()
+            await pilot.pause()
+            await pilot.press("tab")
+            assert screen.focused is open_viewer
+            await pilot.press("enter")
+        else:
+            # Compact: the hidden preview action leaves traversal and a row
+            # activation opens that row in the same full viewer.
+            assert open_viewer.can_focus is False
+            row_0.focus()
+            await pilot.pause()
+            await pilot.press("enter")
         await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
         assert screen._library_media_view == "viewer"
         title = str(

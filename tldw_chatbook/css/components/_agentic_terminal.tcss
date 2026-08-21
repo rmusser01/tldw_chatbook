@@ -2628,27 +2628,37 @@ with stray left-edge border fragments), and padding 0 1 so the full
     display: none;
 }
 
-/* Below the breakpoint: the preserved stacked layout, byte-equivalent to
-   the pre-task-14900 geometry (auto heights, full width, no pane scroll
-   owners, no placeholder). */
+/* Below the breakpoint Media becomes a dense list: the mounted preview is
+   removed from paint/focus participation by the canvas, while the list owns
+   the remaining height and keeps its pager pinned below the row scroller. */
 #library-canvas.library-notes-compact #library-media-workbench {
     layout: vertical;
-    height: auto;
+    height: 1fr;
+    min-height: 0;
 }
 
 #library-canvas.library-notes-compact #library-media-list {
     width: 100%;
+    height: 100%;
+    min-height: 0;
     margin: 0;
     padding: 0;
     overflow-y: hidden;
 }
 
-#library-canvas.library-notes-compact #library-media-preview {
-    width: 100%;
-    height: auto;
+#library-canvas.library-notes-compact #library-media-row-scroll {
+    height: 1fr;
+    min-height: 0;
+}
+
+#library-canvas.library-notes-compact .library-media-row {
+    height: 1;
+    min-height: 1;
     margin: 0;
-    padding: 0;
-    overflow-y: hidden;
+}
+
+#library-canvas.library-notes-compact #library-media-preview {
+    display: none;
 }
 
 #library-canvas.library-notes-compact #library-media-detail-empty {

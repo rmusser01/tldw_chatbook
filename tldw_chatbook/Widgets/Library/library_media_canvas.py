@@ -7,6 +7,7 @@ from typing import Any
 from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.widgets import Button, OptionList, Static
 from textual.widgets.option_list import Option
 
@@ -29,6 +30,16 @@ from tldw_chatbook.Widgets.Library.library_canvas_sync import (
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 
+def _media_row_label_rest(title: str, secondary: str, *, compact: bool) -> str:
+    """Return the marker-free Media row label for one responsive density."""
+    visible_title = _visible_row_title(title)
+    return (
+        f" {visible_title} · {secondary}"
+        if compact
+        else f" {visible_title}\n    {secondary}"
+    )
+
+
 class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
     """Render the Library media list with a type filter and preview.
 
@@ -44,6 +55,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         type_options: tuple[str | None, ...] | None = None,
         stale_action_reason: str = "",
         mutation_action_reason: str = "",
+        compact: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -54,6 +66,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         )
         self.stale_action_reason = stale_action_reason
         self.mutation_action_reason = mutation_action_reason
+        self.compact = compact
         # Fill the (already 13fr) canvas host, not an independent 13fr --
         # ``LibraryMediaViewer`` documented this trap first: an `fr` width
         # here resolves against the HOST's content width per fraction, so
@@ -73,6 +86,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         type_options: tuple[str | None, ...] | None = None,
         stale_action_reason: str = "",
         mutation_action_reason: str = "",
+        compact: bool = False,
     ) -> None:
         """Refresh the canvas from new state.
 
@@ -89,7 +103,40 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         )
         self.stale_action_reason = stale_action_reason
         self.mutation_action_reason = mutation_action_reason
+        self.compact = compact
         self.refresh(recompose=True)
+
+    def apply_compact_presentation(self, compact: bool) -> None:
+        """Patch mounted Media density and preview participation in place."""
+        self.compact = compact
+        select_mode = getattr(self.canvas, "select_mode", False)
+        for button in self.query(".library-media-row"):
+            title = button._library_media_title
+            secondary = button._library_media_secondary
+            label_rest = _media_row_label_rest(title, secondary, compact=compact)
+            button._library_row_label_rest = label_rest
+            if select_mode:
+                marker = "☑" if button._library_media_checked else "☐"
+            else:
+                marker = (
+                    "▸"
+                    if button._library_media_selected and not compact
+                    else " "
+                )
+            button.label = f"{marker}{label_rest}"
+            button.set_class(
+                button._library_media_selected and not compact and not select_mode,
+                "library-media-row-selected",
+            )
+            button.styles.height = 1 if compact else 2
+            button.styles.min_height = 1 if compact else 2
+        try:
+            preview = self.query_one("#library-media-preview")
+            open_viewer = self.query_one("#library-media-open-viewer", Button)
+        except NoMatches:
+            return
+        preview.display = self._has_preview and not compact
+        open_viewer.can_focus = not compact
 
     def _gate_stale_action(self, button: Button, base_label: str) -> Button:
         """Apply the controller's stale-page gate to one unsafe action."""
@@ -463,6 +510,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             not select_mode
             and bool(self.canvas.selected_id and self.canvas.preview_lines)
         )
+        self._has_preview = has_preview
 
         # task-14900: the list and its preview share a workbench container
         # (Collections' `#library-collections-workbench` grammar). Above the
@@ -485,15 +533,15 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         if select_mode:
                             marker = "☑" if row.checked else "☐"
                         else:
-                            marker = "▸" if row.selected else " "
+                            marker = "▸" if row.selected and not self.compact else " "
                     # task-281 (PR #665 review): the in-place toggle needs the
                     # marker-less RAW label to rebuild from -- reading it back
                     # off the mounted Button un-escapes user titles (both
                     # ``.plain`` and Textual 8's ``str(Content)`` return
                     # rendered text), so the raw remainder is stashed here at
                     # the single point of truth.
-                        label_rest = (
-                            f" {_visible_row_title(row.title)}\n    {row.secondary}"
+                        label_rest = _media_row_label_rest(
+                            row.title, row.secondary, compact=self.compact
                         )
                         button = Button(
                             f"{marker}{label_rest}",
@@ -503,16 +551,23 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         )
                         button.media_id = row.media_id
                         button._library_row_label_rest = label_rest
+                        button._library_media_title = row.title
+                        button._library_media_secondary = row.secondary
+                        button._library_media_selected = row.selected
+                        button._library_media_checked = row.checked
                         button.tooltip = escape_markup(row.title)
-                        button.set_class(row.selected, "library-media-row-selected")
-                        button.styles.height = 2
-                        button.styles.min_height = 2
+                        button.set_class(
+                            row.selected and not self.compact and not select_mode,
+                            "library-media-row-selected",
+                        )
+                        button.styles.height = 1 if self.compact else 2
+                        button.styles.min_height = 1 if self.compact else 2
                         yield self._gate_stale_action(button, label_rest.lstrip())
                 if self.pager is not None:
                     yield from self._compose_pager(self.pager)
 
             preview = Vertical(id="library-media-preview")
-            preview.display = has_preview
+            preview.display = has_preview and not self.compact
             with preview:
                 yield Static(
                     "\n".join(self.canvas.preview_lines),
@@ -533,6 +588,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         classes="library-canvas-action",
                         compact=True,
                     )
+                    open_viewer.can_focus = not self.compact
                     yield self._gate_stale_action(open_viewer, "Open in viewer")
 
             # task-14900: the wide split's detail half never sits blank --

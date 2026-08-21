@@ -1460,6 +1460,8 @@ def _apply_library_row_toggle(
         for matching_button in matching_buttons:
             label_rest = matching_button._library_row_label_rest
             matching_button.label = f"{glyph}{label_rest}"
+            if kind == "media":
+                matching_button._library_media_checked = checked
         count_static.update(f"{selection.count} selected")
         export_button.disabled = selection.count == 0
         # F-018: the reason/action tooltip flips in place with `disabled`
@@ -2813,16 +2815,32 @@ class LibraryScreen(BaseAppScreen):
 
     #library-canvas.library-notes-compact #library-media-workbench {
         layout: vertical;
-        height: auto;
+        height: 1fr;
+        min-height: 0;
     }
 
-    #library-canvas.library-notes-compact #library-media-list,
-    #library-canvas.library-notes-compact #library-media-preview {
+    #library-canvas.library-notes-compact #library-media-list {
         width: 100%;
-        height: auto;
+        height: 100%;
+        min-height: 0;
         margin: 0;
         padding: 0;
         overflow-y: hidden;
+    }
+
+    #library-canvas.library-notes-compact #library-media-row-scroll {
+        height: 1fr;
+        min-height: 0;
+    }
+
+    #library-canvas.library-notes-compact .library-media-row {
+        height: 1;
+        min-height: 1;
+        margin: 0;
+    }
+
+    #library-canvas.library-notes-compact #library-media-preview {
+        display: none;
     }
 
     #library-canvas.library-notes-compact #library-media-detail-empty {
@@ -10628,6 +10646,7 @@ class LibraryScreen(BaseAppScreen):
                 if self._library_media_bulk_delete_in_flight
                 else ""
             ),
+            "compact": self._library_notes_compact,
         }
 
     def _library_media_type_options(self) -> tuple[str | None, ...]:
