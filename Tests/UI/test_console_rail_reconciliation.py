@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from dataclasses import replace
 from types import MethodType
 
 import pytest
@@ -21,8 +22,12 @@ from tldw_chatbook.Chat.console_rail_state import ConsoleRailState
 from tldw_chatbook.Chat.console_session_settings import ConsoleSettingsSummaryState
 from tldw_chatbook.UI.Console_Modules import left_rail as left_rail_module
 from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
+from tldw_chatbook.UI.Console_Modules.right_rail import ConsoleInspectorRail
 from tldw_chatbook.Widgets.Console.console_bounded_section import (
     ConsoleBoundedSection,
+)
+from tldw_chatbook.Widgets.Console.console_settings_summary import (
+    ConsoleSettingsSummary,
 )
 from tldw_chatbook.Widgets.Console.console_inspector_section import (
     ConsoleInspectorSectionState,
@@ -969,6 +974,59 @@ async def test_focus_and_pointer_activation_are_transient_and_open_close_falls_b
         await pilot.click(session_toggle)
         await _settle(pilot)
         assert rail._active_section_id == "conversations"
+
+
+@pytest.mark.asyncio
+async def test_inspector_descendant_mutation_settles_local_before_coalesced_outer() -> (
+    None
+):
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = _ProductionConsoleHarness(app)
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        screen = host.screen_stack[-1]
+        await _wait_for_selector(screen, pilot, "#console-settings-summary")
+        screen.query_one("#console-inspector-rail-open", Button).press()
+        await _settle(pilot)
+
+        rail = screen.query_one("#console-right-rail", ConsoleInspectorRail)
+        summary = screen.query_one("#console-settings-summary", ConsoleSettingsSummary)
+        section = summary.query_one(
+            "#console-bounded-section-session-settings", ConsoleBoundedSection
+        )
+        events: list[str] = []
+        original_local = section._run_scheduled_reconcile
+        original_outer = rail._run_scheduled_outer_reconcile
+
+        def run_local() -> None:
+            events.append("local")
+            original_local()
+
+        def run_outer() -> None:
+            if not any(
+                candidate._reconcile_scheduled
+                for candidate in rail.query(ConsoleBoundedSection)
+            ):
+                events.append("outer")
+            original_outer()
+
+        section._run_scheduled_reconcile = run_local  # type: ignore[method-assign]
+        rail._run_scheduled_outer_reconcile = run_outer  # type: ignore[method-assign]
+        baseline = rail._outer_reconcile_count
+
+        summary.sync_state(
+            replace(summary.state, model_row="Model: changed after mount")
+        )
+        rail.request_outer_reconcile()
+        rail.request_outer_reconcile()
+        for _ in range(8):
+            await pilot.pause()
+
+        assert "local" in events
+        assert "outer" in events
+        assert events.index("local") < events.index("outer")
+        assert rail._outer_reconcile_count == baseline + 1
 
 
 @pytest.mark.asyncio

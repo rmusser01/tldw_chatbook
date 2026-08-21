@@ -3133,8 +3133,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
 
 #console-staged-context-tray {
     height: auto;
-    min-height: 3;
-    max-height: 6;
+    min-height: 0;
 }
 
 #console-session-context,
@@ -3856,6 +3855,17 @@ ConsoleBoundedSection {
 .console-live-work-source-readiness {
     height: auto;
     min-height: 0;
+    margin: 0;
+}
+
+#console-live-work-section,
+#console-live-work-header,
+#console-pending-launch-card {
+    height: auto;
+    min-height: 0;
+}
+
+#console-live-work-section {
     margin: 1 0 0 0;
 }
 
@@ -3873,7 +3883,7 @@ ConsoleBoundedSection {
 
 .console-settings-summary {
     height: auto;
-    min-height: 9;
+    min-height: 0;
     padding: 0 1;
 }
 

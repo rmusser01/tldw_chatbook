@@ -19,6 +19,7 @@ already guards against (see that module's docstring on ``_GLYPH_NOTE``).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from loguru import logger
@@ -35,6 +36,9 @@ from tldw_chatbook.Chat.console_display_state import (
 )
 from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
+from tldw_chatbook.Widgets.Console.console_bounded_section import (
+    ConsoleBoundedSection,
+)
 
 #: TASK-16800's note badge glyph, shared verbatim with the turn file card
 #: (``ConsoleTurnFileCard._GLYPH_NOTE``) -- one vocabulary, one ASCII
@@ -89,6 +93,8 @@ class ConsoleChangedFilesSection(RecomposeCaptureGuard, Vertical):
     ``ConsoleRunInspector``, ``ConsoleStagedContextTray``).
     """
 
+    MAX_VISIBLE_ROWS = MAX_VISIBLE_ROWS
+
     DEFAULT_CSS = """
     ConsoleChangedFilesSection {
         height: auto;
@@ -128,9 +134,7 @@ class ConsoleChangedFilesSection(RecomposeCaptureGuard, Vertical):
         default.
         """
 
-        def __init__(
-            self, run_id: str, snapshot_id: int, path: str, root: str
-        ) -> None:
+        def __init__(self, run_id: str, snapshot_id: int, path: str, root: str) -> None:
             self.run_id = run_id
             self.snapshot_id = snapshot_id
             self.path = path
@@ -138,7 +142,11 @@ class ConsoleChangedFilesSection(RecomposeCaptureGuard, Vertical):
             super().__init__()
 
     def __init__(
-        self, state: ConsoleChangedFilesState, *, id: str | None = None
+        self,
+        state: ConsoleChangedFilesState,
+        *,
+        id: str | None = None,
+        on_reconcile: Callable[[], None] | None = None,
     ) -> None:
         """Create the section from precomputed display state.
 
@@ -149,6 +157,7 @@ class ConsoleChangedFilesSection(RecomposeCaptureGuard, Vertical):
         """
         super().__init__(id=id, classes="console-changed-files-section")
         self.state = state
+        self._on_reconcile = on_reconcile
         self.display = not self._is_empty(state)
 
     @staticmethod
@@ -166,7 +175,8 @@ class ConsoleChangedFilesSection(RecomposeCaptureGuard, Vertical):
             classes="console-changed-files-header",
             markup=False,
         )
-        visible = state.entries[:MAX_VISIBLE_ROWS]
+        body = []
+        visible = state.entries[: self.MAX_VISIBLE_ROWS]
         for idx, entry in enumerate(visible):
             row = Button(
                 self._row_label(entry),
@@ -192,23 +202,28 @@ class ConsoleChangedFilesSection(RecomposeCaptureGuard, Vertical):
             # the FULL, un-elided (multi-root-prefixed) label so nothing is
             # lost to the elision.
             row.tooltip = entry.label
-            yield row
+            body.append(row)
         remaining = len(state.entries) - len(visible)
         if remaining > 0:
-            yield Static(
-                f"+{remaining} more — open Review",
-                id="console-changed-files-tail",
-                classes="console-changed-files-tail",
-                markup=False,
+            body.append(
+                Static(
+                    f"+{remaining} more — open Review",
+                    id="console-changed-files-tail",
+                    classes="console-changed-files-tail",
+                    markup=False,
+                )
             )
         if state.pruned_rows > 0:
             noun = "turn" if state.pruned_rows == 1 else "turns"
-            yield Static(
-                f"history pruned for {state.pruned_rows} {noun}",
-                id="console-changed-files-pruned",
-                classes="console-changed-files-pruned",
-                markup=False,
+            body.append(
+                Static(
+                    f"history pruned for {state.pruned_rows} {noun}",
+                    id="console-changed-files-pruned",
+                    classes="console-changed-files-pruned",
+                    markup=False,
+                )
             )
+        yield ConsoleBoundedSection(*body, section_id="changed-files")
 
     def update_state(self, state: ConsoleChangedFilesState) -> None:
         """Resync this mounted section onto a new state, in place.
@@ -227,6 +242,19 @@ class ConsoleChangedFilesSection(RecomposeCaptureGuard, Vertical):
         self.state = state
         self.display = not self._is_empty(state)
         self.refresh(recompose=True)
+        self.call_after_refresh(self._request_section_reconcile)
+
+    def _request_section_reconcile(self) -> None:
+        """Settle local demand before invalidating the Inspector owner."""
+
+        sections = list(self.query(ConsoleBoundedSection))
+        if not sections:
+            if self._on_reconcile is not None:
+                self._on_reconcile()
+            return
+        sections[0].request_reconcile()
+        if self._on_reconcile is not None:
+            self._on_reconcile()
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """A row press: post ``FileSelected`` with that entry's identity.

@@ -34,9 +34,17 @@ from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_display_state import (
+    ConversationFileEntry,
     ConsoleDisplayRow,
     ConsoleInspectorAction,
     ConsoleInspectorState,
+)
+from tldw_chatbook.Widgets.Console.console_bounded_section import (
+    ConsoleBoundedSection,
+)
+from tldw_chatbook.Widgets.Console.console_changed_files_section import (
+    ConsoleChangedFilesState,
+    ConsoleChangedFilesSection,
 )
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
@@ -44,6 +52,7 @@ from tldw_chatbook.Chat.console_project_instructions import (
 from tldw_chatbook.Widgets.Console.console_conversation_inspector import (
     ConsoleConversationInspector,
 )
+from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Widgets.Console.console_context_modal import ConsoleContextModal
 from tldw_chatbook.Widgets.Console.console_run_inspector import ConsoleRunInspector
 
@@ -125,11 +134,6 @@ def _expected_run_inspector_child_ids(state) -> tuple[str, ...]:
     )
     child_ids = ["console-inspector-run-status-summary"]
 
-    def add_action(action) -> None:
-        child_ids.append(action.widget_id)
-        if not action.enabled and action.disabled_reason:
-            child_ids.append(f"{action.widget_id}-reason")
-
     for owner, heading_id, _labels in ownership.ROW_GROUPS:
         rows = projected.rows_for(owner)
         actions = projected.actions_for(owner)
@@ -137,9 +141,9 @@ def _expected_run_inspector_child_ids(state) -> tuple[str, ...]:
             continue
         if rows or any(action.enabled for action in actions):
             child_ids.append(heading_id)
-        child_ids.extend(row.widget_id for row in rows)
-        for action in actions:
-            add_action(action)
+            child_ids.append(
+                f"console-bounded-section-{owner.lower().replace(' ', '-')}"
+            )
 
     for heading_id, rows, actions in (
         (
@@ -156,9 +160,10 @@ def _expected_run_inspector_child_ids(state) -> tuple[str, ...]:
         if not rows and not actions:
             continue
         child_ids.append(heading_id)
-        child_ids.extend(row.widget_id for row in rows)
-        for action in actions:
-            add_action(action.action)
+        child_ids.append(
+            "console-bounded-section-"
+            + ("chat-dictionaries" if "dictionaries" in heading_id else "world-books")
+        )
 
     return tuple(child_ids)
 
@@ -175,7 +180,7 @@ def _mounted_boundary_ids(rail) -> tuple[str, ...]:
         "console-run-inspector",
     )
     assert len(direct_children) == 6
-    assert direct_children[-1] in _LIVE_WORK_IDS
+    assert direct_children[-1] == "console-live-work-section"
 
     run_wrapper = rail.query_one("#console-run-inspector")
     run_wrapper_children = tuple(child.id for child in run_wrapper.children)
@@ -205,7 +210,7 @@ def _mounted_boundary_ids(rail) -> tuple[str, ...]:
         *direct_children[:4],
         *inspector_boundaries,
         run_wrapper_children[-1],
-        direct_children[-1],
+        next(card_id for card_id in _LIVE_WORK_IDS if list(rail.query(f"#{card_id}"))),
     )
 
 
@@ -318,6 +323,21 @@ async def test_mounted_inspector_semantic_census_matches_actual_right_rail_order
         await pilot.pause()
         rail = pilot.app.screen.query_one("#console-right-rail")
         rail._inspector_state = exhaustive_state
+        rail._changed_files_state = ConsoleChangedFilesState(
+            entries=(
+                ConversationFileEntry(
+                    root="/tmp/project",
+                    path="changed.py",
+                    label="changed.py",
+                    status="M",
+                    adds=1,
+                    dels=0,
+                    run_id="run-1",
+                    snapshot_id=1,
+                    note_count=0,
+                ),
+            )
+        )
         await rail.recompose()
         await pilot.pause()
 
@@ -325,6 +345,34 @@ async def test_mounted_inspector_semantic_census_matches_actual_right_rail_order
         expected_ids = tuple(item[0] for item in _EXPECTED_BOUNDARY_ANCHORS)
         assert mounted_ids[:-1] == expected_ids
         assert mounted_ids[-1] in _LIVE_WORK_IDS
+
+        compact_ids = {
+            "console-project-instruction-status",
+            "console-retrieval-scope-row",
+            "console-inspector-run-status-summary",
+        }
+        for compact_id in compact_ids:
+            compact = rail.query_one(f"#{compact_id}")
+            assert not any(
+                isinstance(ancestor, ConsoleBoundedSection)
+                for ancestor in compact.ancestors
+            )
+
+        specialized = (
+            ("#console-staged-context-tray", "sources"),
+            ("#console-changed-files-section", "changed-files"),
+            ("#console-settings-summary", "session-settings"),
+            ("#console-live-work-section", "live-work"),
+        )
+        for root_selector, section_id in specialized:
+            root = rail.query_one(root_selector)
+            bodies = list(root.query(ConsoleBoundedSection))
+            assert [body.section_id for body in bodies] == [section_id]
+
+        changed = rail.query_one(
+            "#console-changed-files-section", ConsoleChangedFilesSection
+        )
+        assert changed.MAX_VISIBLE_ROWS == 12
 
 
 @pytest.mark.asyncio
@@ -346,6 +394,103 @@ async def test_new_specialized_sibling_fails_mounted_production_census():
             with pytest.raises(AssertionError):
                 _mounted_boundary_ids(rail)
             await sibling.remove()
+
+
+@pytest.mark.asyncio
+async def test_sources_and_live_work_use_exact_twenty_line_content_ceiling():
+    async with make_console_pilot(size=(235, 52)) as pilot:
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause()
+        rail = pilot.app.screen.query_one("#console-right-rail")
+        content_by_section = {}
+        for section_id in ("sources", "live-work"):
+            section = rail.query_one(
+                f"#console-bounded-section-{section_id}", ConsoleBoundedSection
+            )
+            await section.viewport.remove_children()
+            content = Static("\n".join(f"row {index}" for index in range(20)))
+            await section.viewport.mount(content)
+            content_by_section[section_id] = content
+            section.request_reconcile()
+        for _ in range(5):
+            await pilot.pause()
+
+        for section_id in content_by_section:
+            section = rail.query_one(
+                f"#console-bounded-section-{section_id}", ConsoleBoundedSection
+            )
+            assert section.viewport.content_region.height == 20
+            assert section.hint.display is False
+
+        for section_id, content in content_by_section.items():
+            content.update("\n".join(f"row {index}" for index in range(21)))
+            content.refresh(layout=True)
+            rail.query_one(
+                f"#console-bounded-section-{section_id}", ConsoleBoundedSection
+            ).request_reconcile()
+        for _ in range(5):
+            await pilot.pause()
+
+        for section_id in content_by_section:
+            section = rail.query_one(
+                f"#console-bounded-section-{section_id}", ConsoleBoundedSection
+            )
+            assert section.viewport.content_region.height == 20
+            assert section.hint.display is True
+            assert section.hint.region.height == 1
+
+
+@pytest.mark.asyncio
+async def test_live_work_swap_retains_header_and_bounded_scaffold_identity(monkeypatch):
+    async with make_console_pilot(size=(235, 52)) as pilot:
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause()
+        screen = pilot.app.screen
+        rail = screen.query_one("#console-right-rail")
+        live_root = rail.query_one("#console-live-work-section")
+        header = rail.query_one("#console-live-work-header")
+        pending_header = rail.query_one("#console-live-work-status-badge")
+        readiness_header = rail.query_one("#console-live-work-source-readiness-title")
+        bounded = rail.query_one(
+            "#console-bounded-section-live-work", ConsoleBoundedSection
+        )
+        viewport = bounded.viewport
+        hint = bounded.hint
+        order = []
+        monkeypatch.setattr(bounded, "request_reconcile", lambda: order.append("local"))
+        monkeypatch.setattr(
+            rail, "request_outer_reconcile", lambda: order.append("outer")
+        )
+
+        screen._pending_console_launch_context = ConsoleLiveWorkLaunch.from_values(
+            source="test", title="bounded swap"
+        )
+        await screen._apply_console_live_work_card_swap()
+
+        assert order == ["local", "outer"]
+        assert rail.query_one("#console-live-work-section") is live_root
+        assert rail.query_one("#console-live-work-header") is header
+        assert rail.query_one("#console-live-work-status-badge") is pending_header
+        assert (
+            rail.query_one("#console-live-work-source-readiness-title")
+            is readiness_header
+        )
+        assert rail.query_one("#console-bounded-section-live-work") is bounded
+        assert bounded.viewport is viewport
+        assert bounded.hint is hint
+        assert rail.query_one("#console-pending-launch-card").parent is viewport
+        assert pending_header.display is True
+        assert readiness_header.display is False
+
+        order.clear()
+        screen._pending_console_launch_context = None
+        await screen._apply_console_live_work_card_swap()
+        assert order == ["local", "outer"]
+        assert rail.query_one("#console-live-work-section") is live_root
+        assert rail.query_one("#console-bounded-section-live-work") is bounded
+        assert rail.query_one("#console-live-work-source-readiness").parent is viewport
+        assert pending_header.display is False
+        assert readiness_header.display is True
 
 
 @pytest.mark.asyncio

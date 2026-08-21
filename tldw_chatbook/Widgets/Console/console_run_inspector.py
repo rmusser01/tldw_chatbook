@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from loguru import logger
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.css.query import NoMatches, QueryError
+from textual.widget import Widget
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_display_state import (
@@ -22,6 +24,9 @@ from tldw_chatbook.Widgets.Console.console_inspector_ownership import (
     InspectorOwnershipPolicy,
     classify_inspector_content,
 )
+from tldw_chatbook.Widgets.Console.console_bounded_section import (
+    ConsoleBoundedSection,
+)
 
 _ACTION_GROUPS = ACTION_GROUPS
 
@@ -35,6 +40,7 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
         *,
         ownership_policy: InspectorOwnershipPolicy = InspectorOwnershipPolicy.STRICT,
         reported_unknown_fingerprints: set[tuple[str, ...]] | None = None,
+        on_reconcile: Callable[[], None] | None = None,
         **kwargs: Any,
     ) -> None:
         ownership = classify_inspector_content(state, ownership_policy)
@@ -47,6 +53,7 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
             if reported_unknown_fingerprints is not None
             else set()
         )
+        self._on_reconcile = on_reconcile
         self._report_unowned_content(ownership)
         self.styles.height = "auto"
         self.styles.min_height = 0
@@ -81,11 +88,13 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
         ):
             self.recompose_count += 1
             self.refresh(recompose=True)
+            self.call_after_refresh(self._request_sections_reconcile)
             return
         # Deferred to match the recompose path's timing: a wholesale
         # recompose lands on the NEXT refresh cycle, i.e. after any rail
         # cascade the owning screen applies later in the same sync tick.
         self.call_after_refresh(self._restore_rail_cascade_visibility)
+        self.call_after_refresh(self._request_sections_reconcile)
 
     def _report_unowned_content(self, ownership: InspectorOwnedContent) -> None:
         """Log one privacy-safe diagnostic for each unknown fingerprint."""
@@ -245,7 +254,12 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
         return button
 
     def _compose_action(self, action: ConsoleInspectorAction) -> ComposeResult:
-        yield self._button_for_action(action)
+        yield from self._widgets_for_action(action)
+
+    def _widgets_for_action(self, action: ConsoleInspectorAction) -> list[Widget]:
+        """Build an action subtree for insertion into one bounded body."""
+
+        widgets: list[Widget] = [self._button_for_action(action)]
         if not action.enabled and action.disabled_reason:
             reason = Static(
                 action.disabled_reason,
@@ -255,7 +269,20 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
             reason.styles.display = "none"
             reason.styles.height = 0
             reason.styles.min_height = 0
-            yield reason
+            widgets.append(reason)
+        return widgets
+
+    @staticmethod
+    def _section_id(owner: str) -> str:
+        return owner.lower().replace(" ", "-")
+
+    def _request_sections_reconcile(self) -> None:
+        """Settle every changed local body before invalidating the rail owner."""
+
+        for section in self.query(ConsoleBoundedSection):
+            section.request_reconcile()
+        if self._on_reconcile is not None:
+            self._on_reconcile()
 
     def _status_summary(
         self,
@@ -297,10 +324,7 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
             group_actions = self._ownership.actions_for(heading)
             if not group_rows and not group_actions:
                 continue
-
             if not group_rows and not any(action.enabled for action in group_actions):
-                for action in group_actions:
-                    yield from self._compose_action(action)
                 continue
 
             yield Static(
@@ -308,19 +332,26 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
                 id=heading_id,
                 classes="console-inspector-group-heading destination-section",
             )
+            body: list[Widget] = []
             for entry in group_rows:
-                yield Static(
-                    entry.row.text,
-                    id=entry.widget_id,
-                    classes=(
-                        "console-inspector-row "
-                        f"console-inspector-row-{entry.row.status}"
-                    ),
-                    markup=False,
+                body.append(
+                    Static(
+                        entry.row.text,
+                        id=entry.widget_id,
+                        classes=(
+                            "console-inspector-row "
+                            f"console-inspector-row-{entry.row.status}"
+                        ),
+                        markup=False,
+                    )
                 )
 
             for action in group_actions:
-                yield from self._compose_action(action)
+                body.extend(self._widgets_for_action(action))
+            yield ConsoleBoundedSection(
+                *body,
+                section_id=self._section_id(heading),
+            )
 
         dict_rows = self._ownership.dictionary_rows
         dict_actions = self._ownership.dictionary_actions
@@ -330,18 +361,25 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
                 id="console-inspector-dictionaries-heading",
                 classes="console-inspector-group-heading destination-section",
             )
+            body = []
             for entry in dict_rows:
-                yield Static(
-                    entry.row.text,
-                    id=entry.widget_id,
-                    classes=(
-                        "console-inspector-row "
-                        f"console-inspector-row-{entry.row.status}"
-                    ),
-                    markup=False,
+                body.append(
+                    Static(
+                        entry.row.text,
+                        id=entry.widget_id,
+                        classes=(
+                            "console-inspector-row "
+                            f"console-inspector-row-{entry.row.status}"
+                        ),
+                        markup=False,
+                    )
                 )
             for entry in dict_actions:
-                yield from self._compose_action(entry.action)
+                body.extend(self._widgets_for_action(entry.action))
+            yield ConsoleBoundedSection(
+                *body,
+                section_id="chat-dictionaries",
+            )
 
         world_book_rows = self._ownership.world_book_rows
         world_book_actions = self._ownership.world_book_actions
@@ -351,15 +389,22 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
                 id="console-inspector-worldbooks-heading",
                 classes="console-inspector-group-heading destination-section",
             )
+            body = []
             for entry in world_book_rows:
-                yield Static(
-                    entry.row.text,
-                    id=entry.widget_id,
-                    classes=(
-                        "console-inspector-row "
-                        f"console-inspector-row-{entry.row.status}"
-                    ),
-                    markup=False,
+                body.append(
+                    Static(
+                        entry.row.text,
+                        id=entry.widget_id,
+                        classes=(
+                            "console-inspector-row "
+                            f"console-inspector-row-{entry.row.status}"
+                        ),
+                        markup=False,
+                    )
                 )
             for entry in world_book_actions:
-                yield from self._compose_action(entry.action)
+                body.extend(self._widgets_for_action(entry.action))
+            yield ConsoleBoundedSection(
+                *body,
+                section_id="world-books",
+            )

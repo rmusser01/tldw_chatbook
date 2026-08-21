@@ -23,6 +23,9 @@ from tldw_chatbook.Widgets.Console.console_run_inspector import (
     _ROW_GROUPS,
     ConsoleRunInspector,
 )
+from tldw_chatbook.Widgets.Console.console_bounded_section import (
+    ConsoleBoundedSection,
+)
 
 
 EXPECTED_ROW_OWNERS = {
@@ -393,6 +396,80 @@ async def test_review_changes_mounts_under_changes_before_dictionaries():
         assert mounted_ids.index(
             "console-inspector-review-changes"
         ) < mounted_ids.index("console-inspector-dictionaries-heading")
+
+
+@pytest.mark.asyncio
+async def test_each_run_group_has_external_heading_and_one_bounded_body():
+    state = _base_state(
+        rows=tuple(
+            ConsoleDisplayRow(label, f"value for {label}")
+            for label in EXPECTED_ROW_OWNERS
+        ),
+        actions=tuple(
+            ConsoleInspectorAction(action_id, owner, True)
+            for action_id, owner in EXPECTED_ACTION_OWNERS.items()
+        ),
+        dictionary_rows=(ConsoleDisplayRow("Dictionary", "attached"),),
+        world_book_rows=(ConsoleDisplayRow("World Book", "attached"),),
+    )
+
+    async with InspectorHarness(state).run_test(size=(100, 60)) as pilot:
+        await pilot.pause()
+        inspector = pilot.app.query_one("#inspector", ConsoleRunInspector)
+        assert (
+            inspector.query_one("#console-inspector-run-status-summary").parent
+            is inspector
+        )
+
+        expected_sections = (
+            *(owner for owner, _heading_id, _labels in _ROW_GROUPS),
+            "Chat Dictionaries",
+            "World Books",
+        )
+        assert tuple(
+            section.section_id for section in inspector.query(ConsoleBoundedSection)
+        ) == tuple(owner.lower().replace(" ", "-") for owner in expected_sections)
+
+        for owner, heading_id, labels in _ROW_GROUPS:
+            heading = inspector.query_one(f"#{heading_id}")
+            body = inspector.query_one(
+                f"#console-bounded-section-{owner.lower().replace(' ', '-')}",
+                ConsoleBoundedSection,
+            )
+            assert heading.parent is inspector
+            assert body.parent is inspector
+            children = list(inspector.children)
+            assert children.index(body) == children.index(heading) + 1
+            assert len(body.query(ConsoleBoundedSection)) == 0
+            for label in labels:
+                row_id = _ownership_module().ROW_IDS[label]
+                assert body.query_one(f"#{row_id}")
+
+
+@pytest.mark.asyncio
+async def test_run_section_uses_exact_twenty_line_content_ceiling():
+    state = _base_state()
+    async with InspectorHarness(state).run_test(size=(80, 40)) as pilot:
+        section = pilot.app.query_one(
+            "#console-bounded-section-run", ConsoleBoundedSection
+        )
+        await section.viewport.remove_children()
+        content = Static("\n".join(f"row {index}" for index in range(20)))
+        await section.viewport.mount(content)
+        section.request_reconcile()
+        for _ in range(4):
+            await pilot.pause()
+        assert section.viewport.content_region.height == 20
+        assert section.hint.display is False
+
+        content.update("\n".join(f"row {index}" for index in range(21)))
+        content.refresh(layout=True)
+        section.request_reconcile()
+        for _ in range(4):
+            await pilot.pause()
+        assert section.viewport.content_region.height == 20
+        assert section.hint.display is True
+        assert section.hint.region.height == 1
 
 
 @pytest.mark.asyncio

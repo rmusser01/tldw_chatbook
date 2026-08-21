@@ -402,6 +402,7 @@ from ...Widgets.Chat_Widgets.skill_install_confirm_card import SkillInstallConfi
 from ...Widgets.Chat_Widgets.skill_script_confirm_card import SkillScriptConfirmCard
 from ...Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 from ...Widgets.Console import (
+    ConsoleBoundedSection,
     ConsoleChangedFilesSection,
     ConsoleChangedFilesState,
     ConsoleCitationSourcesModal,
@@ -5009,6 +5010,15 @@ class ChatScreen(BaseAppScreen):
             return
         left_rail.request_allocation_reconcile()
 
+    def _request_console_inspector_outer_reconcile(self) -> None:
+        """Safely invalidate Inspector ownership after descendant layout."""
+
+        try:
+            right_rail = self.query_one("#console-right-rail", ConsoleInspectorRail)
+        except (NoMatches, QueryError):
+            return
+        right_rail.request_outer_reconcile()
+
     def _sync_console_settings_summary(self) -> None:
         """Refresh the mounted Console settings summary surfaces if present."""
         summary_state = self._build_console_settings_summary_state()
@@ -5019,7 +5029,10 @@ class ChatScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             pass
         else:
+            summary_changed = summary.state != summary_state
             summary.sync_state(summary_state)
+            if summary_changed:
+                self.call_after_refresh(self._request_console_inspector_outer_reconcile)
         provider_value = _summary_row_value(summary_state.provider_row) or "—"
         model_value = _summary_row_value(summary_state.model_row) or "—"
         temperature_match = re.search(r"T ([\d.]+)", summary_state.sampling_row or "")
@@ -11533,7 +11546,11 @@ class ChatScreen(BaseAppScreen):
             )
         except QueryError:
             return
-        section.update_state(self._build_console_changed_files_state())
+        state = self._build_console_changed_files_state()
+        changed = section.state != state
+        section.update_state(state)
+        if changed:
+            self.call_after_refresh(self._request_console_inspector_outer_reconcile)
 
     def _land_console_changed_files(
         self, conversation_id: "str | None", entries: list, pruned_rows: int
@@ -12132,13 +12149,7 @@ class ChatScreen(BaseAppScreen):
             badge, optional primary action, and payload rows as children.
         """
         card_state = ConsoleLiveWorkStatusCardState.from_launch(launch)
-        children: list[Any] = [
-            Static(
-                card_state.badge_text,
-                id=card_state.badge_id,
-                classes=card_state.badge_classes,
-            )
-        ]
+        children: list[Any] = []
         if card_state.primary_action is not None:
             children.append(
                 Button(
@@ -12152,11 +12163,14 @@ class ChatScreen(BaseAppScreen):
             Static(row.text, id=row.widget_id, classes=row.classes)
             for row in card_state.rows
         )
-        return Container(
+        container = Container(
             *children,
             id=card_state.container_id,
             classes=card_state.container_classes,
         )
+        container.styles.height = "auto"
+        container.styles.min_height = 0
+        return container
 
     @staticmethod
     def _hidden_static(text: str, *, id: str, classes: str = "") -> Static:
@@ -12822,11 +12836,6 @@ class ChatScreen(BaseAppScreen):
         )
         children: list[Any] = [
             Static(
-                readiness.title,
-                id=readiness.title_id,
-                classes=readiness.title_classes,
-            ),
-            Static(
                 self._retrieval._console_library_rag_scope_label(),
                 id="console-library-rag-scope",
                 classes="destination-section",
@@ -13063,14 +13072,16 @@ class ChatScreen(BaseAppScreen):
         swap_completed = False
         try:
             try:
-                rail_body = self.query_one(
-                    "#console-inspector-rail-body", VerticalScroll
+                local_section = self.query_one(
+                    "#console-bounded-section-live-work", ConsoleBoundedSection
                 )
-                # Task-400: the Context (staged sources) tray is pinned at
-                # the TOP of the rail body, so live-work cards keep their
-                # pre-move anchor -- mounted after the run-inspector block,
-                # at the bottom of the rail body.
-                anchor = self.query_one("#console-run-inspector", Vertical)
+                rail = self.query_one("#console-right-rail", ConsoleInspectorRail)
+                pending_header = self.query_one(
+                    "#console-live-work-status-badge", Static
+                )
+                readiness_header = self.query_one(
+                    "#console-live-work-source-readiness-title", Static
+                )
             except QueryError:
                 return
             for selector in (
@@ -13078,7 +13089,7 @@ class ChatScreen(BaseAppScreen):
                 f"#{SOURCE_READINESS_CARD_ID}",
             ):
                 try:
-                    stale_card = self.query_one(selector)
+                    stale_card = local_section.query_one(selector)
                 except QueryError:
                     continue
                 await stale_card.remove()
@@ -13088,7 +13099,11 @@ class ChatScreen(BaseAppScreen):
                 if launch is not None
                 else self._build_console_live_work_source_readiness_card()
             )
-            await rail_body.mount(card, after=anchor)
+            await local_section.viewport.mount(card)
+            pending_header.display = launch is not None
+            readiness_header.display = launch is None
+            local_section.request_reconcile()
+            rail.request_outer_reconcile()
             swapped_context = launch
             swap_completed = True
         finally:
@@ -13115,9 +13130,10 @@ class ChatScreen(BaseAppScreen):
         state = self._build_console_staged_context_state(
             self._pending_console_launch_context
         )
-        tray.styles.min_height = 3 if state.is_empty else 4
-        tray.styles.max_height = 6 if state.is_empty else 10
+        changed = tray.state != state
         tray.sync_state(state)
+        if changed:
+            self.call_after_refresh(self._request_console_inspector_outer_reconcile)
 
     @work(exclusive=True, group="console-library-rag-search")
     async def _execute_console_library_rag_search(
@@ -17757,7 +17773,10 @@ class ChatScreen(BaseAppScreen):
             self._pending_console_launch_context
         )
         if inspector is not None:
+            inspector_changed = inspector.state != inspector_state
             inspector.sync_state(inspector_state)
+            if inspector_changed:
+                self.call_after_refresh(self._request_console_inspector_outer_reconcile)
         # TASK-18060 Task 5: same in-place sync shape as the run inspector
         # immediately above -- reads only the cached summary, never the
         # DB/git (the guard-gated recompute lives in

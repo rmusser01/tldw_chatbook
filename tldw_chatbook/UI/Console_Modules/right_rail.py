@@ -57,7 +57,7 @@ import os
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widget import Widget
-from textual.widgets import Button
+from textual.widgets import Button, Static
 
 from ...Chat.console_display_state import (
     ConsoleInspectorState,
@@ -66,9 +66,11 @@ from ...Chat.console_display_state import (
     ConsoleStagedContextState,
 )
 from ...Chat.console_session_settings import ConsoleSettingsSummaryState
+from ...Chat.console_live_work import PENDING_LAUNCH_CARD_ID
 from ...Widgets.Console import (
     ConsoleChangedFilesSection,
     ConsoleChangedFilesState,
+    ConsoleBoundedSection,
     InspectorOwnershipPolicy,
     ConsoleProjectInstructionStatusRow,
     ConsoleRetrievalScopeRow,
@@ -176,6 +178,36 @@ class ConsoleInspectorRail(Vertical):
             ownership_policy or _resolve_inspector_ownership_policy()
         )
         self._reported_unknown_fingerprints: set[tuple[str, ...]] = set()
+        self._outer_reconcile_scheduled = False
+        self._outer_reconcile_count = 0
+
+    def on_mount(self) -> None:
+        """Schedule the first owner pass after descendant layout settles."""
+
+        self.request_outer_reconcile()
+
+    def request_outer_reconcile(self) -> None:
+        """Coalesce Inspector owner invalidation behind local section demand."""
+
+        if not self.is_mounted or self._outer_reconcile_scheduled:
+            return
+        self._outer_reconcile_scheduled = True
+        self.call_after_refresh(self._run_scheduled_outer_reconcile)
+
+    def _run_scheduled_outer_reconcile(self) -> None:
+        """Expose a Task-7-ready seam only after every local body has settled."""
+
+        if not self.is_mounted:
+            self._outer_reconcile_scheduled = False
+            return
+        if any(
+            section._reconcile_scheduled
+            for section in self.query(ConsoleBoundedSection)
+        ):
+            self.call_after_refresh(self._run_scheduled_outer_reconcile)
+            return
+        self._outer_reconcile_scheduled = False
+        self._outer_reconcile_count += 1
 
     def compose(self) -> ComposeResult:
         """Compose the rail header, staged-context tray, scope row, and run inspector.
@@ -227,18 +259,13 @@ class ConsoleInspectorRail(Vertical):
             staged_context_state = self._staged_context_state
             staged_context_tray = ConsoleStagedContextTray(
                 staged_context_state,
+                on_reconcile=self.request_outer_reconcile,
                 id="console-staged-context-tray",
                 classes="console-inspector-context-section",
             )
             staged_context_tray.styles.width = "100%"
             staged_context_tray.styles.min_width = 0
             staged_context_tray.styles.height = "auto"
-            staged_context_tray.styles.min_height = (
-                3 if staged_context_state.is_empty else 4
-            )
-            staged_context_tray.styles.max_height = (
-                6 if staged_context_state.is_empty else 10
-            )
             # `ChatScreen._staged_context_frame_variant` is a `@staticmethod`
             # returning "quiet" unconditionally (mirrors task 3's inlining
             # of `_workspace_context_frame_variant`) -- inlined as a literal
@@ -270,6 +297,7 @@ class ConsoleInspectorRail(Vertical):
             changed_files_section = ConsoleChangedFilesSection(
                 self._changed_files_state,
                 id="console-changed-files-section",
+                on_reconcile=self.request_outer_reconcile,
             )
             # Same margin/padding rhythm as the Sources tray and Scope row
             # above (`.console-inspector-context-section`) -- the widget's
@@ -287,10 +315,12 @@ class ConsoleInspectorRail(Vertical):
                     self._inspector_state,
                     ownership_policy=self._ownership_policy,
                     reported_unknown_fingerprints=(self._reported_unknown_fingerprints),
+                    on_reconcile=self.request_outer_reconcile,
                     id="console-run-inspector-state",
                 )
                 settings_summary = ConsoleSettingsSummary(
                     self._settings_summary_state,
+                    on_reconcile=self.request_outer_reconcile,
                     id="console-settings-summary",
                     classes=(
                         "console-inspector-session-settings console-settings-summary"
@@ -300,4 +330,27 @@ class ConsoleInspectorRail(Vertical):
                 settings_summary.styles.min_width = 0
                 yield settings_summary
 
-            yield self._live_work_card_builder()
+            live_work_card = self._live_work_card_builder()
+            pending_visible = live_work_card.id == PENDING_LAUNCH_CARD_ID
+            with Vertical(id="console-live-work-section"):
+                with Vertical(id="console-live-work-header"):
+                    pending_header = Static(
+                        "Pending Console launch",
+                        id="console-live-work-status-badge",
+                        classes="ds-status-badge console-live-work-status-badge",
+                    )
+                    pending_header.display = pending_visible
+                    yield pending_header
+                    readiness_header = Static(
+                        "Live work sources",
+                        id="console-live-work-source-readiness-title",
+                        classes=(
+                            "ds-status-badge console-live-work-source-readiness-title"
+                        ),
+                    )
+                    readiness_header.display = not pending_visible
+                    yield readiness_header
+                yield ConsoleBoundedSection(
+                    live_work_card,
+                    section_id="live-work",
+                )
