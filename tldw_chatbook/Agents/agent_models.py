@@ -509,6 +509,8 @@ class AgentConfig:
             with launch-relative, never absolute, paths). Empty for the default
             workspace, so the common case adds nothing. Carried on the config
             so it propagates verbatim onto spawned sub-agents' configs.
+        response_reserve_tokens: Non-negative output-token capacity excluded
+            from project-instruction input admission.
     """
 
     model: str
@@ -518,6 +520,10 @@ class AgentConfig:
     native_tools: bool = True
     workspace_context_note: str = ""
     response_reserve_tokens: int = 2048
+
+    def __post_init__(self) -> None:
+        if self.response_reserve_tokens < 0:
+            raise ValueError("response_reserve_tokens must be non-negative")
 
 
 @dataclass

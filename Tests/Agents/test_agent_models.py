@@ -3,6 +3,8 @@
 import dataclasses
 import math
 
+import pytest
+
 from tldw_chatbook.Agents.agent_models import (
     CHECK_AGENTS_TOOL_NAME,
     DIRECT_DISCLOSE_THRESHOLD,
@@ -84,6 +86,15 @@ def test_budget_defaults():
         b.max_active_tools,
         b.max_subagent_result_chars,
     ) == (8, 240.0, 2, 24, 4000)
+
+
+def test_agent_config_rejects_negative_response_reserve_tokens():
+    with pytest.raises(ValueError, match="response_reserve_tokens"):
+        AgentConfig(
+            model="m",
+            system_prompt="s",
+            response_reserve_tokens=-1,
+        )
 
 
 # -- clamp_child_budget: the TURN-SCOPED / INLINE path ONLY --------------
