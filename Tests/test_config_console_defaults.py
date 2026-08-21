@@ -316,6 +316,55 @@ def test_config_template_exposes_conversation_memory_defaults():
     )
 
 
+def test_console_project_instruction_byte_limits_default_to_32_kib(
+    tmp_path, monkeypatch
+):
+    template_console = config_module.DEFAULT_CONFIG_FROM_TOML["console"]
+    assert template_console["project_instructions_startup_max_bytes"] == 32768
+    assert template_console["project_instructions_nested_max_bytes"] == 32768
+
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(tmp_path / "missing-config.toml"))
+
+    settings = config_module.load_settings(force_reload=True)
+    console = settings["console"]
+
+    assert console["project_instructions_startup_max_bytes"] == 32768
+    assert console["project_instructions_nested_max_bytes"] == 32768
+
+
+@pytest.mark.parametrize(
+    "raw_value, expected",
+    [
+        ('"4096"', 4096),
+        ("1", 1),
+        ("1048576", 1048576),
+        ("0", 32768),
+        ("1048577", 32768),
+        ("true", 32768),
+    ],
+)
+def test_console_project_instruction_byte_limits_are_bounded(
+    tmp_path, monkeypatch, raw_value, expected
+):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[console]",
+                f"project_instructions_startup_max_bytes = {raw_value}",
+                f"project_instructions_nested_max_bytes = {raw_value}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    console = config_module.load_settings(force_reload=True)["console"]
+
+    assert console["project_instructions_startup_max_bytes"] == expected
+    assert console["project_instructions_nested_max_bytes"] == expected
+
+
 def test_console_local_tools_coerced(tmp_path, monkeypatch):
     config_path = tmp_path / "config.toml"
     config_path.write_text(

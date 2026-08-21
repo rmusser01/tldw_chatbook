@@ -22,6 +22,8 @@ from loguru import logger as loguru_logger
 from tldw_chatbook.Agents import run_log as run_log_module
 from tldw_chatbook.Agents.agent_models import (
     FENCE_TOOL_RESULT_PREFIX,
+    RUN_LOG_SLICE_TOOL_NAME,
+    RUN_LOG_STATS_TOOL_NAME,
     SEARCH_RUN_LOG_TOOL_NAME,
     AgentConfig,
     RunBudget,
@@ -29,7 +31,7 @@ from tldw_chatbook.Agents.agent_models import (
     ToolResult,
     ToolSchema,
 )
-from tldw_chatbook.Agents.agent_service import AgentService
+from tldw_chatbook.Agents.agent_service import RUN_LOG_PROMPT_SECTION, AgentService
 from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
 from tldw_chatbook.Chat import console_history_budget as budget_module
 from tldw_chatbook.Chat.console_history_budget import (
@@ -625,11 +627,79 @@ def test_flag_on_and_log_unavailable_still_sends_full_history(db, tmp_path, monk
         ),
         api_endpoint="llama_cpp",
     )
+    assert all(
+        RUN_LOG_PROMPT_SECTION not in str(call["messages_payload"])
+        for call in chat.calls
+    )
+    assert all(
+        SEARCH_RUN_LOG_TOOL_NAME not in str(call.get("tools", ()))
+        for call in chat.calls
+    )
     last_payload = chat.calls[-1]["messages_payload"]
     assert any("MARK1_" in str(m.get("content", "")) for m in last_payload), (
         "logging unavailable must suppress eviction even with the flag on"
     )
     assert not any("Context note" in str(m.get("content", "")) for m in last_payload)
+
+
+def test_writer_append_failure_disables_log_features_on_next_request(
+    db, tmp_path, monkeypatch
+):
+    monkeypatch.setenv(_EVICT_ENV_VAR, "true")
+    monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
+    monkeypatch.setattr(budget_module, "get_model_token_limit", lambda *a, **k: 50)
+
+    writer = run_log_module.RunLogWriter()
+
+    def fail_append(*args, **kwargs):
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr(writer, "_write_bytes", fail_append)
+    chat = ScriptedChat(_native_replies(1))
+    service = AgentService(
+        db=db,
+        registry=_make_registry(1),
+        chat_call=chat,
+        run_log_writer=writer,
+    )
+    earliest = "EARLIEST_HISTORY_SENTINEL"
+    history = [
+        {"role": "user", "content": earliest},
+        {"role": "assistant", "content": "old answer " + ("x " * 200)},
+        {"role": "user", "content": "another old question"},
+        {"role": "assistant", "content": "another old answer " + ("y " * 200)},
+        {"role": "user", "content": "start"},
+    ]
+
+    service.run_turn(
+        conversation_id="c",
+        messages=history,
+        config=_run_config(native_tools=True),
+        api_endpoint="groq",
+    )
+
+    assert len(chat.calls) == 2
+    log_tool_names = {
+        SEARCH_RUN_LOG_TOOL_NAME,
+        RUN_LOG_STATS_TOOL_NAME,
+        RUN_LOG_SLICE_TOOL_NAME,
+    }
+    first_tools = {
+        tool["function"]["name"] for tool in chat.calls[0].get("tools", ())
+    }
+    assert RUN_LOG_PROMPT_SECTION in str(chat.calls[0]["messages_payload"])
+    assert log_tool_names <= first_tools
+    assert writer.log_dir is not None
+    assert not writer.is_active
+
+    second = chat.calls[1]
+    second_tools = {
+        tool["function"]["name"] for tool in second.get("tools", ())
+    }
+    assert RUN_LOG_PROMPT_SECTION not in str(second["messages_payload"])
+    assert log_tool_names.isdisjoint(second_tools)
+    assert all(message in second["messages_payload"] for message in history)
+    assert "Context note" not in str(second["messages_payload"])
 
 
 def test_flag_on_and_log_active_fence_protocol_drops_old_rounds_intact(
@@ -652,7 +722,10 @@ def test_flag_on_and_log_active_fence_protocol_drops_old_rounds_intact(
         api_endpoint="llama_cpp",
     )
     assert outcome.final_text == "done."
+    first_payload = chat.calls[0]["messages_payload"]
     last_payload = chat.calls[-1]["messages_payload"]
+    assert RUN_LOG_PROMPT_SECTION in str(first_payload[0].get("content", ""))
+    assert RUN_LOG_PROMPT_SECTION in str(last_payload[0].get("content", ""))
     assert not any("MARK1_" in str(m.get("content", "")) for m in last_payload), (
         "the earliest round should have been evicted under this tiny window"
     )

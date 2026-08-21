@@ -581,6 +581,36 @@ class ChatPersistenceService:
             )
         )
 
+    def get_conversation_console_project_context(
+        self, *, conversation_id: str
+    ) -> str | None:
+        """Return a conversation's local-only Console project-context JSON.
+
+        Args:
+            conversation_id: Durable conversation identifier.
+
+        Returns:
+            Stored versioned JSON, or ``None`` when unset or unavailable.
+        """
+        return self.db.get_conversation_console_project_context(conversation_id)
+
+    def set_conversation_console_project_context(
+        self,
+        *,
+        conversation_id: str,
+        project_context_json: str | None,
+    ) -> None:
+        """Write local-only Console project-context JSON without sync churn.
+
+        Args:
+            conversation_id: Durable conversation identifier.
+            project_context_json: Versioned control-state JSON, or ``None`` to
+                clear it.
+        """
+        self.db.set_conversation_console_project_context(
+            conversation_id, project_context_json
+        )
+
     def update_message_content(
         self,
         *,

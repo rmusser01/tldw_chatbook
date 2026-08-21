@@ -14,7 +14,7 @@ import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Iterator, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Any, Callable, Iterator, Mapping, NotRequired, TypedDict
 
 from loguru import logger
 
@@ -42,6 +42,7 @@ from .session_todo_store import (
 
 if TYPE_CHECKING:
     from tldw_chatbook.Tools.watchlists_tool_service import WatchlistsToolService
+from .tool_catalog import ToolPathTarget
 
 # Module-level (not the function-local imports the other `_default_specs`
 # tool modules use) SPECIFICALLY so tests can patch this one name via
@@ -91,6 +92,9 @@ LOCAL_KILL_SWITCH_REFUSAL = "blocked — local tools are switched off"
 # where a genuine unapproved timeout is not).
 LOCAL_GATE_ERROR_REFUSAL = (
     f"blocked — {PERMISSION_STATE_UNRESOLVED_CLAUSE}; retrying may succeed"
+)
+LOCAL_ROOT_CHANGED_REFUSAL = (
+    "Selected workspace root changed after dispatch started; the tool was not run."
 )
 
 _MAX_RESULT_BYTES = 32 * 1024
@@ -201,20 +205,29 @@ class LocalToolProvider:
         on_todo_change: TodoChangeCallback | None = None,
         watchlists_service: WatchlistsToolService | None = None,
         no_callback_refusal: str | None = None,
+        allow_write: bool = True,
+        root_guard: Callable[[], bool] | None = None,
     ) -> None:
         self._root = workspace_root
+        selected_specs = (
+            specs
+            if specs is not None
+            else _default_specs(
+                 workspace_root,
+                 todo_store=todo_store,
+                 on_todo_change=on_todo_change,
+                 watchlists_service=watchlists_service,
+             )
+        )
+        if not allow_write:
+            selected_specs = [
+                spec
+                for spec in selected_specs
+                if spec.name not in {"fs_write", "fs_edit", "fs_patch"}
+            ]
         self._specs = {
             s.name: s
-            for s in (
-                specs
-                if specs is not None
-                else _default_specs(
-                    workspace_root,
-                    todo_store=todo_store,
-                    on_todo_change=on_todo_change,
-                    watchlists_service=watchlists_service,
-                )
-            )
+            for s in selected_specs
         }
         self._resolve_state = resolve_state or (
             lambda hub: EffectiveToolState(state="ask", origin="global_default")
@@ -225,6 +238,7 @@ class LocalToolProvider:
         self._persist_approval = persist_approval
         self._record_decision = record_decision
         self._no_callback_refusal = no_callback_refusal
+        self._root_guard = root_guard
         # PR2a Task 5: keyed (run_id, tool_name), not tool_name -- one
         # provider instance is shared by a parent run and every sub-agent
         # it spawns, so a name-keyed dict let any run's turn clear or
@@ -359,6 +373,80 @@ class LocalToolProvider:
         """
         return [self.hub_tool_for(name) for name in self._specs]
 
+    def path_targets(
+        self, tool_id: str, args: Mapping[str, Any]
+    ) -> tuple[ToolPathTarget, ...]:
+        """Map supported local file and git calls to validated path targets."""
+        name = tool_id.split(":", 1)[-1]
+        if name not in self._specs:
+            return ()
+
+        from tldw_chatbook.Tools.local_tool_impls import (
+            LocalToolError,
+            resolve_workspace_path,
+        )
+
+        root = Path(self._root).resolve()
+        if name in {"fs_read", "fs_write", "fs_edit"}:
+            path = resolve_workspace_path(args["path"], root)
+            return (ToolPathTarget(path=path, kind="exact"),)
+        if name == "fs_list":
+            path = resolve_workspace_path(args["path"], root)
+            return (ToolPathTarget(path=path, kind="directory"),)
+        if name in {"fs_glob", "fs_grep"}:
+            return (ToolPathTarget(path=root, kind="directory"),)
+        if name == "fs_patch":
+            from tldw_chatbook.Tools.patch_tool_impls import (
+                FilesystemPatchError,
+                parse_patch_targets,
+            )
+
+            try:
+                plans = parse_patch_targets(args["diff"])
+            except FilesystemPatchError as exc:
+                raise LocalToolError(
+                    f"fs_patch failed [{exc.reason_code}]"
+                ) from exc
+            targets: list[ToolPathTarget] = []
+            seen: set[Path] = set()
+            for plan in plans:
+                assert plan.new_path is not None
+                path = resolve_workspace_path(plan.new_path, root)
+                if path in seen:
+                    continue
+                seen.add(path)
+                targets.append(ToolPathTarget(path=path, kind="exact"))
+            return tuple(targets)
+
+        from tldw_chatbook.Tools.git_tool_impls import (
+            _prepare_for_path,
+            _repo_relative_path,
+            prepare_repository,
+        )
+
+        if name == "git_branches":
+            repo_root = prepare_repository(root, ".")
+            return (ToolPathTarget(path=repo_root, kind="repository"),)
+        if name == "git_status":
+            repo_root = _prepare_for_path(root, args.get("path", "."))
+            return (ToolPathTarget(path=repo_root, kind="repository"),)
+        if name in {"git_diff", "git_log"}:
+            raw_path = args.get("path")
+            repo_root = _prepare_for_path(root, raw_path)
+            if raw_path is None:
+                return (ToolPathTarget(path=repo_root, kind="repository"),)
+            path = resolve_workspace_path(raw_path, root)
+            _repo_relative_path(root, repo_root, raw_path)
+            scope = path if path.is_dir() else path.parent
+            return (ToolPathTarget(path=scope, kind="repository"),)
+        if name == "git_blame":
+            raw_path = args["path"]
+            repo_root = _prepare_for_path(root, raw_path)
+            path = resolve_workspace_path(raw_path, root)
+            _repo_relative_path(root, repo_root, raw_path)
+            return (ToolPathTarget(path=path.parent, kind="repository"),)
+        return ()
+
     # -- approval stamps (mirror MCPToolProvider) ----------------------
 
     def apply_batch_decisions(self, run_id: str, decisions: dict[str, str]) -> None:
@@ -438,6 +526,8 @@ class LocalToolProvider:
         # Same `local:`-prefix tolerance as invoke()/load_schema(): the
         # registry invokes by catalog id ("local:fs_list") while the review
         # hook resolves by LLM-facing name ("fs_list").
+        if not self._root_is_valid():
+            return None
         name = name.split(":", 1)[1] if ":" in name else name
         spec = self._specs.get(name)
         if spec is None:
@@ -537,6 +627,8 @@ class LocalToolProvider:
         spec = self._specs.get(name)
         if spec is None:
             return ToolResult(ok=False, error=f"Unknown local tool: {name}")
+        if not self._root_is_valid():
+            return ToolResult(ok=False, error=LOCAL_ROOT_CHANGED_REFUSAL)
         if self._kill_switch_engaged():
             self._record_decision_safe(self.hub_tool_for(name), "denied")
             return ToolResult(ok=False, error=LOCAL_KILL_SWITCH_REFUSAL)
@@ -547,6 +639,8 @@ class LocalToolProvider:
         # writes, so such a call resolves through the fresh gate below.
         verdict = self._verdict_for(name, args, current_run_id())
         if verdict == "allow":
+            if not self._root_is_valid():
+                return ToolResult(ok=False, error=LOCAL_ROOT_CHANGED_REFUSAL)
             try:
                 return ToolResult(ok=True, content=_fit_result(spec.handler(args)))
             except Exception as exc:  # noqa: BLE001 — never raises across the boundary
@@ -578,6 +672,15 @@ class LocalToolProvider:
         # "deny" and any unrecognized verdict fail closed the same way.
         self._record_decision_safe(self.hub_tool_for(name), "denied")
         return ToolResult(ok=False, error=LOCAL_DENY_REFUSAL)
+
+    def _root_is_valid(self) -> bool:
+        """Never raise while revalidating an optional selected-root guard."""
+        if self._root_guard is None:
+            return True
+        try:
+            return bool(self._root_guard())
+        except Exception:  # noqa: BLE001 - invocation must fail closed
+            return False
 
     def _kill_switch_engaged(self) -> bool:
         """Never-raise kill-switch read.

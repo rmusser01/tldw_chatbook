@@ -176,6 +176,16 @@ def parse_unified_diff(
     return tuple(files)
 
 
+def parse_patch_targets(diff_text: str) -> tuple[PatchFile, ...]:
+    """Parse the bounded create/modify plans shared by preflight and execution."""
+    return parse_unified_diff(
+        diff_text,
+        max_files=PATCH_MAX_FILES,
+        max_hunks=PATCH_MAX_HUNKS,
+        max_bytes=PATCH_MAX_BYTES,
+    )
+
+
 def apply_patch_to_text(original: str, patch_file: PatchFile) -> str:
     """Apply one parsed file patch to original text without touching the filesystem."""
 
@@ -379,12 +389,7 @@ def patch_files(diff_text: str, *, workspace_root: Path, dry_run: bool = False) 
     """
 
     try:
-        parsed = parse_unified_diff(
-            diff_text,
-            max_files=PATCH_MAX_FILES,
-            max_hunks=PATCH_MAX_HUNKS,
-            max_bytes=PATCH_MAX_BYTES,
-        )
+        parsed = parse_patch_targets(diff_text)
     except FilesystemPatchError as exc:
         raise LocalToolError(f"fs_patch failed [{exc.reason_code}]") from exc
 

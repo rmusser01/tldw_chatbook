@@ -60,6 +60,7 @@ from textual.widgets import Button
 
 from ...Chat.console_display_state import (
     ConsoleInspectorState,
+    ConsoleProjectInstructionState,
     ConsoleRetrievalScopeState,
     ConsoleStagedContextState,
 )
@@ -67,6 +68,7 @@ from ...Chat.console_session_settings import ConsoleSettingsSummaryState
 from ...Widgets.Console import (
     ConsoleChangedFilesSection,
     ConsoleChangedFilesState,
+    ConsoleProjectInstructionStatusRow,
     ConsoleRetrievalScopeRow,
     ConsoleRunInspector,
     ConsoleSettingsSummary,
@@ -96,6 +98,7 @@ class ConsoleInspectorRail(Vertical):
         retrieval_scope_state: ConsoleRetrievalScopeState,
         inspector_state: ConsoleInspectorState,
         changed_files_state: ConsoleChangedFilesState,
+        project_instruction_state: ConsoleProjectInstructionState,
         settings_summary_state: ConsoleSettingsSummaryState,
         live_work_card_builder: Callable[[], Widget],
         **kwargs,
@@ -117,6 +120,8 @@ class ConsoleInspectorRail(Vertical):
                 screen's cached summary, never the DB/git. Mounted between
                 the Scope row and the run inspector; renders nothing when
                 empty (config OFF or no changed-file history).
+            project_instruction_state: Content-free project-instruction status
+                rendered above Sources.
             settings_summary_state: Console session settings summary
                 (``ChatScreen._build_console_settings_summary_state``),
                 parsed independently here from the left rail's own copy --
@@ -151,6 +156,7 @@ class ConsoleInspectorRail(Vertical):
         self._retrieval_scope_state = retrieval_scope_state
         self._inspector_state = inspector_state
         self._changed_files_state = changed_files_state
+        self._project_instruction_state = project_instruction_state
         self._settings_summary_state = settings_summary_state
         self._live_work_card_builder = live_work_card_builder
 
@@ -186,6 +192,13 @@ class ConsoleInspectorRail(Vertical):
             id="console-inspector-rail-body",
             classes="console-inspector-rail-body",
         ):
+            project_instruction_row = ConsoleProjectInstructionStatusRow(
+                self._project_instruction_state
+            )
+            project_instruction_row.styles.width = "100%"
+            project_instruction_row.styles.height = 1
+            yield project_instruction_row
+
             # Context (staged sources) section -- moved here from the left
             # rail (task-400). Pinned to the TOP of the Inspector body so it
             # is visible without scrolling and reads above the run

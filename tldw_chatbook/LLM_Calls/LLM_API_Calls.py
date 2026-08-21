@@ -1285,6 +1285,8 @@ def chat_with_anthropic(
     )
 
     anthropic_messages = []
+    from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
+
     for msg in input_data:
         role = msg.get("role")
         content = msg.get("content")
@@ -1311,6 +1313,24 @@ def chat_with_anthropic(
                 last["content"].append(block)
             else:
                 anthropic_messages.append({"role": "user", "content": [block]})
+            continue
+        if role == "user" and msg.get(EPHEMERAL_ORIGIN_KEY) == "project_instructions":
+            text_block = {"type": "text", "text": str(content or "")}
+            last = anthropic_messages[-1] if anthropic_messages else None
+            if (
+                last is not None
+                and last.get("role") == "user"
+                and isinstance(last.get("content"), list)
+                and any(
+                    isinstance(block, dict) and block.get("type") == "tool_result"
+                    for block in last["content"]
+                )
+            ):
+                last["content"].append(text_block)
+            else:
+                anthropic_messages.append(
+                    {"role": "user", "content": [text_block]}
+                )
             continue
         if role == "assistant" and msg.get("tool_calls"):
             # OpenAI assistant tool_calls echo -> Anthropic tool_use blocks
@@ -3295,6 +3315,8 @@ def chat_with_google(
     )
 
     gemini_contents = []
+    from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
+
     tool_call_names: Dict[str, str] = {}
     last_function_call_names: List[str] = []
     consecutive_tool_results = 0
@@ -3342,6 +3364,13 @@ def chat_with_google(
                 gemini_contents.append({"role": "user", "parts": [part]})
             continue
         consecutive_tool_results = 0
+        if role == "user" and msg.get(EPHEMERAL_ORIGIN_KEY) == "project_instructions":
+            # Consume the internal marker here and keep repository context in
+            # its own user turn after any preceding function-response turn.
+            gemini_contents.append(
+                {"role": "user", "parts": [{"text": str(content or "")}]}
+            )
+            continue
         if role == "assistant" and msg.get("tool_calls"):
             parts = []
             if isinstance(content, str) and content.strip():

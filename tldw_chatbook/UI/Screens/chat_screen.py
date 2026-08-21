@@ -243,7 +243,6 @@ from ...Chat.console_provider_endpoints import (
     normalize_generic_endpoint_for_compare,
     safe_endpoint_display,
 )
-
 from ...Chat.console_voice_input import (
     acoustic_barge_in_enabled,
     realtime_idle_timeout_seconds,
@@ -461,6 +460,7 @@ from ...Widgets.Console.console_selection_menu import (
 )
 from ...Widgets.Console.console_side_chat_modal import ConsoleSideChatModal
 from ...Widgets.Console.console_context_modal import ConsoleContextModal
+from ...Widgets.Console import console_project_instructions as project_instruction_ui
 from ...Widgets.Console.console_cost_modal import ConsoleCostModal
 from ...Widgets.Console.console_citation_sources_modal import (
     selected_valid_evidence_ordinals,
@@ -3262,17 +3262,23 @@ class ChatScreen(BaseAppScreen):
             self.notify("No active conversation.", severity="warning")
             return
 
-        async def _factory() -> ConsoleContextSnapshot:
-            try:
-                composer = self.query_one(
-                    "#console-native-composer", ConsoleComposerBar
-                )
-            except (NoMatches, QueryError):
-                composer = None
-            current_draft = composer.draft_text() if composer else ""
+        def _captured_draft() -> str:
+            if controller.store.active_session_id == session_id:
+                try:
+                    return self.query_one(
+                        "#console-native-composer", ConsoleComposerBar
+                    ).draft_text()
+                except (NoMatches, QueryError):
+                    pass
+            session = next(
+                (item for item in controller.store.sessions() if item.id == session_id),
+                None,
+            )
+            return session.draft if session is not None else ""
 
-            current_session_id = controller.store.active_session_id
-            pending = controller.store.pending_attachments(current_session_id)
+        async def _factory() -> ConsoleContextSnapshot:
+            current_draft = _captured_draft()
+            pending = controller.store.pending_attachments(session_id)
             current_attachments = tuple(
                 MessageAttachment(
                     data=pending_attachment.data,
@@ -3288,17 +3294,11 @@ class ChatScreen(BaseAppScreen):
                 draft=current_draft,
                 attachments=current_attachments,
                 staged_sources=current_staged_sources,
+                session_id=session_id,
             )
 
         def _estimate_factory() -> int | None:
-            try:
-                composer = self.query_one(
-                    "#console-native-composer", ConsoleComposerBar
-                )
-            except (NoMatches, QueryError):
-                composer = None
-            current_draft = composer.draft_text() if composer else ""
-            return self._estimate_tokens({"draft": current_draft})
+            return self._estimate_tokens({"draft": _captured_draft()})
 
         token_estimate = _estimate_factory()
         in_progress = controller.run_state.status in CONSOLE_ACTIVE_RUN_STATUSES
@@ -3309,6 +3309,9 @@ class ChatScreen(BaseAppScreen):
                 estimate_factory=_estimate_factory,
                 in_progress=in_progress,
                 ephemeral=self._console_active_session_is_ephemeral(),
+                **project_instruction_ui.project_instruction_context_kwargs(
+                    self, controller, session_id
+                ),
             )
         )
 
@@ -5467,6 +5470,7 @@ class ChatScreen(BaseAppScreen):
                 turn_context_provider=(
                     self._session._build_console_turn_execution_context
                 ),
+                provider_config=self._provider_readiness_app_config,
             )
         # task-15860: every screen-owned slot on the controller, the store
         # and the wake coordinator is (re)bound HERE, through the single
@@ -5474,6 +5478,12 @@ class ChatScreen(BaseAppScreen):
         # can clear all of them at detach. This block used to assign each
         # one by hand and had no counterpart anywhere.
         self._console_runtime().attach_view(self)
+        self._console_chat_controller._confirm_project_instruction_dispatch = (
+            self._session._confirm_project_instruction_dispatch
+        )
+        self._console_chat_controller._select_project_instruction_binding = (
+            self._session._select_project_instruction_binding
+        )
         # MCP batch-approval bridge (task-5): `request_mcp_approvals` runs
         # on the agent bridge's worker thread and needs a
         # `call_from_thread`-capable App handle. Deliberately NOT a
@@ -13241,6 +13251,9 @@ class ChatScreen(BaseAppScreen):
                     retrieval_scope_state=retrieval_scope_state,
                     inspector_state=inspector_state,
                     changed_files_state=self._build_console_changed_files_state(),
+                    project_instruction_state=project_instruction_ui.project_instruction_ui_state_for_screen(
+                        self
+                    ),
                     settings_summary_state=self._build_console_settings_summary_state(),
                     live_work_card_builder=(
                         lambda: (
@@ -15242,6 +15255,7 @@ class ChatScreen(BaseAppScreen):
             await self._sync_console_native_session_tabs()
             self._dispatch_active_console_roleplay_refresh()
             self._sync_console_workspace_context()
+            project_instruction_ui.sync_project_instruction_status_for_screen(self)
             await self._sync_native_console_transcript()
             self._sync_console_rail_visibility_if_changed(
                 self._current_console_rail_state()

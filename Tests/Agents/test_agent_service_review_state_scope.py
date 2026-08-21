@@ -43,6 +43,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import tldw_chatbook.Agents.agent_service as agent_service
 from tldw_chatbook.Agents.agent_models import (
     RUN_DONE,
     SPAWN_TOOL_NAME,
@@ -50,6 +51,7 @@ from tldw_chatbook.Agents.agent_models import (
     ToolCall,
 )
 from tldw_chatbook.Agents.agent_service import SUBAGENT_SYSTEM_PROMPT, AgentService
+from tldw_chatbook.Agents.project_instruction_runtime import InstructionPreparation
 from tldw_chatbook.Agents.builtin_tool_gate import BuiltinToolGate
 from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider, USER_DENY_REFUSAL
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRegistry
@@ -421,6 +423,85 @@ def test_review_state_scope_defaults_to_none_and_spawn_still_works(db, inline_sp
 
     assert outcome.status == RUN_DONE
     assert outcome.subagents_spawned == 1
+
+
+def test_parent_and_inline_child_share_context_but_keep_distinct_chain_state(
+    db, monkeypatch
+):
+    original_setting = agent_service._setting
+    monkeypatch.setattr(
+        agent_service,
+        "_setting",
+        lambda key, default: (
+            1
+            if key == agent_service.MAX_LIVE_SUBAGENTS_KEY
+            else original_setting(key, default)
+        ),
+    )
+
+    class ContextSpy:
+        def __init__(self):
+            self.initial: list[tuple[str, int]] = []
+            self.prepared: list[tuple[str, int, tuple[str, ...]]] = []
+
+        def initial_context_for_chain(self, chain_id, payload_state):
+            self.initial.append((chain_id, id(payload_state)))
+            return InstructionPreparation("proceed")
+
+        def prepare(self, calls, chain_id, registry, payload_state):
+            self.prepared.append(
+                (chain_id, id(payload_state), tuple(call.name for call in calls))
+            )
+            return InstructionPreparation("proceed")
+
+        def mark_payload_sent(self, receipt, rows):
+            raise AssertionError("proceed preparations have no receipt")
+
+    context = ContextSpy()
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    spawn_call = ToolCall(
+        name=SPAWN_TOOL_NAME, args={"task": "use calculator"}, call_id="p-spawn"
+    )
+    child_call = ToolCall(
+        name="calculator", args={"expression": "1+1"}, call_id="c-calc"
+    )
+    chat = ScriptedChat(
+        parent_replies=[_native_turn([spawn_call]), "parent done"],
+        child_replies=[_native_turn([child_call]), "child done"],
+    )
+    service = AgentService(
+        db=db,
+        registry=registry,
+        chat_call=chat,
+        project_instruction_context=context,
+    )
+    config = AgentConfig(
+        model="m",
+        system_prompt="s",
+        allowed_tools=(SPAWN_TOOL_NAME, "calculator"),
+        native_tools=True,
+    )
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="c-project-chains",
+        messages=[{"role": "user", "content": "go"}],
+        config=config,
+        api_endpoint="openai",
+    )
+
+    assert outcome.status == RUN_DONE
+    assert [chain for chain, _state in context.initial] == [
+        "primary",
+        "primary:child-1",
+    ]
+    assert len({state for _chain, state in context.initial}) == 2
+    assert [entry[0] for entry in context.prepared] == [
+        "primary",
+        "primary:child-1",
+    ]
+    assert context.prepared[0][1] == context.initial[0][1]
+    assert context.prepared[1][1] == context.initial[1][1]
 
 
 # ---------------------------------------------------------------------------

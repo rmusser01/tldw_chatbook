@@ -476,6 +476,73 @@ def test_compose_local_provider_empty_workspace_root_uses_cwd(monkeypatch, tmp_p
     assert local_provider._root == tmp_path.resolve()
 
 
+def test_local_provider_read_only_filters_write_specs_without_global_mutation(tmp_path):
+    before = LocalToolProvider(workspace_root=tmp_path)
+    read_only = LocalToolProvider(workspace_root=tmp_path, allow_write=False)
+    after = LocalToolProvider(workspace_root=tmp_path)
+
+    before_names = {entry.name for entry in before.list_catalog()}
+    read_only_names = {entry.name for entry in read_only.list_catalog()}
+    after_names = {entry.name for entry in after.list_catalog()}
+    assert {"fs_write", "fs_edit", "fs_patch"} <= before_names
+    assert {"fs_write", "fs_edit", "fs_patch"}.isdisjoint(read_only_names)
+    assert {"fs_read", "fs_list", "git_status"} <= read_only_names
+    assert after_names == before_names
+
+
+def test_compose_local_provider_selected_root_overrides_disabled_fallback(
+    monkeypatch, tmp_path
+):
+    fallback = tmp_path / "fallback"
+    selected = tmp_path / "selected"
+    fallback.mkdir()
+    selected.mkdir()
+    monkeypatch.setattr(
+        controller_mod,
+        "get_cli_setting",
+        _console_settings(workspace_root=str(fallback)),
+    )
+    controller = _bare_controller(SimpleNamespace(unified_mcp_service=_FakeService()))
+
+    legacy_provider, _ = controller._compose_local_provider()
+    selected_provider, _ = controller._compose_local_provider(
+        project_root=selected, allow_write=False
+    )
+
+    assert legacy_provider._root == fallback.resolve()
+    assert selected_provider._root == selected.resolve()
+    selected_names = {entry.name for entry in selected_provider.list_catalog()}
+    assert {"fs_write", "fs_edit", "fs_patch"}.isdisjoint(selected_names)
+
+
+def test_selected_root_swap_fails_closed_before_local_invoke(monkeypatch, tmp_path):
+    selected = tmp_path / "selected"
+    selected.mkdir()
+    (selected / "secret.txt").write_text("inside")
+    identity = controller_mod._capture_project_root_identity(selected)
+    monkeypatch.setattr(controller_mod, "get_cli_setting", _console_settings())
+    controller = _bare_controller(
+        SimpleNamespace(unified_mcp_service=_FakeService(state=ALLOW))
+    )
+    local_provider, review = controller._compose_local_provider(
+        project_root=selected,
+        project_root_identity=identity,
+    )
+
+    moved = tmp_path / "moved"
+    selected.rename(moved)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("outside")
+    selected.symlink_to(outside, target_is_directory=True)
+
+    assert review([ToolCall(name="fs_read", args={"path": "secret.txt"})]) == {}
+    result = local_provider.invoke("fs_read", {"path": "secret.txt"})
+    assert result.ok is False
+    assert "root changed" in result.error.lower()
+    assert "outside" not in result.error
+
+
 def test_compose_local_provider_tilde_workspace_root_expands_home(
     monkeypatch, tmp_path
 ):

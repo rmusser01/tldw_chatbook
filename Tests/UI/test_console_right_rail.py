@@ -24,10 +24,17 @@ and byte-identical afterwards (task-4 brief, global constraint 3).
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import threading
 
 import pytest
 from textual.containers import Horizontal
 from textual.widgets import Button
+
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_project_instructions import (
+    ProjectInstructionControlState,
+)
+from tldw_chatbook.Widgets.Console.console_context_modal import ConsoleContextModal
 
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -115,10 +122,26 @@ async def test_clicking_open_then_collapse_toggles_visibility_and_persists():
         # pins that every id inside the moved block survived the click path,
         # not just the rail's own root.
         assert pilot.app.screen.query_one("#console-inspector-rail-body")
+        project_row = pilot.app.screen.query_one("#console-project-instruction-status")
+        staged = pilot.app.screen.query_one("#console-staged-context-tray")
+        assert project_row.region.y < staged.region.y
         assert pilot.app.screen.query_one("#console-staged-context-tray")
         assert pilot.app.screen.query_one("#console-run-inspector")
         assert pilot.app.screen.query_one("#console-run-inspector-state")
         assert pilot.app.screen.query_one("#console-settings-summary")
+        controller = pilot.app.screen._ensure_console_chat_controller()
+        assert controller._confirm_project_instruction_dispatch.__self__ is (
+            pilot.app.screen._session
+        )
+        assert controller._select_project_instruction_binding.__self__ is (
+            pilot.app.screen._session
+        )
+
+        await pilot.click("#console-project-instruction-status-button")
+        await pilot.pause()
+        assert isinstance(pilot.app.screen, ConsoleContextModal)
+        await pilot.press("escape")
+        await pilot.pause()
 
         await pilot.click("#console-inspector-rail-collapse")
         await pilot.pause(0.2)
@@ -201,3 +224,76 @@ async def test_clicking_the_collapse_button_clears_focus():
         await pilot.pause(0.2)
 
         assert pilot.app.focused is None
+
+
+@pytest.mark.asyncio
+async def test_context_modal_refresh_factory_keeps_opening_session_after_switch():
+    async with make_console_pilot() as pilot:
+        console = pilot.app.screen
+        store = console._ensure_console_chat_store()
+        captured = store.ensure_session(title="Captured")
+        store.append_message(
+            captured.id,
+            role=ConsoleMessageRole.USER,
+            content="captured transcript",
+        )
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause()
+        await pilot.click("#console-project-instruction-status-button")
+        await pilot.pause()
+        modal = pilot.app.screen
+        assert isinstance(modal, ConsoleContextModal)
+        assert modal._project_instruction_session_id == captured.id
+
+        active = store.create_session(title="Active")
+        store.append_message(
+            active.id,
+            role=ConsoleMessageRole.USER,
+            content="wrong active transcript",
+        )
+        snapshot = await modal._snapshot_factory()
+
+        assert [message.content for message in snapshot.current_messages] == [
+            "captured transcript"
+        ]
+
+        assert modal._project_instruction_recovery is not None
+        main_thread_id = threading.get_ident()
+        setter_threads = []
+        original_setter = store.set_session_project_instruction_state
+
+        def record_setter(session_id, state):
+            setter_threads.append(threading.get_ident())
+            return original_setter(session_id, state)
+
+        store.set_session_project_instruction_state = record_setter
+        state = await modal._project_instruction_recovery(captured.id, "disable")
+        assert state.status == "Off"
+        assert setter_threads == [main_thread_id]
+        captured_after = next(item for item in store.sessions() if item.id == captured.id)
+        active_after = next(item for item in store.sessions() if item.id == active.id)
+        assert captured_after.project_instruction_state == (
+            ProjectInstructionControlState.legacy_disabled()
+        )
+        assert active_after.project_instruction_state != (
+            ProjectInstructionControlState.legacy_disabled()
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(100, 30), (140, 40)])
+async def test_project_status_remains_visible_in_real_thirty_column_rail(size):
+    async with make_console_pilot(size=size) as pilot:
+        if not _right_rail_open(pilot):
+            await pilot.click("#console-inspector-rail-open")
+            await pilot.pause()
+        rail = pilot.app.screen.query_one("#console-right-rail")
+        rail.styles.width = 30
+        rail.styles.min_width = 30
+        rail.styles.max_width = 30
+        await pilot.pause()
+        button = pilot.app.screen.query_one(
+            "#console-project-instruction-status-button", Button
+        )
+        assert button.region.width <= 30
+        assert str(button.label).endswith(" · Project")

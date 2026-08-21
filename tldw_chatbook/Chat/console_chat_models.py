@@ -680,6 +680,44 @@ class ConsoleVariantSet:
 
 
 @dataclass(frozen=True)
+class ProjectInstructionPreview:
+    """Disposable, user-requested preview of automatic project context.
+
+    Only ``next_send_payload`` may contain the instruction body. The remaining
+    fields are content-free metadata suitable for the Context diagnostics UI.
+    """
+
+    relative_source: str | None
+    scope: str
+    byte_count: int
+    outcomes: tuple[str, ...]
+    warning_codes: tuple[str, ...]
+    next_send_payload: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ProjectInstructionActivationEvent:
+    """Content-free notice that project guidance changed for one run."""
+
+    relative_sources: tuple[str, ...] = ()
+    scopes: tuple[str, ...] = ()
+    outcome_codes: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        fields = (
+            self.relative_sources,
+            self.scopes,
+            self.outcome_codes,
+        )
+        if any(
+            not isinstance(value, str) or "\n" in value or "\r" in value
+            for values in fields
+            for value in values
+        ):
+            raise ValueError("project instruction event values must be single-line text")
+
+
+@dataclass(frozen=True)
 class ConsoleContextSnapshot:
     """Independent snapshot of current transcript and next-send provider payload.
 
@@ -692,6 +730,7 @@ class ConsoleContextSnapshot:
 
     current_messages: list[ConsoleChatMessage]
     next_send_payload: dict[str, Any]
+    project_instruction_preview: ProjectInstructionPreview | None = None
 
 
 def fold_greeting_into_system_prompt(system_prompt: str, greeting: str) -> str:

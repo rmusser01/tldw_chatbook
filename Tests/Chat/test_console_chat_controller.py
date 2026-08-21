@@ -36,6 +36,9 @@ from tldw_chatbook.Chat.console_chat_models import (
     MessageAttachment,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_project_instructions import (
+    ProjectInstructionControlState,
+)
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
@@ -3598,6 +3601,9 @@ def _arm_session(store):
     """Create+activate a session with settings; return it."""
     session = store.ensure_session(
         workspace_id=store.workspace_context.active_workspace_id
+    )
+    session.project_instruction_state = (
+        ProjectInstructionControlState.legacy_disabled()
     )
     if session.settings is None:
         session.settings = ConsoleSessionSettings(provider="llama_cpp")

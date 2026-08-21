@@ -57,6 +57,9 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderResolution,
     ProviderToolCalls,
 )
+from tldw_chatbook.Chat.console_project_instructions import (
+    ProjectInstructionControlState,
+)
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 
@@ -433,6 +436,9 @@ def _persisted_store(
     session = store.ensure_session(
         settings=ConsoleSessionSettings(provider="llama_cpp")
     )
+    session.project_instruction_state = (
+        ProjectInstructionControlState.legacy_disabled()
+    )
     session.persisted_conversation_id = "conversation-1"
     return store
 
@@ -492,6 +498,9 @@ def _recording_citation_store(
     store = _RecordingCitationStore(persistence=persistence)
     session = store.ensure_session(
         settings=ConsoleSessionSettings(provider="openai", model="repair-model")
+    )
+    session.project_instruction_state = (
+        ProjectInstructionControlState.legacy_disabled()
     )
     if persistence is not None:
         session.persisted_conversation_id = "conversation-1"

@@ -23,6 +23,7 @@ from tldw_chatbook.Chat.Chat_Deps import ChatProviderError
 from tldw_chatbook.Chat.Chat_Functions import chat_api_call
 from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
 from tldw_chatbook.Agents.session_todo_store import SessionTodoStore
+from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.LLM_Calls.LLM_API_Calls import _google_tools_payload
 
 
@@ -227,6 +228,65 @@ def test_openai_tool_history_converts_to_gemini_parts(mock_post):
         {"functionResponse": {"name": "calculator", "response": {"result": "6"}}},
     ]
     assert len(contents) == 3
+
+
+@patch("requests.Session.post")
+def test_project_context_follows_gemini_function_responses_as_separate_turn(mock_post):
+    messages = [
+        {"role": "user", "content": "go"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_A",
+                    "type": "function",
+                    "function": {"name": "calculator", "arguments": "{}"},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_A", "content": "4"},
+        {
+            "role": "user",
+            "content": "[Project instructions] scoped text",
+            EPHEMERAL_ORIGIN_KEY: "project_instructions",
+        },
+    ]
+    contents = _call_google(mock_post, messages)["contents"]
+    assert "functionResponse" in contents[-2]["parts"][0]
+    assert contents[-1] == {
+        "role": "user",
+        "parts": [{"text": "[Project instructions] scoped text"}],
+    }
+
+
+@patch("requests.Session.post")
+def test_nested_context_follows_all_parallel_gemini_results_in_distinct_turn(mock_post):
+    messages = [
+        {"role": "user", "content": "go"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "a", "type": "function", "function": {"name": "one", "arguments": "{}"}},
+                {"id": "b", "type": "function", "function": {"name": "two", "arguments": "{}"}},
+            ],
+        },
+        {"role": "tool", "tool_call_id": "a", "content": "deferred-a"},
+        {"role": "tool", "tool_call_id": "b", "content": "deferred-b"},
+        {
+            "role": "user",
+            "content": "NESTED_CONTEXT",
+            EPHEMERAL_ORIGIN_KEY: "project_instructions",
+        },
+    ]
+
+    contents = _call_google(mock_post, messages)["contents"]
+
+    assert len(contents[-2]["parts"]) == 2
+    assert all("functionResponse" in part for part in contents[-2]["parts"])
+    assert contents[-1] == {"role": "user", "parts": [{"text": "NESTED_CONTEXT"}]}
+    assert "NESTED_CONTEXT" not in str(contents[-2])
 
 
 @patch("requests.Session.post")

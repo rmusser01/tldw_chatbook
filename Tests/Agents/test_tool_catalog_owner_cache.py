@@ -18,7 +18,11 @@ fix folds a name -> id map into the SAME cache build as the owner map, so
 both lookups share one `list_catalog()` sweep per provider per run.
 """
 
-from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
+import itertools
+
+import pytest
+
+from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry, ToolPathTarget
 from tldw_chatbook.Agents.agent_models import ToolCatalogEntry, ToolSchema, ToolResult
 
 
@@ -74,6 +78,7 @@ class _NamedCountingProvider:
         self.list_calls = 0
         self._tool_id = tool_id
         self._name = name
+        self.invocations = []
 
     def list_catalog(self):
         self.list_calls += 1
@@ -87,7 +92,11 @@ class _NamedCountingProvider:
         return ToolSchema(id=tool_id, name=self._name, description="d", parameters={})
 
     def invoke(self, tool_id, args):
+        self.invocations.append((tool_id, args))
         return ToolResult(ok=True, content=self._tool_id)
+
+    def timeout_for(self, tool_id):
+        return 42.0 if tool_id == self._tool_id else None
 
 
 def test_invoke_by_name_triggers_at_most_one_list_catalog_sweep_per_provider_per_run():
@@ -132,3 +141,180 @@ def test_invoke_by_name_shadowing_order_unchanged_by_the_cache_fix():
     # providers are swept once to build the cache) but never invoked.
     assert first.list_calls == 1
     assert second.list_calls == 1
+
+
+class _CollidingPathProvider(_NamedCountingProvider):
+    def __init__(self, source):
+        super().__init__(tool_id=f"{source}:dup", name="dup")
+        self.source = source
+        self.invocations = []
+        self.preflights = []
+
+    def invoke(self, tool_id, args):
+        self.invocations.append((tool_id, args))
+        return ToolResult(ok=True, content=self.source)
+
+    def path_targets(self, tool_id, args):
+        self.preflights.append((tool_id, args))
+        return (ToolPathTarget(path=None, kind="outside"),)
+
+
+@pytest.mark.parametrize(
+    "order", list(itertools.permutations(("builtin", "local", "skill", "mcp")))
+)
+def test_atomic_owner_resolution_and_dispatch_share_exact_first_registrant(order):
+    registry = ToolCatalogRegistry()
+    providers = [_CollidingPathProvider(source) for source in order]
+    for provider in providers:
+        registry.register_provider(provider)
+
+    tool_id, owner = registry.resolve_owner_for_name("dup")
+    targets = owner.path_targets(tool_id, {"path": "shadow-test"})
+    result = registry.invoke_by_name("dup", {"path": "shadow-test"})
+
+    assert (tool_id, owner) == (f"{order[0]}:dup", providers[0])
+    assert targets == (ToolPathTarget(path=None, kind="outside"),)
+    assert result.content == order[0]
+    assert providers[0].preflights == [
+        (f"{order[0]}:dup", {"path": "shadow-test"})
+    ]
+    assert providers[0].invocations == [
+        (f"{order[0]}:dup", {"path": "shadow-test"})
+    ]
+    assert all(provider.preflights == [] for provider in providers[1:])
+    assert all(provider.invocations == [] for provider in providers[1:])
+
+
+def test_invoke_by_name_uses_atomic_owner_record(monkeypatch):
+    registry = ToolCatalogRegistry()
+    provider = _CollidingPathProvider("builtin")
+    registry.register_provider(provider)
+    record = registry._owner_record_for_name("dup")
+    monkeypatch.setattr(
+        registry,
+        "_owner_record_for_name",
+        lambda name: record if name == "dup" else None,
+    )
+    monkeypatch.setattr(
+        registry,
+        "resolve_name",
+        lambda _name: (_ for _ in ()).throw(
+            AssertionError("invoke must use the atomic owner resolver")
+        ),
+    )
+
+    assert registry.invoke_by_name("dup", {}).content == "builtin"
+
+
+def test_registration_cannot_be_overwritten_by_an_inflight_cache_build(monkeypatch):
+    registry = ToolCatalogRegistry()
+    registry.register_provider(
+        _NamedCountingProvider(tool_id="first:x", name="first")
+    )
+    second = _NamedCountingProvider(tool_id="second:y", name="second")
+    real_build = registry._build_owner_cache
+    injected = False
+
+    def build_while_registering():
+        nonlocal injected
+        result = real_build()
+        if not injected:
+            injected = True
+            registry.register_provider(second)
+        return result
+
+    monkeypatch.setattr(registry, "_build_owner_cache", build_while_registering)
+
+    assert registry.resolve_owner_for_name("second") == ("second:y", second)
+
+
+def test_reentrant_catalog_mutation_fails_fast_instead_of_retrying_forever():
+    registry = ToolCatalogRegistry()
+
+    class ReentrantProvider(_CountingProvider):
+        def list_catalog(self):
+            self.list_calls += 1
+            if self.list_calls <= 2:
+                registry.reset_catalog_cache()
+            return [
+                ToolCatalogEntry(
+                    id="p:foo", name="foo", one_line_description="d", source="p"
+                )
+            ]
+
+    provider = ReentrantProvider()
+    registry.register_provider(provider)
+
+    with pytest.raises(RuntimeError, match="changed during cache build"):
+        registry.list_catalog()
+
+    assert provider.list_calls == 2
+
+
+@pytest.mark.parametrize("mutation", ["reset", "register"])
+@pytest.mark.parametrize(
+    ("lookup", "expected"),
+    [
+        (lambda registry: registry.load_schema("p:foo").name, "foo"),
+        (lambda registry: registry.resolve_name("foo"), "p:foo"),
+        (lambda registry: registry._source_for("p:foo"), "p"),
+        (lambda registry: registry.timeout_for("foo"), 42.0),
+        (lambda registry: registry.invoke_by_name("foo", {}).content, "p:foo"),
+    ],
+)
+def test_each_lookup_uses_the_snapshot_returned_by_cache_ensure(
+    monkeypatch, mutation, lookup, expected
+):
+    registry = ToolCatalogRegistry()
+    registry.register_provider(_NamedCountingProvider(tool_id="p:foo", name="foo"))
+    real_ensure = registry._ensure_catalog_cache
+    mutated = False
+
+    def ensure_then_invalidate():
+        nonlocal mutated
+        snapshot = real_ensure()
+        if not mutated:
+            mutated = True
+            if mutation == "reset":
+                registry.reset_catalog_cache()
+            else:
+                registry.register_provider(
+                    _NamedCountingProvider(tool_id="later:bar", name="bar")
+                )
+        return snapshot
+
+    monkeypatch.setattr(registry, "_ensure_catalog_cache", ensure_then_invalidate)
+
+    assert lookup(registry) == expected
+
+
+def test_duplicate_tool_id_suppresses_the_later_entry_everywhere():
+    registry = ToolCatalogRegistry()
+    first = _NamedCountingProvider(tool_id="shared:id", name="first_name")
+    conflicting = _NamedCountingProvider(tool_id="shared:id", name="leaked_name")
+    registry.register_provider(first)
+    registry.register_provider(conflicting)
+
+    assert [(entry.id, entry.name) for entry in registry.list_catalog()] == [
+        ("shared:id", "first_name")
+    ]
+    assert registry.resolve_name("leaked_name") is None
+    assert registry.resolve_owner_for_name("leaked_name") is None
+    assert registry.find("leaked_name") == []
+    assert registry.invoke_by_name("leaked_name", {}).ok is False
+    assert conflicting.invocations == []
+
+    assert registry.resolve_owner_for_name("first_name") == ("shared:id", first)
+    assert registry.invoke_by_name("first_name", {}).content == "shared:id"
+    assert first.invocations == [("shared:id", {})]
+
+
+def test_catalog_snapshot_mappings_are_immutable():
+    registry = ToolCatalogRegistry()
+    registry.register_provider(_NamedCountingProvider(tool_id="p:foo", name="foo"))
+    snapshot = registry._ensure_catalog_cache()
+
+    with pytest.raises(TypeError):
+        snapshot.by_id["other:id"] = snapshot.by_id["p:foo"]
+    with pytest.raises(TypeError):
+        snapshot.by_name["other"] = snapshot.by_name["foo"]

@@ -9,6 +9,7 @@ import hashlib
 import inspect
 import os
 import re
+import stat
 import threading
 import time
 from collections import OrderedDict
@@ -45,6 +46,8 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleCitationPhase,
     ConsoleCitationPresentation,
     ConsoleContextSnapshot,
+    ProjectInstructionActivationEvent,
+    ProjectInstructionPreview,
     ConsoleMessageRole,
     ConsoleProviderSelection,
     ConsoleRunMarker,
@@ -86,9 +89,6 @@ from tldw_chatbook.Chat.console_history_budget import (
     count_console_messages_tokens,
     provider_continuation_owner_groups,
 )
-from tldw_chatbook.Chat.console_provider_endpoints import (
-    normalize_generic_endpoint_for_compare,
-)
 from tldw_chatbook.Chat.console_context_compaction import (
     CompactionAdmission,
     CompactionDecision,
@@ -128,7 +128,18 @@ from tldw_chatbook.Chat.console_visual_transcript import (
     render_visual_transcript,
     resolve_effective_compaction_representation,
 )
-from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_session_settings import (
+    ConsoleSessionSettings,
+    build_default_console_session_settings,
+    normalize_llamacpp_base_url,
+)
+from tldw_chatbook.Chat.console_provider_endpoints import first_configured_endpoint
+from tldw_chatbook.Chat.console_project_instructions import (
+    ProjectInstructionControlState,
+    fingerprint_canonical_locator,
+    project_instruction_notice_key,
+    sanitized_destination_label,
+)
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationConflictError,
     ContinuationRestoreTarget,
@@ -176,6 +187,11 @@ from tldw_chatbook.Agents.builtin_tool_gate import (
 )
 from tldw_chatbook.Agents.human_input_wait import use_human_input_wait
 from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+from tldw_chatbook.Agents.project_instruction_resolver import (
+    InstructionSnapshot,
+    ProjectInstructionResolver,
+    StartupInstructionCandidate,
+)
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall, MCPToolProvider
 from tldw_chatbook.Agents.run_context import current_run_id
 from tldw_chatbook.Agents.session_todo_store import (
@@ -183,7 +199,14 @@ from tldw_chatbook.Agents.session_todo_store import (
     TodoChangeCallback,
 )
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
-from tldw_chatbook.config import coerce_bool_setting, get_cli_setting
+from tldw_chatbook.config import (
+    DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+    MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+    MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+    coerce_bool_setting,
+    coerce_int_setting,
+    get_cli_setting,
+)
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
 from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
 from tldw_chatbook.MCP.permission_store import BUILTIN_TOOL_SERVER_KEY
@@ -252,6 +275,86 @@ CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS: frozenset = frozenset(
 #: run is stopped/cancelled. A positive value still fails undecided calls
 #: closed to ``"timeout"``. A human prompt is not a wedged tool; making the
 #: user race a clock to keep their run was the defect, auto-deny is opt-in.
+_WINDOWS = os.name == "nt"
+_REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", None)
+
+
+def build_console_provider_selection_from_settings(
+    settings: ConsoleSessionSettings,
+    *,
+    app_config: Mapping[str, Any],
+    workspace_context: Any,
+    legacy_model: Any = None,
+) -> ConsoleProviderSelection:
+    """Reconstruct the effective selection from one session snapshot."""
+
+    def section(value: Any, key: str) -> Mapping[str, Any]:
+        child = value.get(key, {}) if isinstance(value, Mapping) else {}
+        return child if isinstance(child, Mapping) else {}
+
+    def selected(value: Any) -> str | None:
+        text = str(value).strip() if value is not None else ""
+        return text if text and text.lower() not in {"none", "null"} else None
+
+    provider = provider_config_key(settings.provider) or "llama_cpp"
+    explicit_model = selected(settings.model)
+    provider_config = section(section(app_config, "api_settings"), provider)
+    configured_model = selected(
+        provider_config.get("model")
+        or provider_config.get("api_model")
+        or provider_config.get("default_model")
+    )
+    if selected(legacy_model) is None and explicit_model == configured_model:
+        explicit_model = None
+
+    base_url: str | None = None
+    if provider in {"llama_cpp", "local_llamacpp"}:
+        console_config = section(app_config, "console")
+        fallback_url = (
+            os.environ.get("TLDW_CONSOLE_LLAMA_CPP_BASE_URL")
+            or console_config.get("llama_cpp_base_url_override")
+            or first_configured_endpoint(provider_config)
+        )
+        base_url = normalize_llamacpp_base_url(
+            selected(settings.base_url) or selected(fallback_url)
+        )
+    elif selected(settings.base_url) is not None:
+        base_url = selected(settings.base_url)
+
+    defaults = build_default_console_session_settings(app_config, provider, None)
+    return ConsoleProviderSelection(
+        provider=provider,
+        base_url=base_url,
+        explicit_model=explicit_model,
+        configured_model=configured_model,
+        temperature=settings.temperature,
+        top_p=settings.top_p,
+        min_p=settings.min_p,
+        top_k=settings.top_k,
+        max_tokens=(
+            settings.max_tokens
+            if settings.max_tokens is not None
+            else defaults.max_tokens
+        ),
+        seed=settings.seed,
+        presence_penalty=settings.presence_penalty,
+        frequency_penalty=settings.frequency_penalty,
+        reasoning_effort=settings.reasoning_effort,
+        reasoning_summary=settings.reasoning_summary,
+        verbosity=settings.verbosity,
+        thinking_effort=settings.thinking_effort,
+        thinking_budget_tokens=settings.thinking_budget_tokens,
+        streaming=settings.streaming,
+        system_prompt=settings.system_prompt,
+        workspace_context=workspace_context,
+    )
+
+
+#: Fallback used when no `mcp_approval_timeout_seconds` seam is injected --
+#: mirrors `UnifiedMCPControlPlaneService.approval_timeout_seconds`'s own
+#: default (task-201/T2), read directly here since the controller has no
+#: dependency on that service (T6 wires the service into `MCPToolProvider`,
+#: not into this controller).
 #:
 #: The PRE-ADR default was 120.0, kept strictly below
 #: ``RunBudget.max_tool_call_seconds`` (300s at defaults,
@@ -285,6 +388,366 @@ _DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS = 0.0
 #: method's docstring) without ever colliding with a real bridge round's
 #: `uuid4()` id -- every genuine round id is a UUID string; this is not.
 _LEGACY_PENDING_APPROVAL_ROUND_ID = "__legacy_pending_approval__"
+
+
+class ProjectInstructionBindingRecovery(RuntimeError):
+    """Raised when an enabled session cannot prove one selected folder root."""
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectInstructionBindingSelection:
+    """Validated folder binding used as one agent dispatch's authority root."""
+
+    binding: Any
+    root: Path
+    locator_fingerprint: str
+    allow_write: bool
+    root_identity: tuple[tuple[str, int, int, int], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _ProjectInstructionAuthoritySnapshot:
+    """Minimal immutable session state used for off-loop authority checks."""
+
+    workspace_id: str
+    project_instruction_state: ProjectInstructionControlState
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectInstructionDispatchNotice:
+    """Content-free consent data for one owning session and destination."""
+
+    session_id: str
+    destination_label: str
+    relative_source: str | None
+    scope: str
+    byte_count: int
+    outcomes: tuple[str, ...]
+    warning_codes: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectInstructionDisplayMetadata:
+    """Immutable content-free result of one final primary delivery decision."""
+
+    binding_id: str
+    locator_fingerprint: str
+    relative_source: str | None
+    scope: str
+    byte_count: int
+    outcome: str
+    warning_codes: tuple[str, ...]
+
+
+def build_project_instruction_dispatch_notice(
+    snapshot: InstructionSnapshot, *, session_id: str, resolution: Any
+) -> ProjectInstructionDispatchNotice:
+    """Build sanitized consent data from the exact resolved destination."""
+    source = getattr(snapshot, "startup_source_metadata", None)
+    if source is None:
+        source = snapshot.startup_source
+    provider_label = str(
+        getattr(resolution, "provider", "")
+        or getattr(resolution, "execution_key", "")
+        or "Provider"
+    )
+    return ProjectInstructionDispatchNotice(
+        session_id=session_id,
+        destination_label=sanitized_destination_label(
+            provider_label, getattr(resolution, "base_url", None)
+        ),
+        relative_source=source.relative_path if source else None,
+        scope=source.scope if source else ".",
+        byte_count=source.byte_count if source else 0,
+        outcomes=tuple(
+            outcome.code for outcome in snapshot.primary_delivery.outcomes
+        ),
+        warning_codes=snapshot.warning_codes,
+    )
+
+
+def _capture_project_root_identity(
+    root: Path,
+) -> tuple[tuple[str, int, int, int], ...] | None:
+    """Capture root/ancestor identities while rejecting every symlink component."""
+    identities: list[tuple[str, int, int, int]] = []
+    try:
+        for component in (*reversed(root.parents), root):
+            value = os.lstat(component)
+            if (
+                stat.S_ISLNK(value.st_mode)
+                or _is_project_root_reparse(value)
+                or not stat.S_ISDIR(value.st_mode)
+            ):
+                return None
+            identities.append(
+                (str(component), value.st_dev, value.st_ino, value.st_mode)
+            )
+    except (AttributeError, OSError, TypeError, ValueError):
+        return None
+    return tuple(identities)
+
+
+def _is_project_root_reparse(value: object) -> bool:
+    if not _WINDOWS:
+        return False
+    attributes = getattr(value, "st_file_attributes")
+    if attributes is None or _REPARSE_POINT is None:
+        raise ValueError("unsafe reparse metadata")
+    return bool(int(attributes) & int(_REPARSE_POINT))
+
+
+def _project_root_identity_matches(
+    root: Path, expected: tuple[tuple[str, int, int, int], ...]
+) -> bool:
+    """Fail closed when a selected root or any ancestor changed identity."""
+    return _capture_project_root_identity(root) == expected
+
+
+def resolve_project_instruction_binding(
+    session: ConsoleChatSession, registry: Any
+) -> ProjectInstructionBindingSelection | None:
+    """Resolve one enabled session's binding without silently retargeting it."""
+    state = session.project_instruction_state
+    if not state.project_instructions_enabled:
+        return None
+    if registry is None:
+        raise ProjectInstructionBindingRecovery("binding_unavailable")
+
+    selected_id = state.working_folder_binding_id
+    if selected_id:
+        try:
+            binding = registry.get_runtime_binding(selected_id)
+        except (KeyError, OSError, RuntimeError, ValueError, AttributeError):
+            raise ProjectInstructionBindingRecovery("binding_unavailable") from None
+        selection = _validate_project_instruction_binding(session, binding)
+        if selection is None:
+            raise ProjectInstructionBindingRecovery("binding_unavailable")
+        if selection.locator_fingerprint != state.working_folder_locator_fingerprint:
+            raise ProjectInstructionBindingRecovery("binding_retargeted")
+        return selection
+    eligible = list_project_instruction_bindings(session, registry)
+    if not eligible:
+        raise ProjectInstructionBindingRecovery("no_eligible_binding")
+    if len(eligible) != 1:
+        raise ProjectInstructionBindingRecovery("choose_binding")
+    return eligible[0]
+
+
+def list_project_instruction_bindings(
+    session: ConsoleChatSession, registry: Any
+) -> tuple[ProjectInstructionBindingSelection, ...]:
+    """Return currently eligible bindings for an explicit setup choice."""
+    if registry is None:
+        return ()
+
+    try:
+        bindings = registry.list_runtime_bindings(session.workspace_id)
+    except (KeyError, OSError, RuntimeError, ValueError, AttributeError):
+        raise ProjectInstructionBindingRecovery("binding_unavailable") from None
+    return tuple(
+        selection
+        for binding in bindings
+        if (selection := _validate_project_instruction_binding(session, binding))
+        is not None
+    )
+
+
+def _validate_project_instruction_binding(
+    session: ConsoleChatSession, binding: Any
+) -> ProjectInstructionBindingSelection | None:
+    if binding is None or str(getattr(binding, "workspace_id", "")) != str(
+        session.workspace_id
+    ):
+        return None
+    kind = getattr(getattr(binding, "binding_kind", None), "value", None) or str(
+        getattr(binding, "binding_kind", "")
+    )
+    status = getattr(getattr(binding, "status", None), "value", None) or str(
+        getattr(binding, "status", "")
+    )
+    if kind != "local-filesystem" or status != "ready":
+        return None
+    try:
+        lexical = Path(str(binding.locator)).expanduser().absolute()
+        if _capture_project_root_identity(lexical) is None:
+            return None
+        root = lexical.resolve(strict=True)
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if root != lexical:
+        return None
+    root_identity = _capture_project_root_identity(root)
+    if root_identity is None:
+        return None
+    return ProjectInstructionBindingSelection(
+        binding=binding,
+        root=root,
+        locator_fingerprint=fingerprint_canonical_locator(str(root)),
+        allow_write=str(getattr(binding, "metadata", {}).get("access", "ro")) == "rw",
+        root_identity=root_identity,
+    )
+
+
+def _same_project_instruction_authority(
+    current: ProjectInstructionBindingSelection,
+    expected: ProjectInstructionBindingSelection,
+) -> bool:
+    return (
+        str(current.binding.binding_id) == str(expected.binding.binding_id)
+        and current.root == expected.root
+        and current.locator_fingerprint == expected.locator_fingerprint
+        and current.allow_write == expected.allow_write
+        and current.root_identity == expected.root_identity
+        and _project_root_identity_matches(expected.root, expected.root_identity)
+    )
+
+
+def project_instruction_authority_is_current(
+    *,
+    store: Any,
+    session_id: str,
+    registry: Any,
+    expected_selection: ProjectInstructionBindingSelection,
+) -> bool:
+    """Re-resolve binding state and selected-root identity without retargeting."""
+    session = next((item for item in store.sessions() if item.id == session_id), None)
+    if session is None:
+        return False
+    return project_instruction_authority_snapshot_is_current(
+        session_snapshot=session,
+        registry=registry,
+        expected_selection=expected_selection,
+    )
+
+
+def project_instruction_authority_snapshot_is_current(
+    *,
+    session_snapshot: Any,
+    registry: Any,
+    expected_selection: ProjectInstructionBindingSelection,
+) -> bool:
+    """Re-resolve filesystem authority from an immutable session snapshot."""
+    session = session_snapshot
+    state = session.project_instruction_state
+    if (
+        not state.project_instructions_enabled
+        or state.working_folder_binding_id
+        != expected_selection.binding.binding_id
+        or state.working_folder_locator_fingerprint
+        != expected_selection.locator_fingerprint
+    ):
+        return False
+    try:
+        current_selection = resolve_project_instruction_binding(session, registry)
+    except ProjectInstructionBindingRecovery:
+        return False
+    return current_selection is not None and _same_project_instruction_authority(
+        current_selection, expected_selection
+    )
+
+
+def commit_project_instruction_setup_decision(
+    *,
+    store: Any,
+    session_id: str,
+    registry: Any,
+    expected_state: ProjectInstructionControlState,
+    expected_options: tuple[ProjectInstructionBindingSelection, ...],
+    action: str,
+    binding_id: str | None,
+) -> tuple[
+    Literal["select", "disable", "cancel"],
+    ProjectInstructionBindingSelection | None,
+]:
+    """Commit one chooser result only while state and authority stay exact."""
+    session = next((item for item in store.sessions() if item.id == session_id), None)
+    if session is None or session.project_instruction_state != expected_state:
+        return "cancel", None
+    if action == "cancel":
+        return "cancel", None
+    if action == "disable":
+        store.set_session_project_instruction_state(
+            session_id, ProjectInstructionControlState.legacy_disabled()
+        )
+        return "disable", None
+    if action != "select" or binding_id is None:
+        return "cancel", None
+    expected = next(
+        (
+            option
+            for option in expected_options
+            if str(option.binding.binding_id) == str(binding_id)
+        ),
+        None,
+    )
+    if expected is None:
+        return "cancel", None
+    try:
+        fresh_options = list_project_instruction_bindings(session, registry)
+    except ProjectInstructionBindingRecovery:
+        return "cancel", None
+    current = next(
+        (
+            option
+            for option in fresh_options
+            if str(option.binding.binding_id) == str(binding_id)
+        ),
+        None,
+    )
+    if current is None or not _same_project_instruction_authority(current, expected):
+        return "cancel", None
+    store.set_session_project_instruction_state(
+        session_id,
+        ProjectInstructionControlState(
+            project_instructions_enabled=True,
+            working_folder_binding_id=current.binding.binding_id,
+            working_folder_locator_fingerprint=current.locator_fingerprint,
+            project_instruction_notice_key=None,
+        ),
+    )
+    return "select", current
+
+
+def commit_project_instruction_dispatch_decision(
+    *,
+    store: Any,
+    session_id: str,
+    registry: Any,
+    expected_state: ProjectInstructionControlState,
+    expected_selection: ProjectInstructionBindingSelection,
+    notice_key: str,
+    decision: Literal["proceed", "cancel", "disable"] | None,
+) -> Literal["proceed", "cancel", "disable", "prompt"]:
+    """Atomically validate authority and apply consent on the owning loop."""
+    session = next((item for item in store.sessions() if item.id == session_id), None)
+    if session is None or session.project_instruction_state != expected_state:
+        return "cancel"
+    if not project_instruction_authority_is_current(
+        store=store,
+        session_id=session_id,
+        registry=registry,
+        expected_selection=expected_selection,
+    ):
+        return "cancel"
+    if expected_state.project_instruction_notice_key == notice_key:
+        return "proceed"
+    if decision is None:
+        return "prompt"
+    if decision == "cancel":
+        return "cancel"
+    enabled = decision == "proceed"
+    store.set_session_project_instruction_state(
+        session_id,
+        ProjectInstructionControlState(
+            project_instructions_enabled=enabled,
+            working_folder_binding_id=expected_selection.binding.binding_id,
+            working_folder_locator_fingerprint=expected_selection.locator_fingerprint,
+            project_instruction_notice_key=notice_key if enabled else None,
+        ),
+    )
+    return decision
+
 
 #: TASK-1861: the tool result a call gets when the user refused it at the
 #: approval card. The runtime turns any non-"proceed" verdict string into the
@@ -1224,6 +1687,16 @@ class ConsoleChatController:
         context_repository: ConsoleContextRepository | None = None,
         turn_context_provider: "Callable[[str], ConsoleTurnExecutionContext] | None" = None,
         queued_staged_rider_provider: "Callable[[str], bool] | None" = None,
+        provider_config: "Callable[[], Mapping[str, Any]] | None" = None,
+        confirm_project_instruction_dispatch: Callable[
+            [ProjectInstructionDispatchNotice], Literal["proceed", "cancel", "disable"]
+        ]
+        | None = None,
+        select_project_instruction_binding: Callable[
+            [str, tuple[ProjectInstructionBindingSelection, ...], str],
+            Awaitable[tuple[Literal["select", "disable", "cancel"], str | None]],
+        ]
+        | None = None,
     ) -> None:
         self.store = store
         self.provider_gateway = provider_gateway
@@ -1253,6 +1726,7 @@ class ConsoleChatController:
         self._chat_dictionary_applier = chat_dictionary_applier
         self._world_info_applier = world_info_applier
         self._rag_capture_provider = rag_capture_provider
+        self._provider_config = provider_config
         #: Task 4 (D2 fix wave, "bonus race"): screen-owned callable that
         #: builds a fresh default `ConsoleSessionSettings` snapshot (mirrors
         #: `ChatScreen._default_console_session_settings`, wired by
@@ -1297,6 +1771,16 @@ class ConsoleChatController:
         )
         self._turn_context_provider = turn_context_provider
         self._queued_staged_rider_provider = queued_staged_rider_provider
+        self._confirm_project_instruction_dispatch = (
+            confirm_project_instruction_dispatch
+        )
+        self._select_project_instruction_binding = select_project_instruction_binding
+        self._project_instruction_display: dict[
+            str, ProjectInstructionDisplayMetadata
+        ] = {}
+        self._project_instruction_activation_events: dict[
+            str, list[ProjectInstructionActivationEvent]
+        ] = {}
         # Parallel-agents spec §2: run state is a PER-SESSION map, not a
         # single global slot -- two sessions can each have their own
         # in-flight/terminal run without stamping each other. `run_state`/
@@ -3615,6 +4099,7 @@ class ConsoleChatController:
         previous_active_id = self.store.active_session_id
         closed = self.store.close_session(session_id)
         self.prompt_queue_coordinator.remove_session(session_id)
+        self._clear_project_instruction_delivery(session_id)
         new_active_id = self.store.active_session_id
         if (
             owns_active_stream
@@ -4767,6 +5252,8 @@ class ConsoleChatController:
     async def _compose_mcp_provider(
         self,
         session_id: str | None = None,
+        *,
+        publish_counts: bool = True,
     ) -> MCPToolProvider | None:
         """Build + compose THIS run's MCPToolProvider on the running main loop.
 
@@ -4790,11 +5277,11 @@ class ConsoleChatController:
         composed catalog is empty (nothing to register, and -- since
         ``not_connected_count`` is only ever non-zero for servers that
         already contributed at least one eligible tool -- nothing an
-        empty catalog could usefully report either). Every return path
-        also publishes this run's inspector counts via
-        ``_publish_mcp_inspector_counts`` -- see that method's docstring;
-        this is the only production writer of ``console_mcp_tool_count``/
-        ``console_mcp_not_connected_count``.
+        empty catalog could usefully report either). Live composition
+        publishes this run's inspector counts on every return path via
+        ``_publish_mcp_inspector_counts``. Disposable Context composition
+        passes ``publish_counts=False`` and never mutates those app-level
+        inspector values.
 
         Args:
             session_id: The run's OWNING session (Task 3/9) -- threaded
@@ -4806,15 +5293,21 @@ class ConsoleChatController:
                 check exactly like the batch review-hook path does.
                 ``None`` (the default -- every pre-Task-9 call site) keeps
                 ``request_mcp_approvals``' legacy no-session behavior.
+            publish_counts: Whether to publish app-level MCP inspector counts.
+                Live dispatch keeps the default; disposable preview disables it.
 
         Returns:
             A composed ``MCPToolProvider`` ready to hand to
             ``ConsoleAgentBridge.run_reply`` when eligible; ``None``
             otherwise.
         """
+        def publish(tool_count: int | None, not_connected: int | None) -> None:
+            if publish_counts:
+                self._publish_mcp_inspector_counts(tool_count, not_connected)
+
         service = getattr(self.app, "unified_mcp_service", None)
         if service is None:
-            self._publish_mcp_inspector_counts(None, None)
+            publish(None, None)
             return None
         try:
             kill_switch = service.get_kill_switch()
@@ -4822,10 +5315,10 @@ class ConsoleChatController:
             logger.opt(exception=True).warning(
                 "ConsoleChatController: get_kill_switch failed; skipping MCP this run"
             )
-            self._publish_mcp_inspector_counts(None, None)
+            publish(None, None)
             return None
         if kill_switch:
-            self._publish_mcp_inspector_counts(None, None)
+            publish(None, None)
             return None
         bound_request_approvals = functools.partial(
             self.request_mcp_approvals, session_id=session_id
@@ -4846,19 +5339,62 @@ class ConsoleChatController:
             logger.opt(exception=True).warning(
                 "ConsoleChatController: MCP compose_catalog failed; skipping MCP this run"
             )
-            self._publish_mcp_inspector_counts(None, None)
+            publish(None, None)
             return None
         catalog = provider.list_catalog()
         if not catalog:
-            self._publish_mcp_inspector_counts(None, None)
+            publish(None, None)
             return None
-        self._publish_mcp_inspector_counts(len(catalog), provider.not_connected_count)
+        publish(len(catalog), provider.not_connected_count)
         return provider
+
+    async def _compose_agent_request_providers(
+        self,
+        *,
+        session_id: str,
+        project_selection: ProjectInstructionBindingSelection | None,
+        project_authority_guard: Callable[[], bool] | None,
+        turn_context: ConsoleTurnExecutionContext | None = None,
+        publish_mcp_counts: bool = True,
+    ) -> tuple[
+        MCPToolProvider | None,
+        "BuiltinToolGate",
+        LocalToolProvider | None,
+        Callable[[list["ToolCall"]], dict[str, str]] | None,
+    ]:
+        """Compose providers shared by live and preview.
+
+        ``publish_mcp_counts`` is true for live dispatch and false for the
+        disposable Context preflight, whose composition must not mutate the
+        app-level inspector counters.
+        """
+        mcp_provider = await self._compose_mcp_provider(
+            session_id, publish_counts=publish_mcp_counts
+        )
+        builtin_gate = build_builtin_gate(
+            getattr(self.app, "unified_mcp_service", None)
+        )
+        local_provider, local_review_hook = self._compose_local_provider(
+            session_id=session_id,
+            turn_context=turn_context,
+            project_root=(project_selection.root if project_selection else None),
+            allow_write=(project_selection.allow_write if project_selection else True),
+            project_root_identity=(
+                project_selection.root_identity if project_selection else None
+            ),
+            project_root_guard=project_authority_guard,
+        )
+        return mcp_provider, builtin_gate, local_provider, local_review_hook
 
     def _compose_local_provider(
         self,
         session_id: str | None = None,
         turn_context: ConsoleTurnExecutionContext | None = None,
+        *,
+        project_root: Path | None = None,
+        allow_write: bool = True,
+        project_root_identity: tuple[tuple[str, int, int, int], ...] | None = None,
+        project_root_guard: Callable[[], bool] | None = None,
     ) -> tuple[
         LocalToolProvider | None, Callable[[list["ToolCall"]], dict[str, str]] | None
     ]:
@@ -4983,19 +5519,22 @@ class ConsoleChatController:
 
         # expanduser() before resolve(): a configured "~/repo" must land
         # under the user's home, not literal "~" under the cwd.
-        raw_root = str(
-            (
-                turn_context.tool_configuration.get("workspace_root", "")
-                if turn_context is not None
-                else get_cli_setting("console", "workspace_root", "")
+        if project_root is None:
+            raw_root = str(
+                (
+                    turn_context.tool_configuration.get("workspace_root", "")
+                    if turn_context is not None
+                    else get_cli_setting("console", "workspace_root", "")
+                )
+                or ""
+            ).strip()
+            root = (
+                Path(raw_root).expanduser().resolve()
+                if raw_root
+                else Path(os.getcwd()).resolve()
             )
-            or ""
-        ).strip()
-        root = (
-            Path(raw_root).expanduser().resolve()
-            if raw_root
-            else Path(os.getcwd()).resolve()
-        )
+        else:
+            root = project_root
         subscriptions_db = getattr(self.app, "subscriptions_db", None)
         watchlists_service = WatchlistsToolService(
             db_resolver=lambda: subscriptions_db,
@@ -5005,6 +5544,18 @@ class ConsoleChatController:
         )
         provider = LocalToolProvider(
             workspace_root=root,
+            allow_write=allow_write,
+            root_guard=(
+                project_root_guard
+                if project_root_guard is not None
+                else (
+                    lambda: _project_root_identity_matches(
+                        root, project_root_identity
+                    )
+                    if project_root_identity is not None
+                    else True
+                )
+            ),
             resolve_state=service.gate_tool_test,
             kill_switch=_kill_switch,
             approval_callback=bound_request_approvals,
@@ -5029,7 +5580,9 @@ class ConsoleChatController:
         bridge = self._agent_bridge
         if bridge is None:
             return {}
-        session = next((s for s in self.store.sessions() if s.id == session_id), None)
+        session = next(
+            (s for s in self.store.sessions() if s.id == session_id), None
+        )
         if session is None:
             return {}
 
@@ -5388,10 +5941,8 @@ class ConsoleChatController:
         event = threading.Event()
         decision: dict[str, bool] = {}
         request_id = str(uuid4())
-        owning_session_id = (
-            session_id
-            if session_id is not None
-            else (self.store.active_session_id or "")
+        owning_session_id = session_id if session_id is not None else (
+            self.store.active_session_id or ""
         )
         # PR3a-1 Task 6b (audit F4): arm-time cancel binding, identical to
         # `request_mcp_approvals`' -- see `_bind_round_cancel_signal`.
@@ -5435,8 +5986,9 @@ class ConsoleChatController:
         # DIFFERENT, background session -- mirrors `request_mcp_approvals`'
         # identical `is_parked` gate. `session_id is None` (a legacy caller
         # with no session context) always mounts.
-        is_parked = session_id is not None and session_id != (
-            self.store.active_session_id or ""
+        is_parked = (
+            session_id is not None
+            and session_id != (self.store.active_session_id or "")
         )
         # PR0: legacy `session_id is None` callers never park and never
         # queue -- they keep the unconditional mount below.
@@ -5644,10 +6196,8 @@ class ConsoleChatController:
         event = threading.Event()
         decision: dict[str, bool] = {}
         request_id = str(uuid4())
-        owning_session_id = (
-            session_id
-            if session_id is not None
-            else (self.store.active_session_id or "")
+        owning_session_id = session_id if session_id is not None else (
+            self.store.active_session_id or ""
         )
         # PR3a-1 Task 6b (audit F4): arm-time cancel binding, identical to
         # `request_mcp_approvals`' -- see `_bind_round_cancel_signal`.
@@ -6794,7 +7344,9 @@ class ConsoleChatController:
             body = assemble(rows)
         return body
 
-    async def impersonate_user_reply(self, session_id: str) -> "ImpersonateResult":
+    async def impersonate_user_reply(
+        self, session_id: str
+    ) -> "ImpersonateResult":
         """Draft the USER's next message with the session's current model.
 
         task-1683: "Impersonate" writes a candidate reply *as the user*,
@@ -6825,7 +7377,9 @@ class ConsoleChatController:
             return ImpersonateResult(
                 "",
                 "provider-not-ready",
-                self._blocked_visible_copy(getattr(resolution, "visible_copy", "")),
+                self._blocked_visible_copy(
+                    getattr(resolution, "visible_copy", "")
+                ),
             )
         session_messages = self.store.messages_for_session(session_id)
         # Mirror _provider_message_payloads' rules exactly (cubic PR #1160):
@@ -7170,10 +7724,12 @@ class ConsoleChatController:
         draft: str,
         attachments: Iterable[MessageAttachment] | None = None,
         staged_sources: Iterable[ConsoleStagedSource] | None = None,
+        *,
+        session_id: str | None = None,
     ) -> ConsoleContextSnapshot:
         """Return a read-only snapshot of the current transcript and the assembled next-send payload.
 
-        Skills with side effects are NOT executed; only chat dictionaries are applied.
+        Skill rendering runs on disposable messages; live session state is untouched.
 
         Args:
             draft: The current composer draft text to include as a synthetic user turn.
@@ -7185,10 +7741,15 @@ class ConsoleChatController:
             redacted next-send provider payload. If assembly fails, the payload may
             contain an ``"error"`` key with a human-readable message.
         """
-        session_id = self.store.active_session_id
+        session_id = session_id or self.store.active_session_id
         if not session_id:
             return ConsoleContextSnapshot(current_messages=[], next_send_payload={})
 
+        session = next(
+            (item for item in self.store.sessions() if item.id == session_id), None
+        )
+        turn_context = self.resolve_turn_execution_context(session_id)
+        provider_selection = turn_context.provider_selection
         current_messages = list(self.store.messages_for_session(session_id))
         staged_sources_list = [
             {"source_id": s.source_id, "label": s.label, "type": s.source_type}
@@ -7203,7 +7764,9 @@ class ConsoleChatController:
             # below can anchor by identity, exactly like the real dispatch path
             # (the keys are stripped again before the snapshot is returned).
             provider_messages = self._provider_messages_for_session(
-                session_id, annotate_ids=True
+                session_id,
+                annotate_ids=True,
+                turn_context=turn_context,
             )
 
             # Append a synthetic user turn for the draft so the preview matches what would be sent.
@@ -7220,16 +7783,34 @@ class ConsoleChatController:
                     ],
                     skip_failed=True,
                     session_id=session_id,
+                    turn_context=turn_context,
                 )
                 provider_messages.extend(synthetic_user)
 
-            # Do NOT call _apply_skill_substitution because it may execute skills with side effects.
-            # Instead, annotate the final user message if a synthetic turn was appended and it
-            # starts with a skill command. Historical turns have already been resolved at send time
-            # and must not be annotated.
-            provider_messages = self._annotate_skill_commands(
-                provider_messages, synthetic_turn_added=synthetic_turn_added
+            prefill, prefill_from_one_shot = self._resolve_submit_prefill(session_id)
+            dispatch_eligible = self._agent_dispatch_is_eligible(
+                session, prefill=prefill
             )
+            skill_bindings: tuple[str, ...] = ()
+            skill_bundle_block = ""
+            if dispatch_eligible:
+                (
+                    provider_messages,
+                    skill_refusal,
+                    _skill_notes,
+                    skill_bindings,
+                    skill_bundle_block,
+                ) = await self._apply_skill_substitution(
+                    copy.deepcopy(provider_messages)
+                )
+                if skill_refusal is not None:
+                    dispatch_eligible = False
+            else:
+                # Historical turns have already been resolved at send time;
+                # annotate only a newly synthesized bypassed turn.
+                provider_messages = self._annotate_skill_commands(
+                    provider_messages, synthetic_turn_added=synthetic_turn_added
+                )
 
             # Chat dictionaries are safe to apply (string replacements only).
             provider_messages = await self._apply_chat_dictionaries(
@@ -7258,7 +7839,6 @@ class ConsoleChatController:
             # read-only preview). Placed after dictionaries to match
             # `_stream_assistant_response`'s ordering (dictionaries never
             # rewrite prefill text).
-            prefill, prefill_from_one_shot = self._resolve_submit_prefill(session_id)
             if prefill:
                 provider_messages = [
                     *provider_messages,
@@ -7267,6 +7847,12 @@ class ConsoleChatController:
                         "content": prefill,
                     },
                 ]
+
+            # Preserve the exact provider projection for disposable agent
+            # admission.  Redaction and image placeholders are display-only:
+            # applying either before AgentService's token admission can change
+            # whether the project source fits compared with the live request.
+            exact_provider_messages = copy.deepcopy(provider_messages)
 
             # Replace image data with placeholders for the preview, including historical images.
             provider_messages = self._replace_image_data_with_placeholders(
@@ -7286,7 +7872,9 @@ class ConsoleChatController:
                 [provider_messages[0]]
                 if provider_messages
                 and provider_messages[0].get("role") == ConsoleMessageRole.SYSTEM.value
-                else self._leading_system_message(session_id=session_id)
+                else self._leading_system_message(
+                    session_id=session_id, turn_context=turn_context
+                )
             )
             redacted_system = self._redact_secrets(leading_system)
 
@@ -7296,7 +7884,10 @@ class ConsoleChatController:
             )
 
             next_send_payload: dict[str, Any] = {
-                "model": self.model or self.configured_model,
+                "model": (
+                    provider_selection.explicit_model
+                    or provider_selection.configured_model
+                ),
                 "messages": redacted_messages,
                 # `system` is intentionally duplicated from the leading system
                 # message in `messages` so the preview viewer can show the
@@ -7316,9 +7907,22 @@ class ConsoleChatController:
                     else prefill,
                     "agent_loop_bypassed": True,
                 }
+            preview = None
+            if dispatch_eligible:
+                preview = await self._build_project_instruction_preview_for_session(
+                    session_id,
+                    next_send_payload,
+                    exact_provider_messages,
+                    provider_selection=provider_selection,
+                    turn_skill_bindings=skill_bindings,
+                    turn_bundle_block=skill_bundle_block,
+                )
+            if preview is not None:
+                next_send_payload = preview.next_send_payload
             return ConsoleContextSnapshot(
                 current_messages=copied_messages,
                 next_send_payload=next_send_payload,
+                project_instruction_preview=preview,
             )
         except Exception as exc:
             logger.exception(
@@ -7344,14 +7948,19 @@ class ConsoleChatController:
                 )
             )
             degraded_system = self._redact_secrets(
-                self._leading_system_message(session_id=session_id)
+                self._leading_system_message(
+                    session_id=session_id, turn_context=turn_context
+                )
             )
             return ConsoleContextSnapshot(
                 current_messages=self._presented_message_snapshots(
                     session_id, current_messages
                 ),
                 next_send_payload={
-                    "model": self.model or self.configured_model,
+                    "model": (
+                        provider_selection.explicit_model
+                        or provider_selection.configured_model
+                    ),
                     "messages": degraded_messages,
                     "system": degraded_system,
                     "staged_sources": staged_sources_list,
@@ -7363,6 +7972,270 @@ class ConsoleChatController:
                     "error": f"Failed to build context snapshot: {exc}",
                 },
             )
+
+    async def _build_project_instruction_preview_for_session(
+        self,
+        session_id: str,
+        base_payload: dict[str, Any],
+        provider_messages: list[dict[str, Any]],
+        *,
+        provider_selection: ConsoleProviderSelection | None = None,
+        turn_skill_bindings: tuple[str, ...] = (),
+        turn_bundle_block: str = "",
+    ) -> ProjectInstructionPreview | None:
+        """Securely reread root guidance into a disposable preview only."""
+        if not self._agent_runtime_enabled or self._agent_bridge is None:
+            return None
+        session = next(
+            (item for item in self.store.sessions() if item.id == session_id), None
+        )
+        if (
+            session is None
+            or not session.project_instruction_state.project_instructions_enabled
+        ):
+            return None
+        expected_control = session.project_instruction_state
+        expected_session_snapshot = _ProjectInstructionAuthoritySnapshot(
+            workspace_id=session.workspace_id,
+            project_instruction_state=session.project_instruction_state,
+        )
+        owning_provider_selection = (
+            provider_selection or self._provider_selection_for_session(session_id)
+        )
+        try:
+            resolution = await self.provider_gateway.resolve_for_send(
+                owning_provider_selection
+            )
+        except Exception:  # noqa: BLE001 - preview failure stays content-free
+            return None
+        if not getattr(resolution, "ready", True):
+            return None
+        registry = getattr(self.app, "workspace_registry_service", None)
+        try:
+            selection = resolve_project_instruction_binding(session, registry)
+            if selection is None:
+                return None
+            candidate = await asyncio.to_thread(
+                ProjectInstructionResolver().resolve_startup,
+                binding_id=selection.binding.binding_id,
+                binding_root=selection.root,
+                locator_fingerprint=selection.locator_fingerprint,
+                max_bytes=coerce_int_setting(
+                    get_cli_setting(
+                        "console",
+                        "project_instructions_startup_max_bytes",
+                        DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    ),
+                    DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    minimum=MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    maximum=MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                ),
+                dispatch_started_wall_ns=time.time_ns(),
+            )
+        except Exception:  # noqa: BLE001 - preview failure stays content-free
+            return None
+        bridge = self._agent_bridge
+        if bridge is None:
+            return None
+        bound = bound_messages_to_window(
+            copy.deepcopy(provider_messages),
+            model=getattr(resolution, "model", None) or "",
+            provider=getattr(resolution, "provider", "") or "",
+            response_reservation=(
+                getattr(resolution, "max_tokens", None)
+                or DEFAULT_RESPONSE_RESERVATION
+            ),
+        )
+        agent_messages = list(bound.messages)
+        session_system_prompt = ""
+        if (
+            agent_messages
+            and agent_messages[0].get("role") == ConsoleMessageRole.SYSTEM.value
+        ):
+            session_system_prompt = str(agent_messages[0].get("content", ""))
+            agent_messages = agent_messages[1:]
+        mcp_provider, builtin_gate, local_provider, _local_review_hook = (
+            await self._compose_agent_request_providers(
+                session_id=session_id,
+                project_selection=selection,
+                project_authority_guard=None,
+                publish_mcp_counts=False,
+            )
+        )
+        try:
+            preview_result = await asyncio.to_thread(
+                bridge.build_project_instruction_preview_request,
+                candidate=candidate,
+                session_id=session_id,
+                resolution=resolution,
+                fallback_model=(
+                    owning_provider_selection.explicit_model
+                    or owning_provider_selection.configured_model
+                    or ""
+                ),
+                session_system_prompt=session_system_prompt,
+                agent_messages=agent_messages,
+                mcp_provider=mcp_provider,
+                builtin_gate=builtin_gate,
+                local_provider=local_provider,
+                turn_skill_bindings=turn_skill_bindings,
+                turn_bundle_block=turn_bundle_block,
+                request_skill_install_enabled=True,
+                request_skill_script_enabled=(
+                    self.set_pending_skill_script is not None
+                ),
+            )
+        except Exception:  # noqa: BLE001 - preview failure stays content-free
+            return None
+        if preview_result is None:
+            source = candidate.source
+            code = "preview_uncertain_run_log_binding"
+            return ProjectInstructionPreview(
+                relative_source=source.relative_path if source else None,
+                scope=source.scope if source else ".",
+                byte_count=source.byte_count if source else 0,
+                outcomes=(code,),
+                warning_codes=(code,),
+                next_send_payload=copy.deepcopy(base_payload),
+            )
+        exact_payload, snapshot = preview_result
+        current_session = next(
+            (item for item in self.store.sessions() if item.id == session_id), None
+        )
+        if (
+            current_session is None
+            or current_session.project_instruction_state != expected_control
+        ):
+            return None
+        try:
+            authority_current = await asyncio.to_thread(
+                project_instruction_authority_snapshot_is_current,
+                session_snapshot=expected_session_snapshot,
+                registry=registry,
+                expected_selection=selection,
+            )
+        except Exception:  # noqa: BLE001 - authority doubt fails closed
+            return None
+        if not authority_current:
+            return None
+        current_session = next(
+            (item for item in self.store.sessions() if item.id == session_id), None
+        )
+        if (
+            current_session is None
+            or current_session.project_instruction_state != expected_control
+        ):
+            return None
+        try:
+            current_binding = registry.get_runtime_binding(
+                str(selection.binding.binding_id)
+            )
+        except Exception:  # noqa: BLE001 - in-memory registry doubt fails closed
+            return None
+        if current_binding != selection.binding:
+            return None
+        if not _project_root_identity_matches(
+            selection.root, selection.root_identity
+        ):
+            return None
+        payload = copy.deepcopy(base_payload)
+        payload.pop("tools", None)
+        display_payload = self._replace_image_data_with_placeholders(
+            copy.deepcopy(exact_payload.get("messages") or ())
+        )
+        projected_exact = copy.deepcopy(exact_payload)
+        projected_exact["messages"] = self._redact_secrets(display_payload)
+        payload.update(projected_exact)
+        messages = list(payload.get("messages") or ())
+        payload["system"] = (
+            [copy.deepcopy(messages[0])]
+            if messages
+            and messages[0].get("role") == ConsoleMessageRole.SYSTEM.value
+            else []
+        )
+        source = snapshot.startup_source_metadata or snapshot.startup_source
+        outcomes = tuple(
+            outcome.code for outcome in snapshot.primary_delivery.outcomes
+        )
+        return ProjectInstructionPreview(
+            relative_source=source.relative_path if source else None,
+            scope=source.scope if source else ".",
+            byte_count=source.byte_count if source else 0,
+            outcomes=outcomes,
+            warning_codes=tuple(snapshot.warning_codes),
+            next_send_payload=payload,
+        )
+
+    def _agent_dispatch_is_eligible(self, session, *, prefill: str | None) -> bool:
+        """Return the single live/preview agent-dispatch eligibility decision."""
+        return bool(
+            self._agent_runtime_enabled
+            and self._agent_bridge is not None
+            and not prefill
+            and session is not None
+            and session.assistant_kind != "character"
+        )
+
+    def _remember_project_instruction_delivery(
+        self, session_id: str, snapshot: InstructionSnapshot
+    ) -> None:
+        """Retain only content-free metadata from a final primary delivery."""
+        self._project_instruction_activation_events.pop(session_id, None)
+        source = snapshot.startup_source_metadata
+        outcomes = tuple(outcome.code for outcome in snapshot.primary_delivery.outcomes)
+        delivered = bool(
+            snapshot.startup_source is not None
+            and snapshot.startup_source.digest
+            in snapshot.primary_delivery.source_digests
+        )
+        self._project_instruction_display[session_id] = (
+            ProjectInstructionDisplayMetadata(
+                binding_id=snapshot.binding_id,
+                locator_fingerprint=snapshot.locator_fingerprint,
+                relative_source=source.relative_path if source else None,
+                scope=source.scope if source else ".",
+                byte_count=source.byte_count if source else 0,
+                outcome="active" if delivered else (outcomes[0] if outcomes else "none"),
+                warning_codes=tuple(snapshot.warning_codes),
+            )
+        )
+
+    def _clear_project_instruction_delivery(self, session_id: str) -> None:
+        self._project_instruction_display.pop(session_id, None)
+        self._project_instruction_activation_events.pop(session_id, None)
+
+    def _record_project_instruction_activation(
+        self, session_id: str, event: ProjectInstructionActivationEvent
+    ) -> None:
+        """Keep one run's content-free activation notices in session memory."""
+        self._project_instruction_activation_events.setdefault(session_id, []).append(
+            event
+        )
+
+    def project_instruction_activation_events(
+        self, session_id: str
+    ) -> tuple[ProjectInstructionActivationEvent, ...]:
+        """Return content-free activation notices for one live session."""
+        return tuple(self._project_instruction_activation_events.get(session_id, ()))
+
+    def project_instruction_display_metadata(
+        self, session_id: str
+    ) -> ProjectInstructionDisplayMetadata | None:
+        """Return current content-free final-delivery metadata for one session."""
+        metadata = self._project_instruction_display.get(session_id)
+        if metadata is None:
+            return None
+        session = next((item for item in self.store.sessions() if item.id == session_id), None)
+        state = session.project_instruction_state if session is not None else None
+        if (
+            state is None
+            or not state.project_instructions_enabled
+            or state.working_folder_binding_id != metadata.binding_id
+            or state.working_folder_locator_fingerprint != metadata.locator_fingerprint
+        ):
+            self._clear_project_instruction_delivery(session_id)
+            return None
+        return metadata
 
     @staticmethod
     def _replace_image_data_with_placeholders(
@@ -7621,45 +8494,24 @@ class ConsoleChatController:
         if settings is None:
             return replace(
                 self._provider_selection(),
+                system_prompt=self._resolved_system_prompt(session_id),
                 workspace_context=workspace_context,
             )
 
-        provider = str(settings.provider or self.provider)
-        same_provider = provider_config_key(provider) == provider_config_key(
-            self.provider
-        )
-        return ConsoleProviderSelection(
-            provider=provider,
-            base_url=(
-                settings.base_url
-                if settings.base_url is not None
-                else self.base_url
-                if same_provider
-                else None
-            ),
-            explicit_model=settings.model,
-            configured_model=(
-                self.configured_model
-                if settings.model is None and same_provider
-                else None
-            ),
-            temperature=settings.temperature,
-            top_p=settings.top_p,
-            min_p=settings.min_p,
-            top_k=settings.top_k,
-            max_tokens=settings.max_tokens,
-            seed=settings.seed,
-            presence_penalty=settings.presence_penalty,
-            frequency_penalty=settings.frequency_penalty,
-            reasoning_effort=settings.reasoning_effort,
-            reasoning_summary=settings.reasoning_summary,
-            verbosity=settings.verbosity,
-            thinking_effort=settings.thinking_effort,
-            thinking_budget_tokens=settings.thinking_budget_tokens,
-            streaming=settings.streaming,
-            system_prompt=settings.system_prompt,
+        app_config = self._provider_config() if self._provider_config else {}
+        selection = build_console_provider_selection_from_settings(
+            settings,
+            app_config=app_config,
             workspace_context=workspace_context,
         )
+        session = next(
+            (item for item in self.store.sessions() if item.id == session_id), None
+        )
+        if session is not None and session.assistant_kind == "character":
+            selection = replace(
+                selection, system_prompt=self._resolved_system_prompt(session_id)
+            )
+        return selection
 
     def resolve_turn_execution_context(
         self, session_id: str
@@ -10042,9 +10894,9 @@ class ConsoleChatController:
             # "never fail a send" contract this method promises. Swallow and
             # log instead; a dropped usage attach is a missing cost figure,
             # not a broken turn.
-            logger.bind(message_id=assistant_message_id, error=repr(exc)).warning(
-                "usage_attach_failed"
-            )
+            logger.bind(
+                message_id=assistant_message_id, error=repr(exc)
+            ).warning("usage_attach_failed")
         if not attached:
             return
         # Cost-ticker PR3: cache-TTL ground truth, Anthropic prompt-caching
@@ -10053,8 +10905,9 @@ class ConsoleChatController:
         # stamp. Same never-fail posture as the attach above: this is
         # read by the chip, never by send control flow.
         try:
-            if provider_config_key(provider) == "anthropic" and getattr(
-                resolution, "prompt_caching", None
+            if (
+                provider_config_key(provider) == "anthropic"
+                and getattr(resolution, "prompt_caching", None)
             ):
                 sid = self.store.session_id_for_message(assistant_message_id)
                 had_cache_activity = (total.cache_read + total.cache_write) > 0
@@ -10062,9 +10915,9 @@ class ConsoleChatController:
                 if had_cache_activity:
                     self._cache_warm_until[sid] = time.monotonic() + 300.0
         except Exception as exc:
-            logger.bind(message_id=assistant_message_id, error=repr(exc)).warning(
-                "cost_cache_ttl_record_failed"
-            )
+            logger.bind(
+                message_id=assistant_message_id, error=repr(exc)
+            ).warning("cost_cache_ttl_record_failed")
 
     async def _run_direct_provider_reply(
         self,
@@ -10662,6 +11515,156 @@ class ConsoleChatController:
             turn_context = self.resolve_turn_execution_context(session_id)
         elif turn_context.session_id != session_id:
             raise ValueError("Console turn context does not own the assistant row.")
+        session = next((s for s in self.store.sessions() if s.id == session_id), None)
+        startup_candidate: StartupInstructionCandidate | None = None
+        project_selection: ProjectInstructionBindingSelection | None = None
+        confirm_project_dispatch = None
+        project_authority_guard = None
+        project_activation_callback = None
+        if session is not None and session.project_instruction_state.project_instructions_enabled:
+            try:
+                registry = getattr(self.app, "workspace_registry_service", None)
+            except Exception:
+                registry = None
+            try:
+                project_selection = resolve_project_instruction_binding(
+                    session, registry
+                )
+            except ProjectInstructionBindingRecovery as exc:
+                callback = self._select_project_instruction_binding
+                if callback is None:
+                    return ConsoleSubmitResult(False, False, str(exc))
+                expected_setup_state = session.project_instruction_state
+                try:
+                    options = list_project_instruction_bindings(session, registry)
+                except ProjectInstructionBindingRecovery:
+                    options = ()
+                action, binding_id = await callback(session_id, options, str(exc))
+                action, project_selection = (
+                    commit_project_instruction_setup_decision(
+                        store=self.store,
+                        session_id=session_id,
+                        registry=registry,
+                        expected_state=expected_setup_state,
+                        expected_options=options,
+                        action=action,
+                        binding_id=binding_id,
+                    )
+                )
+                if action == "disable":
+                    self._clear_project_instruction_delivery(session_id)
+                    return ConsoleSubmitResult(
+                        False, False, "project_instructions_disabled"
+                    )
+                if action != "select" or project_selection is None:
+                    self._clear_project_instruction_delivery(session_id)
+                    return ConsoleSubmitResult(False, False, str(exc))
+            if project_selection is not None:
+                state = session.project_instruction_state
+                if state.working_folder_binding_id is None:
+                    state = ProjectInstructionControlState(
+                        project_instructions_enabled=True,
+                        working_folder_binding_id=(
+                            project_selection.binding.binding_id
+                        ),
+                        working_folder_locator_fingerprint=(
+                            project_selection.locator_fingerprint
+                        ),
+                        project_instruction_notice_key=None,
+                    )
+                    self.store.set_session_project_instruction_state(
+                        session_id, state
+                    )
+                startup_candidate = ProjectInstructionResolver().resolve_startup(
+                    binding_id=project_selection.binding.binding_id,
+                    binding_root=project_selection.root,
+                    locator_fingerprint=project_selection.locator_fingerprint,
+                    max_bytes=coerce_int_setting(
+                        get_cli_setting(
+                            "console",
+                            "project_instructions_startup_max_bytes",
+                            DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                        ),
+                        DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                        minimum=MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                        maximum=MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    ),
+                    dispatch_started_wall_ns=time.time_ns(),
+                )
+                destination_provider = str(
+                    getattr(resolution, "execution_key", "")
+                    or getattr(resolution, "provider", "")
+                    or "agent"
+                )
+                destination_endpoint = getattr(resolution, "base_url", None)
+                notice_key = project_instruction_notice_key(
+                    project_selection.locator_fingerprint,
+                    destination_provider,
+                    destination_endpoint,
+                )
+                expected_project_state = state
+
+                def on_owning_loop(callback):
+                    call_from_thread = getattr(self.app, "call_from_thread", None)
+                    if callable(call_from_thread):
+                        return call_from_thread(callback)
+                    return callback()
+
+                def project_activation_callback(event):
+                    return on_owning_loop(
+                        lambda: self._record_project_instruction_activation(
+                            session_id, event
+                        )
+                    )
+
+                def project_authority_guard():
+                    return bool(
+                        on_owning_loop(
+                            lambda: project_instruction_authority_is_current(
+                                store=self.store,
+                                session_id=session_id,
+                                registry=registry,
+                                expected_selection=project_selection,
+                            )
+                        )
+                    )
+
+                def confirm_project_dispatch(snapshot):
+                    def commit_and_record(decision):
+                        committed = commit_project_instruction_dispatch_decision(
+                            store=self.store,
+                            session_id=session_id,
+                            registry=registry,
+                            expected_state=expected_project_state,
+                            expected_selection=project_selection,
+                            notice_key=notice_key,
+                            decision=decision,
+                        )
+                        if committed != "prompt":
+                            if committed == "proceed":
+                                self._remember_project_instruction_delivery(
+                                    session_id, snapshot
+                                )
+                            else:
+                                self._clear_project_instruction_delivery(session_id)
+                        return committed
+
+                    initial = on_owning_loop(
+                        lambda: commit_and_record(None)
+                    )
+                    if initial != "prompt":
+                        return initial
+                    callback = self._confirm_project_instruction_dispatch
+                    notice = build_project_instruction_dispatch_notice(
+                        snapshot,
+                        session_id=session_id,
+                        resolution=resolution,
+                    )
+                    decision = callback(notice) if callback is not None else "cancel"
+                    if decision not in {"proceed", "cancel", "disable"}:
+                        decision = "cancel"
+                    return on_owning_loop(lambda: commit_and_record(decision))
+
         self._active_assistant_message_ids[session_id] = assistant_message_id
         self._active_stream_tasks[session_id] = asyncio.current_task()
         self._stop_requested = False
@@ -10734,7 +11737,17 @@ class ConsoleChatController:
         # outside this task's file scope, so keeping that function
         # byte-identical and building the run-level hook separately here
         # is the lower-blast-radius choice.
-        mcp_provider = await self._compose_mcp_provider(session_id)
+        (
+            mcp_provider,
+            builtin_gate,
+            local_provider,
+            local_review_hook,
+        ) = await self._compose_agent_request_providers(
+            session_id=session_id,
+            project_selection=project_selection,
+            project_authority_guard=project_authority_guard,
+            turn_context=turn_context,
+        )
         self._mcp_provider = mcp_provider
 
         # task-545/T6: build THIS run's built-in permission gate and hand
@@ -10746,9 +11759,6 @@ class ConsoleChatController:
         # gate, and vice versa. `build_builtin_gate(None)` (no
         # `unified_mcp_service` on the app) is fail-closed-correct, not
         # "ungated" -- see that function's own docstring.
-        builtin_gate = build_builtin_gate(
-            getattr(self.app, "unified_mcp_service", None)
-        )
         # Only `.tool_for(name)` is used by the review hook below, to
         # resolve a `ToolCall.name` to the `Tool` object `builtin_gate.
         # resolve` needs -- this instance is never used to invoke a tool,
@@ -10791,12 +11801,10 @@ class ConsoleChatController:
         # Local tools (ADR-032): same per-run composition point. Both
         # hooks see every batch; each gates only what its provider owns,
         # so the combined hook is a collision-free merge.
-        local_provider, local_review_hook = self._compose_local_provider(
-            session_id=session_id,
-            turn_context=turn_context,
-        )
         if local_review_hook is not None:
-            review_hook = build_combined_review_hook([review_hook, local_review_hook])
+            review_hook = build_combined_review_hook(
+                [review_hook, local_review_hook]
+            )
 
         # task-1337: THIS run's Library retrieval provider (direct tools or
         # the bounded RAG fallback), resolved ONCE here on the main loop via
@@ -10861,6 +11869,9 @@ class ConsoleChatController:
                 request_skill_install_confirm=functools.partial(
                     self.request_skill_install_confirm, session_id=session_id
                 ),
+                startup_instruction_candidate=startup_candidate,
+                confirm_project_instruction_dispatch=confirm_project_dispatch,
+                on_project_instruction_activation=project_activation_callback,
                 # Advertised must equal usable (the #847 lesson, restated in
                 # the run_skill_script docstring below): only pass the
                 # confirm callback -- and therefore only let the bridge

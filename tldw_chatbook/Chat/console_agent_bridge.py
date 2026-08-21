@@ -14,6 +14,7 @@ import asyncio
 import contextlib
 import functools
 import os
+import re
 import threading
 import time
 from collections import deque
@@ -34,8 +35,8 @@ from loguru import logger
 from tldw_chatbook.Agents.agent_models import (
     AGENT_KIND_PRIMARY,
     AGENT_KIND_SUBAGENT,
-    DIRECT_DISCLOSE_THRESHOLD,
     FIND_TOOLS_NAME,
+    FENCE_TOOL_RESULT_PREFIX,
     LOAD_TOOLS_NAME,
     MAX_STEERING_CHARS,
     RunBudget,
@@ -56,7 +57,25 @@ from tldw_chatbook.Agents.agent_models import (
     ToolSchema,
 )
 from tldw_chatbook.Agents import agent_service as agent_service_module
-from tldw_chatbook.Agents.agent_service import SUBAGENT_SYSTEM_PROMPT, AgentService
+from tldw_chatbook.Agents.agent_service import (
+    SUBAGENT_SYSTEM_PROMPT,
+    AgentService,
+    FirstRequestSchemaPlan,
+    RunLogRequestPlan,
+    _count_model_messages,
+    build_first_request_schema_plan,
+    build_run_log_request_plan,
+)
+from tldw_chatbook.Agents.project_instruction_resolver import (
+    InstructionSnapshot,
+    StartupInstructionCandidate,
+)
+from tldw_chatbook.Agents.project_instruction_runtime import (
+    InstructionActivationLedger,
+    InstructionDeliveryReceipt,
+    InstructionPreparation,
+)
+from tldw_chatbook.Agents.native_tools import provider_supports_native_tools
 from tldw_chatbook.Agents.agent_stream import StreamGate
 from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator, FleetHandle
 from tldw_chatbook.Agents.tool_catalog import (
@@ -69,6 +88,7 @@ from tldw_chatbook.Tools.workspace_file_roots import workspace_context_note
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
+    ProjectInstructionActivationEvent,
 )
 from tldw_chatbook.Chat.console_display_state import (
     format_diff_feedback_disclosure,
@@ -79,6 +99,7 @@ from tldw_chatbook.Chat.console_prepared_request import (
     CONTINUATION_OWNER_KEY,
     build_console_request,
 )
+from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderCallSignals,
     ConsoleProviderGateway,
@@ -86,18 +107,27 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ProviderToolCalls,
     ProviderTurnMetadata,
 )
+from tldw_chatbook.Chat.console_history_budget import DEFAULT_RESPONSE_RESERVATION
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationOwnerGroup,
     ContinuationRestoreTarget,
     ProviderContinuationCheckpoint,
 )
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
+from tldw_chatbook.config import (
+    DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+    MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+    MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+    coerce_int_setting,
+    get_cli_setting,
+)
 from tldw_chatbook.Chat.console_skill_resolver import SKILL_UNTRUSTED_REFUSE
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
 from tldw_chatbook.Internal_Prompts.catalog import CATALOG
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
+from tldw_chatbook.Utils.token_counter import get_model_token_limit
 
 # Catalog-default re-export: keeps existing imports/tests valid and pins
 # the "shipped default" text. compose_agent_system_prompt below resolves
@@ -1579,6 +1609,192 @@ class _StreamingProviderResponse(dict[str, Any]):
         return self._provider_continuation
 
 
+def _serialize_project_instruction_rows_for_transport(
+    messages: Sequence[Mapping[str, Any]], *, native_tools: bool
+) -> list[dict[str, Any]]:
+    """Copy canonical rows into native or fenced project-context grammar."""
+    rows = [dict(message) for message in messages]
+    if native_tools:
+        return rows
+    result: list[dict[str, Any]] = []
+    index = 0
+    while index < len(rows):
+        row = rows[index]
+        if row.get(EPHEMERAL_ORIGIN_KEY) != "project_instructions":
+            result.append(row)
+            index += 1
+            continue
+        context_parts: list[str] = []
+        while (
+            index < len(rows)
+            and rows[index].get(EPHEMERAL_ORIGIN_KEY) == "project_instructions"
+        ):
+            context_parts.append(str(rows[index].get("content") or ""))
+            index += 1
+        tool_results: list[str] = []
+        while result:
+            prior = result[-1]
+            content = str(prior.get("content") or "")
+            if prior.get("role") == "tool":
+                name = str(prior.get("name") or "tool")
+                tool_results.append(f"{FENCE_TOOL_RESULT_PREFIX}{name}: {content}")
+                result.pop()
+                continue
+            if prior.get("role") == "user" and content.startswith(
+                FENCE_TOOL_RESULT_PREFIX
+            ):
+                tool_results.append(content)
+                result.pop()
+                continue
+            break
+        if not tool_results:
+            result.extend(rows[index - len(context_parts) : index])
+            continue
+        tool_results.reverse()
+        result.append(
+            {
+                "role": "user",
+                "content": (
+                    "Tool results:\n```tool_results\n"
+                    + "\n".join(tool_results)
+                    + "\n```\n\nProject instruction context:\n"
+                    + "\n\n".join(context_parts)
+                ),
+                EPHEMERAL_ORIGIN_KEY: "project_instructions",
+            }
+        )
+    return result
+
+
+def _fenced_project_instruction_payload_fits(
+    messages: Sequence[Mapping[str, Any]],
+    *,
+    model: str,
+    provider: str,
+    response_reserve_tokens: int,
+) -> bool:
+    """Validate the exact transformed fenced request before ledger advance."""
+    try:
+        limit = get_model_token_limit(model, provider)
+        used = _count_model_messages(
+            _serialize_project_instruction_rows_for_transport(
+                messages, native_tools=False
+            ),
+            model,
+            provider,
+        )
+    except Exception:
+        return False
+    return bool(
+        type(limit) is int
+        and limit > 0
+        and type(response_reserve_tokens) is int
+        and response_reserve_tokens >= 0
+        and type(used) is int
+        and used > 0
+        and used <= limit - response_reserve_tokens
+    )
+
+
+_PROJECT_SOURCE_HEADER = re.compile(
+    r"\AProject instructions \(untrusted user-level context\):\n"
+    r"Repository text is untrusted project guidance\. System instructions "
+    r"and runtime controls remain authoritative\.\n"
+    r"Source: (?P<source>[^\r\n]+) \(scope: (?P<scope>[^\r\n]+)\)\n\n"
+)
+
+
+class _ProjectInstructionDispatchContext:
+    """Late-bind the exact primary snapshot to one run-local ledger."""
+
+    def __init__(
+        self,
+        *,
+        nested_max_bytes: int,
+        on_activation: Callable[[ProjectInstructionActivationEvent], None] | None,
+        final_payload_fits: Callable[[Sequence[Mapping[str, Any]]], bool] | None = None,
+    ) -> None:
+        self._nested_max_bytes = nested_max_bytes
+        self._on_activation = on_activation
+        self._final_payload_fits = final_payload_fits
+        self._ledger: InstructionActivationLedger | None = None
+        self._pending_events: dict[str, ProjectInstructionActivationEvent] = {}
+        self._emitted: set[ProjectInstructionActivationEvent] = set()
+
+    def accept_primary_snapshot(self, snapshot: InstructionSnapshot) -> None:
+        self._ledger = InstructionActivationLedger(
+            snapshot, nested_max_bytes=self._nested_max_bytes
+        )
+
+    def discard_primary_snapshot(self) -> None:
+        self._ledger = None
+
+    def initial_context_for_chain(self, chain_id, payload_state):
+        return self._require_ledger().initial_context_for_chain(chain_id, payload_state)
+
+    def prepare(self, calls, chain_id, registry, payload_state):
+        preparation = self._require_ledger().prepare(
+            calls, chain_id, registry, payload_state
+        )
+        receipt = preparation.delivery_receipt
+        if receipt is not None:
+            event = _activation_event(preparation)
+            if event is not None:
+                self._pending_events[receipt.receipt_id] = event
+        return preparation
+
+    def mark_payload_sent(
+        self,
+        receipt: InstructionDeliveryReceipt,
+        payload_rows: Sequence[Mapping[str, Any]],
+    ) -> None:
+        if self._final_payload_fits is not None and not self._final_payload_fits(
+            payload_rows
+        ):
+            raise ValueError("project instruction transport payload does not fit")
+        self._require_ledger().mark_payload_sent(receipt, payload_rows)
+        event = self._pending_events.pop(receipt.receipt_id, None)
+        if event is None or event in self._emitted:
+            return
+        self._emitted.add(event)
+        if self._on_activation is not None:
+            try:
+                self._on_activation(event)
+            except Exception:  # noqa: BLE001 - content-free best-effort UI event
+                logger.warning("project_instruction_activation_callback_failed")
+
+    def _require_ledger(self) -> InstructionActivationLedger:
+        if self._ledger is None:
+            raise RuntimeError("project instruction context is not initialized")
+        return self._ledger
+
+
+def _activation_event(
+    preparation: InstructionPreparation,
+) -> ProjectInstructionActivationEvent | None:
+    sources: list[str] = []
+    scopes: list[str] = []
+    for row in preparation.ephemeral_rows:
+        match = _PROJECT_SOURCE_HEADER.match(str(row.get("content") or ""))
+        if match is None:
+            continue
+        sources.append(match.group("source"))
+        scopes.append(match.group("scope"))
+    receipt = preparation.delivery_receipt
+    outcome_codes = (
+        tuple(key.split("\x1f", 1)[0] for key in receipt.outcome_keys)
+        if receipt is not None
+        else ()
+    )
+    if not sources and not outcome_codes:
+        return None
+    return ProjectInstructionActivationEvent(
+        relative_sources=tuple(sources),
+        scopes=tuple(scopes),
+        outcome_codes=outcome_codes,
+    )
+
+
 class _StreamingModelAdapter:
     """chat_call-compatible adapter that streams every PRIMARY turn live.
 
@@ -1649,6 +1865,7 @@ class _StreamingModelAdapter:
         assistant_message_id,
         should_cancel,
         loop,
+        native_tools: bool,
         provider_stream_signals: ConsoleProviderStreamSignals | None = None,
         continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
         continuation_target: ContinuationRestoreTarget | None = None,
@@ -1660,6 +1877,7 @@ class _StreamingModelAdapter:
         self._assistant_message_id = assistant_message_id
         self._should_cancel = should_cancel
         self._loop = loop
+        self._native_tools = native_tools
         self._provider_stream_signals = provider_stream_signals
         self._continuation_sidecar = tuple(continuation_sidecar)
         self._continuation_target = continuation_target
@@ -1773,7 +1991,10 @@ class _StreamingModelAdapter:
         continuation_groups: tuple[ContinuationOwnerGroup, ...] = (),
         **_ignored,
     ) -> dict:
-        is_subagent = self._is_subagent(messages_payload)
+        transport_messages = _serialize_project_instruction_rows_for_transport(
+            messages_payload, native_tools=self._native_tools
+        )
+        is_subagent = self._is_subagent(transport_messages)
         gate = StreamGate()
         any_streamed = False
         native_calls: list[dict] = []
@@ -1801,7 +2022,7 @@ class _StreamingModelAdapter:
             # is always None. The real gateway and any fake built against
             # this task's own `tools=None` contract see identical behavior
             # either way, since the callee-side default is also None.
-            dispatch_messages = messages_payload
+            dispatch_messages = transport_messages
             stream_kwargs = {"tools": tools} if tools is not None else {}
             prepare_request = getattr(self._gateway, "prepare_chat_request", None)
             if continuation_groups and callable(prepare_request):
@@ -1812,7 +2033,7 @@ class _StreamingModelAdapter:
                     raise ValueError("Provider continuation request is not pinned.")
                 owner_ids = {group.owner_message_id for group in continuation_groups}
                 semantic_messages: list[dict[str, Any]] = []
-                for message in messages_payload:
+                for message in transport_messages:
                     row = dict(message)
                     owner_id = row.pop(self._continuation_owner_key, None)
                     if type(owner_id) is str and owner_id in owner_ids:
@@ -1831,7 +2052,7 @@ class _StreamingModelAdapter:
             elif self._continuation_sidecar and callable(prepare_request):
                 dispatch_messages = prepare_request(
                     self._resolution,
-                    messages_payload,
+                    transport_messages,
                     tools=tools,
                     continuation_target=self._continuation_target,
                     continuation_sidecar=self._continuation_sidecar,
@@ -2423,6 +2644,142 @@ def _compose_run_registry_and_allowed(
     return registry, allowed_tools, builtin_names, local_names
 
 
+@dataclass(frozen=True, slots=True)
+class ConsoleFirstRequestPlan:
+    """Pure, disposable inputs for the Console agent's first model request."""
+
+    registry: ToolCatalogRegistry
+    allowed_tools: tuple[str, ...]
+    builtin_names: tuple[str, ...]
+    local_names: tuple[str, ...]
+    skill_names: frozenset[str]
+    config: AgentConfig
+    schemas: FirstRequestSchemaPlan
+    run_log: RunLogRequestPlan
+    messages: list[dict]
+    api_endpoint: str
+
+
+def build_console_first_request_plan(
+    *,
+    shared_registry: ToolCatalogRegistry,
+    shared_allowed_tools: tuple[str, ...],
+    context: Mapping[str, Any],
+    skills_present: bool,
+    mcp_provider: Any | None,
+    builtin_gate: Any | None,
+    local_provider: Any | None,
+    library_provider: Any | None,
+    workspace_id: str | None,
+    ephemeral: bool,
+    diff_sink: Callable[[tuple[str, str, str, str]], None] | None,
+    resolution: Any,
+    fallback_model: str,
+    session_system_prompt: str,
+    native_tools: bool,
+    turn_skill_bindings: tuple[str, ...],
+    turn_bundle_block: str,
+    install_skill_enabled: bool,
+    run_skill_script_enabled: bool,
+    agent_messages: list[dict],
+) -> ConsoleFirstRequestPlan:
+    """Build live/preview-identical first-request inputs without live effects."""
+    fresh = bool(
+        skills_present
+        or mcp_provider is not None
+        or builtin_gate is not None
+        or local_provider is not None
+        or library_provider is not None
+    )
+    if fresh:
+        registry, allowed_tools, builtin_names, local_names = (
+            _compose_run_registry_and_allowed(
+                context,
+                mcp_provider=mcp_provider,
+                builtin_gate=builtin_gate,
+                workspace_id=workspace_id,
+                ephemeral=ephemeral,
+                diff_sink=diff_sink,
+                local_provider=local_provider,
+                library_provider=library_provider,
+            )
+        )
+    else:
+        registry = shared_registry
+        allowed_tools = shared_allowed_tools
+        builtin_names = tuple(
+            entry.name for entry in registry.list_catalog() if entry.source == "builtin"
+        )
+        local_names = ()
+    skill_names = (
+        frozenset(
+            str(item["name"])
+            for item in _non_colliding_skill_entries(
+                context, builtin_names, local_names=local_names
+            )
+        )
+        if skills_present and not ephemeral
+        else frozenset()
+    )
+    resolved_model = str(getattr(resolution, "model", "") or fallback_model)
+    api_endpoint = str(
+        getattr(resolution, "execution_key", "")
+        or getattr(resolution, "provider", "")
+        or "agent"
+    )
+    run_log = build_run_log_request_plan()
+    schemas = build_first_request_schema_plan(
+        registry,
+        allowed_tools,
+        CONSOLE_RUN_BUDGET,
+        skill_file_enabled=bool(skills_present and turn_skill_bindings),
+        install_skill_enabled=install_skill_enabled,
+        run_skill_script_enabled=run_skill_script_enabled,
+        run_log_active=run_log.requested,
+    )
+    config = AgentConfig(
+        model=resolved_model,
+        system_prompt=compose_agent_system_prompt(
+            session_system_prompt,
+            offer_find_load=schemas.offer_find_load,
+        ),
+        allowed_tools=allowed_tools,
+        budget=console_run_budget(),
+        native_tools=native_tools,
+        workspace_context_note=workspace_context_note(workspace_id),
+        response_reserve_tokens=(
+            getattr(resolution, "max_tokens", None)
+            or DEFAULT_RESPONSE_RESERVATION
+        ),
+    )
+    messages = agent_messages
+    if turn_bundle_block:
+        messages = [dict(message) for message in agent_messages]
+        for index in range(len(messages) - 1, -1, -1):
+            message = messages[index]
+            content = message.get("content")
+            if message.get("role") == ConsoleMessageRole.USER.value and isinstance(
+                content, str
+            ):
+                messages[index] = {
+                    **message,
+                    "content": f"{content}\n\n{turn_bundle_block}",
+                }
+                break
+    return ConsoleFirstRequestPlan(
+        registry=registry,
+        allowed_tools=allowed_tools,
+        builtin_names=builtin_names,
+        local_names=local_names,
+        skill_names=skill_names,
+        config=config,
+        schemas=schemas,
+        run_log=run_log,
+        messages=messages,
+        api_endpoint=api_endpoint,
+    )
+
+
 class _BridgeSkillRunner:
     """``SkillRunner``: renders a skill, then routes it through THIS run's spawn.
 
@@ -2757,6 +3114,108 @@ class ConsoleAgentBridge:
             )
         return schemas
 
+    def build_project_instruction_preview_request(
+        self,
+        *,
+        candidate: StartupInstructionCandidate,
+        session_id: str,
+        resolution: Any,
+        fallback_model: str,
+        session_system_prompt: str,
+        agent_messages: list[dict],
+        mcp_provider: Any | None = None,
+        builtin_gate: Any | None = None,
+        local_provider: Any | None = None,
+        turn_skill_bindings: tuple[str, ...] = (),
+        turn_bundle_block: str = "",
+        request_skill_install_enabled: bool = False,
+        request_skill_script_enabled: bool = False,
+    ) -> tuple[dict[str, Any], InstructionSnapshot] | None:
+        """Build a disposable exact first request without a run or consent."""
+        context: Mapping[str, Any] = {}
+        if self._skills_service is not None:
+            context = asyncio.run(self._skills_service.get_context(mode="local"))
+        workspace_id = None
+        ephemeral = False
+        if self._store is not None:
+            try:
+                workspace_id = self._store.session_workspace_id(session_id)
+            except KeyError:
+                pass
+            try:
+                ephemeral = self._store.session_is_ephemeral(session_id)
+            except KeyError:
+                pass
+        native_tools = (
+            True
+            if self._native_tools_enabled is None
+            else bool(self._native_tools_enabled())
+        )
+        script_tool_enabled = False
+        if self._skills_service is not None and request_skill_script_enabled:
+            from tldw_chatbook.Skills_Interop.skill_script_runner import (
+                sandbox_supported,
+            )
+
+            script_tool_enabled = sandbox_supported()
+        plan = build_console_first_request_plan(
+            shared_registry=self._registry,
+            shared_allowed_tools=self._allowed_tools,
+            context=context,
+            skills_present=self._skills_service is not None,
+            mcp_provider=mcp_provider,
+            builtin_gate=builtin_gate,
+            local_provider=local_provider,
+            library_provider=None,
+            workspace_id=workspace_id,
+            ephemeral=ephemeral,
+            diff_sink=None,
+            resolution=resolution,
+            fallback_model=fallback_model,
+            session_system_prompt=session_system_prompt,
+            native_tools=native_tools,
+            turn_skill_bindings=turn_skill_bindings,
+            turn_bundle_block=turn_bundle_block,
+            install_skill_enabled=bool(
+                self._skills_service is not None
+                and request_skill_install_enabled
+            ),
+            run_skill_script_enabled=script_tool_enabled,
+            agent_messages=agent_messages,
+        )
+        if plan.run_log.requested:
+            # A disposable preview cannot bind a real run-log writer, so it
+            # cannot know whether live first-request history/log tools are
+            # admissible. The controller turns this content-free sentinel
+            # into an explicit unavailable preview rather than guessing.
+            return None
+
+        def no_provider_call(**_kwargs):
+            raise RuntimeError("preview must not call the provider")
+
+        service = AgentService(
+            self._db,
+            plan.registry,
+            chat_call=no_provider_call,
+            run_log_request_plan=plan.run_log,
+        )
+        request, snapshot = service.build_project_instruction_request(
+            candidate=candidate,
+            config=plan.config,
+            api_endpoint=plan.api_endpoint,
+            runtime_schemas=list(plan.schemas.runtime_schemas),
+            messages=list(plan.messages),
+            active_schemas=plan.schemas.active_schemas,
+            log_active=False,
+        )
+        payload: dict[str, Any] = {
+            "model": plan.config.model,
+            "messages": [dict(message) for message in request.messages],
+        }
+        if request.tools:
+            payload["tools"] = [dict(tool) for tool in request.tools]
+        return payload, snapshot
+
     # -- run ------------------------------------------------------------
 
     def run_reply(
@@ -2803,6 +3262,15 @@ class ConsoleAgentBridge:
         continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
         continuation_target: ContinuationRestoreTarget | None = None,
         continuation_owner_key: str | None = None,
+        startup_instruction_candidate: StartupInstructionCandidate | None = None,
+        confirm_project_instruction_dispatch: Callable[
+            [InstructionSnapshot], str
+        ]
+        | None = None,
+        on_project_instruction_activation: Callable[
+            [ProjectInstructionActivationEvent], None
+        ]
+        | None = None,
     ) -> tuple[str, RunOutcome]:
         protocol = getattr(resolution, "continuation_protocol", None)
         if continuation_target is None and isinstance(protocol, str) and protocol:
@@ -2848,21 +3316,6 @@ class ConsoleAgentBridge:
         # no-local-tools, no-gate path stays
         # byte-identical to before this task (existing callers that never
         # pass `builtin_gate` see no behavior change at all).
-        registry = self._registry
-        allowed_tools = self._allowed_tools
-        # Resolve the RUNNING session's workspace once, up front. It feeds both
-        # the tool registry composition (fresh-build branch below) AND the
-        # workspace-context note appended to the agent's system prompt -- so
-        # the note is present even on the fast path that never enters that
-        # branch. Fail-safe: `self._store` is None in construction-only tests
-        # and `session_id` could name a closed session; either degrades to
-        # None (no note), never raising -- matching allowed_file_roots' posture.
-        run_workspace_id: str | None = None
-        if self._store is not None:
-            try:
-                run_workspace_id = self._store.session_workspace_id(session_id)
-            except KeyError:
-                run_workspace_id = None
         skill_runner = None
         # TASK-1366: this run's UI-side diff channel. When this run takes
         # the fresh-build branch below, the provider's strip seam
@@ -2897,76 +3350,126 @@ class ConsoleAgentBridge:
         # service read, matching _BridgeSkillRunner.run's own
         # asyncio.run-in-worker-thread pattern just below.
         skill_file_bindings = None
-        if (
+        context: Mapping[str, Any] = {}
+        if self._skills_service is not None:
+            context = asyncio.run(self._skills_service.get_context(mode="local"))
+        run_workspace_id: str | None = None
+        run_is_ephemeral = False
+        if self._store is not None:
+            try:
+                run_workspace_id = self._store.session_workspace_id(session_id)
+            except KeyError:
+                pass
+            try:
+                run_is_ephemeral = self._store.session_is_ephemeral(session_id)
+            except KeyError:
+                pass
+        from tldw_chatbook.Skills_Interop.skill_script_runner import (
+            sandbox_supported,
+        )
+
+        script_tool_enabled = bool(
             self._skills_service is not None
-            or mcp_provider is not None
-            or builtin_gate is not None
-            or local_provider is not None
-            or library_provider is not None
-        ):
-            context: Mapping[str, Any] = {}
-            if self._skills_service is not None:
-                context = asyncio.run(self._skills_service.get_context(mode="local"))
-            # `run_workspace_id` is resolved up front (see run_reply's opening
-            # lines); reused here so the tool registry and the workspace note
-            # agree on one value. `run_is_ephemeral` follows the same fail-safe
-            # pattern: an unresolvable session degrades to `False` (not
-            # temporary) rather than raising -- consistent with every other
-            # lookup on this path, and the worst case is a normal run behaving
-            # normally, not a run crashing.
-            run_is_ephemeral = False
-            if self._store is not None:
-                try:
-                    run_is_ephemeral = self._store.session_is_ephemeral(session_id)
-                except KeyError:
-                    run_is_ephemeral = False
-            # TASK-1366: wire this run's diff channel (declared above) into
-            # the freshly-built provider.
-            registry, allowed_tools, builtin_names, local_names = (
-                _compose_run_registry_and_allowed(
-                    context,
-                    mcp_provider=mcp_provider,
-                    builtin_gate=builtin_gate,
-                    workspace_id=run_workspace_id,
-                    ephemeral=run_is_ephemeral,
-                    diff_sink=pending_diffs.append,
-                    local_provider=local_provider,
-                    library_provider=library_provider,
-                )
+            and request_skill_script_confirm is not None
+            and sandbox_supported()
+        )
+        native_tools = (
+            bool(native_tools_enabled)
+            if native_tools_enabled is not None
+            else (
+                True
+                if self._native_tools_enabled is None
+                else bool(self._native_tools_enabled())
             )
-            # task-1337: keep the skill-runner's own name set in agreement
-            # with the registry built above -- a skill fronting a Library
-            # tool name is excluded at BOTH layers.
-            library_names: tuple[str, ...] = ()
-            if library_provider is not None:
-                library_names = tuple(
-                    entry.name for entry in library_provider.list_catalog()
-                )
-            if self._skills_service is not None:
-                skill_names = frozenset(
-                    str(item["name"])
-                    for item in _non_colliding_skill_entries(
-                        context,
-                        builtin_names,
-                        local_names=local_names,
-                        library_names=library_names,
-                    )
-                )
-                skill_file_bindings = SkillFileBindings(
-                    authorized=set(),
-                    reader=lambda skill_name, path: asyncio.run(
-                        self._skills_service.read_skill_file(
-                            skill_name, path, mode="local"
-                        )
+        )
+        first_request_plan = build_console_first_request_plan(
+            shared_registry=self._registry,
+            shared_allowed_tools=self._allowed_tools,
+            context=context,
+            skills_present=self._skills_service is not None,
+            mcp_provider=mcp_provider,
+            builtin_gate=builtin_gate,
+            local_provider=local_provider,
+            library_provider=library_provider,
+            workspace_id=run_workspace_id,
+            ephemeral=run_is_ephemeral,
+            diff_sink=pending_diffs.append,
+            resolution=resolution,
+            fallback_model=model,
+            session_system_prompt=session_system_prompt,
+            native_tools=native_tools,
+            turn_skill_bindings=turn_skill_bindings,
+            turn_bundle_block=turn_bundle_block,
+            install_skill_enabled=bool(
+                self._skills_service is not None
+                and request_skill_install_confirm is not None
+            ),
+            run_skill_script_enabled=script_tool_enabled,
+            agent_messages=agent_messages,
+        )
+        registry = first_request_plan.registry
+        allowed_tools = first_request_plan.allowed_tools
+        config = first_request_plan.config
+        project_instruction_context = None
+        service_confirm_project_instruction_dispatch = (
+            confirm_project_instruction_dispatch
+        )
+        if startup_instruction_candidate is not None:
+            project_instruction_context = _ProjectInstructionDispatchContext(
+                nested_max_bytes=coerce_int_setting(
+                    get_cli_setting(
+                        "console",
+                        "project_instructions_nested_max_bytes",
+                        DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
                     ),
-                )
-                skill_runner = _BridgeSkillRunner(
-                    skills_service=self._skills_service,
-                    skill_names=skill_names,
-                    builtin_names=builtin_names,
-                    local_names=local_names,
-                    skill_file_bindings=skill_file_bindings,
-                )
+                    DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    minimum=MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    maximum=MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                ),
+                on_activation=on_project_instruction_activation,
+                final_payload_fits=(
+                    None
+                    if config.native_tools
+                    and provider_supports_native_tools(first_request_plan.api_endpoint)
+                    else lambda rows: _fenced_project_instruction_payload_fits(
+                        rows,
+                        model=config.model,
+                        provider=first_request_plan.api_endpoint,
+                        response_reserve_tokens=config.response_reserve_tokens,
+                    )
+                ),
+            )
+            original_confirm = confirm_project_instruction_dispatch
+
+            def service_confirm_project_instruction_dispatch(snapshot):
+                project_instruction_context.accept_primary_snapshot(snapshot)
+                decision = "cancel"
+                try:
+                    decision = (
+                        original_confirm(snapshot)
+                        if original_confirm is not None
+                        else "cancel"
+                    )
+                    return decision
+                finally:
+                    if decision != "proceed":
+                        project_instruction_context.discard_primary_snapshot()
+        if self._skills_service is not None:
+            skill_file_bindings = SkillFileBindings(
+                authorized=set(),
+                reader=lambda skill_name, path: asyncio.run(
+                    self._skills_service.read_skill_file(
+                        skill_name, path, mode="local"
+                    )
+                ),
+            )
+            skill_runner = _BridgeSkillRunner(
+                skills_service=self._skills_service,
+                skill_names=first_request_plan.skill_names,
+                builtin_names=first_request_plan.builtin_names,
+                local_names=first_request_plan.local_names,
+                skill_file_bindings=skill_file_bindings,
+            )
         # task-5 (skills-fork-reachability): seed this run's own bindings
         # with the names the CONTROLLER already resolved/spliced for the
         # triggering turn (a leading `$skill` mention, or embedded mentions
@@ -3057,16 +3560,8 @@ class ConsoleAgentBridge:
         # OUTSIDE any asyncio.run) -> run -> broad-catch wrap.
         # run_skill_script re-verifies policy/trust/path authoritatively, so
         # a stale plan can never widen what actually executes.
-        from tldw_chatbook.Skills_Interop.skill_script_runner import (
-            sandbox_supported,
-        )
-
         run_skill_script_tool = None
-        if (
-            self._skills_service is not None
-            and request_skill_script_confirm is not None
-            and sandbox_supported()
-        ):
+        if script_tool_enabled:
             scope = self._skills_service
             trust_service = getattr(
                 getattr(scope, "local_service", None), "trust_service", None
@@ -3172,48 +3667,6 @@ class ConsoleAgentBridge:
                     lines.append(f"output directory: {outcome.output_dir}")
                 return ToolResult(ok=True, content="\n".join(lines))
 
-        # [console] native_tool_calls kill-switch (Task 5): a caller-supplied
-        # predicate (chat_screen.py's _console_native_tool_calls_enabled)
-        # gates whether this run may use native provider tool-calls at all;
-        # no predicate (fakes/tests that never pass one) defaults to
-        # always-on, matching the pre-kill-switch behavior.
-        native_tools = (
-            bool(native_tools_enabled)
-            if native_tools_enabled is not None
-            else (
-                True
-                if self._native_tools_enabled is None
-                else bool(self._native_tools_enabled())
-            )
-        )
-        config = AgentConfig(
-            model=model,
-            system_prompt=compose_agent_system_prompt(
-                session_system_prompt,
-                # Same condition initial_disclosure applies inside
-                # AgentService.run_turn: past the threshold, find/load is
-                # the live disclosure mode and the hint points at it.
-                offer_find_load=(
-                    len(registry.list_catalog()) > DIRECT_DISCLOSE_THRESHOLD
-                ),
-            ),
-            allowed_tools=allowed_tools,
-            # Resolved per run, not module-level: a Settings change to any
-            # of the five [console] agent_max_* keys must apply to the very
-            # next message without an app restart (TASK-18600).
-            budget=console_run_budget(),
-            native_tools=native_tools,
-            # Non-default workspace: tell the agent (and, via config
-            # propagation, its sub-agents) which workspace it is in and that
-            # the launch directory differs. Empty for the default workspace.
-            # The note describes the session's own workspace roots, which the
-            # file tools honor on the production path (console_chat_controller
-            # always passes builtin_gate -> the fresh-build branch binds
-            # run_workspace(run_workspace_id)). On the no-gate fast path the
-            # shared provider falls back to the active workspace, so note and
-            # enforced roots can diverge there -- test/embedding only.
-            workspace_context_note=workspace_context_note(run_workspace_id),
-        )
         # One event loop for the whole run (PR #629 Fix 1(c)): every turn
         # this run makes -- primary tool-call turns, any sub-agent turns,
         # and the final-answer turn -- bridges through this same loop via
@@ -3252,6 +3705,10 @@ class ConsoleAgentBridge:
             assistant_message_id=assistant_message_id,
             should_cancel=should_cancel,
             loop=turn_lifeline.loop,
+            native_tools=(
+                config.native_tools
+                and provider_supports_native_tools(first_request_plan.api_endpoint)
+            ),
             provider_stream_signals=provider_stream_signals,
             continuation_sidecar=continuation_sidecar,
             continuation_target=continuation_target,
@@ -3500,6 +3957,7 @@ class ConsoleAgentBridge:
             review_state_scope=review_state_scope,
             install_skill_tool=install_skill_tool,
             run_skill_script_tool=run_skill_script_tool,
+            run_log_request_plan=first_request_plan.run_log,
             revoke_approvals=revoke_approvals,
             persist_provider_continuation=(
                 self._store.persist_provider_continuation_event
@@ -3543,6 +4001,22 @@ class ConsoleAgentBridge:
             # kill switch is on, which leaves `AgentService` to take its
             # own inline path exactly as before.
             fleet_coordinator=self._conversation_fleet_coordinator(conversation_id),
+            startup_instruction_candidate=startup_instruction_candidate,
+            confirm_project_instruction_dispatch=(
+                service_confirm_project_instruction_dispatch
+            ),
+            project_instruction_context=project_instruction_context,
+            on_ephemeral_runtime_warning=(
+                (
+                    lambda code, _names, _count: on_project_instruction_activation(
+                        ProjectInstructionActivationEvent(
+                            outcome_codes=(code,),
+                        )
+                    )
+                )
+                if on_project_instruction_activation is not None
+                else None
+            ),
         )
         # PR2b Task 1: publish BEFORE `run_turn` is called (below) -- see
         # `self._fleet_services`'s own docstring in `__init__` for the
@@ -3560,20 +4034,7 @@ class ConsoleAgentBridge:
             if supersede_previous
             else None
         )
-        # task-5 (skills-fork-reachability): append the turn's pre-rendered
-        # "Bundled files" block (built controller-side as pure string work
-        # over `execute_skill` results already in hand -- Task 4's
-        # byte-identical row format) to the LAST role=="user" entry of THIS
-        # run's OWN copy of `agent_messages` -- the caller's list and
-        # message dict are never mutated. This is the only place the block
-        # is ever inserted into a payload: substitution built it but never
-        # wrote it into messages, and plain (non-agent) sends never call
-        # run_reply at all, so they drop it unused. No-op (the original
-        # `agent_messages` list is used unchanged) when there is no block
-        # to append or no user message to append it to.
-        run_messages, _ = _append_to_last_user_message(
-            agent_messages, turn_bundle_block
-        )
+        run_messages = list(first_request_plan.messages)
         # task-5 (turn-file-annotate, spec §4): auto-attach this
         # conversation's pending diff-feedback notes to the SAME outbound
         # copy, immediately after the bundle block above and by the same
@@ -3659,11 +4120,7 @@ class ConsoleAgentBridge:
                 # "agent" remain fallbacks for fakes lacking either
                 # attribute (e.g. resolution=object() in existing tests),
                 # which keeps them on the fence path unchanged.
-                api_endpoint=str(
-                    getattr(resolution, "execution_key", "")
-                    or getattr(resolution, "provider", "")
-                    or "agent"
-                ),
+                api_endpoint=first_request_plan.api_endpoint,
                 should_cancel=should_cancel,
                 supersede_run_id=supersede_run_id,
                 continuation_owner_message_id=assistant_message_id,

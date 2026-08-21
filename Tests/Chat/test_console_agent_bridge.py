@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import copy
 import json
+import os
 import threading
 import time
 from dataclasses import replace
@@ -12,7 +13,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 from loguru import logger
 
+import tldw_chatbook.Agents.agent_service as agent_service_module
 from tldw_chatbook.Chat import console_agent_bridge
+import tldw_chatbook.Chat.console_agent_bridge as bridge_module
 from tldw_chatbook.Chat.console_agent_bridge import (
     CONSOLE_AGENT_OPERATING_PROMPT,
     FIND_LOAD_DISCOVERY_HINT,
@@ -80,6 +83,9 @@ from tldw_chatbook.Agents.tool_catalog import (
     SkillToolProvider,
     ToolCatalogRegistry,
 )
+from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider, _default_specs
+from tldw_chatbook.Agents.project_instruction_resolver import ProjectInstructionResolver
+from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 
 from Tests.Agents.test_agent_service import SUBAGENT_PROMPT_PREFIX
@@ -167,9 +173,11 @@ class _ChunkGateway:
         )  # each entry: list of str and/or ProviderToolCalls
         self.calls = 0
         self.tools_seen = []
+        self.messages_seen = []
 
     async def stream_chat(self, resolution, messages, tools=None, **kwargs):
         self.tools_seen.append(tools)
+        self.messages_seen.append([dict(message) for message in messages])
         chunks = self._scripts[self.calls]
         self.calls += 1
         for chunk in chunks:
@@ -244,6 +252,85 @@ def _join_fleet_threads(timeout=5.0):
             thread.join(timeout)
 
 
+@pytest.mark.parametrize(
+    ("case", "agent_messages", "supersede"),
+    [
+        ("text", [{"role": "user", "content": "text"}], False),
+        (
+            "multimodal",
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "look"},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": "data:image/png;base64,AA=="},
+                        },
+                    ],
+                }
+            ],
+            False,
+        ),
+        ("retry", [{"role": "user", "content": "retry"}], True),
+        ("regenerate", [{"role": "user", "content": "regenerate"}], True),
+        ("continue", [{"role": "user", "content": "continue"}], True),
+    ],
+)
+def test_all_agent_dispatch_shapes_receive_one_startup_rider(
+    tmp_path, case, agent_messages, supersede
+):
+    from tldw_chatbook.Agents.project_instruction_resolver import (
+        InstructionSource,
+        StartupInstructionCandidate,
+    )
+    from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
+
+    gateway = _ChunkGateway([["done"]])
+    bridge, _db, store, session, assistant_id = _bridge_with_gateway(
+        tmp_path / case, gateway
+    )
+    source = InstructionSource(
+        canonical_path=tmp_path / "AGENTS.md",
+        relative_path="AGENTS.md",
+        scope=".",
+        kind="standard",
+        body="BRIDGE_STARTUP_SENTINEL",
+        byte_count=23,
+        digest="a" * 64,
+    )
+    candidate = StartupInstructionCandidate(
+        binding_id="b",
+        binding_root=tmp_path,
+        locator_fingerprint="f" * 64,
+        dispatch_started_wall_ns=1,
+        source=source,
+        outcomes=(),
+    )
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        assistant_id,
+        resolution=_native_resolution(),
+        agent_messages=agent_messages,
+        supersede_previous=supersede,
+        startup_instruction_candidate=candidate,
+        confirm_project_instruction_dispatch=lambda _snapshot: "proceed",
+    )
+    assert outcome.status == "done", outcome.steps
+    rows = [
+        row
+        for row in gateway.messages_seen[0]
+        if "BRIDGE_STARTUP_SENTINEL" in str(row.get("content", ""))
+    ]
+    assert len(rows) == 1
+    assert rows[0][EPHEMERAL_ORIGIN_KEY] == "project_instructions"
+    assert "BRIDGE_STARTUP_SENTINEL" not in str(
+        [message.content for message in store.messages_for_session(session.id)]
+    )
+
+
 class _SignalChunkGateway(_ChunkGateway):
     """Scripted gateway that records the out-of-band signal by identity."""
 
@@ -285,6 +372,13 @@ def _native_resolution():
     return _test_resolution(provider="Groq", execution_key="groq")
 
 
+class _FencedResolution:
+    provider = "Custom"
+    execution_key = "custom"
+    model = "test-model"
+    max_tokens = 10
+
+
 def _native_calls(name, args, call_id="c1"):
     return ProviderToolCalls(
         tool_calls=(
@@ -306,6 +400,7 @@ def _bridge(tmp_path, scripts, native_tools_enabled=None):
 
 
 def _bridge_with_gateway(tmp_path, gateway, native_tools_enabled=None):
+    tmp_path.mkdir(parents=True, exist_ok=True)
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
@@ -337,6 +432,390 @@ def _run(bridge, store, session, assistant_id, **over):
     # run_reply returns (run_id, outcome); these tests assert on the outcome.
     _run_id, outcome = bridge.run_reply(**kwargs)
     return outcome
+
+
+def test_nested_project_instructions_defer_whole_batch_before_review_and_execution(
+    tmp_path,
+):
+    root = tmp_path / "workspace"
+    nested = root / "pkg"
+    nested.mkdir(parents=True)
+    (root / "AGENTS.md").write_text("ROOT_GUIDANCE", encoding="utf-8")
+    (nested / "AGENTS.md").write_text("NESTED_GUIDANCE", encoding="utf-8")
+    (nested / "data.txt").write_text("payload", encoding="utf-8")
+    candidate = ProjectInstructionResolver().resolve_startup(
+        binding_id="binding-1",
+        binding_root=root,
+        locator_fingerprint="f" * 64,
+        max_bytes=32768,
+        dispatch_started_wall_ns=time.time_ns(),
+    )
+    first_calls = ProviderToolCalls(
+        tool_calls=(
+            {
+                "id": "read-1",
+                "type": "function",
+                "function": {
+                    "name": "fs_read",
+                    "arguments": json.dumps({"path": "pkg/data.txt"}),
+                },
+            },
+            {
+                "id": "list-1",
+                "type": "function",
+                "function": {
+                    "name": "fs_list",
+                    "arguments": json.dumps({"path": "pkg"}),
+                },
+            },
+        )
+    )
+    gateway = _ChunkGateway([[first_calls], [first_calls], ["done"]])
+    bridge, _db, store, session, assistant_id = _bridge_with_gateway(
+        tmp_path / "run", gateway
+    )
+    local = LocalToolProvider(
+        workspace_root=root,
+        specs=[
+            spec for spec in _default_specs(root) if spec.name in {"fs_read", "fs_list"}
+        ],
+        resolve_state=lambda _tool: EffectiveToolState(
+            state="allow", origin="global_default"
+        ),
+    )
+    reviews = []
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        assistant_id,
+        resolution=_native_resolution(),
+        local_provider=local,
+        startup_instruction_candidate=candidate,
+        confirm_project_instruction_dispatch=lambda _snapshot: "proceed",
+        review_tool_calls=lambda calls, _run_id: (
+            reviews.append(tuple(c.name for c in calls)) or {}
+        ),
+    )
+
+    assert outcome.status == "done", outcome.steps
+    assert reviews == [("fs_read", "fs_list")]
+    second = gateway.messages_seen[1]
+    assert [row["tool_call_id"] for row in second if row["role"] == "tool"] == [
+        "read-1",
+        "list-1",
+    ]
+    context_rows = [
+        row for row in second if "NESTED_GUIDANCE" in str(row.get("content", ""))
+    ]
+    assert len(context_rows) == 1
+    assert second.index(context_rows[0]) > max(
+        index for index, row in enumerate(second) if row["role"] == "tool"
+    )
+    assert all("NESTED_GUIDANCE" not in str(step.result) for step in outcome.steps)
+
+
+@pytest.mark.parametrize(
+    ("transformed_tokens", "expected_status", "expected_calls"),
+    [(90, "done", 3), (91, "error", 1)],
+)
+def test_fenced_nested_delivery_counts_exact_transformed_payload_before_mark(
+    tmp_path, monkeypatch, transformed_tokens, expected_status, expected_calls
+):
+    root = tmp_path / "workspace"
+    nested = root / "pkg"
+    nested.mkdir(parents=True)
+    (nested / "AGENTS.md").write_text("FENCED_NESTED_GUIDANCE", encoding="utf-8")
+    (nested / "data.txt").write_text("payload", encoding="utf-8")
+    candidate = ProjectInstructionResolver().resolve_startup(
+        binding_id="binding-1",
+        binding_root=root,
+        locator_fingerprint="f" * 64,
+        max_bytes=32768,
+        dispatch_started_wall_ns=time.time_ns(),
+    )
+    call = _fence("fs_read", {"path": "pkg/data.txt"})
+    gateway = _ChunkGateway([[call], [call], ["done"]])
+    bridge, _db, store, session, assistant_id = _bridge_with_gateway(
+        tmp_path / "run", gateway
+    )
+    local = LocalToolProvider(
+        workspace_root=root,
+        specs=[spec for spec in _default_specs(root) if spec.name == "fs_read"],
+        resolve_state=lambda _tool: EffectiveToolState(
+            state="allow", origin="global_default"
+        ),
+    )
+    events = []
+    monkeypatch.setattr(agent_service_module, "get_model_token_limit", lambda *_: 100)
+    monkeypatch.setattr(agent_service_module, "_count_model_messages", lambda *_: 10)
+    monkeypatch.setattr(
+        bridge_module, "get_model_token_limit", lambda *_: 100, raising=False
+    )
+    monkeypatch.setattr(
+        bridge_module,
+        "_count_model_messages",
+        lambda *_: transformed_tokens,
+        raising=False,
+    )
+    marks = []
+    real_mark = bridge_module.InstructionActivationLedger.mark_payload_sent
+
+    def track_mark(ledger, receipt, rows):
+        marks.append(receipt)
+        return real_mark(ledger, receipt, rows)
+
+    monkeypatch.setattr(
+        bridge_module.InstructionActivationLedger, "mark_payload_sent", track_mark
+    )
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        assistant_id,
+        resolution=_FencedResolution(),
+        local_provider=local,
+        startup_instruction_candidate=candidate,
+        confirm_project_instruction_dispatch=lambda _snapshot: "proceed",
+        on_project_instruction_activation=events.append,
+    )
+
+    assert outcome.status == expected_status
+    assert gateway.calls == expected_calls
+    if expected_status == "done":
+        delivered = gateway.messages_seen[1]
+        assert all(row["role"] != "tool" for row in delivered)
+        assert "Tool results:\n```tool_results\n" in delivered[-1]["content"]
+        assert "\n```\n\nProject instruction context:\n" in delivered[-1]["content"]
+        assert "FENCED_NESTED_GUIDANCE" in delivered[-1]["content"]
+        assert events
+        assert len(marks) == 1
+    else:
+        assert events == []
+        assert marks == []
+
+
+def test_opaque_tool_arguments_do_not_activate_nested_project_instructions(tmp_path):
+    root = tmp_path / "workspace"
+    nested = root / "pkg"
+    nested.mkdir(parents=True)
+    (root / "AGENTS.md").write_text("ROOT_GUIDANCE", encoding="utf-8")
+    (nested / "AGENTS.md").write_text("NESTED_GUIDANCE", encoding="utf-8")
+    candidate = ProjectInstructionResolver().resolve_startup(
+        binding_id="binding-1",
+        binding_root=root,
+        locator_fingerprint="f" * 64,
+        max_bytes=32768,
+        dispatch_started_wall_ns=time.time_ns(),
+    )
+    calculator = _native_calls(
+        "calculator", {"expression": "len('pkg/data.txt')"}, "calc-1"
+    )
+    gateway = _ChunkGateway([[calculator], ["done"]])
+    bridge, _db, store, session, assistant_id = _bridge_with_gateway(
+        tmp_path / "run", gateway
+    )
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        assistant_id,
+        resolution=_native_resolution(),
+        startup_instruction_candidate=candidate,
+        confirm_project_instruction_dispatch=lambda _snapshot: "proceed",
+    )
+
+    assert outcome.status == "done", outcome.steps
+    assert all("NESTED_GUIDANCE" not in repr(rows) for rows in gateway.messages_seen)
+
+
+def test_nested_resolution_rejects_backdated_root_replacement_after_consent(tmp_path):
+    root = tmp_path / "workspace"
+    nested = root / "pkg"
+    nested.mkdir(parents=True)
+    (root / "AGENTS.md").write_text("ROOT_GUIDANCE", encoding="utf-8")
+    (nested / "data.txt").write_text("original", encoding="utf-8")
+    dispatch_started = time.time_ns()
+    candidate = ProjectInstructionResolver().resolve_startup(
+        binding_id="binding-1",
+        binding_root=root,
+        locator_fingerprint="f" * 64,
+        max_bytes=32768,
+        dispatch_started_wall_ns=dispatch_started,
+    )
+    read = _native_calls("fs_read", {"path": "pkg/data.txt"}, "read-1")
+    gateway = _ChunkGateway([[read], [read], ["done"]])
+    bridge, _db, store, session, assistant_id = _bridge_with_gateway(
+        tmp_path / "run", gateway
+    )
+    local = LocalToolProvider(
+        workspace_root=root,
+        specs=[spec for spec in _default_specs(root) if spec.name == "fs_read"],
+        resolve_state=lambda _tool: EffectiveToolState(
+            state="allow", origin="global_default"
+        ),
+    )
+
+    def replace_after_consent_check(_snapshot):
+        root.rename(tmp_path / "displaced")
+        (root / "pkg").mkdir(parents=True)
+        replacement = root / "pkg" / "AGENTS.md"
+        replacement.write_text("BACKDATED_REPLACEMENT_SECRET", encoding="utf-8")
+        (root / "pkg" / "data.txt").write_text("replacement", encoding="utf-8")
+        backdated = dispatch_started - 1_000_000_000
+        os.utime(replacement, ns=(backdated, backdated))
+        return "proceed"
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        assistant_id,
+        resolution=_native_resolution(),
+        local_provider=local,
+        startup_instruction_candidate=candidate,
+        confirm_project_instruction_dispatch=replace_after_consent_check,
+    )
+
+    assert outcome.status == "done", outcome.steps
+    assert all(
+        "BACKDATED_REPLACEMENT_SECRET" not in repr(rows)
+        for rows in gateway.messages_seen
+    )
+    assert any("resolution_failed" in repr(rows) for rows in gateway.messages_seen)
+
+
+def test_parent_and_child_share_activation_but_each_receive_nested_revision(
+    tmp_path, monkeypatch
+):
+    original_setting = agent_service_module._setting
+    monkeypatch.setattr(
+        agent_service_module,
+        "_setting",
+        lambda key, default: (
+            1
+            if key == agent_service_module.MAX_LIVE_SUBAGENTS_KEY
+            else original_setting(key, default)
+        ),
+    )
+    root = tmp_path / "workspace"
+    nested = root / "pkg"
+    nested.mkdir(parents=True)
+    (root / "AGENTS.md").write_text("ROOT_GUIDANCE", encoding="utf-8")
+    (nested / "AGENTS.md").write_text("NESTED_GUIDANCE", encoding="utf-8")
+    (nested / "data.txt").write_text("payload", encoding="utf-8")
+    candidate = ProjectInstructionResolver().resolve_startup(
+        binding_id="binding-1",
+        binding_root=root,
+        locator_fingerprint="f" * 64,
+        max_bytes=32768,
+        dispatch_started_wall_ns=time.time_ns(),
+    )
+    read = _native_calls("fs_read", {"path": "pkg/data.txt"}, "read-1")
+    gateway = _ChunkGateway(
+        [
+            [_native_calls(SPAWN_TOOL_NAME, {"task": "inspect pkg"}, "spawn-1")],
+            [read],
+            [read],
+            ["child done"],
+            [read],
+            [read],
+            ["parent done"],
+        ]
+    )
+    bridge, _db, store, session, assistant_id = _bridge_with_gateway(
+        tmp_path / "run", gateway
+    )
+    local = LocalToolProvider(
+        workspace_root=root,
+        specs=[spec for spec in _default_specs(root) if spec.name == "fs_read"],
+        resolve_state=lambda _tool: EffectiveToolState(
+            state="allow", origin="global_default"
+        ),
+    )
+    reviews = []
+    events = []
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        assistant_id,
+        resolution=_native_resolution(),
+        local_provider=local,
+        startup_instruction_candidate=candidate,
+        confirm_project_instruction_dispatch=lambda _snapshot: "proceed",
+        review_tool_calls=lambda calls, _run_id: (
+            reviews.append(tuple(c.name for c in calls)) or {}
+        ),
+        on_project_instruction_activation=events.append,
+    )
+
+    assert outcome.status == "done", outcome.steps
+    nested_visibility = [
+        any("NESTED_GUIDANCE" in str(row.get("content", "")) for row in rows)
+        for rows in gateway.messages_seen
+    ]
+    assert nested_visibility == [False, False, True, True, False, True, True]
+    assert reviews.count(("fs_read",)) == 2
+    assert reviews.count((SPAWN_TOOL_NAME,)) == 1
+    assert len(events) == 1
+    assert events[0].relative_sources == ("pkg/AGENTS.md",)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("force_character", [False, True])
+async def test_plain_and_character_forced_plain_never_resolve_project_instructions(
+    monkeypatch, force_character
+):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents.project_instruction_resolver import (
+        ProjectInstructionResolver,
+    )
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+    gateway = _ChunkGateway([["plain done"]])
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    if force_character:
+        session.assistant_kind = "character"
+    user = store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="question"
+    )
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+
+    class ExplodingBridge:
+        def run_reply(self, **_kwargs):
+            raise AssertionError("character sessions must stay plain")
+
+    monkeypatch.setattr(
+        ProjectInstructionResolver,
+        "resolve_startup",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("plain sends must not read AGENTS.md")
+        ),
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_bridge=ExplodingBridge(),
+        agent_runtime_enabled=force_character,
+    )
+    result = await controller._stream_assistant_response_inner(
+        resolution=SimpleNamespace(
+            provider="openai", model="gpt-4o-mini", max_tokens=128
+        ),
+        provider_messages=[{"role": "user", "content": user.content}],
+        assistant_message_id=assistant.id,
+    )
+    assert result.accepted is True
+    assert gateway.calls == 1
 
 
 def test_compose_prepends_session_prompt_then_agent_prompt():
@@ -692,7 +1171,6 @@ def test_run_reply_appends_workspace_note_for_a_non_default_workspace(
 def test_run_reply_adds_no_workspace_note_for_the_default_workspace(
     tmp_path, monkeypatch
 ):
-    from tldw_chatbook.Tools import workspace_file_roots as wfr
     from tldw_chatbook.Workspaces import DEFAULT_WORKSPACE_ID
 
     gateway = _RecordingGateway()
@@ -1853,6 +2331,7 @@ def test_concurrent_subagent_adapter_calls_keep_terminal_usage_call_scoped(tmp_p
         assistant_message_id=assistant.id,
         should_cancel=lambda: False,
         loop=loop,
+        native_tools=False,
         provider_stream_signals=signals,
     )
     responses: dict[str, dict] = {}
@@ -3736,9 +4215,10 @@ def test_run_reply_appends_bundle_block_copy_safely(tmp_path):
 
     assert outcome2.status == "done"
     assert captured2["messages"][-1]["content"] == "hi"
-    # No block to append: the original list is used unchanged (not merely
-    # equal -- the very same object), matching the documented no-op path.
-    assert captured2["messages"] is agent_messages2
+    # No block to append: the frozen first-request plan remains value-identical
+    # while keeping the caller-owned list untouched.
+    assert captured2["messages"] == agent_messages2
+    assert agent_messages2 == [{"role": "user", "content": "hi"}]
 
 
 def test_no_skills_service_leaves_shared_registry_path_untouched(tmp_path):

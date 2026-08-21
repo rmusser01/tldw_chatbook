@@ -326,6 +326,21 @@ def test_llamacpp_payload_includes_supported_sampling_params() -> None:
     }
 
 
+def test_direct_llamacpp_payload_consumes_ephemeral_origin_marker_copy_only() -> None:
+    from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
+
+    messages = [
+        {
+            "role": "user",
+            "content": "context",
+            EPHEMERAL_ORIGIN_KEY: "project_instructions",
+        }
+    ]
+    payload = build_llamacpp_chat_payload(model="m", messages=messages, stream=False)
+    assert EPHEMERAL_ORIGIN_KEY not in payload["messages"][0]
+    assert messages[0][EPHEMERAL_ORIGIN_KEY] == "project_instructions"
+
+
 def test_llamacpp_payload_omits_blank_provider_defaults() -> None:
     payload = build_llamacpp_chat_payload(
         model="m",
@@ -4008,14 +4023,14 @@ async def test_tools_run_real_answer_equal_to_fallback_copy_survives() -> None:
 # ---- system-row extraction (PR #1112 Qodo finding 3) ----
 
 
-def _bare_resolution() -> ConsoleProviderResolution:
+def _bare_resolution(execution_key: str = "anthropic") -> ConsoleProviderResolution:
     """Minimal ready resolution for direct `_chat_api_kwargs` calls."""
     return ConsoleProviderResolution(
         provider="anthropic",
         base_url="",
         model="claude-x",
         ready=True,
-        execution_key="anthropic",
+        execution_key=execution_key,
         api_key="k",
         streaming=False,
     )
@@ -4063,6 +4078,26 @@ def test_chat_api_kwargs_without_system_rows_omits_system_message() -> None:
 
     assert "system_message" not in kwargs
     assert kwargs["messages_payload"] == messages
+
+
+def test_chat_api_kwargs_preserves_project_marker_for_native_grouping_only() -> None:
+    from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
+
+    row = {
+        "role": "user",
+        "content": "context",
+        EPHEMERAL_ORIGIN_KEY: "project_instructions",
+    }
+    for endpoint in ("anthropic", "google"):
+        kwargs = ConsoleProviderGateway._chat_api_kwargs(
+            _bare_resolution(endpoint), [row]
+        )
+        assert kwargs["messages_payload"][0][EPHEMERAL_ORIGIN_KEY]
+
+    kwargs = ConsoleProviderGateway._chat_api_kwargs(_bare_resolution("openai"), [row])
+    assert EPHEMERAL_ORIGIN_KEY in kwargs["messages_payload"][0]
+    assert row[EPHEMERAL_ORIGIN_KEY] == "project_instructions"
+    assert kwargs["messages_payload"] == [row]
 
 
 def test_chat_api_kwargs_system_message_is_byte_stable_across_turns() -> None:

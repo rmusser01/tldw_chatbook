@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 from collections.abc import Awaitable, Callable
 from datetime import datetime
@@ -29,8 +30,13 @@ from textual.widgets import (
 from textual.worker import Worker, WorkerState
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
+from tldw_chatbook.Chat.console_display_state import ConsoleProjectInstructionState
 from tldw_chatbook.Chat.console_ephemeral import blocked_reason
+from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
+from tldw_chatbook.Widgets.Console.console_project_instructions import (
+    ConsoleProjectInstructionContextPanel,
+)
 
 
 SIZE_THRESHOLD_BYTES = 1 * 1024 * 1024
@@ -41,7 +47,13 @@ class ConsoleContextModal(SafeModalDismissMixin, ModalScreen[None]):
 
     DEFAULT_CSS = """
     ConsoleContextModal { align: center middle; }
-    #console-context-modal { width: 95; height: 40; border: tall gray; }
+    #console-context-modal {
+        width: 95%;
+        max-width: 95;
+        height: 90%;
+        max-height: 40;
+        border: tall gray;
+    }
     /* LY-13 (TASK-2154.23): with no messages the modal would otherwise render
        its full 95x40 frame around one line of copy; compact it to content. */
     #console-context-modal.context-empty { height: 20; }
@@ -51,6 +63,12 @@ class ConsoleContextModal(SafeModalDismissMixin, ModalScreen[None]):
     #console-context-loading.loading { display: block; }
     #console-context-tabs { height: 1fr; }
     #console-context-actions { height: auto; }
+    #console-context-actions > Checkbox { width: auto; }
+    #console-context-actions > Button {
+        width: 1fr;
+        min-width: 0;
+        padding: 0;
+    }
     """
 
     BINDINGS = [
@@ -58,6 +76,7 @@ class ConsoleContextModal(SafeModalDismissMixin, ModalScreen[None]):
         ("r", "refresh", "Refresh"),
     ]
     SAFE_MODAL_CONTENT = "#console-context-modal"
+    AUTO_FOCUS = None
 
     # task-16843: a bare instance default (`reactive(ConsoleContextSnapshot(...))`)
     # installs the SAME snapshot object on every modal instance until
@@ -82,6 +101,16 @@ class ConsoleContextModal(SafeModalDismissMixin, ModalScreen[None]):
         estimate_factory: Callable[[], int | None] | None = None,
         in_progress: bool = False,
         ephemeral: bool = False,
+        project_instruction_state: ConsoleProjectInstructionState | None = None,
+        project_instruction_state_factory: Callable[
+            [], Awaitable[ConsoleProjectInstructionState]
+        ]
+        | None = None,
+        project_instruction_session_id: str | None = None,
+        project_instruction_recovery: Callable[
+            [str | None, str], Awaitable[ConsoleProjectInstructionState | None]
+        ]
+        | None = None,
     ) -> None:
         super().__init__()
         self._snapshot_factory = snapshot_factory
@@ -89,11 +118,21 @@ class ConsoleContextModal(SafeModalDismissMixin, ModalScreen[None]):
         self.token_estimate = token_estimate
         self.in_progress = in_progress
         self._save_blocked_reason = blocked_reason("save-context", ephemeral=ephemeral)
+        self._project_instruction_state = project_instruction_state
+        self._project_instruction_state_factory = project_instruction_state_factory
+        self._project_instruction_session_id = project_instruction_session_id
+        self._project_instruction_recovery = project_instruction_recovery
 
     def compose(self) -> ComposeResult:
         with Vertical(id="console-context-modal"):
             yield Static("Chat Context", id="console-context-header")
             yield Static("", id="console-context-warning")
+            if self._project_instruction_state is not None:
+                yield ConsoleProjectInstructionContextPanel(
+                    self._project_instruction_state,
+                    session_id=self._project_instruction_session_id,
+                    id="console-context-project-instructions",
+                )
             yield LoadingIndicator(id="console-context-loading")
 
             with TabbedContent(id="console-context-tabs"):
@@ -122,6 +161,43 @@ class ConsoleContextModal(SafeModalDismissMixin, ModalScreen[None]):
 
     def on_mount(self) -> None:
         self.run_worker(self._load_snapshot, exclusive=True)
+        self.call_after_refresh(self._focus_initial_control)
+
+    def _focus_initial_control(self) -> None:
+        """Focus the most relevant available action without shifting layout."""
+        for selector in (
+            ".console-project-instruction-recovery-action",
+            "#console-context-refresh",
+            "#console-context-close",
+        ):
+            controls = list(self.query(selector))
+            available = [
+                control
+                for control in controls
+                if control.can_focus and not getattr(control, "disabled", False)
+            ]
+            if available:
+                available[0].focus()
+                return
+
+    @on(ConsoleProjectInstructionContextPanel.RecoveryRequested)
+    async def _recover_project_instructions(
+        self, event: ConsoleProjectInstructionContextPanel.RecoveryRequested
+    ) -> None:
+        if self._project_instruction_recovery is None:
+            return
+        event.stop()
+        state = await self._project_instruction_recovery(
+            event.session_id, event.action
+        )
+        if state is None:
+            return
+        self._project_instruction_state = state
+        self.query_one(
+            "#console-context-project-instructions",
+            ConsoleProjectInstructionContextPanel,
+        ).sync_state(state)
+        self.call_after_refresh(self._focus_initial_control)
 
     def watch_snapshot(self) -> None:
         self._update_view()
@@ -141,6 +217,17 @@ class ConsoleContextModal(SafeModalDismissMixin, ModalScreen[None]):
         # show yet; the full 95x40 frame is only earned by actual content.
         modal = self.query_one("#console-context-modal", Vertical)
         modal.set_class(not self.snapshot.current_messages, "context-empty")
+        if self._project_instruction_state is not None:
+            project_panel = self.query_one(
+                "#console-context-project-instructions",
+                ConsoleProjectInstructionContextPanel,
+            )
+            project_panel.sync_state(self._project_instruction_state)
+            if (
+                self._project_instruction_state.enabled
+                and self._project_instruction_state.locator_match == "match"
+            ):
+                project_panel.sync_preview(self.snapshot.project_instruction_preview)
 
         warning = self.query_one("#console-context-warning", Static)
         if self.in_progress:
@@ -274,6 +361,24 @@ class ConsoleContextModal(SafeModalDismissMixin, ModalScreen[None]):
     def _format_next_send_text(self) -> str:
         return self._json_block(self.snapshot.next_send_payload)
 
+    def _format_export_text(self) -> str:
+        """Serialize a body-free payload for clipboard and filesystem export."""
+        payload = copy.deepcopy(self.snapshot.next_send_payload)
+        messages = payload.get("messages")
+        if isinstance(messages, list):
+            retained = [
+                message
+                for message in messages
+                if not (
+                    isinstance(message, dict)
+                    and message.get(EPHEMERAL_ORIGIN_KEY) == "project_instructions"
+                )
+            ]
+            if len(retained) != len(messages):
+                payload["messages"] = retained
+                payload["project_instructions_export"] = "automatic body omitted"
+        return self._json_block(payload)
+
     @staticmethod
     def _json_block(obj: Any) -> str:
         return json.dumps(obj, indent=2, default=str)
@@ -291,9 +396,15 @@ class ConsoleContextModal(SafeModalDismissMixin, ModalScreen[None]):
     async def _load_snapshot(self) -> None:
         self.loading = True
         try:
-            self.snapshot = await self._snapshot_factory()
+            snapshot = await self._snapshot_factory()
+            if self._project_instruction_state_factory is not None:
+                self._project_instruction_state = (
+                    await self._project_instruction_state_factory()
+                )
+            self.snapshot = snapshot
             if self._estimate_factory is not None:
                 self.token_estimate = self._estimate_factory()
+            self.call_after_refresh(self._focus_initial_control)
         finally:
             self.loading = False
 
@@ -310,7 +421,7 @@ class ConsoleContextModal(SafeModalDismissMixin, ModalScreen[None]):
     @on(Button.Pressed, "#console-context-copy")
     def _copy_json(self, event: Button.Pressed) -> None:
         event.stop()
-        text = self._format_next_send_text()
+        text = self._format_export_text()
         try:
             import pyperclip
 
@@ -323,7 +434,7 @@ class ConsoleContextModal(SafeModalDismissMixin, ModalScreen[None]):
     @on(Button.Pressed, "#console-context-save")
     def _save_json(self, event: Button.Pressed) -> None:
         event.stop()
-        text = self._format_next_send_text()
+        text = self._format_export_text()
         filename = f"chatbook_context_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         path = Path.home() / "Downloads" / filename
         try:

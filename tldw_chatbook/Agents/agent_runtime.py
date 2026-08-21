@@ -7,10 +7,25 @@ from __future__ import annotations
 
 import json
 from collections import deque
+from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any, Callable, Literal
 
 from loguru import logger
+
+from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
+from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationRestoreTarget,
+    ContinuationResult,
+    ProviderContinuationCheckpoint,
+    dump_provider_continuation_json,
+    transition_provider_call,
+    validate_continuation_restore,
+)
+from tldw_chatbook.model_capabilities import (
+    moonshot_model_returns_reasoning_content,
+)
 
 from .agent_models import (
     CHECK_AGENTS_TOOL_NAME,
@@ -37,6 +52,7 @@ from .agent_models import (
     STEP_STEERING,
     STEP_TOOL_CALL,
     STEP_TOOL_RESULT,
+    WAIT_AGENTS_TOOL_NAME,
     AgentConfig,
     AgentStep,
     ContinuationEventContext,
@@ -50,19 +66,13 @@ from .agent_models import (
     ToolCallFinished,
     ToolResult,
     ToolSchema,
-    WAIT_AGENTS_TOOL_NAME,
     format_steering_message,
 )
-from tldw_chatbook.Chat.provider_continuation import (
-    ContinuationResult,
-    ContinuationRestoreTarget,
-    ProviderContinuationCheckpoint,
-    dump_provider_continuation_json,
-    transition_provider_call,
-    validate_continuation_restore,
-)
-from tldw_chatbook.model_capabilities import (
-    moonshot_model_returns_reasoning_content,
+from .project_instruction_runtime import (
+    PROJECT_INSTRUCTION_ROW_KEY,
+    InstructionChainPayloadState,
+    InstructionDeliveryReceipt,
+    build_project_instruction_deferral_rows,
 )
 
 FENCE_OPEN = "```tool_call"
@@ -75,6 +85,39 @@ STREAM_UNDECIDED = "undecided"
 
 def _noop_provider_continuation(event: ProviderContinuationEvent) -> None:
     """Preserve legacy callers that never opt into provider continuation."""
+
+
+@dataclass(frozen=True, slots=True)
+class ToolBatchPreparation:
+    """Typed result of preparing one complete tool-call batch."""
+
+    status: Literal["proceed", "retry_with_context"]
+    ephemeral_rows: tuple[Mapping[str, Any], ...] = ()
+    delivery_receipt: InstructionDeliveryReceipt | None = None
+
+    def __post_init__(self) -> None:
+        try:
+            object.__setattr__(self, "ephemeral_rows", tuple(self.ephemeral_rows))
+        except TypeError as error:
+            raise ValueError("invalid tool batch preparation") from error
+        if self.status == "proceed":
+            if self.ephemeral_rows or self.delivery_receipt is not None:
+                raise ValueError("proceed preparation cannot carry context")
+            return
+        if (
+            self.status != "retry_with_context"
+            or not self.ephemeral_rows
+            or self.delivery_receipt is None
+        ):
+            raise ValueError("retry preparation requires rows and a receipt")
+        row_keys = tuple(
+            row.get(PROJECT_INSTRUCTION_ROW_KEY) for row in self.ephemeral_rows
+        )
+        if row_keys != self.delivery_receipt.row_keys or any(
+            row.get(EPHEMERAL_ORIGIN_KEY) != "project_instructions"
+            for row in self.ephemeral_rows
+        ):
+            raise ValueError("instruction receipt does not match context rows")
 
 
 def parse_fenced_tool_call(text: str) -> ToolCall | None:
@@ -302,6 +345,16 @@ class LoopDeps:
     # behavior. ``None`` (the default) is a no-op: every call proceeds,
     # byte-identical to pre-Task-4 behavior.
     review_tool_calls: Callable[[list[ToolCall]], dict[str, str]] | None = None
+    # Optional Task 10 whole-batch preparation. It runs once after the
+    # assistant turn has entered run-local history and immediately before
+    # the unchanged review hook. A retry result appends canonical deferral
+    # stubs plus separate ephemeral context and returns to the model without
+    # reviewing or dispatching any call in the deferred batch.
+    prepare_tool_calls: Callable[[list[ToolCall]], ToolBatchPreparation] | None = None
+    project_instruction_payload_state: InstructionChainPayloadState | None = None
+    on_ephemeral_runtime_warning: Callable[[str, tuple[str, ...], int], None] | None = (
+        None
+    )
     # skill_file: the fourth runtime tool (task-3, skills-foundation). Unlike
     # a ToolProvider entry, its schema is pinned into runtime_schemas by the
     # service (never disclosure-gated) and its authorization lives on a
@@ -808,7 +861,11 @@ def run_agent_loop(
         # through a streamed final turn (`final_text` set on
         # RUN_CANCELLED) never delivered that text as a completed turn,
         # and pretending otherwise would fabricate the child's memory.
-        final_messages = messages[:coherent_len]
+        final_messages = [
+            row
+            for row in messages[:coherent_len]
+            if row.get(EPHEMERAL_ORIGIN_KEY) != "project_instructions"
+        ]
         if status == RUN_DONE:
             final_messages = final_messages + [
                 {"role": "assistant", "content": kw.get("final_text", "")}
@@ -1141,6 +1198,36 @@ def run_agent_loop(
             messages.append(
                 turn.assistant_message or {"role": "assistant", "content": turn.text}
             )
+
+        if deps.prepare_tool_calls is not None and calls:
+            preparation = ToolBatchPreparation("proceed")
+            try:
+                if deps.project_instruction_payload_state is not None:
+                    deps.project_instruction_payload_state.capture(
+                        messages, tuple(active), calls
+                    )
+                preparation = deps.prepare_tool_calls(list(calls))
+                if not isinstance(preparation, ToolBatchPreparation):
+                    raise TypeError("invalid tool batch preparation")
+            except Exception:  # noqa: BLE001 - content-free fail-open boundary
+                code = "project_instruction_preparation_failed"
+                tool_names = tuple(call.name for call in calls)
+                logger.warning(
+                    f"{code}: tool_names={tool_names!r} tool_count={len(calls)}"
+                )
+                if deps.on_ephemeral_runtime_warning is not None:
+                    try:
+                        deps.on_ephemeral_runtime_warning(
+                            code, tool_names, len(calls)
+                        )
+                    except Exception:  # noqa: BLE001 - warning is best effort
+                        logger.warning("project_instruction_warning_callback_failed")
+            if preparation.status == "retry_with_context":
+                messages.extend(build_project_instruction_deferral_rows(calls))
+                messages.extend(
+                    deepcopy(dict(row)) for row in preparation.ephemeral_rows
+                )
+                continue
 
         # P5 Task 4: optional pre-dispatch batch review, called ONCE with
         # the full batch about to be dispatched below (whichever produced

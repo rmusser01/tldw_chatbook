@@ -62,6 +62,43 @@ path), and **Close** (also `Escape`). Payloads over 1 MiB are not
 rendered inline — the viewer shows "Context exceeds 1 MiB. Use Save to
 File to view the full payload."
 
+### Project instructions
+
+The Inspector places a one-line **Project** status above **Sources**:
+**Off**, **Choose folder**, **None**, **N loaded**, or **Warning**. Select the
+row to open this viewer's metadata-only **Project Instructions** section. It
+shows whether the feature is enabled, the selected binding and locator match,
+override/standard precedence, relative source paths, scopes, byte counts,
+active or omitted outcomes, and deduplicated warning codes. Removed or
+retargeted bindings offer **Choose folder** and **Disable**; **Off** offers
+**Enable**. There is no automatic-file editor or second settings surface.
+
+The **Next Send** tab is the only automatic UI surface that may show the exact
+instruction body, and only as a disposable preview of the captured session's
+next request. Closing it discards the preview. **Copy JSON** and **Save to
+File** omit automatic instruction bodies. The transcript, rail, context
+metadata, warnings, run logs, and saved conversation state carry only
+content-free metadata. If you explicitly ask a file tool to read an
+`AGENTS.md`, its result is ordinary user-requested tool output and follows the
+normal logging and persistence rules.
+
+On the first send for a selected binding and provider destination, a notice
+lists only destination and source metadata and asks **Proceed**, **Cancel**,
+or **Disable**. Consent is repeated when the binding locator or provider/custom
+endpoint changes, but not for a model-only change at the same destination.
+Nested files may load later. Automatic sources are constrained independently
+to `[console] project_instructions_startup_max_bytes = 32768` at the binding
+root and `project_instructions_nested_max_bytes = 32768` for the run; a whole
+file must also fit the exact model request's token headroom. Omitted, stale,
+unsafe, unreadable, or outside-scope candidates produce content-free warnings.
+
+This behavior deliberately combines two ecosystems without pretending they
+are identical. Codex defines the `AGENTS.override.md` / `AGENTS.md` hierarchy
+and broad-to-specific composition. Claude Code inspired lazy path-sensitive
+loading, but its native project file is `CLAUDE.md`, not `AGENTS.md`. Chatbook
+adds its own selected-binding authority boundary and delivers automatic text
+as ephemeral user context rather than privileged policy.
+
 ### System prompt
 
 Type `/system` (or use the palette entry **Console: Edit system prompt**,
@@ -363,6 +400,8 @@ Enter again to send as text."
 - [Branching & rewind](branching-and-rewind.md) — how regenerate, edit &
   resend, and "Summarize up to here" change what history the model sees.
 - [Guide index](../index.md) — global keys and navigation.
+- [Agent runs & tools](agent-runs-and-tools.md#project-instructions-before-tools-run)
+  — lazy nested activation before review and execution.
 
 ## Quirks & troubleshooting
 

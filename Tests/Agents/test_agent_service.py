@@ -2,17 +2,20 @@
 """Service tests: scripted chat_call (no network) + real AgentRunsDB."""
 
 import dataclasses
+import hashlib
 import json
 import threading
 import time
 
 import pytest
 
+from tldw_chatbook.Agents import agent_service
 from tldw_chatbook.Agents.agent_models import (
     DIRECT_DISCLOSE_THRESHOLD,
     FIND_TOOLS_NAME,
     LOAD_TOOLS_NAME,
     RUN_DONE,
+    RUN_ERROR,
     RUN_STUCK,
     SPAWN_TOOL_NAME,
     WAIT_AGENTS_TOOL_NAME,
@@ -32,7 +35,19 @@ from tldw_chatbook.Chat.provider_continuation import (
     ContinuationRound,
     ProviderContinuationCheckpoint,
 )
-from tldw_chatbook.Agents import agent_service
+from tldw_chatbook.Agents.project_instruction_runtime import (
+    PROJECT_INSTRUCTION_ROW_KEY,
+    InstructionActivationLedger,
+    InstructionDeliveryReceipt,
+    InstructionPreparation,
+)
+from tldw_chatbook.Agents.project_instruction_resolver import (
+    InstructionChainDelivery,
+    InstructionOutcome,
+    InstructionSnapshot,
+    InstructionSource,
+    StartupInstructionCandidate,
+)
 from tldw_chatbook.Agents.agent_service import (
     SUBAGENT_SYSTEM_PROMPT,
     AgentService,
@@ -44,6 +59,7 @@ from tldw_chatbook.Agents.tool_catalog import (
     BuiltinToolProvider,
     ToolCatalogRegistry,
 )
+from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 from Tests.Agents.conftest import join_fleet_children
@@ -281,11 +297,562 @@ def _service_with(db, chat):
     return AgentService(db=db, registry=registry, chat_call=chat)
 
 
+class _ProjectInstructionContextSpy:
+    """Duck-typed Task 9 ledger spy with content-free call evidence."""
+
+    def __init__(self, *, initial_rows: bool = True) -> None:
+        self.initial_rows = initial_rows
+        self.initial_calls: list[str] = []
+        self.prepare_calls: list[tuple[str, tuple[str, ...]]] = []
+        self.mark_calls: list[tuple[str, tuple[dict, ...]]] = []
+
+    @staticmethod
+    def _delivery(chain_id: str) -> InstructionPreparation:
+        safe_chain = chain_id.replace(":", "-")
+        row_key = f"{safe_chain}-row"
+        receipt = InstructionDeliveryReceipt(
+            receipt_id=f"receipt-{safe_chain}",
+            chain_id=chain_id,
+            through_revision=1,
+            source_digests=(),
+            outcome_keys=(),
+            row_keys=(row_key,),
+        )
+        row = {
+            "role": "user",
+            "content": f"instructions for {chain_id}",
+            EPHEMERAL_ORIGIN_KEY: "project_instructions",
+            PROJECT_INSTRUCTION_ROW_KEY: row_key,
+        }
+        return InstructionPreparation("retry_with_context", (row,), receipt)
+
+    def initial_context_for_chain(self, chain_id, payload_state):
+        self.initial_calls.append(chain_id)
+        if not self.initial_rows:
+            return InstructionPreparation("proceed")
+        return self._delivery(chain_id)
+
+    def prepare(self, calls, chain_id, registry, payload_state):
+        self.prepare_calls.append((chain_id, tuple(call.name for call in calls)))
+        return InstructionPreparation("proceed")
+
+    def mark_payload_sent(self, receipt, payload_rows):
+        self.mark_calls.append(
+            (receipt.chain_id, tuple(dict(row) for row in payload_rows))
+        )
+
+
+def _warning_ledger(tmp_path) -> InstructionActivationLedger:
+    snapshot = InstructionSnapshot(
+        binding_id="binding",
+        binding_root=tmp_path,
+        locator_fingerprint="fingerprint",
+        dispatch_started_wall_ns=time.time_ns(),
+        startup_source=None,
+        global_outcomes=(InstructionOutcome("AGENTS.md", ".", "resolution_failed"),),
+        primary_delivery=InstructionChainDelivery((), ()),
+        warning_codes=("resolution_failed",),
+    )
+    return InstructionActivationLedger(snapshot, nested_max_bytes=0)
+
+
 CFG = AgentConfig(
     model="test-model",
     system_prompt="You are helpful.",
     allowed_tools=("calculator", "get_current_datetime", SPAWN_TOOL_NAME),
 )
+
+
+def test_initial_project_instruction_rows_are_verified_and_marked_before_provider(
+    db, monkeypatch
+):
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_args: 100_000)
+    context = _ProjectInstructionContextSpy()
+    events: list[str] = []
+
+    def chat_call(**kwargs):
+        assert context.mark_calls
+        events.append("provider")
+        payload = kwargs["messages_payload"]
+        assert [
+            row[PROJECT_INSTRUCTION_ROW_KEY]
+            for row in payload
+            if PROJECT_INSTRUCTION_ROW_KEY in row
+        ] == ["primary-row"]
+        return provider_reply("done")
+
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    service = AgentService(
+        db=db,
+        registry=registry,
+        chat_call=chat_call,
+        project_instruction_context=context,
+    )
+    original = [{"role": "user", "content": "go"}]
+    _run_id, outcome = service.run_turn(
+        conversation_id="c-project-initial",
+        messages=original,
+        config=CFG,
+        api_endpoint="openai",
+    )
+
+    assert outcome.status == RUN_DONE
+    assert context.initial_calls == ["primary"]
+    assert [chain for chain, _payload in context.mark_calls] == ["primary"]
+    assert events == ["provider"]
+    assert original == [{"role": "user", "content": "go"}]
+
+
+def test_bounding_that_drops_pending_instruction_row_stops_without_send_or_mark(
+    db, monkeypatch
+):
+    context = _ProjectInstructionContextSpy()
+    service, chat = make_service(db, ["must not send"])
+    service.project_instruction_context = context
+
+    def drop_project_rows(messages, **_kwargs):
+        return [row for row in messages if PROJECT_INSTRUCTION_ROW_KEY not in row]
+
+    monkeypatch.setattr(agent_service, "bound_history_for_send", drop_project_rows)
+    _run_id, outcome = service.run_turn(
+        conversation_id="c-project-unfit",
+        messages=[{"role": "user", "content": "go"}],
+        config=CFG,
+        api_endpoint="openai",
+    )
+
+    assert outcome.status == RUN_ERROR
+    assert chat.calls == []
+    assert context.mark_calls == []
+    assert outcome.steps[0].summary == "project instruction context could not fit"
+
+
+def test_real_ledger_one_over_final_limit_stops_without_mark_or_send(
+    db, monkeypatch, tmp_path
+):
+    ledger = _warning_ledger(tmp_path)
+    service, chat = make_service(db, ["must not send"])
+    service.project_instruction_context = ledger
+
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_args: 100)
+    monkeypatch.setattr(agent_service, "estimate_tokens", lambda *_args, **_kwargs: 5)
+
+    def count_one_over(messages, *_args, **_kwargs):
+        if any(row.get("role") == "system" for row in messages):
+            return (
+                86
+                if any(PROJECT_INSTRUCTION_ROW_KEY in row for row in messages)
+                else 85
+            )
+        return 1
+
+    monkeypatch.setattr(agent_service, "count_tokens_messages", count_one_over)
+    config = AgentConfig(
+        model="m",
+        system_prompt="s",
+        allowed_tools=(),
+        response_reserve_tokens=10,
+    )
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="c-project-zero-headroom",
+        messages=[{"role": "user", "content": "go"}],
+        config=config,
+        api_endpoint="openai",
+    )
+
+    assert outcome.status == RUN_ERROR
+    assert outcome.steps[0].summary == "project instruction context could not fit"
+    assert chat.calls == []
+    pending = ledger.initial_context_for_chain(
+        "primary",
+        agent_service.InstructionChainPayloadState(
+            request_builder=lambda messages, schemas: (messages, schemas),
+            safe_token_allowance=lambda request, rows: 100,
+            count_tokens=lambda rows: 1,
+        ),
+    )
+    assert pending.status == "retry_with_context"
+
+
+def test_real_ledger_exact_final_limit_marks_and_sends(db, monkeypatch, tmp_path):
+    ledger = _warning_ledger(tmp_path)
+    service, chat = make_service(db, ["done"])
+    service.project_instruction_context = ledger
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_args: 100)
+    monkeypatch.setattr(agent_service, "estimate_tokens", lambda *_args, **_kwargs: 5)
+
+    def count_exact_fit(messages, *_args, **_kwargs):
+        if any(row.get("role") == "system" for row in messages):
+            return (
+                85
+                if any(PROJECT_INSTRUCTION_ROW_KEY in row for row in messages)
+                else 84
+            )
+        return 1
+
+    monkeypatch.setattr(agent_service, "count_tokens_messages", count_exact_fit)
+    config = AgentConfig(
+        model="m",
+        system_prompt="s",
+        allowed_tools=(),
+        response_reserve_tokens=10,
+    )
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="c-project-exact-fit",
+        messages=[{"role": "user", "content": "go"}],
+        config=config,
+        api_endpoint="openai",
+    )
+
+    assert outcome.status == RUN_DONE
+    assert len(chat.calls) == 1
+    payload = chat.calls[0]["messages_payload"]
+    assert sum(PROJECT_INSTRUCTION_ROW_KEY in row for row in payload) == 1
+    state = agent_service.InstructionChainPayloadState(
+        request_builder=lambda messages, schemas: (messages, schemas),
+        safe_token_allowance=lambda request, rows: 100,
+        count_tokens=lambda rows: 1,
+    )
+    state.capture([], (), ())
+    assert ledger.initial_context_for_chain("primary", state).status == "proceed"
+
+
+def test_real_ledger_multimodal_fallback_exact_fit_marks_and_sends(
+    db, monkeypatch, tmp_path
+):
+    ledger = _warning_ledger(tmp_path)
+    service, chat = make_service(db, ["done"])
+    service.project_instruction_context = ledger
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_args: 100)
+    monkeypatch.setattr(agent_service, "estimate_tokens", lambda *_args, **_kwargs: 5)
+    primary_calls: list[list[dict]] = []
+    fallback_calls: list[list[dict]] = []
+
+    def primary_counter(messages, *_args, **_kwargs):
+        primary_calls.append(list(messages))
+        raise TypeError("multimodal content")
+
+    def multimodal_fallback(messages, *_args, **_kwargs):
+        fallback_calls.append(list(messages))
+        return 85 if any(PROJECT_INSTRUCTION_ROW_KEY in row for row in messages) else 84
+
+    monkeypatch.setattr(agent_service, "count_tokens_messages", primary_counter)
+    monkeypatch.setattr(
+        agent_service, "count_console_messages_tokens", multimodal_fallback
+    )
+    config = AgentConfig(
+        model="m",
+        system_prompt="s",
+        allowed_tools=(),
+        response_reserve_tokens=10,
+    )
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "inspect"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,AAAA"},
+                },
+            ],
+        }
+    ]
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="c-project-multimodal-exact-fit",
+        messages=messages,
+        config=config,
+        api_endpoint="openai",
+    )
+
+    assert outcome.status == RUN_DONE
+    assert len(chat.calls) == 1
+    assert primary_calls and fallback_calls
+    assert (
+        sum(
+            PROJECT_INSTRUCTION_ROW_KEY in row
+            for row in chat.calls[0]["messages_payload"]
+        )
+        == 1
+    )
+
+
+@pytest.mark.parametrize(
+    ("limit_value", "count_value"),
+    [
+        (None, 1),
+        (0, 1),
+        (-1, 1),
+        (RuntimeError("limit"), 1),
+        (100, 0),
+        (100, -1),
+        (100, RuntimeError("count")),
+    ],
+)
+def test_real_ledger_unknown_or_invalid_final_budget_fails_closed(
+    db, monkeypatch, tmp_path, limit_value, count_value
+):
+    ledger = _warning_ledger(tmp_path)
+    service, chat = make_service(db, ["must not send"])
+    service.project_instruction_context = ledger
+
+    def model_limit(*_args):
+        if isinstance(limit_value, Exception):
+            raise limit_value
+        return limit_value
+
+    def count_invalid(messages, *_args, **_kwargs):
+        if isinstance(count_value, Exception):
+            raise count_value
+        if any(row.get("role") == "system" for row in messages):
+            return count_value
+        return 1
+
+    monkeypatch.setattr(agent_service, "get_model_token_limit", model_limit)
+    monkeypatch.setattr(agent_service, "count_tokens_messages", count_invalid)
+    config = AgentConfig(
+        model="m",
+        system_prompt="s",
+        allowed_tools=(),
+        response_reserve_tokens=10,
+    )
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="c-project-invalid-final-budget",
+        messages=[{"role": "user", "content": "go"}],
+        config=config,
+        api_endpoint="openai",
+    )
+
+    assert outcome.status == RUN_ERROR
+    assert outcome.steps[0].summary == "project instruction context could not fit"
+    assert chat.calls == []
+
+
+@pytest.mark.parametrize("failing_callback", ["initial", "mark"])
+def test_project_instruction_delivery_callback_failures_are_content_free(
+    db, monkeypatch, capsys, failing_callback
+):
+    sentinel = "SECRET-BODY /private/workspace/AGENTS.md"
+
+    class FailingContext(_ProjectInstructionContextSpy):
+        def initial_context_for_chain(self, chain_id, payload_state):
+            if failing_callback == "initial":
+                raise RuntimeError(sentinel)
+            return self._delivery(chain_id)
+
+        def mark_payload_sent(self, receipt, payload_rows):
+            if failing_callback == "mark":
+                raise RuntimeError(sentinel)
+            super().mark_payload_sent(receipt, payload_rows)
+
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_args: 100_000)
+    context = FailingContext()
+    service, chat = make_service(db, ["must not send"])
+    service.project_instruction_context = context
+
+    run_id, outcome = service.run_turn(
+        conversation_id=f"c-project-{failing_callback}-failure",
+        messages=[{"role": "user", "content": "go"}],
+        config=CFG,
+        api_endpoint="openai",
+    )
+
+    captured = capsys.readouterr()
+    persisted = db.get_run(run_id)
+    assert outcome.status == RUN_ERROR
+    assert outcome.steps[0].summary == "project_instruction_delivery_failed"
+    assert chat.calls == []
+    assert sentinel not in repr(outcome)
+    assert sentinel not in repr(persisted)
+    assert sentinel not in captured.out
+    assert sentinel not in captured.err
+
+
+def test_provider_failure_after_instruction_mark_does_not_undo_advance(db, monkeypatch):
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_args: 100_000)
+    context = _ProjectInstructionContextSpy()
+
+    def failing_chat(**_kwargs):
+        assert [chain for chain, _payload in context.mark_calls] == ["primary"]
+        raise RuntimeError("provider unavailable")
+
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    service = AgentService(
+        db=db,
+        registry=registry,
+        chat_call=failing_chat,
+        project_instruction_context=context,
+    )
+    _run_id, outcome = service.run_turn(
+        conversation_id="c-project-provider-failure",
+        messages=[{"role": "user", "content": "go"}],
+        config=CFG,
+        api_endpoint="openai",
+    )
+
+    assert outcome.status == RUN_ERROR
+    assert [chain for chain, _payload in context.mark_calls] == ["primary"]
+
+
+def test_later_batch_context_retries_before_review_and_is_marked_on_exact_request(
+    db, monkeypatch
+):
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_args: 100_000)
+
+    class LaterContext(_ProjectInstructionContextSpy):
+        def __init__(self):
+            super().__init__(initial_rows=False)
+            self.issued = False
+
+        def prepare(self, calls, chain_id, registry, payload_state):
+            self.prepare_calls.append((chain_id, tuple(call.name for call in calls)))
+            if self.issued:
+                return InstructionPreparation("proceed")
+            self.issued = True
+            return self._delivery(chain_id)
+
+    context = LaterContext()
+    reviewed: list = []
+    chat = ScriptedChat(
+        [
+            {
+                "content": None,
+                "tool_calls": [native_call("calculator", {"expression": "2+2"})],
+            },
+            "done",
+        ]
+    )
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    service = AgentService(
+        db=db,
+        registry=registry,
+        chat_call=chat,
+        review_tool_calls=lambda batch: reviewed.append(list(batch)) or {},
+        project_instruction_context=context,
+    )
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="c-project-later",
+        messages=[{"role": "user", "content": "go"}],
+        config=CFG,
+        api_endpoint="openai",
+    )
+
+    assert outcome.status == RUN_DONE
+    assert context.prepare_calls == [("primary", ("calculator",))]
+    assert reviewed == []
+    assert len(chat.calls) == 2
+    second = chat.calls[1]["messages_payload"]
+    instruction_index = next(
+        index for index, row in enumerate(second) if PROJECT_INSTRUCTION_ROW_KEY in row
+    )
+    stub_index = next(
+        index
+        for index, row in enumerate(second)
+        if "Deferred because project instructions were loaded"
+        in str(row.get("content", ""))
+    )
+    assert stub_index < instruction_index
+    assert [chain for chain, _payload in context.mark_calls] == ["primary"]
+
+
+@pytest.mark.parametrize("use_context", [True, False])
+def test_child_uses_exactly_one_root_delivery_path(
+    db, monkeypatch, tmp_path, use_context
+):
+    original_setting = agent_service._setting
+    monkeypatch.setattr(
+        agent_service,
+        "_setting",
+        lambda key, default: (
+            1
+            if key == agent_service.MAX_LIVE_SUBAGENTS_KEY
+            else original_setting(key, default)
+        ),
+    )
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_args: 100_000)
+    sentinel = "ROOT-INSTRUCTION-SENTINEL"
+    raw = sentinel.encode()
+    source = InstructionSource(
+        canonical_path=tmp_path / "AGENTS.md",
+        relative_path="AGENTS.md",
+        scope=".",
+        kind="standard",
+        body=sentinel,
+        byte_count=len(raw),
+        digest=hashlib.sha256(raw).hexdigest(),
+    )
+    candidate = StartupInstructionCandidate(
+        binding_id="binding",
+        binding_root=tmp_path,
+        locator_fingerprint="fingerprint",
+        dispatch_started_wall_ns=time.time_ns() + 1_000_000_000,
+        source=source,
+        outcomes=(),
+    )
+    snapshot = InstructionSnapshot(
+        binding_id="binding",
+        binding_root=tmp_path,
+        locator_fingerprint="fingerprint",
+        dispatch_started_wall_ns=candidate.dispatch_started_wall_ns,
+        startup_source=source,
+        global_outcomes=(),
+        primary_delivery=InstructionChainDelivery((source.digest,), ()),
+        warning_codes=(),
+    )
+    context = (
+        InstructionActivationLedger(snapshot, nested_max_bytes=0)
+        if use_context
+        else None
+    )
+    chat = ScriptedChat(
+        [
+            {
+                "content": None,
+                "tool_calls": [native_call(SPAWN_TOOL_NAME, {"task": "inspect"}, "s")],
+            },
+            "child done",
+            "parent done",
+        ]
+    )
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    service = AgentService(
+        db=db,
+        registry=registry,
+        chat_call=chat,
+        startup_instruction_candidate=candidate,
+        confirm_project_instruction_dispatch=lambda _snapshot: "proceed",
+        project_instruction_context=context,
+    )
+    config = AgentConfig(
+        model="m",
+        system_prompt="s",
+        allowed_tools=(SPAWN_TOOL_NAME,),
+        native_tools=True,
+        response_reserve_tokens=10,
+    )
+
+    _run_id, outcome = service.run_turn(
+        conversation_id=f"c-project-child-{use_context}",
+        messages=[{"role": "user", "content": "go"}],
+        config=config,
+        api_endpoint="openai",
+    )
+
+    assert outcome.status == RUN_DONE
+    assert len(chat.calls) == 3
+    parent_first = chat.calls[0]["messages_payload"]
+    child_first = chat.calls[1]["messages_payload"]
+    assert sum(sentinel in str(row) for row in parent_first) == 1
+    assert sum(sentinel in str(row) for row in child_first) == 1
 
 
 def test_native_endpoint_sends_tools_and_suppresses_fence_protocol(db):

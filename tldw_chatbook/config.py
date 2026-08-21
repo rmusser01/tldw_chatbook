@@ -723,6 +723,9 @@ def _get_int_timeout_value(data_dict: Dict, key: str, default: int) -> int:
 DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD = 50
 MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD = 1
 MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD = 100000
+DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES = 32768
+MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES = 1
+MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES = 1024 * 1024
 
 # TASK-870: the single, user-adjustable cap on how much of an agent tool
 # result the Console *displays* -- replaces the scattered hardcoded caps
@@ -1532,6 +1535,18 @@ def load_settings(force_reload: bool = False) -> Dict:
         final_console_settings_cli.get("local_tools_enabled", True),
         True,
     )
+    for key in (
+        "project_instructions_startup_max_bytes",
+        "project_instructions_nested_max_bytes",
+    ):
+        final_console_settings_cli[key] = coerce_int_setting(
+            final_console_settings_cli.get(
+                key, DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES
+            ),
+            DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+            minimum=MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+            maximum=MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+        )
     workspace_root = final_console_settings_cli.get("workspace_root", "")
     if not isinstance(workspace_root, str):
         workspace_root = ""
@@ -2919,6 +2934,10 @@ collapse_large_pastes = true  # Display large pasted chunks compactly in Console
 stack_collapsed_rail_labels = false  # Use compact stacked labels on collapsed Console rails
 paste_collapse_threshold = 50  # Collapse pasted/inserted chunks only when longer than this many characters
 local_tools_enabled = true      # workspace, web, and Watchlists agent tools; every call still uses MCP Ask/Allow/Off permissions
+# Root-source byte limit; allowed range is 1-1048576 (1 MiB).
+project_instructions_startup_max_bytes = 32768
+# Cumulative nested-source byte limit per dispatch; allowed range is 1-1048576 (1 MiB).
+project_instructions_nested_max_bytes = 32768
 # Conversation-memory defaults (ADR-052). Model capacity remains capability data,
 # not a persisted policy value.
 conversation_budget_mode = "automatic"  # automatic, custom

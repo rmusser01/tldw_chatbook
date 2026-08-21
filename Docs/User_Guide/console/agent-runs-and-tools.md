@@ -900,6 +900,31 @@ in a conversation you were not watching, that session's tab shows the
 finished-and-unvisited `✓` instead. Both mean "there is something here
 you haven't seen"; viewing the conversation clears either.
 
+### Project instructions before tools run
+
+When project instructions are enabled for a session, Chatbook treats the
+selected folder as both the agent's working directory and its instruction
+authority. A root `AGENTS.override.md` takes precedence over `AGENTS.md`;
+an empty override falls back to the standard file, while an invalid override
+fails closed instead of silently falling back. Instruction text is untrusted
+user-level context, never system policy and never permission to bypass tool
+approval.
+
+Instructions for deeper folders load lazily when a path-aware tool targets
+them. Chatbook walks only the binding-root-to-target chain, composes active
+files broad-to-specific, and asks the model to reconsider the unchanged tool
+batch before the normal review and execution steps. A content-free context
+event names the newly active relative sources and scopes. Parent agents and
+sub-agents share the run's 32 KiB nested-source budget, but each receives the
+active context on its own model request.
+
+Read-only bindings do not advertise write, edit, or patch tools. Selecting a
+different authorized folder, a removed/retargeted binding, byte or token
+limits, and unsafe or stale files surface as content-free warnings; they do
+not expose file bodies in the transcript or run log. An explicit file-read
+tool remains ordinary tool activity, so its result follows the usual review,
+logging, and conversation-persistence rules.
+
 ### Skills
 
 Skills are reusable instruction packs kept in Library ▸ Skills.
@@ -1222,6 +1247,8 @@ Enter). Tab-fleet keys (Ctrl+T, Alt+1…9, Ctrl+K) are covered in
 - [Console agent runs are screen-scoped](../index.md#console-agent-runs-are-screen-scoped)
   — what leaving Console does to runs and approvals.
 - [Console](../console.md) — the screen itself.
+- [Context & RAG](context-and-rag.md#project-instructions) — status states,
+  first-use consent, budgets, and the exact Next Send inspection boundary.
 
 ## Quirks & troubleshooting
 
