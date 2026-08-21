@@ -60,6 +60,12 @@ def allocate_context_sections(
 ) -> ContextAllocationResult:
     """Allocate Context content rows while preserving the input section order."""
 
+    seen_section_ids: set[str] = set()
+    for section in sections:
+        if section.section_id in seen_section_ids:
+            raise ValueError(f"duplicate Context section ID: {section.section_id}")
+        seen_section_ids.add(section.section_id)
+
     uses_outer_scroll = header_chrome_height > viewport_height
     if uses_outer_scroll:
         allocated_rows = _allocate_short_height(
@@ -154,10 +160,15 @@ def _allocate_short_height(
 
 
 def _allocate_header_fit(
-    content_budget: int,
+    available_section_rows: int,
     sections: Sequence[ContextSectionDemand],
     active_section_id: str | None,
 ) -> list[int]:
+    """Allocate content plus hint rows within the normal-mode section budget.
+
+    The result maintains ``sum(A + hint_required) <= available_section_rows``.
+    """
+
     allocated = [0] * len(sections)
     eligible = [
         index
@@ -169,7 +180,7 @@ def _allocate_header_fit(
         key=lambda index: sections[index].section_id != active_section_id,
     )
 
-    remaining = content_budget
+    remaining = available_section_rows
     for index in priority:
         base_cost = 1 + int(sections[index].desired_content_rows > 1)
         if base_cost <= remaining:

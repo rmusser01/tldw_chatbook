@@ -108,6 +108,15 @@ def test_normal_allocation_funds_active_first_and_preserves_dom_order() -> None:
     )
 
 
+def test_allocation_rejects_duplicate_section_ids() -> None:
+    with pytest.raises(ValueError, match="^duplicate Context section ID: sessions$"):
+        allocate_context_sections(
+            viewport_height=10,
+            header_chrome_height=2,
+            sections=(demand("sessions", 2), demand("sessions", 3)),
+        )
+
+
 def test_normal_allocation_breaks_water_fill_ties_in_dom_order() -> None:
     result = allocate_context_sections(
         viewport_height=7,
@@ -245,3 +254,17 @@ def test_fallback_active_section_prefers_nearest_preceding_then_first_following(
         )
         is None
     )
+
+
+def test_fallback_active_section_retains_valid_active_and_handles_no_known_active() -> (
+    None
+):
+    sections = (
+        demand("sessions", 0),
+        demand("workspaces", 2),
+        demand("conversations", 2),
+    )
+
+    assert fallback_active_section(sections, "conversations") == "conversations"
+    assert fallback_active_section(sections, "missing") == "workspaces"
+    assert fallback_active_section(sections, None) == "workspaces"
