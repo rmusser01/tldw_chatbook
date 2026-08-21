@@ -357,19 +357,25 @@ async def test_authority_refresh_is_snapshot_driven_and_explicitly_invalidatable
     await tasks[-1]
     controller._request_console_project_instruction_display_refresh(session.id)
     await asyncio.sleep(0)
-    assert controller._refresh_console_project_instruction_display_state.await_count == 1
+    assert (
+        controller._refresh_console_project_instruction_display_state.await_count == 1
+    )
 
     changed = ProjectInstructionControlState(True, "binding-2", "e" * 64, None)
     store.set_session_project_instruction_state(session.id, changed)
     controller._request_console_project_instruction_display_refresh(session.id)
     await tasks[-1]
-    assert controller._refresh_console_project_instruction_display_state.await_count == 2
+    assert (
+        controller._refresh_console_project_instruction_display_state.await_count == 2
+    )
 
     controller._request_console_project_instruction_display_refresh(
         session.id, force=True
     )
     await tasks[-1]
-    assert controller._refresh_console_project_instruction_display_state.await_count == 3
+    assert (
+        controller._refresh_console_project_instruction_display_state.await_count == 3
+    )
 
 
 def test_disposable_preview_matches_live_exact_request_when_source_is_omitted(
@@ -450,9 +456,7 @@ async def test_preview_fails_closed_when_run_log_binding_is_uncertain(
     control = ProjectInstructionControlState(True, "binding-1", "f" * 64, None)
     store = ConsoleChatStore()
     session = store.create_session(project_instruction_state=control)
-    store.append_message(
-        session.id, role=ConsoleMessageRole.USER, content="question"
-    )
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="question")
     resolution = SimpleNamespace(
         ready=True,
         provider="openai",
@@ -740,9 +744,7 @@ async def test_controller_preview_applies_live_skill_turn_before_admission(
     monkeypatch.setattr(
         agent_service,
         "_count_model_messages",
-        lambda messages, *_a, **_k: 95
-        if "$code-review" in str(messages)
-        else 20,
+        lambda messages, *_a, **_k: 95 if "$code-review" in str(messages) else 20,
     )
     monkeypatch.setattr(agent_service, "count_tokens_messages", lambda *_a, **_k: 5)
     monkeypatch.setattr(agent_service, "estimate_tokens", lambda *_a, **_k: 0)
@@ -764,9 +766,7 @@ async def test_controller_preview_applies_live_skill_turn_before_admission(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "race", ["disable", "remove", "retarget", "replace_root"]
-)
+@pytest.mark.parametrize("race", ["disable", "remove", "retarget", "replace_root"])
 async def test_preview_revalidates_authority_after_awaited_composition(
     tmp_path, monkeypatch, race
 ):
@@ -804,6 +804,7 @@ async def test_preview_revalidates_authority_after_awaited_composition(
         ready=True, provider="openai", execution_key="openai", model="m", max_tokens=20
     )
     gateway = SimpleNamespace(resolve_for_send=AsyncMock(return_value=resolution))
+
     async def compose(**_kwargs):
         return None, Mock(), None, None
 
@@ -812,9 +813,7 @@ async def test_preview_revalidates_authority_after_awaited_composition(
             return_value=(
                 {
                     "model": "m",
-                    "messages": [
-                        {"role": "user", "content": candidate.source.body}
-                    ],
+                    "messages": [{"role": "user", "content": candidate.source.body}],
                 },
                 SimpleNamespace(
                     startup_source_metadata=None,
@@ -887,7 +886,9 @@ async def test_parked_session_preview_does_not_publish_global_mcp_counts(
     control = ProjectInstructionControlState(True, "binding-1", "f" * 64, None)
     store = ConsoleChatStore()
     parked = store.create_session(project_instruction_state=control)
-    store.create_session(project_instruction_state=ProjectInstructionControlState.legacy_disabled())
+    store.create_session(
+        project_instruction_state=ProjectInstructionControlState.legacy_disabled()
+    )
     resolution = SimpleNamespace(
         ready=True, provider="openai", execution_key="openai", model="m", max_tokens=20
     )
@@ -1514,8 +1515,7 @@ async def test_captured_context_uses_provider_fallbacks_for_images_and_admission
     monkeypatch.setattr(
         controller_module,
         "is_vision_capable",
-        lambda provider, model: (provider, model)
-        == ("llama_cpp", "captured-vision"),
+        lambda provider, model: (provider, model) == ("llama_cpp", "captured-vision"),
     )
     monkeypatch.setattr(controller_module, "max_history_images", lambda *_a: 2)
     monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a, **_k: 100)
@@ -1536,7 +1536,9 @@ async def test_captured_context_uses_provider_fallbacks_for_images_and_admission
     assert captured_selection.configured_model == "captured-vision"
     assert captured_selection.base_url == "http://127.0.0.1:9191"
     assert captured_selection.max_tokens == 70
-    assert str(preview.next_send_payload).count("[image: data redacted for preview]") == 2
+    assert (
+        str(preview.next_send_payload).count("[image: data redacted for preview]") == 2
+    )
     assert "[image omitted]" not in str(preview.next_send_payload)
     assert "omitted_token_budget" in preview.outcomes
 
@@ -1621,9 +1623,7 @@ def test_notice_observes_captured_stop_event_after_run_map_cleanup():
     active_events = {"session-a": cancel_event}
     controller._screen = SimpleNamespace(
         app=SimpleNamespace(push_screen=push_screen),
-        _console_chat_controller=SimpleNamespace(
-            _active_cancel_events=active_events
-        ),
+        _console_chat_controller=SimpleNamespace(_active_cancel_events=active_events),
     )
     controller.app_instance = SimpleNamespace(
         call_from_thread=lambda callback: callback()
