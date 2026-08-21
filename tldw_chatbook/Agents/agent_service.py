@@ -1298,8 +1298,8 @@ class AgentService:
                 or reserve < 0
             ):
                 return False
-            used = count_tokens_messages(
-                list(request.messages), config.model, provider=api_endpoint
+            used = _count_model_messages(
+                list(request.messages), config.model, api_endpoint
             )
             if type(used) is not int or used <= 0:
                 return False

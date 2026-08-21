@@ -512,6 +512,64 @@ def test_real_ledger_exact_final_limit_marks_and_sends(db, monkeypatch, tmp_path
     assert ledger.initial_context_for_chain("primary", state).status == "proceed"
 
 
+def test_real_ledger_multimodal_fallback_exact_fit_marks_and_sends(
+    db, monkeypatch, tmp_path
+):
+    ledger = _warning_ledger(tmp_path)
+    service, chat = make_service(db, ["done"])
+    service.project_instruction_context = ledger
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_args: 100)
+    monkeypatch.setattr(agent_service, "estimate_tokens", lambda *_args, **_kwargs: 5)
+    primary_calls: list[list[dict]] = []
+    fallback_calls: list[list[dict]] = []
+
+    def primary_counter(messages, *_args, **_kwargs):
+        primary_calls.append(list(messages))
+        raise TypeError("multimodal content")
+
+    def multimodal_fallback(messages, *_args, **_kwargs):
+        fallback_calls.append(list(messages))
+        return 85 if any(PROJECT_INSTRUCTION_ROW_KEY in row for row in messages) else 84
+
+    monkeypatch.setattr(agent_service, "count_tokens_messages", primary_counter)
+    monkeypatch.setattr(
+        agent_service, "count_console_messages_tokens", multimodal_fallback
+    )
+    config = AgentConfig(
+        model="m",
+        system_prompt="s",
+        allowed_tools=(),
+        response_reserve_tokens=10,
+    )
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "inspect"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,AAAA"},
+                },
+            ],
+        }
+    ]
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="c-project-multimodal-exact-fit",
+        messages=messages,
+        config=config,
+        api_endpoint="openai",
+    )
+
+    assert outcome.status == RUN_DONE
+    assert len(chat.calls) == 1
+    assert primary_calls and fallback_calls
+    assert sum(
+        PROJECT_INSTRUCTION_ROW_KEY in row
+        for row in chat.calls[0]["messages_payload"]
+    ) == 1
+
+
 @pytest.mark.parametrize(
     ("limit_value", "count_value"),
     [
