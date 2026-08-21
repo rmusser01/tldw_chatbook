@@ -290,7 +290,7 @@ async def test_library_landing_late_sync_cannot_replace_a_new_route_owner(
 
 
 @pytest.mark.asyncio
-async def test_library_graduation_header_survives_reconcile_and_same_route_replace():
+async def test_library_graduation_announcement_survives_reconcile_and_same_route_replace():
     app = _build_test_app()
     _seed_conversations(app, [], notes=_two_notes())
     host = LibraryHarness(app)

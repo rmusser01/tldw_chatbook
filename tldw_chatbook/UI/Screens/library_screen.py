@@ -15294,8 +15294,8 @@ class LibraryScreen(BaseAppScreen):
         status.update(copy)
         status.display = bool(copy)
 
-    def _clear_library_graduation_announcement(self) -> None:
-        """Acknowledge transition feedback at the next admitted navigation."""
+    def _acknowledge_library_destination_change(self) -> None:
+        """Clear transition feedback after an explicit route is admitted."""
         if not self._library_graduation_announcement_visible:
             return
         self._library_graduation_announcement_visible = False
@@ -15902,6 +15902,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_file_notes_workspace = (
                 self._library_file_notes_workspace_factory()
             )
+        self._acknowledge_library_destination_change()
         self._library_notes_source = LIBRARY_NOTES_SOURCE_FILES
         # task-2850: the Files-mode Escape binding only fires while
         # ``_file_notes_active()`` is true, so the footer's advertised keys
@@ -15950,6 +15951,7 @@ class LibraryScreen(BaseAppScreen):
         if release_source is False:
             return
         try:
+            self._acknowledge_library_destination_change()
             self._library_notes_source = LIBRARY_NOTES_SOURCE_DATABASE
             self._register_footer_shortcuts()
             await self.recompose()
@@ -16157,7 +16159,7 @@ class LibraryScreen(BaseAppScreen):
         if not await self._flush_library_skill_save():
             self._notify_skill_dirty_veto()
             return
-        self._clear_library_graduation_announcement()
+        self._acknowledge_library_destination_change()
         if row_id != LIBRARY_ROW_BROWSE_MEDIA:
             self._library_media_browse_controller.invalidate()
         self._library_navigation_context_generation += 1
@@ -16402,6 +16404,7 @@ class LibraryScreen(BaseAppScreen):
             )
             return
         if conversation_id:
+            self._acknowledge_library_destination_change()
             self._selected_conversation_id = conversation_id
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_CONVERSATIONS
         _sync_library_canvas(self, "conversations")
@@ -17434,6 +17437,7 @@ class LibraryScreen(BaseAppScreen):
         """
         media_id = str(media_id or "")
         if media_id:
+            self._acknowledge_library_destination_change()
             self._selected_media_id = media_id
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
         self._library_media_view = "viewer"
@@ -21111,6 +21115,7 @@ class LibraryScreen(BaseAppScreen):
             return
         if not await self._flush_library_prompt_save():
             return
+        self._acknowledge_library_destination_change()
         self._clear_library_prompt_selection(announce=True)
         self._invalidate_library_prompts_browse()
         self._reset_library_prompt_editor_state()
@@ -28130,6 +28135,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_note_session_blank_id = None
         self._library_note_title_user_edited = False
         if note_id:
+            self._acknowledge_library_destination_change()
             self._begin_library_note_load(note_id)
         _sync_library_canvas(self, "notes")
 
@@ -31753,6 +31759,8 @@ class LibraryScreen(BaseAppScreen):
                 return None
             if parsed_prompt_id < 1:
                 return None
+            if not entry_origin:
+                self._acknowledge_library_destination_change()
             self._clear_library_prompt_selection(announce=True)
             self._invalidate_library_prompts_browse()
             # Mirrors handle_library_prompt_row's full state-set exactly so
@@ -31794,6 +31802,8 @@ class LibraryScreen(BaseAppScreen):
                 return None
             if not entry_is_current():
                 return LibraryEntryReconcileResult.SUPERSEDED
+            if not entry_origin:
+                self._acknowledge_library_destination_change()
             self._clear_library_prompt_selection(announce=True)
             # Mirrors handle_library_media_row's full state-set EXACTLY so
             # the recomposed canvas lands on a clean viewer, never a stale
@@ -31840,6 +31850,8 @@ class LibraryScreen(BaseAppScreen):
                 return None
             if not entry_is_current():
                 return LibraryEntryReconcileResult.SUPERSEDED
+            if not entry_origin:
+                self._acknowledge_library_destination_change()
             self._clear_library_prompt_selection(announce=True)
             self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
             if entry_origin:

@@ -1826,6 +1826,134 @@ async def test_library_graduation_announcement_persists_on_note_creation_canvas(
 
 
 @pytest.mark.asyncio
+async def test_library_graduation_announcement_clears_on_notes_files_switch() -> None:
+    gates = _LibraryEvidenceGates(
+        outcomes={"notes": [LibraryContentEvidence.HAS_USER_CONTENT]}
+    )
+    app = _new_library_onboarding_app(gates)
+    screen = LibraryScreen(app)
+    host = LibraryHarness(app, screen=screen)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            await _wait_for_evidence_round(pilot, gates)
+            screen.query_one("#library-hub-action-new-note", Button).press()
+            await _wait_for_selector(screen, pilot, "#library-notes-source-files")
+
+            gates.release_round(0, "notes")
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_lifecycle is LibraryLifecycle.GRADUATED,
+                message="note evidence did not graduate before the source switch",
+            )
+            lifecycle_status = screen.query_one("#library-lifecycle-status", Static)
+            assert "Library tools are now available." in str(
+                lifecycle_status.renderable
+            )
+
+            screen.query_one("#library-notes-source-files", Button).press()
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen._library_notes_source
+                    == library_screen_module.LIBRARY_NOTES_SOURCE_FILES
+                ),
+                message="Notes Files source switch was not admitted",
+            )
+            await pilot.pause()
+
+            assert "Library tools are now available." not in str(
+                lifecycle_status.renderable
+            )
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+async def test_library_graduation_announcement_clears_on_direct_item_open() -> None:
+    gates = _LibraryEvidenceGates(
+        outcomes={"notes": [LibraryContentEvidence.HAS_USER_CONTENT]}
+    )
+    app = _new_library_onboarding_app(gates)
+    screen = LibraryScreen(app)
+    host = LibraryHarness(app, screen=screen)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            await _wait_for_evidence_round(pilot, gates)
+            gates.release_round(0, "notes")
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_lifecycle is LibraryLifecycle.GRADUATED,
+                message="note evidence did not graduate before the direct open",
+            )
+            lifecycle_status = screen.query_one("#library-lifecycle-status", Static)
+            assert "Library tools are now available." in str(
+                lifecycle_status.renderable
+            )
+
+            await screen._open_library_item_by_id("media", "media-direct")
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_media_view == "viewer",
+                message="direct media destination was not admitted",
+            )
+            await pilot.pause()
+
+            assert "Library tools are now available." not in str(
+                lifecycle_status.renderable
+            )
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+async def test_library_graduation_announcement_survives_cancelled_source_switch(
+    monkeypatch,
+) -> None:
+    gates = _LibraryEvidenceGates(
+        outcomes={"notes": [LibraryContentEvidence.HAS_USER_CONTENT]}
+    )
+    app = _new_library_onboarding_app(gates)
+    screen = LibraryScreen(app)
+    host = LibraryHarness(app, screen=screen)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            await _wait_for_evidence_round(pilot, gates)
+            screen.query_one("#library-hub-action-new-note", Button).press()
+            await _wait_for_selector(screen, pilot, "#library-notes-source-files")
+            gates.release_round(0, "notes")
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_lifecycle is LibraryLifecycle.GRADUATED,
+                message="note evidence did not graduate before the cancelled switch",
+            )
+
+            async def leave_dirty():
+                return None
+
+            monkeypatch.setattr(screen, "_flush_library_note_save", leave_dirty)
+            monkeypatch.setattr(
+                LibraryScreen,
+                "_library_note_dirty",
+                property(lambda _screen: True),
+            )
+            screen.query_one("#library-notes-source-files", Button).press()
+            await pilot.pause()
+
+            assert (
+                screen._library_notes_source
+                == library_screen_module.LIBRARY_NOTES_SOURCE_DATABASE
+            )
+            assert "Library tools are now available." in str(
+                screen.query_one("#library-lifecycle-status", Static).renderable
+            )
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
 async def test_library_persisted_graduated_restart_has_no_transition_announcement():
     gates = _LibraryEvidenceGates()
     app = _new_library_onboarding_app(gates)
