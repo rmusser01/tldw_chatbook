@@ -21898,6 +21898,7 @@ class _LibraryIngestCanvasHarness(LibraryIngestQueueMixin, App):
 
     def __init__(self, media_db, *, pool_factory=None, worker_count=None):
         super().__init__()
+        self.app_config = {}
         # task-3315: the runtime-state contract is DERIVED from the app's own
         # initializer, never hand-listed -- the hand-listed version missed
         # `_ingest_local_stt_jobs` when the local-STT lane landed and ~20
