@@ -28,6 +28,24 @@ and this project adheres to Some kind of Versioning
   standard nav/footer/status chrome and a live Loading/Error/Ready/Empty header badge.
 
 ### Removed
+- **BREAKING — file template store deleted (chunking-template-parity, spec §8.1).**
+  `tldw_chatbook/Chunking/templates/` (the 13 built-in template JSONs plus
+  `README.md` and `example_usage.py`) and `Chunking/chunking_templates.py`
+  (`ChunkingTemplateManager`, `ChunkingPipeline`, `ChunkingTemplate`,
+  `ChunkingStage`, `ChunkingOperation`) are gone, and those names are no longer
+  exported from the `tldw_chatbook.Chunking` package root — a breaking change
+  to the package's public import surface. The vendored engine's own
+  `ChunkingTemplate` (same public name, different class) is deliberately NOT
+  re-exported either: nothing outside the service layer resolves templates.
+  Chunking templates are DB rows now. `Chunker`/`improved_chunking_process`
+  keep their `template=`/`template_manager=` parameters, but `template=`
+  accepts only a pre-resolved template dict (resolve names first via
+  `tldw_chatbook.Chunking.template_runtime.resolve_template`); a bare name
+  string raises `TemplateError`, and `template_manager=` is accepted and
+  ignored. All five packaging sites (pyproject package-data and package
+  exclude, MANIFEST.in, `Packaging/check_manifest.py`, and the installed-
+  distribution import pin and data contract) moved in the same commit: no
+  `Chunking/templates/` path ships in the wheel or sdist.
 - Rejected, unreachable dictation-history implementations removed:
   `Audio/transcription_history.py`, `Widgets/transcription_history_viewer.py`,
   and `UI/Dictation_Window.py`.

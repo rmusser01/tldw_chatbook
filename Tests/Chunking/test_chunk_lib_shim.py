@@ -274,15 +274,20 @@ def test_rolling_summarize_marker_prefixes_absent_from_source():
 
 
 def test_improved_chunking_process_honors_template_kwarg():
-    # C2: template=/template_manager= kwargs previously accepted but ignored
-    # (the body never read them). The 'conversation' template's chunk stage
-    # pins method='sentences'; without the template the default is 'words'.
-    # Assert the template path is actually taken.
+    # C2: template=/template_manager= kwargs remain in the signature. Since
+    # the file store was deleted (spec §8.2) template= accepts a
+    # PRE-RESOLVED dict: this template's chunk stage pins method='sentences'
+    # where the options default would be 'words'. Assert the template's
+    # chunk-stage options are actually applied.
+    conversation = {
+        "name": "conversation",
+        "chunking": {"method": "sentences", "config": {}},
+    }
     chunks = Chunk_Lib.improved_chunking_process(
         "Introduction sentence one. Methods sentence here. Results are shown. "
         "Discussion follows. " * 6,
         {"max_size": 8, "overlap": 0},
-        template="conversation",
+        template=conversation,
     )
     assert chunks, "template chunking produced no chunks"
     assert all(c["metadata"]["chunk_method"] == "sentences" for c in chunks), (

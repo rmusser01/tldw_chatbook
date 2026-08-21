@@ -58,15 +58,13 @@ def test_character_chat_without_optional_deps():
 def test_chunking_without_optional_deps(tmp_path):
     """Test chunking functionality works without optional language-specific deps."""
     from tldw_chatbook.Chunking.Chunk_Lib import Chunker
-    from tldw_chatbook.Chunking.chunking_templates import ChunkingTemplateManager
 
-    # Basic English text chunking should work without jieba/fugashi
-    template_manager = ChunkingTemplateManager(
-        user_templates_dir=tmp_path / "chunking_templates"
-    )
+    # Basic English text chunking should work without jieba/fugashi.
+    # template_manager= is accepted-and-ignored since the file template
+    # store was deleted (spec §8.2): passing one must not change behavior.
     chunker = Chunker(
         {"method": "words", "max_size": 100, "overlap": 20, "language": "en"},
-        template_manager=template_manager,
+        template_manager=object(),
     )
 
     test_text = "This is a test text for chunking. It should work without optional dependencies."

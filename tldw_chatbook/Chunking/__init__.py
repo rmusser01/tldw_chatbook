@@ -1,6 +1,15 @@
 # __init__.py
 """
-Chunking module for flexible text chunking with template support.
+Chunking module for flexible text chunking.
+
+Templates are DB rows: name resolution lives in
+``template_runtime.resolve_template`` at the service layer (spec §8.2), and
+``Chunker``/``improved_chunking_process`` accept only pre-resolved template
+dicts. The former file store (``Chunking/templates/``) and its manager
+module (``chunking_templates.py``, re-exported here until its deletion) are
+gone -- a breaking change to this package's namespace recorded in the
+CHANGELOG. The vendored engine's ``ChunkingTemplate`` is deliberately NOT
+re-exported: nothing outside the service layer resolves templates.
 """
 
 from .Chunk_Lib import (
@@ -14,14 +23,6 @@ from .Chunk_Lib import (
     process_document_with_metadata,
     DEFAULT_CHUNK_OPTIONS,
     ENGINE_VERSION,
-)
-
-from .chunking_templates import (
-    ChunkingTemplate,
-    ChunkingTemplateManager,
-    ChunkingPipeline,
-    ChunkingStage,
-    ChunkingOperation,
 )
 
 from .language_chunkers import (
@@ -41,12 +42,6 @@ __all__ = [
     "process_document_with_metadata",
     "DEFAULT_CHUNK_OPTIONS",
     "ENGINE_VERSION",
-    # Template system
-    "ChunkingTemplate",
-    "ChunkingTemplateManager",
-    "ChunkingPipeline",
-    "ChunkingStage",
-    "ChunkingOperation",
     # Language support
     "LanguageChunkerFactory",
     "ChineseChunker",
