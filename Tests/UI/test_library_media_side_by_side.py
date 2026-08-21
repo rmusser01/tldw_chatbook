@@ -35,6 +35,13 @@ WIDE_SIZE = LIBRARY_TEST_SIZE  # (170, 48)
 NARROW_SIZE = (100, 30)
 
 
+def _build_media_test_app():
+    """Return a populated-Library app rather than a fresh Starter profile."""
+    app = _build_test_app()
+    app.library_new_profile_admission = False
+    return app
+
+
 async def _open_media_list(host, pilot):
     """Select the Media rail row and wait for the list rows to mount."""
     screen = _active_library_screen(host)
@@ -68,7 +75,7 @@ async def test_media_list_and_preview_side_by_side_at_wide_width():
     """At 170 cols the preview renders BESIDE the list (same row band,
     strictly to its right), not below it -- the task-14900 defect was a
     blank right half-canvas while list and preview stacked vertically."""
-    app = _build_test_app()
+    app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
     host = LibraryHarness(app)
 
@@ -96,7 +103,7 @@ async def test_media_list_and_preview_side_by_side_at_wide_width():
 async def test_media_list_and_preview_stacked_below_breakpoint():
     """At 100 cols the current stacked layout is preserved: the preview sits
     strictly BELOW the list at the same left edge, full canvas width."""
-    app = _build_test_app()
+    app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
     host = LibraryHarness(app)
 
@@ -123,7 +130,7 @@ async def test_trash_view_stays_single_column_at_wide_width():
     """The split applies to the LIST view only: Trash is a list-only surface
     (no detail half exists in its state), so at wide widths its rows keep the
     full canvas width and no media workbench container is present."""
-    app = _build_test_app()
+    app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
     host = LibraryHarness(app)
 
@@ -144,7 +151,7 @@ async def test_trash_view_stays_single_column_at_wide_width():
 
 
 async def _assert_keyboard_traversal_and_viewer_entry(size):
-    app = _build_test_app()
+    app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
     host = LibraryHarness(app)
 
@@ -210,7 +217,7 @@ async def test_keyboard_traversal_and_viewer_entry_narrow():
 
 
 async def _assert_select_mode_bulk_toolbar_usable(size):
-    app = _build_test_app()
+    app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
     host = LibraryHarness(app)
 
@@ -286,7 +293,7 @@ async def _assert_select_mode_keyboard_toggle_and_footer(size):
     the in-place patcher (marker preserved -- the label rewrite must keep
     the ☑/☐ at position 0), and the footer seam stays honest through the
     armed bulk-delete sub-state in this layout."""
-    app = _build_test_app()
+    app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
     host = LibraryHarness(app)
 
@@ -365,7 +372,7 @@ async def test_select_mode_keyboard_toggle_and_footer_narrow():
 async def test_wide_select_mode_shows_detail_placeholder():
     """In the wide split, Select mode hides the preview (task-2853 AC4), so
     the detail half explains itself instead of sitting blank."""
-    app = _build_test_app()
+    app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
     host = LibraryHarness(app)
 
@@ -393,7 +400,7 @@ async def test_narrow_select_mode_keeps_placeholder_hidden():
     """The placeholder is a wide-layout affordance only -- the preserved
     stacked layout renders nothing below the list in Select mode, exactly
     as before this task."""
-    app = _build_test_app()
+    app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
     host = LibraryHarness(app)
 
