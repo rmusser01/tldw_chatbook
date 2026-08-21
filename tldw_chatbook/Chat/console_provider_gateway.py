@@ -264,6 +264,15 @@ class ConsoleProviderStreamSignals:
             if flight is not None:
                 flight[key].extend(items)
 
+    def _mark_scoped_exchange_synthetic(self, token: object) -> None:
+        """Stamp one call's in-flight record as carrying locally
+        synthesized fallback UI copy, not provider output (review finding
+        M3)."""
+        with self._exchange_lock:
+            flight = self._active_exchanges.get(token)
+            if flight is not None:
+                flight["synthetic_fallback"] = True
+
     def _complete_scoped_exchange(
         self, token: object, status: str,
         usage_payload: dict[str, Any] | None,
@@ -301,6 +310,13 @@ class ConsoleProviderCallSignals:
         init=False,
         repr=False,
     )
+    # Review finding M3: set by mark_synthetic_fallback(), consumed by the
+    # very next record_exchange_content() call in the generic stream loop --
+    # NOT the aggregate's own sticky Event (that one never resets, and is
+    # shared across every call this signals object ever makes; this one is
+    # per-call and self-clearing, so only the ONE chunk actually generated
+    # as fallback UI copy gets labeled, never a later real answer).
+    _synthetic_pending: bool = field(default=False, init=False, repr=False)
 
     @property
     def synthetic_fallback_emitted(self) -> bool:
@@ -320,8 +336,19 @@ class ConsoleProviderCallSignals:
         return self._aggregate.exchange_capture_enabled
 
     def mark_synthetic_fallback(self) -> None:
-        """Mark synthetic fallback usage on the aggregate signal."""
+        """Mark synthetic fallback usage on the aggregate signal, and flag
+        this call's NEXT recorded content chunk as synthetic (review
+        finding M3 -- consumed once by ``take_synthetic_pending()``)."""
+        self._synthetic_pending = True
         self._aggregate.mark_synthetic_fallback()
+
+    def take_synthetic_pending(self) -> bool:
+        """Consume (and clear) whether ``mark_synthetic_fallback()`` fired
+        for the chunk about to be recorded. Self-clearing so only the one
+        chunk actually generated as fallback UI copy is ever labeled."""
+        pending = self._synthetic_pending
+        self._synthetic_pending = False
+        return pending
 
     def record_usage_payload(self, payload: Mapping[str, Any]) -> None:
         """Merge a provider usage payload into this call's snapshot.
@@ -374,13 +401,25 @@ class ConsoleProviderCallSignals:
         self._aggregate._begin_scoped_exchange(self._token, {
             "provider": provider, "model": model, "endpoint": endpoint,
             "request": request, "omitted_keys": omitted_keys,
-            "content": [], "tool_calls": [],
+            "content": [], "tool_calls": [], "synthetic_fallback": False,
             "created_at": datetime.now(timezone.utc).isoformat(),
         })
 
-    def record_exchange_content(self, text: str) -> None:
+    def record_exchange_content(self, text: str, *, synthetic: bool = False) -> None:
+        """Append one content chunk to this call's in-flight capture.
+
+        Args:
+            synthetic: True when ``text`` is locally synthesized fallback
+                UI copy (``NO_PROVIDER_CONTENT_COPY``/``UNSUPPORTED_
+                PROVIDER_RESPONSE_COPY``), never actual provider output --
+                stamped into the capture's response so the Exchange tab can
+                label it instead of presenting UI copy as a model answer
+                (review finding M3).
+        """
         if text:
             self._aggregate._mutate_scoped_exchange(self._token, "content", [text])
+            if synthetic:
+                self._aggregate._mark_scoped_exchange_synthetic(self._token)
 
     def record_exchange_tool_calls(self, calls: "Sequence[Mapping[str, Any]]") -> None:
         self._aggregate._mutate_scoped_exchange(
@@ -443,7 +482,8 @@ def _flight_capture(run_tag: str, seq: int, flight: dict[str, Any],
         provider=flight["provider"], model=flight["model"],
         endpoint=flight["endpoint"], request=flight["request"],
         response={"content": "".join(flight["content"]),
-                  "tool_calls": list(flight["tool_calls"])},
+                  "tool_calls": list(flight["tool_calls"]),
+                  "synthetic_fallback": bool(flight.get("synthetic_fallback", False))},
         status=status, usage_json=usage_json,
         omitted_keys=flight["omitted_keys"],
     )
@@ -2444,7 +2484,38 @@ class ConsoleProviderGateway:
                     except Exception:
                         logger.opt(exception=True).warning("exchange_capture_begin_failed")
                 if not resolution.streaming:
-                    completion = await self.complete_llamacpp_chat(
+                    # M1: an HTTP failure here must close the exchange as
+                    # "error" -- left to the outer `finally` below, it would
+                    # see `completed` still False and close as "stopped"
+                    # (a real send failure misreported as a user-initiated
+                    # stop), unlike the generic path's own explicit
+                    # close_exchange(status="error") before it re-raises.
+                    try:
+                        completion = await self.complete_llamacpp_chat(
+                            base_url=resolution.base_url,
+                            model=resolution.model,
+                            messages=wire_messages,
+                            temperature=resolution.temperature,
+                            top_p=resolution.top_p,
+                            min_p=resolution.min_p,
+                            top_k=resolution.top_k,
+                            max_tokens=effective_resolution.max_tokens,
+                            reasoning_effort=resolution.reasoning_effort,
+                            thinking_budget_tokens=resolution.thinking_budget_tokens,
+                            api_key=resolution.api_key,
+                        )
+                    except Exception:
+                        if call_signals is not None:
+                            call_signals.close_exchange(status="error")
+                        raise
+                    if call_signals is not None:
+                        call_signals.record_exchange_content(completion)
+                    if completion:
+                        yield completion
+                    completed = True
+                    return
+                try:
+                    async for chunk in self.stream_llamacpp_chat(
                         base_url=resolution.base_url,
                         model=resolution.model,
                         messages=wire_messages,
@@ -2456,29 +2527,19 @@ class ConsoleProviderGateway:
                         reasoning_effort=resolution.reasoning_effort,
                         thinking_budget_tokens=resolution.thinking_budget_tokens,
                         api_key=resolution.api_key,
-                    )
+                    ):
+                        if call_signals is not None:
+                            call_signals.record_exchange_content(chunk)
+                        yield chunk
+                except Exception:
+                    # Only real provider/HTTP failures land here -- a
+                    # consumer abort throws GeneratorExit/CancelledError
+                    # (BaseException, not Exception) into this suspended
+                    # `yield`, so it still falls through to the outer
+                    # `finally`'s "stopped" close, unchanged.
                     if call_signals is not None:
-                        call_signals.record_exchange_content(completion)
-                    if completion:
-                        yield completion
-                    completed = True
-                    return
-                async for chunk in self.stream_llamacpp_chat(
-                    base_url=resolution.base_url,
-                    model=resolution.model,
-                    messages=wire_messages,
-                    temperature=resolution.temperature,
-                    top_p=resolution.top_p,
-                    min_p=resolution.min_p,
-                    top_k=resolution.top_k,
-                    max_tokens=effective_resolution.max_tokens,
-                    reasoning_effort=resolution.reasoning_effort,
-                    thinking_budget_tokens=resolution.thinking_budget_tokens,
-                    api_key=resolution.api_key,
-                ):
-                    if call_signals is not None:
-                        call_signals.record_exchange_content(chunk)
-                    yield chunk
+                        call_signals.close_exchange(status="error")
+                    raise
                 completed = True
                 return
             if resolution.execution_key:
@@ -2579,7 +2640,18 @@ class ConsoleProviderGateway:
                     if text:
                         emitted_content = True
                     if signals is not None and text:
-                        signals.record_exchange_content(text)
+                        # M3: the fallback UI copy this loop can receive
+                        # from `normalize_provider_response` (NO_PROVIDER_
+                        # CONTENT_COPY / UNSUPPORTED_PROVIDER_RESPONSE_COPY)
+                        # is locally synthesized, never provider output --
+                        # take_synthetic_pending() reports whether THIS
+                        # specific chunk was one (set by mark_synthetic_
+                        # fallback() just before that generator's yield),
+                        # so the capture records it as such instead of
+                        # presenting UI copy as a model answer.
+                        signals.record_exchange_content(
+                            text, synthetic=signals.take_synthetic_pending()
+                        )
                     enqueue(_QueueItem.content(text))
                 if stop_event.is_set():
                     return

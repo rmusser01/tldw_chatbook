@@ -6233,6 +6233,35 @@ class TestGatewayExchangeCapture:
         assert "api_key" not in captures[0].request
         assert "api_key" in captures[0].omitted_keys
         assert captures[0].response["content"] == "pong"
+        # Review finding M3 control: real provider output is never
+        # mislabeled as synthesized fallback copy.
+        assert captures[0].response["synthetic_fallback"] is False
+
+    @pytest.mark.asyncio
+    async def test_synthetic_fallback_copy_is_stamped_not_silently_recorded(self):
+        """Review finding M3: NO_PROVIDER_CONTENT_COPY is locally
+        synthesized UI copy, not provider output -- the empty-response turn
+        a user opens the inspector to debug must not show that copy as if
+        the model said it. The capture stamps response["synthetic_
+        fallback"] instead."""
+
+        def fake_chat_api_call(**kwargs):
+            return {"choices": [{"message": {"content": ""}}]}
+
+        gateway = ConsoleProviderGateway(chat_api_call_fn=fake_chat_api_call)
+        signals = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
+        items = await self._drain(
+            gateway.stream_chat(
+                self._resolution(),
+                [{"role": "user", "content": "q"}],
+                signals=signals,
+            )
+        )
+        assert items == [NO_PROVIDER_CONTENT_COPY]
+        captures = signals.exchange_captures()
+        assert len(captures) == 1
+        assert captures[0].response["content"] == NO_PROVIDER_CONTENT_COPY
+        assert captures[0].response["synthetic_fallback"] is True
 
     @pytest.mark.asyncio
     async def test_transcript_output_byte_identical_with_capture(self):
@@ -6597,6 +6626,68 @@ class TestLlamaCppExchangeCapture:
         assert len(captures) == 1
         assert captures[0].status == "stopped"
         assert captures[0].response["content"] == "done"
+
+    @pytest.mark.asyncio
+    async def test_llamacpp_non_streaming_http_failure_closes_capture_as_error(
+        self, monkeypatch
+    ):
+        """Review finding M1: an HTTP failure in the non-streaming llama.cpp
+        branch must close the exchange as "error" -- left to the outer
+        `finally`, ``completed`` would still be False and it would close as
+        "stopped" instead, misreporting a real send failure as a
+        user-initiated stop (the generic path already does this correctly
+        via its own explicit ``close_exchange(status="error")``)."""
+        gateway = ConsoleProviderGateway()
+
+        async def failing_complete(self, **kwargs):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(
+            ConsoleProviderGateway, "complete_llamacpp_chat", failing_complete
+        )
+        aggregate = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
+        resolution = self._resolution(streaming=False)
+        with pytest.raises(RuntimeError):
+            async for _ in gateway.stream_chat(
+                resolution, [{"role": "user", "content": "q"}], signals=aggregate
+            ):
+                pass
+
+        captures = aggregate.exchange_captures()
+        assert len(captures) == 1
+        assert captures[0].status == "error"
+
+    @pytest.mark.asyncio
+    async def test_llamacpp_streaming_http_failure_closes_capture_as_error(
+        self, monkeypatch
+    ):
+        """Review finding M1: same for the streaming branch -- a mid-stream
+        HTTP failure must close as "error", keeping whatever partial content
+        was already recorded before the failure (contrast with a consumer
+        abort, which still closes "stopped" -- see the abort test above)."""
+        gateway = ConsoleProviderGateway()
+
+        async def failing_stream(self, **kwargs):
+            yield "he"
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(
+            ConsoleProviderGateway, "stream_llamacpp_chat", failing_stream
+        )
+        aggregate = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
+        resolution = self._resolution(streaming=True)
+        collected = []
+        with pytest.raises(RuntimeError):
+            async for chunk in gateway.stream_chat(
+                resolution, [{"role": "user", "content": "q"}], signals=aggregate
+            ):
+                collected.append(chunk)
+
+        assert collected == ["he"]
+        captures = aggregate.exchange_captures()
+        assert len(captures) == 1
+        assert captures[0].status == "error"
+        assert captures[0].response["content"] == "he"
 
     @pytest.mark.asyncio
     async def test_disabled_capture_never_builds_wire_payload_for_capture(

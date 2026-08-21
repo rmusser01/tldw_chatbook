@@ -335,7 +335,20 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         super().__init__()
         self._rows = list(rows)
         self._totals = totals
-        self._turns_by_index = {turn.index: turn for turn in turns}
+        # Review finding M5: `turns` is index-aligned with `rows` via
+        # InspectorTurn.index == ConsoleCostRow.index, but the CALLER
+        # (chat_screen.py's _build_console_inspector_cost_data) builds one
+        # turn per transcript MESSAGE, while `build_cost_rows` already
+        # skipped non-contributing ones (no usage, no non-blank content) --
+        # e.g. a bare tool-result message. Unfiltered, the Exchange tab
+        # showed a Collapsible for every message, roughly double the real
+        # count, half of them permanently reading "No capture recorded for
+        # this turn". Restrict to turns that actually have a cost row --
+        # the same set the Costs tab already renders.
+        contributing_indices = {row.index for row in self._rows}
+        self._turns_by_index = {
+            turn.index: turn for turn in turns if turn.index in contributing_indices
+        }
         self._exchanges_loader = exchanges_loader
         self._snapshot_factory = snapshot_factory
         self._token_estimate = token_estimate
@@ -745,12 +758,26 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         self, capture: ExchangeCapture, call_key: str
     ) -> Collapsible:
         text = self._response_text(capture)
-        est = estimate_tokens(text, "", "")
-        title = f"Response (~{est} tokens est."
-        usage = ProviderUsage.from_json(capture.usage_json)
-        if usage is not None:
-            title += f" / reported out:{usage.output}"
-        title += ")"
+        # Review finding M3: `synthetic_fallback` marks a response the
+        # gateway generated locally (NO_PROVIDER_CONTENT_COPY /
+        # UNSUPPORTED_PROVIDER_RESPONSE_COPY) because the provider returned
+        # nothing usable -- the inspector must never present that UI copy
+        # as if it were the model's own answer.
+        synthetic = bool(
+            capture.response.get("synthetic_fallback") if capture.response else False
+        )
+        if synthetic:
+            title = (
+                "Response (locally synthesized fallback copy -- the "
+                "provider returned no content)"
+            )
+        else:
+            est = estimate_tokens(text, "", "")
+            title = f"Response (~{est} tokens est."
+            usage = ProviderUsage.from_json(capture.usage_json)
+            if usage is not None:
+                title += f" / reported out:{usage.output}"
+            title += ")"
         return Collapsible(
             title=Content.from_text(title, markup=False),
             collapsed=True,

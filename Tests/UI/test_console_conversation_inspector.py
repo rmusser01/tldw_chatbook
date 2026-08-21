@@ -212,6 +212,41 @@ async def test_costs_rows_render_and_totals() -> None:
 
 
 @pytest.mark.asyncio
+async def test_exchange_tab_only_shows_turns_with_a_cost_row() -> None:
+    """Review finding M5: ``chat_screen.py`` builds one ``InspectorTurn``
+    per transcript MESSAGE, but ``build_cost_rows`` already skips
+    non-contributing ones (no usage, no non-blank content) -- e.g. a bare
+    tool-result message at index 1 here. Unfiltered, the Exchange tab
+    showed a Collapsible for every message (roughly double the real turn
+    count on a typical conversation), half of them permanently reading "no
+    capture recorded for this turn". Only turns with a matching cost row
+    (the same set the Costs tab already renders) should appear."""
+    app = InspectorHarness(
+        **_default_kwargs(
+            rows=[_row(index=0), _row(index=2)],
+            turns=[
+                _turn(index=0, message_id="p1", native_message_id="n1"),
+                _turn(index=1, message_id="p2", native_message_id="n2"),
+                _turn(index=2, message_id="p3", native_message_id="n3"),
+            ],
+            initial_tab=TAB_EXCHANGE,
+        )
+    )
+
+    async with app.run_test(size=(120, 44)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        turns_container = modal.query_one(
+            "#console-inspector-exchange-turns", VerticalScroll
+        )
+        collapsibles = {c.id: c for c in turns_container.query(Collapsible)}
+        assert set(collapsibles) == {
+            "console-inspector-exchange-turn-0",
+            "console-inspector-exchange-turn-2",
+        }
+
+
+@pytest.mark.asyncio
 async def test_collapsible_title_is_not_markup_parsed() -> None:
     """Regression pin (review finding 1): a Collapsible's title IS
     markup-parsed by Textual unless built with ``Content.from_text(...,
@@ -706,6 +741,56 @@ async def test_estimates_labeled_and_reported_authoritative() -> None:
         assert "~" in response_title
         assert "tokens est." in response_title
         assert "reported out:5" in response_title
+
+
+@pytest.mark.asyncio
+async def test_synthetic_fallback_response_is_labeled_not_shown_as_model_output() -> (
+    None
+):
+    """Review finding M3: a capture whose response is locally synthesized
+    fallback UI copy (``synthetic_fallback: True``, stamped by the gateway
+    when the provider returned nothing usable) must not be presented in the
+    Response section as if it were the model's own answer -- the section
+    title switches to an explicit label instead of the normal token
+    estimate."""
+    cap = _capture(
+        "r1",
+        0,
+        "t",
+        "m",
+        request={"system_message": "", "messages_payload": [], "tools": []},
+        response={
+            "content": "The provider returned no content.",
+            "tool_calls": [],
+            "synthetic_fallback": True,
+        },
+    )
+
+    async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
+        return [(cap, False)]
+
+    app = InspectorHarness(
+        **_default_kwargs(exchanges_loader=loader, initial_tab=TAB_EXCHANGE)
+    )
+
+    async with app.run_test(size=(120, 44)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+
+        turn = modal.query_one("#console-inspector-exchange-turn-0", Collapsible)
+        turn.collapsed = False
+        await _wait_until(pilot, lambda: bool(turn.query(Collapsible)))
+
+        call = turn.query_one("#console-inspector-exchange-call-0-0", Collapsible)
+        call.collapsed = False
+        await _wait_until(pilot, lambda: bool(call.query(Collapsible)))
+
+        response_title = _rendered_title(
+            call.query_one("#console-inspector-exchange-section-0-0-response", Collapsible)
+        )
+        assert "synthesized fallback" in response_title
+        assert "~" not in response_title
+        assert "tokens est." not in response_title
 
 
 @pytest.mark.asyncio
