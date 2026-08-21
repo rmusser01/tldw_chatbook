@@ -1416,12 +1416,36 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
     # -- Next Send tab (task-10, ported from the retired context modal) -
 
     def watch_snapshot(self) -> None:
+        """Re-render the Next Send tab whenever ``snapshot`` is replaced.
+
+        ``_load_snapshot`` swaps in a freshly-fetched
+        ``ConsoleContextSnapshot`` (current messages + the exact next-send
+        payload); this keeps the Current Context and Next Send Payload
+        panes in sync with it without either caller having to remember to
+        call ``_update_view`` itself.
+        """
         self._update_view()
 
     def watch_raw_json(self) -> None:
+        """Re-render the Next Send tab when the raw-JSON toggle flips.
+
+        ``raw_json`` switches ``_build_next_send_widgets`` between its
+        structured (collapsible-sections) rendering and a single raw
+        ``TextArea`` dump of the payload; this is what makes that switch
+        take effect immediately instead of only on the next unrelated
+        reflow.
+        """
         self._update_view()
 
     def watch_next_send_loading(self) -> None:
+        """Show/hide the Next Send tab's spinner as a snapshot load runs.
+
+        ``next_send_loading`` is deliberately NOT named ``loading`` (see
+        the reactive's own declaration comment above) so it cannot collide
+        with ``Widget``'s built-in whole-screen loading overlay; this
+        watcher is what actually drives the tab-local
+        ``LoadingIndicator``'s visibility from that separate flag.
+        """
         loading = self.query_one(
             "#console-inspector-next-send-loading", LoadingIndicator
         )
@@ -1673,13 +1697,16 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             self.next_send_loading = False
 
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
-        # Filtered to THIS pane's own worker group (task-10 review finding
-        # 2a) -- this screen also runs the Costs tab's ``_load_turn_
-        # captures`` and the Exchange tab's ``_load_exchange_turn`` workers
-        # (both left in Textual's "default" group), and an unfiltered
-        # handler here would toast this tab's "Failed to refresh context."
-        # message -- and clear THIS tab's spinner -- for a failure that has
-        # nothing to do with the Next Send tab.
+        """Surface a Next Send snapshot-load failure and clear its spinner.
+
+        Filtered to THIS pane's own worker group (task-10 review finding
+        2a) -- this screen also runs the Costs tab's ``_load_turn_
+        captures`` and the Exchange tab's ``_load_exchange_turn`` workers
+        (both left in Textual's "default" group), and an unfiltered
+        handler here would toast this tab's "Failed to refresh context."
+        message -- and clear THIS tab's spinner -- for a failure that has
+        nothing to do with the Next Send tab.
+        """
         if event.worker.group != _NEXT_SEND_WORKER_GROUP:
             return
         if event.state == WorkerState.ERROR:
