@@ -68,6 +68,38 @@ while the numeric version reports **838** -- it would have collided on essential
 every filing. That mistake was in the first draft of this very file, which is a fair
 illustration of why these entries carry their evidence.
 
+**MAX+20 leapfrogging has now failed TWICE against concurrent minting — 2026-08-21
+(TASK-19573/TASK-19601).** Seven ids were each claimed by two unrelated task files,
+in two internally-clean batches: `16320`, `16322`, `16323`, `16324` (note `16321`
+was never duplicated) and `18912`, `18913`, `18915` (note `18914` was never
+duplicated). Each batch's minting session DID sweep and leapfrog past an observed
+maximum -- that is exactly why every id within a batch was unique. The failure was
+that two different sessions performed that sweep against the *same* pre-merge
+maximum from different worktrees/branches, so their two leapfrogged blocks
+overlapped wholesale. Leapfrogging further (MAX+30, MAX+50, ...) does not fix this
+class of failure -- it only widens the window a collision can hide in, because the
+race is not "did you leapfrog far enough," it is "did anyone else observe the same
+maximum before you merged."
+
+Four of the seven pairs were also **Done vs. Done**, which the standing "a Done
+task never moves" reading made unresolvable at the file level -- fixing only the
+three resolvable pairs would not have turned the guard green, since the other four
+still collided.
+
+**The fix was a tie-break rule, not more distance.** TASK-19601 decided: the
+OLDER arrival (by `created_date`) keeps the id regardless of status; the younger
+task renumbers, carrying a `## Renumbering provenance` section that names the old
+id, with every inbound reference (`dependencies:`, docs, plans, code comments)
+moved to match. `.github/workflows/backlog-guard.yml`'s failure message now states
+this rule directly, so the next collision is actionable without re-deriving policy
+from scratch.
+
+**What to do.** Sweeping and leapfrogging reduces collision probability but cannot
+eliminate it while multiple sessions mint ids from an observed maximum
+concurrently -- treat every freshly-claimed id as provisional until it lands on
+`origin/dev`, and when a collision is found anyway, apply the older-keeps-id rule
+instead of trying to out-sweep the next session.
+
 ---
 
 ## `--ac` does not split on commas — you get one run-on criterion
