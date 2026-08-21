@@ -106,9 +106,6 @@ from ..Console_Modules.retrieval import (
 from ..Console_Modules.transcript import _ConsoleTranscriptReadingState
 from ..Console_Modules.wiring import build_console_controllers
 from ..Console_Modules.session import (
-    _canonical_card_character_id,
-    _console_global_user_display_name,
-    _character_session_prompt_seed,
     _has_selected_text,
     _is_empty_select_value,
 )
@@ -498,7 +495,6 @@ from ...Widgets.Console.console_retrieval_scope_row import (
 )
 from ...Widgets.Console.console_character_picker_modal import (
     ConsoleCharacterChoice,
-    ConsoleCharacterOption,
     ConsoleCharacterPickerModal,
 )
 from ...Widgets.Console.console_composer_menu_modal import (
@@ -9047,7 +9043,7 @@ class ChatScreen(BaseAppScreen):
             # rail name covers resumed conversations.
             character=(
                 getattr(settings, "character_label", None)
-                or self._current_console_rail_character_name()
+                or self._character._current_console_rail_character_name()
             ),
             assistant_kind=getattr(active_session, "assistant_kind", None),
             assistant_name=getattr(active_session, "assistant_name", None),
@@ -9831,7 +9827,9 @@ class ChatScreen(BaseAppScreen):
 
     async def _open_console_character_picker(self) -> None:
         """Load characters off-thread and open the picker modal (task-1672)."""
-        options = await asyncio.to_thread(self._console_character_picker_options)
+        options = await asyncio.to_thread(
+            self._character._console_character_picker_options
+        )
         if not options:
             self.app.notify(
                 "No characters saved yet — import a card in Roleplay first.",
@@ -9841,37 +9839,12 @@ class ChatScreen(BaseAppScreen):
         self.app.push_screen(
             ConsoleCharacterPickerModal(
                 options=options,
-                current_character_id=self._current_console_rail_character_id(),
+                current_character_id=(
+                    self._character._current_console_rail_character_id()
+                ),
             ),
             callback=self._apply_console_character_choice,
         )
-
-    def _console_character_picker_options(
-        self,
-    ) -> tuple[ConsoleCharacterOption, ...]:
-        """Read selectable character cards (worker thread; never raises)."""
-        db = getattr(self.app_instance, "chachanotes_db", None)
-        if db is None:
-            return ()
-        try:
-            cards = db.list_character_cards(limit=500)
-        except Exception:
-            logger.opt(exception=True).warning("Character picker: list failed.")
-            return ()
-        options: list[ConsoleCharacterOption] = []
-        for card in cards or ():
-            card_id = _canonical_card_character_id(card.get("id"))
-            name = str(card.get("name") or "").strip()
-            if card_id is None or not name:
-                continue
-            options.append(
-                ConsoleCharacterOption(
-                    character_id=card_id,
-                    name=name,
-                    description=str(card.get("description") or "")[:200],
-                )
-            )
-        return tuple(options)
 
     def _apply_console_character_choice(
         self, choice: "ConsoleCharacterChoice | None"
@@ -9880,108 +9853,10 @@ class ChatScreen(BaseAppScreen):
         if choice is None:
             return
         self.run_worker(
-            self._apply_console_character_choice_async(choice),
+            self._character._apply_console_character_choice_async(choice),
             exclusive=True,
             group="console-character-pick",
         )
-
-    async def _apply_console_character_choice_async(
-        self, choice: "ConsoleCharacterChoice"
-    ) -> None:
-        """Apply the picked character to this session or a fresh one."""
-        card = await asyncio.to_thread(
-            self._fetch_character_card_for_avatar, choice.character_id
-        )
-        if card is None:
-            display_name = (
-                sanitize_character_display_label(
-                    choice.name,
-                    max_characters=180,
-                )
-                or "that character"
-            )
-            self.app.notify(
-                f"Could not load {escape_markup(display_name)}.",
-                severity="error",
-            )
-            return
-        # cubic PR #1153 P1: the store lives on the SCREEN behind a lazy
-        # accessor -- `app_instance.console_chat_store` is always None, so
-        # the whole feature silently did nothing.
-        store = self._ensure_console_chat_store()
-        global_name = _console_global_user_display_name(
-            self._provider_readiness_app_config()
-        )
-        if choice.placement == "new" or store.active_session_id is None:
-            effective_name = global_name
-        else:
-            effective_name = store.presentation_context(
-                store.active_session_id,
-                global_name,
-            ).user_name
-        seed = _character_session_prompt_seed(
-            card,
-            choice.name,
-            user_name=effective_name,
-        )
-        display_name = (
-            sanitize_character_display_label(
-                seed.name,
-                max_characters=180,
-            )
-            or "that character"
-        )
-        notification_name = escape_markup(display_name)
-        if choice.placement == "new":
-            # cubic PR #1153 P1: the card's system prompt was computed and
-            # discarded, leaving the new chat on the default prompt. Mirror
-            # the Start-Chat path, which seeds it into the session settings.
-            settings = replace(
-                self._session._default_console_session_settings(),
-                system_prompt=seed.system_prompt,
-            )
-            session = store.create_session(
-                title=f"Chat with {seed.name}",
-                workspace_id=CONSOLE_GLOBAL_WORKSPACE_ID,
-                settings=settings,
-                runtime_backend="local",
-                assistant_kind="character",
-                assistant_id=str(choice.character_id),
-                assistant_authority_id=None,
-                character_id=choice.character_id,
-                character_name=seed.name,
-            )
-            try:
-                store.seed_character_roleplay(
-                    session.id,
-                    system_template=seed.system_template,
-                    greeting_template=seed.greeting_template,
-                    global_default=global_name,
-                )
-            except Exception:
-                logger.opt(exception=True).warning(
-                    "Character picker: roleplay template seed failed; continuing."
-                )
-            store.switch_session(session.id)
-            # task-7 review: a new (never-ephemeral) session may be
-            # replacing a temporary one as the active tab; the awaited
-            # `_sync_native_console_chat_ui()` below never touches the
-            # temporary chip (see `_sync_console_temporary_chip`).
-            self._sync_console_temporary_chip()
-            self.app.notify(f"Started a new chat with {notification_name}.")
-        else:
-            if not self._session._swap_console_session_character(
-                store,
-                choice.character_id,
-                seed,
-                global_default=global_name,
-            ):
-                return
-            self.app.notify(f"This chat now uses {notification_name}.")
-        # cubic PR #1153 P2: this refresher is async -- calling it without
-        # awaiting produced a never-run coroutine (and a RuntimeWarning).
-        await self._sync_native_console_chat_ui()
-        await self._character._refresh_active_character_avatar_if_scope_changed()
 
     @on(ConsoleScopeChip.OpenRequested)
     async def _console_scope_chip_activated(
@@ -10007,54 +9882,6 @@ class ChatScreen(BaseAppScreen):
         until this seam existed.
         """
         return self._session._current_console_conversation_id()
-
-    def _current_console_rail_conversation_id(self) -> Optional[str]:
-        """Return the conversation scope used only for Console rail persistence."""
-        native_session = self._session._active_native_console_session()
-        if native_session is not None:
-            conversation_id = getattr(
-                native_session,
-                "persisted_conversation_id",
-                None,
-            )
-            return str(conversation_id) if conversation_id else None
-        return self._session._current_console_conversation_id()
-
-    def _current_console_rail_character_id(self) -> Optional[int]:
-        """Active native Console session's character id (int), or None.
-
-        Resolved ONLY off the live session (#754 sets it at Start-Chat, on
-        DB-resume, and on screen-state restore); never from legacy
-        ``app.current_chat_*`` reactives. None for a generic session.
-        """
-        native_session = self._session._active_native_console_session()
-        if native_session is None:
-            return None
-        return native_session.local_character_id()
-
-    def _current_console_rail_character_name(self) -> Optional[str]:
-        """Active native Console session's character name, or None."""
-        native_session = self._session._active_native_console_session()
-        if native_session is None:
-            return None
-        name = getattr(native_session, "character_name", None)
-        return str(name) if name else None
-
-    def _fetch_character_card_for_avatar(self, character_id: int) -> dict | None:
-        """Synchronous character-card fetch for the avatar refresh (off-thread).
-
-        Canonical DB accessor used throughout `chat_screen.py` (e.g. the
-        resume path `_resolve_resumed_character_name`); there is no
-        `self.chachanotes_db`.
-        """
-        db = getattr(self.app_instance, "chachanotes_db", None)
-        if db is None:
-            return None
-        try:
-            return db.get_character_card_by_id(int(character_id))
-        except Exception:
-            logger.opt(exception=True).debug("avatar: character fetch failed")
-            return None
 
     async def _render_character_avatar_into_section(
         self,
@@ -10896,7 +10723,7 @@ class ChatScreen(BaseAppScreen):
                     break
         preference_key = build_console_rail_preference_key(
             workspace_id=workspace_context.active_workspace_id,
-            conversation_id=self._current_console_rail_conversation_id(),
+            conversation_id=(self._character._current_console_rail_conversation_id()),
             session_id=self._session._current_console_session_id(),
         )
         self._migrate_console_rail_fallback_preferences(
@@ -11139,7 +10966,7 @@ class ChatScreen(BaseAppScreen):
         workspace_context = self._workspace._current_console_workspace_context()
         preference_key = build_console_rail_preference_key(
             workspace_id=workspace_context.active_workspace_id,
-            conversation_id=self._current_console_rail_conversation_id(),
+            conversation_id=(self._character._current_console_rail_conversation_id()),
             session_id=self._session._current_console_session_id(),
         )
         self._migrate_console_rail_fallback_preferences(
@@ -11620,7 +11447,7 @@ class ChatScreen(BaseAppScreen):
         (worst case is still O(messages), when no message in the session
         carries a marker at all).
         """
-        conversation_id = self._current_console_rail_conversation_id()
+        conversation_id = self._character._current_console_rail_conversation_id()
         store = self._console_chat_store
         session_id = store.active_session_id if store is not None else None
         newest_run_id: str | None = None
@@ -11686,7 +11513,7 @@ class ChatScreen(BaseAppScreen):
             entries: The recompute's cross-turn summary.
             pruned_rows: How many rows retention pruned out of it.
         """
-        if self._current_console_rail_conversation_id() != conversation_id:
+        if self._character._current_console_rail_conversation_id() != conversation_id:
             logger.debug(
                 "Console changed-files: dropping a stale worker result for "
                 f"conversation {conversation_id!r} -- no longer current"
@@ -11696,9 +11523,7 @@ class ChatScreen(BaseAppScreen):
         self._console_changed_files_pruned_rows = pruned_rows
         self._sync_console_changed_files_section()
 
-    def _land_console_changed_files_empty(
-        self, conversation_id: "str | None"
-    ) -> None:
+    def _land_console_changed_files_empty(self, conversation_id: "str | None") -> None:
         """The no-provider variant of `_land_console_changed_files`.
 
         Same stale-conversation guard (Fix 4c) -- see that method's
@@ -11707,7 +11532,7 @@ class ChatScreen(BaseAppScreen):
         Args:
             conversation_id: The conversation live at DISPATCH time.
         """
-        if self._current_console_rail_conversation_id() != conversation_id:
+        if self._character._current_console_rail_conversation_id() != conversation_id:
             logger.debug(
                 "Console changed-files: dropping a stale empty-land for "
                 f"conversation {conversation_id!r} -- no longer current"
@@ -11840,6 +11665,7 @@ class ChatScreen(BaseAppScreen):
             self._console_changed_files_row_cache = {}
             self._sync_console_changed_files_section()
         self._dispatch_console_changed_files_worker(scope[0])
+
     async def _console_dictionary_attach_worker(self) -> None:
         """Pick and attach a chat dictionary to the active Console conversation.
 
@@ -11850,7 +11676,7 @@ class ChatScreen(BaseAppScreen):
         ``run_worker(exit_on_error=True)``.
         """
         try:
-            conversation_id = self._current_console_rail_conversation_id()
+            conversation_id = self._character._current_console_rail_conversation_id()
             if not conversation_id:
                 self.app_instance.notify(
                     "Start or load a conversation first.", severity="warning"
@@ -11902,7 +11728,7 @@ class ChatScreen(BaseAppScreen):
         ``run_worker(exit_on_error=True)``.
         """
         try:
-            conversation_id = self._current_console_rail_conversation_id()
+            conversation_id = self._character._current_console_rail_conversation_id()
             if not conversation_id:
                 self.app_instance.notify(
                     "Start or load a conversation first.", severity="warning"
@@ -11969,7 +11795,7 @@ class ChatScreen(BaseAppScreen):
         Analogous to :meth:`_console_worldbook_attach_worker`.
         """
         try:
-            conversation_id = self._current_console_rail_conversation_id()
+            conversation_id = self._character._current_console_rail_conversation_id()
             if not conversation_id:
                 self.app_instance.notify(
                     "Start or load a conversation first.", severity="warning"
@@ -12037,7 +11863,7 @@ class ChatScreen(BaseAppScreen):
         ``console_attached_dictionaries``/``handle_console_dictionary_detach``.
         """
         try:
-            conversation_id = self._current_console_rail_conversation_id()
+            conversation_id = self._character._current_console_rail_conversation_id()
             if not conversation_id:
                 self.app_instance.notify(
                     "Start or load a conversation first.", severity="warning"

@@ -173,7 +173,7 @@ def build_console_controllers(
             lambda: screen._session._active_native_console_session()
         ),
         current_conversation_id=(
-            lambda: screen._current_console_rail_conversation_id()
+            lambda: screen._character._current_console_rail_conversation_id()
         ),
         clear_evidence_sent_notice=(
             lambda: screen._clear_console_evidence_sent_notice()
@@ -364,10 +364,38 @@ def build_console_controllers(
                 getattr(screen, "_console_chat_controller", None), "store", None
             )
         ),
+        active_native_session_accessor=(
+            lambda: screen._session._active_native_console_session()
+        ),
+        current_conversation_id_accessor=(
+            lambda: screen._session._current_console_conversation_id()
+        ),
+        character_db_accessor=(
+            lambda: getattr(screen.app_instance, "chachanotes_db", None)
+        ),
+        ensure_chat_store=lambda: screen._ensure_console_chat_store(),
+        provider_readiness_config_accessor=(
+            lambda: screen._provider_readiness_app_config()
+        ),
+        default_session_settings=(
+            lambda: screen._session._default_console_session_settings()
+        ),
+        swap_session_character=(
+            lambda store, character_id, seed, *, global_default: (
+                screen._session._swap_console_session_character(
+                    store,
+                    character_id,
+                    seed,
+                    global_default=global_default,
+                )
+            )
+        ),
+        sync_temporary_chip=lambda: screen._sync_console_temporary_chip(),
+        sync_native_chat_ui=lambda: screen._sync_native_console_chat_ui(),
+        notify=(lambda message, **kwargs: screen.app.notify(message, **kwargs)),
         actor_scope_accessor=(
             lambda: screen._session._current_visual_identity_actor_scope()
         ),
-        character_name_accessor=lambda: screen._current_console_rail_character_name(),
         manual_reaction_key=lambda scope: screen._session._manual_reaction_key(scope),
         resolve_visual_identity=(
             lambda scope, state, manual: screen._session._resolve_visual_identity(
@@ -884,7 +912,7 @@ def build_console_controllers(
         # `Tests/UI/test_console_agent_rail.py` (5 and 3 sites), so a bound
         # method captured here would silently stop observing those patches.
         current_rail_conversation_id=(
-            lambda: screen._current_console_rail_conversation_id()
+            lambda: screen._character._current_console_rail_conversation_id()
         ),
         current_rail_state_accessor=lambda: screen._current_console_rail_state(),
         # `getattr` with a default, matching the pre-move body: the fleet
