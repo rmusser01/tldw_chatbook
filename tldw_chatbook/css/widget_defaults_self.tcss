@@ -35,7 +35,6 @@
         text-align: center;
         margin-left: 1;
     }
-    
 
 /* ===== WIDGET: ConsolePromptQueueRegion (UI/Console_Modules/prompt_queue.py) ===== */
 
@@ -70,7 +69,6 @@
     ConsolePromptQueueRegion.-narrow #console-prompt-queue-preview {
         display: none;
     }
-    
 
 /* ===== WIDGET: LLMManagementWindow (UI/LLM_Management_Window.py) ===== */
 
@@ -101,62 +99,11 @@
     /* Side-by-side form rows (UX-054): the label lives inside the input row
      * instead of stacked above it, so server forms fit the fold. */
 
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
 /* ===== WIDGET: LogsWindow (UI/Logs_Window.py) ===== */
 
     LogsWindow {
         layout: vertical;
     }
-
-
-    
 
 /* ===== WIDGET: MCPAuditMode (UI/MCP_Modules/mcp_audit_mode.py) ===== */
 
@@ -229,10 +176,6 @@
     `max-height: 70%` below resolves against a definite height, same
     percentage-inside-a-definite-not-auto-parent discipline the Select
     slot comment above documents for the filter bar. */
-
-
-
-    
 
 /* ===== WIDGET: MCPInspector (UI/MCP_Modules/mcp_inspector.py) ===== */
 
@@ -358,8 +301,6 @@
     dominating the rest of the inspector pane, mirroring #mcp-inspector-
     audit-scroll's identical bounded-pretty-printed-JSON precedent above. */
 
-    
-
 /* ===== WIDGET: MCPPermissionsMode (UI/MCP_Modules/mcp_permissions_mode.py) ===== */
 
     MCPPermissionsMode {
@@ -408,8 +349,6 @@
     listing (a handful of Static rows at most) -- hugs its own content,
     same rationale as #mcp-perm-preview immediately above. */
 
-    
-
 /* ===== WIDGET: MCPRail (UI/MCP_Modules/mcp_rail.py) ===== */
 
     MCPRail {
@@ -425,8 +364,6 @@
     /* task-2243: the in-rail state legend decodes the rows' glyphs right
     under the "Servers" heading -- same quiet dim tier as the empty state,
     hugging its own (possibly wrapped) content. */
-
-    
 
 /* ===== WIDGET: MCPServersMode (UI/MCP_Modules/mcp_servers_mode.py) ===== */
 
@@ -464,8 +401,6 @@
     raw `$text-muted` token rationale: this widget's unit tests mount it
     without the app bundle where the `$ds-*` aliases are defined. */
 
-    
-
 /* ===== WIDGET: MCPToolsMode (UI/MCP_Modules/mcp_tools_mode.py) ===== */
 
     MCPToolsMode {
@@ -491,9 +426,6 @@
     1fr, so the table hugs its own row count instead of ballooning to fill
     the canvas. */
 
-
-    
-
 /* ===== WIDGET: MCPWorkbench (UI/MCP_Modules/mcp_workbench.py) ===== */
 
     MCPWorkbench {
@@ -513,18 +445,11 @@
     DEFAULT_CSS on ties in this Textual version -- the established lockstep
     pattern documented there). */
 
-
-
-    
-
 /* ===== WIDGET: BaseAppScreen (UI/Navigation/base_app_screen.py) ===== */
 
     BaseAppScreen {
         background: $background;
     }
-
-
-    
 
 /* ===== WIDGET: MainNavigationBar (UI/Navigation/main_navigation.py) ===== */
 
@@ -636,14 +561,6 @@
        out rather than reworking every geometry read onto a different
        property. */
 
-
-
-
-
-
-
-    
-
 /* ===== WIDGET: ChatScreen (UI/Screens/chat_screen.py) ===== */
 
     ChatScreen ToastRack {
@@ -652,7 +569,6 @@
         margin-top: 1;
         margin-bottom: 0;
     }
-    
 
 /* ===== WIDGET: LabModeStrip (UI/Screens/lab_mode_strip.py) ===== */
 
@@ -683,7 +599,6 @@
         border: none;
         text-style: bold underline;
     }
-    
 
 /* ===== WIDGET: LibraryScreen (UI/Screens/library_screen.py) ===== */
 
@@ -858,22 +773,6 @@
        (css/components/_agentic_terminal.tcss) carries the same rules and
        wins when loaded. */
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    
-
 /* ===== WIDGET: MCPScreen (UI/Screens/mcp_screen.py) ===== */
 
 
@@ -895,8 +794,6 @@
     /* Active AND focused: still reads as "active" (bold underline, same
     background as non-focused .is-active) rather than picking up the
     reverse-video focus treatment above. */
-
-    
 
 /* ===== WIDGET: CuratedView (UI/Screens/model_curated_view.py) ===== */
 
@@ -940,7 +837,6 @@
         width: auto;
         margin-right: 1;
     }
-    
 
 /* ===== WIDGET: ExternalModelView (UI/Screens/model_external_view.py) ===== */
 
@@ -992,7 +888,6 @@
         width: 100%;
         margin-bottom: 1;
     }
-    
 
 /* ===== WIDGET: InstalledView (UI/Screens/model_installed_view.py) ===== */
 
@@ -1036,7 +931,6 @@
         width: auto;
         margin-right: 1;
     }
-    
 
 /* ===== WIDGET: RemoteView (UI/Screens/model_remote_view.py) ===== */
 
@@ -1070,8 +964,6 @@
     RemoteView .remote-title {
         text-style: bold;
     }
-
-    
 
 /* ===== WIDGET: PersonasScreen (UI/Screens/personas_screen.py) ===== */
 
@@ -1137,19 +1029,11 @@
        BUNDLED_CSS keeps every part height: auto, which the old cap existed
        to force). */
 
-    
-
 /* ===== WIDGET: ConflictsTab (UI/Screens/scheduling/conflicts_tab.py) ===== */
 
     ConflictsTab {
         height: 1fr;
     }
-
-
-
-
-
-    
 
 /* ===== WIDGET: SyncStatusWidget (UI/Screens/scheduling/sync_status_widget.py) ===== */
 
@@ -1161,16 +1045,11 @@
     /* task-2723: without margins these Statics render flush against each
        other — "Last pull: —Last push: —<error text>" read as one run. */
 
-
-
-    
-
 /* ===== WIDGET: DestinationHeader (UI/Workbench/workbench_widgets.py) ===== */
 
     DestinationHeader {
         height: auto;
     }
-    
 
 /* ===== WIDGET: AppFooterStatus (Widgets/AppFooterStatus.py) ===== */
 
@@ -1201,7 +1080,6 @@
         padding: 0 1;
         margin-left: 2;
     }
-    
 
 /* ===== WIDGET: ConsoleTranscriptSurface (Widgets/Console/console_background_effect.py) ===== */
 
@@ -1222,7 +1100,6 @@
         width: 100%;
         height: 100%;
     }
-    
 
 /* ===== WIDGET: ConsoleSessionTabButton (Widgets/Console/console_session_surface.py) ===== */
 
@@ -1230,7 +1107,6 @@
         text-wrap: nowrap;
         text-overflow: clip;
     }
-    
 
 /* ===== WIDGET: ConsoleSetupBackdrop (Widgets/Console/console_setup_modal.py) ===== */
 
@@ -1238,7 +1114,6 @@
         width: 1fr;
         height: 1fr;
     }
-    
 
 /* ===== WIDGET: ModelInstallProgress (Widgets/ModelArtifacts/install_progress.py) ===== */
 
@@ -1249,7 +1124,6 @@
     ModelInstallProgress ProgressBar {
         margin-top: 1;
     }
-    
 
 /* ===== WIDGET: PersonaProfileCardWidget (Widgets/Persona_Widgets/persona_profile_card_widget.py) ===== */
 
@@ -1280,7 +1154,6 @@
         border: none;
         margin-right: 1;
     }
-    
 
 /* ===== WIDGET: PersonaProfileEditorWidget (Widgets/Persona_Widgets/persona_profile_editor_widget.py) ===== */
 
@@ -1314,7 +1187,6 @@
     PersonaProfileEditorWidget .is-invalid {
         border: round red;
     }
-    
 
 /* ===== WIDGET: PersonasCharacterCardWidget (Widgets/Persona_Widgets/personas_character_card_widget.py) ===== */
 
@@ -1351,7 +1223,6 @@
         border: none;
         margin-right: 1;
     }
-    
 
 /* ===== WIDGET: PersonasCharacterDictionariesWidget (Widgets/Persona_Widgets/personas_character_dictionaries.py) ===== */
 
@@ -1378,7 +1249,6 @@
     }
 
     PersonasCharacterDictionariesWidget #personas-char-dicts-table { height: auto; max-height: 8; }
-    
 
 /* ===== WIDGET: PersonasCharacterEditorWidget (Widgets/Persona_Widgets/personas_character_editor_widget.py) ===== */
 
@@ -1644,7 +1514,6 @@
     PersonasCharacterEditorWidget .is-invalid {
         border: round red;
     }
-    
 
 /* ===== WIDGET: PersonasCharacterTTSWidget (Widgets/Persona_Widgets/personas_character_tts_widget.py) ===== */
 
@@ -1698,7 +1567,6 @@
         width: 100%;
         margin-right: 0;
     }
-    
 
 /* ===== WIDGET: PersonasCharacterWorldBooksWidget (Widgets/Persona_Widgets/personas_character_world_books.py) ===== */
 
@@ -1725,7 +1593,6 @@
     }
 
     PersonasCharacterWorldBooksWidget #personas-char-worldbooks-table { height: auto; max-height: 8; }
-    
 
 /* ===== WIDGET: PersonasConversationTranscriptWidget (Widgets/Persona_Widgets/personas_conversation_transcript_widget.py) ===== */
 
@@ -1741,7 +1608,6 @@
     PersonasConversationTranscriptWidget .personas-transcript-line {
         height: auto;
     }
-    
 
 /* ===== WIDGET: PersonasDictionaryDetailWidget (Widgets/Persona_Widgets/personas_dictionary_detail.py) ===== */
 
@@ -1785,7 +1651,6 @@
         height: auto;
         max-height: 8;
     }
-    
 
 /* ===== WIDGET: PersonasDictionaryTryItWidget (Widgets/Persona_Widgets/personas_dictionary_tryit.py) ===== */
 
@@ -1816,7 +1681,6 @@
     PersonasDictionaryTryItWidget #personas-dict-tryit-nearmiss {
         height: auto;
     }
-    
 
 /* ===== WIDGET: PersonasInspectorPane (Widgets/Persona_Widgets/personas_inspector_pane.py) ===== */
 
@@ -1896,7 +1760,6 @@
         background: $surface;
         color: $text;
     }
-    
 
 /* ===== WIDGET: PersonasLibraryPane (Widgets/Persona_Widgets/personas_library_pane.py) ===== */
 
@@ -1969,7 +1832,6 @@
         width: 100%;
         margin-right: 0;
     }
-    
 
 /* ===== WIDGET: PersonasLoreDetailWidget (Widgets/Persona_Widgets/personas_lore_detail.py) ===== */
 
@@ -1998,7 +1860,6 @@
         height: auto;
         max-height: 8;
     }
-    
 
 /* ===== WIDGET: PersonasLoreTryItWidget (Widgets/Persona_Widgets/personas_lore_tryit.py) ===== */
 
@@ -2032,7 +1893,6 @@
     PersonasLoreTryItWidget #personas-lore-tryit-nearmiss {
         height: auto;
     }
-    
 
 /* ===== WIDGET: PersonaVisualCustomStateDialog (Widgets/Persona_Widgets/personas_persona_visual_pack_widget.py) ===== */
 
@@ -2059,7 +1919,6 @@
         width: 1fr;
         min-width: 0;
     }
-
 
 /* ===== WIDGET: PersonasPersonaVisualPackWidget (Widgets/Persona_Widgets/personas_persona_visual_pack_widget.py) ===== */
 
@@ -2190,7 +2049,6 @@
         border: none;
         margin-right: 1;
     }
-    
 
 /* ===== WIDGET: PersonasVisualIdentityPackWidget (Widgets/Persona_Widgets/personas_visual_identity_pack_widget.py) ===== */
 

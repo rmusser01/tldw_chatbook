@@ -5543,3 +5543,19 @@ actually touches (here: "the three named workspace test files" vs. "every
 call site of `on_screen_resume`"), run the broader sweep anyway before
 declaring done; a gate scoped to the files the task author thought of is not
 the same as a gate scoped to the files the change can reach.
+
+## `tail -1` on a multi-line verification hides the failure (TASK-19480, 2026-08-21)
+
+`check_bundle_sync.py` prints ONE line per generated sheet (five of them) and
+exits non-zero if any is stale. Three CSS PRs in a row verified it with
+`... | tail -1`, which shows only the last sheet's line — so a red guard read
+as green every time. The desync (`widget_defaults_self.tcss`, one 4-space
+line) was finally caught not locally but by reading GitHub's CI log, where all
+five lines were visible and the error sat in the MIDDLE of them.
+
+Rule: a verification that emits one line per checked item must be read in
+full, or grepped for its failure token (`grep -E "error|out of sync"` /
+check the exit code) — never `tail -1`. The habit of tailing to keep output
+small is exactly what makes a per-item check unreadable. Note the exit code
+alone was also insufficient here: the script printed `::error::` and still
+exited 0 under the shell pipeline used.
