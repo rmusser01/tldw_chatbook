@@ -123,6 +123,15 @@ class WorkspaceCreateModal(
         registry_service: LocalWorkspaceRegistryService,
         description: str = "Created from the workspace setup dialog.",
     ) -> None:
+        """Build the dialog against a registry, with per-surface provenance.
+
+        Args:
+            registry_service: Local workspace registry the dialog reads the
+                next free identity from and writes the new workspace to.
+            description: Provenance stored on the created ``WorkspaceRecord``
+                (TASK-17962). Each surface passes its own wording; the
+                default covers callers that do not care.
+        """
         super().__init__()
         self._registry = registry_service
         #: Provenance stored on the created ``WorkspaceRecord`` (TASK-17962):
