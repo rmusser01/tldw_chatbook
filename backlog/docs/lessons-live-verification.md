@@ -1209,3 +1209,118 @@ driving it (`Button.press()` and `focus()` are synchronous schedulers;
 settle then re-check side-effect-free predicates. App startup readiness does not
 prove a destination screen has loaded. A correct harness can then reveal a real
 focus race instead of manufacturing one.
+
+---
+
+## Four Console-inspector traps from one programme (task-18300, 2026-08-18 → 2026-08-20)
+
+**A migration `.sql` file must be registered in FOUR packaging registries or
+an installed build cannot open the DB.** `aae305cbf` found that the v40→v41
+`message_exchanges` migration was missing from `pyproject.toml`
+`[tool.setuptools.package-data]`, `MANIFEST.in`, both sdist/wheel lists in
+`Packaging/check_manifest.py`, and `RUNTIME_MIGRATION_PATHS` in
+`Tests/Packaging/test_installed_distribution.py` — and, digging further,
+`46945ebbe`'s earlier v39→v40 `transcript_annotations` migration had the
+identical gap already sitting on `dev`, undiscovered, meaning any packaged
+wheel/sdist already could not open a pre-v39 database before this task even
+started (`422534a5f` proved it: reverting one registry line turned a green
+release-checker probe red through the real migration chain). The release
+checker validates against this same enumerated list, so a registry that is
+itself incomplete cannot catch its own gap — only a `uv build` against the
+real artifact plus a direct tar/zip listing does. **What to do:** after
+adding any migration `.sql` file, grep for every existing migration's
+filename across the repo (`pyproject.toml`, `MANIFEST.in`,
+`check_manifest.py`, `test_installed_distribution.py`) and confirm the new
+file appears in the same four places — then build a real sdist+wheel and
+list their contents, don't trust the checker alone to catch its own
+enumeration gap.
+
+**A Textual `Collapsible(title=...)` is markup-parsed even when sibling
+`Static`s pass `markup=False`.** `1850ea3dc`: a bracketed model id such as
+`[test]` was silently eaten from a Collapsible title, and one containing
+`[/]` raised `MarkupError` *inside* `compose()`, taking the whole modal down
+— reproduced directly against the installed Textual both before and after
+the fix. `Static(..., markup=False)` protects only that one widget class;
+`Collapsible`'s title has no equivalent constructor flag and needs
+`Content.from_text(title_text, markup=False)` built explicitly. **What to
+do:** when any user- or model-supplied string (an id, a filename, a free-text
+label) becomes a `Collapsible` title, assume it can contain `[` and build the
+title via `Content.from_text(..., markup=False)` — grep for other
+`Collapsible(title=` construction sites using an f-string or raw variable
+directly and check each one.
+
+**Naming a Textual reactive `loading` shadows `Widget`'s own built-in
+loading-overlay reactive — and the collision surfaces as a `NoMatches`, not
+an obvious name clash.** While porting `ConsoleConversationInspector`'s
+Next-Send-tab loading flag, a bare `loading = reactive(False)` collided with
+`Widget`/`ModalScreen`'s own `loading` (whole-widget loading-overlay
+semantics): Textual's internal `loading` reads (e.g.
+`Screen.update_pointer_shape`) walk the ancestor chain and invoke the new
+reactive's `init=True` watcher before the pane's own DOM subtree exists to
+query, producing a real `NoMatches`. The fix (still in the shipped code as a
+comment at the reactive's declaration) was simply renaming it to
+`next_send_loading`. **What to do:** never name a widget-local reactive
+`loading` (or any other name that shadows a `Widget`/`Screen` base
+attribute — `disabled`, `visible`, `styles` are the same trap); grep
+`class Widget` / `class Screen` reactive declarations in the installed
+Textual before picking a name for anything state-flag-shaped, and prefer a
+prefixed name (`next_send_loading`, not `loading`) by default.
+
+**Stale comments asserting `diagnose=True` overstated a security finding's
+severity — verify sink config by grepping `logger.add(`, not by reading
+comments.** `cee88d074`'s task-9 review had two prior rounds disagreeing
+about whether the app's file log sink ran `diagnose=True` (which would dump
+frame-locals — i.e. secrets — into the log on any traceback). Three `app.py`
+comments asserted it did. Empirically, every live `logger.add()` call in the
+codebase is `diagnose=False`; the comments were stale and had led a reviewer
+to treat them as ground truth, overstating the finding's blast radius.
+**What to do:** when a security or logging-config claim rests on what a sink
+"does," grep every `logger.add(` call site directly and read the actual
+keyword arguments — treat a comment describing sink behavior as an
+unverified claim, not a source of truth, especially in a codebase old enough
+for the comment to have drifted out of sync with a later refactor.
+
+---
+
+## A model's response can reveal in the transcript UI as one late batch, not incrementally — "stop while nothing is visible yet" is not proof the click missed (task-18300, 2026-08-20)
+
+**What happened.** Live-verifying Console's Stop-mid-stream capture (a real
+OpenAI `gpt-4o-mini` session, `~$0.03` total spend across the whole
+programme), the most reliable way to *see* partial content before stopping
+was expected to be watching the transcript pane fill in gradually. It did
+not, for several prompt shapes tried in sequence: a 1200-word essay, a
+2000-word essay, and "count 1 to 300" all showed a bare `Assistant
+Generating…` label for anywhere from 3 to 20+ seconds with zero visible
+characters, then — for the one case left to run to completion instead of
+being stopped — painted nearly the entire response in one step once it
+finished (reached "241, 242, … 267" out of a 300-target count, cut off by
+`max_tokens`, appearing all at once around the 13s mark with nothing visible
+before it). By contrast, short repeated-word prompts ("write 'apple' 100
+times") revealed content within ~1s and then completed within another
+1-2s — too fast to reliably win a tmux-round-trip race to click Stop in the
+middle. Two *genuinely* early Stop clicks (landing within ~1-4.5s of send,
+before the essay-style prompts had revealed anything) produced real
+`call 0 [stopped]` entries in the Exchange tab with `Response (~0 tokens
+est.)` — a legitimate empty-partial-content capture, not a harness failure,
+confirmed by checking the *capture*, not just the transcript pane. Several
+further attempts to reproduce a **non-empty** stopped capture all instead
+raced past natural completion (`call 0 [complete]`) because the fast
+word-repeat prompts finish before a tmux-driven click lands, while the
+slow-reveal essay prompts show nothing to click "during."
+
+**What to do.** Do not infer "the click missed" or "nothing streamed yet"
+from an unchanging transcript pane — Console's transcript rendering can
+legitimately hold back all visible content until a late point (observed:
+right around natural completion) regardless of whether the underlying
+provider stream has been delivering deltas the whole time. To confirm
+whether a Stop-click genuinely raced ahead of the first token (true empty
+capture) versus arrived after the response had already finished (a
+`complete` call wearing a truncated look), check the *Exchange tab's own
+call status and Response section* for that specific turn, never the
+transcript pane's rendered text or a "Stopped" label's mere presence. When a
+manual UI repro like this consumes several real provider round-trips without
+converging (this one used ~10), that is itself the signal to stop chasing a
+single visual confirmation and report exactly what was and was not observed,
+per the honesty rule already in this file's header — a slow repro can
+consume the very verification budget it was meant to spend on other
+scenarios.
