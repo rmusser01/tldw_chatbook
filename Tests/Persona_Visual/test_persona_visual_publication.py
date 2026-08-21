@@ -857,6 +857,30 @@ def test_cleanup_capability_marker_is_bound_to_exact_candidate(environment) -> N
     assert forged_directory.is_dir()
 
 
+def test_cleanup_refuses_same_path_directory_substitution(environment) -> None:
+    repository, source_root, profile_root = environment
+    with pytest.raises(PersonaVisualPublicationError) as publication:
+        _publish(environment, _snapshot(source_root), guard=lambda: False)
+    cleanup_candidate = publication.value.cleanup_candidate
+    assert cleanup_candidate is not None
+    (issued_directory,) = _publication_directories(profile_root)
+    displaced = issued_directory.with_name("displaced-issued-directory")
+    issued_directory.rename(displaced)
+    issued_directory.mkdir(mode=0o700)
+    marker_name = ".persona-visual-cleanup"
+    (issued_directory / marker_name).write_bytes((displaced / marker_name).read_bytes())
+    (issued_directory / "unrelated").write_bytes(b"preserve")
+
+    with pytest.raises(PersonaVisualPublicationError, match="cleanup_denied"):
+        cleanup_persona_visual_publication_candidate(
+            repository, cleanup_candidate, profile_root=profile_root
+        )
+
+    assert displaced.is_dir()
+    assert (issued_directory / marker_name).is_file()
+    assert (issued_directory / "unrelated").read_bytes() == b"preserve"
+
+
 def test_cleanup_refuses_active_reference_invalid_tokens_and_symlink_substitution(
     environment,
 ) -> None:

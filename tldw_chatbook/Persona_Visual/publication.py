@@ -209,7 +209,12 @@ def publish_persona_visual(
             os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
             dir_fd=versions_fd,
         )
-        marker_raw = _cleanup_marker(cleanup_secret, final_token)
+        staging_identity = os.fstat(staging_fd)
+        marker_raw = _cleanup_marker(
+            cleanup_secret,
+            final_token,
+            (staging_identity.st_dev, staging_identity.st_ino),
+        )
         _write_private_file(staging_fd, _CLEANUP_MARKER_NAME, marker_raw)
         assets_fd = -1
         try:
@@ -442,7 +447,9 @@ def cleanup_persona_visual_publication_candidate(
             os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
             dir_fd=versions_fd,
         )
-        if not _owned_private_directory(candidate_fd):
+        if not _owned_private_directory(candidate_fd) or not _entry_matches_fd(
+            versions_fd, candidate_path.name, candidate_fd
+        ):
             raise PermissionError
         if not _cleanup_marker_current(
             candidate_fd,
@@ -664,14 +671,25 @@ def _parse_cleanup_capability(value: str) -> tuple[str, str] | None:
     return cleanup_path, secret
 
 
-def _cleanup_marker(secret: str, cleanup_path: str) -> bytes:
+def _cleanup_marker(
+    secret: str,
+    cleanup_path: str,
+    directory_identity: tuple[int, int],
+) -> bytes:
     parent, name = cleanup_path.rsplit("/", 1)
     final_path = f"{parent}/{name.removeprefix('.staging-')}"
-    if _CLEANUP_PATH.fullmatch(final_path) is None:
+    if (
+        _CLEANUP_PATH.fullmatch(final_path) is None
+        or len(directory_identity) != 2
+        or any(type(value) is not int or value < 0 for value in directory_identity)
+    ):
         raise ValueError
+    device, inode = directory_identity
     return (
         hashlib.blake2b(
-            f"persona-visual-cleanup-v1\0{final_path}".encode("ascii"),
+            f"persona-visual-cleanup-v1\0{final_path}\0{device}\0{inode}".encode(
+                "ascii"
+            ),
             key=bytes.fromhex(secret),
             digest_size=32,
         )
@@ -685,9 +703,14 @@ def _cleanup_marker_current(
     cleanup_path: str,
     secret: str,
 ) -> bool:
-    expected = _cleanup_marker(secret, cleanup_path)
     marker_fd = -1
     try:
+        candidate = os.fstat(candidate_fd)
+        expected = _cleanup_marker(
+            secret,
+            cleanup_path,
+            (candidate.st_dev, candidate.st_ino),
+        )
         marker_fd = os.open(
             _CLEANUP_MARKER_NAME,
             os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0),
