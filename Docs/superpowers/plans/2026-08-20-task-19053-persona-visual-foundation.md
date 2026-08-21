@@ -263,6 +263,7 @@ git commit -m "feat: validate Persona Visual assets"
 - Create: `Tests/Persona_Visual/test_persona_visual_runtime.py`
 - Modify: `tldw_chatbook/Persona_Visual/repository.py`
 - Modify: `Tests/Persona_Visual/test_persona_visual_repository.py`
+- Modify: `tldw_chatbook/Persona_Visual/validation.py`
 
 - [ ] **Step 1: Write resolver RED tests**
 
@@ -298,7 +299,7 @@ TLDW_TEST_MODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/pyt
 - [ ] **Step 5: Commit the resolver slice**
 
 ```bash
-git add tldw_chatbook/Persona_Visual/runtime.py Tests/Persona_Visual/test_persona_visual_runtime.py tldw_chatbook/Persona_Visual/repository.py Tests/Persona_Visual/test_persona_visual_repository.py
+git add tldw_chatbook/Persona_Visual/runtime.py Tests/Persona_Visual/test_persona_visual_runtime.py tldw_chatbook/Persona_Visual/repository.py Tests/Persona_Visual/test_persona_visual_repository.py tldw_chatbook/Persona_Visual/validation.py
 git commit -m "feat: resolve Persona Visual runtime states"
 ```
 
