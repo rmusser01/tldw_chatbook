@@ -189,6 +189,36 @@ class TestCleanupOnFailure:
 
         assert _stray_entries(tmp_path) == []
 
+    def test_unlink_cleanup_failure_preserves_writer_exception(
+        self, tmp_path, monkeypatch
+    ):
+        target = tmp_path / "target.txt"
+        temp = aw.unique_temp_path(target)
+        writer_error = RuntimeError("sentinel writer failure")
+        cleanup_error = OSError(errno.EIO, "sentinel unlink failure")
+
+        def write_then_fail(path: Path) -> None:
+            path.write_text("partial", encoding="utf-8")
+            raise writer_error
+
+        def fail_unlink(self, *, missing_ok=False):
+            assert self == temp
+            assert missing_ok
+            raise cleanup_error
+
+        monkeypatch.setattr(Path, "unlink", fail_unlink)
+
+        try:
+            with pytest.raises(RuntimeError) as exc_info:
+                aw.replace_atomically(temp, target, write_then_fail)
+
+            assert exc_info.value is writer_error
+            assert temp.exists()
+            assert not target.exists()
+        finally:
+            if temp.exists():
+                os.unlink(temp)
+
 
 # ---------------------------------------------------------------------------
 # Owner-only temp creation: trust material can opt into exclusive 0o600 temp
@@ -248,6 +278,10 @@ class TestOwnerOnlyTempCreation:
         assert flags & os.O_ACCMODE == os.O_WRONLY
         assert flags & os.O_CREAT
         assert flags & os.O_EXCL
+        for optional_flag_name in ("O_CLOEXEC", "O_NOFOLLOW", "O_BINARY"):
+            optional_flag = getattr(os, optional_flag_name, 0)
+            if optional_flag:
+                assert flags & optional_flag == optional_flag
         assert requested_mode == 0o600
         assert events == [("fchmod", 0o600), ("writer", 0o600)]
         assert mode_during_replace == [0o600]
@@ -379,6 +413,117 @@ class TestOwnerOnlyTempCreation:
                 except OSError as exc:
                     if exc.errno == errno.EBADF:
                         continue
+                try:
+                    real_close(fd)
+                except OSError:
+                    pass
+
+    @pytest.mark.skipif(
+        os.name != "posix" or not hasattr(os, "fchmod"),
+        reason="POSIX file descriptors and fchmod required",
+    )
+    def test_owner_only_fchmod_and_close_failure_preserves_fchmod_exception(
+        self, tmp_path, monkeypatch
+    ):
+        target = tmp_path / "trust.json"
+        temp = aw.unique_temp_path(target, hidden=True)
+        real_open = os.open
+        real_close = os.close
+        setup_error = PermissionError(errno.EPERM, "sentinel fchmod failure")
+        close_error = OSError(errno.EIO, "sentinel close failure")
+        captured_fds: list[int] = []
+        writer_calls: list[Path] = []
+
+        def tracking_open(path, flags, mode=0o777, *, dir_fd=None):
+            if dir_fd is None:
+                fd = real_open(path, flags, mode)
+            else:
+                fd = real_open(path, flags, mode, dir_fd=dir_fd)
+            if Path(path) == temp:
+                captured_fds.append(fd)
+            return fd
+
+        def fail_fchmod(fd, mode):
+            assert fd in captured_fds
+            assert mode == 0o600
+            raise setup_error
+
+        def fail_close(fd):
+            assert fd in captured_fds
+            raise close_error
+
+        monkeypatch.setattr(aw.os, "open", tracking_open)
+        monkeypatch.setattr(aw.os, "fchmod", fail_fchmod)
+        monkeypatch.setattr(aw.os, "close", fail_close)
+
+        try:
+            with pytest.raises(PermissionError) as exc_info:
+                aw.replace_atomically(
+                    temp,
+                    target,
+                    writer_calls.append,
+                    owner_only=True,
+                )
+
+            assert exc_info.value is setup_error
+            assert writer_calls == []
+            assert not temp.exists()
+            assert not target.exists()
+        finally:
+            for fd in captured_fds:
+                try:
+                    real_close(fd)
+                except OSError:
+                    pass
+
+    @pytest.mark.skipif(
+        os.name != "posix" or not hasattr(os, "fchmod"),
+        reason="POSIX file descriptors and fchmod required",
+    )
+    def test_owner_only_close_failure_after_setup_propagates_close_error(
+        self, tmp_path, monkeypatch
+    ):
+        target = tmp_path / "trust.json"
+        target_sentinel = b"existing-target-must-survive"
+        target.write_bytes(target_sentinel)
+        temp = aw.unique_temp_path(target, hidden=True)
+        real_open = os.open
+        real_close = os.close
+        close_error = OSError(errno.EIO, "sentinel close failure")
+        captured_fds: list[int] = []
+        writer_calls: list[Path] = []
+
+        def tracking_open(path, flags, mode=0o777, *, dir_fd=None):
+            if dir_fd is None:
+                fd = real_open(path, flags, mode)
+            else:
+                fd = real_open(path, flags, mode, dir_fd=dir_fd)
+            if Path(path) == temp:
+                captured_fds.append(fd)
+            return fd
+
+        def fail_close(fd):
+            assert fd in captured_fds
+            raise close_error
+
+        monkeypatch.setattr(aw.os, "open", tracking_open)
+        monkeypatch.setattr(aw.os, "close", fail_close)
+
+        try:
+            with pytest.raises(OSError) as exc_info:
+                aw.replace_atomically(
+                    temp,
+                    target,
+                    writer_calls.append,
+                    owner_only=True,
+                )
+
+            assert exc_info.value is close_error
+            assert writer_calls == []
+            assert not temp.exists()
+            assert target.read_bytes() == target_sentinel
+        finally:
+            for fd in captured_fds:
                 try:
                     real_close(fd)
                 except OSError:

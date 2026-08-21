@@ -121,11 +121,19 @@ def replace_atomically(
         if owner_only:
             fd = os.open(temp_path, _owner_only_open_flags(), _OWNER_ONLY_FILE_MODE)
             created_temp = True
+            setup_succeeded = False
             try:
                 if os.name == "posix" and hasattr(os, "fchmod"):
                     os.fchmod(fd, _OWNER_ONLY_FILE_MODE)
+                setup_succeeded = True
             finally:
-                os.close(fd)
+                try:
+                    os.close(fd)
+                except BaseException:
+                    # Keep an active setup error primary; otherwise close is
+                    # the failure the caller must see.
+                    if setup_succeeded:
+                        raise
         write_fn(temp_path)
         temp_path.replace(target_path)
     except BaseException:
