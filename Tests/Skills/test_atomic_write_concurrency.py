@@ -24,7 +24,10 @@ temp names (captured as the task's RED evidence) -- see TASK-17963.
 
 from __future__ import annotations
 
+import errno
 import json
+import os
+import stat
 import threading
 from pathlib import Path
 
@@ -44,6 +47,10 @@ N_ITERATIONS = 30
 _KNOWN_FIXTURE_ENTRIES = {"test_data"}
 
 
+def _mode(path: Path) -> int:
+    return stat.S_IMODE(path.stat().st_mode)
+
+
 def _stray_entries(tmp_path: Path, *exclude: Path) -> list[Path]:
     """Return unexpected entries directly under ``tmp_path``.
 
@@ -58,7 +65,9 @@ def _stray_entries(tmp_path: Path, *exclude: Path) -> list[Path]:
     ]
 
 
-def _run_concurrent(fn, *, n_threads: int = N_THREADS, n_iterations: int = N_ITERATIONS):
+def _run_concurrent(
+    fn, *, n_threads: int = N_THREADS, n_iterations: int = N_ITERATIONS
+):
     """Run ``fn(worker_id, i)`` from ``n_threads`` threads, ``n_iterations`` times
     each, and return every exception any call raised (empty list == clean run).
     """
@@ -179,6 +188,173 @@ class TestCleanupOnFailure:
             aw.write_bytes_atomic(target, b"payload")
 
         assert _stray_entries(tmp_path) == []
+
+
+# ---------------------------------------------------------------------------
+# Owner-only temp creation: trust material can opt into exclusive 0o600 temp
+# creation without changing the long-standing behavior of default callers.
+# ---------------------------------------------------------------------------
+
+
+class TestOwnerOnlyTempCreation:
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits required")
+    def test_owner_only_exclusively_opens_0o600_temp_before_real_replace(
+        self, tmp_path, monkeypatch
+    ):
+        target = tmp_path / "trust.json"
+        temp = aw.unique_temp_path(target, hidden=True)
+        real_open = os.open
+        real_replace = Path.replace
+        open_calls: list[tuple[Path, int, int]] = []
+        mode_during_replace: list[int] = []
+
+        def tracking_open(path, flags, mode=0o777, *, dir_fd=None):
+            open_calls.append((Path(path), flags, mode))
+            if dir_fd is None:
+                return real_open(path, flags, mode)
+            return real_open(path, flags, mode, dir_fd=dir_fd)
+
+        def tracking_replace(self, other):
+            mode_during_replace.append(_mode(self))
+            return real_replace(self, other)
+
+        monkeypatch.setattr(aw.os, "open", tracking_open)
+        monkeypatch.setattr(Path, "replace", tracking_replace)
+
+        aw.replace_atomically(
+            temp,
+            target,
+            lambda path: path.write_text("secret", encoding="utf-8"),
+            owner_only=True,
+        )
+
+        temp_open_calls = [call for call in open_calls if call[0] == temp]
+        assert len(temp_open_calls) == 1
+        _, flags, requested_mode = temp_open_calls[0]
+        assert flags & os.O_CREAT
+        assert flags & os.O_EXCL
+        assert requested_mode == 0o600
+        assert mode_during_replace == [0o600]
+        assert _mode(target) == 0o600
+
+    def test_owner_only_existing_temp_is_preserved_and_target_is_not_created(
+        self, tmp_path
+    ):
+        target = tmp_path / "trust.json"
+        temp = aw.unique_temp_path(target, hidden=True)
+        sentinel = b"do-not-overwrite-this-temp"
+        temp.write_bytes(sentinel)
+
+        with pytest.raises(FileExistsError):
+            aw.replace_atomically(
+                temp,
+                target,
+                lambda path: path.write_bytes(b"replacement"),
+                owner_only=True,
+            )
+
+        assert temp.read_bytes() == sentinel
+        assert not target.exists()
+
+    def test_owner_only_writer_failure_cleans_owned_temp(self, tmp_path):
+        target = tmp_path / "trust.json"
+        temp = aw.unique_temp_path(target, hidden=True)
+
+        def fail_after_precreate(path: Path) -> None:
+            assert path.exists()
+            path.write_bytes(b"partial")
+            raise RuntimeError("simulated owner-only writer failure")
+
+        with pytest.raises(RuntimeError, match="simulated owner-only writer failure"):
+            aw.replace_atomically(temp, target, fail_after_precreate, owner_only=True)
+
+        assert not temp.exists()
+        assert not target.exists()
+
+    def test_owner_only_replace_failure_is_preserved_and_cleans_temp(
+        self, tmp_path, monkeypatch
+    ):
+        target = tmp_path / "trust.json"
+        temp = aw.unique_temp_path(target, hidden=True)
+        replace_error = OSError(errno.EIO, "simulated owner-only replace failure")
+
+        def fail_replace(self, other):
+            raise replace_error
+
+        monkeypatch.setattr(Path, "replace", fail_replace)
+
+        with pytest.raises(OSError) as exc_info:
+            aw.replace_atomically(
+                temp,
+                target,
+                lambda path: path.write_bytes(b"complete"),
+                owner_only=True,
+            )
+
+        assert exc_info.value is replace_error
+        assert not temp.exists()
+        assert not target.exists()
+
+    def test_default_replace_does_not_precreate_temp(self, tmp_path):
+        target = tmp_path / "ordinary.txt"
+        temp = aw.unique_temp_path(target)
+        existed_before_writer: list[bool] = []
+
+        def write(path: Path) -> None:
+            existed_before_writer.append(path.exists())
+            path.write_text("ordinary", encoding="utf-8")
+
+        aw.replace_atomically(temp, target, write)
+
+        assert existed_before_writer == [False]
+        assert target.read_text(encoding="utf-8") == "ordinary"
+        assert not temp.exists()
+
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX file descriptors required")
+    def test_owner_only_fchmod_failure_closes_fd_and_cleans_temp(
+        self, tmp_path, monkeypatch
+    ):
+        target = tmp_path / "trust.json"
+        temp = aw.unique_temp_path(target, hidden=True)
+        real_open = os.open
+        real_fstat = os.fstat
+        real_close = os.close
+        captured_fds: list[int] = []
+
+        def tracking_open(path, flags, mode=0o777, *, dir_fd=None):
+            if dir_fd is None:
+                fd = real_open(path, flags, mode)
+            else:
+                fd = real_open(path, flags, mode, dir_fd=dir_fd)
+            if Path(path) == temp:
+                captured_fds.append(fd)
+            return fd
+
+        def fail_fchmod(fd, mode):
+            raise OSError(errno.EIO, "simulated fchmod failure")
+
+        monkeypatch.setattr(aw.os, "open", tracking_open)
+        monkeypatch.setattr(aw.os, "fchmod", fail_fchmod)
+
+        with pytest.raises(OSError, match="simulated fchmod failure"):
+            aw.replace_atomically(
+                temp,
+                target,
+                lambda path: path.write_bytes(b"must not run"),
+                owner_only=True,
+            )
+
+        assert len(captured_fds) == 1
+        fd = captured_fds[0]
+        try:
+            real_fstat(fd)
+        except OSError as exc:
+            assert exc.errno == errno.EBADF
+        else:
+            real_close(fd)
+            pytest.fail("owner-only temp file descriptor remained open")
+        assert not temp.exists()
+        assert not target.exists()
 
 
 # ---------------------------------------------------------------------------
@@ -357,9 +533,13 @@ class TestSemanticsPreservation:
 
         original_replace_atomically = aw.replace_atomically
 
-        def spy_replace_atomically(temp_path, target_path, write_fn):
+        def spy_replace_atomically(
+            temp_path, target_path, write_fn, *, owner_only=False
+        ):
             observed_temp_names.append(temp_path.name)
-            return original_replace_atomically(temp_path, target_path, write_fn)
+            return original_replace_atomically(
+                temp_path, target_path, write_fn, owner_only=owner_only
+            )
 
         monkeypatch.setattr(
             trust_store_module, "replace_atomically", spy_replace_atomically
