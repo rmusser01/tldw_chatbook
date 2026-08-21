@@ -6,6 +6,7 @@ from collections.abc import Callable, Sequence
 import json
 from pathlib import Path
 import sqlite3
+from typing import Protocol
 from uuid import uuid4
 
 from loguru import logger
@@ -37,6 +38,14 @@ from .change_review_consent import (
 
 
 _STORAGE_FAILURE_MESSAGE = "Workspace registry storage failed."
+
+
+class _ChangeReviewBindingOwner(Protocol):
+    def binding_added(
+        self,
+        workspace_id: str,
+        binding: WorkspaceRuntimeBinding,
+    ) -> None: ...
 
 
 def _filesystem_binding_missing(locator: str) -> bool:
@@ -203,6 +212,14 @@ class LocalWorkspaceRegistryService:
         self.db = db
         self._id_factory = id_factory or (lambda: f"workspace-link-{uuid4().hex}")
         self._now_factory = now_factory or utc_now_iso
+        self._change_review_binding_owner: _ChangeReviewBindingOwner | None = None
+
+    def attach_change_review_consent_service(
+        self,
+        service: _ChangeReviewBindingOwner,
+    ) -> None:
+        """Attach the app-owned Change Review binding lifecycle observer."""
+        self._change_review_binding_owner = service
 
     def create_workspace(
         self,
@@ -817,28 +834,15 @@ class LocalWorkspaceRegistryService:
             metadata={"access": "rw" if allow_write else "ro"},
         )
         binding_result = self.save_runtime_binding(binding)
-        # TASK-1971 (Agent Change Review): the FIRST shadow snapshot of a
-        # root happens here, at registration, on a background thread -- the
-        # first agent send must never absorb the cost of hashing a whole
-        # tree. Best-effort: failures log and are disclosed on first use.
         try:
-            from tldw_chatbook.Workspaces.change_bounds import (
-                change_review_enabled_globally,
-            )
-            from tldw_chatbook.Workspaces.change_turn_tracker import (
-                initial_snapshot_in_background,
-            )
-
-            # TASK-1979 (Qodo #1264): the opt-out gates registration too —
-            # a disabled workspace (or a global kill) must not grow shadow
-            # state when a binding is added.
-            if change_review_enabled_globally() and self.change_review_enabled(
-                workspace_id
-            ):
-                initial_snapshot_in_background(resolved)
-        except Exception:  # noqa: BLE001 -- registration must never fail on this
+            if self._change_review_binding_owner is not None:
+                self._change_review_binding_owner.binding_added(
+                    workspace_id,
+                    binding_result,
+                )
+        except Exception:  # noqa: BLE001 -- persistence must never fail on observer
             logger.opt(exception=True).debug(
-                "change_review: initial-snapshot hook failed at registration"
+                "change_review: binding observer failed after registration"
             )
         return binding_result
 

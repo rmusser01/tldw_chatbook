@@ -34,6 +34,43 @@ def build_test_registry(tmp_path: Path) -> LocalWorkspaceRegistryService:
     )
 
 
+def test_folder_binding_without_app_owner_starts_no_change_review_thread(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Registry persistence alone must not own background snapshot work."""
+    import tldw_chatbook.Workspaces.change_turn_tracker as tracker
+
+    service = build_test_registry(tmp_path)
+    service.create_workspace(workspace_id="ws-review", name="Review")
+    service.set_change_review_enabled("ws-review", True)
+    root = tmp_path / "root"
+    root.mkdir()
+    calls: list[Path] = []
+    monkeypatch.setattr(tracker, "initialize_shadow_root", calls.append)
+
+    service.add_folder_binding("ws-review", root)
+
+    assert calls == []
+
+
+def test_folder_binding_notifies_attached_change_review_owner(tmp_path: Path) -> None:
+    """A durable binding add is handed to the app-owned lifecycle service."""
+    service = build_test_registry(tmp_path)
+    service.create_workspace(workspace_id="ws-review", name="Review")
+    root = tmp_path / "root"
+    root.mkdir()
+    calls = []
+
+    class Owner:
+        def binding_added(self, workspace_id, binding) -> None:
+            calls.append((workspace_id, binding))
+
+    service.attach_change_review_consent_service(Owner())
+    binding = service.add_folder_binding("ws-review", root)
+
+    assert calls == [("ws-review", binding)]
+
+
 def test_change_review_missing_row_is_disabled(tmp_path: Path) -> None:
     """Workspace consent is opt-in even when the global capability exists."""
     from tldw_chatbook.Workspaces import change_review_consent

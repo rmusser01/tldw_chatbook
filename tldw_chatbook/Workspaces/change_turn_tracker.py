@@ -39,8 +39,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
-from loguru import logger
-
 from tldw_chatbook.Workspaces.change_bounds import (
     DEFAULT_MAX_FILE_BYTES,
     change_review_setting,
@@ -483,34 +481,21 @@ class ChangeTurnTracker:
         return out
 
 
-def initial_snapshot_in_background(root: Path | str) -> threading.Thread | None:
-    """Best-effort background initial snapshot for a newly registered root.
+def initialize_shadow_root(root: Path | str) -> None:
+    """Synchronously create one root's initial shadow snapshot.
 
-    Spec §2: the FIRST snapshot of a root happens at registration time, so
-    first-send latency never absorbs the cost of hashing a whole tree.
-    Failures log and are disclosed on first use instead; never raises.
+    Background ownership belongs to :class:`ChangeReviewConsentService`;
+    this helper performs only the filesystem/Git operation and either returns
+    normally or raises so the owner can publish honest readiness.
 
     Args:
-        root: The just-registered folder root.
+        root: Canonical workspace folder root.
 
-    Returns:
-        The started thread (for tests to join), or ``None`` when tracking
-        is unavailable.
+    Raises:
+        ChangeTrackingError: If shadow Git is unavailable.
+        Exception: If repository initialization or snapshotting fails.
     """
     service = ShadowRepoService()
     if not service.available:
-        return None
-
-    def _snapshot() -> None:
-        try:
-            service.repo_for_root(root).snapshot("root registered")
-        except Exception:  # noqa: BLE001 -- best-effort by design
-            logger.opt(exception=True).warning(
-                f"change_review: initial snapshot failed for {root}"
-            )
-
-    thread = threading.Thread(
-        target=_snapshot, name="change-review-initial-snapshot", daemon=True
-    )
-    thread.start()
-    return thread
+        raise ChangeTrackingError("Change Review shadow Git is unavailable.")
+    service.repo_for_root(root).snapshot("root registered")
