@@ -104,27 +104,27 @@ Tasks 19006, 19007, and 19008 may run concurrently after their prerequisites bec
 - Modify: `Tests/Notes/test_sync_containment.py`
 - Create: `Helper_Scripts/Benchmarks/benchmark_notes_sync_reconciliation.py`
 
-- [ ] Write RED byte/identity/representation tests.
+- [x] Write RED byte/identity/representation tests.
 
   Cover descriptor-verified reads, guarded atomic replacement, same-root move, root-symlink rejection, directory symlink traversal, hard links, aliases, invalid UTF-8, mixed newlines, BOM, LF/CRLF, final newline, supported mode preservation, identity change between observation and mutation, and Windows read-only admission.
 
-- [ ] Extend only the low-level pinned-root primitives.
+- [x] Extend only the low-level pinned-root primitives.
 
   Add byte-safe observation/replacement/move operations to `PinnedSyncRoot`; retain `read_file()`/`write_text()` as legacy compatibility wrappers until cutover. `PosixNotesSyncFilesystem` composes those primitives and captures serialization/metadata/recovery. Reuse `NativeWindowsReadOnlyFilesystem` for safe Folder -> Library observation; keep Windows bidirectional writes unavailable until an equivalent guarded adapter exists.
 
-- [ ] Write the complete RED direction matrix before planner code.
+- [x] Write the complete RED direction matrix before planner code.
 
   Table-drive no-change, one-sided create/update, out-of-direction change, both-side conflict, identity-proven file move, ambiguous move, note-implied filesystem move, every missing-side/deletion case, offline root, overlap, capability loss, duplicate authority, and stale observation. Assert move classification precedes missing-side logic and no case selects a global winner.
 
-- [ ] Implement `plan_reconciliation()` as a pure function.
+- [x] Implement `plan_reconciliation()` as a pure function.
 
   `notes_sync_reconciler.py` imports frozen models only. It does no SQLite, filesystem, clock, logging, Textual, or service I/O. Return safe actions, attention rows, skips, managed-placement effects, and a stable observation token. Repeated calls with the same inputs must be equal.
 
-- [ ] Measure before choosing deletion-burst and paging defaults.
+- [x] Measure before choosing deletion-burst and paging defaults.
 
   Add a deterministic representative-tree benchmark with no network or real profile access. Record plan time/memory at several file counts. Use the evidence to set the smallest bounded page size and deletion-burst grouping threshold that keeps review responsive; document the measured values in TASK-19005 Implementation Notes. Do not add a generic tuning framework.
 
-- [ ] Run the task gate and commit.
+- [x] Run the task gate and commit.
 
   ```bash
   ../../.venv/bin/python -B -m pytest -q -p no:cacheprovider -o addopts="" Tests/Notes/test_sync_containment.py Tests/Notes/test_notes_sync_filesystem.py Tests/Notes/test_notes_sync_reconciler.py

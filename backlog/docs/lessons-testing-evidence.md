@@ -6195,3 +6195,22 @@ allow only explicitly repairable omissions and SQLite-owned internals. Tests
 must assert the rejected database is unchanged. Post-migration shape checks
 alone cannot prove provenance, because idempotent DDL preserves whatever was
 already using the requested names.
+
+## Native rename flags and post-commit errors need real platform probes (TASK-19005, 2026-08-21)
+
+The first guarded Notes move used rename flag `1` as “no replace” on every
+POSIX platform. That is correct for Linux `renameat2`, but on Darwin flag `1`
+means `RENAME_SECLUDE`; an actual macOS probe replaced the destination and
+removed the source. Unit tests around a mocked rename seam had made the code
+look safe without testing the host primitive's semantics.
+
+The same review found errors after atomic exchange/rename reported as ordinary
+refusals. Callers could retry even though new bytes were already installed or a
+source had already moved, and cleanup paths could delete the displaced bytes.
+
+For native mutation primitives, test the real supported platform constants and
+collision behavior, not only wrapper calls. Mark the exact linearization point
+in code: failures before it are bounded refusals; every unverified outcome after
+it is a distinct partial state, with displaced authority preserved until the
+commit is durably verified. A successful syscall is not proof that the whole
+method may still report an ordinary failure.
