@@ -344,14 +344,14 @@ async def test_character_picker_swap_uses_override_and_only_greets_empty_chat(
     )
 
     await screen._character._apply_console_character_choice_async(
-        ConsoleCharacterChoice(character_id=7, name="Alraune", placement="current")
+        ConsoleCharacterChoice(character_id=7, name="Alraune", placement="swap")
     )
     first_messages = store.messages_for_session(session.id)
     assert [message.content for message in first_messages] == ["Hello, Per Chat."]
     assert first_messages[0].metadata.template_source == "Hello, {{user}}."
 
     await screen._character._apply_console_character_choice_async(
-        ConsoleCharacterChoice(character_id=8, name="Brynn", placement="current")
+        ConsoleCharacterChoice(character_id=8, name="Brynn", placement="swap")
     )
 
     assert session.character_name == "Brynn"
