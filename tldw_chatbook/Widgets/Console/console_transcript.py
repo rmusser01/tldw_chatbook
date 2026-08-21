@@ -839,6 +839,15 @@ def _annotation_marker_content(notes: tuple[str, ...]) -> Content:
     return Content.assemble(*segments)
 
 
+def _activity_is_expandable(message: ConsoleChatMessage) -> bool:
+    """Return whether one TOOL marker owns any disclosure detail."""
+    return message.role is ConsoleMessageRole.TOOL and bool(
+        message.content.strip()
+        or message.tool_output_full
+        or message.tool_diff is not None
+    )
+
+
 @dataclass(frozen=True)
 class _TranscriptRow:
     key: str
@@ -5735,13 +5744,16 @@ class ConsoleTranscript(VerticalScroll):
         pointer captured.
         """
         selection = self.selection_manager.state.selection
-        if (
-            isinstance(
-                widget,
-                (ConsoleTranscriptMessage, ConsoleMarkdownMessage, ConsoleToolDiffRow),
-            )
-            and selection is not None
-            and selection.row_key == widget.id
+        selection_row: Widget | None = None
+        if selection is not None:
+            if widget.id == selection.row_key:
+                selection_row = widget
+            else:
+                matches = list(widget.query(f"#{selection.row_key}"))
+                selection_row = matches[0] if matches else None
+        if isinstance(
+            selection_row,
+            (ConsoleTranscriptMessage, ConsoleMarkdownMessage, ConsoleToolDiffRow),
         ):
             if self.selection_manager.state.active:
                 self.release_mouse()
@@ -5900,6 +5912,7 @@ class ConsoleTranscript(VerticalScroll):
             getattr(widget, "_console_activity_signature", None)
             != row.activity_signature
         ):
+            self._cancel_selection_if_row_removed(widget.activity_stack)
             await widget.replace_activity_widgets(self._build_activity_widgets(row))
             widget._console_activity_signature = row.activity_signature
         if getattr(widget, "_console_adjunct_signature", None) != row.adjunct_signature:
@@ -5908,6 +5921,7 @@ class ConsoleTranscript(VerticalScroll):
                 for nested_row in row.nested_rows[1:]
             )
             if widget.adjunct_stack.children:
+                self._cancel_selection_if_row_removed(widget.adjunct_stack)
                 await widget.adjunct_stack.remove_children()
             if adjuncts:
                 await widget.adjunct_stack.mount(*adjuncts)
@@ -6058,6 +6072,13 @@ class ConsoleTranscript(VerticalScroll):
                         )
                     continue
                 detail_widgets.append(self._build_row_widget(owned_row, track=False))
+            if not detail_widgets and _activity_is_expandable(activity):
+                # Preserve lazy collapsed rendering while telling the disclosure
+                # that hidden full output or a diff exists. The expanded refresh
+                # replaces this sentinel with the real shared message/diff rows.
+                detail_widgets.append(
+                    Static("", classes="console-activity-detail-placeholder")
+                )
             disclosures.append(
                 ConsoleActivityDisclosure(
                     activity.id,
@@ -6444,15 +6465,7 @@ class ConsoleTranscript(VerticalScroll):
             (candidate for candidate in self._messages if candidate.id == message_id),
             None,
         )
-        if (
-            message is None
-            or message.role is not ConsoleMessageRole.TOOL
-            or not (
-                message.content.strip()
-                or message.tool_output_full
-                or message.tool_diff is not None
-            )
-        ):
+        if message is None or not _activity_is_expandable(message):
             return
         if message_id in self._expanded_tool_output_ids:
             self._expanded_tool_output_ids.discard(message_id)

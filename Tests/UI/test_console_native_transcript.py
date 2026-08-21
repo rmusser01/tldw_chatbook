@@ -425,7 +425,7 @@ async def test_activity_header_click_and_o_share_expansion_state() -> None:
         await transcript.refresh_messages()
 
         header = transcript.query_one("#console-activity-header-tool-turn")
-        header._activate()
+        header.on_click(SimpleNamespace(stop=lambda: None))
         await pilot.pause()
         assert transcript.selected_message_id == "tool-turn"
         assert "tool-turn" in transcript._expanded_tool_output_ids
@@ -461,10 +461,133 @@ async def test_unknown_empty_activity_uses_neutral_nonexpandable_header() -> Non
 
         assert str(header.renderable) == "Activity · done"
         assert not header.has_class("console-activity-header-expandable")
-        header._activate()
+        header.on_click(SimpleNamespace(stop=lambda: None))
         await pilot.pause()
         assert transcript.selected_message_id == "neutral-tool"
         assert "neutral-tool" not in transcript._expanded_tool_output_ids
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("detail_kind", ["full-output", "diff"])
+async def test_empty_preview_activity_advertises_detail_and_all_toggles_agree(
+    detail_kind: str,
+) -> None:
+    """Hidden full output and diffs remain discoverable with an empty preview."""
+    app = MutableTranscriptHarness()
+    tool_kwargs = (
+        {"tool_output_full": "FULL-ONLY-DETAIL"}
+        if detail_kind == "full-output"
+        else {"tool_diff": ("file.txt", "before", "after")}
+    )
+    messages = [
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT,
+            content="answer",
+            id=f"answer-{detail_kind}",
+        ),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.TOOL,
+            content="",
+            id=f"activity-{detail_kind}",
+            activity_presentation=ConsoleActivityPresentation(
+                "tool", f"literal [{detail_kind}]", "success"
+            ),
+            **tool_kwargs,
+        ),
+    ]
+    activity_id = f"activity-{detail_kind}"
+
+    async with app.run_test(size=(100, 28)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_messages(messages)
+        await transcript.refresh_messages()
+        header = transcript.query_one(f"#console-activity-header-{activity_id}")
+        disclosure = transcript.query_one(
+            f"#console-activity-disclosure-{activity_id}",
+            ConsoleActivityDisclosure,
+        )
+
+        assert header.has_class("console-activity-header-expandable")
+        assert header.renderable.plain.startswith("▸ literal [")
+        assert not disclosure.detail_stack.display
+        assert len(transcript.query(f"#console-message-{activity_id}")) == 0
+        assert len(transcript.query(f"#console-tool-diff-{activity_id}")) == 0
+
+        header.on_click(SimpleNamespace(stop=lambda: None))
+        await pilot.pause()
+        assert activity_id in transcript._expanded_tool_output_ids
+        expanded = transcript.query_one(
+            f"#console-activity-disclosure-{activity_id}",
+            ConsoleActivityDisclosure,
+        )
+        assert expanded.detail_stack.display
+        if detail_kind == "full-output":
+            assert "FULL-ONLY-DETAIL" in _message_row_text(transcript, activity_id)
+        else:
+            assert len(transcript.query(f"#console-tool-diff-{activity_id}")) == 1
+
+        header = transcript.query_one(f"#console-activity-header-{activity_id}")
+        header.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert activity_id not in transcript._expanded_tool_output_ids
+
+        transcript.focus()
+        await pilot.press("o")
+        await pilot.pause()
+        assert activity_id in transcript._expanded_tool_output_ids
+
+
+@pytest.mark.asyncio
+async def test_session_switch_cancels_finished_selection_in_nested_answer() -> None:
+    """A detached Assistant answer cannot remain the selection-manager domain."""
+    app = MutableTranscriptHarness()
+
+    async with app.run_test(size=(100, 24)):
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_messages(_assistant_turn_messages())
+        await transcript.refresh_messages()
+        answer = transcript.query_one("#console-message-a-turn")
+        transcript.selection_manager.begin_drag(answer.id, 0)
+        transcript.selection_manager.extend_drag(answer.id, 3)
+        assert transcript.selection_manager.finish_drag() is not None
+
+        transcript.set_messages(
+            [ConsoleChatMessage(role=ConsoleMessageRole.USER, content="new", id="new")]
+        )
+        await transcript.refresh_messages()
+
+        assert not answer.is_attached
+        assert transcript.selection_manager.state.selection is None
+
+
+@pytest.mark.asyncio
+async def test_activity_stack_replacement_cancels_finished_nested_selection() -> None:
+    """Replacing disclosure children clears selection keyed to detached detail."""
+    app = MutableTranscriptHarness()
+    user, assistant, thinking, tool = _assistant_turn_messages()
+
+    async with app.run_test(size=(100, 28)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_messages([user, assistant, tool])
+        await transcript.refresh_messages()
+        transcript.toggle_tool_output(tool.id)
+        await pilot.pause()
+        detail = transcript.query_one(f"#console-message-{tool.id}")
+        turn = transcript.query_one(
+            f"#console-assistant-turn-{assistant.id}", ConsoleAssistantTurnWidget
+        )
+        answer = turn.answer_widget
+        transcript.selection_manager.begin_drag(detail.id, 0)
+        transcript.selection_manager.extend_drag(detail.id, 4)
+        assert transcript.selection_manager.finish_drag() is not None
+
+        transcript.set_messages([user, assistant, thinking, tool])
+        await transcript.refresh_messages()
+
+        assert not detail.is_attached
+        assert turn.answer_widget is answer
+        assert transcript.selection_manager.state.selection is None
 
 
 class StyledRoleplayTranscriptHarness(ConsolidatedCSSApp):
