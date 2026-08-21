@@ -17,12 +17,15 @@ from tldw_chatbook.Notes.note_import_plan_models import (
     ImportAction,
     ImportBounds,
     ImportClassification,
+    ImportMatch,
+    ImportMatchKind,
     ImportPreviewItem,
     ImportSource,
     ImportSourceKind,
     NoteImportPlan,
     ParsedNotePayload,
     ProposedFolderMembership,
+    RootCollisionState,
 )
 from tldw_chatbook.UI.Library_Modules.library_note_import_controller import (
     LibraryNoteImportController,
@@ -131,6 +134,7 @@ def _controller(
     receipt: ImportExecutionReceipt | None = None,
     executor_error: Exception | None = None,
     planning_error: Exception | None = None,
+    review_note_reader=None,
 ) -> LibraryNoteImportController:
     published: list[object] = []
     executor = _Executor(calls, receipt or _receipt(), executor_error)
@@ -181,9 +185,105 @@ def _controller(
         executor_factory=lambda db, folders, receipts: executor,
         publish_snapshot=published.append,
         refresh_after_settlement=lambda: calls.append("refresh"),
+        review_note_reader=review_note_reader,
     )
     controller._published_for_test = published
     return controller
+
+
+def test_destination_input_keeps_raw_authority_and_publishes_inline_error(
+    tmp_path: Path,
+) -> None:
+    controller = _controller(
+        plan=_plan(tmp_path / "one.md"), calls=[], repository=_FolderRepository()
+    )
+    controller.begin_selection()
+    controller.accept_selected_path(tmp_path / "one.md", is_folder=False)
+
+    controller.set_destination("Inbox//Archive")
+
+    assert controller.snapshot.destination_input == "Inbox//Archive"
+    assert controller.snapshot.destination_segments == ()
+    assert controller.presentation_snapshot.destination == "Inbox//Archive"
+    assert controller.presentation_snapshot.destination_error == (
+        "Remove the empty folder between separators."
+    )
+    assert controller.presentation_snapshot.can_check is False
+
+
+@pytest.mark.asyncio
+async def test_check_builds_bounded_existing_note_diff_and_effect_context(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "one.md"
+    base = _plan(source)
+    matched = replace(
+        base.items[0],
+        source=replace(base.items[0].source, display_path="alpha/one.md"),
+        classification=ImportClassification.CHANGED_REPEAT,
+        default_action=ImportAction.CREATE_NEW,
+        selected_action=ImportAction.UPDATE_EXISTING,
+        allowed_actions=(
+            ImportAction.SKIP,
+            ImportAction.CREATE_NEW,
+            ImportAction.UPDATE_EXISTING,
+        ),
+        match=ImportMatch(
+            kind=ImportMatchKind.EXACT,
+            note_id="existing-1",
+            note_version=7,
+        ),
+        replace_content=True,
+    )
+    plan = replace(base, items=(matched,))
+    controller = _controller(
+        plan=plan,
+        calls=[],
+        repository=_FolderRepository(),
+        review_note_reader=lambda note_id: SimpleNamespace(
+            title="Existing title",
+            content="Old body",
+            version=7,
+        ),
+    )
+    controller.begin_selection()
+    controller.accept_selected_path(source, is_folder=False)
+    controller.set_destination("Inbox")
+
+    await controller.check()
+
+    item = controller.presentation_snapshot.preview_items[0]
+    assert item.name == "alpha/one.md"
+    assert item.target_label == "Existing note: Existing title (version 7)."
+    assert "-Old body" in item.content_diff
+    assert "+Body" in item.content_diff
+    assert len(item.content_diff) <= 1_600
+
+
+@pytest.mark.asyncio
+async def test_collision_rename_requires_valid_non_colliding_name(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "one.md"
+    collision = RootCollisionState(proposed_label="Inbox", collides=True)
+    plan = replace(_plan(source), root_collision=collision)
+    controller = _controller(plan=plan, calls=[], repository=_FolderRepository())
+    controller.begin_selection()
+    controller.accept_selected_path(source, is_folder=False)
+    controller.set_destination("Inbox")
+    await controller.check()
+
+    controller.set_collision_name("Inbox")
+    assert controller.presentation_snapshot.collision_rename_available is False
+    assert controller.presentation_snapshot.collision_rename_error == (
+        "That folder name already exists. Enter a different name."
+    )
+    with pytest.raises(ValueError, match="different folder name"):
+        controller.set_collision_choice("renamed_root")
+
+    controller.set_collision_name("Fresh")
+    assert controller.presentation_snapshot.collision_rename_available is True
+    assert controller.presentation_snapshot.collision_rename_error == ""
 
 
 @pytest.mark.asyncio

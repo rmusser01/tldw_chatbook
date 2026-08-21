@@ -7,7 +7,7 @@ from typing import Any
 
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import VerticalScroll
+from textual.containers import Vertical, VerticalScroll
 from textual.message import Message
 from textual.widgets import Button, Input, Static
 
@@ -45,13 +45,31 @@ def _bounded_source_name(name: str) -> str:
     return name if len(name) <= 48 else f"{name[:47]}…"
 
 
-class LibraryNoteImportCanvas(PostRecomposeCallback, VerticalScroll):
+class _ImportBody(VerticalScroll):
+    """Keyboard-focusable scroll owner for the changing import detail."""
+
+    can_focus = True
+
+
+class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
     """Render one immutable import snapshot and post typed physical intents."""
 
     DEFAULT_CSS = """
     LibraryNoteImportCanvas {
         width: 1fr;
         min-width: 40;
+        height: 1fr;
+        overflow: hidden;
+    }
+
+    LibraryNoteImportCanvas #note-import-heading,
+    LibraryNoteImportCanvas #note-import-status,
+    LibraryNoteImportCanvas #note-import-overflow-hint,
+    LibraryNoteImportCanvas .note-import-primary {
+        height: auto;
+    }
+
+    LibraryNoteImportCanvas #note-import-body {
         height: 1fr;
         overflow-y: auto;
     }
@@ -147,14 +165,89 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, VerticalScroll):
         super().__init__(**kwargs)
         self.snapshot = snapshot
         self._destination_value = snapshot.destination
-        self._collision_name = snapshot.collision_name
+        self._collision_name = (
+            snapshot.collision_rename_input or snapshot.collision_name
+        )
 
     def sync_state(self, snapshot: LibraryNoteImportSnapshot) -> None:
-        """Recompose this retained child from one complete immutable snapshot."""
+        """Apply one snapshot without replacing an actively edited input."""
+        previous = self.snapshot
         self.snapshot = snapshot
         self._destination_value = snapshot.destination
-        self._collision_name = snapshot.collision_name
+        self._collision_name = (
+            snapshot.collision_rename_input or snapshot.collision_name
+        )
+        if not self.is_attached or previous.phase != snapshot.phase:
+            self.refresh(recompose=True)
+            return
+        if snapshot.phase in {"select", "destination"}:
+            self._sync_destination_controls(snapshot)
+            return
+        collision_only = (
+            snapshot.phase == "review"
+            and previous.preview_items == snapshot.preview_items
+            and previous.page == snapshot.page
+            and previous.collision_choice == snapshot.collision_choice
+        )
+        if collision_only:
+            self._sync_collision_controls(snapshot)
+            return
         self.refresh(recompose=True)
+
+    def _sync_destination_controls(self, snapshot: LibraryNoteImportSnapshot) -> None:
+        try:
+            destination = self.query_one("#note-import-destination", Input)
+            if destination.value != snapshot.destination:
+                destination.value = snapshot.destination
+            self.query_one("#note-import-destination-error", Static).update(
+                snapshot.destination_error
+            )
+            check = self.query_one("#note-import-check", Button)
+            check.disabled = not snapshot.can_check
+            check.label = _disabled_action_label(
+                "Check selection", disabled=not snapshot.can_check
+            )
+            check.tooltip = snapshot.check_disabled_reason or (
+                "Check the selected sources without changing Notes."
+            )
+        except Exception:
+            self.refresh(recompose=True)
+
+    def _sync_collision_controls(self, snapshot: LibraryNoteImportSnapshot) -> None:
+        try:
+            rename_input = self.query_one("#note-import-collision-name", Input)
+            visible_name = snapshot.collision_rename_input or snapshot.collision_name
+            if rename_input.value != visible_name:
+                rename_input.value = visible_name
+            self.query_one("#note-import-collision-rename-error", Static).update(
+                snapshot.collision_rename_error
+            )
+            rename = self.query_one("#note-import-collision-rename", Button)
+            rename.disabled = not snapshot.collision_rename_available
+            submit = self.query_one("#note-import-import", Button)
+            submit.disabled = not snapshot.can_import
+            submit.label = _disabled_action_label(
+                "Import selected items", disabled=not snapshot.can_import
+            )
+            submit.tooltip = snapshot.import_disabled_reason or (
+                "Import the exact choices shown in this review."
+            )
+        except Exception:
+            self.refresh(recompose=True)
+
+    def on_mount(self) -> None:
+        self.call_after_refresh(self._update_overflow_hint)
+
+    def _after_recompose(self) -> None:
+        self.call_after_refresh(self._update_overflow_hint)
+
+    def _update_overflow_hint(self) -> None:
+        try:
+            body = self.query_one("#note-import-body", VerticalScroll)
+            hint = self.query_one("#note-import-overflow-hint", Static)
+            hint.display = body.virtual_size.height > body.container_size.height
+        except Exception:
+            return
 
     def compose(self) -> ComposeResult:
         state = self.snapshot
@@ -169,23 +262,78 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, VerticalScroll):
             id="note-import-status",
             markup=False,
         )
+        with _ImportBody(id="note-import-body"):
+            if state.phase in {"select", "destination"}:
+                yield from self._compose_selection(state)
+            elif state.phase == "review":
+                yield from self._compose_review(state)
+            elif state.phase == "importing":
+                yield from self._compose_importing(state)
+            elif state.phase == "receipt":
+                yield from self._compose_receipt(state)
+        hint = Static(
+            "More below — focus this panel and use Up/Down to scroll.",
+            id="note-import-overflow-hint",
+            classes="note-import-quiet",
+            markup=False,
+        )
+        hint.display = False
+        yield hint
+        yield from self._compose_primary_action(state)
 
+    def _compose_primary_action(
+        self, state: LibraryNoteImportSnapshot
+    ) -> ComposeResult:
         if state.phase in {"select", "destination"}:
-            yield from self._compose_selection(state)
-        elif state.phase == "checking":
+            check = Button(
+                _disabled_action_label("Check selection", disabled=not state.can_check),
+                id="note-import-check",
+                classes="library-canvas-action note-import-primary",
+                compact=True,
+                disabled=not state.can_check,
+            )
+            check.tooltip = state.check_disabled_reason or (
+                "Check the selected sources without changing Notes."
+            )
+            yield check
+        elif state.phase in {"checking", "importing"}:
             yield Button(
-                "Cancel check" if state.can_cancel else "Stopping…",
+                (
+                    "Cancel check"
+                    if state.phase == "checking" and state.can_cancel
+                    else "Cancel import"
+                    if state.can_cancel
+                    else "Stopping…"
+                ),
                 id="note-import-cancel",
-                classes="library-canvas-action",
+                classes="library-canvas-action note-import-primary",
                 compact=True,
                 disabled=not state.can_cancel,
             )
         elif state.phase == "review":
-            yield from self._compose_review(state)
-        elif state.phase == "importing":
-            yield from self._compose_importing(state)
-        elif state.phase == "receipt":
-            yield from self._compose_receipt(state)
+            submit = Button(
+                _disabled_action_label(
+                    "Import selected items", disabled=not state.can_import
+                ),
+                id="note-import-import",
+                classes="library-canvas-action note-import-primary",
+                compact=True,
+                disabled=not state.can_import,
+            )
+            submit.tooltip = state.import_disabled_reason or (
+                "Import the exact choices shown in this review."
+            )
+            yield submit
+        elif state.phase == "receipt" and (
+            state.retry_available or state.retryable_failures
+        ):
+            noun = "failure" if state.retryable_failures == 1 else "failures"
+            yield Button(
+                state.retry_label or f"Retry {state.retryable_failures} {noun}",
+                id="note-import-retry",
+                classes="library-canvas-action note-import-primary",
+                compact=True,
+            )
 
     def _compose_selection(self, state: LibraryNoteImportSnapshot) -> ComposeResult:
         count = len(state.selected_names)
@@ -227,18 +375,12 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, VerticalScroll):
                 placeholder="Existing or new folder path",
                 id="note-import-destination",
             )
-
-        check = Button(
-            _disabled_action_label("Check selection", disabled=not state.can_check),
-            id="note-import-check",
-            classes="library-canvas-action",
-            compact=True,
-            disabled=not state.can_check,
-        )
-        check.tooltip = state.check_disabled_reason or (
-            "Check the selected sources without changing Notes."
-        )
-        yield check
+            yield Static(
+                state.destination_error,
+                id="note-import-destination-error",
+                classes="note-import-quiet",
+                markup=False,
+            )
 
     def _compose_review(self, state: LibraryNoteImportSnapshot) -> ComposeResult:
         if state.collision_kind:
@@ -266,11 +408,21 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, VerticalScroll):
                     name=choice,
                     classes="library-canvas-action note-import-collision-choice",
                     compact=True,
+                    disabled=(
+                        choice == "renamed_root"
+                        and not state.collision_rename_available
+                    ),
                 )
             yield Input(
-                value=state.collision_name,
+                value=state.collision_rename_input or state.collision_name,
                 placeholder="New top-level folder name",
                 id="note-import-collision-name",
+            )
+            yield Static(
+                state.collision_rename_error,
+                id="note-import-collision-rename-error",
+                classes="note-import-quiet",
+                markup=False,
             )
 
         order = tuple(_CLASSIFICATION_LABELS)
@@ -318,20 +470,6 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, VerticalScroll):
             )
             yield next_button
 
-        submit = Button(
-            _disabled_action_label(
-                "Import selected items", disabled=not state.can_import
-            ),
-            id="note-import-import",
-            classes="library-canvas-action",
-            compact=True,
-            disabled=not state.can_import,
-        )
-        submit.tooltip = state.import_disabled_reason or (
-            "Import the exact choices shown in this review."
-        )
-        yield submit
-
     def _compose_review_item(
         self,
         item: LibraryNoteImportItemSnapshot,
@@ -348,6 +486,18 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, VerticalScroll):
                 classes="note-import-quiet",
                 markup=False,
             )
+        for detail in (
+            item.target_label,
+            item.effect_summary,
+            item.membership_summary,
+            item.content_diff,
+        ):
+            if detail:
+                yield Static(
+                    detail,
+                    classes="note-import-quiet",
+                    markup=False,
+                )
 
         yield Button(
             _choice_label(selected=item.action == "skip", text="Skip"),
@@ -420,13 +570,6 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, VerticalScroll):
             id="note-import-progress",
             markup=False,
         )
-        yield Button(
-            "Cancel import" if state.can_cancel else "Stopping…",
-            id="note-import-cancel",
-            classes="library-canvas-action",
-            compact=True,
-            disabled=not state.can_cancel,
-        )
 
     def _compose_receipt(self, state: LibraryNoteImportSnapshot) -> ComposeResult:
         yield Static(
@@ -440,14 +583,6 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, VerticalScroll):
             classes="note-import-quiet",
             markup=False,
         )
-        if state.retry_available or state.retryable_failures:
-            noun = "failure" if state.retryable_failures == 1 else "failures"
-            yield Button(
-                state.retry_label or f"Retry {state.retryable_failures} {noun}",
-                id="note-import-retry",
-                classes="library-canvas-action",
-                compact=True,
-            )
 
     @on(Input.Changed, "#note-import-destination")
     def _destination_changed(self, event: Input.Changed) -> None:

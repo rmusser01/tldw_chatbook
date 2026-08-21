@@ -283,7 +283,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             return f"{prefix} · {status} · Next: {next_action}"
         if self.mode == "sync":
             state = self.sync_panel_state
-            status = "Sync unavailable" if state is None else f"Sync {state.status_line}"
+            status = (
+                "Sync unavailable" if state is None else f"Sync {state.status_line}"
+            )
             if state is None or state.status_line.startswith("failed"):
                 next_action = "Review the error, then Sync now."
             elif state.running:
@@ -295,8 +297,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             state = self.import_snapshot
             status = "Import unavailable" if state is None else state.status_line
             return (
-                f"{prefix} · Import once · {status} · "
-                "Next: Review the import workflow."
+                f"{prefix} · Import once · {status} · Next: Review the import workflow."
             )
         state = self.list_state
         status = state.operation_status if state is not None else ""
@@ -332,11 +333,10 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
     ) -> None:
         """Apply a complete screen-owned snapshot within this canvas only.
 
-        The method intentionally replaces every compose input before asking
-        Textual to rebuild this widget's children. Keeping the update complete
-        prevents list/editor/sync conditionals from retaining values from the
-        previous surface while the Library shell, rail, and footer retain
-        identity.
+        The method replaces every compose input before updating the visible
+        surface. A retained import child accepts same-route snapshots directly
+        so active text input keeps identity; other routes rebuild this widget's
+        children.
 
         Args:
             list_state: Notes list snapshot, or ``None`` outside list mode.
@@ -378,6 +378,25 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         if previous_mode != mode:
             self.remove_class(f"library-notes-mode-{previous_mode}")
             self.add_class(f"library-notes-mode-{mode}")
+        import_canvases = self.query("#library-note-import-canvas")
+        if (
+            previous_mode == mode == "import"
+            and import_snapshot is not None
+            and import_canvases
+        ):
+            authority = self.query("#library-notes-authority")
+            if authority:
+                authority.first(Static).update(self._authority_copy())
+            child = import_canvases.first(LibraryNoteImportCanvas)
+            callback = self._post_recompose_callback
+            self._post_recompose_callback = None
+            child.queue_after_recompose(callback)
+            child.sync_state(import_snapshot)
+            if not getattr(child, "_recompose_required", False):
+                child.queue_after_recompose(None)
+                if callback is not None:
+                    self.call_after_refresh(callback)
+            return
         self.refresh(recompose=True)
 
     def _compose_loading(self) -> ComposeResult:
@@ -591,7 +610,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 if import_phase in {"destination", "checking", "review"}
                 or (
                     import_phase == "select"
-                    and bool(self.import_snapshot and self.import_snapshot.selected_names)
+                    and bool(
+                        self.import_snapshot and self.import_snapshot.selected_names
+                    )
                 )
                 else "Import"
             )

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import difflib
 import inspect
-import re
 import threading
 from collections.abc import Callable
 from dataclasses import replace
@@ -13,6 +13,7 @@ from typing import Any
 
 from tldw_chatbook.Library.library_note_import_state import (
     NoteImportPhase,
+    NoteImportReviewEffect,
     NoteImportWorkflowSnapshot,
     add_selected_file,
     apply_import_progress,
@@ -25,11 +26,13 @@ from tldw_chatbook.Library.library_note_import_state import (
     revisit_latest_receipt,
     select_folder,
     set_approved_plan,
-    set_destination_segments,
+    set_collision_rename,
+    set_destination_input,
     set_review_page,
     settle_import,
     show_review,
 )
+from tldw_chatbook.Notes.note_import_executor import LocalNoteImportTarget
 from tldw_chatbook.Notes.note_import_plan_models import (
     ImportAction,
     ImportBounds,
@@ -58,6 +61,7 @@ class LibraryNoteImportController:
         executor_factory: Callable[[Any, Any, Any], Any],
         publish_snapshot: Callable[[Any], None],
         refresh_after_settlement: Callable[[], Any],
+        review_note_reader: Callable[[str], Any] | None = None,
     ) -> None:
         """Bind the narrow planning/execution seams used by this workflow."""
         if not isinstance(bounds, ImportBounds):
@@ -96,13 +100,13 @@ class LibraryNoteImportController:
         self._executor_factory = executor_factory
         self._publish_snapshot = publish_snapshot
         self._refresh_after_settlement = refresh_after_settlement
+        self._review_note_reader = review_note_reader
 
         self._state = initial_note_import_snapshot()
         self._before_check: NoteImportWorkflowSnapshot | None = None
         self._check_task: asyncio.Task[Any] | None = None
         self._cancel_event: threading.Event | None = None
         self._existing_top_level_names: tuple[str, ...] = ()
-        self._collision_rename = ""
         self._error_message = ""
 
     @property
@@ -130,7 +134,6 @@ class LibraryNoteImportController:
             latest_receipt=self._state.latest_receipt
         )
         self._existing_top_level_names = ()
-        self._collision_rename = ""
         self._error_message = ""
         self.publish()
 
@@ -155,18 +158,8 @@ class LibraryNoteImportController:
         self.publish()
 
     def set_destination(self, value: str) -> None:
-        """Set mutation-free destination segments for selected files."""
-        if not isinstance(value, str):
-            raise TypeError("destination must be text.")
-        stripped = value.strip()
-        segments = (
-            tuple(part.strip() for part in re.split(r"[/\\]", stripped))
-            if stripped
-            else ()
-        )
-        if any(not segment for segment in segments):
-            raise ValueError("destination contains an empty folder segment.")
-        self._state = set_destination_segments(self._state, segments)
+        """Retain exact destination input and its mutation-free validation."""
+        self._state = set_destination_input(self._state, value)
         self._error_message = ""
         self.publish()
 
@@ -179,7 +172,7 @@ class LibraryNoteImportController:
         self.publish()
         self._check_task = asyncio.current_task()
         try:
-            plan, names = await asyncio.to_thread(self._plan_selection, before)
+            plan, names, effects = await asyncio.to_thread(self._plan_selection, before)
         except asyncio.CancelledError:
             self._state = before
             self.publish()
@@ -195,12 +188,12 @@ class LibraryNoteImportController:
             self._check_task = None
             self._before_check = None
         self._existing_top_level_names = names
-        self._state = show_review(self._state, plan)
+        self._state = show_review(self._state, plan, review_effects=effects)
         self.publish()
 
     def _plan_selection(
         self, selected: NoteImportWorkflowSnapshot
-    ) -> tuple[Any, tuple[str, ...]]:
+    ) -> tuple[Any, tuple[str, ...], tuple[NoteImportReviewEffect, ...]]:
         discovery = self._discover(selected.selected_paths, self._bounds)
         destination = (
             selected.destination_segments if selected.requires_destination else None
@@ -220,7 +213,56 @@ class LibraryNoteImportController:
             prior_observations=observations,
         )
         names = self._top_level_folder_names()
-        return self._analyze_collision(plan, names), names
+        plan = self._analyze_collision(plan, names)
+        return plan, names, self._build_review_effects(plan)
+
+    def _build_review_effects(self, plan: Any) -> tuple[NoteImportReviewEffect, ...]:
+        matched = tuple(item for item in plan.items if item.match is not None)
+        if not matched:
+            return ()
+        reader = self._review_note_reader
+        if reader is None:
+            target = LocalNoteImportTarget(
+                db=self._database(),
+                folder_repository=self._folder_repository(),
+            )
+
+            def reader(note_id: str) -> Any:
+                return target.read_note(note_id=note_id)
+
+        effects: list[NoteImportReviewEffect] = []
+        for item in matched:
+            note = reader(item.match.note_id)
+            if note is None:
+                continue
+            effects.append(
+                NoteImportReviewEffect(
+                    item_id=item.item_id,
+                    target_title=note.title,
+                    target_version=note.version,
+                    content_diff=self._bounded_note_diff(note, item),
+                )
+            )
+        return tuple(effects)
+
+    @staticmethod
+    def _bounded_note_diff(note: Any, item: Any) -> str:
+        if not item.payloads:
+            return ""
+        payload = item.payloads[0]
+        before = f"Title: {note.title}\n\n{note.content}".splitlines()
+        after = f"Title: {payload.title}\n\n{payload.content}".splitlines()
+        diff = "\n".join(
+            difflib.unified_diff(
+                before,
+                after,
+                fromfile="Existing note",
+                tofile="Imported source",
+                n=2,
+                lineterm="",
+            )
+        )
+        return diff if len(diff) <= 1_600 else f"{diff[:1599]}…"
 
     def _top_level_folder_names(self) -> tuple[str, ...]:
         repository = self._folder_repository()
@@ -235,20 +277,40 @@ class LibraryNoteImportController:
             offset = next_offset
 
     def set_collision_name(self, name: str) -> None:
-        """Retain a proposed collision rename until the explicit choice."""
+        """Retain and validate an exact proposed collision rename."""
         if not isinstance(name, str):
             raise TypeError("name must be text.")
-        self._collision_rename = name.strip()
+        error = self._collision_rename_error(name)
+        self._state = set_collision_rename(self._state, name, error=error)
+        self.publish()
+
+    def _collision_rename_error(self, name: str) -> str:
+        if not name:
+            return "Enter a different folder name."
+        if name != name.strip():
+            return "Remove leading or trailing spaces from the folder name."
+        if name in {".", ".."}:
+            return "Use a folder name other than '.' or '..'."
+        if any(character in name for character in ("/", "\\", "\x00")):
+            return "Enter one folder name without separators."
+        existing = {value.casefold() for value in self._existing_top_level_names}
+        if name.casefold() in existing:
+            return "That folder name already exists. Enter a different name."
+        return ""
 
     def set_collision_choice(self, choice: str) -> None:
         """Apply one explicit folder-root collision resolution."""
         plan = self._require_review_plan()
         collision_choice = RootCollisionChoice(choice)
         renamed = (
-            self._collision_rename
+            self._state.collision_rename_input
             if collision_choice is RootCollisionChoice.RENAMED_ROOT
             else None
         )
+        if collision_choice is RootCollisionChoice.RENAMED_ROOT and (
+            not renamed or self._state.collision_rename_error
+        ):
+            raise ValueError("Enter a valid different folder name before renaming.")
         updated = self._resolve_collision(
             plan,
             collision_choice,
@@ -315,9 +377,21 @@ class LibraryNoteImportController:
 
     def _replace_review_plan(self, plan: Any) -> None:
         page_number = self._state.page.page_number
+        effects = self._state.review_effects
+        rename_input = self._state.collision_rename_input
+        rename_error = self._state.collision_rename_error
         self._state = set_review_page(
-            show_review(begin_checking(self._state), plan),
+            show_review(
+                begin_checking(self._state),
+                plan,
+                review_effects=effects,
+            ),
             page_number,
+        )
+        self._state = replace(
+            self._state,
+            collision_rename_input=rename_input,
+            collision_rename_error=rename_error,
         )
         self.publish()
 

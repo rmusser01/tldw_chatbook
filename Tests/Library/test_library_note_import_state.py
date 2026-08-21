@@ -10,6 +10,7 @@ from tldw_chatbook.Library.library_note_import_state import (
     LibraryNoteImportSnapshot,
     MAX_IMPORT_REVIEW_PAGE_SIZE,
     NoteImportPhase,
+    NoteImportReviewEffect,
     add_selected_file,
     apply_import_progress,
     begin_checking,
@@ -18,6 +19,8 @@ from tldw_chatbook.Library.library_note_import_state import (
     initial_note_import_snapshot,
     request_import_cancellation,
     project_library_note_import_snapshot,
+    set_collision_rename,
+    set_destination_input,
     revisit_latest_receipt,
     select_folder,
     set_approved_plan,
@@ -279,6 +282,33 @@ def test_destination_segments_are_required_safe_and_invalidate_review_authority(
     assert changed.phase is NoteImportPhase.DESTINATION
 
 
+def test_destination_input_retains_raw_text_and_exposes_inline_validation() -> None:
+    state = add_selected_file(initial_note_import_snapshot(), _PRIVATE_ROOT / "a.md")
+
+    valid = set_destination_input(state, " Inbox / Archive ")
+    assert valid.destination_input == " Inbox / Archive "
+    assert valid.destination_segments == ()
+    assert valid.destination_error == (
+        "Remove leading or trailing spaces from each folder name."
+    )
+    assert valid.can_check is False
+    assert project_library_note_import_snapshot(valid).destination == (
+        " Inbox / Archive "
+    )
+
+    valid = set_destination_input(state, "Inbox/Archive")
+    assert valid.destination_input == "Inbox/Archive"
+    assert valid.destination_segments == ("Inbox", "Archive")
+    assert valid.destination_error == ""
+    assert valid.can_check is True
+
+    invalid = set_destination_input(valid, "Inbox//Archive")
+    assert invalid.destination_input == "Inbox//Archive"
+    assert invalid.destination_segments == ()
+    assert invalid.destination_error == "Remove the empty folder between separators."
+    assert invalid.can_check is False
+
+
 def test_review_page_is_bounded_and_clamps_after_plan_changes() -> None:
     plan = _plan(*(_item(number) for number in range(1, 58)))
     state = _file_review(plan, page_size=10_000)
@@ -310,12 +340,12 @@ def test_unresolved_collision_blocks_approval_until_an_explicit_resolution() -> 
     assert resolved.can_approve is True
 
 
-def test_uncertain_match_must_be_confirmed_before_update_is_available() -> None:
+def test_uncertain_create_new_is_approvable_but_update_requires_confirmation() -> None:
     uncertain = _item(classification=ImportClassification.UNCERTAIN_MATCH)
     state = _file_review(_plan(uncertain))
 
-    assert state.can_approve is False
-    assert "uncertain match" in state.approval_blocker.casefold()
+    assert state.plan.items[0].selected_action is ImportAction.CREATE_NEW
+    assert state.can_approve is True
     with pytest.raises(ValueError, match="confirmed"):
         set_item_decision(
             state,
@@ -333,6 +363,27 @@ def test_uncertain_match_must_be_confirmed_before_update_is_available() -> None:
     )
     confirmed = show_review(begin_checking(state), confirmed_plan)
     assert confirmed.can_approve is True
+
+
+def test_collision_rename_input_invalidates_rename_authority() -> None:
+    collision = RootCollisionState(
+        proposed_label="Imported",
+        collides=True,
+        choice=RootCollisionChoice.RENAMED_ROOT,
+        resolved_label="Fresh",
+    )
+    state = _file_review(_plan(collision=collision))
+
+    edited = set_collision_rename(
+        state,
+        "Imported",
+        error="That folder name already exists. Enter a different name.",
+    )
+
+    assert edited.collision_rename_input == "Imported"
+    assert edited.collision_rename_error.startswith("That folder name")
+    assert edited.plan.root_collision.choice is None
+    assert edited.can_approve is False
 
 
 def test_update_existing_requires_an_explicit_content_and_membership_decision() -> None:
@@ -525,5 +576,102 @@ def test_presentation_projection_is_frozen_path_safe_and_redacted() -> None:
     with pytest.raises(FrozenInstanceError):
         projected.phase = "select"  # type: ignore[misc]
     rendered = repr(projected)
-    for secret in (str(_PRIVATE_ROOT), _SECRET_CONTENT, _SECRET_KEYWORD):
+    for secret in (
+        str(_PRIVATE_ROOT),
+        "record.md",
+        "record-1.md",
+        _SECRET_CONTENT,
+        _SECRET_KEYWORD,
+    ):
         assert secret not in rendered
+
+
+def test_review_projection_exposes_relative_source_membership_and_bounded_effects() -> (
+    None
+):
+    item = replace(
+        _item(
+            classification=ImportClassification.CHANGED_REPEAT,
+            selected_action=ImportAction.UPDATE_EXISTING,
+            replace_content=True,
+            add_membership=True,
+        ),
+        source=replace(_item().source, display_path="alpha/record.md"),
+        memberships=(
+            ProposedFolderMembership(
+                payload_index=0,
+                folder_segments=("Imported", "Alpha"),
+            ),
+        ),
+    )
+    state = _file_review(_plan(item))
+    effect = NoteImportReviewEffect(
+        item_id=item.item_id,
+        target_title="Existing title",
+        target_version=7,
+        content_diff="--- Existing\n+++ Imported\n-Old\n+New",
+    )
+    state = replace(state, review_effects=(effect,))
+
+    projected = project_library_note_import_snapshot(state).preview_items[0]
+
+    assert projected.name == "alpha/record.md"
+    assert projected.target_label == "Existing note: Existing title (version 7)."
+    assert projected.membership_summary == "Folder placement: add Imported / Alpha."
+    assert projected.effect_summary == "Content: replace existing content."
+    assert "-Old" in projected.content_diff
+    assert "alpha/record.md" not in repr(projected)
+    assert "Existing title" not in repr(projected)
+
+
+@pytest.mark.parametrize(
+    ("receipt_state", "completed", "failed", "expected_status", "detail_fragment"),
+    (
+        (ImportSessionState.COMPLETED, 4, 0, "Import completed.", "settled"),
+        (
+            ImportSessionState.CANCELLED,
+            2,
+            0,
+            "Import cancelled after the current item.",
+            "not rolled back",
+        ),
+        (
+            ImportSessionState.NEEDS_ATTENTION,
+            4,
+            1,
+            "Import needs attention.",
+            "failed",
+        ),
+    ),
+)
+def test_receipt_projection_distinguishes_durable_session_state(
+    receipt_state: ImportSessionState,
+    completed: int,
+    failed: int,
+    expected_status: str,
+    detail_fragment: str,
+) -> None:
+    state = _file_review()
+    approved = approve_note_import_plan(state.plan, approval_id=_APPROVAL_ID)
+    receipt = _receipt(
+        state=receipt_state,
+        completed=completed,
+        imported=max(completed - failed, 0),
+        updated=0,
+        skipped=0,
+        failed=failed,
+        retryable=failed,
+        reason_code="target_conflict"
+        if failed
+        else "cancelled"
+        if receipt_state is ImportSessionState.CANCELLED
+        else None,
+    )
+    settled = settle_import(
+        begin_importing(set_approved_plan(state, approved)), receipt
+    )
+
+    projected = project_library_note_import_snapshot(settled)
+
+    assert projected.status_line == expected_status
+    assert detail_fragment in projected.receipt_detail.casefold()

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
+import re
 
 from tldw_chatbook.Notes.note_import_execution_models import (
     ApprovedNoteImportPlan,
@@ -14,7 +15,6 @@ from tldw_chatbook.Notes.note_import_execution_models import (
 )
 from tldw_chatbook.Notes.note_import_plan_models import (
     ImportAction,
-    ImportClassification,
     ImportMatchKind,
     ImportPreviewItem,
     NoteImportPlan,
@@ -70,7 +70,10 @@ class NoteImportWorkflowSnapshot:
     selected_paths: tuple[Path, ...] = field(default=(), repr=False)
     selection_is_folder: bool = False
     destination_segments: tuple[str, ...] = field(default=(), repr=False)
+    destination_input: str = field(default="", repr=False)
+    destination_error: str = ""
     plan: NoteImportPlan | None = field(default=None, repr=False)
+    review_effects: tuple["NoteImportReviewEffect", ...] = field(default=(), repr=False)
     page: NoteImportPage = field(default_factory=NoteImportPage)
     approved_plan: ApprovedNoteImportPlan | None = field(default=None, repr=False)
     progress: ImportExecutionProgress | None = None
@@ -78,6 +81,8 @@ class NoteImportWorkflowSnapshot:
     latest_receipt: ImportExecutionReceipt | None = field(default=None, repr=False)
     cancel_requested: bool = False
     decision_item_ids: frozenset[str] = frozenset()
+    collision_rename_input: str = field(default="", repr=False)
+    collision_rename_error: str = ""
     revision: int = 0
 
     @property
@@ -100,6 +105,7 @@ class NoteImportWorkflowSnapshot:
         return (
             bool(self.selected_paths)
             and (self.selection_is_folder or bool(self.destination_segments))
+            and not self.destination_error
             and self.phase in {NoteImportPhase.SELECT, NoteImportPhase.DESTINATION}
         )
 
@@ -110,13 +116,6 @@ class NoteImportWorkflowSnapshot:
         collision = self.plan.root_collision
         if collision is not None and collision.collides and collision.choice is None:
             return "Choose how to handle the folder name collision."
-        if any(
-            item.classification is ImportClassification.UNCERTAIN_MATCH
-            and item.match is not None
-            and item.match.kind is ImportMatchKind.UNCERTAIN
-            for item in self.plan.items
-        ):
-            return "Confirm every uncertain match before importing."
         if not self.plan.items:
             return "No importable items were found."
         return ""
@@ -173,7 +172,7 @@ class LibraryNoteImportItemSnapshot:
     """Path-safe render projection for one review item."""
 
     item_id: str
-    name: str
+    name: str = field(repr=False)
     classification: str
     action: str
     reason: str = ""
@@ -182,6 +181,20 @@ class LibraryNoteImportItemSnapshot:
     confirmed: bool = False
     replace_content: bool = False
     add_membership: bool = False
+    target_label: str = field(default="", repr=False)
+    effect_summary: str = field(default="", repr=False)
+    membership_summary: str = field(default="", repr=False)
+    content_diff: str = field(default="", repr=False)
+
+
+@dataclass(frozen=True, slots=True)
+class NoteImportReviewEffect:
+    """Bounded private comparison data for one immutable review item."""
+
+    item_id: str
+    target_title: str = field(default="", repr=False)
+    target_version: int | None = None
+    content_diff: str = field(default="", repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,9 +202,9 @@ class LibraryNoteImportSnapshot:
     """Complete immutable input for the render-only import canvas."""
 
     phase: str
-    selected_names: tuple[str, ...]
+    selected_names: tuple[str, ...] = field(repr=False)
     selection_kind: str
-    destination: str
+    destination: str = field(repr=False)
     status_line: str
     preview_items: tuple[LibraryNoteImportItemSnapshot, ...]
     page: int
@@ -200,10 +213,14 @@ class LibraryNoteImportSnapshot:
     check_disabled_reason: str
     can_import: bool
     import_disabled_reason: str
+    destination_error: str = ""
     collision_kind: str = ""
-    collision_name: str = ""
+    collision_name: str = field(default="", repr=False)
     collision_choice: str = ""
     collision_reason: str = ""
+    collision_rename_input: str = field(default="", repr=False)
+    collision_rename_error: str = ""
+    collision_rename_available: bool = False
     progress_completed: int = 0
     progress_total: int = 0
     progress_detail: str = ""
@@ -288,6 +305,8 @@ def select_folder(
         selected_paths=(path,),
         selection_is_folder=True,
         destination_segments=(),
+        destination_input="",
+        destination_error="",
         revision=state.revision + 1,
     )
 
@@ -312,7 +331,61 @@ def set_destination_segments(
         state,
         phase=NoteImportPhase.DESTINATION,
         destination_segments=copied,
+        destination_input="/".join(copied),
+        destination_error="",
         plan=None if changed else state.plan,
+        page=_page(None, 1, state.page.page_size) if changed else state.page,
+        approved_plan=None if changed else state.approved_plan,
+        revision=state.revision + changed,
+    )
+
+
+def _folder_name_error(value: str) -> str:
+    if not value:
+        return "Enter a Notes destination."
+    if value != value.strip():
+        return "Remove leading or trailing spaces from each folder name."
+    if value in {".", ".."}:
+        return "Use a folder name other than '.' or '..'."
+    if "\x00" in value:
+        return "Remove the unsupported character from the folder name."
+    return ""
+
+
+def parse_note_import_destination(value: str) -> tuple[tuple[str, ...], str]:
+    """Return safe destination segments and one inline correction message."""
+    if not isinstance(value, str):
+        raise TypeError("destination must be text.")
+    if not value:
+        return (), "Enter a Notes destination."
+    parts = tuple(re.split(r"[/\\]", value))
+    if any(not part for part in parts):
+        return (), "Remove the empty folder between separators."
+    for part in parts:
+        error = _folder_name_error(part)
+        if error:
+            return (), error
+    return parts, ""
+
+
+def set_destination_input(
+    state: NoteImportWorkflowSnapshot, value: str
+) -> NoteImportWorkflowSnapshot:
+    """Retain exact typed destination text with parsed, mutation-free authority."""
+    segments, error = parse_note_import_destination(value)
+    changed = (
+        value != state.destination_input
+        or segments != state.destination_segments
+        or error != state.destination_error
+    )
+    return replace(
+        state,
+        phase=NoteImportPhase.DESTINATION,
+        destination_input=value,
+        destination_error=error,
+        destination_segments=segments,
+        plan=None if changed else state.plan,
+        review_effects=() if changed else state.review_effects,
         page=_page(None, 1, state.page.page_size) if changed else state.page,
         approved_plan=None if changed else state.approved_plan,
         revision=state.revision + changed,
@@ -330,18 +403,24 @@ def begin_checking(state: NoteImportWorkflowSnapshot) -> NoteImportWorkflowSnaps
         state,
         phase=NoteImportPhase.CHECKING,
         plan=None,
+        review_effects=(),
         page=_page(None, 1, state.page.page_size),
         approved_plan=None,
         progress=None,
         receipt=None,
         cancel_requested=False,
         decision_item_ids=frozenset(),
+        collision_rename_input="",
+        collision_rename_error="",
         revision=state.revision + 1,
     )
 
 
 def show_review(
-    state: NoteImportWorkflowSnapshot, plan: NoteImportPlan
+    state: NoteImportWorkflowSnapshot,
+    plan: NoteImportPlan,
+    *,
+    review_effects: tuple[NoteImportReviewEffect, ...] = (),
 ) -> NoteImportWorkflowSnapshot:
     if state.phase is not NoteImportPhase.CHECKING:
         raise ValueError("Review may only follow checking.")
@@ -351,6 +430,7 @@ def show_review(
         state,
         phase=NoteImportPhase.REVIEW,
         plan=plan,
+        review_effects=tuple(review_effects),
         page=_page(plan, 1, state.page.page_size),
         approved_plan=None,
         cancel_requested=False,
@@ -389,6 +469,44 @@ def set_root_collision_resolution(
         page=_page(plan, state.page.page_number, state.page.page_size),
         approved_plan=None,
         revision=state.revision + 1,
+    )
+
+
+def set_collision_rename(
+    state: NoteImportWorkflowSnapshot,
+    value: str,
+    *,
+    error: str,
+) -> NoteImportWorkflowSnapshot:
+    """Retain an exact rename proposal and clear stale rename approval."""
+    if state.plan is None or state.plan.root_collision is None:
+        raise ValueError("A root collision is required.")
+    collision = state.plan.root_collision
+    plan = state.plan
+    if (
+        collision.choice is RootCollisionChoice.RENAMED_ROOT
+        and value != collision.resolved_label
+    ):
+        plan = replace(
+            plan,
+            root_collision=RootCollisionState(
+                proposed_label=collision.proposed_label,
+                collides=collision.collides,
+            ),
+        )
+    changed = (
+        value != state.collision_rename_input
+        or error != state.collision_rename_error
+        or plan is not state.plan
+    )
+    return replace(
+        state,
+        plan=plan,
+        page=_page(plan, state.page.page_number, state.page.page_size),
+        approved_plan=None if changed else state.approved_plan,
+        collision_rename_input=value,
+        collision_rename_error=error,
+        revision=state.revision + changed,
     )
 
 
@@ -561,10 +679,11 @@ def project_library_note_import_snapshot(
 ) -> LibraryNoteImportSnapshot:
     """Project private workflow authority into bounded, path-safe UI copy."""
 
+    effects = {effect.item_id: effect for effect in state.review_effects}
     items = tuple(
         LibraryNoteImportItemSnapshot(
             item_id=item.item_id,
-            name=Path(item.source.display_path).name,
+            name=item.source.display_path,
             classification=item.classification.value,
             action=item.selected_action.value,
             reason=item.reason,
@@ -581,6 +700,12 @@ def project_library_note_import_snapshot(
             ),
             replace_content=item.replace_content,
             add_membership=item.add_membership,
+            target_label=_target_label(effects.get(item.item_id)),
+            effect_summary=_effect_summary(item),
+            membership_summary=_membership_summary(item),
+            content_diff=(
+                effects[item.item_id].content_diff if item.item_id in effects else ""
+            ),
         )
         for item in state.page.items
     )
@@ -598,11 +723,7 @@ def project_library_note_import_snapshot(
             else "Importing notes…"
         )
     elif state.phase is NoteImportPhase.RECEIPT:
-        status = (
-            "Import finished."
-            if receipt and receipt.completed == receipt.total
-            else "Import stopped after the current item."
-        )
+        status = _receipt_status(receipt)
     elif state.selected_count:
         status = f"{state.selected_count} {'folder' if state.selection_is_folder else 'file' + ('s' if state.selected_count != 1 else '')} selected."
     else:
@@ -616,7 +737,8 @@ def project_library_note_import_snapshot(
         phase=state.phase.value,
         selected_names=tuple(path.name for path in state.selected_paths),
         selection_kind=selection_kind,
-        destination=" / ".join(state.destination_segments),
+        destination=state.destination_input,
+        destination_error=state.destination_error,
         status_line=status,
         preview_items=items,
         page=state.page.page_number,
@@ -625,6 +747,8 @@ def project_library_note_import_snapshot(
         check_disabled_reason=(
             "Choose a source first."
             if not state.selected_paths
+            else state.destination_error
+            if state.destination_error
             else "Choose a Notes destination."
             if state.requires_destination and not state.destination_segments
             else ""
@@ -643,6 +767,11 @@ def project_library_note_import_snapshot(
             if collision and collision.collides and collision.choice is None
             else ""
         ),
+        collision_rename_input=state.collision_rename_input,
+        collision_rename_error=state.collision_rename_error,
+        collision_rename_available=bool(
+            state.collision_rename_input and not state.collision_rename_error
+        ),
         progress_completed=progress.completed if progress else 0,
         progress_total=progress.total if progress else 0,
         progress_detail=(
@@ -655,13 +784,7 @@ def project_library_note_import_snapshot(
             if receipt
             else ""
         ),
-        receipt_detail=(
-            "Partial completion. Finished items were not rolled back."
-            if receipt and receipt.completed < receipt.total
-            else "All planned items settled."
-            if receipt
-            else ""
-        ),
+        receipt_detail=_receipt_detail(receipt),
         retryable_failures=receipt.retryable if receipt else 0,
         retry_available=state.can_retry,
         retry_label=(
@@ -674,3 +797,72 @@ def project_library_note_import_snapshot(
         ),
         can_cancel=state.can_cancel,
     )
+
+
+def _target_label(effect: NoteImportReviewEffect | None) -> str:
+    if effect is None or not effect.target_title:
+        return ""
+    title = (
+        effect.target_title
+        if len(effect.target_title) <= 120
+        else f"{effect.target_title[:119]}…"
+    )
+    version = (
+        f" (version {effect.target_version})"
+        if effect.target_version is not None
+        else ""
+    )
+    return f"Existing note: {title}{version}."
+
+
+def _membership_summary(item: ImportPreviewItem) -> str:
+    if item.selected_action is not ImportAction.UPDATE_EXISTING:
+        if item.selected_action is ImportAction.SKIP:
+            return "Folder placement: no change."
+        verb = "Create in"
+    elif not item.add_membership:
+        return "Folder placement: unchanged."
+    else:
+        verb = "Folder placement: add"
+    paths = tuple(
+        dict.fromkeys(" / ".join(entry.folder_segments) for entry in item.memberships)
+    )
+    shown = "; ".join(paths[:3])
+    if len(paths) > 3:
+        shown = f"{shown}; and {len(paths) - 3} more"
+    return f"{verb} {shown}."
+
+
+def _effect_summary(item: ImportPreviewItem) -> str:
+    if item.selected_action is ImportAction.SKIP:
+        return "Content: no change."
+    if item.selected_action is ImportAction.CREATE_NEW:
+        count = len(item.payloads)
+        return f"Content: create {count} new {'note' if count == 1 else 'notes'}."
+    return (
+        "Content: replace existing content."
+        if item.replace_content
+        else "Content: keep existing content."
+    )
+
+
+def _receipt_status(receipt: ImportExecutionReceipt | None) -> str:
+    if receipt is None:
+        return "Import status unavailable."
+    if receipt.state is ImportSessionState.COMPLETED:
+        return "Import completed."
+    if receipt.state is ImportSessionState.CANCELLED:
+        return "Import cancelled after the current item."
+    if receipt.state is ImportSessionState.NEEDS_ATTENTION:
+        return "Import needs attention."
+    return "Import status unavailable."
+
+
+def _receipt_detail(receipt: ImportExecutionReceipt | None) -> str:
+    if receipt is None:
+        return ""
+    if receipt.state is ImportSessionState.CANCELLED:
+        return "Cancelled. Finished items were not rolled back."
+    if receipt.state is ImportSessionState.NEEDS_ATTENTION:
+        return "Some items failed. Completed changes were kept."
+    return "All planned items settled."

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.containers import Container
+from textual.containers import Container, VerticalScroll
 from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Library.library_note_import_state import (
@@ -17,6 +17,7 @@ from tldw_chatbook.Library.library_note_import_state import (
 from tldw_chatbook.Widgets.Library.library_note_import_canvas import (
     LibraryNoteImportCanvas,
 )
+from tldw_chatbook.Widgets.Library.library_notes_canvas import LibraryNotesCanvas
 from tldw_chatbook.app import TldwCli
 
 pytestmark = pytest.mark.asyncio
@@ -554,18 +555,189 @@ async def test_review_is_scrollable_and_paints_next_action_at_60_columns() -> No
 
     async with app.run_test(size=(60, 20)) as pilot:
         await pilot.pause()
-        canvas = app.query_one(LibraryNoteImportCanvas)
-        assert canvas.allow_vertical_scroll is True
-        assert canvas.virtual_size.height > canvas.container_size.height
+        body = app.query_one("#note-import-body", VerticalScroll)
+        assert body.allow_vertical_scroll is True
+        assert body.virtual_size.height > body.container_size.height
 
         import_button = app.query_one("#note-import-import", Button)
-        import_button.scroll_visible(animate=False, force=True, immediate=True)
-        await pilot.pause()
         visible = app.screen._compositor.visible_widgets
+        assert app.query_one("#note-import-heading", Static) in visible
+        assert app.query_one("#note-import-status", Static) in visible
         assert import_button in visible
+        assert app.query_one("#note-import-overflow-hint", Static) in visible
+        body.focus()
+        await pilot.press("end")
+        await pilot.pause()
+        assert body.scroll_y > 0
         frame = app.export_screenshot()
         assert "Import selected items" in frame.replace("&#160;", " ")
         assert import_button.region.x + import_button.region.width <= 60
+
+
+async def test_destination_burst_typing_retains_every_character_and_inline_error() -> (
+    None
+):
+    class EchoApp(_CanvasApp):
+        def on_library_note_import_canvas_destination_changed(
+            self, message: LibraryNoteImportCanvas.DestinationChanged
+        ) -> None:
+            canvas = self.query_one(LibraryNoteImportCanvas)
+            error = (
+                "Remove the empty folder between separators."
+                if "//" in message.destination
+                else ""
+            )
+            canvas.sync_state(
+                replace(
+                    canvas.snapshot,
+                    destination=message.destination,
+                    destination_error=error,
+                    can_check=not error and bool(message.destination),
+                    check_disabled_reason=error,
+                )
+            )
+
+    app = EchoApp(
+        _snapshot(
+            phase="destination",
+            selected_names=("one.md",),
+            selection_kind="files",
+        )
+    )
+    async with app.run_test(size=(60, 20)) as pilot:
+        field = app.query_one("#note-import-destination", Input)
+        field.focus()
+        await pilot.press("i", "n", "b", "o", "x")
+        await pilot.pause()
+        current = app.query_one("#note-import-destination", Input)
+        assert current is field
+        assert current.value == "inbox"
+
+        current.value = "Inbox//Archive"
+        await pilot.pause()
+        assert app.query_one("#note-import-destination", Input) is field
+        assert _plain(app.query_one("#note-import-destination-error", Static)) == (
+            "Remove the empty folder between separators."
+        )
+        assert app.query_one("#note-import-check", Button).disabled is True
+
+
+async def test_wrapper_handler_keeps_destination_input_mounted_during_burst_typing() -> (
+    None
+):
+    class WrapperApp(App[None]):
+        def __init__(self) -> None:
+            super().__init__()
+            self.snapshot = _snapshot(
+                phase="destination",
+                selected_names=("one.md",),
+                selection_kind="files",
+            )
+
+        def compose(self) -> ComposeResult:
+            yield LibraryNotesCanvas(
+                mode="import",
+                import_snapshot=self.snapshot,
+                id="notes-canvas",
+            )
+
+        def on_library_note_import_canvas_destination_changed(
+            self, message: LibraryNoteImportCanvas.DestinationChanged
+        ) -> None:
+            error = (
+                "Remove the empty folder between separators."
+                if "//" in message.destination
+                else ""
+            )
+            self.snapshot = replace(
+                self.snapshot,
+                destination=message.destination,
+                destination_error=error,
+                can_check=not error and bool(message.destination),
+                check_disabled_reason=error,
+            )
+            self.query_one(LibraryNotesCanvas).sync_state(
+                list_state=None,
+                sort_mode="newest",
+                filter_value="",
+                mode="import",
+                presentation_state=None,
+                sync_panel_state=None,
+                import_snapshot=self.snapshot,
+                import_receipt_available=False,
+                tree_projection=None,
+                tree_selected_placement_id="",
+                tree_deleted_folder_available=False,
+                title_placeholder_only=False,
+                compact=True,
+                create_running=False,
+                create_status="",
+                load_state="loading",
+                load_message="",
+            )
+
+    app = WrapperApp()
+    async with app.run_test(size=(60, 20)) as pilot:
+        field = app.query_one("#note-import-destination", Input)
+        field.focus()
+        await pilot.press("r", "e", "s", "e", "a", "r", "c", "h")
+        await pilot.pause()
+
+        current = app.query_one("#note-import-destination", Input)
+        assert current is field
+        assert current.value == "research"
+
+
+async def test_collision_rename_is_disabled_with_specific_inline_error() -> None:
+    app = _CanvasApp(
+        _snapshot(
+            phase="review",
+            collision_kind="root",
+            collision_name="Inbox",
+            collision_rename_input="Inbox",
+            collision_rename_error=(
+                "That folder name already exists. Enter a different name."
+            ),
+            collision_rename_available=False,
+        )
+    )
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        rename = app.query_one("#note-import-collision-rename", Button)
+        assert rename.disabled is True
+        assert "already exists" in _plain(
+            app.query_one("#note-import-collision-rename-error", Static)
+        )
+
+
+async def test_review_item_shows_source_target_membership_and_content_effect() -> None:
+    item = _item(
+        name="alpha/draft.md",
+        classification="changed_repeat",
+        action="update_existing",
+        target_label="Existing note: Draft (version 4).",
+        effect_summary="Content: replace existing content.",
+        membership_summary="Folder placement: add Imported / Alpha.",
+        content_diff="--- Existing\n+++ Imported\n-Old\n+New",
+        can_update=True,
+        replace_content=True,
+        add_membership=True,
+    )
+    app = _CanvasApp(
+        _snapshot(
+            phase="review",
+            preview_items=(item,),
+            can_import=True,
+            import_disabled_reason="",
+        )
+    )
+    async with app.run_test(size=(70, 24)) as pilot:
+        await pilot.pause()
+        text = "\n".join(_plain(widget) for widget in app.query(".note-import-quiet"))
+        assert "Existing note: Draft" in text
+        assert "replace existing content" in text
+        assert "Imported / Alpha" in text
+        assert "-Old" in text
 
 
 async def test_canvas_module_has_no_planner_storage_or_filesystem_dependencies() -> (
