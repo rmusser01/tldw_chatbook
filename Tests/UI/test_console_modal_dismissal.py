@@ -1227,12 +1227,22 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
     # task-8 replaced both of the Console root's original standalone
     # launch targets with ConsoleConversationInspector (chat_screen.py no
     # longer constructs either); task-10 deleted the two now-orphaned
-    # module files outright, so there is nothing left for
-    # ``_discover_console_modal_types`` to pick up outside the contract
-    # tables -- this carried set is intentionally empty now (see the
-    # task-10 report for the incident: it started with the two retired
-    # standalone modal classes here, while their files still existed
-    # post-task-8).
+    # module files outright.
+    #
+    # I2 (task-18300 review; NOT this branch's to fix): this carried set
+    # is NOT actually empty -- ``ProjectInstructionNoticeModal`` and
+    # ``ProjectInstructionSetupModal`` (dev's project-instructions feature,
+    # ``console_project_instructions.py``) are real ``ModalScreen``
+    # subclasses under the scanned Console root that
+    # ``_discover_console_modal_types`` DOES pick up, and neither is
+    # declared in TASK2_MODAL_CONTRACTS/TASK3_MODAL_CONTRACTS/
+    # TASK567_MODAL_CONTRACTS. This is reproducible on a clean
+    # ``origin/dev`` checkout -- dev introduced the gap, not this branch --
+    # so it is tracked separately rather than fixed here; this test
+    # currently fails on that mismatch (left un-widened deliberately: an
+    # empty ``inventory_only_types`` keeps the assertion honest about what
+    # SHOULD be true once the upstream declarations are added, rather than
+    # quietly widening the contract to paper over the gap).
     inventory_only_types: set[type[ModalScreen[Any]]] = set()
 
     assert discovered_console_types - console_contract_types == inventory_only_types
