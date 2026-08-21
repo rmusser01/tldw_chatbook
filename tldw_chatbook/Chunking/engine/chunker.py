@@ -2362,9 +2362,12 @@ class Chunker:
 
         # ADR-029 / TASK-19321: a user file path is private data, so streaming
         # diagnostics identify the file by a stable content-free handle instead
-        # of the path. An operator can recompute
-        # sha256(str(Path(candidate).resolve()))[:12] to confirm which file a
-        # record refers to.
+        # of the path. An operator can recompute the handle for a candidate
+        # file with:
+        #   hashlib.sha256(
+        #       str(Path(candidate).resolve()).encode("utf-8", "surrogatepass")
+        #   ).hexdigest()[:12]
+        # to confirm which file a record refers to.
         path_ref = hashlib.sha256(
             str(file_path.resolve()).encode("utf-8", "surrogatepass")
         ).hexdigest()[:12]

@@ -125,9 +125,10 @@ TOK_USEFIXTURES = (
 
 def _fail(anchor: str, name: str) -> None:
     sys.exit(
-        f"FATAL: ported-test patch anchor not found in {name}: {anchor[:60]!r}…\n"
-        f"Upstream test content drifted from the pinned expectations; update the\n"
-        f"patch table in sync_chunking_engine.py before re-syncing."
+        f"FATAL: patch anchor not found in {name}: {anchor[:60]!r}…\n"
+        f"Upstream content drifted from the pinned expectations; update the\n"
+        f"matching patch table (TEST_PATCHES / ENGINE_PATCHES) in\n"
+        f"sync_chunking_engine.py before re-syncing."
     )
 
 
@@ -394,9 +395,12 @@ def _patch_chunker_stream_diagnostics(text: str) -> str:
         '        logger.info(f"Stream processing file: {file_path} ({file_size} bytes)")\n',
         "        # ADR-029 / TASK-19321: a user file path is private data, so streaming\n"
         "        # diagnostics identify the file by a stable content-free handle instead\n"
-        "        # of the path. An operator can recompute\n"
-        "        # sha256(str(Path(candidate).resolve()))[:12] to confirm which file a\n"
-        "        # record refers to.\n"
+        "        # of the path. An operator can recompute the handle for a candidate\n"
+        "        # file with:\n"
+        "        #   hashlib.sha256(\n"
+        '        #       str(Path(candidate).resolve()).encode("utf-8", "surrogatepass")\n'
+        "        #   ).hexdigest()[:12]\n"
+        "        # to confirm which file a record refers to.\n"
         "        path_ref = hashlib.sha256(\n"
         '            str(file_path.resolve()).encode("utf-8", "surrogatepass")\n'
         "        ).hexdigest()[:12]\n"
