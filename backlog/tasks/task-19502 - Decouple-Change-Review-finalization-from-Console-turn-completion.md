@@ -1,8 +1,9 @@
 ---
 id: TASK-19502
 title: Decouple Change Review finalization from Console turn completion
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-08-21'
 labels:
   - console
@@ -29,3 +30,21 @@ Ensure a completed assistant response releases the Console turn and prompt queue
 - [ ] #6 Shutdown stops admission, bounded-drains pure workers, rejects late-generation results, disposes the coordinator, and only then closes AgentRunsDB
 - [ ] #7 Failed and cancelled turns still request review finalization and bounded failures persist honest tracking-error results
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Extract synchronous, caller-owned B/E tracker operations without changing the legacy tracker wrapper.
+2. Add a bounded app-owned coordinator with all-or-nothing canonical-root lane reservations and per-root FIFO execution.
+3. Register B before model execution and schedule E from the terminal bridge path without awaiting it.
+4. Move survivor-window lineage into the coordinator so successors and last-child settlement share exact SHA boundaries.
+5. Publish change rows independently from assistant anchors and refresh transcript markers through an idempotent durable join.
+6. Dispose Console admission, coordinator workers/publisher, and persistence in a tested bounded order.
+7. Run deterministic three-turn, concurrency, remount, failure, cancellation, and shutdown verification.
+
+ADR required: no
+ADR path: `backlog/decisions/077-change-review-consent-and-asynchronous-finalization.md`
+Reason: ADR-077 already defines the cross-root ordering, publication, and lifecycle boundaries implemented by this task.
+
+Detailed plan: `Docs/superpowers/plans/2026-08-21-change-review-nonblocking-finalization.md`
+<!-- SECTION:PLAN:END -->
