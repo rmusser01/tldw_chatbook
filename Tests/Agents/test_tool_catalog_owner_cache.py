@@ -18,7 +18,11 @@ fix folds a name -> id map into the SAME cache build as the owner map, so
 both lookups share one `list_catalog()` sweep per provider per run.
 """
 
-from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
+import itertools
+
+import pytest
+
+from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry, ToolPathTarget
 from tldw_chatbook.Agents.agent_models import ToolCatalogEntry, ToolSchema, ToolResult
 
 
@@ -132,3 +136,87 @@ def test_invoke_by_name_shadowing_order_unchanged_by_the_cache_fix():
     # providers are swept once to build the cache) but never invoked.
     assert first.list_calls == 1
     assert second.list_calls == 1
+
+
+class _CollidingPathProvider(_NamedCountingProvider):
+    def __init__(self, source):
+        super().__init__(tool_id=f"{source}:dup", name="dup")
+        self.source = source
+        self.invocations = []
+        self.preflights = []
+
+    def invoke(self, tool_id, args):
+        self.invocations.append((tool_id, args))
+        return ToolResult(ok=True, content=self.source)
+
+    def path_targets(self, tool_id, args):
+        self.preflights.append((tool_id, args))
+        return (ToolPathTarget(path=None, kind="outside"),)
+
+
+@pytest.mark.parametrize(
+    "order", list(itertools.permutations(("builtin", "local", "skill", "mcp")))
+)
+def test_atomic_owner_resolution_and_dispatch_share_exact_first_registrant(order):
+    registry = ToolCatalogRegistry()
+    providers = [_CollidingPathProvider(source) for source in order]
+    for provider in providers:
+        registry.register_provider(provider)
+
+    tool_id, owner = registry.resolve_owner_for_name("dup")
+    targets = owner.path_targets(tool_id, {"path": "shadow-test"})
+    result = registry.invoke_by_name("dup", {"path": "shadow-test"})
+
+    assert (tool_id, owner) == (f"{order[0]}:dup", providers[0])
+    assert targets == (ToolPathTarget(path=None, kind="outside"),)
+    assert result.content == order[0]
+    assert providers[0].preflights == [
+        (f"{order[0]}:dup", {"path": "shadow-test"})
+    ]
+    assert providers[0].invocations == [
+        (f"{order[0]}:dup", {"path": "shadow-test"})
+    ]
+    assert all(provider.preflights == [] for provider in providers[1:])
+    assert all(provider.invocations == [] for provider in providers[1:])
+
+
+def test_invoke_by_name_uses_atomic_owner_resolver(monkeypatch):
+    registry = ToolCatalogRegistry()
+    provider = _CollidingPathProvider("builtin")
+    registry.register_provider(provider)
+    monkeypatch.setattr(
+        registry,
+        "resolve_owner_for_name",
+        lambda name: ("builtin:dup", provider) if name == "dup" else None,
+    )
+    monkeypatch.setattr(
+        registry,
+        "resolve_name",
+        lambda _name: (_ for _ in ()).throw(
+            AssertionError("invoke must use the atomic owner resolver")
+        ),
+    )
+
+    assert registry.invoke_by_name("dup", {}).content == "builtin"
+
+
+def test_registration_cannot_be_overwritten_by_an_inflight_cache_build(monkeypatch):
+    registry = ToolCatalogRegistry()
+    registry.register_provider(
+        _NamedCountingProvider(tool_id="first:x", name="first")
+    )
+    second = _NamedCountingProvider(tool_id="second:y", name="second")
+    real_build = registry._build_owner_cache
+    injected = False
+
+    def build_while_registering():
+        nonlocal injected
+        result = real_build()
+        if not injected:
+            injected = True
+            registry.register_provider(second)
+        return result
+
+    monkeypatch.setattr(registry, "_build_owner_cache", build_while_registering)
+
+    assert registry.resolve_owner_for_name("second") == ("second:y", second)

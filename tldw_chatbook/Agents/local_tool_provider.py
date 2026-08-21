@@ -14,7 +14,7 @@ import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Iterator, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Any, Callable, Iterator, Mapping, NotRequired, TypedDict
 
 from loguru import logger
 
@@ -42,6 +42,7 @@ from .session_todo_store import (
 
 if TYPE_CHECKING:
     from tldw_chatbook.Tools.watchlists_tool_service import WatchlistsToolService
+from .tool_catalog import ToolPathTarget
 
 # Module-level (not the function-local imports the other `_default_specs`
 # tool modules use) SPECIFICALLY so tests can patch this one name via
@@ -371,6 +372,80 @@ class LocalToolProvider:
             registered or listed.
         """
         return [self.hub_tool_for(name) for name in self._specs]
+
+    def path_targets(
+        self, tool_id: str, args: Mapping[str, Any]
+    ) -> tuple[ToolPathTarget, ...]:
+        """Map supported local file and git calls to validated path targets."""
+        name = tool_id.split(":", 1)[-1]
+        if name not in self._specs:
+            return ()
+
+        from tldw_chatbook.Tools.local_tool_impls import (
+            LocalToolError,
+            resolve_workspace_path,
+        )
+
+        root = Path(self._root).resolve()
+        if name in {"fs_read", "fs_write", "fs_edit"}:
+            path = resolve_workspace_path(args["path"], root)
+            return (ToolPathTarget(path=path, kind="exact"),)
+        if name == "fs_list":
+            path = resolve_workspace_path(args["path"], root)
+            return (ToolPathTarget(path=path, kind="directory"),)
+        if name in {"fs_glob", "fs_grep"}:
+            return (ToolPathTarget(path=root, kind="directory"),)
+        if name == "fs_patch":
+            from tldw_chatbook.Tools.patch_tool_impls import (
+                FilesystemPatchError,
+                parse_patch_targets,
+            )
+
+            try:
+                plans = parse_patch_targets(args["diff"])
+            except FilesystemPatchError as exc:
+                raise LocalToolError(
+                    f"fs_patch failed [{exc.reason_code}]"
+                ) from exc
+            targets: list[ToolPathTarget] = []
+            seen: set[Path] = set()
+            for plan in plans:
+                assert plan.new_path is not None
+                path = resolve_workspace_path(plan.new_path, root)
+                if path in seen:
+                    continue
+                seen.add(path)
+                targets.append(ToolPathTarget(path=path, kind="exact"))
+            return tuple(targets)
+
+        from tldw_chatbook.Tools.git_tool_impls import (
+            _prepare_for_path,
+            _repo_relative_path,
+            prepare_repository,
+        )
+
+        if name == "git_branches":
+            repo_root = prepare_repository(root, ".")
+            return (ToolPathTarget(path=repo_root, kind="repository"),)
+        if name == "git_status":
+            repo_root = _prepare_for_path(root, args.get("path", "."))
+            return (ToolPathTarget(path=repo_root, kind="repository"),)
+        if name in {"git_diff", "git_log"}:
+            raw_path = args.get("path")
+            repo_root = _prepare_for_path(root, raw_path)
+            if raw_path is None:
+                return (ToolPathTarget(path=repo_root, kind="repository"),)
+            path = resolve_workspace_path(raw_path, root)
+            _repo_relative_path(root, repo_root, raw_path)
+            scope = path if path.is_dir() else path.parent
+            return (ToolPathTarget(path=scope, kind="repository"),)
+        if name == "git_blame":
+            raw_path = args["path"]
+            repo_root = _prepare_for_path(root, raw_path)
+            path = resolve_workspace_path(raw_path, root)
+            _repo_relative_path(root, repo_root, raw_path)
+            return (ToolPathTarget(path=path.parent, kind="repository"),)
+        return ()
 
     # -- approval stamps (mirror MCPToolProvider) ----------------------
 

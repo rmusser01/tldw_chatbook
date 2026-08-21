@@ -12,7 +12,18 @@ import asyncio
 import json
 import threading
 from collections.abc import Sequence
-from typing import Any, Callable, Iterable, Mapping, NamedTuple, Protocol
+from dataclasses import dataclass
+from pathlib import Path
+from typing import (
+    Any,
+    Callable,
+    Iterable,
+    Literal,
+    Mapping,
+    NamedTuple,
+    Protocol,
+    runtime_checkable,
+)
 
 from loguru import logger
 
@@ -490,6 +501,23 @@ class ToolProvider(Protocol):
     def invoke(self, tool_id: str, args: dict) -> ToolResult: ...
 
 
+@dataclass(frozen=True, slots=True)
+class ToolPathTarget:
+    """One provider-validated path relevant to instruction discovery."""
+
+    path: Path | None
+    kind: Literal["exact", "directory", "repository", "outside"]
+
+
+@runtime_checkable
+class PathAwareToolProvider(Protocol):
+    """Optional structural path mapping implemented by local file providers."""
+
+    def path_targets(
+        self, tool_id: str, args: Mapping[str, Any]
+    ) -> tuple[ToolPathTarget, ...]: ...
+
+
 def build_builtin_gate(*args: Any, **kwargs: Any) -> Any:
     """Thin, monkeypatchable indirection to the real gate builder.
 
@@ -614,6 +642,7 @@ class BuiltinToolProvider:
         workspace_id: str | None = None,
         ephemeral: bool = False,
         diff_sink: Callable[[tuple[str, str, str, str]], None] | None = None,
+        instruction_root: Path | None = None,
     ) -> None:
         # settings-workspaces-folder-roots spec §3: the run's workspace,
         # bound around every tool execution (see `invoke`) so file tools
@@ -624,6 +653,9 @@ class BuiltinToolProvider:
         # in `builtin_tool_gate.builtin_permission_rows`) leaves
         # `allowed_file_roots` to fall back to the active workspace.
         self._workspace_id = workspace_id
+        self._instruction_root = (
+            Path(instruction_root).resolve() if instruction_root is not None else None
+        )
         # final-review F4: whether THIS run's owning Console session is
         # temporary. Mirrors `_workspace_id` exactly -- `False` (the
         # default) preserves every pre-existing construction site's
@@ -714,6 +746,43 @@ class BuiltinToolProvider:
         tool = self._tools.get(tool_id.split(":", 1)[-1])
         seconds = float(getattr(tool, "timeout_seconds", 0.0) or 0.0)
         return seconds if seconds > 0 else None
+
+    def path_targets(
+        self, tool_id: str, args: Mapping[str, Any]
+    ) -> tuple[ToolPathTarget, ...]:
+        """Map enabled built-in file tools to their validated target path."""
+        name = tool_id.split(":", 1)[-1]
+        root = self._instruction_root
+        arguments = {
+            "read_file": ("file_path", "exact", False),
+            "write_file": ("file_path", "exact", True),
+            "list_directory": ("directory_path", "directory", False),
+        }
+        mapping = arguments.get(name)
+        if root is None or mapping is None or name not in self._tools:
+            return ()
+        argument, kind, write = mapping
+        value = args.get(argument)
+        if not isinstance(value, (str, Path)):
+            return ()
+
+        from tldw_chatbook.Tools.file_operation_tools import (
+            _tool_sandbox_root,
+            allowed_file_roots,
+        )
+        from tldw_chatbook.Tools.workspace_file_roots import run_workspace
+        from tldw_chatbook.Utils.path_validation import validate_path_multi
+
+        with run_workspace(self._workspace_id):
+            roots = allowed_file_roots(
+                write=write, sandbox_root=_tool_sandbox_root()
+            )
+        path = validate_path_multi(value, roots)
+        try:
+            path.relative_to(root)
+        except ValueError:
+            return (ToolPathTarget(path=path, kind="outside"),)
+        return (ToolPathTarget(path=path, kind=kind),)
 
     def _resolve_gate(self) -> Any:
         """Return the provider's gate, building one lazily on first use.
@@ -1218,6 +1287,17 @@ class ToolCatalogRegistry:
     def resolve_name(self, name: str) -> str | None:
         _owner, name_to_id, _source = self._ensure_catalog_cache()
         return name_to_id.get(name)
+
+    def resolve_owner_for_name(
+        self, name: str
+    ) -> tuple[str, ToolProvider] | None:
+        """Atomically resolve one LLM-facing name to its cached first owner."""
+        owners, names, _sources = self._ensure_catalog_cache()
+        tool_id = names.get(name)
+        if tool_id is None:
+            return None
+        owner = owners.get(tool_id)
+        return (tool_id, owner) if owner is not None else None
 
     def invoke_by_name(self, name: str, args: dict) -> ToolResult:
         # PR2a: name -> id, id -> owner, and id -> source all come from ONE

@@ -1,6 +1,11 @@
 # Tests/Agents/test_tool_catalog.py
 """Catalog registry + real builtin tools (no network, no DB)."""
 
+from dataclasses import FrozenInstanceError
+from pathlib import Path
+
+import pytest
+
 from tldw_chatbook.Agents.agent_models import (
     DIRECT_DISCLOSE_THRESHOLD,
     FIND_TOOLS_NAME,
@@ -16,7 +21,9 @@ from tldw_chatbook.Agents.tool_catalog import (
     LOAD_TOOLS_SCHEMA,
     SPAWN_TOOL_SCHEMA,
     BuiltinToolProvider,
+    PathAwareToolProvider,
     ToolCatalogRegistry,
+    ToolPathTarget,
     initial_disclosure,
 )
 
@@ -92,6 +99,14 @@ def test_tool_for_returns_the_real_tool_invoke_would_dispatch():
 def test_tool_for_returns_none_for_unknown_name():
     provider = BuiltinToolProvider()
     assert provider.tool_for("not_a_real_tool") is None
+
+
+def test_path_target_contract_is_immutable_and_runtime_checkable(tmp_path):
+    target = ToolPathTarget(path=Path(tmp_path), kind="exact")
+
+    with pytest.raises(FrozenInstanceError):
+        target.kind = "directory"
+    assert isinstance(BuiltinToolProvider(), PathAwareToolProvider)
 
 
 class FakeBigProvider:
