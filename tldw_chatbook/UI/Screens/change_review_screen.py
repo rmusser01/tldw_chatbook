@@ -1852,16 +1852,29 @@ class ChangeReviewScreen(Screen):
                 """Hand a result back to the UI thread, tolerating teardown.
 
                 ``call_from_thread`` raises once the app is shutting down
-                (the loop it posts onto is gone) -- which a status read can
-                easily outlive, since it is a git subprocess. Unhandled,
-                that surfaces as a logged ``WorkerFailed``; worse, raising
-                out of a per-root landing mid-loop would abort the roots
-                after it and quietly break the per-root isolation this
-                loop exists to guarantee.
+                -- which a status read can easily outlive, since it is a
+                git subprocess. Unhandled, that surfaces as a logged
+                ``WorkerFailed``; worse, raising out of a PER-ROOT landing
+                mid-loop would abort the roots after it and quietly break
+                the per-root isolation this loop exists to guarantee.
+
+                ``RuntimeError`` ONLY, deliberately (re-review round 2):
+                Textual signals teardown as
+                ``RuntimeError("App is not running")`` (``app.py``; a
+                closed loop reports ``RuntimeError`` too), while
+                ``call_from_thread`` ALSO re-raises whatever the landing
+                callback itself raised -- and the landings do real work
+                (tree queries, ``_populate_tree``, banner math). A bare
+                ``except Exception`` here would downgrade a genuine bug in
+                them to one debug line whose text ("app is no longer
+                accepting callbacks") would be an outright lie, instead of
+                the loud ``WorkerFailed`` traceback Textual gives it.
+                ``CancelledError`` is a ``BaseException`` and was never
+                caught here in either form.
                 """
                 try:
                     app.call_from_thread(callback, *args)
-                except Exception:  # noqa: BLE001 -- app is going away
+                except RuntimeError:
                     logger.debug(
                         "change_review: current-mode landing skipped -- "
                         "the app is no longer accepting callbacks"

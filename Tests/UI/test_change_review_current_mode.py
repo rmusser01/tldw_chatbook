@@ -29,6 +29,7 @@ import pytest
 from rich.text import Text
 from textual.app import App
 from textual.widgets import Select, Static, Tree
+from textual.worker import WorkerFailed
 
 import tldw_chatbook.config as config_module
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
@@ -949,6 +950,97 @@ async def test_one_root_failing_between_detect_and_status_degrades_alone(
             f"the failed root must be named honestly: {banner!r}"
         )
         assert "repository vanished mid-load" in banner
+
+
+@pytest.mark.asyncio
+async def test_a_bug_inside_a_landing_is_not_swallowed(
+    monkeypatch, git_review_fixture
+):
+    """The worker's landing guard must catch TEARDOWN, not every failure.
+
+    `call_from_thread` raises two very different things: Textual's
+    `RuntimeError("App is not running")` when the app is going away, and
+    whatever the landing callback itself raised — and the landings do real
+    work (tree queries, `_populate_tree`, banner math). A guard wide enough
+    to swallow the second turns a genuine bug into one misleading
+    `logger.debug` line saying the app is shutting down, which is exactly
+    the kind of masking Tasks 7-8 would then have to debug blind.
+
+    Loud here means what it means in production: Textual wraps the worker
+    error in `WorkerFailed` and tears the app down with a traceback, which
+    `run_test` re-raises for the test framework.
+    """
+    _patch_git_actions(monkeypatch, True)
+    provider, repo, _db, _run1, _run2 = git_review_fixture
+    boom = ValueError("a real bug inside the landing")
+
+    def exploding_land(_token, _statuses):
+        raise boom
+
+    app = _Harness(provider)
+    with pytest.raises(WorkerFailed) as excinfo:
+        async with app.run_test(size=(160, 48)) as pilot:
+            screen = await _open_screen(pilot, app)
+            await _wait_for_detection(pilot, screen)
+            screen._land_current_mode = exploding_land
+
+            screen.query_one(
+                "#change-review-turn-select", Select
+            ).value = CURRENT_MODE_SENTINEL
+            await _wait_for(
+                pilot,
+                lambda: app._exception is not None,
+                "the app to record the landing failure",
+                timeout=5.0,
+            )
+
+    assert excinfo.value.error is boom, (
+        "the ORIGINAL exception must survive, not a rewritten one; got "
+        f"{excinfo.value.error!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_teardown_runtime_error_from_a_landing_is_still_swallowed(
+    monkeypatch, git_review_fixture
+):
+    """The other half: the teardown case the guard exists for stays quiet.
+
+    A status read is a git subprocess and can easily outlive the app; its
+    landing then hits `RuntimeError("App is not running")`. That must NOT
+    surface as a WorkerFailed traceback — it is an ordinary, expected race,
+    and the worker should simply finish.
+    """
+    _patch_git_actions(monkeypatch, True)
+    provider, repo, _db, _run1, _run2 = git_review_fixture
+
+    def teardown_land(_token, _statuses):
+        raise RuntimeError("App is not running")
+
+    app = _Harness(provider)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _open_screen(pilot, app)
+        await _wait_for_detection(pilot, screen)
+        screen._land_current_mode = teardown_land
+
+        screen.query_one(
+            "#change-review-turn-select", Select
+        ).value = CURRENT_MODE_SENTINEL
+        await _wait_idle(pilot, app, "change-review-current")
+        await pilot.pause()
+
+        assert app._exception is None, (
+            "a teardown RuntimeError must not tear the app down; got "
+            f"{app._exception!r}"
+        )
+        states = {
+            w.state.name
+            for w in app.workers
+            if w.group == "change-review-current"
+        }
+        assert "ERROR" not in states, (
+            f"the worker must finish rather than fail; states={states}"
+        )
 
 
 @pytest.mark.asyncio
