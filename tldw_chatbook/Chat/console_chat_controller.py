@@ -1843,7 +1843,75 @@ class ConsoleChatController:
         #: are written only from the main thread (`_set_run_state`,
         #: `mark_session_visited`), never from a worker thread, so they
         #: carry no cross-thread hazard this lock needs to close.
-        self._approval_state_lock = threading.Lock()
+        from tldw_chatbook.Chat.console_interrupt_rounds import InterruptRoundHost
+
+        #: C1: the interrupt-round spine. One lifecycle, ONE lock,
+        #: per-kind storage. The nine historical attribute names below
+        #: are ALIASES onto the host's own objects -- 11 test files and
+        #: `ChatScreen._current_park_round_ids` read them by name, and
+        #: none is ever reassigned outside __init__ (verified), so the
+        #: aliases cannot go stale.
+        self._interrupt_host = InterruptRoundHost(self)
+        self._approval_state_lock = self._interrupt_host.lock
+        self._pending_skill_install_lock = self._interrupt_host.lock
+        self._pending_skill_script_lock = self._interrupt_host.lock
+        #: Task 9 (Fix round 1): each batch-approval round's release signal
+        #: + shared decisions holder + owning session id, keyed by a
+        #: freshly minted ROUND id (``uuid4()``, stamped into the payload
+        #: as ``"round_id"`` and round-tripped through ``ChatApprovalCard``
+        #: -> ``ApprovalDecided`` -> ``resolve_pending_approval``) --
+        #: mirrors ``_pending_skill_script_rounds``'s identical
+        #: ``request_id``-keyed design. Superseded TWO earlier, both-wrong
+        #: shapes: the pre-Task-9 single ``_pending_approval_event``/
+        #: ``_pending_approval_decisions`` pair (only ever tracked ONE
+        #: round controller-wide -- fatal once two sessions can each have
+        #: their own concurrent pending approval), and this task's own
+        #: first draft keyed by session id alone (still wrong: `Approval
+        #: Decided` travels as an async Textual message, so a
+        #: `switch_session` landing in the gap between the user's click and
+        #: the handler running could resolve session A's decision against
+        #: session B's completely different batch -- review CRITICAL
+        #: finding, fix round 1). Read/written from the UI thread by
+        #: ``resolve_pending_approval``, which resolves ONLY the round
+        #: whose id was stamped onto the card the user actually decided --
+        #: never "whichever session happens to be active right now".
+        self._pending_approval_rounds = self._interrupt_host.registries["approval"]
+        #: TASK-910: per-round release Event + shared decision box + owning
+        #: session id, keyed by a freshly minted request id -- mirrors
+        #: `_pending_skill_script_rounds`' identical shape (itself task-581's
+        #: fix for the same "single shared slot clobbers a second concurrent
+        #: round" hazard `request_mcp_approvals` solved with `round_id`).
+        #: Pre-TASK-910 this was a single `_pending_skill_install_event`/
+        #: `_pending_skill_install_decision` pair -- fine while only one
+        #: session could ever have a live install confirm, but parking makes
+        #: two DIFFERENT background sessions' install confirms genuinely
+        #: concurrent.
+        self._pending_skill_install_rounds = self._interrupt_host.registries["skill_install"]
+        #: The active script-confirm round's release Event + shared
+        #: decision box ({"allow": bool, "remember": bool}), now also
+        #: carrying the round's owning session id (TASK-910) so teardown can
+        #: tell whether ANOTHER still-armed round belongs to the SAME
+        #: session (must not clear the mounted card out from under it --
+        #: see `request_skill_script_confirm`) independently of whether some
+        #: OTHER session also has a round outstanding.
+        #: task-581: rounds keyed by request_id, not a single slot. Two rounds
+        #: armed at once previously clobbered each other's event/decision and
+        #: both worker threads then blocked to their full deadline.
+        self._pending_skill_script_rounds = self._interrupt_host.registries["skill_script"]
+        #: PR0: retained payload per ROUND (was per session), keyed by
+        #: `round_id`. `switch_session` and every teardown re-derive the
+        #: mounted card from this map's FIFO head for the session, so a
+        #: second same-session round no longer evicts an older sibling's
+        #: card. Every payload carries its own `round_id` and `session_id`.
+        self._parked_approval_payloads = self._interrupt_host.payloads["approval"]
+        #: PR0: retained payload per ROUND (was per session), keyed by
+        #: `request_id`. The mounted card is the session's FIFO head, so a
+        #: second same-session confirm no longer evicts an older sibling.
+        self._parked_skill_install_payloads = self._interrupt_host.payloads["skill_install"]
+        #: PR0: retained payload per ROUND (was per session), keyed by
+        #: `request_id`. The mounted card is the session's FIFO head, so a
+        #: second same-session confirm no longer evicts an older sibling.
+        self._parked_skill_script_payloads = self._interrupt_host.payloads["skill_script"]
         # Revision tokens fence destructive lifecycle confirmations without
         # mirroring any activity values. Counts remain derived on demand from
         # ``ConsoleControllerActivity``; these integers only reveal that one
@@ -2153,33 +2221,6 @@ class ConsoleChatController:
         #: ADR-067: that default is 0 = no deadline (wait indefinitely);
         #: a positive value re-arms the auto-deny clock.
         self.mcp_approval_timeout_seconds: Callable[[], float] | None = None
-        #: Task 9 (Fix round 1): each batch-approval round's release signal
-        #: + shared decisions holder + owning session id, keyed by a
-        #: freshly minted ROUND id (``uuid4()``, stamped into the payload
-        #: as ``"round_id"`` and round-tripped through ``ChatApprovalCard``
-        #: -> ``ApprovalDecided`` -> ``resolve_pending_approval``) --
-        #: mirrors ``_pending_skill_script_rounds``'s identical
-        #: ``request_id``-keyed design. Superseded TWO earlier, both-wrong
-        #: shapes: the pre-Task-9 single ``_pending_approval_event``/
-        #: ``_pending_approval_decisions`` pair (only ever tracked ONE
-        #: round controller-wide -- fatal once two sessions can each have
-        #: their own concurrent pending approval), and this task's own
-        #: first draft keyed by session id alone (still wrong: `Approval
-        #: Decided` travels as an async Textual message, so a
-        #: `switch_session` landing in the gap between the user's click and
-        #: the handler running could resolve session A's decision against
-        #: session B's completely different batch -- review CRITICAL
-        #: finding, fix round 1). Read/written from the UI thread by
-        #: ``resolve_pending_approval``, which resolves ONLY the round
-        #: whose id was stamped onto the card the user actually decided --
-        #: never "whichever session happens to be active right now".
-        self._pending_approval_rounds: dict[str, dict[str, Any]] = {}
-        #: PR0: retained payload per ROUND (was per session), keyed by
-        #: `round_id`. `switch_session` and every teardown re-derive the
-        #: mounted card from this map's FIFO head for the session, so a
-        #: second same-session round no longer evicts an older sibling's
-        #: card. Every payload carries its own `round_id` and `session_id`.
-        self._parked_approval_payloads: dict[str, dict[str, Any]] = {}
         #: UI-thread callback that pushes/clears the pending skill-install
         #: confirm payload into the owning screen's task-resume state
         #: (`ConsoleSkillController._set_console_pending_skill_install`). Invoked through
@@ -2187,22 +2228,6 @@ class ConsoleChatController:
         self.set_pending_skill_install: Callable[[dict | None], None] | None = None
         #: Optional test override for the confirm timeout.
         self.skill_install_confirm_timeout_seconds: Callable[[], float] | None = None
-        #: TASK-910: per-round release Event + shared decision box + owning
-        #: session id, keyed by a freshly minted request id -- mirrors
-        #: `_pending_skill_script_rounds`' identical shape (itself task-581's
-        #: fix for the same "single shared slot clobbers a second concurrent
-        #: round" hazard `request_mcp_approvals` solved with `round_id`).
-        #: Pre-TASK-910 this was a single `_pending_skill_install_event`/
-        #: `_pending_skill_install_decision` pair -- fine while only one
-        #: session could ever have a live install confirm, but parking makes
-        #: two DIFFERENT background sessions' install confirms genuinely
-        #: concurrent.
-        self._pending_skill_install_rounds: dict[str, dict[str, Any]] = {}
-        self._pending_skill_install_lock = threading.Lock()
-        #: PR0: retained payload per ROUND (was per session), keyed by
-        #: `request_id`. The mounted card is the session's FIFO head, so a
-        #: second same-session confirm no longer evicts an older sibling.
-        self._parked_skill_install_payloads: dict[str, dict[str, Any]] = {}
         #: UI-thread callback that pushes/clears the pending skill-SCRIPT
         #: confirm payload into the owning screen's task-resume state.
         #: Invoked through self.app.call_from_thread from
@@ -2212,22 +2237,6 @@ class ConsoleChatController:
         #: Optional test override for the confirm timeout, mirroring
         #: `skill_install_confirm_timeout_seconds`.
         self.skill_script_confirm_timeout_seconds: Callable[[], float] | None = None
-        #: The active script-confirm round's release Event + shared
-        #: decision box ({"allow": bool, "remember": bool}), now also
-        #: carrying the round's owning session id (TASK-910) so teardown can
-        #: tell whether ANOTHER still-armed round belongs to the SAME
-        #: session (must not clear the mounted card out from under it --
-        #: see `request_skill_script_confirm`) independently of whether some
-        #: OTHER session also has a round outstanding.
-        #: task-581: rounds keyed by request_id, not a single slot. Two rounds
-        #: armed at once previously clobbered each other's event/decision and
-        #: both worker threads then blocked to their full deadline.
-        self._pending_skill_script_rounds: dict[str, dict[str, Any]] = {}
-        self._pending_skill_script_lock = threading.Lock()
-        #: PR0: retained payload per ROUND (was per session), keyed by
-        #: `request_id`. The mounted card is the session's FIFO head, so a
-        #: second same-session confirm no longer evicts an older sibling.
-        self._parked_skill_script_payloads: dict[str, dict[str, Any]] = {}
 
     @property
     def run_state(self) -> ConsoleRunState:
@@ -4951,128 +4960,44 @@ class ConsoleChatController:
     # last-armed-wins semantics let a second same-session round overwrite
     # the first's payload and strand it until timeout (task-15661).
 
+    def _kind_for_store(self, store: dict) -> str:
+        for kind, mapped in self._interrupt_host.payloads.items():
+            if mapped is store:
+                return kind
+        raise ValueError("unknown payload store")
+
+    def _park_round_payload(self, store, round_id, payload):
+        return self._interrupt_host.park_round_payload(
+            self._kind_for_store(store), round_id, payload
+        )
+
+    def _head_round_payload(self, store, session_id):
+        return self._interrupt_host.head_round_payload(
+            self._kind_for_store(store), session_id
+        )
+
+    def _session_round_payloads(self, store, session_id):
+        return self._interrupt_host.session_round_payloads(
+            self._kind_for_store(store), session_id
+        )
+
+    def _unpark_round_payload(self, store, round_id):
+        self._interrupt_host.unpark_round_payload(
+            self._kind_for_store(store), round_id
+        )
+
+    def _remount_head(self, store, setter, session_id):
+        # `setter` is ignored: the host looks the setter up late-bound by
+        # kind, which is what every production caller passed anyway.
+        # Kept in the signature for call-site compatibility until Task 5
+        # collapses the call sites.
+        self._interrupt_host.remount_head(self._kind_for_store(store), session_id)
+
     @staticmethod
-    def _head_round_payload_locked(
-        store: dict[str, dict[str, Any]], session_id: str | None
-    ) -> dict[str, Any] | None:
-        """The session's oldest-armed payload. Caller holds the lock."""
-        for payload in store.values():
-            if payload.get("session_id") == session_id:
-                return payload
-        return None
-
-    def _park_round_payload(
-        self, store: dict[str, dict[str, Any]], round_id: str, payload: dict[str, Any]
-    ) -> bool:
-        """Retain ``payload``; return whether it is now its session's head.
-
-        A round that is NOT the head must not mount -- an older sibling is
-        still holding the card.
-        """
-        session_id = payload.get("session_id")
-        with self._approval_state_lock:
-            store[round_id] = payload
-            head = self._head_round_payload_locked(store, session_id)
-        return head is payload
-
-    def _head_round_payload(
-        self, store: dict[str, dict[str, Any]], session_id: str
-    ) -> dict[str, Any] | None:
-        """The payload whose card ``session_id`` should currently show.
-
-        Qodo PR #1836 finding 1: a round's auto-deny deadline starts at ARM
-        time, but a queued round can mount much later (promotion at the
-        head's resolve, a switch back to a parked session, a headless
-        attach). Handing the card the arm-time ``timeout_seconds`` then
-        overstates the decision window -- "Auto-denies in 2:00" on a card
-        whose worker denies in seconds. When the payload carries its
-        ``deadline_monotonic``, return a shallow SNAPSHOT whose
-        ``timeout_seconds`` is the remaining time at this call; the
-        retained payload is never mutated, so every later re-derive
-        computes its own fresh snapshot. A payload without a deadline
-        (ADR-067 arms none for ``timeout <= 0`` script confirms) passes
-        through untouched. ``_park_round_payload``'s ``head is payload``
-        identity check goes through ``_head_round_payload_locked`` and is
-        unaffected.
-        """
-        with self._approval_state_lock:
-            payload = self._head_round_payload_locked(store, session_id)
-        if payload is None:
-            return None
-        deadline = payload.get("deadline_monotonic")
-        if not deadline:
-            return payload
-        snapshot = dict(payload)
-        snapshot["timeout_seconds"] = max(0.0, deadline - time.monotonic())
-        return snapshot
-
-    def _session_round_payloads(
-        self, store: dict[str, dict[str, Any]], session_id: str
-    ) -> list[dict[str, Any]]:
-        """Every payload ``store`` retains for ``session_id``, arm order first.
-
-        Key-shape agnostic on purpose: it matches on the payload's own
-        ``session_id``, so it reads a PR0 round-keyed map and a not-yet-
-        migrated session-keyed one identically (`ChatScreen._current_park_
-        round_ids` scans all three bridges' maps through it).
-        """
-        with self._approval_state_lock:
-            return [
-                payload
-                for payload in store.values()
-                if payload.get("session_id") == session_id
-            ]
-
-    def _unpark_round_payload(
-        self, store: dict[str, dict[str, Any]], round_id: str
-    ) -> None:
-        """Drop one round's retained payload. Idempotent."""
-        with self._approval_state_lock:
-            store.pop(round_id, None)
-
-    def _remount_head(
-        self,
-        store: dict[str, dict[str, Any]],
-        setter: Callable[[dict[str, Any] | None], None] | None,
-        session_id: str | None,
-    ) -> None:
-        """WORKER THREAD: enqueue a head re-derive onto the UI thread.
-
-        Replaces the pre-PR0 two-part TOCTOU guard. That guard existed
-        because CLEARING the card was order-dependent -- whether to clear
-        depended on which sibling resolved first, and a worker-thread
-        snapshot of that answer could be stale by the time the UI thread
-        ran it. Re-deriving the head is order-INDEPENDENT: it is a pure
-        function of current state. The race-proofing principle is
-        unchanged -- the decision still runs inside the callable on the UI
-        thread, never from a snapshot -- but the decision itself is now one
-        lookup instead of an identity check plus a sibling check.
-
-        ``session_id=None`` means "the session being VIEWED when the
-        callback runs" (Qodo PR #1836 finding 2): a legacy no-session round
-        mounts unconditionally, so its card can be sitting over ANY session
-        by teardown time, and re-deriving for the arm-time snapshot id
-        no-ops on a mismatch -- stranding the card where the deleted
-        pre-PR0 guard cleared it unconditionally. Resolving the active
-        session inside ``_apply`` clears the stale legacy card AND restores
-        that session's own real head if it has one -- strictly better than
-        the old unconditional clear, which could wipe a real sibling's
-        card. Session-attributed rounds keep the exact-match guard so a
-        background teardown can never touch the viewed session's card.
-        """
-        if self.app is None or setter is None:
-            return
-
-        def _apply() -> None:
-            if session_id is None:
-                active = self.store.active_session_id or ""
-                setter(self._head_round_payload(store, active))
-                return
-            if session_id != (self.store.active_session_id or ""):
-                return
-            setter(self._head_round_payload(store, session_id))
-
-        self.app.call_from_thread(_apply)
+    def _head_round_payload_locked(store, session_id):
+        # Caller-holds-lock variant, still used by in-file readers.
+        from tldw_chatbook.Chat.console_interrupt_rounds import InterruptRoundHost
+        return InterruptRoundHost._head_locked(store, session_id)
 
     def remount_pending_approval_for_active_session(self) -> bool:
         """Mount the ACTIVE session's still-armed approval round, if any.
