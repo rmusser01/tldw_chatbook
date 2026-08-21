@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import re
-from io import BytesIO
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
+from datetime import datetime
+from io import BytesIO
 from os import PathLike
-from typing import Protocol
+from typing import Protocol, TypeVar
 
 from PIL import Image
 
@@ -20,10 +21,13 @@ from .assets import (
 )
 from .contracts import (
     ALLOWED_ASSET_MIME_TYPES,
+    ALLOWED_ASSET_ROLES,
     MAX_ASSET_COUNT,
     MAX_ASSET_DIMENSION,
     MAX_ASSET_TOTAL_BYTES,
     MAX_FALLBACK_DEPTH,
+    MAX_FRAME_DURATION_MS,
+    MAX_FRAMES_PER_ANIMATION,
     PersonaVisualAlignment,
     PersonaVisualAnimation,
     PersonaVisualFrame,
@@ -32,9 +36,12 @@ from .contracts import (
 )
 from .repository import (
     PersonaVisualAssetRecord,
+    PersonaVisualBindingRecord,
     PersonaVisualGraph,
     PersonaVisualIdentity,
+    PersonaVisualPackRecord,
     PersonaVisualRepository,
+    PersonaVisualVersionRecord,
 )
 
 
@@ -47,6 +54,7 @@ RUNTIME_FAILED_REASON = "persona_visual_runtime_failed"
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _STATE = re.compile(r"[a-z][a-z0-9_.:-]{0,95}\Z")
 _OPAQUE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
+_SOURCE_KIND = re.compile(r"[a-z][a-z0-9_.:-]{0,63}\Z")
 _MAX_RUNTIME_CANDIDATES = 2 * (256 + 9)
 _MAX_PORTRAIT_BYTES = 25 * 1024 * 1024
 _RASTER_FORMATS = {
@@ -56,6 +64,7 @@ _RASTER_FORMATS = {
     "image/gif": "GIF",
 }
 _ASSET_MISS = object()
+_Record = TypeVar("_Record")
 
 
 class PersonaVisualAssetLoader(Protocol):
@@ -164,12 +173,7 @@ def resolve_active_persona_visual(
     try:
         graph = repository.get_active_persona_pack(persona_id)
     except Exception:
-        public_state = (
-            requested_state
-            if type(requested_state) is str
-            and _STATE.fullmatch(requested_state) is not None
-            else "invalid"
-        )
+        public_state, _ = _public_state(requested_state)
         return _fallback_result(
             None,
             public_state,
@@ -211,10 +215,7 @@ def resolve_persona_visual(
 ) -> PersonaVisualResolution:
     """Resolve one active graph without accepting or returning private storage data."""
 
-    valid_requested_state = (
-        type(requested_state) is str and _STATE.fullmatch(requested_state) is not None
-    )
-    public_requested_state = requested_state if valid_requested_state else "invalid"
+    public_requested_state, valid_requested_state = _public_state(requested_state)
     if graph is None:
         return _fallback_result(
             None,
@@ -327,56 +328,45 @@ def _validated_graph(
 ]:
     if type(graph) is not PersonaVisualGraph:
         raise ValueError
-    identity = graph.identity
+    identity = _validated_identity(graph.identity)
+    pack = _validated_pack(graph.pack)
+    version = _validated_version(graph.version)
+    binding = _validated_binding(graph.binding)
     if (
-        type(identity) is not PersonaVisualIdentity
-        or graph.pack.status != "active"
-        or graph.binding.status != "active"
-        or graph.version.renderer_type != "sprite_frames"
-        or graph.version.manifest_version != 1
-        or graph.pack.id != identity.pack_id
-        or graph.pack.revision != identity.pack_revision
-        or graph.version.id != identity.pack_version_id
-        or graph.version.pack_id != identity.pack_id
-        or graph.version.version_number != identity.version_number
-        or graph.version.manifest_sha256 != identity.manifest_sha256
-        or graph.binding.id != identity.binding_id
-        or graph.binding.revision != identity.binding_version
-        or graph.binding.persona_id != identity.persona_id
-        or graph.binding.persona_revision != identity.persona_revision
-        or graph.binding.pack_id != identity.pack_id
-        or graph.binding.active_version_id != identity.pack_version_id
-        or _SHA256.fullmatch(identity.manifest_sha256) is None
-        or type(graph.version.manifest) is not PersonaVisualManifest
+        pack.id != identity.pack_id
+        or pack.revision != identity.pack_revision
+        or version.id != identity.pack_version_id
+        or version.pack_id != identity.pack_id
+        or version.version_number != identity.version_number
+        or version.manifest_sha256 != identity.manifest_sha256
+        or binding.id != identity.binding_id
+        or binding.revision != identity.binding_version
+        or binding.persona_id != identity.persona_id
+        or binding.persona_revision != identity.persona_revision
+        or binding.pack_id != identity.pack_id
+        or binding.active_version_id != identity.pack_version_id
     ):
         raise ValueError
-    identity = replace(identity)
     records: dict[str, PersonaVisualAssetRecord] = {}
     record_ids: set[int] = set()
     total_bytes = 0
     if type(graph.assets) is not tuple or len(graph.assets) > MAX_ASSET_COUNT:
         raise ValueError
     for record in graph.assets:
+        record = _validated_asset_record(record)
+        if record.id in record_ids or record.asset_key in records:
+            raise ValueError
         if (
-            type(record) is not PersonaVisualAssetRecord
-            or type(record.id) is not int
-            or record.id <= 0
-            or record.id in record_ids
-            or record.asset_key in records
-            or record.pack_id != identity.pack_id
+            record.pack_id != identity.pack_id
             or record.pack_version_id != identity.pack_version_id
-            or _SHA256.fullmatch(record.sha256) is None
-            or type(record.byte_count) is not int
-            or record.byte_count <= 0
         ):
             raise ValueError
-        record = replace(record)
         total_bytes += record.byte_count
         if total_bytes > MAX_ASSET_TOTAL_BYTES:
             raise ValueError
         record_ids.add(record.id)
         records[record.asset_key] = record
-    manifest = graph.version.manifest
+    manifest = version.manifest
     for animation in manifest.animations.values():
         if type(animation) is not PersonaVisualAnimation:
             raise ValueError
@@ -385,6 +375,152 @@ def _validated_graph(
                 raise ValueError
     _reject_fallback_cycles(manifest)
     return identity, manifest, records
+
+
+def _public_state(value: object) -> tuple[str, bool]:
+    valid = type(value) is str and _STATE.fullmatch(value) is not None
+    return (value if valid else "invalid"), valid
+
+
+def _validated_identity(value: object) -> PersonaVisualIdentity:
+    value = _runtime_record(
+        value,
+        PersonaVisualIdentity,
+        "binding_id binding_version pack_id pack_revision pack_version_id version_number",
+        "persona_revision",
+    )
+    _runtime_text(value.persona_id, 200)
+    _runtime_digest(value.manifest_sha256)
+    return replace(value)
+
+
+def _validated_pack(value: object) -> PersonaVisualPackRecord:
+    value = _runtime_record(
+        value,
+        PersonaVisualPackRecord,
+        "id revision",
+        timestamps="created_at updated_at",
+    )
+    _runtime_text(value.title, 256)
+    _runtime_text(value.description, 4096, allow_empty=True)
+    if _runtime_text(value.status, 64) != "active":
+        raise ValueError
+    if _SOURCE_KIND.fullmatch(_runtime_text(value.source_kind, 64)) is None:
+        raise ValueError
+    return value
+
+
+def _validated_version(value: object) -> PersonaVisualVersionRecord:
+    value = _runtime_record(
+        value,
+        PersonaVisualVersionRecord,
+        "id pack_id version_number",
+        timestamps="created_at",
+    )
+    if type(value.renderer_type) is not str or value.renderer_type != "sprite_frames":
+        raise ValueError
+    if type(value.manifest_version) is not int or value.manifest_version != 1:
+        raise ValueError
+    if type(value.manifest) is not PersonaVisualManifest:
+        raise ValueError
+    _runtime_digest(value.manifest_sha256)
+    return value
+
+
+def _validated_binding(value: object) -> PersonaVisualBindingRecord:
+    value = _runtime_record(
+        value,
+        PersonaVisualBindingRecord,
+        "id pack_id active_version_id revision",
+        "persona_revision",
+        "created_at updated_at",
+    )
+    _runtime_text(value.persona_id, 200)
+    if _runtime_text(value.status, 64) != "active":
+        raise ValueError
+    return value
+
+
+def _validated_asset_record(value: object) -> PersonaVisualAssetRecord:
+    value = _runtime_record(
+        value,
+        PersonaVisualAssetRecord,
+        "id pack_id pack_version_id byte_count width height",
+        timestamps="created_at",
+    )
+    asset_key = _runtime_text(value.asset_key, 128)
+    if _OPAQUE_ID.fullmatch(asset_key) is None:
+        raise ValueError
+    role = _runtime_text(value.role, 64)
+    mime_type = _runtime_text(value.mime_type, 64)
+    if role not in ALLOWED_ASSET_ROLES or mime_type not in ALLOWED_ASSET_MIME_TYPES:
+        raise ValueError
+    _runtime_int(value.byte_count, maximum=MAX_ASSET_TOTAL_BYTES)
+    _runtime_int(value.width, maximum=MAX_ASSET_DIMENSION)
+    _runtime_int(value.height, maximum=MAX_ASSET_DIMENSION)
+    _runtime_optional_int(value.frame_count, MAX_FRAMES_PER_ANIMATION)
+    _runtime_optional_int(value.duration_ms, MAX_FRAME_DURATION_MS)
+    _runtime_digest(value.sha256)
+    return replace(value)
+
+
+def _runtime_int(
+    value: object,
+    *,
+    positive: bool = True,
+    maximum: int | None = None,
+) -> int:
+    if (
+        type(value) is not int
+        or (value <= 0 if positive else value < 0)
+        or (maximum is not None and value > maximum)
+    ):
+        raise ValueError
+    return value
+
+
+def _runtime_record(
+    value: object,
+    expected: type[_Record],
+    positive: str,
+    nonnegative: str = "",
+    timestamps: str = "",
+) -> _Record:
+    if type(value) is not expected:
+        raise ValueError
+    for name in positive.split():
+        _runtime_int(getattr(value, name))
+    for name in nonnegative.split():
+        _runtime_int(getattr(value, name), positive=False)
+    for name in timestamps.split():
+        _runtime_timestamp(getattr(value, name))
+    return value  # type: ignore[return-value]
+
+
+def _runtime_optional_int(value: object, maximum: int) -> int | None:
+    return None if value is None else _runtime_int(value, maximum=maximum)
+
+
+def _runtime_text(value: object, maximum: int, *, allow_empty: bool = False) -> str:
+    if type(value) is not str:
+        raise ValueError
+    value.encode("utf-8")
+    if (not allow_empty and not value) or len(value) > maximum:
+        raise ValueError
+    return value
+
+
+def _runtime_digest(value: object) -> str:
+    value = _runtime_text(value, 64)
+    if _SHA256.fullmatch(value) is None:
+        raise ValueError
+    return value
+
+
+def _runtime_timestamp(value: object) -> str:
+    value = _runtime_text(value, 19)
+    datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+    return value
 
 
 def _reject_fallback_cycles(manifest: PersonaVisualManifest) -> None:
@@ -433,11 +569,16 @@ def _load_animation(
     attempted: list[PersonaVisualCacheAsset],
     memo: dict[tuple[PersonaVisualIdentity, PersonaVisualAssetRecord, int], object],
 ) -> _LoadedAnimation | None:
-    alignment = _snapshot_alignment(animation.alignment)
+    alignment = _snapshot_optional(animation.alignment, PersonaVisualAlignment)
     frame_rate = animation.frame_rate
     loop = animation.loop
     frame_snapshots = tuple(
-        (index, frame.asset_id, frame.duration_ms, _snapshot_region(frame.region))
+        (
+            index,
+            frame.asset_id,
+            frame.duration_ms,
+            _snapshot_optional(frame.region, PersonaVisualRegion),
+        )
         for index, frame in enumerate(animation.frames)
     )
     if reduced_motion:
@@ -498,22 +639,14 @@ def _load_animation(
     )
 
 
-def _snapshot_alignment(
-    alignment: PersonaVisualAlignment | None,
-) -> PersonaVisualAlignment | None:
-    if alignment is None:
+def _snapshot_optional(
+    value: _Record | None, expected: type[_Record]
+) -> _Record | None:
+    if value is None:
         return None
-    if type(alignment) is not PersonaVisualAlignment:
+    if type(value) is not expected:
         raise ValueError
-    return replace(alignment)
-
-
-def _snapshot_region(region: PersonaVisualRegion | None) -> PersonaVisualRegion | None:
-    if region is None:
-        return None
-    if type(region) is not PersonaVisualRegion:
-        raise ValueError
-    return replace(region)
+    return replace(value)
 
 
 def _static_index(animation: PersonaVisualAnimation) -> tuple[int, str]:

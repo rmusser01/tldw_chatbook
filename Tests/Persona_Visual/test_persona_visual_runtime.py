@@ -244,6 +244,148 @@ def test_runtime_imports_from_the_assigned_worktree() -> None:
     assert Path(runtime_module.__file__).resolve().is_relative_to(_WORKTREE)
 
 
+def _assert_hostile_graph_is_path_free_invalid(
+    graph: PersonaVisualGraph,
+    *,
+    marker: str = "/private/runtime/identity-marker",
+) -> None:
+    loader = RecordingLoader()
+
+    result = resolve_persona_visual(
+        graph, "idle", asset_loader=loader, portrait=_portrait()
+    )
+
+    assert result.reason == "persona_visual_graph_invalid"
+    assert result.cache_identity.graph is None
+    assert loader.calls == []
+    assert marker not in repr(result)
+    hash(result)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("persona_id", []),
+        ("persona_revision", True),
+        ("binding_id", True),
+        ("binding_version", 0),
+        ("pack_id", True),
+        ("pack_revision", 0),
+        ("pack_version_id", True),
+        ("version_number", 0),
+        ("manifest_sha256", "/private/runtime/identity-marker"),
+    ],
+)
+def test_hostile_identity_scalars_never_reach_public_results(
+    field: str,
+    value: object,
+) -> None:
+    graph = _graph()
+    hostile = replace(graph.identity, **{field: value})
+    related = graph
+    if field == "persona_id":
+        related = replace(graph, binding=replace(graph.binding, persona_id=value))  # type: ignore[arg-type]
+    elif field == "persona_revision":
+        related = replace(
+            graph,
+            binding=replace(graph.binding, persona_revision=value),  # type: ignore[arg-type]
+        )
+    elif field == "binding_id":
+        related = replace(graph, binding=replace(graph.binding, id=value))  # type: ignore[arg-type]
+    elif field == "binding_version":
+        related = replace(graph, binding=replace(graph.binding, revision=value))  # type: ignore[arg-type]
+    elif field == "pack_id":
+        related = replace(
+            graph,
+            pack=replace(graph.pack, id=value),  # type: ignore[arg-type]
+            version=replace(graph.version, pack_id=value),  # type: ignore[arg-type]
+            binding=replace(graph.binding, pack_id=value),  # type: ignore[arg-type]
+            assets=tuple(replace(asset, pack_id=value) for asset in graph.assets),  # type: ignore[arg-type]
+        )
+    elif field == "pack_revision":
+        related = replace(graph, pack=replace(graph.pack, revision=value))  # type: ignore[arg-type]
+    elif field == "pack_version_id":
+        related = replace(
+            graph,
+            version=replace(graph.version, id=value),  # type: ignore[arg-type]
+            binding=replace(graph.binding, active_version_id=value),  # type: ignore[arg-type]
+            assets=tuple(
+                replace(asset, pack_version_id=value)
+                for asset in graph.assets  # type: ignore[arg-type]
+            ),
+        )
+    elif field == "version_number":
+        related = replace(graph, version=replace(graph.version, version_number=value))  # type: ignore[arg-type]
+    elif field == "manifest_sha256":
+        related = replace(graph, version=replace(graph.version, manifest_sha256=value))  # type: ignore[arg-type]
+
+    _assert_hostile_graph_is_path_free_invalid(replace(related, identity=hostile))
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("id", True),
+        ("pack_id", True),
+        ("pack_version_id", True),
+        ("asset_key", "/private/runtime/identity-marker"),
+        ("role", []),
+        ("mime_type", []),
+        ("byte_count", True),
+        ("sha256", "/private/runtime/identity-marker"),
+        ("width", True),
+        ("height", 0),
+        ("frame_count", True),
+        ("duration_ms", True),
+        ("created_at", "/private/runtime/identity-marker"),
+    ],
+)
+def test_hostile_asset_scalars_never_reach_memo_loader_or_results(
+    field: str,
+    value: object,
+) -> None:
+    graph = _graph()
+    hostile = replace(graph.assets[0], **{field: value})
+
+    _assert_hostile_graph_is_path_free_invalid(
+        replace(graph, assets=(hostile, *graph.assets[1:]))
+    )
+
+
+@pytest.mark.parametrize(
+    ("record_name", "field", "value"),
+    [
+        ("pack", "created_at", "/private/runtime/identity-marker"),
+        ("pack", "title", []),
+        ("version", "created_at", "/private/runtime/identity-marker"),
+        ("version", "renderer_type", []),
+        ("binding", "updated_at", "/private/runtime/identity-marker"),
+        ("binding", "status", []),
+    ],
+)
+def test_hostile_related_record_scalars_fail_before_loader(
+    record_name: str,
+    field: str,
+    value: object,
+) -> None:
+    graph = _graph()
+    record = replace(getattr(graph, record_name), **{field: value})
+
+    _assert_hostile_graph_is_path_free_invalid(replace(graph, **{record_name: record}))
+
+
+def test_authoritative_unicode_space_and_slash_persona_id_remains_valid() -> None:
+    persona_id = "Ada Lovelace / ペルソナ-éclair"
+
+    result = resolve_persona_visual(
+        _graph(persona_id=persona_id), "idle", asset_loader=RecordingLoader()
+    )
+
+    assert result.source == "persona_visual"
+    assert result.cache_identity.graph is not None
+    assert result.cache_identity.graph.persona_id == persona_id
+
+
 @pytest.mark.parametrize(
     ("requested", "resolved", "animation_id", "reason"),
     [
