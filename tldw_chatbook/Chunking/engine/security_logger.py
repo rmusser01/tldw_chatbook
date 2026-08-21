@@ -2,9 +2,14 @@
 """
 Security event logging for the Chunking module.
 Logs security-related events for audit and monitoring.
+
+Privacy contract (TASK-19323): the in-memory event store and every log line
+carry METADATA ONLY -- event types, severities, counts, and lengths -- never
+user document content. The module's sole persistence surface is the loguru
+sink declared in ``SecurityLogger.__init__``; adding any other file write
+here trips ``Tests/Architecture/test_security_logger_write_surface.py``.
 """
 
-import json
 import threading
 from datetime import datetime
 from enum import Enum
@@ -97,15 +102,20 @@ class SecurityLogger:
         """
         Log an XXE attack attempt.
 
+        Only the LENGTH of the offending XML is retained: the content itself
+        is user document data and must never sit in the event store, where a
+        future export or dump would ship it outside the redaction guarantees
+        (TASK-19323).
+
         Args:
-            xml_content: The malicious XML content (truncated)
+            xml_content: The malicious XML content (used for its length only)
             source: Optional source identifier
         """
         self.log_event(
             SecurityEventType.XXE_ATTEMPT,
             "XML External Entity (XXE) attack attempt blocked",
             {
-                "xml_sample": xml_content[:500] if xml_content else "",
+                "xml_length": len(xml_content) if xml_content else 0,
                 "source": source,
                 "blocked_patterns": ["DOCTYPE", "ENTITY", "SYSTEM"]
             },
@@ -195,18 +205,6 @@ class SecurityLogger:
             events = [e for e in events if e["severity"] == severity]
 
         return events[-limit:]
-
-    def export_events(self, output_file: Path) -> None:
-        """
-        Export security events to a JSON file.
-
-        Args:
-            output_file: Path to output file
-        """
-        with open(output_file, 'w') as f:
-            json.dump(self._events, f, indent=2, default=str)
-
-        logger.info(f"Exported {len(self._events)} security events to {output_file}")
 
     def clear_events(self) -> None:
         """Clear stored security events."""
