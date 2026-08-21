@@ -78,6 +78,20 @@ from tldw_chatbook.Agents.project_instruction_runtime import (
 from tldw_chatbook.Agents.native_tools import provider_supports_native_tools
 from tldw_chatbook.Agents.agent_stream import StreamGate
 from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator, FleetHandle
+from tldw_chatbook.Agents.local_tool_provider import (
+    LOCAL_DENY_REFUSAL,
+    LOCAL_GATE_ERROR_REFUSAL,
+    LOCAL_KILL_SWITCH_REFUSAL,
+    LOCAL_ROOT_CHANGED_REFUSAL,
+    LOCAL_TIMEOUT_REFUSAL,
+)
+from tldw_chatbook.Agents.mcp_tool_provider import (
+    DENY_REFUSAL as MCP_DENY_REFUSAL,
+    KILL_SWITCH_REFUSAL as MCP_KILL_SWITCH_REFUSAL,
+    TIMEOUT_REFUSAL as MCP_TIMEOUT_REFUSAL,
+    UNRESOLVED_REFUSAL as MCP_UNRESOLVED_REFUSAL,
+    USER_DENY_REFUSAL as MCP_USER_DENY_REFUSAL,
+)
 from tldw_chatbook.Agents.tool_catalog import (
     BuiltinToolProvider,
     SkillToolProvider,
@@ -86,9 +100,15 @@ from tldw_chatbook.Agents.tool_catalog import (
 )
 from tldw_chatbook.Tools.workspace_file_roots import workspace_context_note
 from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleActivityPresentation,
+    ConsoleActivityStatus,
     ConsoleChatMessage,
     ConsoleMessageRole,
     ProjectInstructionActivationEvent,
+)
+from tldw_chatbook.Chat.console_chat_controller import (
+    KILL_SWITCH_REFUSAL as CONTROLLER_KILL_SWITCH_REFUSAL,
+    USER_DENIED_REFUSAL as CONTROLLER_USER_DENIED_REFUSAL,
 )
 from tldw_chatbook.Chat.console_display_state import (
     format_diff_feedback_disclosure,
@@ -903,6 +923,110 @@ def _sanitize_task_marker_label(text: str) -> str:
         for char in flattened
     )
     return sanitized[:200]
+
+
+_BUILTIN_KILL_SWITCH_REFUSAL = "tool execution is disabled by the kill switch"
+_BUILTIN_DENY_REFUSAL_PREFIX = "tool is set to Off: "
+_BUILTIN_UNRESOLVED_REFUSAL_PREFIX = (
+    "tool requires approval and none was granted: "
+)
+_CONTROLLER_USER_DENIED_PREFIX = CONTROLLER_USER_DENIED_REFUSAL.partition(
+    "{name}"
+)[0]
+_BLOCKED_PROVIDER_REFUSALS = frozenset(
+    {
+        _BUILTIN_KILL_SWITCH_REFUSAL,
+        LOCAL_DENY_REFUSAL,
+        LOCAL_TIMEOUT_REFUSAL,
+        LOCAL_KILL_SWITCH_REFUSAL,
+        LOCAL_GATE_ERROR_REFUSAL,
+        LOCAL_ROOT_CHANGED_REFUSAL,
+        MCP_DENY_REFUSAL,
+        MCP_USER_DENY_REFUSAL,
+        MCP_UNRESOLVED_REFUSAL,
+        MCP_TIMEOUT_REFUSAL,
+        MCP_KILL_SWITCH_REFUSAL,
+    }
+)
+_BLOCKED_PROVIDER_REFUSAL_PREFIXES = (
+    _BUILTIN_DENY_REFUSAL_PREFIX,
+    _CONTROLLER_USER_DENIED_PREFIX,
+    _BUILTIN_UNRESOLVED_REFUSAL_PREFIX,
+)
+
+
+def _is_direct_controller_block(result: str) -> bool:
+    """Return whether ``result`` is a pre-dispatch Console review refusal."""
+    return result == CONTROLLER_KILL_SWITCH_REFUSAL or result.startswith(
+        _CONTROLLER_USER_DENIED_PREFIX
+    )
+
+
+def _is_blocked_tool_refusal(error: str) -> bool:
+    """Match canonical dispatched-provider permission refusal copy."""
+    return error in _BLOCKED_PROVIDER_REFUSALS or error.startswith(
+        _BLOCKED_PROVIDER_REFUSAL_PREFIXES
+    )
+
+
+def classify_activity_status(
+    kind: str, result: Any = None
+) -> ConsoleActivityStatus:
+    """Classify one step from protocol facts, never its formatted marker."""
+    if kind == STEP_APPROVAL_TIMEOUT:
+        return "blocked"
+    if kind == STEP_ERROR:
+        return "failed"
+    if kind != STEP_TOOL_RESULT:
+        return "done"
+    text = str(result if result is not None else "")
+    if _is_direct_controller_block(text):
+        return "blocked"
+    if not text.startswith("ERROR:"):
+        return "success"
+    error = text.removeprefix("ERROR:").strip()
+    return "blocked" if _is_blocked_tool_refusal(error) else "failed"
+
+
+def _activity_label(value: object, *, fallback: str) -> str:
+    """Return one non-empty, bounded literal label for presentation metadata."""
+    sanitized = _sanitize_task_marker_label(str(value or "")).strip()
+    return sanitized or fallback
+
+
+def build_step_activity_presentation(
+    kind: str,
+    *,
+    tool_name: str | None = None,
+    result: Any = None,
+) -> ConsoleActivityPresentation:
+    """Build bounded presentation metadata directly from an agent step."""
+    status = classify_activity_status(kind, result)
+    if kind == STEP_TOOL_RESULT:
+        return ConsoleActivityPresentation(
+            "tool",
+            _activity_label(tool_name, fallback="Tool"),
+            status,
+        )
+    if kind == STEP_SPAWN:
+        return ConsoleActivityPresentation("spawn", "Sub-agent", status)
+    if kind == STEP_APPROVAL_TIMEOUT:
+        return ConsoleActivityPresentation(
+            "warning",
+            _activity_label(tool_name, fallback="Approval"),
+            status,
+        )
+    if kind == STEP_ERROR:
+        return ConsoleActivityPresentation(
+            "warning",
+            _activity_label(tool_name, fallback="Error"),
+            status,
+        )
+    return ConsoleActivityPresentation(
+        "activity",
+        _activity_label(tool_name or kind, fallback="Activity"),
+        status,
+    )
 
 
 def format_todo_marker(tasks: list[dict[str, object]]) -> str:
@@ -3827,6 +3951,11 @@ class ConsoleAgentBridge:
                             marker_text=marker_text,
                         ),
                         tool_diff=tool_diff,
+                        activity_presentation=build_step_activity_presentation(
+                            step.kind,
+                            tool_name=step.tool_name,
+                            result=step.result,
+                        ),
                     )
             # Content-free operational logging for tool outcomes. The actual
             # invocation lives inside AgentService, so this intentionally
@@ -4293,6 +4422,9 @@ class ConsoleAgentBridge:
                             role=ConsoleMessageRole.TOOL,
                             content=format_diff_feedback_disclosure(
                                 disclosed_notes
+                            ),
+                            activity_presentation=ConsoleActivityPresentation(
+                                "feedback", "Feedback delivered", "done"
                             ),
                         )
                 except Exception:  # noqa: BLE001 -- notes must never break the reply
@@ -5599,6 +5731,11 @@ class ConsoleAgentBridge:
                             role=ConsoleMessageRole.TOOL,
                             content=text,
                             status="complete",
+                            activity_presentation=build_step_activity_presentation(
+                                str(step.get("kind") or ""),
+                                tool_name=step.get("tool_name"),
+                                result=step.get("result"),
+                            ),
                             # AC#5: a resumed marker is as expandable as a
                             # live one -- the step rows carry the full result.
                             tool_output_full=full_step_output(
@@ -5645,6 +5782,15 @@ class ConsoleAgentBridge:
                         ),
                         status="complete",
                         change_review_run_id=str(record.get("id")),
+                        activity_presentation=ConsoleActivityPresentation(
+                            "changes",
+                            (
+                                "Sub-agent changes"
+                                if _rows is post_turn_rows
+                                else "Changes"
+                            ),
+                            "done",
+                        ),
                     )
                 )
                 if _rows is turn_rows and any(
@@ -5656,6 +5802,9 @@ class ConsoleAgentBridge:
                             role=ConsoleMessageRole.TOOL,
                             content=format_concurrent_subagent_change_marker(),
                             status="complete",
+                            activity_presentation=ConsoleActivityPresentation(
+                                "warning", "Concurrent sub-agent", "done"
+                            ),
                         )
                     )
             # Parity for the FAILURE shape too (review finding 2): live
@@ -5672,6 +5821,9 @@ class ConsoleAgentBridge:
                                 str(_row.get("tracking_error", "")),
                             ),
                             status="complete",
+                            activity_presentation=ConsoleActivityPresentation(
+                                "warning", "Change tracking", "failed"
+                            ),
                         )
                     )
             # task-6 (turn-file-annotate, spec §4) + fix round: append this
@@ -5700,6 +5852,9 @@ class ConsoleAgentBridge:
                             disclosure_batches[str(record.get("id"))][_delivered_at]
                         ),
                         status="complete",
+                        activity_presentation=ConsoleActivityPresentation(
+                            "feedback", "Feedback delivered", "done"
+                        ),
                     )
                 )
             blocks.append((record.get("assistant_message_id"), block))
@@ -5717,7 +5872,13 @@ class ConsoleAgentBridge:
         ``call_from_thread`` marshalling, exactly like the live step-marker
         path. Nothing is re-derived from durable AgentRuns state on restart.
         """
-        self._append_marker(session_id, format_todo_marker(tasks))
+        self._append_marker(
+            session_id,
+            format_todo_marker(tasks),
+            activity_presentation=ConsoleActivityPresentation(
+                "tasks", "Tasks updated", "done"
+            ),
+        )
 
     # -- internals ------------------------------------------------------
 
@@ -5765,12 +5926,24 @@ class ConsoleAgentBridge:
                         sum(r.dels for r in changed),
                     ),
                     change_review_run_id=run_id,
+                    activity_presentation=ConsoleActivityPresentation(
+                        "changes",
+                        (
+                            "Sub-agent changes"
+                            if kind == CHANGE_KIND_SUBAGENT_POST_TURN
+                            else "Changes"
+                        ),
+                        "done",
+                    ),
                 )
                 if kind == CHANGE_KIND_TURN_CONCURRENT_SUBAGENT:
                     self._store.append_message(
                         session_id,
                         role=ConsoleMessageRole.TOOL,
                         content=format_concurrent_subagent_change_marker(),
+                        activity_presentation=ConsoleActivityPresentation(
+                            "warning", "Concurrent sub-agent", "done"
+                        ),
                     )
             for rec in records:
                 if rec.tracking_error:
@@ -5779,6 +5952,9 @@ class ConsoleAgentBridge:
                         role=ConsoleMessageRole.TOOL,
                         content=format_change_tracking_failure_marker(
                             rec.root, rec.tracking_error
+                        ),
+                        activity_presentation=ConsoleActivityPresentation(
+                            "warning", "Change tracking", "failed"
                         ),
                     )
         except Exception:  # noqa: BLE001 -- a marker must never fail the run
@@ -5822,6 +5998,7 @@ class ConsoleAgentBridge:
         *,
         full_output: str | None = None,
         tool_diff: tuple[str, str, str] | None = None,
+        activity_presentation: ConsoleActivityPresentation | None = None,
     ) -> None:
         # Kept raw (no escaping): both consumers render markup-off --
         # console_transcript.py's _message_render_text builds a Content via
@@ -5842,6 +6019,7 @@ class ConsoleAgentBridge:
                 content=text,
                 tool_output_full=full_output,
                 tool_diff=tool_diff,
+                activity_presentation=activity_presentation,
             )
         except KeyError:
             pass  # session vanished mid-run; the rail still has the live snapshot

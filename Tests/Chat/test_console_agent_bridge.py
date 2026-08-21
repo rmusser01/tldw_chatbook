@@ -17,6 +17,9 @@ import tldw_chatbook.Agents.agent_service as agent_service_module
 from tldw_chatbook.Chat import console_agent_bridge
 import tldw_chatbook.Chat.console_agent_bridge as bridge_module
 from tldw_chatbook.Chat.console_agent_bridge import (
+    CHANGE_KIND_SUBAGENT_POST_TURN,
+    CHANGE_KIND_TURN,
+    CHANGE_KIND_TURN_CONCURRENT_SUBAGENT,
     CONSOLE_AGENT_OPERATING_PROMPT,
     FIND_LOAD_DISCOVERY_HINT,
     ConsoleAgentBridge,
@@ -37,6 +40,7 @@ from tldw_chatbook.Chat.console_agent_bridge import (
     shadowed_mcp_names,
 )
 from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleActivityPresentation,
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
@@ -87,6 +91,7 @@ from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider, _default
 from tldw_chatbook.Agents.project_instruction_resolver import ProjectInstructionResolver
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
+from tldw_chatbook.Workspaces.change_turn_tracker import TurnChangeRecord
 
 from Tests.Agents.test_agent_service import SUBAGENT_PROMPT_PREFIX
 
@@ -2900,6 +2905,9 @@ def test_append_todo_marker_appends_tool_message_to_store(tmp_path):
     assert [m.content for m in tool_messages] == [
         "☰ Tasks (1 in progress):\n  [~] ship it"
     ]
+    assert tool_messages[0].activity_presentation == ConsoleActivityPresentation(
+        "tasks", "Tasks updated", "done"
+    )
 
 
 def test_resume_marker_messages_reproduces_live_markers_after_simulated_restart(
@@ -2924,8 +2932,193 @@ def test_resume_marker_messages_reproduces_live_markers_after_simulated_restart(
         agent_runs_db=db, store=None, provider_gateway=None
     )
     blocks = fresh_bridge.resume_marker_messages("conv-1")
-    resumed_tool_contents = [m.content for _anchor, block in blocks for m in block]
-    assert resumed_tool_contents == live_tool_contents
+    resumed_markers = [m for _anchor, block in blocks for m in block]
+    assert [m.content for m in resumed_markers] == live_tool_contents
+    assert [m.activity_presentation for m in resumed_markers] == [
+        ConsoleActivityPresentation("tool", "calculator", "success")
+    ]
+    live_markers = [
+        m
+        for m in store.messages_for_session(session.id)
+        if m.role is ConsoleMessageRole.TOOL
+    ]
+    assert [m.activity_presentation for m in live_markers] == [
+        m.activity_presentation for m in resumed_markers
+    ]
+
+
+def test_resume_step_markers_attach_presentation_for_every_known_step_shape(
+    tmp_path,
+):
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    run_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    db.append_steps(
+        run_id,
+        [
+            {
+                "index": 0,
+                "kind": STEP_SPAWN,
+                "summary": "research",
+                "tool_name": "",
+                "result": "",
+                "args": None,
+                "created_at": "",
+            },
+            {
+                "index": 1,
+                "kind": STEP_TOOL_RESULT,
+                "summary": "",
+                "tool_name": "fs_write",
+                "result": "ERROR: disk exploded",
+                "args": None,
+                "created_at": "",
+            },
+            {
+                "index": 2,
+                "kind": STEP_ERROR,
+                "summary": "provider failed",
+                "tool_name": "",
+                "result": "",
+                "args": None,
+                "created_at": "",
+            },
+            {
+                "index": 3,
+                "kind": console_agent_bridge.STEP_APPROVAL_TIMEOUT,
+                "summary": "30",
+                "tool_name": "fs_edit",
+                "result": "",
+                "args": None,
+                "created_at": "",
+            },
+        ],
+    )
+    db.set_status(run_id, "done", result="ok")
+
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
+    markers = bridge.resume_marker_messages("conv-1")[0][1]
+
+    assert [m.activity_presentation for m in markers] == [
+        ConsoleActivityPresentation("spawn", "Sub-agent", "done"),
+        ConsoleActivityPresentation("tool", "fs_write", "failed"),
+        ConsoleActivityPresentation("warning", "Error", "failed"),
+        ConsoleActivityPresentation("warning", "fs_edit", "blocked"),
+    ]
+
+
+def test_live_and_resume_change_marker_inventory_has_content_and_metadata_parity(
+    tmp_path,
+):
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="answer"
+    )
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=None)
+    inventory = [
+        (
+            CHANGE_KIND_TURN,
+            TurnChangeRecord(
+                root="/turn", files_changed=1, adds=2, dels=3
+            ),
+        ),
+        (
+            CHANGE_KIND_SUBAGENT_POST_TURN,
+            TurnChangeRecord(
+                root="/post", files_changed=2, adds=4, dels=5
+            ),
+        ),
+        (
+            CHANGE_KIND_TURN_CONCURRENT_SUBAGENT,
+            TurnChangeRecord(
+                root="/concurrent", files_changed=3, adds=6, dels=7
+            ),
+        ),
+        (
+            CHANGE_KIND_TURN,
+            TurnChangeRecord(root="/failed", tracking_error="snapshot failed"),
+        ),
+    ]
+    for kind, record in inventory:
+        # One real change window belongs to one run. Keeping these separate
+        # mirrors production and prevents resume's intentional per-run
+        # same-kind aggregation from inventing a fixture-only difference.
+        run_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
+        bridge._append_change_markers(  # noqa: SLF001 - targeted builder contract
+            session.id, run_id, [record], kind=kind
+        )
+        db.record_change_snapshot(
+            run_id=run_id,
+            root=record.root,
+            baseline_sha=record.baseline_sha,
+            end_sha=record.end_sha,
+            files_changed=record.files_changed,
+            adds=record.adds,
+            dels=record.dels,
+            tracking_error=record.tracking_error,
+            kind=kind,
+        )
+        db.set_status(run_id, "done", result="ok")
+
+    live = [
+        m
+        for m in store.messages_for_session(session.id)
+        if m.role is ConsoleMessageRole.TOOL
+    ]
+    resumed = [
+        marker
+        for _anchor, block in ConsoleAgentBridge(
+            agent_runs_db=db, store=None, provider_gateway=None
+        ).resume_marker_messages("conv-1")
+        for marker in block
+    ]
+
+    assert [(m.content, m.activity_presentation) for m in resumed] == [
+        (m.content, m.activity_presentation) for m in live
+    ]
+    assert [m.activity_presentation for m in live] == [
+        ConsoleActivityPresentation("changes", "Changes", "done"),
+        ConsoleActivityPresentation("changes", "Sub-agent changes", "done"),
+        ConsoleActivityPresentation("changes", "Changes", "done"),
+        ConsoleActivityPresentation("warning", "Concurrent sub-agent", "done"),
+        ConsoleActivityPresentation("warning", "Change tracking", "failed"),
+    ]
+
+
+def test_live_and_resume_diff_feedback_disclosure_has_metadata_parity(tmp_path):
+    bridge, db, store, session, assistant_id = _bridge(tmp_path, [["answer"]])
+    annotated_run = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    db.set_status(annotated_run, "done", result="prior")
+    note_id = _add_note(db, annotated_run, note="rename this variable")
+
+    _run(bridge, store, session, assistant_id)
+
+    delivered = db.notes_for_run(annotated_run)
+    assert delivered[0]["id"] == note_id
+    assert delivered[0]["delivered_at"] is not None
+    live = [
+        m
+        for m in store.messages_for_session(session.id)
+        if "Diff feedback attached" in m.content
+    ]
+    resumed = [
+        m
+        for _anchor, block in ConsoleAgentBridge(
+            agent_runs_db=db, store=None, provider_gateway=None
+        ).resume_marker_messages("conv-1")
+        for m in block
+        if "Diff feedback attached" in m.content
+    ]
+
+    assert len(live) == len(resumed) == 1
+    assert (resumed[0].content, resumed[0].activity_presentation) == (
+        live[0].content,
+        live[0].activity_presentation,
+    )
+    assert live[0].activity_presentation == ConsoleActivityPresentation(
+        "feedback", "Feedback delivered", "done"
+    )
 
 
 def test_resume_marker_messages_surfaces_assistant_message_id_anchor(tmp_path):

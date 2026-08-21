@@ -34,6 +34,7 @@ from tldw_chatbook.Chat.citation_trace_repository import (
 from tldw_chatbook.Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
     DEFAULT_CONSOLE_SESSION_TITLE,
+    ConsoleActivityPresentation,
     ConsoleChatMessage,
     ConsoleCitationPresentation,
     ConsoleMessageFeedback,
@@ -2230,6 +2231,7 @@ class ConsoleChatStore:
         tool_diff: tuple[str, str, str] | None = None,
         change_review_run_id: str | None = None,
         metadata: "MessageMetadata | None" = None,
+        activity_presentation: ConsoleActivityPresentation | None = None,
     ) -> ConsoleChatMessage:
         """Append a message; scalar image kwargs become a one-item tuple.
 
@@ -2241,6 +2243,9 @@ class ConsoleChatStore:
         ``tool_diff`` (TASK-1366) is the raw (path, before, after) capture
         behind a file-writing TOOL marker -- session-only, never persisted
         (see ``ConsoleChatMessage.tool_diff``).
+
+        ``activity_presentation`` is session-only structured display state;
+        it is attached only to the in-memory message and never serialized.
         """
         self._session_or_raise(session_id)
         effective = tuple(attachments)
@@ -2294,6 +2299,7 @@ class ConsoleChatStore:
             tool_diff=tool_diff,
             change_review_run_id=change_review_run_id,
             metadata=metadata,
+            activity_presentation=activity_presentation,
         )
         self._set_message_attachments(message, effective)
         if attachment_label and effective and not effective[0].display_name:
