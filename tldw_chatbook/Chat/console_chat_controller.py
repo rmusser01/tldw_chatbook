@@ -5799,12 +5799,21 @@ class ConsoleChatController:
         # only and in-loop, so no wrapper hosts it today, but the mark
         # keeps every human wait on one contract).
         owning_run_id = current_run_id()
-        with self._pending_skill_install_lock:
-            self._pending_skill_install_rounds[request_id] = {
-                "event": event,
-                "decision": decision,
-                "session_id": owning_session_id,
-            }
+        install_round_state: dict[str, Any] = {
+            "event": event,
+            "decision": decision,
+            "session_id": owning_session_id,
+            # C1: the host's `run_round` reads these off `state` itself
+            # (worker thread, generic across all three bridges) rather
+            # than taking them as call arguments -- see
+            # `InterruptRoundHost.run_round`.
+            "cancel_event": round_cancel_event,
+            "visit_event": visit_cancel_event,
+        }
+        # C1: registration (`self._pending_skill_install_rounds[request_id]
+        # = install_round_state`, guarded by `_pending_skill_install_lock`)
+        # now happens inside `run_round` itself, under the same lock object
+        # (aliased at construction -- see `InterruptRoundHost.__init__`).
 
         timeout_seconds = (
             self.skill_install_confirm_timeout_seconds()
@@ -5833,88 +5842,28 @@ class ConsoleChatController:
             session_id is not None
             and session_id != (self.store.active_session_id or "")
         )
-        # PR0: legacy `session_id is None` callers never park and never
-        # queue -- they keep the unconditional mount below.
-        is_head = True
-        if session_id is not None:
-            # TASK-1050 (Defect A): round-keyed, not a plain boolean -- see
-            # `request_mcp_approvals`' identical `add_pending_round` call
-            # for the full rationale (a sibling round from this bridge or
-            # either of the other two must not have its badge stolen by
-            # THIS round's own teardown).
-            self.add_pending_round(session_id, request_id)
-            # Retain THIS round's payload for EVERY session-attributed
-            # round -- mounted or parked -- not just a parked one, mirroring
-            # `request_mcp_approvals`' identical retention (Fix wave,
-            # CRITICAL 1): a round that mounted immediately must still be
-            # recoverable after a switch-away-and-back.
-            # PR0: keyed by ROUND, and the return says whether THIS round
-            # is its session's FIFO head. A non-head round must not mount:
-            # an older sibling is still holding the card.
-            is_head = self._park_round_payload(
-                self._parked_skill_install_payloads, request_id, payload
-            )
-        try:
-            if is_parked:
-                if self.app is not None and self.park_pending_approval is not None:
-                    self.app.call_from_thread(self.park_pending_approval, session_id)
-            elif is_head:
-                self._marshal_pending_skill_install(payload)
-            # ADR-067: mark the owning run as waiting on a human decision
-            # (see `request_mcp_approvals`' identical wrap for the why).
-            with use_human_input_wait(owning_run_id):
-                while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
-                    if self._is_session_cancelled(
-                        session_id,
-                        cancel_event=round_cancel_event,
-                        visit_event=visit_cancel_event,
-                    ):
-                        break
-                    if deadline is not None and time.monotonic() >= deadline:
-                        break
-            return bool(decision.get("allow", False))
-        finally:
-            with self._pending_skill_install_lock:
-                self._pending_skill_install_rounds.pop(request_id, None)
-            # PR0: drop exactly THIS round's retained payload. Pre-PR0 the
-            # slot was shared per session, so the pop had to be guarded by
-            # an order-dependent "is this the last armed round for the
-            # session" test to avoid discarding a still-armed sibling's
-            # only copy. Per-round storage makes that guard meaningless --
-            # each round owns its own key.
-            self._unpark_round_payload(
-                self._parked_skill_install_payloads, request_id
-            )
-            if session_id is not None:
-                # TASK-1050 (Defect A): discard ONLY this round's own id --
-                # the badge clears only once every bridge round for this
-                # session (this one included) has resolved.
-                self.discard_pending_round(session_id, request_id)
-            # PR0: re-derive the card from the session's remaining FIFO
-            # head rather than deciding whether to CLEAR it. This
-            # subsumes `_clear_pending_skill_install_if_round_is_current`'s
-            # two-part TOCTOU guard -- see `request_mcp_approvals`'
-            # identical `_remount_head` teardown call for the full race
-            # analysis.
-            # `owning_session_id`, not `session_id`: a legacy no-session
-            # caller retains no payload, so its head resolves to `None` and
-            # the card clears exactly as the pre-PR0 unconditional clear
-            # did -- `_remount_head` no-ops on a `None` session_id, which
-            # would otherwise leave a legacy caller's card stuck on screen
-            # (caught live by `test_console_skill_install_confirm.py::
-            # test_confirm_round_trip_allow`).
-            try:
-                # Qodo PR #1836 finding 2 -- see the approvals teardown's
-                # identical legacy-round note.
-                self._remount_head(
-                    self._parked_skill_install_payloads,
-                    self.set_pending_skill_install,
-                    owning_session_id if session_id is not None else None,
-                )
-            except Exception:  # noqa: BLE001 -- suppress teardown-time errors
-                logger.opt(exception=True).debug(
-                    "Failed to marshal skill-install remount during teardown"
-                )
+        # C1: `is_head` (whether THIS round owns the card slot, computed
+        # from `park_round_payload`) and the `add_pending_round` badge
+        # call both moved into `run_round` -- see its own docstring for
+        # why it now owns them (identical across all three bridges; only
+        # the announce/park/mount BRANCH choice was ever bridge-specific,
+        # and skill-install has none beyond park-vs-mount).
+
+        # ADR-067: `human_wait_run_id` marks this run as waiting on a
+        # human decision for the duration of the wait inside `run_round`
+        # (the install confirm is primary-agent only and in-loop, so no
+        # per-call wrapper hosts it today, but the mark keeps every human
+        # wait on one contract).
+        outcome = self._interrupt_host.run_round(
+            "skill_install", request_id, payload, install_round_state,
+            session_id=session_id,
+            owning_session_id=owning_session_id,
+            deadline=deadline,
+            is_parked=is_parked,
+            human_wait_run_id=owning_run_id,
+            check_revoked=False,  # install is never swept (primary-agent only)
+        )
+        return bool(decision.get("allow", False))
 
     def _remount_parked_skill_install(self, session_id: str) -> None:
         """Re-derive the mounted skill-install confirm card for ``session_id``.
@@ -6067,9 +6016,17 @@ class ConsoleChatController:
             # Re-read after the wait: a late Allow must not stick. See
             # `revoke_approval_rounds_for_run`.
             "revoked": False,
+            # C1: the host's `run_round` reads these off `state` itself
+            # (worker thread, generic across all three bridges) rather
+            # than taking them as call arguments -- see
+            # `InterruptRoundHost.run_round`.
+            "cancel_event": round_cancel_event,
+            "visit_event": visit_cancel_event,
         }
-        with self._pending_skill_script_lock:
-            self._pending_skill_script_rounds[request_id] = script_round_state
+        # C1: registration (`self._pending_skill_script_rounds[request_id]
+        # = script_round_state`, guarded by `_pending_skill_script_lock`)
+        # now happens inside `run_round` itself, under the same lock object
+        # (aliased at construction -- see `InterruptRoundHost.__init__`).
 
         timeout_seconds = (
             self.skill_script_confirm_timeout_seconds()
@@ -6091,95 +6048,37 @@ class ConsoleChatController:
         is_parked = session_id is not None and session_id != (
             self.store.active_session_id or ""
         )
-        # PR0: legacy `session_id is None` callers never park and never
-        # queue -- they keep the unconditional mount below.
-        is_head = True
-        if session_id is not None:
-            # TASK-1050 (Defect A): round-keyed, not a plain boolean -- see
-            # `request_mcp_approvals`' identical `add_pending_round` call
-            # for the full rationale.
-            self.add_pending_round(session_id, request_id)
-            # PR0: keyed by ROUND, and the return says whether THIS round
-            # is its session's FIFO head. A non-head round must not mount:
-            # an older sibling is still holding the card.
-            is_head = self._park_round_payload(
-                self._parked_skill_script_payloads, request_id, card_payload
-            )
-        try:
-            if is_parked:
-                if self.app is not None and self.park_pending_approval is not None:
-                    self.app.call_from_thread(self.park_pending_approval, session_id)
-            elif is_head:
-                self._marshal_pending_skill_script(card_payload)
-            # ADR-067: mark the owning run as waiting on a human decision
-            # (see `request_mcp_approvals`' identical wrap for the why).
-            with use_human_input_wait(
-                str(script_round_state.get("run_id") or "")
-            ):
-                while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
-                    if self._is_session_cancelled(
-                        session_id,
-                        cancel_event=round_cancel_event,
-                        visit_event=visit_cancel_event,
-                    ):
-                        break
-                    if deadline is not None and time.monotonic() >= deadline:
-                        break
-            # PR2a Task 7 (review M1): a revoked round denies
-            # unconditionally, without consulting `decision` at all --
-            # `resolve_pending_skill_script` writes into that shared box
-            # after snapshotting the round, so an Allow delivered just
-            # after the child was cancelled could otherwise reach the
-            # `asyncio.run(scope.run_skill_script(...))` call the bridge
-            # makes on the very next line. Mirrors `request_mcp_
-            # approvals`' identical post-wait guard.
-            with self._pending_skill_script_lock:
-                was_revoked = bool(script_round_state.get("revoked"))
-            if was_revoked:
-                return {"allow": False, "remember": False}
-            return {
-                "allow": bool(decision.get("allow", False)),
-                "remember": bool(decision.get("remember", False)),
-            }
-        finally:
-            with self._pending_skill_script_lock:
-                self._pending_skill_script_rounds.pop(request_id, None)
-            # PR0: drop exactly THIS round's retained payload. Pre-PR0 the
-            # slot was shared per session, so the pop had to be guarded by
-            # an order-dependent "is this the last armed round for the
-            # session" test to avoid discarding a still-armed sibling's
-            # only copy. Per-round storage makes that guard meaningless --
-            # each round owns its own key.
-            self._unpark_round_payload(
-                self._parked_skill_script_payloads, request_id
-            )
-            if session_id is not None:
-                # TASK-1050 (Defect A): discard ONLY this round's own id --
-                # the badge clears only once every bridge round for this
-                # session (this one included) has resolved.
-                self.discard_pending_round(session_id, request_id)
-            # PR0: re-derive the card from the session's remaining FIFO
-            # head rather than deciding whether to CLEAR it. This subsumes
-            # the pre-PR0 `_clear_pending_skill_script_if_round_is_current`
-            # guard's two-part TOCTOU check -- see `request_mcp_approvals`'
-            # identical `_remount_head` teardown call for the full race
-            # analysis.
-            # Qodo PR #1836 finding 2: a legacy no-session round passes
-            # None, so `_remount_head` re-derives for the session active
-            # WHEN THE CALLBACK RUNS -- the arm-time `owning_session_id`
-            # snapshot could mismatch after a switch and strand the
-            # unconditionally-mounted legacy card. Session-attributed
-            # rounds keep the exact-match owning id.
-            try:
-                self._remount_head(
-                    self._parked_skill_script_payloads,
-                    self.set_pending_skill_script,
-                    owning_session_id if session_id is not None else None,
-                )
-            except Exception:  # noqa: BLE001 -- suppress teardown-time errors
-                logger.opt(exception=True).debug(
-                    "Failed to marshal skill-script remount during teardown"
-                )
+        # C1: `is_head` (whether THIS round owns the card slot, computed
+        # from `park_round_payload`) and the `add_pending_round` badge
+        # call both moved into `run_round` -- see its own docstring for
+        # why it now owns them (identical across all three bridges; only
+        # the announce/park/mount BRANCH choice was ever bridge-specific,
+        # and skill-script has none beyond park-vs-mount).
+
+        # ADR-067: mark the owning run as waiting on a human decision for
+        # the duration of the wait inside `run_round` (see
+        # `request_mcp_approvals`' identical wrap for the why).
+        outcome = self._interrupt_host.run_round(
+            "skill_script", request_id, card_payload, script_round_state,
+            session_id=session_id,
+            owning_session_id=owning_session_id,
+            deadline=deadline,
+            is_parked=is_parked,
+            human_wait_run_id=str(script_round_state.get("run_id") or ""),
+        )
+        # PR2a Task 7 (review M1): a revoked round denies unconditionally,
+        # without consulting `decision` at all -- `resolve_pending_skill_
+        # script` writes into that shared box after snapshotting the
+        # round, so an Allow delivered just after the child was cancelled
+        # could otherwise reach the `asyncio.run(scope.run_skill_script(
+        # ...))` call the bridge makes on the very next line. Mirrors
+        # `request_mcp_approvals`' identical post-wait guard.
+        if outcome == "revoked":
+            return {"allow": False, "remember": False}
+        return {
+            "allow": bool(decision.get("allow", False)),
+            "remember": bool(decision.get("remember", False)),
+        }
 
     def _remount_parked_skill_script(self, session_id: str) -> None:
         """Re-derive the mounted skill-script confirm card for ``session_id``.
