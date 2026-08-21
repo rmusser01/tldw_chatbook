@@ -26,7 +26,7 @@ _TIMEOUT_SECONDS = 12.0
 def _child(preferences_path: Path, report_path: Path) -> int:
     """Run the production-CSS child application inside the allocated PTY."""
 
-    from dataclasses import asdict
+    from dataclasses import asdict, replace
 
     from textual import events
     from textual.app import App, ComposeResult
@@ -110,6 +110,7 @@ def _child(preferences_path: Path, report_path: Path) -> int:
         BINDINGS = [
             Binding("m", "probe_modal", "Modal", priority=True),
             Binding("n", "probe_navigate", "Navigate", priority=True),
+            Binding("o", "probe_reopen", "Reopen", priority=True),
             Binding("q", "probe_finish", "Finish", priority=True),
         ]
 
@@ -143,7 +144,6 @@ def _child(preferences_path: Path, report_path: Path) -> int:
             )
             self.call_after_refresh(self._capture_focus_guard)
             self.set_interval(0.10, self._write_probe_report)
-            self.set_timer(0.8, self.action_probe_modal)
 
         def _capture_focus_guard(self) -> None:
             screen = self.screen
@@ -164,6 +164,13 @@ def _child(preferences_path: Path, report_path: Path) -> int:
             self.navigation_count += 1
             await self.switch_screen(ProbeScreen(self, "second"))
 
+        async def action_probe_reopen(self) -> None:
+            current = self.persona_buddy_controller.current_preferences()
+            await self.persona_buddy_controller.update_preferences(
+                replace(current, open=True)
+            )
+            await self.reconcile_persona_buddy_view()
+
         def action_probe_finish(self) -> None:
             self._write_probe_report()
 
@@ -177,6 +184,20 @@ def _child(preferences_path: Path, report_path: Path) -> int:
             buddy = buddies[0] if buddies else None
             preferences_now = self.persona_buddy_controller.current_preferences()
             region = buddy.region if buddy is not None else None
+            controls = {}
+            if buddy is not None:
+                for control_id in (
+                    "persona-buddy-drag-handle",
+                    "persona-buddy-collapse",
+                    "persona-buddy-close",
+                ):
+                    control = buddy.query_one(f"#{control_id}")
+                    controls[control_id] = {
+                        "x": control.region.x,
+                        "y": control.region.y,
+                        "width": control.region.width,
+                        "height": control.region.height,
+                    }
             modal_surfaces = list(self.screen.query(ModalHitSurface))
             modal_region = modal_surfaces[0].region if modal_surfaces else None
             modal_target = None
@@ -188,6 +209,7 @@ def _child(preferences_path: Path, report_path: Path) -> int:
             payload = {
                 "capture_released": self.mouse_captured is None,
                 "collapsed": preferences_now.collapsed,
+                "controls": controls,
                 "focus_guard": self.focus_guard_observed,
                 "geometry": asdict(preferences_now.geometry),
                 "loaded_geometry": self.initial_geometry,
@@ -261,16 +283,30 @@ def _wait_for_output(fd: int, process: subprocess.Popen[bytes], needle: bytes) -
     raise RuntimeError(f"persona_buddy_terminal_not_ready\n{tail}")
 
 
-def _drain_for(fd: int, duration: float) -> None:
+def _drain_for(fd: int, duration: float) -> bytes:
     """Drain terminal paint while allowing a bounded interval between events."""
 
     deadline = time.monotonic() + duration
+    captured = bytearray()
     while time.monotonic() < deadline:
         ready, _, _ = select.select(
             [fd], [], [], min(0.02, deadline - time.monotonic())
         )
         if ready:
-            os.read(fd, 65536)
+            captured.extend(os.read(fd, 65536))
+    return bytes(captured)
+
+
+def _send_mouse(fd: int, code: int, x: int, y: int, *, release: bool = False) -> None:
+    suffix = "m" if release else "M"
+    os.write(fd, f"\x1b[<{code};{x + 1};{y + 1}{suffix}".encode())
+
+
+def _center(region: dict[str, int]) -> tuple[int, int]:
+    return (
+        region["x"] + max(0, region["width"] // 2),
+        region["y"] + max(0, region["height"] // 2),
+    )
 
 
 def _run_child(
@@ -320,34 +356,91 @@ def _run_child(
         if not report.exists():
             raise RuntimeError("persona_buddy_terminal_initial_report_missing")
         initial = json.loads(report.read_text(encoding="utf-8"))
+        observed = {
+            "drag": False,
+            "mouse_resize": False,
+            "fold": False,
+            "reopen": False,
+            "close": False,
+            "navigation_view": False,
+            "paint": initial["painted"],
+            "viewport_clamp": False,
+        }
         if drive:
-            # Compute true terminal-cell coordinates from the child's painted
-            # region (SGR is 1-based), while still sending the real
-            # terminal shape whose Textual MouseDown has widget=None.
-            region = initial["region"]
-            down_col = region["x"] + 4
-            down_row = region["y"] + 3
-            move_col = max(2, down_col - 10)
-            move_row = max(2, down_row - 5)
-            os.write(master, f"\x1b[<0;{down_col};{down_row}M".encode())
+            drag_x, drag_y = _center(initial["controls"]["persona-buddy-drag-handle"])
+            move_x = max(1, drag_x - 10)
+            move_y = max(1, drag_y - 5)
+            _send_mouse(master, 0, drag_x, drag_y)
             _drain_for(master, 0.10)
-            os.write(master, f"\x1b[<32;{move_col};{move_row}M".encode())
+            _send_mouse(master, 32, move_x, move_y)
             _drain_for(master, 0.10)
-            os.write(master, f"\x1b[<0;{move_col};{move_row}m".encode())
+            _send_mouse(master, 0, move_x, move_y, release=True)
             _drain_for(master, 0.25)
-            os.write(master, b"hHcc")
-            _drain_for(master, 0.90)
+            after_drag = json.loads(report.read_text(encoding="utf-8"))
+            observed["drag"] = after_drag["geometry"]["x"] < initial["region"]["x"]
+
+            region = after_drag["region"]
+            corner_x, corner_y = (
+                region["x"] + region["width"] - 1,
+                region["y"] + region["height"] - 1,
+            )
+            _send_mouse(master, 0, corner_x, corner_y)
+            _drain_for(master, 0.10)
+            _send_mouse(master, 32, corner_x + 5, corner_y + 2)
+            _drain_for(master, 0.10)
+            _send_mouse(master, 0, corner_x + 5, corner_y + 2, release=True)
+            _drain_for(master, 0.30)
+            after_resize = json.loads(report.read_text(encoding="utf-8"))
+            observed["mouse_resize"] = (
+                after_resize["geometry"]["width"] > after_drag["geometry"]["width"]
+                and after_resize["geometry"]["height"]
+                > after_drag["geometry"]["height"]
+            )
+
+            fold_x, fold_y = _center(after_resize["controls"]["persona-buddy-collapse"])
+            _send_mouse(master, 0, fold_x, fold_y)
+            _drain_for(master, 0.10)
+            _send_mouse(master, 0, fold_x, fold_y, release=True)
+            _drain_for(master, 0.35)
+            folded = json.loads(report.read_text(encoding="utf-8"))
+            observed["fold"] = folded["collapsed"]
+            reopen_x, reopen_y = _center(folded["controls"]["persona-buddy-collapse"])
+            _send_mouse(master, 0, reopen_x, reopen_y)
+            _drain_for(master, 0.10)
+            _send_mouse(master, 0, reopen_x, reopen_y, release=True)
+            _drain_for(master, 0.35)
+            reopened = json.loads(report.read_text(encoding="utf-8"))
+            observed["reopen"] = not reopened["collapsed"]
+
+            close_x, close_y = _center(reopened["controls"]["persona-buddy-close"])
+            _send_mouse(master, 0, close_x, close_y)
+            _drain_for(master, 0.10)
+            _send_mouse(master, 0, close_x, close_y, release=True)
+            close_output = _drain_for(master, 0.60)
+            closed = json.loads(report.read_text(encoding="utf-8"))
+            observed["close"] = not closed["open"] and not closed["view_present"]
+            if process.poll() is not None:
+                raise RuntimeError(close_output.decode("utf-8", errors="replace"))
+            os.write(master, b"o")
+            _drain_for(master, 0.60)
+
+            os.write(master, b"m")
+            _drain_for(master, 0.35)
             modal_report = json.loads(report.read_text(encoding="utf-8"))
             modal_region = modal_report["modal_region"]
             modal_col = modal_region["x"] + max(1, modal_region["width"] // 2)
             modal_row = modal_region["y"] + max(1, modal_region["height"] // 2)
-            os.write(master, f"\x1b[<0;{modal_col};{modal_row}M".encode())
+            _send_mouse(master, 0, modal_col, modal_row)
             _drain_for(master, 0.10)
-            os.write(master, f"\x1b[<0;{modal_col};{modal_row}m".encode())
+            _send_mouse(master, 0, modal_col, modal_row, release=True)
             _drain_for(master, 0.55)
+            navigated = json.loads(report.read_text(encoding="utf-8"))
+            observed["navigation_view"] = navigated["view_present"]
             _set_size(master, 60, 18)
             process.send_signal(signal.SIGWINCH)
             _drain_for(master, 0.55)
+            resized = json.loads(report.read_text(encoding="utf-8"))
+            observed["viewport_clamp"] = resized["viewport_clamped"]
         else:
             _drain_for(master, 0.30)
         deadline = time.monotonic() + _TIMEOUT_SECONDS
@@ -365,6 +458,7 @@ def _run_child(
             raise RuntimeError(f"persona_buddy_terminal_child_failed\n{tail}")
         payload = json.loads(report.read_text(encoding="utf-8"))
         payload["initial_region"] = initial["region"]
+        payload["observed"] = observed
         if process.poll() is None:
             process.terminate()
             process.wait(timeout=2)
@@ -376,7 +470,7 @@ def _run_child(
             process.wait(timeout=2)
 
 
-def _parent() -> int:
+def _parent(report_output: Path | None = None) -> int:
     if os.name == "nt":
         print("SKIP persona_buddy_terminal windows_no_posix_pty")
         return 0
@@ -390,6 +484,9 @@ def _parent() -> int:
             report=isolated / "first.json",
             drive=True,
         )
+        restored = json.loads(preferences.read_text(encoding="utf-8"))
+        restored["open"] = True
+        preferences.write_text(json.dumps(restored, sort_keys=True), encoding="utf-8")
         second = _run_child(
             root=root,
             preferences=preferences,
@@ -397,25 +494,28 @@ def _parent() -> int:
             drive=False,
         )
         checks = {
-            "drag": (
-                first["geometry"]["x"] <= first["initial_region"]["x"] - 5
-                and first["geometry"]["y"] <= first["initial_region"]["y"] - 3
-            ),
-            "resize_keys": first["geometry"]["width"] != 28,
+            "drag": first["observed"]["drag"],
+            "mouse_resize": first["observed"]["mouse_resize"],
+            "fold": first["observed"]["fold"],
+            "reopen": first["observed"]["reopen"],
+            "close": first["observed"]["close"],
             "focus": first["focus_guard"],
             "modal_hit_testing": first["modal_hits"] >= 1,
             "navigation": (
                 first["navigation_count"] == 1
                 and first["screen_generation"] >= 1
-                and first["view_present"]
+                and first["observed"]["navigation_view"]
             ),
-            "viewport_clamp": first["viewport_clamped"],
+            "viewport_clamp": first["observed"]["viewport_clamp"],
             "capture_release": first["capture_released"],
-            "paint": first["painted"],
+            "paint": first["observed"]["paint"],
             "geometry_restore": second["loaded_geometry"] == first["geometry"],
-            "open_and_expanded": first["open"] and not first["collapsed"],
         }
         result = {"checks": checks, "first": first, "second": second}
+        if report_output is not None:
+            report_output.write_text(
+                json.dumps(result, sort_keys=True), encoding="utf-8"
+            )
         print(json.dumps(result, sort_keys=True))
         if not all(checks.values()):
             print("FAIL persona_buddy_terminal")
@@ -429,12 +529,13 @@ def main() -> int:
     parser.add_argument("--child", action="store_true")
     parser.add_argument("preferences", nargs="?", type=Path)
     parser.add_argument("report", nargs="?", type=Path)
+    parser.add_argument("--report", dest="parent_report", type=Path)
     arguments = parser.parse_args()
     if arguments.child:
         if arguments.preferences is None or arguments.report is None:
             return 2
         return _child(arguments.preferences, arguments.report)
-    return _parent()
+    return _parent(arguments.parent_report)
 
 
 if __name__ == "__main__":

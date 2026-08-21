@@ -14,6 +14,8 @@ from pathlib import Path
 
 import pytest
 from PIL import Image
+from textual.app import ComposeResult
+from textual.screen import Screen
 
 import tldw_chatbook.Persona_Buddy.controller as buddy_controller_module
 from tldw_chatbook.Character_Chat.local_character_persona_service import (
@@ -40,6 +42,10 @@ from tldw_chatbook.Persona_Visual.runtime import (
     PersonaVisualPortrait,
     PersonaVisualResolution,
     PersonaVisualResolvedFrame,
+)
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
+from tldw_chatbook.Widgets.Persona_Widgets.persona_buddy_widget import (
+    PersonaBuddyWidget,
 )
 
 
@@ -243,6 +249,47 @@ async def test_resolve_selected_local_persona_from_real_active_binding(
         )
         for frame in visual.frames
     )
+
+
+@pytest.mark.asyncio
+async def test_mounted_widget_resolves_real_persisted_local_persona_visual(
+    tmp_path: Path,
+) -> None:
+    controller, db, graph = _runtime(tmp_path)
+    assert graph is not None
+
+    class BuddyScreen(Screen):
+        def compose(self) -> ComposeResult:
+            yield PersonaBuddyWidget(
+                controller=controller,
+                view_generation=1,
+                reconcile=lambda: None,
+            )
+
+    class BuddyApp(ConsolidatedCSSApp):
+        CSS_PATH = BUNDLED_STYLESHEET
+
+        async def on_mount(self) -> None:
+            await self.push_screen(BuddyScreen())
+
+    app = BuddyApp()
+    try:
+        async with app.run_test(size=(80, 24)):
+            buddy = app.screen.query_one(PersonaBuddyWidget)
+            for _ in range(200):
+                visual = controller.snapshot().visual
+                if visual is not None and visual.available and visual.frames:
+                    break
+                await asyncio.sleep(0.01)
+            else:
+                raise AssertionError("mounted Buddy never resolved its visual")
+            assert buddy._snapshot.visual.frames
+            assert "Visual pending" not in "\n".join(
+                strip.text for strip in app.screen._compositor.render_strips()
+            )
+    finally:
+        await controller.shutdown()
+        db.close_connection()
 
 
 @pytest.mark.parametrize("case", ("disabled", "deleted", "missing", "unbound"))

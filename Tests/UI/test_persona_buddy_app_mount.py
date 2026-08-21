@@ -145,3 +145,67 @@ async def test_navigation_replaces_screen_local_view_generation():
         second = replacement.query_one(PersonaBuddyWidget)
         assert second is not first
         assert not first.is_attached
+
+        before = app.persona_buddy_controller.current_preferences()
+        stale_before = first._working_preferences
+        await first.close_and_persist()
+        first.action_toggle_collapse()
+        first.action_move_left()
+        await asyncio.sleep(0.05)
+        assert first._working_preferences == stale_before
+        assert app.persona_buddy_controller.current_preferences() == before
+        assert replacement.query_one(PersonaBuddyWidget) is second
+
+
+@pytest.mark.asyncio
+async def test_cancelled_delayed_mount_cleans_only_the_created_view(monkeypatch):
+    app = _BuddyApp(PersonaBuddyPreferences())
+    async with app.run_test(size=(100, 30)):
+        screen = app.screen
+        preferences = _enabled_preferences()
+        await app.persona_buddy_controller.update_preferences(preferences)
+        started = asyncio.Event()
+        release = asyncio.Event()
+        original_mount = screen.mount
+
+        async def delayed_mount(widget, *args, **kwargs):
+            started.set()
+            await release.wait()
+            return await original_mount(widget, *args, **kwargs)
+
+        monkeypatch.setattr(screen, "mount", delayed_mount)
+        reconcile = asyncio.create_task(screen.reconcile_persona_buddy_view())
+        await asyncio.wait_for(started.wait(), timeout=1)
+        reconcile.cancel()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await reconcile
+        assert not list(screen.query(PersonaBuddyWidget))
+        assert screen._persona_buddy_view is None
+
+
+@pytest.mark.asyncio
+async def test_delayed_mount_with_superseded_generation_removes_stale_created_view(
+    monkeypatch,
+):
+    app = _BuddyApp(PersonaBuddyPreferences())
+    async with app.run_test(size=(100, 30)):
+        screen = app.screen
+        await app.persona_buddy_controller.update_preferences(_enabled_preferences())
+        started = asyncio.Event()
+        release = asyncio.Event()
+        original_mount = screen.mount
+
+        async def delayed_mount(widget, *args, **kwargs):
+            started.set()
+            await release.wait()
+            return await original_mount(widget, *args, **kwargs)
+
+        monkeypatch.setattr(screen, "mount", delayed_mount)
+        reconcile = asyncio.create_task(screen.reconcile_persona_buddy_view())
+        await asyncio.wait_for(started.wait(), timeout=1)
+        screen._persona_buddy_view_generation += 1
+        release.set()
+        await reconcile
+        assert not list(screen.query(PersonaBuddyWidget))
+        assert screen._persona_buddy_view is None

@@ -218,7 +218,9 @@ class BaseAppScreen(Screen):
         # defaults to ``screen_name``, see ``__init__``), not ``screen_name``
         # directly, so a screen can opt out of a misleading destination
         # highlight without touching every other screen's behavior.
-        yield MainNavigationBar(active=self.nav_bar_active, active_route=self.nav_bar_active)
+        yield MainNavigationBar(
+            active=self.nav_bar_active, active_route=self.nav_bar_active
+        )
 
         # Content area below navigation
         with Container(id="screen-content"):
@@ -401,19 +403,15 @@ class BaseAppScreen(Screen):
         )
 
         async with self._persona_buddy_reconcile_lock:
-            self._persona_buddy_view_generation += 1
-            generation = self._persona_buddy_view_generation
             controller = getattr(self.app_instance, "persona_buddy_controller", None)
             active = self.is_attached and self.app.screen is self
             snapshot = controller.snapshot() if controller is not None else None
-            visual = getattr(snapshot, "visual", None)
             desired = bool(
                 active
                 and snapshot is not None
                 and snapshot.enabled
                 and snapshot.open
                 and snapshot.selection is not None
-                and not (visual is not None and not visual.available)
             )
 
             current = self._persona_buddy_view
@@ -422,6 +420,7 @@ class BaseAppScreen(Screen):
                 self._persona_buddy_view = None
 
             if not desired:
+                self._persona_buddy_view_generation += 1
                 if current is not None:
                     current.release_interaction_capture()
                     await current.remove()
@@ -433,19 +432,39 @@ class BaseAppScreen(Screen):
                 current.refresh_from_controller()
                 return
 
+            self._persona_buddy_view_generation += 1
+            generation = self._persona_buddy_view_generation
             view = PersonaBuddyWidget(
                 controller=controller,
                 view_generation=generation,
                 reconcile=self.app_instance.reconcile_persona_buddy_view,
+                is_current=lambda candidate: bool(
+                    generation == self._persona_buddy_view_generation
+                    and self._persona_buddy_view is candidate
+                    and self.is_attached
+                    and self.app.screen is self
+                ),
             )
-            await self.mount(view)
+            self._persona_buddy_view = view
+            try:
+                await self.mount(view)
+            except BaseException:
+                if self._persona_buddy_view is view:
+                    self._persona_buddy_view = None
+                if view.is_attached:
+                    view.release_interaction_capture()
+                    await view.remove()
+                raise
             still_current = bool(
                 generation == self._persona_buddy_view_generation
+                and self._persona_buddy_view is view
                 and self.is_attached
                 and self.app.screen is self
             )
             if not still_current:
                 view.release_interaction_capture()
-                await view.remove()
+                if view.is_attached:
+                    await view.remove()
+                if self._persona_buddy_view is view:
+                    self._persona_buddy_view = None
                 return
-            self._persona_buddy_view = view

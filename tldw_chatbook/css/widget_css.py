@@ -916,15 +916,9 @@ def render_stylesheets(
         for stream, text in enumerate(split):
             if not text.strip():
                 continue
-            # A lifted block whose closing `"""` is indented ends with a
-            # whitespace-only line (the quote's own indentation). Emitting
-            # that verbatim put trailing whitespace in a GENERATED file,
-            # which any editor/linter with strip-on-save silently removes --
-            # desyncing the committed sheet from what this builder produces
-            # and failing the CSS Bundle Guard for everyone. (Happened on
-            # dev: `PersonaVisualCustomStateDialog`'s block, one 4-space
-            # line, red guard on every PR until regenerated.) Normalize the
-            # block's tail so generated output is canonical and cannot be
-            # "corrected" into a desync.
-            rendered[stream] += banner + text.rstrip() + "\n"
+            # Class-body indentation appears on otherwise blank lines before
+            # a closing triple quote. Never publish that Python indentation as
+            # trailing whitespace in generated CSS.
+            text = "\n".join(line.rstrip() for line in text.splitlines()) + "\n"
+            rendered[stream] += banner + text
     return rendered[0], rendered[1]

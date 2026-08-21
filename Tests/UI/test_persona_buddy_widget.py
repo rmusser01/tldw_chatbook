@@ -13,7 +13,7 @@ from textual.app import ComposeResult
 from textual.containers import Container
 from textual.geometry import Offset
 from textual.screen import ModalScreen, Screen
-from textual.widgets import Input, Static
+from textual.widgets import Button, Input, Static
 
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from tldw_chatbook.Persona_Buddy import (
@@ -47,6 +47,8 @@ class _FakeController:
         collapsed: bool = False,
         animate: bool = False,
         frames: tuple[str, ...] = ("BUDDY-A",),
+        durations: tuple[int, ...] | None = None,
+        loop: bool = True,
     ) -> None:
         self.preferences = PersonaBuddyPreferences(
             enabled=True,
@@ -61,8 +63,10 @@ class _FakeController:
         )
         self.generation = 1
         self.persisted: list[PersonaBuddyPreferences] = []
+        durations = durations or tuple(20 for _ in frames)
         prepared = tuple(
-            SimpleNamespace(renderable=Text(label), duration_ms=20) for label in frames
+            SimpleNamespace(renderable=Text(label), duration_ms=duration)
+            for label, duration in zip(frames, durations, strict=True)
         )
         self.visual = PersonaBuddyVisualSnapshot(
             available=True,
@@ -77,7 +81,7 @@ class _FakeController:
             cache_identity=None,
             frames=prepared,  # type: ignore[arg-type]
             frame_rate=50.0,
-            loop=True,
+            loop=loop,
             animate=animate,
         )
 
@@ -104,6 +108,10 @@ class _FakeController:
         self.persisted.append(preferences)
         return self.snapshot()
 
+    async def resolve_current_visual(self, *, cols: int, lines: int):
+        assert cols > 0 and lines > 0
+        return self.visual
+
 
 class _BuddyScreen(Screen):
     def __init__(self, controller: _FakeController) -> None:
@@ -120,6 +128,25 @@ class _BuddyScreen(Screen):
             yield Input(id="focus-probe")
             yield Static("FLOW-END", id="flow-end")
         yield self.buddy
+
+
+class _BlockingResolutionController(_FakeController):
+    def __init__(self) -> None:
+        super().__init__()
+        self.resolve_started = asyncio.Event()
+        self.resolve_release = asyncio.Event()
+        self.active_resolves = 0
+        self.max_active_resolves = 0
+
+    async def resolve_current_visual(self, *, cols: int, lines: int):
+        self.active_resolves += 1
+        self.max_active_resolves = max(self.max_active_resolves, self.active_resolves)
+        self.resolve_started.set()
+        try:
+            await self.resolve_release.wait()
+            return self.visual
+        finally:
+            self.active_resolves -= 1
 
 
 class _BuddyApp(ConsolidatedCSSApp):
@@ -141,9 +168,9 @@ def _compositor_text(screen: Screen) -> str:
     return "\n".join(strip.text for strip in screen._compositor.render_strips())
 
 
-def _mouse(event_type, *, x: int, y: int, button: int = 1):
+def _mouse(event_type, *, x: int, y: int, button: int = 1, widget=None):
     return event_type(
-        None,
+        widget,
         x,
         y,
         0,
@@ -180,12 +207,18 @@ async def test_drag_and_resize_are_viewport_bounded_and_persist_once():
     async with app.run_test(size=(80, 24)):
         buddy = app.screen.query_one(PersonaBuddyWidget)
         await _wait_until(lambda: buddy.region.width == 28)
+        drag_handle = buddy.query_one("#persona-buddy-drag-handle", Static)
         initial_geometry = buddy._clamped_geometry(controller.preferences.geometry)
         assert initial_geometry.x + initial_geometry.width <= app.size.width
         assert initial_geometry.y + initial_geometry.height <= app.size.height
 
         buddy.on_mouse_down(
-            _mouse(events.MouseDown, x=buddy.region.x + 2, y=buddy.region.y)
+            _mouse(
+                events.MouseDown,
+                x=drag_handle.region.x + 1,
+                y=drag_handle.region.y + 1,
+                widget=drag_handle,
+            )
         )
         await asyncio.sleep(0)
         assert app.screen.focused is buddy
@@ -250,6 +283,32 @@ async def test_tiny_viewport_uses_labelled_compact_control():
 
 
 @pytest.mark.asyncio
+async def test_labelled_buttons_click_without_starting_drag_and_reopen_collapsed():
+    controller = _FakeController()
+    app = _BuddyApp(controller)
+    async with app.run_test(size=(80, 24)) as pilot:
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: buddy.region.width == 28)
+        await pilot.click("#persona-buddy-collapse")
+        await _wait_until(lambda: controller.preferences.collapsed)
+        assert app.mouse_captured is None
+        reopen = buddy.query_one("#persona-buddy-collapse", Button)
+        assert str(reopen.label) == "Open Buddy"
+        assert reopen.display
+        await pilot.pause(0.25)
+        target, _ = app.screen.get_widget_at(
+            reopen.region.x + reopen.region.width // 2,
+            reopen.region.y + reopen.region.height // 2,
+        )
+        assert target is reopen
+        await pilot.click("#persona-buddy-collapse")
+        await _wait_until(lambda: not controller.preferences.collapsed)
+        await pilot.click("#persona-buddy-close")
+        await _wait_until(lambda: not controller.preferences.open)
+        assert app.mouse_captured is None
+
+
+@pytest.mark.asyncio
 async def test_state_repaint_never_steals_focus():
     controller = _FakeController()
     app = _BuddyApp(controller)
@@ -265,13 +324,23 @@ async def test_state_repaint_never_steals_focus():
 
 @pytest.mark.asyncio
 async def test_animation_cells_change_then_freeze_hidden_collapsed():
-    controller = _FakeController(animate=True, frames=("FRAME-A", "FRAME-B"))
+    controller = _FakeController(
+        animate=True,
+        frames=("FRAME-A", "FRAME-B"),
+        durations=(300, 200),
+        loop=False,
+    )
     app = _BuddyApp(controller)
     async with app.run_test(size=(80, 24)):
         buddy = app.screen.query_one(PersonaBuddyWidget)
         await _wait_until(lambda: "FRAME-A" in _compositor_text(app.screen))
+        buddy._next_frame_at = 0
         buddy.advance_frame()
         await _wait_until(lambda: "FRAME-B" in _compositor_text(app.screen))
+        assert buddy._next_frame_at - asyncio.get_running_loop().time() > 0.1
+        buddy._next_frame_at = 0
+        buddy.advance_frame()
+        assert buddy.frame_index == 1
 
         controller.preferences = replace(controller.preferences, collapsed=True)
         buddy.refresh_from_controller()
@@ -295,6 +364,22 @@ async def test_reduced_motion_paints_static_frame():
         buddy.advance_frame()
         assert buddy.frame_index == 0
         assert "STATIC-A" in _compositor_text(app.screen)
+
+
+@pytest.mark.asyncio
+async def test_resolution_is_single_owned_and_stale_completion_cannot_repaint():
+    controller = _BlockingResolutionController()
+    app = _BuddyApp(controller)
+    async with app.run_test(size=(80, 24)):
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await asyncio.wait_for(controller.resolve_started.wait(), timeout=1)
+        await asyncio.sleep(0.15)
+        assert controller.max_active_resolves == 1
+        previous = buddy._snapshot
+        buddy._current_view = lambda _candidate: False
+        controller.resolve_release.set()
+        await asyncio.sleep(0.05)
+        assert buddy._snapshot is previous
 
 
 @pytest.mark.asyncio
@@ -323,7 +408,12 @@ async def test_capture_is_released_when_widget_unmounts_mid_drag():
         buddy = app.screen.query_one(PersonaBuddyWidget)
         await _wait_until(lambda: buddy.region.width == 28)
         buddy.on_mouse_down(
-            _mouse(events.MouseDown, x=buddy.region.x + 1, y=buddy.region.y)
+            _mouse(
+                events.MouseDown,
+                x=buddy.query_one("#persona-buddy-drag-handle", Static).region.x + 1,
+                y=buddy.query_one("#persona-buddy-drag-handle", Static).region.y + 1,
+                widget=buddy.query_one("#persona-buddy-drag-handle", Static),
+            )
         )
         assert app.mouse_captured is buddy
         await buddy.remove()
