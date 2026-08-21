@@ -5459,6 +5459,18 @@ ChatScreen.-focus #console-workbench-header {
     margin: 1 0 0 0;
 }
 
+/* TASK-18060 task 5 / TASK-19192: cross-turn "Changed files" section --
+   sibling of the Scope row above, run inspector below. Width lives here
+   (the sibling id-rule convention: #console-retrieval-scope-row,
+   #console-staged-context-tray) instead of inline at the right_rail mount
+   site; height/min-height come from the widget's own DEFAULT_CSS, and the
+   margin/padding rhythm from the shared .console-inspector-context-section
+   class added at mount. */
+#console-changed-files-section {
+    width: 100%;
+    min-width: 0;
+}
+
 .console-retrieval-scope-label {
     width: 1fr;
     min-width: 0;
