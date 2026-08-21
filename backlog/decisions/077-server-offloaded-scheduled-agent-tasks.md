@@ -1,7 +1,8 @@
-# ADR-076: Server-offloaded scheduled agent tasks — execution seam and result pass-back
+# ADR-077: Server-offloaded scheduled agent tasks — execution seam and result pass-back
 
 Status: Proposed
 Date: 2026-08-19
+Renumbered: 072 → 076 → 077 (072–075 claimed by concurrent branches at the PR #1832 merge; 076 proven claimed earlier by `076-library-lifecycle-progressive-disclosure` — see TASK-19610 for the trace)
 Related Task: [TASK-18940](../tasks/task-18940%20-%20Server-offloaded-scheduled-agent-tasks-execution-seam.md)
 Amends: ADR-018 (its "execution remains `execution_unavailable` until server-side automation execution is integrated" clause)
 Related client work: ADR-018 (local/server hybrid storage + sync), TASK-18937 (missed-fire accounting), TASK-18938 (Run-now), TASK-18939 (execution timeouts)

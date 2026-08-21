@@ -1,8 +1,9 @@
 ---
 id: TASK-19610
 title: 'Renumber duplicate ADR-076: server-offload ADR moves to 077 (later claimant)'
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@robert'
 created_date: '2026-08-21 11:30'
 updated_date: '2026-08-21 11:30'
 labels:
@@ -33,11 +34,11 @@ Scope of the renumber (grep both forms — per the ADR-collision lesson in this 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Exactly one ADR numbered 076 remains on dev (library-lifecycle); `backlog/decisions/` contains no duplicate numbers (verified with a sorted listing assertion or equivalent check)
-- [ ] #2 The server-offload ADR exists as `077-server-offloaded-scheduled-agent-tasks.md` with a matching `# ADR-077:` header, and its README row links the new filename
-- [ ] #3 Every reference to the server-offload ADR resolves to 077 (TASK-18940 plan section records the renumber chain 072→076→077); no library-ADR reference was modified (before/after grep diff scoped to `076-server-offloaded`/`ADR-077`-after contexts)
-- [ ] #4 The library-lifecycle ADR gains a README index row (it is currently unindexed)
-- [ ] #5 The renumber commit message states the provenance (add-commit ids and timestamps) so the board records why the later claimant moved
+- [x] #1 Exactly one ADR numbered 076 remains on dev (library-lifecycle); `backlog/decisions/` contains no duplicate numbers (verified with a sorted listing assertion or equivalent check)
+- [x] #2 The server-offload ADR exists as `077-server-offloaded-scheduled-agent-tasks.md` with a matching `# ADR-077:` header, and its README row links the new filename
+- [x] #3 Every reference to the server-offload ADR resolves to 077 (TASK-18940 plan section records the renumber chain 072→076→077); no library-ADR reference was modified (before/after grep diff scoped to `076-server-offloaded`/`ADR-077`-after contexts)
+- [x] #4 The library-lifecycle ADR gains a README index row (it is currently unindexed)
+- [x] #5 The renumber commit message states the provenance (add-commit ids and timestamps) so the board records why the later claimant moved
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -53,3 +54,14 @@ Reason: hygiene renumber of an existing Proposed ADR; the ADR's content and stat
 4. Scoped greps to confirm no stragglers and no library-side edits
 5. Commit with the provenance in the message
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+Executed 2026-08-21 on `fix/adr-076-renumber` (isolated worktree; the shared hermes-parity-audit worktree held a parallel session's uncommitted work and was left untouched).
+
+- `git mv` 076→077 server-offload ADR; header updated; a `Renumbered:` line in the frontmatter records the full 072→076→077 chain with causes.
+- README: server-offload row now links 077; the library-lifecycle ADR gained its previously-missing row (summary taken verbatim from its Decision section, status Accepted from its header).
+- TASK-18940's plan references carry the chain note; its step 1 says ADR-077.
+- Scoped sweeps per the lesson (slug + both header forms): every remaining `ADR-076` is library-side (tasks 19022–19026, untouched by design), the lessons file's incident history, or this task's own instruction text. The lesson additionally gained the sequel sentence — the renumber target itself collided, proving the check must cover the number being renamed TO.
+- Also in this PR (separate commit): `task-18300`'s frontmatter id was lowercase (`task-18300`), redding the duplicate-ID guard for every PR since it landed; fixed to `TASK-18300` (guard verified green locally).
+- Verification: `test_backlog_task_frontmatter_ids_are_unique` passes; `backlog/decisions/` has no duplicate numbers (sorted listing: one each 070–077).

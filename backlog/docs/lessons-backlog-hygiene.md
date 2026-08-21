@@ -530,7 +530,11 @@ branch (PR #1832) drafted its server-offload ADR as 072 on 2026-08-19 and discov
 the collision only as a merge conflict in `backlog/decisions/README.md` — by merge
 time on 2026-08-21, dev had claimed 072 (checkpoint harness), 073, 074, AND 075 from
 other branches, forcing a rename to ADR-076 (file, `# ADR-NNN` header, README row,
-and the owning task's plan references) mid-merge.
+and the owning task's plan references) mid-merge. The thesis then recurred on
+itself: 076 was ALREADY claimed (library-lifecycle landed `1c567f3ae` at 14:24 the
+same day, four hours before the 18:44 renumber), caught only the next day, and the
+ADR renumbered again to 077 (TASK-19610) — the merge-time check must cover the
+number being renamed TO, not just the one being renamed FROM.
 
 **What to do.** ADR numbers have exactly the same collision dynamics as task IDs
 (see "assign against origin/dev" above), but no CI guard. Treat the drafted number
