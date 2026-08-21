@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 from textual.app import ComposeResult
-from textual.widgets import Button, OptionList, Static
+from textual.widgets import Button, Input, OptionList, Select, Static
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Persona_Visual.authoring import (
@@ -16,14 +16,15 @@ from tldw_chatbook.Widgets.Persona_Widgets.persona_profile_editor_widget import 
     PersonaProfileEditorWidget,
 )
 from tldw_chatbook.Widgets.Persona_Widgets.personas_persona_visual_pack_widget import (
+    PersonasPersonaVisualPackWidget,
     PersonaVisualAddCustomRequested,
     PersonaVisualCancelRequested,
     PersonaVisualClearRequested,
+    PersonaVisualCustomStateDialog,
     PersonaVisualImportRequested,
     PersonaVisualPreviewRequested,
     PersonaVisualReplaceRequested,
     PersonaVisualSaveRequested,
-    PersonasPersonaVisualPackWidget,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -188,3 +189,48 @@ async def test_profile_editor_embeds_pack_section_and_compact_layout_keeps_actio
             "#personas-persona-visual-import", Button
         ).label.plain == ("Import Pack…")
         assert not getattr(type(pack), "BINDINGS", ())
+
+
+async def test_profile_editor_visual_session_token_changes_on_load_and_save():
+    class EditorApp(ConsolidatedCSSApp):
+        def compose(self) -> ComposeResult:
+            yield PersonaProfileEditorWidget()
+
+    async with EditorApp().run_test() as pilot:
+        editor = pilot.app.query_one(PersonaProfileEditorWidget)
+        initial = editor.persona_visual_session_token
+        editor.load_persona({"id": "p-1", "version": 2, "name": "Archivist"})
+        loaded = editor.persona_visual_session_token
+        editor.mark_saved({"id": "p-1", "version": 3, "name": "Archivist"})
+
+        assert loaded == initial + 1
+        assert editor.persona_visual_session_token == loaded + 1
+
+
+async def test_custom_state_dialog_returns_plain_typed_values():
+    class DialogApp(ConsolidatedCSSApp):
+        result: tuple[str, str, str] | None = None
+
+        def on_mount(self) -> None:
+            self.push_screen(
+                PersonaVisualCustomStateDialog(),
+                callback=lambda value: setattr(self, "result", value),
+            )
+
+    async with DialogApp().run_test() as pilot:
+        await pilot.pause()
+        pilot.app.screen.query_one(
+            "#persona-visual-custom-key", Input
+        ).value = "deep_focus"
+        pilot.app.screen.query_one(
+            "#persona-visual-custom-label", Input
+        ).value = "[bold]Deep focus[/bold]"
+        pilot.app.screen.query_one("#persona-visual-custom-kind", Select).value = "mood"
+        await pilot.click("#persona-visual-custom-confirm")
+        await pilot.pause()
+
+        assert pilot.app.result == (
+            "deep_focus",
+            "[bold]Deep focus[/bold]",
+            "mood",
+        )

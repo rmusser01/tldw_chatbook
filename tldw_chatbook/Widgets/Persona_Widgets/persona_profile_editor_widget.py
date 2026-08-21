@@ -93,6 +93,7 @@ class PersonaProfileEditorWidget(Container):
         # interacted with it. Set True on a genuine field edit or a Save
         # click; reset on every load.
         self._user_touched: bool = False
+        self._persona_visual_session_token = 0
 
     def compose(self) -> ComposeResult:
         yield Static("Persona Editor", classes="destination-section")
@@ -179,6 +180,7 @@ class PersonaProfileEditorWidget(Container):
         CCPPersonaHandler calls this method when it queries ``#ccp-persona-editor-view``
         and finds a ``load_persona`` attribute (see ccp_persona_handler._load_editor).
         """
+        self._persona_visual_session_token += 1
         self._loading = True
         try:
             self.set_runtime_source(runtime_source or self._runtime_source)
@@ -243,6 +245,7 @@ class PersonaProfileEditorWidget(Container):
             record: The just-persisted persona record (carries the
                 incremented optimistic-lock ``version``).
         """
+        self._persona_visual_session_token += 1
         self._persona_id = str(record.get("id", "")) or self._persona_id
         self._version = record.get("version", self._version)
         if self._runtime_source == "local" and self._persona_id is not None:
@@ -250,6 +253,12 @@ class PersonaProfileEditorWidget(Container):
         self._loaded_snapshot = self._form_snapshot()
         self._dirty_posted = False
         self.query_one("#personas-editor-validation", Static).update("")
+
+    @property
+    def persona_visual_session_token(self) -> int:
+        """Return the identity of the currently loaded visual editor session."""
+
+        return self._persona_visual_session_token
 
     def collect(self) -> Dict[str, Any]:
         """Return the current form values as a dict.

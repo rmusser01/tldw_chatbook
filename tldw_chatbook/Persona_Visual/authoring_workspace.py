@@ -33,7 +33,6 @@ from .contracts import (
     MAX_FRAMES_PER_ANIMATION,
 )
 
-
 _STATE = re.compile(r"[a-z][a-z0-9_.:-]{0,95}\Z")
 _MARKER_NAME = ".persona-visual-authoring"
 _FORMATS = {
@@ -72,7 +71,20 @@ class PersonaVisualAuthoringWorkspace:
     relative_root: str
     identity: tuple[int, int] = field(repr=False)
     secret: str = field(repr=False)
-    asset_names: tuple[str, ...] = ()
+    _assets: tuple[_WorkspaceAsset, ...] = field(default=(), repr=False)
+
+    @property
+    def asset_names(self) -> tuple[str, ...]:
+        """Return the bounded path-free file inventory."""
+
+        return tuple(asset.name for asset in self._assets)
+
+
+@dataclass(frozen=True, slots=True)
+class _WorkspaceAsset:
+    name: str
+    identity: tuple[int, int, int, int, int]
+    sha256: str
 
 
 def create_persona_visual_authoring_workspace(
@@ -223,10 +235,28 @@ def cleanup_persona_visual_authoring_workspace(
         expected = set(workspace.asset_names)
         if set(os.listdir(assets_fd)) != expected:
             return False
-        for asset_name in workspace.asset_names:
-            metadata = os.stat(asset_name, dir_fd=assets_fd, follow_symlinks=False)
-            if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
-                return False
+        for asset in workspace._assets:
+            descriptor = os.open(
+                asset.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=assets_fd
+            )
+            try:
+                opened_asset = os.fstat(descriptor)
+                named_asset = os.stat(
+                    asset.name, dir_fd=assets_fd, follow_symlinks=False
+                )
+                if (
+                    not _regular_file(opened_asset)
+                    or not _regular_file(named_asset)
+                    or _file_identity(opened_asset) != asset.identity
+                    or _file_identity(named_asset) != asset.identity
+                    or _digest_fd(descriptor, opened_asset.st_size) != asset.sha256
+                    or _file_identity(os.fstat(descriptor)) != asset.identity
+                ):
+                    return False
+            finally:
+                os.close(descriptor)
+        if set(os.listdir(assets_fd)) != expected:
+            return False
         if set(os.listdir(candidate_fd)) != {_MARKER_NAME, "assets"}:
             return False
         for asset_name in workspace.asset_names:
@@ -259,20 +289,33 @@ def _write_workspace_asset(
     *,
     suffix: str,
 ) -> tuple[PersonaVisualAuthoringWorkspace, PersonaVisualDraftAsset]:
-    candidate = workspace.profile_root / workspace.relative_root
-    current = os.lstat(candidate)
-    if (current.st_dev, current.st_ino) != workspace.identity:
-        raise PersonaVisualAuthoringWorkspaceError(
-            "persona_visual_authoring_staging_failed"
-        )
     name = f"{uuid4().hex}{suffix}"
-    target = candidate / "assets" / name
-    descriptor = os.open(
-        target,
-        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-        0o600,
-    )
+    root_fd = base_fd = candidate_fd = assets_fd = descriptor = -1
     try:
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        root_fd = os.open(workspace.profile_root, flags)
+        visual_fd = os.open("persona_visual", flags, dir_fd=root_fd)
+        os.close(root_fd)
+        root_fd = visual_fd
+        base_fd = os.open("authoring", flags, dir_fd=root_fd)
+        candidate_name = PurePosixPath(workspace.relative_root).name
+        candidate_fd = os.open(candidate_name, flags, dir_fd=base_fd)
+        named_candidate = os.stat(candidate_name, dir_fd=base_fd, follow_symlinks=False)
+        if (
+            (os.fstat(candidate_fd).st_dev, os.fstat(candidate_fd).st_ino)
+            != workspace.identity
+            or (named_candidate.st_dev, named_candidate.st_ino) != workspace.identity
+            or _read_marker(candidate_fd)
+            != _marker(workspace.secret, candidate_name, workspace.identity)
+        ):
+            raise OSError
+        assets_fd = os.open("assets", flags, dir_fd=candidate_fd)
+        descriptor = os.open(
+            name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+            dir_fd=assets_fd,
+        )
         view = memoryview(data)
         while view:
             written = os.write(descriptor, view[:_READ_CHUNK_BYTES])
@@ -280,16 +323,31 @@ def _write_workspace_asset(
                 raise OSError
             view = view[written:]
         os.fsync(descriptor)
+        written_metadata = os.fstat(descriptor)
+        pin = _WorkspaceAsset(
+            name,
+            _file_identity(written_metadata),
+            hashlib.sha256(data).hexdigest(),
+        )
     except Exception:
-        try:
-            os.unlink(target)
-        except OSError:
-            pass
+        if assets_fd >= 0:
+            try:
+                os.unlink(name, dir_fd=assets_fd)
+            except OSError:
+                pass
         raise
     finally:
-        os.close(descriptor)
+        for file_descriptor in (
+            descriptor,
+            assets_fd,
+            candidate_fd,
+            base_fd,
+            root_fd,
+        ):
+            if file_descriptor >= 0:
+                os.close(file_descriptor)
     source_key = f"{workspace.relative_root}/assets/{name}"
-    updated = replace(workspace, asset_names=workspace.asset_names + (name,))
+    updated = replace(workspace, _assets=workspace._assets + (pin,))
     return updated, PersonaVisualDraftAsset(source_key, metadata)
 
 
@@ -353,6 +411,40 @@ def _private_directory(metadata: os.stat_result) -> bool:
         and metadata.st_uid == os.geteuid()
         and stat.S_IMODE(metadata.st_mode) & 0o077 == 0
     )
+
+
+def _regular_file(metadata: os.stat_result) -> bool:
+    return (
+        stat.S_ISREG(metadata.st_mode)
+        and metadata.st_uid == os.geteuid()
+        and stat.S_IMODE(metadata.st_mode) == 0o600
+        and metadata.st_nlink == 1
+    )
+
+
+def _file_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
+def _digest_fd(descriptor: int, expected_size: int) -> str:
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    digest = hashlib.sha256()
+    remaining = expected_size
+    while remaining:
+        chunk = os.read(descriptor, min(_READ_CHUNK_BYTES, remaining))
+        if not chunk:
+            raise ValueError
+        digest.update(chunk)
+        remaining -= len(chunk)
+    if os.read(descriptor, 1):
+        raise ValueError
+    return digest.hexdigest()
 
 
 def _marker(secret: str, name: str, identity: tuple[int, int]) -> str:

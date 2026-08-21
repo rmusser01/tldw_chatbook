@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+from tldw_chatbook.Persona_Visual.assets import PersonaVisualAssetMetadata
 from tldw_chatbook.Persona_Visual.authoring import (
     PersonaVisualAuthoringDraft,
     PersonaVisualDraftAsset,
@@ -22,7 +23,6 @@ from tldw_chatbook.Persona_Visual.authoring_workspace import (
     create_persona_visual_authoring_workspace,
     stage_persona_visual_authoring_asset,
 )
-from tldw_chatbook.Persona_Visual.assets import PersonaVisualAssetMetadata
 
 
 def _png(color=(20, 40, 60, 255)) -> bytes:
@@ -137,6 +137,44 @@ def test_cleanup_deletes_only_the_exact_issued_workspace(tmp_path: Path):
     assert cleanup_persona_visual_authoring_workspace(workspace) is True
     assert not (profile_root / asset.source_storage_key).exists()
     assert unrelated.read_text() == "keep"
+
+
+def test_cleanup_refuses_replaced_staged_file(tmp_path: Path):
+    profile_root = tmp_path / "profile"
+    profile_root.mkdir(mode=0o700)
+    workspace, asset = stage_persona_visual_authoring_asset(
+        create_persona_visual_authoring_workspace(profile_root),
+        _png(),
+        state="idle",
+    )
+    staged = profile_root / asset.source_storage_key
+    staged.unlink()
+    staged.write_bytes(b"unrelated")
+    staged.chmod(0o600)
+
+    assert cleanup_persona_visual_authoring_workspace(workspace) is False
+    assert staged.read_bytes() == b"unrelated"
+
+
+def test_stage_refuses_replaced_assets_directory_without_external_write(
+    tmp_path: Path,
+):
+    profile_root = tmp_path / "profile"
+    profile_root.mkdir(mode=0o700)
+    workspace = create_persona_visual_authoring_workspace(profile_root)
+    candidate = profile_root / workspace.relative_root
+    (candidate / "assets").rename(candidate / "assets-original")
+    external = tmp_path / "external"
+    external.mkdir()
+    (candidate / "assets").symlink_to(external, target_is_directory=True)
+
+    with pytest.raises(
+        PersonaVisualAuthoringWorkspaceError,
+        match="^persona_visual_authoring_asset_invalid$",
+    ):
+        stage_persona_visual_authoring_asset(workspace, _png(), state="idle")
+
+    assert list(external.iterdir()) == []
 
 
 def test_invalid_asset_fails_path_free_without_leaving_a_file(tmp_path: Path):

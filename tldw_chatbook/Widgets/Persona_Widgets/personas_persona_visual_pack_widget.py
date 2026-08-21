@@ -9,8 +9,9 @@ from textual import events, on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
 from textual.message import Message
+from textual.screen import ModalScreen
 from textual.widget import Widget
-from textual.widgets import Button, OptionList, Static
+from textual.widgets import Button, Input, Label, OptionList, Select, Static
 from textual.widgets.option_list import Option
 
 from ...Persona_Visual.authoring import (
@@ -53,6 +54,76 @@ class PersonaVisualSaveRequested(Message):
 
 class PersonaVisualCancelRequested(Message):
     """Ask the screen to cancel work and discard only its isolated draft."""
+
+
+class PersonaVisualCustomStateDialog(ModalScreen[tuple[str, str, str] | None]):
+    """Collect one safe custom state key, visible label, and catalog kind."""
+
+    BUNDLED_CSS = """
+    PersonaVisualCustomStateDialog {
+        align: center middle;
+        background: $background 60%;
+    }
+
+    PersonaVisualCustomStateDialog #persona-visual-custom-dialog {
+        width: 64;
+        max-width: 92%;
+        height: auto;
+        padding: 1 2;
+        border: round $accent;
+        background: $panel;
+    }
+
+    PersonaVisualCustomStateDialog .persona-visual-custom-actions {
+        height: 3;
+        margin-top: 1;
+    }
+
+    PersonaVisualCustomStateDialog Button {
+        width: 1fr;
+        min-width: 0;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="persona-visual-custom-dialog"):
+            yield Label("Custom state key")
+            yield Input(placeholder="operator-ready", id="persona-visual-custom-key")
+            yield Label("Visible label")
+            yield Input(placeholder="Operator ready", id="persona-visual-custom-label")
+            yield Label("Kind")
+            yield Select(
+                (
+                    ("Mood", "mood"),
+                    ("Reaction", "reaction"),
+                    ("Live variant", "live_variant"),
+                    ("Tool variant", "tool_variant"),
+                    ("MCP runtime", "mcp_runtime"),
+                    ("Pack private", "pack_private"),
+                ),
+                value="mood",
+                allow_blank=False,
+                id="persona-visual-custom-kind",
+            )
+            with Horizontal(classes="persona-visual-custom-actions"):
+                yield Button("Add State", id="persona-visual-custom-confirm")
+                yield Button("Cancel", id="persona-visual-custom-dismiss")
+
+    @on(Button.Pressed, "#persona-visual-custom-confirm")
+    def _confirm(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.dismiss(
+            (
+                self.query_one("#persona-visual-custom-key", Input).value,
+                self.query_one("#persona-visual-custom-label", Input).value,
+                str(self.query_one("#persona-visual-custom-kind", Select).value),
+            )
+        )
+
+    @on(Button.Pressed, "#persona-visual-custom-dismiss")
+    def _cancel(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.dismiss(None)
 
 
 PersonaVisualAvailability = Literal[
@@ -443,5 +514,6 @@ __all__ = [
     "PersonaVisualPreviewRequested",
     "PersonaVisualReplaceRequested",
     "PersonaVisualSaveRequested",
+    "PersonaVisualCustomStateDialog",
     "PersonasPersonaVisualPackWidget",
 ]

@@ -2034,6 +2034,33 @@
     }
     
 
+/* ===== WIDGET: PersonaVisualCustomStateDialog (Widgets/Persona_Widgets/personas_persona_visual_pack_widget.py) ===== */
+
+    PersonaVisualCustomStateDialog {
+        align: center middle;
+        background: $background 60%;
+    }
+
+    PersonaVisualCustomStateDialog #persona-visual-custom-dialog {
+        width: 64;
+        max-width: 92%;
+        height: auto;
+        padding: 1 2;
+        border: round $accent;
+        background: $panel;
+    }
+
+    PersonaVisualCustomStateDialog .persona-visual-custom-actions {
+        height: 3;
+        margin-top: 1;
+    }
+
+    PersonaVisualCustomStateDialog Button {
+        width: 1fr;
+        min-width: 0;
+    }
+
+
 /* ===== WIDGET: PersonasPersonaVisualPackWidget (Widgets/Persona_Widgets/personas_persona_visual_pack_widget.py) ===== */
 
     PersonasPersonaVisualPackWidget {
