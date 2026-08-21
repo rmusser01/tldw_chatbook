@@ -729,3 +729,49 @@ def test_prepare_control_worktree_preserves_command_failure(tmp_path: Path) -> N
             control_sha=profile.CONTROL_SHA,
             run_command=fake_run,
         )
+
+
+def _write_fingerprint_tree(root: Path, *, candidate: bool) -> None:
+    tracker = root / "tldw_chatbook/Workspaces/change_turn_tracker.py"
+    tracker.parent.mkdir(parents=True, exist_ok=True)
+    tracker.write_text("class ChangeTurnTracker:\n    def end_turn(self): pass\n")
+    if candidate:
+        (tracker.parent / "change_review_consent.py").write_text(
+            "class ChangeReviewConsentService: pass\n"
+        )
+        (tracker.parent / "change_review_finalization.py").write_text(
+            "class ChangeReviewFinalizationCoordinator:\n    def finalize(self): pass\n"
+        )
+
+
+def test_target_adapter_accepts_only_the_expected_revision_shape(tmp_path: Path) -> None:
+    target_adapter_type = getattr(profile, "TargetAdapter", None)
+    control = tmp_path / "control"
+    candidate = tmp_path / "candidate"
+    _write_fingerprint_tree(control, candidate=False)
+    _write_fingerprint_tree(candidate, candidate=True)
+
+    assert target_adapter_type is not None
+    assert target_adapter_type.for_arm(control, "control").revision_kind == "legacy"
+    assert target_adapter_type.for_arm(candidate, "disabled").revision_kind == "candidate"
+    assert target_adapter_type.for_arm(candidate, "enabled").revision_kind == "candidate"
+    with pytest.raises(RuntimeError, match="target_fingerprint_mismatch"):
+        target_adapter_type.for_arm(candidate, "control")
+    with pytest.raises(RuntimeError, match="target_fingerprint_mismatch"):
+        target_adapter_type.for_arm(control, "enabled")
+
+
+def test_generate_corpus_is_deterministic_and_uses_content_digest(tmp_path: Path) -> None:
+    generate_corpus = getattr(profile, "generate_corpus", None)
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+
+    assert callable(generate_corpus)
+    first_result = generate_corpus(first, file_count=4, file_size=32, blob_size=128)
+    second_result = generate_corpus(second, file_count=4, file_size=32, blob_size=128)
+    assert first_result == second_result
+    assert len(first_result["files"]) == 5
+    assert (first / "measured").is_dir()
+    assert first_result["content_tree_digest"] == profile.content_tree_digest(first)
+    (second / "corpus/0001.bin").write_bytes(b"changed")
+    assert first_result["content_tree_digest"] != profile.content_tree_digest(second)

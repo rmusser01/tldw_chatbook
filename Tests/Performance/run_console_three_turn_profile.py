@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import math
 import json
 import importlib
@@ -111,6 +112,47 @@ class ChildResult:
     status: str
     returncode: int | None
     last_event: dict[str, Any] | None
+
+
+@dataclass(frozen=True)
+class TargetAdapter:
+    """Contain revision-specific Change Review discovery behind one seam."""
+
+    target_root: Path
+    arm: str
+    revision_kind: str
+
+    @classmethod
+    def for_arm(cls, target_root: Path, arm: str) -> "TargetAdapter":
+        root = target_root.resolve()
+        workspace_package = root / "tldw_chatbook" / "Workspaces"
+        tracker = workspace_package / "change_turn_tracker.py"
+        consent = workspace_package / "change_review_consent.py"
+        finalization = workspace_package / "change_review_finalization.py"
+        tracker_text = tracker.read_text(encoding="utf-8") if tracker.is_file() else ""
+        has_legacy_tracker = (
+            "class ChangeTurnTracker" in tracker_text and "def end_turn" in tracker_text
+        )
+        has_candidate = consent.is_file() and finalization.is_file()
+        if arm == "control":
+            if not has_legacy_tracker or has_candidate:
+                raise RuntimeError("target_fingerprint_mismatch:control")
+            kind = "legacy"
+        elif arm in {"disabled", "enabled"}:
+            if not has_legacy_tracker or not has_candidate:
+                raise RuntimeError(f"target_fingerprint_mismatch:{arm}")
+            consent_text = consent.read_text(encoding="utf-8")
+            finalization_text = finalization.read_text(encoding="utf-8")
+            if (
+                "class ChangeReviewConsentService" not in consent_text
+                or "class ChangeReviewFinalizationCoordinator" not in finalization_text
+                or "def finalize" not in finalization_text
+            ):
+                raise RuntimeError(f"target_fingerprint_mismatch:{arm}")
+            kind = "candidate"
+        else:
+            raise RuntimeError("target_fingerprint_mismatch:unknown_arm")
+        return cls(root, arm, kind)
 
 
 def balanced_arm_order(iteration: int) -> tuple[str, str, str]:
@@ -781,3 +823,60 @@ def prepare_control_worktree(
         detail = completed.stderr.strip()
         raise RuntimeError(f"control_worktree_failed:{detail}")
     return target
+
+
+def _fixed_bytes(label: str, size: int) -> bytes:
+    seed = hashlib.sha256(label.encode("utf-8")).digest()
+    repetitions, remainder = divmod(size, len(seed))
+    return seed * repetitions + seed[:remainder]
+
+
+def content_tree_digest(root: Path) -> str:
+    """Hash relative paths, sizes, and file bytes without Git metadata."""
+    digest = hashlib.sha256()
+    for path in sorted(item for item in root.rglob("*") if item.is_file()):
+        relative = path.relative_to(root).as_posix()
+        payload = path.read_bytes()
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(str(len(payload)).encode("ascii"))
+        digest.update(b"\0")
+        digest.update(hashlib.sha256(payload).digest())
+    return digest.hexdigest()
+
+
+def generate_corpus(
+    root: Path,
+    *,
+    file_count: int = 1_024,
+    file_size: int = 4 * 1_024,
+    blob_size: int = 8 * 1_024 * 1_024,
+) -> dict[str, Any]:
+    """Create the fixed synthetic workspace corpus and its portable manifest."""
+    corpus = root / "corpus"
+    measured = root / "measured"
+    corpus.mkdir(parents=True, exist_ok=True)
+    measured.mkdir(parents=True, exist_ok=True)
+    manifest: list[dict[str, Any]] = []
+    for index in range(file_count):
+        path = corpus / f"{index:04d}.bin"
+        payload = _fixed_bytes(f"corpus-{index}", file_size)
+        path.write_bytes(payload)
+        manifest.append(
+            {
+                "path": path.relative_to(root).as_posix(),
+                "bytes": len(payload),
+                "sha256": hashlib.sha256(payload).hexdigest(),
+            }
+        )
+    blob = corpus / "tracked-blob.bin"
+    payload = _fixed_bytes("tracked-blob", blob_size)
+    blob.write_bytes(payload)
+    manifest.append(
+        {
+            "path": blob.relative_to(root).as_posix(),
+            "bytes": len(payload),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        }
+    )
+    return {"files": manifest, "content_tree_digest": content_tree_digest(root)}
