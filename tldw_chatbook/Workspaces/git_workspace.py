@@ -24,11 +24,13 @@ arc; this module lays only the runner and the detection groundwork.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Sequence
+from urllib.parse import quote, urlparse
 
 from loguru import logger
 
@@ -834,3 +836,294 @@ def commit_selected(
         )
     )
     return CommitResult(tuple(outcomes), short_sha)
+
+
+# ---------------------------------------------------------------------------
+# Push engine + PR compare URL (TASK-16801 T4).
+# ---------------------------------------------------------------------------
+
+#: Marker substrings in a push's stderr excerpt that indicate git could not
+#: obtain credentials non-interactively under ``GIT_TERMINAL_PROMPT=0``
+#: (spec §6) -- each maps to the same appended hint, :data:`_CREDENTIAL_HINT`.
+_CREDENTIAL_FAILURE_MARKERS: tuple[str, ...] = (
+    "could not read Username",
+    "terminal prompts disabled",
+    "Permission denied",
+    "Authentication failed",
+)
+
+_CREDENTIAL_HINT = (
+    " — credentials were not available non-interactively; push once from a "
+    "terminal or configure a credential helper/ssh agent"
+)
+
+#: Hosts this arc's PR compare-URL builder supports, in the order named to
+#: the user in refusal copy (spec §6, AC #2).
+_SUPPORTED_PR_HOSTS: tuple[str, ...] = (
+    "github.com",
+    "gitlab.com",
+    "bitbucket.org",
+    "codeberg.org",
+)
+
+_UNSUPPORTED_HOST_REASON = "PR links support " + ", ".join(_SUPPORTED_PR_HOSTS)
+
+#: Matches the scp-like remote URL shape ``[user@]host:path`` (e.g.
+#: ``git@github.com:o/r.git``) -- anything containing ``"://"`` is a real
+#: URL (``https://...``, ``ssh://...``) and is parsed by
+#: :func:`urllib.parse.urlparse` instead.
+_SCP_LIKE_REMOTE_RE = re.compile(r"^(?:[^@/]+@)?(?P<host>[^:/]+):(?P<path>.+)$")
+
+
+@dataclass(frozen=True)
+class PushResult:
+    """The outcome of one :func:`push_current` call.
+
+    Attributes:
+        state: One of ``"pushed"``, ``"up_to_date"``, or ``"failed"``.
+        detail: Empty on success. On failure, a capped stderr excerpt --
+            possibly with :data:`_CREDENTIAL_HINT` appended by
+            :func:`_push_failure_detail` -- never a rolled-up "git
+            failed" (spec §8 per-step honesty).
+    """
+
+    state: str
+    detail: str = ""
+
+
+def _push_failure_detail(stderr_excerpt: str) -> str:
+    """Append the credential-helper hint when the excerpt looks like one.
+
+    Pure string classification, no I/O, so it is unit-testable without a
+    repository (spec §6).
+
+    Args:
+        stderr_excerpt: The push's (already capped) stderr excerpt.
+
+    Returns:
+        ``stderr_excerpt`` unchanged, or with :data:`_CREDENTIAL_HINT`
+        appended when it contains any of
+        :data:`_CREDENTIAL_FAILURE_MARKERS`.
+    """
+    if any(marker in stderr_excerpt for marker in _CREDENTIAL_FAILURE_MARKERS):
+        return stderr_excerpt + _CREDENTIAL_HINT
+    return stderr_excerpt
+
+
+def _resolve_push_remote(info: GitWorkspaceInfo, remote: str | None) -> str | None:
+    """Resolve the remote name :func:`push_current` should push to.
+
+    Args:
+        info: The root's detected workspace info.
+        remote: An explicit remote name, or ``None`` to derive one.
+
+    Returns:
+        ``remote`` when given. Otherwise ``info.upstream_remote`` when an
+        upstream is configured, else the sole entry of ``info.remotes``
+        when there is exactly one. ``None`` when none of these resolve --
+        callers must supply an explicit ``remote`` in the ambiguous case
+        (more than one remote, no upstream); this function does not guess
+        between them.
+    """
+    if remote is not None:
+        return remote
+    if info.upstream_remote is not None:
+        return info.upstream_remote
+    if len(info.remotes) == 1:
+        return info.remotes[0][0]
+    return None
+
+
+def push_current(root: Path, info: GitWorkspaceInfo, remote: str | None) -> PushResult:
+    """Push the current branch, honestly reporting a non-fast-forward rejection.
+
+    Never passes ``--force``/``--force-with-lease`` (spec §6,
+    no-silent-destructive precedent) -- a rejected push surfaces git's own
+    stderr excerpt rather than retrying with force.
+
+    Args:
+        root: Workspace root (must be the repo toplevel).
+        info: The root's detected :class:`GitWorkspaceInfo`.
+        remote: Explicit target remote name, or ``None`` to derive one via
+            :func:`_resolve_push_remote`.
+
+    Returns:
+        The push's :class:`PushResult`.
+
+    Raises:
+        GitWorkspaceError: HEAD is detached (``"no branch checked out"``)
+            or no remote could be resolved
+            (``"no git remote configured"``).
+    """
+    if info.detached or info.branch is None:
+        raise GitWorkspaceError("no branch checked out")
+
+    target_remote = _resolve_push_remote(info, remote)
+    if target_remote is None:
+        raise GitWorkspaceError("no git remote configured")
+
+    if info.upstream is not None:
+        # The remote name comes from detection's `%(upstream:remotename)`
+        # field (never derived by splitting `info.upstream` on "/" --
+        # remote names can themselves contain "/", spec §2 probe 6); no
+        # refspec games -- git pushes the current branch to its tracked
+        # upstream by default.
+        args: tuple[str, ...] = ("push", target_remote)
+    else:
+        args = ("push", "-u", target_remote, info.branch)
+
+    result = _run_user_git(root, *args, timeout=PUSH_TIMEOUT_SECONDS, check=False)
+    if result.returncode == 0:
+        combined = f"{result.stdout}\n{result.stderr}"
+        if "Everything up-to-date" in combined:
+            return PushResult("up_to_date")
+        return PushResult("pushed")
+
+    excerpt = (result.stderr or "").strip()[:400]
+    return PushResult("failed", _push_failure_detail(excerpt))
+
+
+def _parse_remote_url(url: str) -> tuple[str, str, str] | None:
+    """Parse a git remote push URL into ``(host, owner_path, repo)``.
+
+    Handles the three shapes a git remote URL takes in practice:
+    ``https://host/owner/repo(.git)``, ``ssh://git@host/owner/repo(.git)``,
+    and the scp-like ``git@host:owner/repo(.git)``. ``owner_path`` may
+    itself contain ``"/"`` (a GitLab subgroup, e.g. ``"g/sub"``). This
+    function does not judge whether ``host`` is one this arc supports --
+    that check belongs to :func:`pr_compare_url`.
+
+    Args:
+        url: A remote's push URL, exactly as read from ``git remote -v``.
+
+    Returns:
+        ``(host, owner_path, repo)``, or ``None`` when ``url`` does not
+        match any of the three known shapes (empty host or path, no
+        owner/repo split, or an unrecognized scheme-less form).
+    """
+    url = url.strip()
+    if not url:
+        return None
+
+    if "://" in url:
+        parsed = urlparse(url)
+        host = parsed.hostname
+        path = (parsed.path or "").lstrip("/")
+    else:
+        match = _SCP_LIKE_REMOTE_RE.match(url)
+        if match is None:
+            return None
+        host = match.group("host")
+        path = match.group("path")
+
+    if not host or not path:
+        return None
+
+    if path.endswith(".git"):
+        path = path[: -len(".git")]
+    path = path.strip("/")
+    if "/" not in path:
+        return None
+
+    owner_path, _, repo = path.rpartition("/")
+    if not owner_path or not repo:
+        return None
+    return host, owner_path, repo
+
+
+def _codeberg_default_branch(root: Path, remote_name: str) -> str | None:
+    """Resolve a Gitea-family remote's default branch via its local HEAD symref.
+
+    Args:
+        root: Workspace root.
+        remote_name: The KNOWN remote name. The prefix is stripped from
+            ``refs/remotes/<remote_name>/HEAD``'s resolved value by THIS
+            name's length, never by splitting the value on ``"/"`` --
+            remote names can themselves contain ``"/"`` (spec §2 probe 6
+            applied to this lookup).
+
+    Returns:
+        The default branch name, or ``None`` when
+        ``refs/remotes/<remote_name>/HEAD`` does not resolve locally (the
+        remote was never fetched, or carries no such symref).
+    """
+    result = _run_user_git(
+        root,
+        "symbolic-ref",
+        "--short",
+        "-q",
+        f"refs/remotes/{remote_name}/HEAD",
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    value = result.stdout.strip()
+    prefix = f"{remote_name}/"
+    if not value.startswith(prefix):
+        return None
+    return value[len(prefix):]
+
+
+def pr_compare_url(root: Path, info: GitWorkspaceInfo) -> str | GitWorkspaceRefusal:
+    """Build a browser compare/merge-request URL for the current branch.
+
+    The URL is built entirely from parsed remote-URL components and the
+    percent-encoded branch name -- no user text is interpolated unencoded
+    (spec §6).
+
+    Args:
+        root: Workspace root -- used only for the Gitea-family (codeberg)
+            local default-branch lookup.
+        info: The root's detected :class:`GitWorkspaceInfo`.
+
+    Returns:
+        The compare URL. A :class:`GitWorkspaceRefusal` when there is no
+        upstream yet, the upstream remote's push URL is missing or
+        unparseable, the host is unsupported, or (codeberg only) the
+        default branch can't be determined locally.
+    """
+    if info.upstream is None:
+        return GitWorkspaceRefusal("push the branch first")
+
+    push_url: str | None = None
+    for name, url in info.remotes:
+        if name == info.upstream_remote:
+            push_url = url
+            break
+    if push_url is None:
+        return GitWorkspaceRefusal(_UNSUPPORTED_HOST_REASON)
+
+    parsed = _parse_remote_url(push_url)
+    if parsed is None:
+        return GitWorkspaceRefusal(_UNSUPPORTED_HOST_REASON)
+    host, owner_path, repo = parsed
+
+    branch = info.branch
+    if branch is None:
+        return GitWorkspaceRefusal("no branch checked out")
+
+    if host == "github.com":
+        encoded = quote(branch, safe="/")
+        return f"https://github.com/{owner_path}/{repo}/compare/{encoded}?expand=1"
+    if host == "gitlab.com":
+        encoded = quote(branch, safe="")
+        return (
+            f"https://gitlab.com/{owner_path}/{repo}/-/merge_requests/new"
+            f"?merge_request%5Bsource_branch%5D={encoded}"
+        )
+    if host == "bitbucket.org":
+        encoded = quote(branch, safe="")
+        return (
+            f"https://bitbucket.org/{owner_path}/{repo}/pull-requests/new"
+            f"?source={encoded}"
+        )
+    if host == "codeberg.org":
+        base = _codeberg_default_branch(root, info.upstream_remote)
+        if base is None:
+            return GitWorkspaceRefusal(
+                "can't determine the default branch — open the PR on codeberg.org"
+            )
+        encoded = quote(branch, safe="/")
+        return f"https://codeberg.org/{owner_path}/{repo}/compare/{base}...{encoded}"
+
+    return GitWorkspaceRefusal(_UNSUPPORTED_HOST_REASON)
