@@ -77,12 +77,21 @@ def source_mentions_rag(source: Any) -> bool:
 
 
 def sanitize_console_library_rag_query(value: Any) -> str:
-    """Return a centralized-validation-safe Console Library query."""
-    sanitized = sanitize_string(str(value or ""), max_length=2_000)
+    """Return a centralized-validation-safe Console Library query.
+
+    Args:
+        value: Raw query value to normalize and validate.
+
+    Returns:
+        The normalized query, or an empty string when validation fails.
+    """
+    sanitized = sanitize_string(str(value or ""), max_length=AUTO_RAG_QUERY_MAX_CHARS)
     query = " ".join(sanitized.strip().split())
     if not query:
         return ""
-    if not validate_text_input(query, max_length=2_000, allow_html=False):
+    if not validate_text_input(
+        query, max_length=AUTO_RAG_QUERY_MAX_CHARS, allow_html=False
+    ):
         return ""
     return query
 
