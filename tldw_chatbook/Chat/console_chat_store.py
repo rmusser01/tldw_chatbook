@@ -798,10 +798,17 @@ class ConsoleChatStore:
         # naturally misses this cache and recompresses the new bytes.
         # ``_persist_exchanges_only`` prunes each message's inner dict down
         # to exactly its current capture keys on every flush, so a
-        # superseded status's stale blob (and the cache as a whole) cannot
-        # grow past what is actually live on the message; ``delete_message``
-        # and session-close both additionally drop a message's entire
-        # entry outright when the message itself goes away.
+        # superseded status's stale blob does not linger past its own
+        # message's next persist. M2 (softened -- this used to read as an
+        # unqualified "cannot grow past what is actually live" bound, which
+        # was not true of every path a message can disappear by):
+        # ``delete_message`` and session-close both drop a message's
+        # entire entry outright when the message itself goes away, and
+        # ``restore_state`` clears this cache wholesale on a full state
+        # replacement (session switch / restart replay) -- but only those
+        # three sites do the dropping; an in-memory message id that
+        # disappears some OTHER way is not itself proof this cache's entry
+        # for it goes away too.
         self._exchange_blob_cache: dict[str, dict[tuple[str, int, str], bytes]] = {}
         # Ephemeral fence for issued speech snapshots. It deliberately lives
         # outside ConsoleChatMessage so it is neither persisted nor restored.
@@ -2146,6 +2153,14 @@ class ConsoleChatStore:
         self._failed_retry_message_ids.clear()
         self._message_speech_revisions.clear()
         self._message_completion_generations.clear()
+        # M2: both keyed by message id, same as the caches immediately
+        # above -- previously left uncleared here, so a restore (session
+        # switch / app restart replay, distinct from delete_message and
+        # session-close, the only two call sites that used to drop entries)
+        # could leave stale entries keyed by message ids that no longer
+        # exist in the replaced state.
+        self._abandoned_exchange_run_tags.clear()
+        self._exchange_blob_cache.clear()
         self._payload_revisions.clear()
         self._conversation_context_epochs.clear()
         self._speech_preference_epochs.clear()

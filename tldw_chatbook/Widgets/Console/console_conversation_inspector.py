@@ -291,9 +291,19 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
     # modal): with a project-instruction recovery action available, letting
     # Textual's default AUTO_FOCUS land on whatever's first in DOM order can
     # skip right past it. ``_focus_initial_control`` (called from
-    # ``on_mount``, after a snapshot refresh, and after a recovery decision)
-    # picks the single most relevant control instead, without shifting any
+    # ``on_mount``, after a snapshot refresh, and after a recovery decision;
+    # I1 narrowed it to only act while the Next Send tab is active) picks
+    # the single most relevant control instead, without shifting any
     # layout.
+    #
+    # M3: kept for fidelity with the retired modal this was ported from, but
+    # this assignment is itself a no-op against installed Textual (8.2.8) --
+    # it does NOT prevent Textual's own default auto-focus. ``Screen.
+    # AUTO_FOCUS`` (this class's base, via ``ModalScreen``) is already
+    # ``None``, so setting it here changes nothing; and ``None`` on a Screen
+    # does not disable auto-focus outright, it defers to ``App.AUTO_FOCUS``
+    # (``"*"``, Textual's own default), which still runs. Whatever
+    # prevention exists is entirely ``_focus_initial_control``'s doing.
     AUTO_FOCUS = None
 
     # Next Send tab (task-10) reactives, ported from the retired standalone
@@ -1339,10 +1349,18 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         build ``Path.home() / "Downloads" / filename`` themselves; this
         confirms that resolved destination actually stays inside Downloads
         (Qodo PR #1883 finding 2 -- repo rule: file paths go through
-        ``path_validation.py``) before ``mkdir``/``write_text`` run,
-        catching e.g. a symlinked Downloads directory or a future change
-        that makes the filename component non-literal. Deliberately
-        returns the ORIGINAL ``path`` argument on success (not
+        ``path_validation.py``) before ``mkdir``/``write_text`` run.
+
+        M4 (corrected): this does NOT catch a symlinked Downloads
+        directory -- ``validate_path`` resolves BOTH ``path`` and
+        ``downloads_dir`` before comparing, so a Downloads symlink resolves
+        transparently on both sides of the check and never trips the
+        traversal guard. What it DOES catch: the destination FILE itself
+        already existing as a symlink pointing outside Downloads (``path``
+        resolves through it, ``downloads_dir`` does not, so
+        ``relative_to`` fails), and a future change that makes the
+        filename component non-literal (e.g. accepts ``..`` segments or an
+        absolute override). Deliberately returns the ORIGINAL ``path`` argument on success (not
         ``validate_path``'s own return value, which is always a real
         ``pathlib.Path`` freshly re-resolved from it) so the object this
         modal's own ``Path`` name constructed keeps flowing to
@@ -1352,11 +1370,18 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         rejection, notifies with the failure class and the attempted path
         only -- never the raw exception body, matching this file's
         existing no-payload-in-error-surface contract -- and returns
-        ``None`` so the caller does not write.
+        ``None`` so the caller does not write. ``redact_paths=True`` keeps
+        this same restraint inside ``path_validation`` itself: without it,
+        a rejection logs the full attempted/resolved paths at WARNING/
+        ERROR (``path_validation.py``'s own log lines), which would put
+        the user's home directory into the log for every rejected save --
+        this modal's own log line right below already names the path
+        deliberately, so the redaction only removes an UNINTENTIONAL
+        second copy from a module this file does not otherwise control.
         """
         downloads_dir = Path.home() / "Downloads"
         try:
-            validate_path(path, downloads_dir)
+            validate_path(path, downloads_dir, redact_paths=True)
             return path
         except ValueError as exc:
             logger.error(
@@ -1771,6 +1796,15 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
     @on(Button.Pressed, "#console-inspector-next-send-save")
     def _save_json(self, event: Button.Pressed) -> None:
         event.stop()
+        # M5: re-check here as defense in depth on a privacy contract, same
+        # rationale as this file's own ``_save_exchange_capture`` (Exchange
+        # tab review finding M7) -- this button's own ``disabled=`` state
+        # (set from ``self._save_blocked_reason`` in ``compose``) was
+        # previously the ONLY enforcement of the ephemeral save-block for
+        # THIS tab; a direct call bypassing the button (e.g. a future
+        # caller) would still write to disk.
+        if self._save_blocked_reason is not None:
+            return
         # ``_format_export_text``, NOT ``_format_next_send_text`` (task-18300)
         # -- same privacy contract as ``_copy_json`` above, this text lands
         # on disk.

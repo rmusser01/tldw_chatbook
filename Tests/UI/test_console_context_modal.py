@@ -1101,6 +1101,36 @@ async def test_context_modal_save_button_is_disabled_with_a_reason_when_ephemera
 
 
 @pytest.mark.asyncio
+async def test_save_json_direct_call_still_blocked_when_ephemeral(monkeypatch):
+    """M5: ``_save_json`` (the Next Send tab's Save to File) used to have
+    no re-check of ``self._save_blocked_reason`` -- the Save button's own
+    ``disabled=`` state (pinned by the test above) was the ONLY
+    enforcement of the ephemeral save-block. A direct call bypassing the
+    button (e.g. a future caller) must still be blocked, same fix as its
+    Exchange-tab sibling ``_save_exchange_capture`` (review finding M7).
+    Patches this module's own ``Path`` name to raise if ``Path.home()`` is
+    ever reached -- proving the method returns before touching the
+    filesystem at all."""
+    app = ActionHarness()
+
+    async with app.run_test(size=(120, 44)) as pilot:
+        app.push_screen(_inspector(ephemeral=True))
+        await pilot.pause()
+
+        class _BoomPath:
+            @staticmethod
+            def home():
+                raise AssertionError(
+                    "Path.home() must not be reached when save is blocked"
+                )
+
+        monkeypatch.setattr(console_conversation_inspector, "Path", _BoomPath)
+
+        app.screen._save_json(Button.Pressed(Button(id="ignored")))
+        await pilot.pause()  # must not raise, must not write
+
+
+@pytest.mark.asyncio
 async def test_context_modal_empty_state_renders_full_guidance_copy():
     """LY-13 (TASK-2154.23): the empty viewer guides rather than voids.
 

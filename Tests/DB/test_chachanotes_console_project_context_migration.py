@@ -435,6 +435,15 @@ def test_fresh_schema_contains_console_project_context_column(tmp_path) -> None:
     connection = db.get_connection()
     columns = _conversation_columns(connection)
 
+    # M8: deliberately `>= 42`, not `== 42` -- this file only owns the
+    # v41->v42 console_project_context migration, and a LATER, unrelated
+    # migration (e.g. task-18300's own v42->v43 message_exchanges table)
+    # legitimately bumps `_CURRENT_SCHEMA_VERSION` further without this
+    # file needing to know or care. The exact current-version pin lives in
+    # exactly one place, `Tests/DB/test_chachanotes_message_exchanges.py`'s
+    # `test_schema_version_is_43` (currently 43) -- this assertion only
+    # needs to confirm a fresh schema landed AT OR PAST this migration's
+    # own version, not the overall latest.
     assert CharactersRAGDB._CURRENT_SCHEMA_VERSION >= 42
     assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
     assert columns[COLUMN_NAME][2].upper() == "TEXT"

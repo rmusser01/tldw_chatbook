@@ -19,6 +19,8 @@ variant restore, ephemeral, fake persistence):
 """
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
@@ -438,3 +440,29 @@ def test_exchange_blob_cache_does_not_leak_between_messages(
     assert mid in store._exchange_blob_cache
     assert other.id in store._exchange_blob_cache
     assert store._exchange_blob_cache[mid] is not store._exchange_blob_cache[other.id]
+
+
+def test_restore_state_clears_exchange_blob_cache_and_abandoned_run_tags(
+        store_with_fake_persistence):
+    """M2: ``restore_state`` used to clear 25 sibling in-memory maps but
+    leave ``_exchange_blob_cache``/``_abandoned_exchange_run_tags``
+    untouched -- unlike ``delete_message`` and session-close (the two sites
+    this pair's own bound comment used to cite as exhaustive), a restore
+    (session switch / restart replay) replaces the in-memory session/message
+    set wholesale without going through either of those, so a stale entry
+    keyed by a message id no longer present in the restored state could
+    linger indefinitely."""
+    store, mid, persistence = store_with_fake_persistence
+    session_id = store.session_id_for_message(mid)
+
+    store.attach_message_exchanges(mid, [_cap(seq=0, status="complete")])
+    store.mark_message_complete(mid)
+    assert mid in store._exchange_blob_cache  # precondition
+
+    store._abandoned_exchange_run_tags[mid] = {"r-abandoned"}
+
+    session = store._sessions[session_id]
+    store.restore_state(sessions=[replace(session)], active_session_id=session_id)
+
+    assert store._exchange_blob_cache == {}
+    assert store._abandoned_exchange_run_tags == {}
