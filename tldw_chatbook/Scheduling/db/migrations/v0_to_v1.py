@@ -233,5 +233,9 @@ def rollback(db):
     with closing(db._get_connection()) as conn:
         for table in _SCHEDULING_TABLES:
             conn.execute(f"DROP TABLE IF EXISTS {table}")
-        conn.execute("DELETE FROM schema_version WHERE version = ?", (1,))
+        # Clear EVERY version row, not just v1: the chain no longer stops at
+        # v1 (v2 = task-18937), and a fresh database holds only "2" -- a
+        # version-scoped DELETE would leave it behind and get_schema_version
+        # would report a version for a schema that no longer exists.
+        conn.execute("DELETE FROM schema_version")
         conn.commit()

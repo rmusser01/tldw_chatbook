@@ -50,6 +50,14 @@ class DisableTaskRequested(Message):
         self.task = task
 
 
+class RunReminderNowRequested(Message):
+    """Posted when the user asks to run a reminder immediately (task-18938)."""
+
+    def __init__(self, task: ReminderTask) -> None:
+        super().__init__()
+        self.task = task
+
+
 class SyncCompleted(Message):
     """Posted when a sync attempt completes."""
 

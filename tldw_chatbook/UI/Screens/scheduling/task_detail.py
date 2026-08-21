@@ -14,6 +14,7 @@ from ....Scheduling.events import (
     DisableTaskRequested,
     EditTaskRequested,
     EnableTaskRequested,
+    RunReminderNowRequested,
 )
 from ....Scheduling.models import ReminderTask, ScheduledTask, ScheduleKind, TaskStatus
 from ....Widgets.delete_confirmation_dialog import DeleteConfirmationDialog
@@ -53,6 +54,7 @@ _STATUS_LABELS: dict[TaskStatus, str] = {
     TaskStatus.COMPLETED: "Completed",
     TaskStatus.FOUND_RESULTS: "Found Results",
     TaskStatus.MISSED: "Missed",
+    TaskStatus.TIMED_OUT: "Timed out",
     TaskStatus.CONFLICT: "Conflict",
 }
 
@@ -67,6 +69,7 @@ _STATUS_BADGE_CLASSES: dict[TaskStatus, str] = {
     TaskStatus.COMPLETED: "completed",
     TaskStatus.FOUND_RESULTS: "found-results",
     TaskStatus.MISSED: "missed",
+    TaskStatus.TIMED_OUT: "timed-out",
     TaskStatus.CONFLICT: "conflict",
 }
 
@@ -83,6 +86,7 @@ _STATUS_TABLE_STYLES: dict[TaskStatus, str] = {
     TaskStatus.COMPLETED: "bold white on green",
     TaskStatus.FOUND_RESULTS: "bold white on green",
     TaskStatus.MISSED: "bold black on yellow",
+    TaskStatus.TIMED_OUT: "bold black on yellow",
     TaskStatus.CONFLICT: "bold white on red",
 }
 
@@ -186,6 +190,18 @@ def _task_status(task: ReminderTask | ScheduledTask) -> TaskStatus:
     return task.status
 
 
+def _was_missed_while_away(task: ReminderTask | ScheduledTask) -> bool:
+    """Return True when the task's last dispatch was late (task-18937).
+
+    This is deliberately NOT a ``TaskStatus``: 'missed' as a status means the
+    dispatch ran and the handler raised. A late dispatch is orthogonal to
+    that -- it can complete successfully yet still have been missed-while-
+    away -- so it derives from the recorded missed-fire state instead of
+    overloading the status enum.
+    """
+    return isinstance(task, ReminderTask) and task.missed_at is not None
+
+
 def _task_type_label(task: ReminderTask | ScheduledTask) -> str:
     """Return a readable type label for the task."""
     if isinstance(task, ReminderTask):
@@ -256,6 +272,12 @@ class TaskDetail(Vertical):
     .scheduling-detail-value {
         color: $text;
     }
+
+    .scheduling-detail-missed {
+        color: $warning;
+        margin: 0 0 0 11;
+        height: auto;
+    }
     """
 
     def __init__(self, *args, **kwargs) -> None:
@@ -309,12 +331,30 @@ class TaskDetail(Vertical):
                     classes="scheduling-detail-value",
                 ),
             )
+            # task-18937: "missed while away" is its own state -- distinct from
+            # a failed dispatch (which ran and raised). Hidden unless the last
+            # dispatch was late; plain text, no markup (titles are untrusted).
+            yield Static(
+                "",
+                id="scheduling-task-detail-missed",
+                classes="scheduling-detail-missed",
+            )
         yield Horizontal(
             Button(
                 "Edit",
                 id="scheduling-edit-task",
                 variant="primary",
                 tooltip="Edit this reminder.",
+            ),
+            Button(
+                "Run now",
+                id="scheduling-run-now",
+                variant="primary",
+                tooltip="Dispatch this reminder immediately, without waiting "
+                "for its schedule. A real dispatch: a recurring reminder's "
+                "next occurrence is computed from now, a one-time reminder "
+                "is consumed. Works on disabled reminders without enabling "
+                "them.",
             ),
             Button(
                 "Enable",
@@ -351,6 +391,7 @@ class TaskDetail(Vertical):
         button_id = event.button.id
         if button_id in {
             "scheduling-edit-task",
+            "scheduling-run-now",
             "scheduling-enable-task",
             "scheduling-disable-task",
             "scheduling-delete-task",
@@ -358,6 +399,8 @@ class TaskDetail(Vertical):
             event.stop()
         if button_id == "scheduling-edit-task":
             self._request_edit()
+        elif button_id == "scheduling-run-now":
+            self._request_run_now()
         elif button_id == "scheduling-enable-task":
             self._request_enable()
         elif button_id == "scheduling-disable-task":
@@ -379,6 +422,11 @@ class TaskDetail(Vertical):
         """Post a disable request for the current reminder."""
         if isinstance(self._current_task, ReminderTask):
             self.post_message(DisableTaskRequested(self._current_task))
+
+    def _request_run_now(self) -> None:
+        """Post a run-now request for the current reminder (task-18938)."""
+        if isinstance(self._current_task, ReminderTask):
+            self.post_message(RunReminderNowRequested(self._current_task))
 
     def request_delete(self) -> None:
         """Open the delete confirmation modal for the current task."""
@@ -418,6 +466,9 @@ class TaskDetail(Vertical):
             empty_state.display = True
             metadata.display = False
             lifecycle.display = False
+            missed_notice = self.query_one("#scheduling-task-detail-missed", Static)
+            missed_notice.update("")
+            missed_notice.display = False
             self.query_one("#schedules-follow-in-console", Button).label = (
                 "Follow in Console"
             )
@@ -437,6 +488,20 @@ class TaskDetail(Vertical):
             enabled = bool(getattr(task, "enabled", True))
             self.query_one("#scheduling-enable-task", Button).disabled = enabled
             self.query_one("#scheduling-disable-task", Button).disabled = not enabled
+            # The retry affordance for a failed dispatch (task-18938): a
+            # reminder whose last dispatch ran and raised (or was cancelled
+            # at its execution deadline, task-18939) offers Run now as its
+            # retry -- the never-wired "Retry run" concept, now real.
+            run_now_button = self.query_one("#scheduling-run-now", Button)
+            if _task_status(task) in {TaskStatus.MISSED, TaskStatus.TIMED_OUT}:
+                run_now_button.label = "Run now (retry)"
+                run_now_button.tooltip = (
+                    "Retry this reminder now: its last dispatch ran and "
+                    "failed. Dispatches immediately through the same path "
+                    "the scheduler uses."
+                )
+            else:
+                run_now_button.label = "Run now"
 
         self._update_static("scheduling-task-detail-title", task.title)
         self._update_static("scheduling-task-detail-type", _task_type_label(task))
@@ -444,12 +509,63 @@ class TaskDetail(Vertical):
             "scheduling-task-detail-schedule", _task_schedule_label(task)
         )
         self._update_static("scheduling-task-detail-next-run", _format_next_run(task))
+        self._update_missed_notice(task)
 
         status = _task_status(task)
         badge = self.query_one("#scheduling-task-status-badge", Static)
         badge.update(_humanize_status(status))
         badge.remove_class(*_STATUS_BADGE_CLASSES.values())
         badge.add_class(status_badge_class(status))
+
+    def _update_missed_notice(
+        self, task: ReminderTask | ScheduledTask | None
+    ) -> None:
+        """Render the "missed while away" notice for a late last dispatch.
+
+        Distinct from failed: failed means the dispatch ran and the handler
+        raised; missed-while-away means the scheduled time elapsed with the
+        scheduler not running (app closed, or the occurrence predates the
+        task reaching the queue). The notice describes the last dispatch and
+        self-heals: the next on-time dispatch clears it. Plain text, no
+        markup -- titles are untrusted and never interpolated into markup.
+        """
+        notice = self.query_one("#scheduling-task-detail-missed", Static)
+        if not isinstance(task, ReminderTask):
+            notice.update("")
+            notice.display = False
+            return
+        missed_at = getattr(task, "missed_at", None)
+        if missed_at is None:
+            notice.update("")
+            notice.display = False
+            return
+        scheduled = missed_at.strftime("%Y-%m-%d %H:%M")
+        missed_count = int(getattr(task, "missed_count", 0) or 0)
+        if missed_count < 0:
+            # Sentinel from the counting cap: more occurrences elapsed than
+            # the counter will enumerate. Rendered as an explicit "more than
+            # N", never as a false exact number.
+            from tldw_chatbook.Scheduling.db.scheduled_tasks_db import (
+                ScheduledTasksDB,
+            )
+
+            copy = (
+                f"Missed while away: ran late for the {scheduled} occurrence; "
+                f"more than {ScheduledTasksDB._MISSED_COUNT_CAP:,} earlier "
+                "occurrence(s) were skipped, not replayed."
+            )
+        elif missed_count > 0:
+            copy = (
+                f"Missed while away: ran late for the {scheduled} occurrence; "
+                f"{missed_count} earlier occurrence(s) were skipped, not replayed."
+            )
+        else:
+            copy = (
+                f"Missed while away: the {scheduled} occurrence ran late "
+                "(the scheduler was not running at the scheduled time)."
+            )
+        notice.update(copy)
+        notice.display = True
 
     def set_follow_available(self, available: bool) -> None:
         """Enable or disable the Console-follow button and set its tooltip."""

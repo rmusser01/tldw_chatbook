@@ -23,6 +23,7 @@ class TaskStatus(str, Enum):
     COMPLETED = "completed"
     FOUND_RESULTS = "found_results"
     MISSED = "missed"
+    TIMED_OUT = "timed_out"
     CONFLICT = "conflict"
 
 
@@ -93,6 +94,13 @@ class ReminderTask(BaseModel):
     next_run_at: datetime | None = None
     last_run_at: datetime | None = None
     missed_at: datetime | None = None
+    #: Occurrences that elapsed undispatched before the last (late) dispatch.
+    #: Client-local accounting only (task-18937): never pushed to the server
+    #: and not expected in server responses.
+    missed_count: int = 0
+    #: Per-task handler execution timeout in seconds (task-18939). None
+    #: means use the global ``[scheduling] handler_timeout_seconds``.
+    timeout_seconds: float | None = None
     link_type: str | None = None
     link_id: str | None = None
     link_url: str | None = None

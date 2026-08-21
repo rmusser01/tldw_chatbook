@@ -393,6 +393,11 @@ from .Research_Interop import (
     ServerResearchService,
 )
 from .Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
+from .Scheduling.constants import (
+    HANDLER_TIMEOUT_SECONDS,
+    MISSED_FIRE_GRACE_SECONDS,
+    SCHEDULER_POLL_INTERVAL_SECONDS,
+)
 from .Scheduling.services.scheduling_service import SchedulingService
 from .Scheduling.services.server_client import SchedulingServerClient
 from .Scheduling.scheduler.loop import SchedulerLoop, Handler
@@ -6812,6 +6817,17 @@ class TldwCli(
             runtime_source="local",
             watchlist_projection=watchlist_projection,
             briefing_projection=briefing_projection,
+            # task-18937: reminder mutations must reach the live scheduler
+            # queue on the next tick. The loop itself is constructed further
+            # down, so the callback resolves it lazily -- wiring
+            # `self.scheduler_loop.request_reload` directly here would freeze
+            # `None`/AttributeError in before the loop exists (same getter
+            # discipline as `BriefingJobHandler`'s chachanotes_db_getter).
+            on_queue_changed=lambda: getattr(
+                self, "scheduler_loop", None
+            ).request_reload()
+            if getattr(self, "scheduler_loop", None) is not None
+            else None,
         )
 
         watchlist_checks_enabled = get_cli_setting(
@@ -6867,13 +6883,21 @@ class TldwCli(
             self.scheduling_service.db,
             handlers=handlers,
             poll_interval=get_cli_setting(
-                "scheduling", "scheduler_poll_interval_seconds", 30
+                "scheduling",
+                "scheduler_poll_interval_seconds",
+                SCHEDULER_POLL_INTERVAL_SECONDS,
             ),
             watchlist_projection=(
                 watchlist_projection if watchlist_handler is not None else None
             ),
             briefing_projection=(
                 briefing_projection if briefing_handler is not None else None
+            ),
+            missed_fire_grace_seconds=get_cli_setting(
+                "scheduling", "missed_fire_grace_seconds", MISSED_FIRE_GRACE_SECONDS
+            ),
+            handler_timeout_seconds=get_cli_setting(
+                "scheduling", "handler_timeout_seconds", HANDLER_TIMEOUT_SECONDS
             ),
         )
         self.notifications_scope_service = NotificationsScopeService(

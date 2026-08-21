@@ -25,6 +25,7 @@ from ....Scheduling.events import (
     DisableTaskRequested,
     EditTaskRequested,
     EnableTaskRequested,
+    RunReminderNowRequested,
     SyncCompleted,
     SyncFailed,
 )
@@ -39,6 +40,7 @@ from .task_detail import (
     _format_next_run,
     _task_status,
     _task_type_label,
+    _was_missed_while_away,
     status_badge_text,
 )
 
@@ -63,6 +65,7 @@ class SchedulesWorkbench(BaseAppScreen):
     BINDINGS = [
         Binding("c", "create_reminder", "Create"),
         Binding("e", "edit_task", "Edit"),
+        Binding("r", "run_task_now", "Run now"),
         Binding("space", "toggle_enabled", "Enable/Disable"),
         Binding("d", "delete", "Delete"),
         Binding("x", "mark_task", "Mark"),
@@ -76,6 +79,7 @@ class SchedulesWorkbench(BaseAppScreen):
     SCHEDULES_SHORTCUTS = (
         ("c", "create"),
         ("e", "edit"),
+        ("r", "run now"),
         ("space", "toggle"),
         ("d", "delete"),
         ("x", "mark"),
@@ -254,10 +258,19 @@ class SchedulesWorkbench(BaseAppScreen):
             or text in _task_type_label(task).lower()
             or text in _task_status(task).value.lower().replace("_", " ")
             or text in _task_status(task).value.lower()
+            # task-18937: filtering for "missed" finds late-dispatch rows too,
+            # not just handler-failure ones -- both are honest matches for a
+            # user asking "what went wrong while I wasn't looking".
+            or (
+                _was_missed_while_away(task)
+                and "missed" in text
+            )
         ]
         rows: list[tuple[str, str, Text, str]] = [
             (
-                ("● " if task.id in self._marked_ids else "") + task.title,
+                ("● " if task.id in self._marked_ids else "")
+                + ("◇ " if _was_missed_while_away(task) else "")
+                + task.title,
                 _task_type_label(task),
                 status_badge_text(_task_status(task)),
                 _format_next_run(task),
@@ -589,6 +602,70 @@ class SchedulesWorkbench(BaseAppScreen):
         """Disable the requested reminder and refresh the queue."""
         event.stop()
         self._set_reminder_enabled(event.task, False)
+
+    @on(RunReminderNowRequested)
+    def _on_run_reminder_now_requested(self, event: RunReminderNowRequested) -> None:
+        """Dispatch the requested reminder immediately."""
+        event.stop()
+        self._run_reminder_now(event.task)
+
+    def action_run_task_now(self) -> None:
+        """Run the highlighted reminder immediately (``r`` key)."""
+        task = self._selected_reminder_task()
+        if task is not None:
+            self._run_reminder_now(task)
+
+    def _selected_reminder_task(self) -> ReminderTask | None:
+        """Return the highlighted task when it is a reminder (not a projection)."""
+        for task in self._visible_tasks:
+            if task.id == self._selected_task_id and isinstance(task, ReminderTask):
+                return task
+        return None
+
+    def _run_reminder_now(self, task: ReminderTask) -> None:
+        """Dispatch one reminder through the scheduler's own path (task-18938)."""
+        service = self._scheduling_service
+        if service is None:
+            self.app_instance.notify(
+                "Scheduling service is unavailable; cannot run the reminder.",
+                severity="warning",
+            )
+            return
+        loop = getattr(self.app_instance, "scheduler_loop", None)
+        if loop is None:
+            self.app_instance.notify(
+                "The scheduler is not running; cannot run reminders manually.",
+                severity="warning",
+            )
+            return
+
+        was_disabled = not bool(getattr(task, "enabled", True))
+
+        async def _run_and_refresh() -> None:
+            try:
+                result = await service.run_reminder_now(task.id, loop=loop)
+                if result is None:
+                    self.app_instance.notify(
+                        f"'{task.title}' did not run -- it is missing, the "
+                        "reminder handler is unavailable, or its handler "
+                        "failed (the task's status shows which).",
+                        severity="warning",
+                    )
+                else:
+                    suffix = " (still disabled)" if was_disabled else ""
+                    self.app_instance.notify(
+                        f"'{task.title}' ran now{suffix}.",
+                        severity="information",
+                    )
+            except Exception:  # noqa: BLE001
+                logger.exception("Failed to run reminder now")
+                self.app_instance.notify(
+                    f"Failed to run '{task.title}'.",
+                    severity="error",
+                )
+            await self.load_tasks()
+
+        self.run_worker(_run_and_refresh, exclusive=True)  # type: ignore[arg-type]
 
     def _set_reminder_enabled(self, task: ReminderTask, enabled: bool) -> None:
         """Update a reminder's enabled state and refresh the queue."""
