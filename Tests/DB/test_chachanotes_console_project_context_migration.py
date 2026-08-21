@@ -89,7 +89,7 @@ def test_v41_to_v42_adds_nullable_local_column(tmp_path, monkeypatch) -> None:
     connection = db.get_connection()
     columns = _conversation_columns(connection)
 
-    assert _version(connection) == 42
+    assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
     assert columns[COLUMN_NAME][3] == 0
     row = connection.execute(
         "SELECT title, console_project_context_json FROM conversations WHERE id = ?",
@@ -122,7 +122,7 @@ def test_v41_to_v42_recovers_column_present_version_still_41(
 
     db = CharactersRAGDB(db_path, client_id="migration-test")
     connection = db.get_connection()
-    assert _version(connection) == 42
+    assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
     assert (
         connection.execute(
             "SELECT console_project_context_json FROM conversations WHERE id = ?",
@@ -435,8 +435,8 @@ def test_fresh_schema_contains_console_project_context_column(tmp_path) -> None:
     connection = db.get_connection()
     columns = _conversation_columns(connection)
 
-    assert CharactersRAGDB._CURRENT_SCHEMA_VERSION == 42
-    assert _version(connection) == 42
+    assert CharactersRAGDB._CURRENT_SCHEMA_VERSION >= 42
+    assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
     assert columns[COLUMN_NAME][2].upper() == "TEXT"
     assert columns[COLUMN_NAME][3] == 0
     db.close_connection()
