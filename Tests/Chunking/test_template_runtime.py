@@ -327,15 +327,20 @@ VENDORED_DIR_PARTS = ("Chunking", "engine")
 VENDORED_SHIM_PARTS = ("Chunking", "_shims")
 
 MAPPER_GUARD_ALLOWED = {"Chunking/template_runtime.py"}
-# Legacy resolution slated for the PR B CRUD rewrite (spec AC 26 rewrites
-# ChunkingInteropService; until then its get_template_by_name stays).
+# task-8 shrank this to template_runtime + the migration's liveness check:
+# the task-8 CRUD rewrite removed the interop's legacy entry — its
+# name-keyed access is now a full-record CRUD fetch shaped
+# ``WHERE deleted = 0 AND name = ?`` (the deleted filter first is
+# load-bearing: it keeps this ``FROM ChunkingTemplates WHERE name``
+# fingerprint exclusive to genuine name→body resolution sites) and it
+# performs no template-body interpretation of its own. Runtime name→body
+# resolution lives ONLY in template_runtime.resolve_template.
 # DB/Client_Media_DB_v2.py (task-7): the v7 migration's idempotent-seed
 # existence check ("a built-in name that already exists as a custom row is
 # left alone") matches the regex but resolves no template — it never reads
 # a template body, only name liveness.
 RESOLVER_GUARD_ALLOWED = {
     "Chunking/template_runtime.py",
-    "Chunking/chunking_interop_library.py",
     "DB/Client_Media_DB_v2.py",
 }
 

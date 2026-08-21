@@ -3,6 +3,7 @@ Unit tests for SQL validation module.
 """
 
 from tldw_chatbook.DB.sql_validation import (
+    VALID_COLUMNS,
     VALID_TABLES,
     validate_identifier,
     validate_table_name,
@@ -99,10 +100,35 @@ class TestValidateTableName:
             "sync_log",
             "Media_fts",
             "MediaChunks",
+            "ChunkingTemplates",
         ]
 
         for table in valid_tables:
             assert validate_table_name(table, "media") is True
+
+    def test_chunking_templates_columns_accepted_and_live(self, tmp_path):
+        """task-8 (AC 27): ChunkingTemplates and its v7 columns are
+        registered, and the registered set matches the live schema exactly
+        (a fresh MediaDatabase runs the full chain to v7)."""
+        from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+
+        assert validate_table_name("ChunkingTemplates", "media") is True
+
+        database = MediaDatabase(str(tmp_path / "cols.db"), client_id="test")
+        try:
+            live = {
+                row["name"]
+                for row in database.get_connection().execute(
+                    "PRAGMA table_info(ChunkingTemplates)"
+                )
+            }
+        finally:
+            database.close_connection()
+
+        registered = VALID_COLUMNS["ChunkingTemplates"]
+        assert registered == live
+        for column in registered:
+            assert validate_column_name(column, "ChunkingTemplates") is True
 
     def test_valid_prompts_tables(self):
         """Test valid table names for prompts database."""

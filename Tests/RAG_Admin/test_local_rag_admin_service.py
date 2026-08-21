@@ -9,12 +9,19 @@ from tldw_chatbook.Utils.optional_deps import embeddings_rag_deps_installed
 
 
 class FakeChunkingService:
+    """v7-shaped stand-in for ChunkingInteropService (task-8): ``is_builtin``
+    column, ``tags`` column, ``include_builtin`` listing switch."""
+
     def __init__(self):
         self.records = {}
         self.next_id = 1
 
-    def get_all_templates(self, include_system=True):
-        return list(self.records.values())
+    def get_all_templates(self, include_builtin=True):
+        return [
+            record
+            for record in self.records.values()
+            if include_builtin or not record["is_builtin"]
+        ]
 
     def get_template_by_name(self, name):
         return self.records.get(name)
@@ -25,19 +32,27 @@ class FakeChunkingService:
                 return record
         return None
 
-    def create_template(self, *, name, description, template_json, is_system=False):
+    def create_template(
+        self, *, name, description, template_json, tags=None, is_builtin=False
+    ):
         template_id = self.next_id
         self.next_id += 1
         self.records[name] = {
             "id": template_id,
+            "uuid": f"uuid-{template_id}",
             "name": name,
             "description": description,
             "template_json": template_json,
-            "is_system": is_system,
+            "tags": list(tags) if tags else [],
+            "is_builtin": is_builtin,
+            "version": 1,
+            "deleted": False,
         }
         return template_id
 
-    def update_template(self, template_id, *, description=None, template_json=None):
+    def update_template(
+        self, template_id, *, description=None, template_json=None, tags=None
+    ):
         record = self.get_template_by_id(template_id)
         if record is None:
             raise ValueError("missing template")
@@ -45,6 +60,9 @@ class FakeChunkingService:
             record["description"] = description
         if template_json is not None:
             record["template_json"] = template_json
+        if tags is not None:
+            record["tags"] = list(tags)
+        record["version"] += 1
 
 
 class FakeCollection:
@@ -134,6 +152,27 @@ def test_local_rag_admin_service_persists_and_filters_template_tags():
     assert created["tags"] == ["rag", "local"]
     assert [record["name"] for record in filtered] == ["tagged"]
     assert updated["tags"] == ["updated"]
+
+
+def test_local_rag_admin_service_filters_templates_by_builtin_flag():
+    """task-8 (AC 26): the include filters key on ``is_builtin`` — the v7
+    column — not the deleted ``is_system`` spelling."""
+    chunking = FakeChunkingService()
+    chunking.create_template(
+        name="builtin-row", description="d", template_json={}, is_builtin=True
+    )
+    chunking.create_template(
+        name="custom-row", description="d", template_json={}, is_builtin=False
+    )
+    service = LocalRAGAdminService(None, chunking_service=chunking)
+
+    all_names = sorted(t["name"] for t in service.list_templates())
+    custom_only = sorted(t["name"] for t in service.list_templates(include_builtin=False))
+    builtin_only = sorted(t["name"] for t in service.list_templates(include_custom=False))
+
+    assert all_names == ["builtin-row", "custom-row"]
+    assert custom_only == ["custom-row"]
+    assert builtin_only == ["builtin-row"]
 
 
 def test_local_rag_admin_service_applies_server_style_template_to_text():

@@ -120,20 +120,6 @@ class LocalRAGAdminService:
         decorated["tags"] = self._extract_template_tags(decorated, template_config)
         return decorated
 
-    @staticmethod
-    def _with_template_tags(
-        template: Mapping[str, Any], tags: Sequence[str] | None
-    ) -> dict[str, Any]:
-        payload = dict(template)
-        if tags is None:
-            return payload
-        normalized_tags = LocalRAGAdminService._normalize_tags(tags)
-        metadata = dict(payload.get("metadata") or {})
-        metadata["tags"] = normalized_tags
-        payload["metadata"] = metadata
-        payload["tags"] = normalized_tags
-        return payload
-
     def _get_collection(self, collection_name: str) -> Any:
         return self._require_chroma_client().get_collection(name=collection_name)
 
@@ -178,7 +164,7 @@ class LocalRAGAdminService:
         templates = [
             self._decorate_template_record(template)
             for template in list(
-                self._require_chunking_service().get_all_templates(include_system=True)
+                self._require_chunking_service().get_all_templates(include_builtin=True)
                 or []
             )
         ]
@@ -186,13 +172,13 @@ class LocalRAGAdminService:
             templates = [
                 template
                 for template in templates
-                if not bool(template.get("is_system", False))
+                if not bool(template.get("is_builtin", False))
             ]
         if not include_custom:
             templates = [
                 template
                 for template in templates
-                if bool(template.get("is_system", False))
+                if bool(template.get("is_builtin", False))
             ]
         if tags:
             requested_tags = {str(tag) for tag in tags if str(tag).strip()}
@@ -219,10 +205,13 @@ class LocalRAGAdminService:
         user_id: Optional[str] = None,
     ) -> dict[str, Any]:
         service = self._require_chunking_service()
+        # task-8: tags persist in the v7 ``tags`` column (the interop also
+        # moves any body tags there), not embedded in the JSON body.
         template_id = service.create_template(
             name=name,
             description=description,
-            template_json=self._with_template_tags(template, tags),
+            template_json=dict(template),
+            tags=self._normalize_tags(tags) if tags is not None else None,
         )
         return self._decorate_template_record(
             service.get_template_by_id(int(template_id))
@@ -238,20 +227,11 @@ class LocalRAGAdminService:
     ) -> dict[str, Any]:
         service = self._require_chunking_service()
         existing = self.get_template(template_name)
-        template_payload: dict[str, Any] | None = None
-        if template is not None:
-            template_payload = self._with_template_tags(
-                template, tags if tags is not None else existing.get("tags")
-            )
-        elif tags is not None:
-            template_payload = self._with_template_tags(
-                self._parse_template_config(existing.get("template_json")),
-                tags,
-            )
         service.update_template(
             int(existing["id"]),
             description=description,
-            template_json=template_payload,
+            template_json=dict(template) if template is not None else None,
+            tags=self._normalize_tags(tags) if tags is not None else None,
         )
         return self._decorate_template_record(
             service.get_template_by_id(int(existing["id"]))

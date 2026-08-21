@@ -78,21 +78,19 @@ class RAGAdminScopeService:
             )
         return self._service_for_mode(normalized_mode)
 
-    def _enforce_policy(
-        self, mode: RAGAdminBackend, resource: str, action: str
-    ) -> None:
-        if self.policy_enforcer is None:
-            return
-        self.policy_enforcer.require_allowed(
-            action_id=f"rag.{resource}.{action}.{mode.value}"
-        )
-
     async def _maybe_await(self, value: Any) -> Any:
         if inspect.isawaitable(value):
             return await value
         return value
 
     def _enforce_policy(self, action_id: str) -> None:
+        """Require a policy action id (no-op without an enforcer).
+
+        task-8: the shadowed 3-arg ``(mode, resource, action)`` variant is
+        gone — callers build the id with the ``_*_action_id`` helpers (the
+        ``rag.admin.<action>.<mode>`` form), so server-mode paths no longer
+        TypeError the moment a policy enforcer is present.
+        """
         if self.policy_enforcer is None:
             return
         self.policy_enforcer.require_allowed(action_id=action_id)
@@ -306,15 +304,15 @@ class RAGAdminScopeService:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode == RAGAdminBackend.LOCAL:
             # Local mode validates with the server-parity validator (spec §7)
-            # instead of hard-requiring the server backend. create/update
-            # refusing invalid templates lands with the CRUD rewrite (PR B).
+            # instead of hard-requiring the server backend. The CRUD layer
+            # (task-8) runs the same validator on every create/update.
             self._enforce_policy(self._admin_action_id(normalized_mode, "configure"))
             return validate_template(template_config)
         if normalized_mode != RAGAdminBackend.SERVER:
             raise ValueError(
                 "Server retrieval-admin backend is required for this RAG admin operation."
             )
-        self._enforce_policy(normalized_mode, "admin", "configure")
+        self._enforce_policy(self._admin_action_id(normalized_mode, "configure"))
         service = self._service_for_mode(normalized_mode)
         return await self._maybe_await(
             service.validate_template_config(template_config)
@@ -334,7 +332,7 @@ class RAGAdminScopeService:
             raise ValueError(
                 "Server retrieval-admin backend is required for this RAG admin operation."
             )
-        self._enforce_policy(normalized_mode, "admin", "list")
+        self._enforce_policy(self._admin_action_id(normalized_mode, "list"))
         service = self._service_for_mode(normalized_mode)
         kwargs: dict[str, Any] = {}
         if media_type is not None:
@@ -362,7 +360,7 @@ class RAGAdminScopeService:
             raise ValueError(
                 "Server retrieval-admin backend is required for this RAG admin operation."
             )
-        self._enforce_policy(normalized_mode, "admin", "configure")
+        self._enforce_policy(self._admin_action_id(normalized_mode, "configure"))
         service = self._service_for_mode(normalized_mode)
         kwargs: dict[str, Any] = {"name": name}
         if example_text is not None:

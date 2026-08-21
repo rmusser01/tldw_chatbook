@@ -21,12 +21,14 @@ def _to_mapping(value: Any) -> dict[str, Any]:
     payload: dict[str, Any] = {}
     for attribute in (
         "id",
+        "uuid",
         "name",
         "description",
         "template_json",
         "metadata",
         "count",
         "embedding_dimension",
+        "version",
     ):
         if hasattr(value, attribute):
             payload[attribute] = getattr(value, attribute)
@@ -76,11 +78,15 @@ def normalize_template_record(backend: str, payload: Any) -> dict[str, Any]:
         "description": data.get("description") or "",
         "template_json": template_json,
         "template": template,
-        "is_builtin": bool(data.get("is_builtin", data.get("is_system", False))),
+        # task-8 (AC 26): v7 columns sourced from the DB row — no legacy
+        # spelling fallback, no fabricated version (a live v7 row always
+        # carries one; None means the caller stopped forwarding it).
+        "uuid": data.get("uuid"),
+        "is_builtin": bool(data.get("is_builtin", False)),
         "tags": list(data.get("tags") or []),
         "created_at": data.get("created_at"),
         "updated_at": data.get("updated_at"),
-        "version": _safe_int(data.get("version")) or 1,
+        "version": _safe_int(data.get("version")),
         "user_id": data.get("user_id"),
     }
 

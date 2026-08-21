@@ -119,6 +119,10 @@ VALID_TABLES = {
         "MediaChunks",
         "MediaChunks_fts",
         "Transcripts",
+        # task-8 (spec §5.2.1/AC 27): without this row, any use of a
+        # generic helper for the new v7 columns would raise
+        # ``InputError: Invalid table name``.
+        "ChunkingTemplates",
     },
     "prompts": {
         "Prompts",
@@ -348,6 +352,23 @@ VALID_COLUMNS = {
         "deleted",
         "prev_version",
         "merge_parent_uuid",
+    },
+    # task-8 (spec §5.2.1/AC 27): the Media DB's v7 ChunkingTemplates column
+    # set (Client_Media_DB_v2 ``_CHUNKING_TEMPLATES_V7_CREATE_SQL``). Pinned
+    # against a live fresh database by
+    # ``Tests/DB/test_sql_validation.py::test_chunking_templates_columns_accepted_and_live``.
+    "ChunkingTemplates": {
+        "id",
+        "uuid",
+        "name",
+        "description",
+        "template_json",
+        "tags",
+        "is_builtin",
+        "version",
+        "deleted",
+        "created_at",
+        "updated_at",
     },
     # Prompts DB
     "Prompts": {
