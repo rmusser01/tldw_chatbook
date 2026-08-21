@@ -1,7 +1,7 @@
 ---
 id: TASK-19054
 title: Author and import Persona Visual packs
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-20 17:29'
 labels: []
@@ -32,3 +32,18 @@ Let users review, edit, import, stage, and explicitly publish Persona Visual pac
 - [ ] #7 No image-generation provider, recipe workflow, Shared Visual Identity merge, or Buddy window is added.
 - [ ] #8 Labelled actions are keyboard-operable, preserve focus, and add no forbidden bindings; compact and normal layouts paint usable controls; untrusted archive text renders as plain text; user-facing errors, logs, and diagnostics remain path-free. Evidence includes born-RED→GREEN tests and mutation proof for draft, Save, Cancel, authority, archive, cancellation, and invalidation guards; assigned-worktree provenance; real SQLite publication/repository tests where touched; isolated HOME/XDG/config/data roots; focused widget/screen/race/import/publication tests; Ruff, format, compile, and diff checks; diagnostic, privacy, architecture, and governance gates; and Impeccable review after the final visible change.
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Add an immutable, path-free authoring draft contract over the existing Persona Visual manifest/publication boundaries.
+2. Add a pinned-server-compatible `.tldw-persona-vpack` importer with bounded private staging and identity-pinned cleanup.
+3. Add the Persona Visual browser/editor section and typed actions to the existing Persona profile editor.
+4. Wire screen-owned loading, selected-only preview, isolated edits/import, cancellation drain, navigation guards, and honest import labels.
+5. Publish one immutable version through the existing authority boundary, invalidate exact old/new identities, and refresh authoritatively.
+6. Run touched-component, mutation, isolated-profile, SQLite, UI, privacy, architecture, Impeccable, and static gates; then record concise implementation evidence.
+
+ADR required: no
+
+ADR path: `backlog/decisions/074-portable-actor-packs-and-local-persona-visual-runtime.md`
+
+Reason: ADR-074 already defines the separate local Persona Visual runtime, review-first import, immutable publication, authority, and scope boundaries implemented by this task.
