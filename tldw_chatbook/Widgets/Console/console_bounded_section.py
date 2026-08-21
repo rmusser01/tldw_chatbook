@@ -155,6 +155,21 @@ class ConsoleBoundedSection(Vertical):
         yield self._viewport
         yield self._hint
 
+    async def recompose(self) -> None:
+        """Reconcile the stable owner-supplied subtree without pruning it.
+
+        Textual's default recompose removes direct children before invoking
+        ``compose`` again. Here those children contain widgets built and owned by
+        the caller, so pruning would destroy the only content instances available
+        to compose. The scaffold has no reactive composition branches; retaining it
+        and scheduling the normal post-refresh geometry pass is the safe equivalent.
+        """
+
+        if self.is_mounted:
+            # Queue the request itself after refresh so a same-tick content update
+            # has completed layout before the ordinary reconciler snapshots it.
+            self.call_after_refresh(self.request_reconcile)
+
     def on_mount(self) -> None:
         self.request_reconcile()
 

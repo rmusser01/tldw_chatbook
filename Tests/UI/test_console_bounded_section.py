@@ -294,9 +294,8 @@ async def test_content_and_allocation_changes_clamp_and_reconcile_state() -> Non
 
         await button.remove()
         tail.update(_lines(3))
-        section.request_reconcile()
-        await pilot.pause()
-        await pilot.pause()
+        await section.recompose()
+        await _settle(pilot)
         assert recovered == [None]
         assert section.desired_content_lines == 3
         assert section.viewport.scroll_y == 0
@@ -378,7 +377,7 @@ async def test_removed_former_descendant_does_not_steal_valid_outside_focus() ->
         assert app.focused is outside
 
         await focused_row.remove()
-        section.request_reconcile()
+        await section.recompose()
         await _settle(pilot)
         assert recovered == []
         assert app.focused is outside
@@ -484,28 +483,60 @@ async def test_width_shrink_and_growth_remeasure_wrapped_physical_rows() -> None
 
 
 @pytest.mark.asyncio
-async def test_missing_hint_fails_closed_and_a_later_request_retries() -> None:
-    section, _content = _section(21)
+async def test_same_instance_recompose_retains_content_and_preserves_offset() -> None:
+    section, content = _section(30, allocation=5)
     app = _Harness(section)
 
     async with app.run_test(size=(60, 30)) as pilot:
         await _settle(pilot)
-        hint = section.hint
-        assert section.viewport.can_focus is True
-        assert hint.display is True
+        section.viewport.scroll_to(y=8, animate=False)
+        await pilot.pause()
+        assert section.viewport.scroll_y == 8
 
-        await hint.remove()
-        section.request_reconcile()
+        root_id = section.id
+        viewport_id = section.viewport.id
+        hint_id = section.hint.id
+        await section.recompose()
         await _settle(pilot)
+
+        assert section.id == root_id
+        assert section.viewport.id == viewport_id
+        assert section.hint.id == hint_id
+        assert app.query_one("#content", Static) is content
+        assert len(app.query("#content")) == 1
+        assert section.desired_content_lines == 30
+        assert section.viewport.content_region.height == 5
+        assert section.viewport.scroll_y == 8
+        assert section.viewport.can_focus is True
+        assert section.hint.display is True
+        assert str(section.hint.render()) == LOCAL_HINT
+
+        content.update(_lines(3))
+        await section.recompose()
+        await _settle(pilot)
+        assert app.query_one("#content", Static) is content
+        assert len(app.query("#content")) == 1
+        assert section.desired_content_lines == 3
+        assert section.viewport.content_region.height == 3
+        assert section.viewport.scroll_y == 0
         assert section.viewport.can_focus is False
+        assert section.hint.display is False
 
-        await section.mount(hint)
-        section.request_reconcile()
+        section.set_allocation(2)
+        await section.recompose()
         await _settle(pilot)
-        assert hint in tuple(section.children)
+        assert section.desired_content_lines == 3
+        assert section.viewport.content_region.height == 2
+        assert section.viewport.scroll_y == 0
         assert section.viewport.can_focus is True
-        assert hint.display is True
-        assert str(hint.render()) == LOCAL_HINT
+        assert section.hint.display is True
+
+        section.set_allocation(8)
+        await section.recompose()
+        await _settle(pilot)
+        assert section.viewport.content_region.height == 3
+        assert section.viewport.can_focus is False
+        assert section.hint.display is False
 
 
 class _CountingSection(ConsoleBoundedSection):
