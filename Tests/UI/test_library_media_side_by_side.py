@@ -30,11 +30,14 @@ from Tests.UI.test_library_shell import (
     _wait_for_library_shell,
     _wait_for_selector,
 )
+from tldw_chatbook.Library.library_media_state import MediaBrowseScope
+from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
 #: Wide regime: the shell grid measures >= the compact breakpoint (120).
 WIDE_SIZE = LIBRARY_TEST_SIZE  # (170, 48)
 #: Stacked regime: below the breakpoint; a size test_library_shell already uses.
 NARROW_SIZE = (100, 30)
+COMPACT_SCROLL_SIZE = (100, 20)
 
 
 def _build_media_test_app():
@@ -242,6 +245,258 @@ async def test_media_resize_focus_restore_yields_to_newer_user_focus(monkeypatch
         )
         for identity, guard in pending:
             restore(identity, guard)
+        assert screen.focused is type_filter
+
+
+async def _open_scrolled_compact_media_viewer(host, pilot, *, row_index=15):
+    """Open a non-first compact row after recording its real scroll owner."""
+    screen = await _open_media_list(host, pilot)
+    await _wait_for_compact_class(screen, pilot, compact=True)
+    row = screen.query_one(f"#library-media-row-{row_index}", Button)
+    scroll = screen.query_one("#library-media-row-scroll", VerticalScroll)
+    row.focus()
+    row.scroll_visible(animate=False, force=True, immediate=True)
+    await _wait_for_condition(
+        pilot,
+        lambda: scroll.scroll_y > 0,
+        message="Compact Media row pane never reached a nonzero scroll offset.",
+    )
+    media_id = row.media_id
+    offset = (int(scroll.scroll_x), int(scroll.scroll_y))
+    row.press()
+    await _wait_for_selector(screen, pilot, "#library-media-back")
+    return screen, media_id, offset
+
+
+@pytest.mark.asyncio
+async def test_compact_media_viewer_back_restores_semantic_row_and_scroll():
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    service = app.media_reading_scope_service
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=COMPACT_SCROLL_SIZE) as pilot:
+        screen, media_id, scroll_offset = await _open_scrolled_compact_media_viewer(
+            host, pilot
+        )
+        applied_scope = screen._library_media_browse_controller.applied_scope
+        reads_before_back = len(service.search_calls)
+        screen.query_one("#library-media-back", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-scroll")
+        await _wait_for_condition(
+            pilot,
+            lambda: getattr(screen.focused, "media_id", None) == media_id,
+            message="Viewer Back did not restore the activated Media row.",
+        )
+        scroll = screen.query_one("#library-media-row-scroll", VerticalScroll)
+        assert (int(scroll.scroll_x), int(scroll.scroll_y)) == scroll_offset
+        assert screen._library_media_browse_controller.applied_scope == applied_scope
+        assert len(service.search_calls) == reads_before_back
+
+
+@pytest.mark.asyncio
+async def test_compact_media_viewer_back_survives_authoritative_recompose():
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=COMPACT_SCROLL_SIZE) as pilot:
+        screen, media_id, scroll_offset = await _open_scrolled_compact_media_viewer(
+            host, pilot
+        )
+        screen.query_one("#library-media-back", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: getattr(screen.focused, "media_id", None) == media_id,
+            message="Initial viewer return did not restore its Media row.",
+        )
+
+        screen.refresh(recompose=True)
+        await _wait_for_selector(screen, pilot, "#library-media-row-scroll")
+        await _wait_for_condition(
+            pilot,
+            lambda: getattr(screen.focused, "media_id", None) == media_id,
+            message="Authoritative recompose lost the pending Media return row.",
+        )
+        scroll = screen.query_one("#library-media-row-scroll", VerticalScroll)
+        assert (int(scroll.scroll_x), int(scroll.scroll_y)) == scroll_offset
+
+
+@pytest.mark.asyncio
+async def test_compact_media_viewer_back_falls_back_after_row_removed():
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=COMPACT_SCROLL_SIZE) as pilot:
+        screen, media_id, _scroll_offset = await _open_scrolled_compact_media_viewer(
+            host, pilot
+        )
+        controller = screen._library_media_browse_controller
+        service = app.media_reading_scope_service
+        removed_backing = int(media_id.rsplit(":", 1)[1])
+        service.media_items = [
+            item
+            for index, item in enumerate(service.media_items)
+            if service._backing_id(item, index) != removed_backing
+        ]
+        screen._request_library_media_browse(
+            controller.mutation_refresh_scope,
+            focus_identity=None,
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: controller.applied_result is not None
+            and controller.applied_result.total == 44
+            and not controller.loading,
+            message="Authoritative page without the removed row never applied.",
+        )
+        expected = controller.retained_items[0]["id"]
+
+        screen.query_one("#library-media-back", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: getattr(screen.focused, "media_id", None) == expected,
+            message="Removed viewer row did not fall back to the first retained row.",
+        )
+
+
+@pytest.mark.asyncio
+async def test_compact_media_viewer_back_follows_single_page_clamp():
+    app = _build_media_test_app()
+    media = _many_media_items(21)
+    _seed_conversations(app, _two_conversations(), media=media)
+    service = app.media_reading_scope_service
+    screen = LibraryScreen(app)
+    screen._library_selected_row_id = "browse-media"
+    screen._library_media_browse_controller.invalidate(MediaBrowseScope(page=2))
+    host = LibraryProductionCSSHarness(app, screen=screen)
+
+    async with host.run_test(size=COMPACT_SCROLL_SIZE) as pilot:
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-media-row-0")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_browse_controller.applied_scope
+            == MediaBrowseScope(page=2),
+            message="Restored Media page 2 never applied.",
+        )
+        row = screen.query_one("#library-media-row-0", Button)
+        target_id = row.media_id
+        row.press()
+        await _wait_for_selector(screen, pilot, "#library-media-back")
+        reads_before_back = len(service.search_calls)
+        screen.query_one("#library-media-back", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: getattr(screen.focused, "media_id", None) == target_id,
+            message="Viewer Back did not first restore the retained page-2 row.",
+        )
+        assert len(service.search_calls) == reads_before_back == 1
+
+        target_backing = int(target_id.rsplit(":", 1)[1])
+        service.media_items = [
+            item
+            for index, item in enumerate(service.media_items)
+            if service._backing_id(item, index) != target_backing
+        ]
+        controller = screen._library_media_browse_controller
+        screen._request_library_media_browse(
+            controller.mutation_refresh_scope,
+            focus_identity=None,
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: controller.applied_scope == MediaBrowseScope(page=1)
+            and not controller.loading,
+            message="Shrunken page 2 did not clamp once to page 1.",
+        )
+        assert [call["offset"] for call in service.search_calls] == [20, 20, 0]
+        await _wait_for_condition(
+            pilot,
+            lambda: getattr(screen.focused, "media_id", None)
+            == controller.retained_items[0]["id"],
+            message="Clamped page did not fall back to its first authoritative row.",
+        )
+
+
+@pytest.mark.asyncio
+async def test_compact_media_viewer_back_empty_page_focuses_recovery_control():
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    service = app.media_reading_scope_service
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=COMPACT_SCROLL_SIZE) as pilot:
+        screen, _media_id, _scroll_offset = await _open_scrolled_compact_media_viewer(
+            host, pilot
+        )
+        controller = screen._library_media_browse_controller
+        service.media_items = []
+        screen._request_library_media_browse(
+            controller.mutation_refresh_scope,
+            focus_identity=None,
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: controller.applied_result is not None
+            and controller.applied_result.total == 0
+            and not controller.loading,
+            message="Exact empty Media result never applied in the viewer.",
+        )
+        reads_before_back = len(service.search_calls)
+
+        screen.query_one("#library-media-back", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: getattr(screen.focused, "id", None)
+            == "library-media-empty-import",
+            message="Empty viewer return did not focus the Import recovery action.",
+        )
+        assert len(service.search_calls) == reads_before_back
+
+
+@pytest.mark.asyncio
+async def test_compact_media_viewer_back_restore_yields_to_newer_user_focus(
+    monkeypatch,
+):
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=COMPACT_SCROLL_SIZE) as pilot:
+        screen, _media_id, _scroll_offset = await _open_scrolled_compact_media_viewer(
+            host, pilot
+        )
+        pending = []
+        focus_entry = screen._focus_library_list_entry_if_current
+
+        def hold_focus_entry(generation=None):
+            pending.append(generation)
+
+        monkeypatch.setattr(
+            screen,
+            "_focus_library_list_entry_if_current",
+            hold_focus_entry,
+        )
+        screen.query_one("#library-media-back", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-type-filter")
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(pending),
+            message="Viewer Back did not queue its bounded focus settlement.",
+        )
+        type_filter = screen.query_one("#library-media-type-filter", Button)
+        screen._mark_library_notes_user_interaction()
+        type_filter.focus()
+        await pilot.pause()
+
+        monkeypatch.setattr(
+            screen,
+            "_focus_library_list_entry_if_current",
+            focus_entry,
+        )
+        focus_entry(pending[-1])
         assert screen.focused is type_filter
 
 

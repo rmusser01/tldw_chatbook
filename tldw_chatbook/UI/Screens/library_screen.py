@@ -3741,6 +3741,13 @@ class LibraryScreen(BaseAppScreen):
         # -- checks and consumes this flag on every run, re-requesting the
         # focus after whichever recompose turns out to be the last one.
         self._library_pending_list_entry_focus: bool = False
+        self._library_list_entry_focus_generation: int = 0
+        self._library_pending_list_entry_media_return: (
+            tuple[str, tuple[int, int] | None] | None
+        ) = None
+        self._library_media_viewer_return: (
+            tuple[str, tuple[int, int] | None] | None
+        ) = None
         # task-2856 review (PR #1410, Qodo): the settle-window timer
         # ``_arm_library_list_entry_focus`` schedules used to be fire-and-
         # forget -- the ``Timer`` ``set_timer`` returns was never kept, so
@@ -6518,7 +6525,11 @@ class LibraryScreen(BaseAppScreen):
             return getattr(self, "_library_skills_view", "list") == "list"
         return False
 
-    def _arm_library_list_entry_focus(self) -> None:
+    def _arm_library_list_entry_focus(
+        self,
+        *,
+        media_return: tuple[str, tuple[int, int] | None] | None = None,
+    ) -> None:
         """Request the primary list's first row be focused (task-2856 AC1).
 
         Call this (never ``call_after_refresh(self._focus_library_list_entry)``
@@ -6551,8 +6562,16 @@ class LibraryScreen(BaseAppScreen):
         new one is scheduled, so only the most recent arm's timer is ever
         live.
         """
+        self._library_list_entry_focus_generation += 1
         self._library_pending_list_entry_focus = True
-        self.call_after_refresh(self._focus_library_list_entry)
+        self._library_pending_list_entry_media_return = media_return
+        if media_return is None:
+            self.call_after_refresh(self._focus_library_list_entry)
+        else:
+            self.call_after_refresh(
+                self._focus_library_list_entry_if_current,
+                self._library_list_entry_focus_generation,
+            )
         if self._library_list_entry_focus_timer is not None:
             self._library_list_entry_focus_timer.stop()
         self._library_list_entry_focus_timer = self.set_timer(
@@ -6574,7 +6593,9 @@ class LibraryScreen(BaseAppScreen):
         so an interaction-driven disarm never leaves the settle-window
         timer dangling behind it.
         """
+        self._library_list_entry_focus_generation += 1
         self._library_pending_list_entry_focus = False
+        self._library_pending_list_entry_media_return = None
         if self._library_list_entry_focus_timer is not None:
             self._library_list_entry_focus_timer.stop()
             self._library_list_entry_focus_timer = None
@@ -6637,6 +6658,14 @@ class LibraryScreen(BaseAppScreen):
             return
         self._disarm_library_list_entry_focus()
 
+    def _focus_library_list_entry_if_current(self, generation: int) -> None:
+        """Apply one semantic Media return only while its arm still owns focus."""
+        if (
+            self._library_pending_list_entry_focus
+            and generation == self._library_list_entry_focus_generation
+        ):
+            self._focus_library_list_entry()
+
     def _focus_library_list_entry(self) -> None:
         """Focus the primary list's first row -- see ``_arm_library_list_entry_focus``.
 
@@ -6661,10 +6690,23 @@ class LibraryScreen(BaseAppScreen):
         row_class = _LIBRARY_LIST_ROW_CLASS_BY_ROW_ID.get(self._library_selected_row_id)
         if row_class is None:
             return
-        try:
-            rows = self.query(f".{row_class}")
-            first_row = rows.first()
-        except NoMatches:
+        rows = list(self.query(f".{row_class}"))
+        if not rows:
+            if row_class == "library-media-row":
+                for selector in (
+                    "#library-media-type-filter",
+                    "#library-media-empty-clear-type",
+                    "#library-media-empty-import",
+                    "#library-media-retry",
+                ):
+                    try:
+                        control = self.query_one(selector, Widget)
+                    except (NoMatches, QueryError):
+                        continue
+                    if not getattr(control, "disabled", False):
+                        self._library_notes_programmatic_focus_target = control
+                        control.focus()
+                        return
             return
         if (
             row_class == "library-media-row"
@@ -6677,7 +6719,37 @@ class LibraryScreen(BaseAppScreen):
                 ):
                     row.focus()
                     return
-        first_row.focus()
+        target = rows[0]
+        media_return = self._library_pending_list_entry_media_return
+        if row_class == "library-media-row" and media_return is not None:
+            media_id, _scroll_offset = media_return
+            target = next(
+                (
+                    row
+                    for row in rows
+                    if str(getattr(row, "media_id", "") or "") == media_id
+                ),
+                target,
+            )
+        if media_return is None:
+            target.focus()
+        else:
+            self._library_notes_programmatic_focus_target = target
+            self.set_focus(target, scroll_visible=False)
+        if row_class == "library-media-row" and media_return is not None:
+            _media_id, scroll_offset = media_return
+            if scroll_offset is not None:
+                try:
+                    scroll = self.query_one("#library-media-row-scroll", Widget)
+                except (NoMatches, QueryError):
+                    return
+                scroll.scroll_to(
+                    x=max(0, min(scroll_offset[0], int(scroll.max_scroll_x))),
+                    y=max(0, min(scroll_offset[1], int(scroll.max_scroll_y))),
+                    animate=False,
+                    force=True,
+                    immediate=True,
+                )
 
     async def _flush_active_file_notes(self) -> bool:
         """Delegate the common leave guard only while Files owns Notes."""
@@ -9757,7 +9829,13 @@ class LibraryScreen(BaseAppScreen):
         # covers an arbitrary-length chain of these workers instead of
         # exactly one.
         if self._library_pending_list_entry_focus:
-            self.call_after_refresh(self._focus_library_list_entry)
+            if self._library_pending_list_entry_media_return is None:
+                self.call_after_refresh(self._focus_library_list_entry)
+            else:
+                self.call_after_refresh(
+                    self._focus_library_list_entry_if_current,
+                    self._library_list_entry_focus_generation,
+                )
         preferences = self._library_rail_preferences()
 
         yield Static(
@@ -10861,8 +10939,6 @@ class LibraryScreen(BaseAppScreen):
             )
         ):
             focus_identity = f"#{focused_id}"
-        elif self._library_pending_list_entry_focus:
-            focus_identity = "#library-media-row-0"
         if focus_identity in {
             "#library-media-previous",
             "#library-media-next",
@@ -17789,6 +17865,15 @@ class LibraryScreen(BaseAppScreen):
                 row-press behavior for a row missing its ``media_id``).
         """
         media_id = str(media_id or "")
+        self._library_media_viewer_return = None
+        if media_id and self._library_media_view == "list" and self.is_mounted:
+            try:
+                scroll = self.query_one("#library-media-row-scroll", Widget)
+            except (NoMatches, QueryError):
+                scroll_offset = None
+            else:
+                scroll_offset = (int(scroll.scroll_x), int(scroll.scroll_y))
+            self._library_media_viewer_return = (media_id, scroll_offset)
         if media_id:
             self._acknowledge_library_destination_change()
             self._selected_media_id = media_id
@@ -30218,7 +30303,9 @@ class LibraryScreen(BaseAppScreen):
         self.refresh(recompose=True)
         # task-2856 AC1: every "back to list" exit re-focuses the list's
         # first row so Up/Down/Enter work immediately.
-        self._arm_library_list_entry_focus()
+        media_return = self._library_media_viewer_return
+        self._library_media_viewer_return = None
+        self._arm_library_list_entry_focus(media_return=media_return)
 
     def action_library_media_viewer_back(self) -> None:
         """Escape: step back ONE level in the media viewer (task-2856 AC2).
