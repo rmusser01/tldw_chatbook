@@ -108,6 +108,7 @@ from ...Persona_Visual.publication import (
     publish_persona_visual,
 )
 from ...Persona_Visual.repository import PersonaVisualIdentity, PersonaVisualRepository
+from ...Persona_Buddy import PersonaBuddySelection
 from ...TTS import (
     AssignedTTSProfileSnapshot,
     CharacterRef,
@@ -199,6 +200,7 @@ from ...Widgets.Persona_Widgets.personas_library_pane import (
 )
 from ...Widgets.Persona_Widgets.personas_messages import (
     PersonaActionRequested,
+    PersonaBuddyActionRequested,
     PersonaEntitySelected,
     PersonaMarksChanged,
     PersonaPageChanged,
@@ -3931,7 +3933,18 @@ class PersonasScreen(BaseAppScreen):
         self.query_one(PersonaProfileCardWidget).show_persona(record)
         self._show_center("#ccp-persona-card-view")
         inspector = self.query_one(PersonasInspectorPane)
-        inspector.show_selection(name=entity_name, kind="persona")
+        revision = record.get("version")
+        inspector.show_selection(
+            name=entity_name,
+            kind="persona",
+            source=self.persona_handler.current_mode(),
+            entity_id=entity_id,
+            revision=revision if type(revision) is int else None,
+            active=(
+                record.get("is_active", True) is True
+                and record.get("deleted", False) is False
+            ),
+        )
         # Drop any previous character's portrait: the rail must never show a
         # face that belongs to a different selection.
         inspector.set_avatar_thumbnail(None)
@@ -5763,6 +5776,155 @@ class PersonasScreen(BaseAppScreen):
         event.stop()
         await self._attach_selection_to_console(intent="start_chat")
 
+    def _persona_buddy_action_context_is_current(
+        self,
+        message: PersonaBuddyActionRequested,
+        *,
+        scope_service: object,
+        controller: object,
+    ) -> bool:
+        """Revalidate every Workbench owner behind one explicit Buddy action."""
+
+        return bool(
+            self.is_mounted
+            and getattr(self.app_instance, "character_persona_scope_service", None)
+            is scope_service
+            and getattr(self.app, "persona_buddy_controller", None) is controller
+            and self.state.active_mode == "personas"
+            and self.state.runtime_source == message.source
+            and self.persona_handler.current_mode() == message.source
+            and self.state.selected_entity_kind == "persona"
+            and self.state.selected_entity_id == message.persona_id
+            and not self.state.has_unsaved_changes
+        )
+
+    @staticmethod
+    def _persona_buddy_record_is_eligible(
+        record: Mapping[str, object], message: PersonaBuddyActionRequested
+    ) -> bool:
+        """Return whether a complete record still matches local action authority."""
+
+        return bool(
+            message.source == "local"
+            and str(record.get("id") or "") == message.persona_id
+            and type(record.get("version")) is int
+            and record.get("version") == message.revision
+            and record.get("is_active", True) is True
+            and record.get("deleted", False) is False
+        )
+
+    @on(PersonaBuddyActionRequested)
+    async def _handle_persona_buddy_action(
+        self, message: PersonaBuddyActionRequested
+    ) -> None:
+        """Persist one explicit local-Persona Buddy ownership or view command."""
+
+        message.stop()
+        scope_service = getattr(
+            self.app_instance, "character_persona_scope_service", None
+        )
+        controller = getattr(self.app, "persona_buddy_controller", None)
+        if (
+            message.source != "local"
+            or scope_service is None
+            or controller is None
+            or not self._persona_buddy_action_context_is_current(
+                message, scope_service=scope_service, controller=controller
+            )
+        ):
+            self._notify(
+                "Persona Buddy is available for active local Personas.", "warning"
+            )
+            return
+
+        record, complete = await self._fetch_profile_record_checked(message.persona_id)
+        if (
+            not complete
+            or not self._persona_buddy_action_context_is_current(
+                message, scope_service=scope_service, controller=controller
+            )
+            or not self._persona_buddy_record_is_eligible(record, message)
+        ):
+            self._notify(
+                "Persona Buddy is available for active local Personas.", "warning"
+            )
+            return
+
+        current = controller.current_preferences()
+        selection = PersonaBuddySelection("local", message.persona_id)
+        if message.action == "use":
+            changes: dict[str, object] = {
+                "selection": selection,
+                "enabled": True,
+                "open": True,
+            }
+        elif current.selection != selection:
+            self._notify("Use this Persona for Buddy first.", "warning")
+            return
+        elif message.action == "show":
+            changes = {"enabled": True, "open": True}
+        elif message.action == "close":
+            changes = {"open": False}
+        else:
+            changes = {"enabled": False}
+
+        try:
+            preferences_revision = controller.apply_preferences_patch(**changes)
+            persisted = await controller.persist_preferences_revision(
+                preferences_revision
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning(
+                "Persona Buddy preference update failed "
+                "(category=preference_update_failed)."
+            )
+            if self._persona_buddy_action_context_is_current(
+                message, scope_service=scope_service, controller=controller
+            ):
+                self._notify("Persona Buddy preference could not be saved.", "error")
+            return
+        if not self._persona_buddy_action_context_is_current(
+            message, scope_service=scope_service, controller=controller
+        ):
+            return
+        if not persisted:
+            self._notify("Persona Buddy preference could not be saved.", "error")
+            return
+        record, complete = await self._fetch_profile_record_checked(message.persona_id)
+        if (
+            not complete
+            or not self._persona_buddy_action_context_is_current(
+                message, scope_service=scope_service, controller=controller
+            )
+            or not self._persona_buddy_record_is_eligible(record, message)
+        ):
+            return
+        latest = controller.snapshot()
+        preferences = controller.current_preferences()
+        if latest.preferences_generation < preferences_revision or any(
+            getattr(preferences, field) != value for field, value in changes.items()
+        ):
+            return
+        reconcile = getattr(self.app, "reconcile_persona_buddy_view", None)
+        if callable(reconcile):
+            try:
+                await reconcile()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.warning(
+                    "Persona Buddy view refresh failed (category=view_refresh_failed)."
+                )
+                if self._persona_buddy_action_context_is_current(
+                    message, scope_service=scope_service, controller=controller
+                ):
+                    self._notify(
+                        "Persona Buddy was updated, but its view could not refresh.",
+                        "warning",
+                    )
+
     @on(CharacterMessage.Loaded)
     async def _handle_character_loaded(self, message: CharacterMessage.Loaded) -> None:
         message.stop()
@@ -6942,6 +7104,25 @@ class PersonasScreen(BaseAppScreen):
                 logger.warning(
                     "Persona Visual invalidation failed "
                     "(category=cache_invalidation_failed)."
+                )
+        controller = getattr(self.app, "persona_buddy_controller", None)
+        if controller is None:
+            return
+        snapshot = controller.snapshot()
+        visual = getattr(snapshot, "visual", None)
+        if getattr(visual, "graph_identity", None) not in identities:
+            return
+        controller.invalidate_profile()
+        reconcile = getattr(self.app, "reconcile_persona_buddy_view", None)
+        if callable(reconcile):
+            try:
+                await reconcile()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.warning(
+                    "Persona Buddy publication refresh failed "
+                    "(category=view_refresh_failed)."
                 )
 
     async def _save_persona_visual_pack(self) -> bool:
@@ -11519,13 +11700,16 @@ class PersonasScreen(BaseAppScreen):
                 raise ValueError("personas service is not configured")
             record = await self._fetch_profile_record(entity_id)
             raw_version = record.get("version")
+            mode = self.persona_handler.current_mode()
             await service.delete_persona_profile(
                 entity_id,
                 expected_version=(
                     int(raw_version) if raw_version is not None else None
                 ),
-                mode=self.persona_handler.current_mode(),
+                mode=mode,
             )
+            if mode == "local":
+                await self._refresh_persona_buddy_lifecycle(entity_id)
             return
         if kind == "dictionary":
             service = self._dictionary_scope_service()
@@ -11779,10 +11963,11 @@ class PersonasScreen(BaseAppScreen):
                 self._notify("Delete failed: personas are unavailable.", "error")
                 return
             try:
+                mode = self.persona_handler.current_mode()
                 await service.delete_persona_profile(
                     entity_id,
                     expected_version=version,
-                    mode=self.persona_handler.current_mode(),
+                    mode=mode,
                 )
             except Exception as exc:
                 logger.opt(exception=True).error(
@@ -11796,7 +11981,31 @@ class PersonasScreen(BaseAppScreen):
                 else:
                     self._notify(f"Delete failed: {exc}", "error")
                 return
+            if mode == "local":
+                await self._refresh_persona_buddy_lifecycle(entity_id)
         await self._after_delete(kind)
+
+    async def _refresh_persona_buddy_lifecycle(self, persona_id: str) -> None:
+        """Re-resolve the explicitly selected local Persona after a durable change."""
+
+        controller = getattr(self.app, "persona_buddy_controller", None)
+        if controller is None:
+            return
+        snapshot = controller.snapshot()
+        if snapshot.selection != PersonaBuddySelection("local", str(persona_id)):
+            return
+        controller.invalidate_profile()
+        reconcile = getattr(self.app, "reconcile_persona_buddy_view", None)
+        if not callable(reconcile):
+            return
+        try:
+            await reconcile()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning(
+                "Persona Buddy lifecycle refresh failed (category=view_refresh_failed)."
+            )
 
     async def _after_delete(self, kind: str) -> None:
         if kind == "character" and not self._local_character_actions_allowed():
@@ -12251,11 +12460,13 @@ class PersonasScreen(BaseAppScreen):
         saved = dict(result)
         saved.setdefault("id", persona_id)
         try:
-            await self._after_profile_save(saved)
+            await self._after_profile_save(saved, source=mode)
         finally:
             self._profile_save_operation_inflight = False
 
-    async def _after_profile_save(self, saved: dict) -> None:
+    async def _after_profile_save(
+        self, saved: dict, *, source: str | None = None
+    ) -> None:
         # Refresh the cached profile list tolerantly even when the user has
         try:
             profiles = await self.persona_handler.refresh_persona_list(
@@ -12270,6 +12481,9 @@ class PersonasScreen(BaseAppScreen):
         else:
             self._profile_lookup_recovery_state = None
         self._profiles = [dict(record) for record in (profiles or [])]
+        saved_id = str(saved.get("id") or "")
+        if saved_id and source == "local":
+            await self._refresh_persona_buddy_lifecycle(saved_id)
         self._update_purpose_line()
         self._update_purpose_line()
         if not self.is_mounted or self.state.active_mode != "personas":
@@ -12278,13 +12492,23 @@ class PersonasScreen(BaseAppScreen):
         self._edit_mode = "edit"  # create -> edit stays in the editor
         self.state.has_unsaved_changes = False
         self._set_active_row_unsaved(False)
-        saved_id = str(saved.get("id") or "")
         name = str(saved.get("name") or "Saved persona")
         self.state.select_entity(
             entity_kind="persona", entity_id=saved_id, entity_name=name
         )
         inspector = self.query_one(PersonasInspectorPane)
-        inspector.show_selection(name=name, kind="persona")
+        revision = saved.get("version")
+        inspector.show_selection(
+            name=name,
+            kind="persona",
+            source=self.persona_handler.current_mode(),
+            entity_id=saved_id,
+            revision=revision if type(revision) is int else None,
+            active=(
+                saved.get("is_active", True) is True
+                and saved.get("deleted", False) is False
+            ),
+        )
         inspector.set_unsaved(False)
         inspector.show_validation(())
         self._sync_inspector_console_actions()

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from dataclasses import dataclass
+from typing import Any, Literal, Self
 
 from textual.message import Message
 
@@ -34,6 +35,52 @@ PersonaAction = Literal[
     "cancel",
     "refresh",
 ]
+PersonaBuddyAction = Literal["use", "show", "close", "disable"]
+PersonaBuddySource = Literal["local", "server"]
+
+
+@dataclass(frozen=True, slots=True)
+class PersonaBuddyActionRequested(Message):
+    """Request one explicit Buddy ownership or visibility change."""
+
+    action: PersonaBuddyAction
+    source: PersonaBuddySource
+    persona_id: str
+    revision: int
+
+    def __post_init__(self) -> None:
+        if (
+            self.action not in {"use", "show", "close", "disable"}
+            or self.source not in {"local", "server"}
+            or not self.persona_id
+            or type(self.revision) is not int
+            or self.revision < 1
+        ):
+            raise ValueError("invalid Persona Buddy action")
+        # Textual mutates Message's private delivery slots. Keep those slots
+        # operational while the public action payload remains frozen.
+        initialized = Message()
+        for attribute in Message.__slots__:
+            object.__setattr__(self, attribute, getattr(initialized, attribute))
+
+    def set_sender(self, sender: Any) -> Self:
+        object.__setattr__(self, "_sender", sender)
+        return self
+
+    def _set_forwarded(self) -> None:
+        object.__setattr__(self, "_forwarded", True)
+
+    def prevent_default(self, prevent: bool = True) -> Self:
+        object.__setattr__(self, "_no_default_action", prevent)
+        return self
+
+    def stop(self, stop: bool = True) -> Self:
+        object.__setattr__(self, "_stop_propagation", stop)
+        return self
+
+    def _bubble_to(self, widget: Any) -> None:
+        object.__setattr__(self, "_no_default_action", False)
+        widget.post_message(self)
 
 
 class PersonaModeChanged(Message):
@@ -118,6 +165,9 @@ class PersonaMarksChanged(Message):
 __all__ = [
     "PersonaAction",
     "PersonaActionRequested",
+    "PersonaBuddyAction",
+    "PersonaBuddyActionRequested",
+    "PersonaBuddySource",
     "PersonaEntityKind",
     "PersonaEntitySelected",
     "PersonaMarksChanged",

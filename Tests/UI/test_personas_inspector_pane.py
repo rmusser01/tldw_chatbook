@@ -1,5 +1,7 @@
 """Mounted tests for the Personas inspector pane."""
 
+from dataclasses import FrozenInstanceError, is_dataclass
+
 import pytest
 from textual.app import App
 
@@ -11,6 +13,7 @@ from textual.widgets import Button, Checkbox, ListItem, ListView, Static
 from tldw_chatbook.Widgets.Persona_Widgets.personas_inspector_pane import (
     PersonasInspectorPane,
 )
+from tldw_chatbook.Widgets.Persona_Widgets import personas_messages
 from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
     ConversationRowSelected,
 )
@@ -24,8 +27,180 @@ def _row_text(item: ListItem) -> str:
 
 
 class InspectorApp(ConsolidatedCSSApp):
+    def __init__(self):
+        super().__init__()
+        self.buddy_messages = []
+
     def compose(self):
         yield PersonasInspectorPane(id="personas-inspector-pane")
+
+    def on_persona_buddy_action_requested(self, message) -> None:
+        self.buddy_messages.append(message)
+
+
+async def test_persona_buddy_action_message_is_typed_frozen_and_slotted():
+    message_type = getattr(personas_messages, "PersonaBuddyActionRequested", None)
+    assert message_type is not None
+    assert is_dataclass(message_type)
+    assert message_type.__dataclass_params__.frozen is True
+    assert "__dict__" not in message_type.__slots__
+
+    message = message_type(
+        action="use",
+        source="local",
+        persona_id="persona-7",
+        revision=4,
+    )
+
+    assert (message.action, message.source, message.persona_id, message.revision) == (
+        "use",
+        "local",
+        "persona-7",
+        4,
+    )
+    with pytest.raises(FrozenInstanceError):
+        message.action = "show"
+
+
+@pytest.mark.parametrize(
+    ("button_id", "label", "action"),
+    (
+        ("#personas-buddy-use", "Use for Buddy", "use"),
+        ("#personas-buddy-show", "Show Buddy", "show"),
+        ("#personas-buddy-close", "Close Buddy", "close"),
+        ("#personas-buddy-disable", "Disable Buddy", "disable"),
+    ),
+)
+async def test_active_local_persona_buddy_actions_are_explicit_and_typed(
+    button_id: str,
+    label: str,
+    action: str,
+):
+    app = InspectorApp()
+    async with app.run_test(size=(170, 50)) as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        pane.show_selection(
+            name="Archivist",
+            kind="persona",
+            source="local",
+            entity_id="persona-7",
+            revision=4,
+            active=True,
+        )
+        await pilot.pause()
+
+        button = pilot.app.query_one(button_id, Button)
+        assert str(button.label) == label
+        assert button.disabled is False
+        await pilot.click(button_id)
+        await pilot.pause()
+
+        message = app.buddy_messages[-1]
+        assert (message.action, message.source, message.persona_id, message.revision) == (
+            action,
+            "local",
+            "persona-7",
+            4,
+        )
+
+
+async def test_server_persona_buddy_actions_are_disabled_with_exact_recovery_copy():
+    app = InspectorApp()
+    async with app.run_test(size=(170, 50)) as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        pane.show_selection(
+            name="Remote Archivist",
+            kind="persona",
+            source="server",
+            entity_id="persona-7",
+            revision=4,
+            active=True,
+        )
+        await pilot.pause()
+
+        for button_id in (
+            "#personas-buddy-use",
+            "#personas-buddy-show",
+            "#personas-buddy-close",
+            "#personas-buddy-disable",
+        ):
+            button = pilot.app.query_one(button_id, Button)
+            assert button.disabled is True
+            assert button.tooltip == "Save a local copy first"
+
+
+async def test_persona_highlight_alone_emits_no_buddy_action():
+    app = InspectorApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        pane.show_selection(
+            name="Archivist",
+            kind="persona",
+            source="local",
+            entity_id="persona-7",
+            revision=4,
+            active=True,
+        )
+        await pilot.pause()
+
+        assert app.buddy_messages == []
+
+
+@pytest.mark.parametrize("size", ((170, 50), (80, 24)))
+async def test_buddy_actions_keep_exact_labels_and_focus_without_keybindings(size):
+    app = InspectorApp()
+    async with app.run_test(size=size) as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        pane.show_selection(
+            name="Archivist",
+            kind="persona",
+            source="local",
+            entity_id="persona-7",
+            revision=4,
+            active=True,
+        )
+        await pilot.pause()
+
+        expected = (
+            ("#personas-buddy-use", "Use for Buddy"),
+            ("#personas-buddy-show", "Show Buddy"),
+            ("#personas-buddy-close", "Close Buddy"),
+            ("#personas-buddy-disable", "Disable Buddy"),
+        )
+        for button_id, label in expected:
+            button = pilot.app.query_one(button_id, Button)
+            assert str(button.label) == label
+            assert button.can_focus is True
+            button.focus(scroll_visible=True)
+            await pilot.pause()
+            assert button.has_focus is True
+
+        await pilot.press("u", "s", "c", "d")
+        assert app.buddy_messages == []
+
+
+@pytest.mark.parametrize(
+    ("entity_id", "revision", "active"),
+    ((None, 4, True), ("persona-7", None, True), ("persona-7", 4, False)),
+)
+async def test_buddy_rejects_incomplete_or_inactive_local_persona(
+    entity_id, revision, active
+):
+    app = InspectorApp()
+    async with app.run_test(size=(170, 50)) as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        pane.show_selection(
+            name="Archivist",
+            kind="persona",
+            source="local",
+            entity_id=entity_id,
+            revision=revision,
+            active=active,
+        )
+        await pilot.pause()
+
+        for button in pilot.app.query(".persona-buddy-action").results(Button):
+            assert button.disabled is True
 
 
 async def test_default_state_shows_no_selection_and_disabled_actions():

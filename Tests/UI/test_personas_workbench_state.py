@@ -37,6 +37,14 @@ from Tests.UI.consolidated_css import ConsolidatedCSSApp
 
 import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
+from tldw_chatbook.Persona_Buddy import (
+    PersonaBuddyController,
+    PersonaBuddyGeometry,
+    PersonaBuddyPreferences,
+    PersonaBuddySelection,
+    parse_persona_buddy_preferences,
+    serialize_persona_buddy_preferences,
+)
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
     PersonasPreviewPane,
@@ -49,6 +57,24 @@ from Tests.UI.test_personas_dictionaries import (
 )
 
 pytestmark = pytest.mark.asyncio
+
+
+async def test_restart_restores_selection_open_collapsed_and_geometry():
+    expected = PersonaBuddyPreferences(
+        enabled=True,
+        selection=PersonaBuddySelection("local", "persona-7"),
+        open=False,
+        collapsed=True,
+        geometry=PersonaBuddyGeometry(x=17, y=9, width=42, height=14),
+    )
+
+    restarted = PersonaBuddyController(
+        preferences=parse_persona_buddy_preferences(
+            serialize_persona_buddy_preferences(expected)
+        )
+    )
+
+    assert restarted.current_preferences() == expected
 
 CHARACTERS = [
     {

@@ -12,6 +12,7 @@ from textual.widgets import Button, Checkbox, ListItem, ListView, Static
 
 from ..Console.console_image_viewer_modal import ClickableAvatarBox
 
+from .personas_messages import PersonaBuddyActionRequested
 from .personas_pane_messages import ConversationRowSelected
 
 _UNSAVED_TOOLTIP = "Save before using this action; the selection has unsaved edits."
@@ -148,6 +149,10 @@ class PersonasInspectorPane(Vertical):
         self._provider_block_reason: str | None = None
         self._conversation_lookup: dict[str, str] = {}
         self._tts_export_available = False
+        self._buddy_source: str | None = None
+        self._buddy_persona_id: str | None = None
+        self._buddy_revision: int | None = None
+        self._buddy_active = False
         # F-040: marked library rows drive bulk Delete/Export JSON affordances.
         self._marked_count = 0
 
@@ -235,6 +240,30 @@ class PersonasInspectorPane(Vertical):
                 classes="console-action-secondary",
                 tooltip=_NO_SELECTION_GUIDANCE,
             )
+            yield Button(
+                "Use for Buddy",
+                id="personas-buddy-use",
+                disabled=True,
+                classes="console-action-secondary persona-buddy-action",
+            )
+            yield Button(
+                "Show Buddy",
+                id="personas-buddy-show",
+                disabled=True,
+                classes="console-action-subdued persona-buddy-action",
+            )
+            yield Button(
+                "Close Buddy",
+                id="personas-buddy-close",
+                disabled=True,
+                classes="console-action-subdued persona-buddy-action",
+            )
+            yield Button(
+                "Disable Buddy",
+                id="personas-buddy-disable",
+                disabled=True,
+                classes="console-action-subdued persona-buddy-action",
+            )
             tts_checkbox = Checkbox(
                 "Include assigned voice profile",
                 id="personas-export-include-tts",
@@ -267,7 +296,16 @@ class PersonasInspectorPane(Vertical):
                 tooltip=_NO_SELECTION_DELETE_TOOLTIP,
             )
 
-    def show_selection(self, *, name: str, kind: str) -> None:
+    def show_selection(
+        self,
+        *,
+        name: str,
+        kind: str,
+        source: str | None = None,
+        entity_id: str | None = None,
+        revision: int | None = None,
+        active: bool = False,
+    ) -> None:
         """Reflect the selected library item in the inspector summary.
 
         Args:
@@ -278,6 +316,10 @@ class PersonasInspectorPane(Vertical):
         """
         self._has_selection = True
         self._selected_kind = kind
+        self._buddy_source = source
+        self._buddy_persona_id = entity_id
+        self._buddy_revision = revision
+        self._buddy_active = active is True
         self._tts_export_available = False
         self.query_one("#personas-export-include-tts", Checkbox).value = False
         self.query_one("#personas-selected-name", Static).update(f"Selected: {name}")
@@ -288,6 +330,10 @@ class PersonasInspectorPane(Vertical):
         self._has_selection = False
         self._is_unsaved = False
         self._selected_kind = None
+        self._buddy_source = None
+        self._buddy_persona_id = None
+        self._buddy_revision = None
+        self._buddy_active = False
         self._tts_export_available = False
         self.query_one("#personas-export-include-tts", Checkbox).value = False
         self.set_console_actions_enabled(False, reason="select an item")
@@ -587,6 +633,55 @@ class PersonasInspectorPane(Vertical):
             f"Delete the {marked} marked items."
             if marked
             else (None if selected else _NO_SELECTION_DELETE_TOOLTIP)
+        )
+
+        buddy_applies = selected and kind == "persona"
+        buddy_eligible = (
+            buddy_applies
+            and not unsaved
+            and self._buddy_source == "local"
+            and bool(self._buddy_persona_id)
+            and type(self._buddy_revision) is int
+            and self._buddy_revision >= 1
+            and self._buddy_active
+        )
+        if self._buddy_source == "server":
+            buddy_tooltip = "Save a local copy first"
+        elif unsaved:
+            buddy_tooltip = _UNSAVED_TOOLTIP
+        elif not self._buddy_active:
+            buddy_tooltip = "Activate this Persona first."
+        else:
+            buddy_tooltip = "Select a saved local Persona."
+        for button in self.query(".persona-buddy-action").results(Button):
+            button.display = buddy_applies
+            button.disabled = not buddy_eligible
+            button.tooltip = None if buddy_eligible else buddy_tooltip
+
+    @on(Button.Pressed, ".persona-buddy-action")
+    def _buddy_action_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        actions = {
+            "personas-buddy-use": "use",
+            "personas-buddy-show": "show",
+            "personas-buddy-close": "close",
+            "personas-buddy-disable": "disable",
+        }
+        action = actions.get(str(event.button.id or ""))
+        if (
+            action is None
+            or self._buddy_source not in {"local", "server"}
+            or not self._buddy_persona_id
+            or type(self._buddy_revision) is not int
+        ):
+            return
+        self.post_message(
+            PersonaBuddyActionRequested(
+                action=action,
+                source=self._buddy_source,
+                persona_id=self._buddy_persona_id,
+                revision=self._buddy_revision,
+            )
         )
 
     def set_avatar_thumbnail(self, renderable: object | None) -> None:
