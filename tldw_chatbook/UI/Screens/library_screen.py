@@ -404,6 +404,7 @@ from ...Widgets.Library import (
     LibraryIngestQueuePanel,
     LibraryLandingCanvas,
     LibraryLandingCanvasState,
+    LibraryLandingContinueAction,
     LibraryLandingRecentItem,
     LibraryMediaCanvas,
     LibraryMediaTrashCanvas,
@@ -9530,6 +9531,88 @@ class LibraryScreen(BaseAppScreen):
                 is LibraryEvidenceStatus.PARTIAL_FAILURE
             ),
             show_explore=get_started and self._library_rail_collapsed,
+            continue_action=(
+                self._library_landing_continue_action()
+                if not get_started and not self._library_notes_compact
+                else None
+            ),
+        )
+
+    def _library_landing_continue_action(
+        self,
+    ) -> LibraryLandingContinueAction | None:
+        """Describe the validated receipt without exposing record or query text."""
+
+        receipt = self._library_continue_receipt
+        if receipt is None:
+            return None
+        row_id = receipt["row_id"]
+        scope = receipt["scope"]
+        parts = [_LIBRARY_HELP_SURFACE_LABELS[row_id]]
+
+        if scope.get("query"):
+            parts.append("search applied")
+        if row_id == LIBRARY_ROW_BROWSE_MEDIA:
+            if scope["media_type"] is not None:
+                parts.append(f"type: {scope['media_type']}")
+            sort_labels = {
+                "last_modified_desc": "recent first",
+                "last_modified_asc": "oldest first",
+                "date_desc": "newest date",
+                "date_asc": "oldest date",
+                "title_asc": "title A–Z",
+                "title_desc": "title Z–A",
+                "relevance": "relevance",
+            }
+            parts.append(sort_labels[scope["sort_by"]])
+            if scope["page"] > 1:
+                parts.append(f"page {scope['page']}")
+        elif row_id == LIBRARY_ROW_BROWSE_PROMPTS:
+            if scope["collection_id"] is not None:
+                parts.append("collection applied")
+            parts.append(
+                "name A–Z"
+                if scope["sort_by"] == "name" and scope["sort_order"] == "asc"
+                else "name Z–A"
+                if scope["sort_by"] == "name"
+                else "recent first"
+                if scope["sort_order"] == "desc"
+                else "oldest first"
+            )
+            if scope["page"] > 1:
+                parts.append(f"page {scope['page']}")
+        elif row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
+            if scope["page"] > 1:
+                parts.append(f"page {scope['page']}")
+        elif row_id == LIBRARY_ROW_BROWSE_NOTES:
+            if scope["filter"]:
+                parts.append("filter applied")
+            parts.append(
+                {
+                    "newest": "recent first",
+                    "oldest": "oldest first",
+                    "title": "title A–Z",
+                }[scope["sort"]]
+            )
+        elif row_id == LIBRARY_ROW_BROWSE_SKILLS:
+            if scope["filter"]:
+                parts.append("filter applied")
+            parts.append(
+                "status order" if scope["sort"] == "status" else "name A–Z"
+            )
+        elif row_id == LIBRARY_ROW_BROWSE_SEARCH:
+            parts.append("RAG" if scope["mode"] == "rag" else "search")
+            if scope["scope_deselected"]:
+                parts.append("sources adjusted")
+
+        return LibraryLandingContinueAction(
+            label=" · ".join(parts),
+            row_id=row_id,
+            adjustment=(
+                "Item views resume at the source list."
+                if receipt["source_list_adjusted"]
+                else ""
+            ),
         )
 
     def _library_study_handoff_canvas_state(
@@ -16529,6 +16612,41 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         if self._library_onboarding_status is LibraryEvidenceStatus.PARTIAL_FAILURE:
             self._refresh_library_onboarding_evidence()
+
+    @on(Button.Pressed, "#library-hub-continue")
+    async def _continue_library_landing(self, event: Button.Pressed) -> None:
+        """Resume the receipt through the existing guarded source route."""
+
+        event.stop()
+        receipt = self._copy_library_continue_receipt(
+            self._library_continue_receipt
+        )
+        if receipt is None:
+            return
+        row_id = receipt["row_id"]
+        scope = receipt["scope"]
+        await self._select_library_rail_row(row_id)
+        if self._library_selected_row_id != row_id:
+            return
+
+        if row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
+            self._start_library_conversation_page_request(
+                scope["page"],
+                scope["query"],
+            )
+        elif row_id == LIBRARY_ROW_BROWSE_NOTES:
+            # Generic rail admission intentionally clears the Notes filter.
+            # Continue is the sole route that carries an applied Notes scope,
+            # so reapply it only after every ordinary leave guard has passed.
+            self._library_notes_sort = scope["sort"]
+            self._library_notes_filter = scope["filter"]
+            self._library_notes_filter_records = None
+            if self._library_notes_filter:
+                await self._run_library_notes_filter(
+                    self._library_notes_filter
+                )
+            else:
+                _sync_library_canvas(self, "notes")
 
     @on(Button.Pressed, "#library-rail-back-to-starter")
     async def _return_library_rail_to_starter(self, event: Button.Pressed) -> None:

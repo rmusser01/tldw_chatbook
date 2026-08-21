@@ -23955,6 +23955,119 @@ def test_library_landing_continue_receipt_restore_fails_closed_and_legacy_still_
     assert legacy._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
 
 
+def test_library_landing_continue_projects_scope_without_private_query_copy() -> None:
+    screen = LibraryScreen(_build_test_app())
+    screen._library_lifecycle = LibraryLifecycle.GRADUATED
+    screen._library_continue_receipt = {
+        "version": 1,
+        "row_id": LIBRARY_ROW_BROWSE_MEDIA,
+        "scope": {
+            "query": "PRIVATE NEEDLE",
+            "media_type": "audio",
+            "sort_by": "title_asc",
+            "page": 2,
+        },
+        "source_list_adjusted": True,
+    }
+
+    action = screen._library_landing_canvas_state().continue_action
+
+    assert action is not None
+    assert action.row_id == LIBRARY_ROW_BROWSE_MEDIA
+    assert action.label == "Media · search applied · type: audio · title A–Z · page 2"
+    assert action.adjustment == "Item views resume at the source list."
+    assert "PRIVATE NEEDLE" not in repr(action)
+
+    screen._library_notes_compact = True
+    assert screen._library_landing_canvas_state().continue_action is None
+
+
+@pytest.mark.asyncio
+async def test_library_landing_continue_dispatches_full_media_page_scope() -> None:
+    app = _build_test_app()
+    media = [
+        {
+            "id": f"media-{index}",
+            "title": f"Needle {index:02d}",
+            "type": "audio",
+            "last_modified": f"2026-08-{index:02d}T00:00:00Z",
+        }
+        for index in range(1, 46)
+    ]
+    _seed_conversations(app, [], media=media)
+    service = app.media_reading_scope_service
+    original = LibraryScreen(app)
+    original._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+    original._library_media_view = "viewer"
+    original._selected_media_id = "local:media:21"
+    scope = MediaBrowseScope(
+        query="needle",
+        media_type="audio",
+        sort_by="title_asc",
+        page=2,
+    )
+    _apply_continue_media_scope(original, scope)
+    restored = LibraryScreen(app)
+    restored.restore_state(original.save_state())
+    host = LibraryHarness(app, screen=restored)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-hub-continue")
+        assert screen._library_selected_row_id == ""
+        assert "deleted" not in _visible_text(screen).casefold()
+        screen.query_one("#library-hub-continue", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: any(call.get("offset") == 20 for call in service.search_calls),
+            message="Continue did not dispatch the restored Media page.",
+        )
+
+        call = next(call for call in service.search_calls if call.get("offset") == 20)
+        assert call["query"] == "needle"
+        assert call["media_types"] == ["audio"]
+        assert call["sort_by"] == "title_asc"
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+        assert screen._library_media_view == "list"
+
+
+@pytest.mark.asyncio
+async def test_library_landing_continue_reapplies_database_notes_scope_after_admission() -> None:
+    app = _build_test_app()
+    _seed_conversations(app, [], notes=_two_notes())
+    original = LibraryScreen(app)
+    original._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
+    original._library_loaded = True
+    original._library_lookup_error = None
+    original._library_notes_source = "database"
+    original._library_notes_sort = "oldest"
+    original._library_notes_filter = "retro"
+    restored = LibraryScreen(app)
+    restored.restore_state(original.save_state())
+    host = LibraryHarness(app, screen=restored)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-hub-continue")
+        screen.query_one("#library-hub-continue", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+                and screen._library_notes_filter == "retro"
+                and bool(screen.query("#library-notes-row-0"))
+                and "Reading list" not in _visible_text(screen)
+            ),
+            message="Continue did not restore the Database Notes filter.",
+        )
+
+        assert screen._library_notes_sort == "oldest"
+        assert "Q3 retro" in _visible_text(screen)
+        assert "Reading list" not in _visible_text(screen)
+
+
 @pytest.mark.asyncio
 async def test_library_shell_save_state_captures_selection_and_rag_state():
     """``save_state`` is the ``_screen_states`` producer -- assert it
