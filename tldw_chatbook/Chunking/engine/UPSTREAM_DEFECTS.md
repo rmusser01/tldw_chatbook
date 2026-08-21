@@ -10,7 +10,7 @@ so a future pin bump can re-check each item against the new SHA.
 - **Engine root:** `tldw_Server_API/app/core/Chunking/`
 - **Endpoints root:** `tldw_Server_API/app/api/v1/endpoints/`
 - **Source spec:** `Docs/superpowers/specs/2026-08-21-chunking-template-parity-design.md` §11 items 9–14
-- **Governance:** ADR-077 (convergence decision that surfaced these)
+- **Governance:** ADR-078 (convergence decision that surfaced these)
 
 Line numbers are as-read at the pin; re-verify before filing upstream.
 
