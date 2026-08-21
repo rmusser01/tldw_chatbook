@@ -36,6 +36,7 @@ from .contracts import (
 
 
 _CUSTOM_STATE_PATTERN = re.compile(r"^[a-z][a-z0-9_.:-]{0,95}$")
+_RUNTIME_ASSET_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
 _UNSAFE_STATE_PREFIXES = (
     "env:",
     "file:",
@@ -228,7 +229,10 @@ def _animation_document(
                 frame.region, PersonaVisualRegion, "x y width height"
             )
         documents.append(document)
-        if type(frame.asset_id) is str:
+        if (
+            type(frame.asset_id) is str
+            and _RUNTIME_ASSET_ID_PATTERN.fullmatch(frame.asset_id) is not None
+        ):
             known_assets.setdefault(frame.asset_id, None)
     document = {
         "frames": documents,

@@ -396,6 +396,7 @@ def test_authoritative_unicode_space_and_slash_persona_id_remains_valid() -> Non
         "frames_container",
         "frame_type",
         "frame_asset_id",
+        "unsafe_frame_asset_id",
         "frame_duration",
         "frame_region_type",
         "region_scalar",
@@ -439,7 +440,17 @@ def test_hostile_manifest_graph_is_revalidated_before_loader(case: str) -> None:
             animation, frames=(marker, *frames[1:])
         )
         manifest = replace(manifest, animations=MappingProxyType(animations))
-    elif case in {"frame_asset_id", "frame_duration", "frame_region_type"}:
+    elif case == "unsafe_frame_asset_id":
+        idle = animations["idle-animation"]
+        animations["idle-animation"] = replace(
+            idle, frames=(replace(idle.frames[0], asset_id=marker),)
+        )
+        manifest = replace(manifest, animations=MappingProxyType(animations))
+    elif case in {
+        "frame_asset_id",
+        "frame_duration",
+        "frame_region_type",
+    }:
         field = {
             "frame_asset_id": "asset_id",
             "frame_duration": "duration_ms",
