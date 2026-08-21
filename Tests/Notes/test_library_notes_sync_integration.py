@@ -354,7 +354,7 @@ async def test_invalid_stored_relative_path_is_skipped_not_unlinked(
 
 
 @pytest.mark.asyncio
-async def test_library_notes_sync_matches_lexical_root_alias_and_normalizes_metadata(
+async def test_library_notes_sync_rejects_selected_root_alias_without_mutation(
     sync_service,
     notes_service,
     temp_dir,
@@ -382,20 +382,19 @@ async def test_library_notes_sync_matches_lexical_root_alias_and_normalizes_meta
         expected_version=note["version"],
     )
 
-    _, progress = await sync_service.sync_folder(
-        root_folder=selected_root,
-        user_id=USER_ID,
-        direction=SyncDirection.DB_TO_DISK,
-        conflict_resolution=ConflictResolution.ASK,
-    )
+    with pytest.raises(sync_paths.SyncPathError, match="root_link_or_reparse"):
+        await sync_service.sync_folder(
+            root_folder=selected_root,
+            user_id=USER_ID,
+            direction=SyncDirection.DB_TO_DISK,
+            conflict_resolution=ConflictResolution.ASK,
+        )
 
     written = canonical_root / "alias.md"
     refreshed = notes_service.get_note_by_id(USER_ID, note_id)
-    assert written.read_text(encoding="utf-8") == "alias content"
-    assert stat.S_IMODE(written.stat().st_mode) == 0o600
-    assert refreshed["sync_root_folder"] == str(canonical_root.resolve(strict=True))
-    assert refreshed["file_path_on_disk"] == str(written.resolve(strict=True))
-    assert progress.skipped_items == []
+    assert not written.exists()
+    assert refreshed["sync_root_folder"] == str(selected_root)
+    assert refreshed["file_path_on_disk"] == str(selected_root / "alias.md")
 
 
 @pytest.mark.asyncio
