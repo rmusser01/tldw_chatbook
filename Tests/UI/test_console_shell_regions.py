@@ -51,16 +51,21 @@ does today. "clipped" asserts both halves of that observed reality.
 """
 
 from contextlib import asynccontextmanager
+from unittest.mock import Mock
 
 import pytest
 from textual.errors import NoWidget
 from textual.widgets import Button, Static
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
+from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.app import TldwCli
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.Widgets.Console import ConsoleTranscript
 from tldw_chatbook.Widgets.Console.console_rail_handle import ConsoleRailHandle
 
 # (id, expected_at_160x45, expected_at_235x52, expected_at_120x30) where
@@ -93,7 +98,7 @@ class ProductionCSSConsoleHarness(ConsoleHarness):
 
 
 @asynccontextmanager
-async def make_console_pilot(*, size):
+async def make_console_pilot(*, size, app=None, hide_setup_overlay=True):
     """Mount a fresh Console (ChatScreen) at ``size`` via the production harness.
 
     Build a fresh ``TldwCli`` with every real I/O seam faked out
@@ -102,7 +107,7 @@ async def make_console_pilot(*, size):
     the composer -- the same "the shell is up" signal used elsewhere -- before
     handing control to the caller.
     """
-    app = _build_test_app()
+    app = app or _build_test_app()
     host = ProductionCSSConsoleHarness(app)
     async with host.run_test(size=size) as pilot:
         console = host.screen_stack[-1]
@@ -111,9 +116,122 @@ async def make_console_pilot(*, size):
         # The setup-blocked state supplies the Inspector rows that trigger its
         # production auto-open. Hide only its covering overlay afterward so
         # hit-tests can inspect the underlying shell geometry.
-        console.query_one("#console-setup-modal").display = False
-        await pilot.pause()
+        if hide_setup_overlay:
+            console.query_one("#console-setup-modal").display = False
+            await pilot.pause()
         yield pilot
+
+
+def _assert_workspace_state_is_contained(
+    screen,
+    *,
+    expected_displayed: set[str],
+    default_context_only: bool,
+) -> None:
+    """Assert displayed workspace panes have real, contained compositor regions."""
+    grid = screen.query_one("#console-workspace-grid")
+    children = tuple(grid.children)
+
+    assert {child.id for child in children} == {
+        "console-context-rail-handle",
+        "console-left-rail",
+        "console-main-column",
+        "console-right-rail",
+        "console-inspector-rail-handle",
+    }
+    displayed = tuple(child for child in children if child.display)
+    assert {child.id for child in displayed} == expected_displayed
+
+    for child in displayed:
+        assert child.region.width > 0 and child.region.height > 0, (
+            f"{child.id} has no painted geometry: {child.region}"
+        )
+        assert grid.content_region.contains_region(child.region), (
+            f"{child.id} escapes workspace content: "
+            f"child={child.region}, grid={grid.content_region}"
+        )
+        assert screen.region.contains_region(child.region), (
+            f"{child.id} escapes the {screen.region.width}x"
+            f"{screen.region.height} viewport: "
+            f"child={child.region}, screen={screen.region}"
+        )
+        point = (
+            child.region.x + child.region.width // 2,
+            child.region.y + (child.region.height - 1) // 2,
+        )
+        hit = screen.get_widget_at(*point)[0]
+        assert hit is child or child in hit.ancestors, (
+            f"{child.id} is not painted at {point}: hit={hit!r}"
+        )
+
+    main = screen.query_one("#console-main-column")
+    if default_context_only:
+        assert main.region.width >= 55
+
+    transcript = screen.query_one("#console-native-transcript")
+    assert transcript.content_region.width >= 40
+    transcript_point = (
+        transcript.content_region.x + transcript.content_region.width // 2,
+        transcript.content_region.y + (transcript.content_region.height - 1) // 2,
+    )
+    transcript_hit = screen.get_widget_at(*transcript_point)[0]
+    assert transcript_hit is transcript or transcript in transcript_hit.ancestors, (
+        f"native transcript is not painted at {transcript_point}: "
+        f"hit={transcript_hit!r}"
+    )
+
+
+def _transcript_anchor_state(transcript: ConsoleTranscript) -> tuple[bool, bool]:
+    """Return Textual's raw anchor flags for continuity assertions."""
+    return (
+        bool(transcript.is_anchored),
+        bool(transcript._anchor_released),
+    )
+
+
+def _transcript_is_following_tail(transcript: ConsoleTranscript) -> bool:
+    """Return the transcript's semantic tail-follow state."""
+    return transcript._is_following_tail()
+
+
+async def _seed_resize_transcript(screen, pilot):
+    """Create a selected, detached real transcript at a stable reading offset."""
+    store = screen._ensure_console_chat_store()
+    selected_message_id = ""
+    for index in range(24):
+        message = store.append_message(
+            store.active_session_id,
+            role=(
+                ConsoleMessageRole.USER
+                if index % 2 == 0
+                else ConsoleMessageRole.ASSISTANT
+            ),
+            content="\n".join(
+                f"resize message {index} line {line}" for line in range(3)
+            ),
+        )
+        selected_message_id = message.id
+    await screen._sync_native_console_chat_ui()
+    transcript = screen.query_one("#console-native-transcript", ConsoleTranscript)
+    for _ in range(40):
+        if transcript.max_scroll_y > 0:
+            break
+        await pilot.pause(0.05)
+    assert transcript.max_scroll_y > 0
+
+    transcript.select_message(selected_message_id)
+    transcript.release_anchor()
+    transcript.scroll_to(y=2, animate=False)
+    await pilot.pause()
+    assert transcript.selected_message_id == selected_message_id
+    assert _transcript_is_following_tail(transcript) is False
+    assert transcript.scroll_y == 2
+    return (
+        selected_message_id,
+        _transcript_is_following_tail(transcript),
+        _transcript_anchor_state(transcript),
+        transcript.scroll_y,
+    )
 
 
 @pytest.mark.asyncio
@@ -266,3 +384,245 @@ async def test_compact_workspace_grid_children_are_contained() -> None:
             "console-main-column",
             "console-right-rail",
         }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    (
+        "stored_left_open",
+        "stored_right_open",
+        "effective_left_open",
+        "effective_right_open",
+        "expected_displayed",
+    ),
+    [
+        pytest.param(
+            True,
+            False,
+            True,
+            False,
+            {
+                "console-left-rail",
+                "console-main-column",
+                "console-inspector-rail-handle",
+            },
+            id="context-open-inspector-closed",
+        ),
+        pytest.param(
+            False,
+            False,
+            False,
+            False,
+            {
+                "console-context-rail-handle",
+                "console-main-column",
+                "console-inspector-rail-handle",
+            },
+            id="both-closed",
+        ),
+        pytest.param(
+            False,
+            True,
+            False,
+            True,
+            {
+                "console-context-rail-handle",
+                "console-main-column",
+                "console-right-rail",
+            },
+            id="context-closed-inspector-open",
+        ),
+        pytest.param(
+            True,
+            True,
+            False,
+            True,
+            {
+                "console-context-rail-handle",
+                "console-main-column",
+                "console-right-rail",
+            },
+            id="inspector-wins-open-conflict",
+        ),
+    ],
+)
+async def test_exact_100_workspace_state_matrix_is_contained(
+    monkeypatch,
+    stored_left_open,
+    stored_right_open,
+    effective_left_open,
+    effective_right_open,
+    expected_displayed,
+) -> None:
+    """Compose-time and settled rail states both have usable 100x30 geometry."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    stored_preferences = {
+        "left_open": stored_left_open,
+        "right_open": stored_right_open,
+    }
+    save_spy = Mock()
+    pre_sync_observations = []
+    queued_first_sync_states = []
+    original_sync = ChatScreen._sync_console_rail_visibility_if_changed
+
+    def sync_after_first_paint_assertions(screen, rail_state):
+        """Inspect the first compositor geometry, then delegate normal sync."""
+        if pre_sync_observations:
+            return original_sync(screen, rail_state)
+
+        queued_first_sync_states.append(rail_state)
+        if len(queued_first_sync_states) == 1:
+
+            def assert_first_paint_then_delegate_sync():
+                """Run after layout but before any queued visibility sync."""
+                setup_modal = screen.query_one("#console-setup-modal")
+                assert setup_modal.display is False
+                _assert_workspace_state_is_contained(
+                    screen,
+                    expected_displayed=expected_displayed,
+                    default_context_only=stored_left_open and not stored_right_open,
+                )
+                pre_sync_observations.append(True)
+                for queued_state in queued_first_sync_states:
+                    original_sync(screen, queued_state)
+                queued_first_sync_states.clear()
+
+            screen.call_after_refresh(assert_first_paint_then_delegate_sync)
+        return None
+
+    monkeypatch.setattr(
+        ChatScreen,
+        "_stored_console_rail_preferences",
+        lambda _self, _key, _fallback_key: stored_preferences,
+    )
+    monkeypatch.setattr(ChatScreen, "_save_console_rail_preferences", save_spy)
+    monkeypatch.setattr(
+        ChatScreen,
+        "_sync_console_rail_visibility_if_changed",
+        sync_after_first_paint_assertions,
+    )
+
+    async with make_console_pilot(
+        size=(100, 30),
+        app=app,
+        hide_setup_overlay=False,
+    ) as pilot:
+        screen = pilot.app.screen
+        assert pre_sync_observations == [True]
+        assert screen.query_one("#console-setup-modal").display is False
+
+        # `_last_console_rail_state` is a settled-state oracle only; compose-time
+        # geometry was asserted by the first-sync wrapper before delegation.
+        rail_state = screen._last_console_rail_state
+        assert rail_state is not None
+        assert rail_state.preferred_left_open is stored_left_open
+        assert rail_state.preferred_right_open is stored_right_open
+        assert rail_state.left_open is effective_left_open
+        assert rail_state.right_open is effective_right_open
+
+        _assert_workspace_state_is_contained(
+            screen,
+            expected_displayed=expected_displayed,
+            default_context_only=stored_left_open and not stored_right_open,
+        )
+        save_spy.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("start_width", "destination_width"),
+    [
+        pytest.param(101, 100, id="101-to-100"),
+        pytest.param(100, 101, id="100-to-101"),
+        pytest.param(99, 100, id="99-to-100"),
+        pytest.param(100, 99, id="100-to-99"),
+    ],
+)
+async def test_exact_100_live_resize_preserves_workspace_and_interaction_state(
+    monkeypatch,
+    start_width,
+    destination_width,
+) -> None:
+    """All adjacent exact-100 crossings preserve reading and focus continuity."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+
+    async with make_console_pilot(size=(start_width, 30), app=app) as pilot:
+        screen = pilot.app.screen
+        (
+            selected_message_id,
+            was_following_tail,
+            anchor_state,
+            reading_y,
+        ) = await _seed_resize_transcript(screen, pilot)
+        initial_rail_state = screen._last_console_rail_state
+        assert initial_rail_state is not None
+        assert initial_rail_state.preferred_left_open is True
+        assert initial_rail_state.preferred_right_open is False
+
+        starts_open = start_width >= 100
+        initial_focus_selector = (
+            "#console-context-rail-collapse"
+            if starts_open
+            else "#console-context-rail-open"
+        )
+        initial_focus = screen.query_one(initial_focus_selector, Button)
+        initial_focus.focus()
+        await pilot.pause()
+        assert pilot.app.focused is initial_focus
+
+        save_spy = Mock()
+        monkeypatch.setattr(screen, "_save_console_rail_preferences", save_spy)
+        await pilot.resize_terminal(destination_width, 30)
+        await pilot.pause(0.2)
+        await pilot.pause()
+
+        destination_open = destination_width >= 100
+        expected_displayed = {
+            "console-left-rail" if destination_open else "console-context-rail-handle",
+            "console-main-column",
+            "console-inspector-rail-handle",
+        }
+        _assert_workspace_state_is_contained(
+            screen,
+            expected_displayed=expected_displayed,
+            default_context_only=destination_open,
+        )
+
+        rail_state = screen._last_console_rail_state
+        assert rail_state is not None
+        assert rail_state.preferred_left_open is initial_rail_state.preferred_left_open
+        assert (
+            rail_state.preferred_right_open is initial_rail_state.preferred_right_open
+        )
+        assert rail_state.left_open is destination_open
+        assert rail_state.right_open is False
+        assert rail_state.left_forced_collapsed is (destination_width < 100)
+        assert rail_state.left_compact_override is (destination_width == 100)
+        assert rail_state.compact_override is (destination_width == 100)
+
+        expected_focus_selector = (
+            "#console-context-rail-collapse"
+            if destination_open
+            else "#console-context-rail-open"
+        )
+        expected_focus = screen.query_one(expected_focus_selector, Button)
+        assert expected_focus.display is True
+        assert pilot.app.focused is expected_focus
+
+        current_transcript = screen.query_one(
+            "#console-native-transcript", ConsoleTranscript
+        )
+        assert current_transcript.max_scroll_y >= reading_y
+        selected_row = current_transcript.query_one(
+            f"#console-message-{selected_message_id}"
+        )
+        assert selected_row.is_mounted
+        assert current_transcript.selected_message_id == selected_message_id
+        assert _transcript_is_following_tail(current_transcript) is was_following_tail
+        assert _transcript_anchor_state(current_transcript) == anchor_state
+        assert current_transcript.scroll_y == min(
+            reading_y, current_transcript.max_scroll_y
+        )
+        save_spy.assert_not_called()

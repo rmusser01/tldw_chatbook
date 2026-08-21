@@ -23,22 +23,21 @@ CONSOLE_RAIL_SECTION_IDS = (
     "character",
 )
 CONSOLE_RAIL_RIGHT_COMPACT_COLLAPSE_COLUMNS = 150
-# TASK-2154.1 (LY-08): below 100 columns the left rail's min-width contract
-# (rail 24 + main 56 + handles) can no longer be honored, so the rail is
-# force-collapsed as a RENDERING override -- the stored preference is left
-# untouched, exactly mirroring the right rail's 150-column rule above. The
-# compose comment's "compact contract" already targeted 100 columns.
-# TASK-2154.2 (LY-11): both compact-collapse rules are the responsive
-# DEFAULT, not a hard block -- an explicit user toggle is honored below the
-# threshold (see build_console_rail_state and ADR-042), with the main
-# column's min-width waived so the grid always resolves. The stored
-# preference is still never rewritten by the width rules.
+# TASK-2154.1/TASK-18913: default Context stays open at exactly 100 columns,
+# where the framed grid has 96 content columns and resolves as Context 30 +
+# main outer 55 + the horizontal Inspector handle 11. The existing main
+# min-width waiver permits that one-column yield; below 100, default Context
+# is force-collapsed as a rendering override without rewriting preference.
+# TASK-2154.2 (LY-11, ADR-043): eligible explicit opens below either compact
+# threshold receive the same layout-minimum waiver. ``compact_override`` is
+# only that layout authority, never persisted preference or explicit intent.
 CONSOLE_RAIL_LEFT_COMPACT_COLLAPSE_COLUMNS = 100
 # TASK-2154.1 (LY-08/LY-09): below this width even the collapsed-handle
-# layout (left handle 13 + main 56 + right handle 11 + grid frame 2 = 82)
-# does not fit, so the workspace drops to a single pane: both rail handles
-# hide and the main column's min-width is waived so the transcript always
-# renders (covers the 80x24 and 60x18 review captures).
+# layout fills the terminal (left handle 13 + main 56 + right handle 11 +
+# two borders + two horizontal-padding cells = 84). Below 84 the default
+# layout is transcript-only: both handles hide and the main minimum is waived.
+# Budget-eligible explicit rails may still render from their 70/74 floors
+# through 83 via compact override while the handles remain hidden.
 CONSOLE_SINGLE_PANE_COLUMNS = 84
 #: task-18911: rail min-widths mirrored from ChatScreen's compose-time
 #: styles (left 30, right 34), plus the floor a transcript needs to stay
@@ -59,7 +58,7 @@ CONSOLE_INSPECTOR_AUTO_OPEN_MAX_COLUMNS = 128
 CONSOLE_RAIL_CONTEXT_LABEL = f"Context {GLYPH_COLLAPSED}"
 CONSOLE_RAIL_INSPECTOR_LABEL = f"{GLYPH_COLLAPSE_LEFT} Inspector"
 
-#: TASK-2154.2 (ADR-042): payload key marking that ``left_open`` was set by
+#: TASK-2154.2 (ADR-043): payload key marking that ``left_open`` was set by
 #: an explicit user toggle rather than riding along in a full-payload
 #: serialize. Only the marker lets the narrow left-rail collapse rule yield
 #: to explicit opens below 100 cols while keeping the LY-08 default; the
@@ -154,11 +153,11 @@ class ConsoleRailState:
     right_forced_collapsed: bool = False
     left_forced_collapsed: bool = False
     single_pane: bool = False
-    # TASK-2154.2: a rail rendered OPEN below its compact-collapse threshold
-    # (an explicit user toggle overrode the responsive default). Drives the
-    # main column's min-width waiver so the honored rail can never break the
-    # grid. build_console_rail_state computes preference-derived overrides;
-    # resolve_console_rail_priority may grant Inspector override authority
+    # Layout-minimum-waiver authority for a rail rendered open in compact
+    # geometry. Below a collapse threshold this covers an honored explicit
+    # open; for Context it also covers the effective default open at exactly
+    # 100 columns. It does not record persistence or explicit user intent.
+    # resolve_console_rail_priority may also grant Inspector this authority
     # after an automatic open.
     right_compact_override: bool = False
     left_compact_override: bool = False
@@ -570,6 +569,7 @@ def resolve_console_rail_priority(
     return replace(
         rail_state,
         left_open=False,
+        left_compact_override=False,
         right_compact_override=True,
         compact_override=True,
     )
@@ -614,6 +614,8 @@ def console_rail_width_band(available_columns: int | None) -> str:
         return "single-pane"
     if available_columns < CONSOLE_RAIL_LEFT_COMPACT_COLLAPSE_COLUMNS:
         return "narrow"
+    if available_columns == CONSOLE_RAIL_LEFT_COMPACT_COLLAPSE_COLUMNS:
+        return "exact-left-boundary"
     if available_columns < CONSOLE_INSPECTOR_AUTO_OPEN_MIN_COLUMNS:
         return "compact-before-auto-open"
     if available_columns < CONSOLE_INSPECTOR_AUTO_OPEN_MAX_COLUMNS + 1:
@@ -665,15 +667,18 @@ def build_console_rail_state(
     Returns:
         Effective rail state combining stored preferences, badges, and the
         responsive rail-collapse/single-pane rules. The collapse rules are
-        the default rendering only: explicit toggles below a threshold are
-        honored and reported via the ``*_compact_override`` flags.
+        the default rendering only: ``*_compact_override`` grants the layout
+        minimum waiver needed by honored explicit opens below a threshold
+        and by effective Context openness at exactly 100 columns; it does not
+        mark persisted preference or explicit intent.
     """
     preferences = coerce_console_rail_preferences(stored_preferences)
-    # TASK-2154.2 (LY-11, ADR-042): the compact-collapse rules below are the
-    # responsive DEFAULT rendering, not a hard block -- an explicit user
-    # toggle is honored at any width, so a manual rail toggle can never
-    # silently persist a preference with zero visual change. The two rails
-    # detect "explicit" differently because their defaults differ:
+    # TASK-2154.2 (LY-11, ADR-043): the compact-collapse rules below are the
+    # responsive default. Explicit opens are honored while the 70/74-column
+    # usable-transcript budgets permit, and receive the layout-minimum waiver;
+    # below those floors the rendering override wins without rewriting the
+    # stored preference. The two rails detect "explicit" differently because
+    # their defaults differ:
     # - Right (default closed): value-based. Default AND explicitly-stored
     #   ``right_open=False`` both keep the collapse, so the rendering AND
     #   the pending-launch auto-open suppression below the threshold are
@@ -730,7 +735,7 @@ def build_console_rail_state(
     )
     left_compact_override = (
         available_columns is not None
-        and available_columns < CONSOLE_RAIL_LEFT_COMPACT_COLLAPSE_COLUMNS
+        and available_columns <= CONSOLE_RAIL_LEFT_COMPACT_COLLAPSE_COLUMNS
         and left_open
     )
 

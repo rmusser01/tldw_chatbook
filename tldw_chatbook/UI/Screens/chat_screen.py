@@ -10734,9 +10734,10 @@ class ChatScreen(BaseAppScreen):
                 continue
             handle.sync_state(label, badge)
 
-        # TASK-2154.1: mirrors the compose-time rules -- single-pane mode
-        # hides both handles and waives the main column's min-width so the
-        # transcript keeps the full grid width at any terminal size.
+        # TASK-2154.1: mirrors the compose-time rules -- below 84 both handles
+        # hide and the main minimum is waived. The default layout gives the
+        # transcript the full grid; budget-eligible explicit rails may remain
+        # visible and share it.
         targets = (
             ("#console-left-rail", rail_state.left_open),
             (
@@ -10763,10 +10764,8 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             pass
         else:
-            # TASK-2154.2: the min-width waiver also applies when a rail is
-            # open below its compact-collapse threshold by explicit toggle
-            # (compact_override), so the honored rail can never overflow the
-            # grid -- mirrors the compose-time rule.
+            # Mirror compose-time geometry: these state flags waive the main
+            # minimum during a live rail-visibility sync.
             main_column.styles.min_width = (
                 0 if rail_state.single_pane or rail_state.compact_override else 56
             )
@@ -10865,7 +10864,7 @@ class ChatScreen(BaseAppScreen):
             if section_id in CONSOLE_RAIL_SECTION_IDS:
                 changes[f"{section_id}_open"] = bool(section_open)
         next_preferences = replace(current, **changes)
-        # TASK-2154.2 (LY-11, ADR-042): an explicit rail toggle writes
+        # TASK-2154.2 (LY-11, ADR-043): an explicit rail toggle writes
         # through even when the coerced value is unchanged. Otherwise "open
         # the left rail" below 100 cols persisted nothing -- the default is
         # already left_open=True -- and the force-collapse rule (see
@@ -13183,22 +13182,18 @@ class ChatScreen(BaseAppScreen):
                 )
                 left_rail.can_focus = True
                 left_rail.styles.width = "3fr"
-                # Compact contract: left rail + main column + the collapsed
-                # three-cell inspector handle must fit a 100-column terminal.
-                # TASK-2154.1 (LY-08/LY-09): below 100 columns the rail state
-                # force-collapses the left rail instead (rendering override;
-                # see console_rail_state), and below
-                # CONSOLE_SINGLE_PANE_COLUMNS the grid drops to the
-                # single-pane fallback handled at `main_column` below.
-                # TASK-2154.2: that collapse is the responsive default; an
-                # explicit user toggle is honored below 100 cols too, with
-                # the main min-width waiver keeping the grid solvable.
-                # TASK-2154.3 (LY-01/LY-07): min-width 24 was below the rail
-                # content's intrinsic width (12-col label + 10-col value +
-                # 7 cells of border/gutter/padding chrome), so every Session
-                # row clipped mid-word at 100-160 cols where the 3fr share
-                # (18-27) is min-bound. 30 keeps the content whole and the
-                # compact contract still resolves: 30 + 56 + 3 + 2 = 91.
+                # TASK-18913 compact contract: at exactly 100 columns the
+                # workspace grid has 96 content columns after two border and
+                # two horizontal-padding cells. Default horizontal-label
+                # geometry resolves as Context 30 + main outer 55 + collapsed
+                # Inspector handle 11 = 96. The main min-width waiver keeps
+                # the row solvable; `rail_state.left_open` determines Context
+                # visibility. Below 100, default Context force-collapses
+                # without rewriting preference; eligible explicit opens
+                # instead receive the same layout-only waiver.
+                # TASK-2154.3 (LY-01/LY-07): 30 is the Context outer minimum
+                # (13-cell label with gutter + 10-cell value + 7-cell chrome).
+                # A 3-column handle applies only with stacked rail labels.
                 left_rail.styles.min_width = 30
                 if not rail_state.left_open:
                     left_rail.styles.display = "none"
@@ -13231,18 +13226,17 @@ class ChatScreen(BaseAppScreen):
                     ),
                 )
                 main_column.styles.width = "13fr"
-                # TASK-2154.1 (LY-09): in single-pane mode the min-width
-                # guarantee is waived so the transcript renders at ANY width
-                # (60x18 included) instead of overflowing out of the grid;
-                # the handles are hidden, so nothing else competes for the
-                # row. At/above CONSOLE_SINGLE_PANE_COLUMNS the 56-column
-                # contract holds: handles (3+3) + 56 + grid frame (2) = 64,
-                # within the 84-column threshold.
-                # TASK-2154.2 (LY-11): the waiver also holds while a rail is
-                # open below its compact-collapse threshold by explicit user
-                # toggle (compact_override) -- the user chose the rail over
-                # transcript width, and the waived minimum keeps the grid
-                # solvable at any width (rails keep their own mins 24/34).
+                # TASK-2154.1 (LY-09): below 84 the handles hide and the main
+                # minimum is waived. The default layout is transcript-only;
+                # budget-eligible explicit rails may still render from their
+                # 70/74 floors through 83 via compact override. At 84, default
+                # horizontal handles (13 + 11), main 56, two borders, and two
+                # padding cells fit exactly; stacked handles are 3 columns each.
+                # TASK-2154.2/TASK-18913: ``compact_override`` is only
+                # layout-minimum-waiver authority. It covers eligible explicit
+                # opens below the thresholds, default Context at exactly 100,
+                # and Inspector priority; it is not preference or user intent.
+                # Open rails retain their 30/34-column minimums.
                 main_column.styles.min_width = (
                     0 if rail_state.single_pane or rail_state.compact_override else 56
                 )
