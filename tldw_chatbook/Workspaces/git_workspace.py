@@ -346,9 +346,12 @@ class CurrentRootStatus:
     """One root's real working-tree status snapshot, for the `current` mode.
 
     Attributes:
-        root: The workspace root this status was read from (as passed to
-            :func:`working_tree_status`, not re-resolved here -- callers
-            already hold a resolved root via :class:`GitWorkspaceInfo`).
+        root: The workspace root this status was read from, ALWAYS
+            ``info.root`` (i.e. resolved) rather than whatever spelling
+            the caller passed to :func:`working_tree_status` -- so
+            ``status.root == status.info.root`` always holds and a caller
+            that keyed a dict by ``status.root`` string can never
+            silently miss a lookup keyed by ``info.root`` instead.
         info: The :class:`GitWorkspaceInfo` this status was read against;
             its ``unborn`` flag decided whether the ``diff HEAD --numstat``
             call ran at all.
@@ -438,6 +441,10 @@ def _parse_porcelain_v1(
         xy, path = token[:2], token[3:]
         i += 1
         old_path: str | None = None
+        # Deliberately checks X (the index column) only, not "R"/"C" in
+        # xy as a whole: git only ever records a rename/copy in the
+        # index column, never the worktree column (Y), so a real "R"/"C"
+        # can't appear at xy[1] -- do not "generalize" this to `in xy`.
         if xy[:1] in ("R", "C"):
             old_path = tokens[i]
             i += 1
@@ -528,7 +535,10 @@ def working_tree_status(root: Path, info: GitWorkspaceInfo) -> CurrentRootStatus
         )
         for status, path, old_path in entries
     )
-    return CurrentRootStatus(root=root, info=info, files=files, untracked=untracked)
+    # Always store info.root (resolved), never the raw `root` argument --
+    # a caller passing a relative or symlinked spelling must not get a
+    # `status.root` that silently disagrees with `status.info.root`.
+    return CurrentRootStatus(root=info.root, info=info, files=files, untracked=untracked)
 
 
 def working_tree_diff(root: Path, path: str) -> str:

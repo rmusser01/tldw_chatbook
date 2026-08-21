@@ -146,3 +146,17 @@ def test_clean_tree_yields_no_files_no_untracked(repo):
     status = working_tree_status(repo, detect_git_workspace(repo))
     assert status.files == ()
     assert status.untracked == frozenset()
+
+
+def test_status_root_matches_info_root_for_a_symlinked_caller_path(repo, tmp_path):
+    # A caller passing a non-canonical spelling of the root (here, a
+    # symlink) must get back a `CurrentRootStatus.root` that agrees with
+    # `status.info.root` -- Task 5 keys detection results by root string
+    # and Task 6 matches pseudo-rows to roots, so the two fields silently
+    # disagreeing (raw caller path vs. GitWorkspaceInfo's `.resolve()`d
+    # path) would break both.
+    link = tmp_path / "link-to-repo"
+    link.symlink_to(repo)
+    info = detect_git_workspace(link)
+    status = working_tree_status(link, info)
+    assert status.root == status.info.root
