@@ -8779,7 +8779,11 @@ class LibraryScreen(BaseAppScreen):
         return None
 
     @classmethod
-    def _source_title(cls, source_type: str, record: Mapping[str, Any]) -> str:
+    def _source_optional_title(
+        cls, source_type: str, record: Mapping[str, Any]
+    ) -> str | None:
+        """Return a trustworthy raw source title without a display fallback."""
+
         title_keys_by_source = {
             "notes": ("title", "name", "note_title", "note_name"),
             "media": ("title", "name", "media_title", "file_name", "url"),
@@ -8789,7 +8793,11 @@ class LibraryScreen(BaseAppScreen):
             title = cls._safe_text(record.get(key))
             if title:
                 return title
-        return "Untitled source"
+        return None
+
+    @classmethod
+    def _source_title(cls, source_type: str, record: Mapping[str, Any]) -> str:
+        return cls._source_optional_title(source_type, record) or "Untitled source"
 
     @staticmethod
     def _response_records_and_count(
@@ -9458,6 +9466,8 @@ class LibraryScreen(BaseAppScreen):
             id -- empty sources are skipped, so a fresh library yields an
             empty list (the old line's None-when-empty contract).
         """
+        if self._library_lookup_error is not None:
+            return []
         items: list[tuple[str, str, str, str]] = []
         for source_type, label in (
             ("notes", "Notes"),
@@ -9465,13 +9475,15 @@ class LibraryScreen(BaseAppScreen):
             ("conversations", "Conversations"),
         ):
             records = self._local_source_records.get(source_type) or ()
-            if not records:
-                continue
-            record_id = self._source_record_id(records[0])
-            if not record_id:
-                continue
-            title = self._hub_table_cell(self._source_title(source_type, records[0]))
-            items.append((source_type, record_id, title, label))
+            for record in records:
+                record_id = self._source_record_id(record)
+                title = self._source_optional_title(source_type, record)
+                if not record_id or title is None:
+                    continue
+                items.append(
+                    (source_type, record_id, self._hub_table_cell(title), label)
+                )
+                break
         return items
 
     def _hub_counts_line(self) -> str:

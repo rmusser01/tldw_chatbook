@@ -24132,6 +24132,72 @@ async def test_library_landing_attention_retries_stale_media_through_source_owne
         assert service.search_calls[0]["offset"] == 0
 
 
+def test_library_landing_from_library_uses_only_trustworthy_cached_summaries() -> None:
+    screen = LibraryScreen(_build_test_app())
+    screen._library_lifecycle = LibraryLifecycle.GRADUATED
+    screen._library_loaded = True
+    screen._library_lookup_error = None
+    screen._library_notes_source = "files"
+    screen._local_source_records = {
+        "notes": (
+            {"note_id": "missing-title", "title": "   "},
+            {"note_id": "note-2", "title": "Database note"},
+        ),
+        "media": (
+            {"media_id": "", "title": "Missing identity"},
+            {"media_id": "media-2", "title": "Field recording"},
+        ),
+        "conversations": (
+            {"conversation_id": "chat-1", "title": "Planning session"},
+        ),
+    }
+
+    items = screen._library_landing_canvas_state().recent_items
+
+    assert [(item.source_type, item.record_id, item.title) for item in items] == [
+        ("notes", "note-2", "Database note"),
+        ("media", "media-2", "Field recording"),
+        ("conversations", "chat-1", "Planning session"),
+    ]
+    assert screen._library_notes_source == "files"
+
+    screen._library_lookup_error = "Source snapshot unavailable."
+    assert screen._library_landing_canvas_state().recent_items == ()
+
+
+def test_library_landing_projection_and_retained_sync_add_no_source_io() -> None:
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    screen._library_lifecycle = LibraryLifecycle.EXPANDED
+    screen._library_loaded = True
+    screen._local_source_records = {
+        "notes": ({"note_id": "n1", "title": "Cached note"},),
+        "media": (),
+        "conversations": (),
+    }
+    refresh = Mock(side_effect=AssertionError("landing projection started a read"))
+    screen._refresh_local_source_snapshot = refresh
+    owner_reads = [
+        Mock(side_effect=AssertionError("landing projection called an owner"))
+        for _ in range(4)
+    ]
+    app.notes_scope_service = SimpleNamespace(list_notes=owner_reads[0])
+    app.media_reading_scope_service = SimpleNamespace(search_media=owner_reads[1])
+    app.chat_conversation_scope_service = SimpleNamespace(
+        list_conversations=owner_reads[2]
+    )
+    app.prompt_scope_service = SimpleNamespace(browse_prompts=owner_reads[3])
+
+    first = screen._library_landing_canvas_state()
+    second = screen._library_landing_canvas_state()
+
+    assert first.recent_items == second.recent_items
+    assert first.recent_items[0].title == "Cached note"
+    refresh.assert_not_called()
+    for read in owner_reads:
+        read.assert_not_called()
+
+
 @pytest.mark.asyncio
 async def test_library_landing_continue_dispatches_full_media_page_scope() -> None:
     app = _build_test_app()
