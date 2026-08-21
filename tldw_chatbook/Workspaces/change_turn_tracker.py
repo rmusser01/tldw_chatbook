@@ -88,6 +88,16 @@ class TurnChangeRecord:
     nested_repos: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class BaselineRootPreparation:
+    """Immutable bounded-scan result consumed before a B snapshot."""
+
+    root: Path
+    registered: tuple[str, ...] = ()
+    nested_repos: tuple[str, ...] = ()
+    tracking_error: str = ""
+
+
 class TurnHandle:
     """The in-flight state of one turn's baseline snapshots."""
 
@@ -111,19 +121,23 @@ class TurnHandle:
         #: made after this turn's E cannot fall between two windows.
         self.end_shas: dict[str, str] = {}
         self._thread: threading.Thread | None = None
+        self._baseline_ready = threading.Event()
+        self._baseline_lock = threading.Lock()
+        self._accepting_baseline = True
 
-    def await_baseline(self, timeout: float = _BASELINE_TIMEOUT_SECONDS) -> None:
+    def await_baseline(self, timeout: float = _BASELINE_TIMEOUT_SECONDS) -> bool:
         """Block until every root's B snapshot settled (or errored).
 
         The tool-dispatch gate: called before the first tool executes and
         again defensively by ``end_turn``. Never raises — a timeout is
         recorded as a per-root error and disclosed downstream.
         """
-        thread = self._thread
-        if thread is None:
-            return
-        thread.join(timeout=timeout)
-        if thread.is_alive():
+        if self._baseline_ready.wait(timeout=max(0.0, timeout)):
+            return True
+        with self._baseline_lock:
+            if self._baseline_ready.is_set():
+                return True
+            self._accepting_baseline = False
             # Qodo #1256: the discovery thread may still be APPENDING
             # sub-roots — iterate a snapshot, never the live list.
             for root in tuple(self.roots):
@@ -132,6 +146,7 @@ class TurnHandle:
                     self.errors[key] = (
                         f"baseline snapshot still running after {timeout:.0f}s"
                     )
+        return False
 
 
 class ChangeTurnTracker:
@@ -153,6 +168,115 @@ class ChangeTurnTracker:
 
     # -- turn lifecycle ----------------------------------------------------
 
+    def new_turn_handle(self, roots: Sequence[Path | str]) -> TurnHandle:
+        """Return an unresolved handle without starting any worker thread."""
+        handle = TurnHandle([Path(r).expanduser().resolve() for r in roots])
+        if not handle.roots:
+            handle._baseline_ready.set()
+        return handle
+
+    def populate_baseline(self, handle: TurnHandle) -> None:
+        """Populate one handle's baseline on the caller-owned worker."""
+        preparations = self.discover_baseline(handle)
+        self.populate_prepared_baseline(handle, preparations)
+
+    def discover_baseline(
+        self, handle: TurnHandle
+    ) -> tuple[BaselineRootPreparation, ...]:
+        """Scan roots and discover bounded nested roots without snapshotting."""
+        from tldw_chatbook.Workspaces.change_bounds import (
+            DEFAULT_MAX_SUB_ROOTS,
+            scan_root,
+        )
+
+        original_keys = {str(root) for root in handle.roots}
+        seen = set(original_keys)
+        queue = list(handle.roots)
+        preparations: list[BaselineRootPreparation] = []
+        while queue:
+            root = queue.pop(0)
+            key = str(root)
+            try:
+                scan = scan_root(root)
+                if scan.over_budget:
+                    preparations.append(
+                        BaselineRootPreparation(
+                            root=root,
+                            tracking_error=(
+                                "root over change-tracking budget "
+                                f"({scan.files}+ files / {scan.total_bytes}+ "
+                                "bytes) — narrow the root or add excludes; "
+                                "tracking disabled for this turn"
+                            ),
+                        )
+                    )
+                    continue
+                registered: tuple[str, ...] = ()
+                if key in original_keys:
+                    max_subs = change_review_setting(
+                        "max_sub_roots", DEFAULT_MAX_SUB_ROOTS
+                    )
+                    kept: list[str] = []
+                    for rel in scan.nested_repos[: max(0, max_subs)]:
+                        child = (root / rel).resolve()
+                        ckey = str(child)
+                        if ckey in seen or not child.is_dir():
+                            continue
+                        seen.add(ckey)
+                        kept.append(rel)
+                        queue.append(child)
+                    registered = tuple(kept)
+                preparations.append(
+                    BaselineRootPreparation(
+                        root=root,
+                        registered=registered,
+                        nested_repos=tuple(
+                            rel for rel in scan.nested_repos if rel not in registered
+                        ),
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 -- disclosed, never raised
+                preparations.append(
+                    BaselineRootPreparation(root=root, tracking_error=str(exc)[:400])
+                )
+        return tuple(preparations)
+
+    def populate_prepared_baseline(
+        self,
+        handle: TurnHandle,
+        preparations: Sequence[BaselineRootPreparation],
+    ) -> None:
+        """Snapshot an already-discovered root set on the caller's worker."""
+        try:
+            with handle._baseline_lock:
+                if handle._accepting_baseline:
+                    handle.roots[:] = [item.root for item in preparations]
+            for item in preparations:
+                root = item.root
+                key = str(root)
+                if item.tracking_error:
+                    with handle._baseline_lock:
+                        if handle._accepting_baseline:
+                            handle.errors[key] = item.tracking_error
+                    continue
+                try:
+                    repo = self.service.repo_for_root(root)
+                    baseline = repo.snapshot("turn baseline")
+                    oversize = repo.last_oversize_excluded
+                    with handle._baseline_lock:
+                        if not handle._accepting_baseline:
+                            continue
+                        handle.auto_registered[key] = item.registered
+                        handle.baseline_nested[key] = item.nested_repos
+                        handle.baselines[key] = baseline
+                        handle.baseline_oversize[key] = oversize
+                except Exception as exc:  # noqa: BLE001 -- disclosed, never raised
+                    with handle._baseline_lock:
+                        if handle._accepting_baseline:
+                            handle.errors[key] = str(exc)[:400]
+        finally:
+            handle._baseline_ready.set()
+
     def begin_turn(self, roots: Sequence[Path | str]) -> TurnHandle:
         """Kick baseline snapshots for ``roots`` in the background.
 
@@ -169,72 +293,14 @@ class ChangeTurnTracker:
         # each touched path, so an unresolved (symlink-spelled) root would
         # make `relative_to` fail and silently skip the force-add -- the
         # .gitignore carve-out dying without a trace.
-        handle = TurnHandle(
-            [Path(r).expanduser().resolve() for r in roots]
-        )
-
-        def _baseline() -> None:
-            from tldw_chatbook.Workspaces.change_bounds import (
-                DEFAULT_MAX_SUB_ROOTS,
-                scan_root,
-            )
-
-            # TASK-1977: nested repos found inside a GIVEN root become
-            # tracked sub-roots of their own (bounded by max_sub_roots).
-            # Depth is 1 by construction: only the caller's original roots
-            # expand — a grandchild repo stays disclosed via ITS parent's
-            # banner rather than recursing unbounded.
-            original_keys = {str(root) for root in handle.roots}
-            seen = set(original_keys)
-            queue = list(handle.roots)
-            while queue:
-                root = queue.pop(0)
-                key = str(root)
-                try:
-                    # TASK-1975: budget gate BEFORE any snapshot work. Over
-                    # budget disables tracking for this root with honest
-                    # copy -- never a silent half-track.
-                    scan = scan_root(root)
-                    if scan.over_budget:
-                        handle.errors[key] = (
-                            "root over change-tracking budget "
-                            f"({scan.files}+ files / {scan.total_bytes}+ "
-                            "bytes) — narrow the root or add excludes; "
-                            "tracking disabled for this turn"
-                        )
-                        continue
-                    registered: tuple[str, ...] = ()
-                    if key in original_keys:
-                        max_subs = change_review_setting(
-                            "max_sub_roots", DEFAULT_MAX_SUB_ROOTS
-                        )
-                        candidates = scan.nested_repos[: max(0, max_subs)]
-                        kept: list[str] = []
-                        for rel in candidates:
-                            child = (root / rel).resolve()
-                            ckey = str(child)
-                            if ckey in seen or not child.is_dir():
-                                continue
-                            seen.add(ckey)
-                            kept.append(rel)
-                            handle.roots.append(child)
-                            queue.append(child)
-                        registered = tuple(kept)
-                    handle.auto_registered[key] = registered
-                    handle.baseline_nested[key] = tuple(
-                        rel
-                        for rel in scan.nested_repos
-                        if rel not in registered
-                    )
-                    repo = self.service.repo_for_root(root)
-                    handle.baselines[key] = repo.snapshot("turn baseline")
-                    handle.baseline_oversize[key] = repo.last_oversize_excluded
-                except Exception as exc:  # noqa: BLE001 -- disclosed, never raised
-                    handle.errors[key] = str(exc)[:400]
+        handle = self.new_turn_handle(roots)
 
         if handle.roots:
             thread = threading.Thread(
-                target=_baseline, name="change-review-baseline", daemon=True
+                target=self.populate_baseline,
+                args=(handle,),
+                name="change-review-baseline",
+                daemon=True,
             )
             handle._thread = thread
             thread.start()
@@ -272,7 +338,18 @@ class ChangeTurnTracker:
         follow_on.baseline_oversize = dict(handle.baseline_oversize)
         follow_on.baseline_nested = dict(handle.baseline_nested)
         follow_on.auto_registered = dict(handle.auto_registered)
+        follow_on._baseline_ready.set()
         return follow_on
+
+    def finish_turn(
+        self,
+        handle: TurnHandle,
+        touched_paths: Sequence[str] = (),
+        *,
+        end_shas: "dict[str, str] | None" = None,
+    ) -> list[TurnChangeRecord]:
+        """Take E synchronously on the caller-owned worker."""
+        return self.end_turn(handle, touched_paths=touched_paths, end_shas=end_shas)
 
     def end_turn(
         self,

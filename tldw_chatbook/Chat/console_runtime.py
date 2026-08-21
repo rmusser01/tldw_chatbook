@@ -116,6 +116,7 @@ it left behind — tree, active leaf, drafts, pending attachments and all.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
@@ -463,6 +464,8 @@ class ConsoleRuntime:
         self._chat_store: Any | None = None
         self._provider_gateway: Any | None = None
         self._agent_bridge: Any | None = None
+        self._agent_runs_db: Any | None = None
+        self._change_review_coordinator: Any | None = None
         self._chat_controller: Any | None = None
         self._persona_buddy_sink = PersonaBuddyConsoleAdapter(
             getattr(app, "persona_buddy_controller", None)
@@ -523,6 +526,11 @@ class ConsoleRuntime:
             getattr(self._app, "persona_buddy_controller", None)
         )
         return self._persona_buddy_sink
+
+    @property
+    def change_review_coordinator(self) -> Any | None:
+        """The built app-owned Change Review coordinator, if available."""
+        return self._change_review_coordinator
 
     # -- handle writes (the screen's properties, and 59 test sites) --------
 
@@ -687,12 +695,32 @@ class ConsoleRuntime:
         from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
         runs_db = AgentRunsDB(Path(db_path).parent / "agent_runs.db")
+        self._agent_runs_db = runs_db
         # TASK-1971 (Agent Change Review): the tracker is None when git is
         # absent -- the bridge then skips tracking entirely, and runs behave
         # exactly as before the feature existed (spec gating decision).
         from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker
 
         change_tracker = ChangeTurnTracker()
+        change_coordinator = None
+        if change_tracker.available:
+            from tldw_chatbook.Workspaces.change_review_finalization import (
+                ChangeReviewFinalizationCoordinator,
+            )
+
+            def _publish_change_review(item: Any) -> None:
+                runs_db.record_change_snapshots_batch(
+                    run_id=item.run_id,
+                    records=[record.__dict__ for record in item.records],
+                    kind=item.kind,
+                )
+
+            change_coordinator = ChangeReviewFinalizationCoordinator(
+                tracker=change_tracker,
+                publish=_publish_change_review,
+                close_publisher=runs_db.close,
+            )
+            self._change_review_coordinator = change_coordinator
         self._agent_bridge = ConsoleAgentBridge(
             agent_runs_db=runs_db,
             store=store_factory(),
@@ -705,6 +733,7 @@ class ConsoleRuntime:
             ),
             change_tracker=change_tracker if change_tracker.available else None,
             buddy_sink=self.persona_buddy_sink,
+            change_finalization_coordinator=change_coordinator,
         )
         # PR3a-2 Task 4: the survivor-completion attention consumer (durable
         # unseen mark + app-wide toast + deep link), registered NEXT TO
@@ -1002,6 +1031,10 @@ class ConsoleRuntime:
         self._disposed = True
         self.detach_view(None)
         controller, gateway = self._chat_controller, self._provider_gateway
+        coordinator, runs_db = (
+            self._change_review_coordinator,
+            self._agent_runs_db,
+        )
         self.generation += 1
         if controller is not None:
             try:
@@ -1014,6 +1047,25 @@ class ConsoleRuntime:
         # coordinator. Only after every trusted producer is tombstoned may
         # the shared Buddy sink release its remaining owner tokens.
         self._persona_buddy_sink.dispose()
+        if coordinator is not None:
+            try:
+                await asyncio.to_thread(coordinator.shutdown, 2.0)
+            except Exception:  # noqa: BLE001 - quit must not die on teardown
+                logger.opt(exception=True).warning(
+                    "Console runtime: Change Review shutdown failed at dispose."
+                )
+        # AgentRunsDB connections are thread-local. The coordinator closes
+        # the publisher thread's connection after its last callback; this
+        # closes the runtime/UI thread's separate held connection. Even when
+        # bounded coordinator shutdown times out, neither close invalidates
+        # the other thread's connection.
+        if runs_db is not None:
+            try:
+                runs_db.close()
+            except Exception:  # noqa: BLE001 - same
+                logger.opt(exception=True).warning(
+                    "Console runtime: AgentRunsDB close failed at dispose."
+                )
         close = getattr(gateway, "aclose", None)
         if callable(close):
             try:

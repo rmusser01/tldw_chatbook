@@ -85,6 +85,10 @@ worker inputs/results, durable publication races, and shutdown order.
 2. Implement immutable `ChangeReviewReservation`, operation/result records,
    lane deques, one coordinator lock, fixed daemon filesystem workers, bounded
    operation/result queues, and all-or-nothing registration.
+   Capacity counts admitted lane reservations exactly. A rejected turn is a
+   caller-owned lightweight token and may reserve one slot in a separate
+   bounded error-publication channel; channel saturation returns a typed
+   visible fallback rather than creating a second reservation pool.
 3. When bounded baseline discovery finds nested repositories, enroll their
    canonical roots into the reservation before snapshotting them. Test both
    shared nested-root FIFO and capacity rejection without partial enrollment.
@@ -131,6 +135,8 @@ worker inputs/results, durable publication races, and shutdown order.
    every row for one completed window in one transaction and never retries a
    partially published window. It then increments the signal. Anchor writes
    increment the same signal.
+   If the atomic batch raises, make exactly one second batch attempt containing
+   per-root tracking-error rows; never retry that terminal attempt.
 3. Remove live change marker insertion. Extend the transcript poll to keep
    running while finalization is pending and, only when the signal revision
    changes, re-derive a temporary active-session render projection with
@@ -147,9 +153,10 @@ worker inputs/results, durable publication races, and shutdown order.
    assistant is durable, submit turn three, and prove its provider starts
    before E is released.
 2. `ConsoleRuntime.dispose` orders teardown as: stop controller admission and
-   settle turns; coordinator bounded shutdown/drain; close or detach durable
-   publisher state; then provider gateway close. Late-generation worker
-   results are rejected before DB access.
+   settle turns; coordinator bounded shutdown/drain; close the publisher and
+   runtime/UI thread-local AgentRunsDB connections on their owning threads;
+   then provider gateway close. Late-generation worker results are rejected
+   before DB access.
 3. Add shutdown tests with a blocked filesystem worker proving bounded return,
    queued tombstones, no DB read after disposal, and no live non-daemon review
    threads.

@@ -3786,6 +3786,8 @@ class ChatScreen(BaseAppScreen):
         #: why `_console_speaking_message_id` in particular still needs one
         #: (`console_transcript.py` reaches it by bare name off `self.screen`).
         self._console_transcript_sync_timer: Any | None = None
+        self._console_change_review_projection_key: tuple[str | None, int] | None = None
+        self._console_change_review_marker_blocks: list[Any] = []
         # PR3a-2 Task 4 (task-15664): the 1s SURVIVOR tick. Runs only
         # while some live session's fleet still owes a drain
         # (`ConsoleChatController.fleet_has_unsettled_children`) -- the
@@ -14670,6 +14672,37 @@ class ChatScreen(BaseAppScreen):
         for the citation cluster's own staying callers."""
         return self._message._native_console_messages()
 
+    def _project_console_change_review_markers(
+        self, messages: list[Any]
+    ) -> list[Any]:
+        """Return the transcript-only durable Change Review projection."""
+        runtime = self._console_runtime()
+        coordinator = runtime.change_review_coordinator
+        if coordinator is None:
+            return messages
+        snapshot = coordinator.publication_signal.snapshot()
+        conversation_id = self._current_console_conversation_id()
+        key = (conversation_id, snapshot.revision)
+        if key != self._console_change_review_projection_key:
+            bridge = runtime.agent_bridge
+            self._console_change_review_marker_blocks = (
+                [
+                    block
+                    for block in bridge.change_review_marker_messages(
+                        conversation_id
+                    )
+                    if block[0] is not None
+                ]
+                if bridge is not None and conversation_id is not None
+                else []
+            )
+            self._console_change_review_projection_key = key
+        from tldw_chatbook.Chat.console_agent_bridge import inject_resume_agent_markers
+
+        return inject_resume_agent_markers(
+            messages, self._console_change_review_marker_blocks
+        )
+
     def _console_citation_modal_request_is_current(
         self,
         *,
@@ -15135,7 +15168,9 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             transcript = None
 
-        messages = self._native_console_messages()
+        messages = self._project_console_change_review_markers(
+            self._native_console_messages()
+        )
         if region := self._console_transcript_region_or_none():
             region.sync_recovery()
         if transcript is not None:
@@ -15719,10 +15754,17 @@ class ChatScreen(BaseAppScreen):
             wake_delivering = (
                 callable(delivering_read) and delivering_read() is not None
             )
+            review_coordinator = self._console_runtime().change_review_coordinator
+            review_pending = (
+                review_coordinator.publication_signal.snapshot().pending > 0
+                if review_coordinator is not None
+                else False
+            )
             if (
                 controller.run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES
                 and controller.in_flight_run_count() == 0
                 and not wake_delivering
+                and not review_pending
             ):
                 # TASK-251: the run just left an active status -- invalidate
                 # so the finalized conversation's title/timestamps appear in

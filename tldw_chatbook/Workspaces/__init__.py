@@ -23,6 +23,14 @@ from .change_review_consent import (
     RootReadinessState,
     SkippedReviewRoot,
 )
+from .change_review_finalization import (
+    ChangeReviewFinalizeResult,
+    ChangeReviewFinalizationCoordinator,
+    ChangeReviewPublication,
+    ChangeReviewPublicationSignal,
+    ChangeReviewPublicationSnapshot,
+    ChangeReviewReservation,
+)
 from .display_state import (
     CONSOLE_WORKSPACE_CONVERSATION_RESULT_LIMIT,
     ConsoleWorkspaceACPHandoffState,
@@ -65,6 +73,12 @@ __all__ = [
     "ChangeReviewCapability",
     "ChangeReviewConsent",
     "ChangeReviewConsentService",
+    "ChangeReviewFinalizeResult",
+    "ChangeReviewFinalizationCoordinator",
+    "ChangeReviewPublication",
+    "ChangeReviewPublicationSignal",
+    "ChangeReviewPublicationSnapshot",
+    "ChangeReviewReservation",
     "ChangeReviewState",
     "ChangeReviewStateConflict",
     "ChangeReviewStatus",

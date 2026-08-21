@@ -1,4 +1,5 @@
 import asyncio
+import threading
 import time
 from copy import deepcopy
 import inspect
@@ -2502,6 +2503,318 @@ def test_console_transcript_sync_timer_polls_at_coarse_interval(monkeypatch):
     screen._start_console_transcript_sync_timer()
 
     assert captured["interval"] >= 0.15
+
+
+@pytest.mark.asyncio
+async def test_console_transcript_poll_stays_alive_while_review_is_pending(
+    monkeypatch,
+):
+    screen = ChatScreen(_build_test_app())
+    captured = {}
+    stopped = []
+    pending = SimpleNamespace(value=1)
+
+    class _Signal:
+        def snapshot(self):
+            return SimpleNamespace(revision=0, pending=pending.value)
+
+    controller = SimpleNamespace(
+        run_state=SimpleNamespace(status=ConsoleRunStatus.IDLE),
+        in_flight_run_count=lambda: 0,
+        fleet_wake=None,
+    )
+    screen._console_chat_controller = controller
+    screen._console_runtime()._change_review_coordinator = SimpleNamespace(
+        publication_signal=_Signal()
+    )
+    monkeypatch.setattr(screen, "_sync_native_console_chat_ui", AsyncMock())
+    monkeypatch.setattr(
+        screen._workspace,
+        "_invalidate_console_persisted_rows_cache",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        screen, "_maybe_start_console_fleet_survivor_tick", lambda: None
+    )
+    monkeypatch.setattr(
+        screen, "_stop_console_transcript_sync_timer", lambda: stopped.append(True)
+    )
+    monkeypatch.setattr(
+        screen,
+        "set_interval",
+        lambda _interval, callback: captured.setdefault("callback", callback)
+        or SimpleNamespace(stop=lambda: None),
+    )
+
+    screen._start_console_transcript_sync_timer()
+    await captured["callback"]()
+    assert stopped == []
+
+    pending.value = 0
+    await captured["callback"]()
+    assert stopped == [True]
+
+
+def test_live_change_review_markers_are_a_store_preserving_projection(monkeypatch):
+    screen = ChatScreen(_build_test_app())
+    assistant = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="answer",
+        status="complete",
+        persisted_message_id="assistant-1",
+    )
+    live_warning = ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL,
+        content="workspace alias warning",
+        status="complete",
+    )
+    marker = ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL,
+        content="Changed 1 file",
+        status="complete",
+    )
+    source = [assistant, live_warning]
+    revision = SimpleNamespace(value=1)
+    calls = []
+
+    class _Signal:
+        def snapshot(self):
+            return SimpleNamespace(revision=revision.value, pending=0)
+
+    bridge = SimpleNamespace(
+        change_review_marker_messages=lambda conversation_id: calls.append(
+            conversation_id
+        )
+        or [("assistant-1", [marker])]
+    )
+    runtime = screen._console_runtime()
+    runtime.set_agent_bridge(bridge)
+    runtime._change_review_coordinator = SimpleNamespace(publication_signal=_Signal())
+    monkeypatch.setattr(screen._message, "_native_console_messages", lambda: source)
+    monkeypatch.setattr(screen, "_current_console_conversation_id", lambda: "c1")
+
+    first = screen._project_console_change_review_markers(source)
+    second = screen._project_console_change_review_markers(source)
+
+    assert [item.content for item in first] == [
+        "answer",
+        "Changed 1 file",
+        "workspace alias warning",
+    ]
+    assert [item.content for item in second] == [item.content for item in first]
+    assert source == [assistant, live_warning]
+    assert calls == ["c1"]
+
+    revision.value = 2
+    screen._project_console_change_review_markers(source)
+    assert calls == ["c1", "c1"]
+
+
+def test_live_change_review_projection_waits_for_durable_anchor(monkeypatch):
+    screen = ChatScreen(_build_test_app())
+    assistant = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="answer",
+        status="complete",
+        persisted_message_id="assistant-1",
+    )
+    marker = ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL,
+        content="Changed 1 file",
+        status="complete",
+    )
+    state = SimpleNamespace(revision=1, anchor=None)
+
+    class _Signal:
+        def snapshot(self):
+            return SimpleNamespace(revision=state.revision, pending=0)
+
+    bridge = SimpleNamespace(
+        change_review_marker_messages=lambda _conversation_id: [
+            (state.anchor, [marker])
+        ]
+    )
+    runtime = screen._console_runtime()
+    runtime.set_agent_bridge(bridge)
+    runtime._change_review_coordinator = SimpleNamespace(publication_signal=_Signal())
+    monkeypatch.setattr(
+        screen._message, "_native_console_messages", lambda: [assistant]
+    )
+    monkeypatch.setattr(screen, "_current_console_conversation_id", lambda: "c1")
+
+    assert screen._project_console_change_review_markers([assistant]) == [assistant]
+
+    state.anchor = "assistant-1"
+    state.revision += 1
+    assert screen._project_console_change_review_markers([assistant]) == [
+        assistant,
+        marker,
+    ]
+
+
+def test_live_change_review_projection_does_not_duplicate_existing_step(monkeypatch):
+    screen = ChatScreen(_build_test_app())
+    assistant = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="answer",
+        status="complete",
+        persisted_message_id="assistant-1",
+    )
+    existing_step = ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL,
+        content="Used fs_read",
+        status="complete",
+    )
+    change_marker = ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL,
+        content="Changed 1 file",
+        status="complete",
+    )
+
+    class _Signal:
+        def snapshot(self):
+            return SimpleNamespace(revision=1, pending=0)
+
+    bridge = SimpleNamespace(
+        resume_marker_messages=lambda _conversation_id: [
+            ("assistant-1", [existing_step, change_marker])
+        ],
+        change_review_marker_messages=lambda _conversation_id: [
+            ("assistant-1", [change_marker])
+        ],
+    )
+    runtime = screen._console_runtime()
+    runtime.set_agent_bridge(bridge)
+    runtime._change_review_coordinator = SimpleNamespace(publication_signal=_Signal())
+    monkeypatch.setattr(screen, "_current_console_conversation_id", lambda: "c1")
+
+    projected = screen._project_console_change_review_markers(
+        [assistant, existing_step]
+    )
+
+    assert [message.content for message in projected] == [
+        "answer",
+        "Changed 1 file",
+        "Used fs_read",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_mounted_console_third_turn_starts_while_second_review_e_is_held(
+    tmp_path,
+):
+    from tldw_chatbook.Workspaces.change_review_finalization import (
+        ChangeReviewFinalizationCoordinator,
+    )
+    from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService
+    from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "seed.txt").write_text("seed\n")
+    second_end_entered = threading.Event()
+    release_second_end = threading.Event()
+
+    class _HeldSecondEndTracker(ChangeTurnTracker):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.ends = 0
+
+        def finish_turn(self, handle, touched_paths=(), *, end_shas=None):
+            self.ends += 1
+            if self.ends == 2:
+                second_end_entered.set()
+                release_second_end.wait(timeout=5)
+            return super().finish_turn(
+                handle, touched_paths=touched_paths, end_shas=end_shas
+            )
+
+    class _MountedGateway(_ReadyResolutionGateway):
+        def __init__(self):
+            self.calls = 0
+            self.third_started = threading.Event()
+
+        async def stream_chat(self, _resolution, _messages, **_kwargs):
+            self.calls += 1
+            if self.calls == 3:
+                self.third_started.set()
+            yield ("one", "two", "three")[self.calls - 1]
+
+    gateway = _MountedGateway()
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.chachanotes_db = CharactersRAGDB(
+        tmp_path / "chatbook.db", client_id="mounted-change-review"
+    )
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        bridge = console._ensure_console_agent_bridge()
+        runtime = console._console_runtime()
+        old_coordinator = runtime.change_review_coordinator
+        assert old_coordinator is not None
+        assert old_coordinator.shutdown(timeout=1)
+
+        tracker = _HeldSecondEndTracker(
+            service=ShadowRepoService(data_dir=tmp_path / "shadow")
+        )
+        coordinator = ChangeReviewFinalizationCoordinator(
+            tracker=tracker,
+            publish=lambda item: bridge.runs_db.record_change_snapshots_batch(
+                run_id=item.run_id,
+                records=[record.__dict__ for record in item.records],
+                kind=item.kind,
+            ),
+            worker_count=1,
+            capacity=4,
+        )
+        runtime._change_review_coordinator = coordinator
+        bridge._change_tracker = tracker
+        bridge._change_finalization_coordinator = coordinator
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+
+        def run_turn(label: str):
+            store.append_message(
+                session.id, role=ConsoleMessageRole.USER, content=label
+            )
+            assistant = store.append_message(
+                session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+            )
+            return bridge.run_reply(
+                conversation_id="mounted-conversation",
+                session_id=session.id,
+                resolution=ConsoleProviderResolution(
+                    provider="llama_cpp",
+                    base_url="",
+                    model="test-model",
+                    ready=True,
+                    execution_key="llama_cpp",
+                ),
+                assistant_message_id=assistant.id,
+                model="test-model",
+                session_system_prompt="",
+                agent_messages=[{"role": "user", "content": label}],
+                should_cancel=lambda: False,
+                change_roots=[root],
+            )
+
+        await asyncio.to_thread(run_turn, "one")
+        assert await asyncio.to_thread(coordinator.wait_idle, 2)
+        second_run_id, _ = await asyncio.to_thread(run_turn, "two")
+        bridge.record_run_assistant_message(second_run_id, "persisted-second")
+        assert second_end_entered.wait(timeout=1)
+
+        third = asyncio.create_task(asyncio.to_thread(run_turn, "three"))
+        assert await asyncio.to_thread(gateway.third_started.wait, 1)
+        release_second_end.set()
+        _third_run_id, third_outcome = await asyncio.wait_for(third, timeout=5)
+        assert third_outcome.final_text.strip() == "three"
+        assert await asyncio.to_thread(coordinator.wait_idle, 3)
+        assert coordinator.shutdown(timeout=1)
 
 
 def test_console_transcript_fingerprint_tolerates_empty_variant_container():
@@ -10153,7 +10466,10 @@ def _bare_console_screen(store: ConsoleChatStore) -> ChatScreen:
             suitable for unit-level serialize/restore round-trip testing.
     """
     screen = ChatScreen.__new__(ChatScreen)
-    screen._console_runtime_ref = ConsoleRuntime(None)
+    # This shell intentionally bypasses ChatScreen.__init__, so it cannot
+    # participate in mounted view-hook binding. Give the property-backed
+    # handles their runtime directly before assigning the store.
+    screen._console_runtime_ref = ConsoleRuntime(app=None)
     screen._console_chat_store = store
     # A bare, uninitialized `ConsoleSessionController` -- `__init__` was
     # never run, so every OTHER dependency is unset by default. Only the

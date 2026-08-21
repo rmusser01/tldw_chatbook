@@ -24,6 +24,10 @@ from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService
+from tldw_chatbook.Workspaces.change_review_finalization import (
+    ChangeReviewFinalizationCoordinator,
+    ChangeReviewFinalizeResult,
+)
 from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker
 from tldw_chatbook.Workspaces.change_review_consent import SkippedReviewRoot
 
@@ -103,6 +107,55 @@ def test_begin_is_nonblocking_and_await_gates(tmp_path, root):
 
     assert begin_elapsed < 0.3, "begin_turn blocked on the snapshot"
     assert events == ["begin-returned", "baseline-finished", "await-returned"]
+
+
+def test_tracker_supports_a_caller_owned_synchronous_lifecycle(tracker, root):
+    """The app-owned coordinator must be the only owner of worker threads."""
+    handle = tracker.new_turn_handle([root])
+
+    tracker.populate_baseline(handle)
+    assert handle.await_baseline(timeout=0) is True
+
+    (root / "caller-owned.txt").write_text("changed\n")
+    records = tracker.finish_turn(handle)
+
+    assert len(records) == 1
+    assert records[0].root == str(root)
+    assert records[0].files_changed == 1
+
+
+def test_timed_out_baseline_rejects_late_success(tmp_path, root):
+    entered = threading.Event()
+    release = threading.Event()
+
+    class _HeldService(ShadowRepoService):
+        def repo_for_root(self, r):
+            repo = super().repo_for_root(r)
+            original = repo.snapshot
+
+            def held_snapshot(message: str) -> str:
+                if message == "turn baseline":
+                    entered.set()
+                    release.wait(timeout=2)
+                return original(message)
+
+            repo.snapshot = held_snapshot  # type: ignore[method-assign]
+            return repo
+
+    tracker = ChangeTurnTracker(service=_HeldService(data_dir=tmp_path / "app"))
+    handle = tracker.new_turn_handle([root])
+    worker = threading.Thread(target=tracker.populate_baseline, args=(handle,))
+    worker.start()
+    assert entered.wait(timeout=1)
+
+    assert handle.await_baseline(timeout=0.01) is False
+    release.set()
+    worker.join(timeout=2)
+
+    records = tracker.finish_turn(handle)
+    assert len(records) == 1
+    assert "baseline snapshot still running" in records[0].tracking_error
+    assert records[0].baseline_sha == ""
 
 
 def test_force_add_carveout_for_tool_touched_ignored_paths(tracker, root):
@@ -210,6 +263,35 @@ def test_v2_database_gains_the_change_snapshots_table_on_open(tmp_path):
     assert [r["run_id"] for r in by_conv] == [run_id]
 
 
+def test_change_snapshot_batch_commits_one_complete_window(tmp_path):
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    run_id = db.create_run(conversation_id="c1", agent_kind="primary")
+    records = [
+        {
+            "root": "/w/one",
+            "baseline_sha": "b1",
+            "end_sha": "e1",
+            "files_changed": 1,
+            "adds": 2,
+            "dels": 0,
+        },
+        {
+            "root": "/w/two",
+            "baseline_sha": "b2",
+            "end_sha": "e2",
+            "tracking_error": "snapshot failed",
+        },
+    ]
+
+    db.record_change_snapshots_batch(run_id=run_id, records=records, kind="turn")
+
+    rows = db.change_snapshots_for_run(run_id)
+    assert [(row["root"], row["tracking_error"]) for row in rows] == [
+        ("/w/one", ""),
+        ("/w/two", "snapshot failed"),
+    ]
+
+
 # -- bridge level -----------------------------------------------------------
 
 
@@ -243,7 +325,7 @@ class _SideEffectGateway:
             raise RuntimeError("provider died mid-turn")
 
 
-def _bridge_with(tmp_path, gateway, tracker):
+def _bridge_with(tmp_path, gateway, tracker, coordinator=None):
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
@@ -256,6 +338,7 @@ def _bridge_with(tmp_path, gateway, tracker):
         store=store,
         provider_gateway=gateway,
         change_tracker=tracker,
+        change_finalization_coordinator=coordinator,
     )
     return bridge, db, store, session, assistant.id
 
@@ -322,6 +405,271 @@ def test_bridge_run_with_no_changes_records_no_row(tmp_path, root, tracker):
     bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
     run_id, _outcome = _run(bridge, session, aid, root)
     assert db.change_snapshots_for_run(run_id) == []
+
+
+def test_bridge_returns_before_coordinated_end_snapshot_finishes(
+    tmp_path, root
+):
+    end_entered = threading.Event()
+    release_end = threading.Event()
+
+    class _HeldEndTracker(ChangeTurnTracker):
+        def finish_turn(self, handle, touched_paths=(), *, end_shas=None):
+            end_entered.set()
+            release_end.wait(timeout=2)
+            return super().finish_turn(
+                handle, touched_paths=touched_paths, end_shas=end_shas
+            )
+
+    tracker = _HeldEndTracker(
+        service=ShadowRepoService(data_dir=tmp_path / "appdata")
+    )
+    gateway = _SideEffectGateway(
+        [[_calc_fence()], ["done."]],
+        side_effect_on_call=2,
+        side_effect=lambda: (root / "made_by_run.txt").write_text("hello\n"),
+    )
+    publications = []
+    db_holder = {}
+
+    def publish(item):
+        publications.append(item)
+        db_holder["db"].record_change_snapshots_batch(
+            run_id=item.run_id,
+            records=[record.__dict__ for record in item.records],
+            kind=item.kind,
+        )
+
+    coordinator = ChangeReviewFinalizationCoordinator(
+        tracker=tracker,
+        publish=publish,
+        worker_count=1,
+        capacity=4,
+    )
+    bridge, db, store, session, aid = _bridge_with(
+        tmp_path, gateway, tracker, coordinator
+    )
+    db_holder["db"] = db
+
+    run_id, outcome = _run(bridge, session, aid, root)
+
+    assert outcome.final_text.strip() == "done."
+    assert end_entered.wait(timeout=1)
+    assert db.change_snapshots_for_run(run_id) == []
+    release_end.set()
+    assert coordinator.wait_idle(timeout=2)
+    assert len(db.change_snapshots_for_run(run_id)) == 1
+    coordinator.shutdown(timeout=1)
+
+
+def test_bridge_surfaces_capacity_error_when_error_channel_is_saturated(
+    tmp_path, root, tracker
+):
+    class _Reservation:
+        roots = (str(root),)
+        admission_error = "change-review error publication channel is at capacity"
+
+        @staticmethod
+        def await_baseline(timeout=120.0):
+            del timeout
+            return True
+
+    class _SaturatedCoordinator:
+        @staticmethod
+        def register(_roots, *, survivor_key=""):
+            return _Reservation()
+
+        @staticmethod
+        def finalize(_reservation, **_kwargs):
+            return ChangeReviewFinalizeResult.OVERLOAD_VISIBLE
+
+    coordinator = _SaturatedCoordinator()
+    bridge, _db, store, session, aid = _bridge_with(
+        tmp_path,
+        _SideEffectGateway([["done."]]),
+        tracker,
+        coordinator,
+    )
+
+    _run(bridge, session, aid, root)
+
+    failures = [
+        message.content
+        for message in _tool_rows(store, session)
+        if "change tracking failed" in message.content
+    ]
+    assert len(failures) == 1
+    assert "error publication channel is at capacity" in failures[0]
+
+
+def test_bridge_does_not_append_capacity_marker_after_coordinator_shutdown(
+    tmp_path, root, tracker
+):
+    class _Reservation:
+        roots = (str(root),)
+        admission_error = "change-review coordinator is at capacity"
+
+        @staticmethod
+        def await_baseline(timeout=120.0):
+            del timeout
+            return True
+
+    class _StoppedCoordinator:
+        @staticmethod
+        def register(_roots, *, survivor_key=""):
+            return _Reservation()
+
+        @staticmethod
+        def finalize(_reservation, **_kwargs):
+            return ChangeReviewFinalizeResult.REJECTED
+
+    bridge, _db, store, session, aid = _bridge_with(
+        tmp_path,
+        _SideEffectGateway([["done."]]),
+        tracker,
+        _StoppedCoordinator(),
+    )
+
+    _run(bridge, session, aid, root)
+
+    assert not [
+        message
+        for message in _tool_rows(store, session)
+        if "change tracking failed" in message.content
+    ]
+
+
+def test_third_turn_starts_while_second_review_finalization_is_held(
+    tmp_path, root
+):
+    second_end_entered = threading.Event()
+    release_second_end = threading.Event()
+
+    class _HoldSecondEndTracker(ChangeTurnTracker):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.ends = 0
+
+        def finish_turn(self, handle, touched_paths=(), *, end_shas=None):
+            self.ends += 1
+            if self.ends == 2:
+                second_end_entered.set()
+                release_second_end.wait(timeout=3)
+            return super().finish_turn(
+                handle, touched_paths=touched_paths, end_shas=end_shas
+            )
+
+    class _ThreeTurnGateway(_SideEffectGateway):
+        def __init__(self):
+            super().__init__([["one"], ["two"], ["three"]])
+            self.third_started = threading.Event()
+
+        async def stream_chat(self, resolution, messages, tools=None, **kwargs):
+            if self._calls == 2:
+                self.third_started.set()
+            async for chunk in super().stream_chat(
+                resolution, messages, tools=tools, **kwargs
+            ):
+                yield chunk
+
+    tracker = _HoldSecondEndTracker(
+        service=ShadowRepoService(data_dir=tmp_path / "appdata")
+    )
+    gateway = _ThreeTurnGateway()
+    db_holder = {}
+
+    def publish(item):
+        db_holder["db"].record_change_snapshots_batch(
+            run_id=item.run_id,
+            records=[record.__dict__ for record in item.records],
+            kind=item.kind,
+        )
+
+    coordinator = ChangeReviewFinalizationCoordinator(
+        tracker=tracker,
+        publish=publish,
+        worker_count=1,
+        capacity=4,
+    )
+    bridge, db, store, session, first_assistant = _bridge_with(
+        tmp_path, gateway, tracker, coordinator
+    )
+    db_holder["db"] = db
+
+    _run(bridge, session, first_assistant, root)
+    assert coordinator.wait_idle(timeout=2)
+
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="two")
+    second_assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    second_run_id, _second_outcome = _run(
+        bridge, session, second_assistant.id, root
+    )
+    bridge.record_run_assistant_message(second_run_id, "persisted-second")
+    assert db.get_run(second_run_id)["assistant_message_id"] == "persisted-second"
+    assert second_end_entered.wait(timeout=1)
+
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="three")
+    third_assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    third_result = []
+    third_thread = threading.Thread(
+        target=lambda: third_result.append(
+            _run(bridge, session, third_assistant.id, root)
+        )
+    )
+    third_thread.start()
+
+    assert gateway.third_started.wait(timeout=1), (
+        "turn three remained blocked behind turn two's file-review E snapshot"
+    )
+    release_second_end.set()
+    third_thread.join(timeout=3)
+    assert third_result and third_result[0][1].final_text.strip() == "three"
+    assert coordinator.wait_idle(timeout=3)
+    coordinator.shutdown(timeout=1)
+
+
+def test_cancelled_turn_still_schedules_coordinated_finalization(
+    tmp_path, root
+):
+    tracker = ChangeTurnTracker(
+        service=ShadowRepoService(data_dir=tmp_path / "appdata")
+    )
+    gateway = _SideEffectGateway([["never used"]])
+    publications = []
+    coordinator = ChangeReviewFinalizationCoordinator(
+        tracker=tracker,
+        publish=publications.append,
+        worker_count=1,
+        capacity=2,
+    )
+    bridge, _db, _store, session, aid = _bridge_with(
+        tmp_path, gateway, tracker, coordinator
+    )
+    scheduled = []
+    original_finalize = coordinator.finalize
+
+    def recording_finalize(*args, **kwargs):
+        scheduled.append(kwargs["run_id"])
+        return original_finalize(*args, **kwargs)
+
+    coordinator.finalize = recording_finalize  # type: ignore[method-assign]
+
+    run_id, outcome = _run(
+        bridge,
+        session,
+        aid,
+        root,
+        should_cancel=lambda: True,
+    )
+
+    assert outcome.status == "cancelled"
+    assert scheduled == [run_id]
+    assert coordinator.wait_idle(timeout=2)
+    coordinator.shutdown(timeout=1)
 
 
 def test_failed_run_still_records_its_end_snapshot(tmp_path, root, tracker):
@@ -651,6 +999,15 @@ def test_resume_re_derives_the_summary_row_byte_identical(tmp_path, root, tracke
     ]
     assert [m.content for m in resumed] == [m.content for m in live]
     assert resumed[0].change_review_run_id == run_id
+    projected = [
+        message
+        for _anchor, block in fresh.change_review_marker_messages("conv-1")
+        for message in block
+    ]
+    assert [message.content for message in projected] == [
+        message.content for message in live
+    ]
+    assert all(message.change_review_run_id == run_id for message in projected)
 
 
 def test_review_changes_action_offered_only_for_summary_rows():

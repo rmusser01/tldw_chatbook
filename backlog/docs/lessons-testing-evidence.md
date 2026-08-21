@@ -9,6 +9,27 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## A display-only durable overlay belongs at the render boundary
+
+**TASK-19502, 2026-08-21.** Nonblocking Change Review publication needed the
+mounted Console to re-derive file-change markers after the assistant turn had
+already completed. The first implementation put that projection in the shared
+`_native_console_messages()` accessor. Review showed that citation discovery,
+message actions, image preparation, state fingerprints, and other non-render
+callers would then all receive display-only TOOL rows and repeatedly pay the
+join/injection cost. The focused marker tests were green because they asked only
+whether the marker appeared; they did not prove unrelated consumers stayed on
+the canonical store view.
+
+**What to do.** Keep the store accessor canonical. Apply a durable, display-only
+overlay at the narrow transcript render boundary, cache only its durable query
+input by a content-free revision, and project it over the fresh message list.
+Test both the visible result and that the source list remains byte-for-byte
+unchanged; otherwise a correct-looking marker can still create hidden semantic
+and performance regressions elsewhere.
+
+---
+
 ## Textual's geometric center is not the painted row for an even-height one-line control
 
 **TASK-16001, 2026-08-13.** A compositor regression helper sampled
