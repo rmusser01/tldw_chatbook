@@ -119,7 +119,7 @@ async def _setup_console(pilot, host, bridge, *, conversation_id: str = "conv-A"
     await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
     console._console_agent_bridge = bridge
     console._console_agent_drilldown_run_id = None
-    console._current_console_rail_conversation_id = lambda: conversation_id
+    console._character._current_console_rail_conversation_id = lambda: conversation_id
     console._agent._console_agent_drilldown_conversation_id = conversation_id
     console._set_console_rail_preference(
         section_updates={"agent": True}, notify_on_failure=False

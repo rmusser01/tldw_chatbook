@@ -416,7 +416,7 @@ async def test_stale_worker_land_after_conversation_switch_does_not_clobber_summ
         session2 = store.create_session(session_id="conv-wiring-stale-2")
         session2.persisted_conversation_id = "conv-wiring-stale-2"
         assert (
-            console._current_console_rail_conversation_id()
+            console._character._current_console_rail_conversation_id()
             == "conv-wiring-stale-2"
         )
 
