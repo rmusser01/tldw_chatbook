@@ -784,6 +784,25 @@ class ConsoleChatStore:
         # for every later flush of that message (see
         # ``attach_message_exchanges``/``_persist_exchanges_only``).
         self._abandoned_exchange_run_tags: dict[str, set[str]] = {}
+        # Qodo PR #1883 finding 4: memoizes ``capture_to_blob``'s
+        # zlib-compressed JSON per (message, run_tag, seq, status) so
+        # ``_persist_exchanges_only`` -- called on EVERY flush of a
+        # message with exchanges, e.g. once per tool call in a long agent
+        # turn -- does not re-compress every still-unchanged capture on
+        # every call. Keyed by message id (outer) then (run_tag, seq,
+        # status) (inner) so one message's blobs can never serve another's
+        # lookup. ``status`` is part of the inner key because a "stopped"
+        # snapshot can legitimately be superseded by a later non-"stopped"
+        # capture for the same (run_tag, seq) (see
+        # ``attach_message_exchanges``'s merge rule) -- that status change
+        # naturally misses this cache and recompresses the new bytes.
+        # ``_persist_exchanges_only`` prunes each message's inner dict down
+        # to exactly its current capture keys on every flush, so a
+        # superseded status's stale blob (and the cache as a whole) cannot
+        # grow past what is actually live on the message; ``delete_message``
+        # and session-close both additionally drop a message's entire
+        # entry outright when the message itself goes away.
+        self._exchange_blob_cache: dict[str, dict[tuple[str, int, str], bytes]] = {}
         # Ephemeral fence for issued speech snapshots. It deliberately lives
         # outside ConsoleChatMessage so it is neither persisted nor restored.
         self._message_speech_revisions: dict[str, int] = {}
@@ -1670,6 +1689,7 @@ class ConsoleChatStore:
             self._message_completion_generations.pop(message_id, None)
             self._native_parent_by_message.pop(message_id, None)
             self._roleplay_message_projection_candidates.pop(message_id, None)
+            self._exchange_blob_cache.pop(message_id, None)
 
         self._messages_by_session.pop(session_id, None)
         self._tool_markers_by_session.pop(session_id, None)
@@ -3218,6 +3238,7 @@ class ConsoleChatStore:
             self._variant_restored_message_ids.discard(node_id)
             self._failed_retry_message_ids.discard(node_id)
             self._message_speech_revisions.pop(node_id, None)
+            self._exchange_blob_cache.pop(node_id, None)
         self._purge_tool_markers(session_id, removed)
         if self._active_leaf_by_session.get(session_id) in removed:
             self._active_leaf_by_session[session_id] = owner_id
@@ -4076,6 +4097,7 @@ class ConsoleChatStore:
             self._failed_retry_message_ids.discard(node_id)
             self._message_speech_revisions.pop(node_id, None)
             self._message_completion_generations.pop(node_id, None)
+            self._exchange_blob_cache.pop(node_id, None)
         # Only when the deleted branch was on the active path does the leaf move
         # (up to the deleted node's parent); an off-path delete leaves it alone.
         self._purge_tool_markers(session_id, set(subtree_ids))
@@ -6277,17 +6299,40 @@ class ConsoleChatStore:
         # method into an already-committed terminal mark.
         try:
             abandoned_tags = self._abandoned_exchange_run_tags.get(message.id, set())
-            rows = [
-                {
-                    "run_tag": c.run_tag,
-                    "seq": c.seq,
-                    "status": c.status,
-                    "abandoned": c.run_tag in abandoned_tags,
-                    "capture_blob": capture_to_blob(c),
-                    "created_at": c.created_at,
-                }
-                for c in message.exchanges
-            ]
+            # Qodo PR #1883 finding 4: this method runs on EVERY flush of a
+            # message with exchanges (e.g. once per tool call in a long
+            # agent turn), but a capture's compressed blob only needs
+            # computing once per (run_tag, seq, status) -- captures are
+            # frozen and, per ``attach_message_exchanges``'s merge rule,
+            # the ONLY legitimate content change for an existing key is a
+            # "stopped" snapshot superseded by a later non-"stopped"
+            # capture, which is a STATUS change and so is naturally a cache
+            # miss (a different key) rather than a stale hit.
+            blob_cache = self._exchange_blob_cache.setdefault(message.id, {})
+            current_keys: set[tuple[str, int, str]] = set()
+            rows = []
+            for c in message.exchanges:
+                cache_key = (c.run_tag, c.seq, c.status)
+                current_keys.add(cache_key)
+                blob = blob_cache.get(cache_key)
+                if blob is None:
+                    blob = capture_to_blob(c)
+                    blob_cache[cache_key] = blob
+                rows.append(
+                    {
+                        "run_tag": c.run_tag,
+                        "seq": c.seq,
+                        "status": c.status,
+                        "abandoned": c.run_tag in abandoned_tags,
+                        "capture_blob": blob,
+                        "created_at": c.created_at,
+                    }
+                )
+            # Prune keys no longer on the message (e.g. a superseded
+            # "stopped" blob) so this message's cache entry cannot outgrow
+            # its current capture count.
+            for stale_key in blob_cache.keys() - current_keys:
+                del blob_cache[stale_key]
             writer(message_id=message.persisted_message_id, rows=rows)
         except Exception as exc:
             logger.bind(message_id=message.id, error=repr(exc)).warning(

@@ -337,3 +337,104 @@ def test_append_message_exchanges_service_wrapper_logs_and_returns_false():
         "exchange_append_failed" in d and "msg-1" in d for d in diagnostics
     ), diagnostics
     assert not any("SECRET-CAPTURE-BYTES" in d for d in diagnostics), diagnostics
+
+
+# --- Blob-compression memoization (Qodo PR #1883 finding 4) ----------------
+
+
+def test_persist_exchanges_only_compresses_each_capture_once_across_flushes(
+        monkeypatch, store_with_fake_persistence):
+    """``_persist_exchanges_only`` runs on EVERY flush of a message with
+    exchanges -- e.g. once per tool call in a long agent turn -- and used
+    to call ``capture_to_blob`` for every capture on every one of those
+    flushes, even ones already compressed and unchanged. Two consecutive
+    flushes of the same unchanged captures must compress each capture only
+    ONCE (spied via a wrapper around the real ``capture_to_blob``)."""
+    import tldw_chatbook.Chat.console_chat_store as store_module
+
+    store, mid, persistence = store_with_fake_persistence
+    real_capture_to_blob = store_module.capture_to_blob
+    calls: list[str] = []
+
+    def _spy(capture):
+        calls.append(f"{capture.run_tag}:{capture.seq}:{capture.status}")
+        return real_capture_to_blob(capture)
+
+    monkeypatch.setattr(store_module, "capture_to_blob", _spy)
+
+    store.attach_message_exchanges(mid, [_cap(seq=0), _cap(seq=1)])
+    store.mark_message_complete(mid)  # first flush: 2 unseen captures
+    assert calls == ["r1:0:complete", "r1:1:complete"]
+
+    # A second flush of the exact same, unchanged captures (e.g. a later
+    # metadata-only edit that re-enters ``_persist_exchanges_only``) must
+    # not recompress either one.
+    message = store.get_message(mid)
+    store._persist_exchanges_only(message)
+
+    assert calls == ["r1:0:complete", "r1:1:complete"], (
+        "unchanged captures must not be recompressed on a second flush"
+    )
+    # The writer still received both rows on the second flush (memoization
+    # is a compression-cost optimization, not a "skip the write" one).
+    assert len(persistence.appended_exchange_rows) == 4
+
+
+def test_persist_exchanges_only_recompresses_a_superseded_stopped_capture(
+        store_with_fake_persistence):
+    """The one legitimate content change for an existing (run_tag, seq) key
+    -- a 'stopped' snapshot superseded by a later non-'stopped' capture for
+    the same key (``attach_message_exchanges``'s documented merge rule) --
+    is a STATUS change, so it must be treated as a cache MISS: recompressed
+    and persisted with the NEW bytes, not served the stale 'stopped' blob."""
+    store, mid, persistence = store_with_fake_persistence
+
+    store.attach_message_exchanges(mid, [_cap(seq=0, status="stopped")])
+    store.mark_message_complete(mid)  # first flush: the stop-time snapshot
+    stopped_rows = [
+        r for r in persistence.appended_exchange_rows if r["status"] == "stopped"
+    ]
+    assert len(stopped_rows) == 1
+    stopped_blob = stopped_rows[0]["capture_blob"]
+    assert mid in store._exchange_blob_cache
+    assert ("r1", 0, "stopped") in store._exchange_blob_cache[mid]
+
+    # Supersede with the run's actual closed outcome for the same key --
+    # message is already terminal, so this flushes immediately.
+    store.attach_message_exchanges(mid, [_cap(seq=0, status="complete")])
+
+    complete_rows = [
+        r for r in persistence.appended_exchange_rows if r["status"] == "complete"
+    ]
+    assert len(complete_rows) == 1
+    complete_blob = complete_rows[0]["capture_blob"]
+    assert complete_blob != stopped_blob, (
+        "a superseded capture must persist NEW bytes, not the stale stopped blob"
+    )
+    # The stale 'stopped' cache entry is pruned, not left to linger --
+    # ``_exchange_blob_cache`` cannot grow past what is currently live.
+    assert ("r1", 0, "stopped") not in store._exchange_blob_cache[mid]
+    assert ("r1", 0, "complete") in store._exchange_blob_cache[mid]
+
+
+def test_exchange_blob_cache_does_not_leak_between_messages(
+        store_with_fake_persistence):
+    """Two different messages that each happen to carry a capture with the
+    same (run_tag, seq, status) key must not share a cache entry -- the
+    cache is keyed by message id first, so one message's blob can never be
+    served to (or invalidated by) another's flush."""
+    store, mid, persistence = store_with_fake_persistence
+    session_id = store.session_id_for_message(mid)
+    other = store.append_message(
+        session_id, role=ConsoleMessageRole.ASSISTANT, content="", persist=True
+    )
+    store.append_stream_chunk(other.id, "hi")
+
+    store.attach_message_exchanges(mid, [_cap(seq=0, status="complete")])
+    store.mark_message_complete(mid)
+    store.attach_message_exchanges(other.id, [_cap(seq=0, status="complete")])
+    store.mark_message_complete(other.id)
+
+    assert mid in store._exchange_blob_cache
+    assert other.id in store._exchange_blob_cache
+    assert store._exchange_blob_cache[mid] is not store._exchange_blob_cache[other.id]
