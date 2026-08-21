@@ -142,19 +142,19 @@ Tasks 19006, 19007, and 19008 may run concurrently after their prerequisites bec
 - Create: `Tests/Notes/test_notes_sync_coordinator.py`
 - Create: `Tests/Notes/test_notes_sync_coordinator_process.py`
 
-- [ ] Write RED validation and two-process tests.
+- [x] Write RED validation and two-process tests.
 
   Cover every ancestor/descendant overlap direction across active lasting roots, `app.file_notes_session_owner.current_binding()`, and `Utils.sensitive_paths.find_root_binding_conflict`; root symlinks/reparse points; missing/offline roots; passive admission; two processes racing one root; and forced process death.
 
-- [ ] Implement the minimal coordinator with existing `portalocker`.
+- [x] Implement the minimal coordinator with existing `portalocker`.
 
   Add `NotesSyncRootCoordinator`, `RootLease`, `RootAdmission`, `validate_candidate_root`, `try_acquire`, `release`, and `close_admission`. Store lock files in an owner-private fixed runtime directory and name them with canonical-root digests so paths are not disclosed. The OS lock is authority; SQLite lease data is display/diagnostic state only.
 
-- [ ] Prove close-admission ordering.
+- [x] Prove close-admission ordering.
 
   A held lease may finish the current mutation-or-durable-stage boundary. New admission fails immediately. Release occurs only after the settlement callback completes. Passive processes cannot start watchers, plans, or executors.
 
-- [ ] Run and commit.
+- [x] Run and commit.
 
   ```bash
   ../../.venv/bin/python -B -m pytest -q -p no:cacheprovider -o addopts="" Tests/Notes/test_notes_sync_coordinator.py Tests/Notes/test_notes_sync_coordinator_process.py

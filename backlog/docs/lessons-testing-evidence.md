@@ -6214,3 +6214,19 @@ in code: failures before it are bounded refusals; every unverified outcome after
 it is a distinct partial state, with displaced authority preserved until the
 commit is durably verified. A successful syscall is not proof that the whole
 method may still report an ordinary failure.
+
+## A lock pathname is not the locked inode, and release has a commit point (TASK-19006, 2026-08-21)
+
+The first lasting-sync coordinator correctly held an OS lock, but it trusted the
+fixed lock pathname afterward. Replacing that regular file or its private
+directory let a second process lock a new inode while the first admission still
+reported write authority. A separate interleaving let `close_admission()` return
+while another thread had removed the handle from shared state but had not yet
+called OS unlock.
+
+For path-addressed advisory locks, persist and revalidate the opened handle,
+path, parent directory, protected resource, modes, owner, and link identities;
+pathname equality alone does not preserve authority. Model release explicitly
+as running, committed, or failed. Clearing a shared handle is not release
+completion, and every concurrent close/release caller must wait for the same OS
+unlock/close outcome before reporting that ownership ended.
