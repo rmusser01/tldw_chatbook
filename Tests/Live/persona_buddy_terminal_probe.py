@@ -21,6 +21,53 @@ import time
 from typing import Any
 
 _TIMEOUT_SECONDS = 12.0
+_DIAGNOSTIC_BYTES = 16_000
+_CHECK_NAMES = (
+    "drag",
+    "mouse_resize",
+    "keyboard",
+    "fold",
+    "reopen",
+    "close",
+    "focus",
+    "modal_hit_testing",
+    "navigation",
+    "viewport_clamp",
+    "capture_release",
+    "paint",
+    "geometry_restore",
+)
+
+
+class _ProbeChildFailure(RuntimeError):
+    """Structured child-process failure retained until evidence is durable."""
+
+    def __init__(
+        self,
+        *,
+        category: str,
+        phase: str,
+        child_return_code: int,
+        diagnostic_tail: str,
+    ) -> None:
+        super().__init__(category)
+        self.category = category
+        self.phase = phase
+        self.child_return_code = child_return_code
+        self.diagnostic_tail = diagnostic_tail
+
+
+def _atomic_write_text(path: Path, value: str) -> None:
+    """Replace one evidence file only after its complete contents are durable."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temporary.write_text(value, encoding="utf-8")
+    temporary.replace(path)
+
+
+def _atomic_write_json(path: Path, value: dict[str, Any]) -> None:
+    _atomic_write_text(path, json.dumps(value, sort_keys=True))
 
 
 def _child(preferences_path: Path, report_path: Path) -> int:
@@ -286,9 +333,7 @@ def _child(preferences_path: Path, report_path: Path) -> int:
                     and region.bottom <= self.size.height
                 ),
             }
-            report_path.write_text(
-                json.dumps(payload, sort_keys=True), encoding="utf-8"
-            )
+            _atomic_write_json(report_path, payload)
 
     ProbeApp().run(mouse=True)
     return 0
@@ -349,6 +394,8 @@ def _run_child(
     preferences: Path,
     report: Path,
     drive: bool,
+    phase: str,
+    inject_child_failure: bool = False,
 ) -> dict[str, Any]:
     master, slave = pty.openpty()
     _set_size(slave, 80, 24)
@@ -366,14 +413,12 @@ def _run_child(
     )
     for directory in (isolated / "home", isolated / "config", isolated / "data"):
         directory.mkdir(parents=True, exist_ok=True)
+    command = [sys.executable, str(Path(__file__).resolve())]
+    if inject_child_failure:
+        command.append("--inject-child-failure")
+    command.extend(("--child", str(preferences), str(report)))
     process = subprocess.Popen(
-        [
-            sys.executable,
-            str(Path(__file__).resolve()),
-            "--child",
-            str(preferences),
-            str(report),
-        ],
+        command,
         cwd=root,
         env=environment,
         stdin=slave,
@@ -382,6 +427,7 @@ def _run_child(
         close_fds=True,
     )
     os.close(slave)
+    current_phase = f"{phase}:startup"
     try:
         _wait_for_output(master, process, b"Persona Buddy")
         initial_deadline = time.monotonic() + 2.0
@@ -406,6 +452,7 @@ def _run_child(
             )
 
         initial = json.loads(report.read_text(encoding="utf-8"))
+        current_phase = f"{phase}:interaction"
         observed = {
             "drag": False,
             "mouse_resize": False,
@@ -534,6 +581,38 @@ def _run_child(
             process.terminate()
             process.wait(timeout=2)
         return payload
+    except Exception as error:
+        captured = bytearray()
+        drain_deadline = time.monotonic() + 0.25
+        while time.monotonic() < drain_deadline:
+            ready, _, _ = select.select([master], [], [], 0.02)
+            if not ready:
+                if process.poll() is not None:
+                    break
+                continue
+            try:
+                captured.extend(os.read(master, 65536))
+            except OSError:
+                break
+        child_return_code = process.poll()
+        if child_return_code is None:
+            process.terminate()
+            process.wait(timeout=2)
+            child_return_code = process.returncode
+        diagnostic = f"{type(error).__name__}: {error}"
+        if captured:
+            diagnostic += "\n" + bytes(captured).decode("utf-8", errors="replace")
+        category = (
+            "persona_buddy_terminal_child_exit"
+            if child_return_code != 0
+            else "persona_buddy_terminal_probe_failure"
+        )
+        raise _ProbeChildFailure(
+            category=category,
+            phase=current_phase,
+            child_return_code=int(child_return_code),
+            diagnostic_tail=diagnostic[-_DIAGNOSTIC_BYTES:],
+        ) from error
     finally:
         os.close(master)
         if process.poll() is None:
@@ -541,59 +620,94 @@ def _run_child(
             process.wait(timeout=2)
 
 
-def _parent(report_output: Path | None = None) -> int:
+def _parent(
+    report_output: Path | None = None, *, inject_child_failure: bool = False
+) -> int:
     if os.name == "nt":
         print("SKIP persona_buddy_terminal windows_no_posix_pty")
         return 0
     root = Path(__file__).resolve().parents[2]
     with tempfile.TemporaryDirectory(prefix="persona-buddy-terminal-") as temporary:
-        isolated = Path(temporary)
-        preferences = isolated / "persona_buddy.json"
-        first = _run_child(
-            root=root,
-            preferences=preferences,
-            report=isolated / "first.json",
-            drive=True,
-        )
-        restored = json.loads(preferences.read_text(encoding="utf-8"))
-        restored["open"] = True
-        preferences.write_text(json.dumps(restored, sort_keys=True), encoding="utf-8")
-        second = _run_child(
-            root=root,
-            preferences=preferences,
-            report=isolated / "second.json",
-            drive=False,
-        )
-        checks = {
-            "drag": first["observed"]["drag"],
-            "mouse_resize": first["observed"]["mouse_resize"],
-            "keyboard": first["observed"]["keyboard"],
-            "fold": first["observed"]["fold"],
-            "reopen": first["observed"]["reopen"],
-            "close": first["observed"]["close"],
-            "focus": first["focus_guard"],
-            "modal_hit_testing": first["modal_hits"] >= 1,
-            "navigation": (
-                first["navigation_count"] == 1
-                and first["screen_generation"] >= 1
-                and first["observed"]["navigation_view"]
-            ),
-            "viewport_clamp": first["observed"]["viewport_clamp"],
-            "capture_release": first["capture_released"],
-            "paint": first["observed"]["paint"],
-            "geometry_restore": second["loaded_geometry"] == first["geometry"],
-        }
-        result = {"checks": checks, "first": first, "second": second}
-        if report_output is not None:
-            report_output.write_text(
-                json.dumps(result, sort_keys=True), encoding="utf-8"
+        try:
+            isolated = Path(temporary)
+            preferences = isolated / "persona_buddy.json"
+            first = _run_child(
+                root=root,
+                preferences=preferences,
+                report=isolated / "first.json",
+                drive=True,
+                phase="first",
+                inject_child_failure=inject_child_failure,
             )
-        print(json.dumps(result, sort_keys=True))
-        if not all(checks.values()):
-            print("FAIL persona_buddy_terminal")
-            return 1
-        print("PASS persona_buddy_terminal")
-        return 0
+            restored = json.loads(preferences.read_text(encoding="utf-8"))
+            restored["open"] = True
+            preferences.write_text(
+                json.dumps(restored, sort_keys=True), encoding="utf-8"
+            )
+            second = _run_child(
+                root=root,
+                preferences=preferences,
+                report=isolated / "second.json",
+                drive=False,
+                phase="restore",
+            )
+            checks = {
+                "drag": first["observed"]["drag"],
+                "mouse_resize": first["observed"]["mouse_resize"],
+                "keyboard": first["observed"]["keyboard"],
+                "fold": first["observed"]["fold"],
+                "reopen": first["observed"]["reopen"],
+                "close": first["observed"]["close"],
+                "focus": first["focus_guard"],
+                "modal_hit_testing": first["modal_hits"] >= 1,
+                "navigation": (
+                    first["navigation_count"] == 1
+                    and first["screen_generation"] >= 1
+                    and first["observed"]["navigation_view"]
+                ),
+                "viewport_clamp": first["observed"]["viewport_clamp"],
+                "capture_release": first["capture_released"],
+                "paint": first["observed"]["paint"],
+                "geometry_restore": second["loaded_geometry"] == first["geometry"],
+            }
+            result = {"checks": checks, "first": first, "second": second}
+            if report_output is not None:
+                _atomic_write_json(report_output, result)
+            print(json.dumps(result, sort_keys=True))
+            if not all(checks.values()):
+                print("FAIL persona_buddy_terminal")
+                return 1
+            print("PASS persona_buddy_terminal")
+            return 0
+        except _ProbeChildFailure as failure:
+            diagnostic = failure.diagnostic_tail.replace(str(root), "<REPO_ROOT>")
+            diagnostic = diagnostic.replace(temporary, "<TEMP_ROOT>")
+            if report_output is not None:
+                artifact = report_output.with_name(
+                    f"{report_output.stem}.diagnostic.log"
+                ).resolve()
+            else:
+                artifact = (
+                    Path(tempfile.gettempdir())
+                    / f"persona-buddy-terminal-{os.getpid()}.diagnostic.log"
+                ).resolve()
+            _atomic_write_text(artifact, diagnostic)
+            checks = {name: False for name in _CHECK_NAMES}
+            result = {
+                "status": "FAIL",
+                "category": failure.category,
+                "phase": failure.phase,
+                "parent_return_code": 1,
+                "child_return_code": failure.child_return_code,
+                "diagnostic_tail": diagnostic,
+                "diagnostic_artifact": str(artifact),
+                "checks": checks,
+                "check_statuses": {name: "not_run" for name in _CHECK_NAMES},
+            }
+            if report_output is not None:
+                _atomic_write_json(report_output, result)
+            print(json.dumps(result, sort_keys=True))
+            raise RuntimeError(f"{failure.category} artifact={artifact}") from failure
 
 
 def main() -> int:
@@ -602,12 +716,22 @@ def main() -> int:
     parser.add_argument("preferences", nargs="?", type=Path)
     parser.add_argument("report", nargs="?", type=Path)
     parser.add_argument("--report", dest="parent_report", type=Path)
+    parser.add_argument("--inject-child-failure", action="store_true")
     arguments = parser.parse_args()
     if arguments.child:
         if arguments.preferences is None or arguments.report is None:
             return 2
+        if arguments.inject_child_failure:
+            raise RuntimeError("persona_buddy_injected_child_failure")
         return _child(arguments.preferences, arguments.report)
-    return _parent(arguments.parent_report)
+    try:
+        return _parent(
+            arguments.parent_report,
+            inject_child_failure=arguments.inject_child_failure,
+        )
+    except RuntimeError as error:
+        print(str(error), file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
