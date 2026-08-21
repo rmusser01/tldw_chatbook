@@ -181,6 +181,30 @@ async def _settle(pilot, passes: int = 5) -> None:
         await pilot.pause()
 
 
+async def _wait_for_rail_condition(
+    pilot,
+    rail: ConsoleLeftRail,
+    condition,
+    *,
+    attempts: int = 20,
+) -> None:
+    """Wait until a mounted rail condition holds across two refresh turns."""
+
+    stable_passes = 0
+    for _ in range(attempts):
+        await pilot.pause()
+        idle = not rail._allocation_reconcile_scheduled and all(
+            not section._reconcile_scheduled for section in _sections(rail)
+        )
+        if idle and condition():
+            stable_passes += 1
+            if stable_passes == 2:
+                return
+        else:
+            stable_passes = 0
+    pytest.fail("Context rail condition did not stabilize within the refresh bound")
+
+
 def _install_demands(
     monkeypatch: pytest.MonkeyPatch,
     demands: dict[str, int],
@@ -378,6 +402,142 @@ async def test_production_css_uses_uncompressed_header_demand_and_reaches_every_
             await pilot.pause()
             assert header.region.overlaps(outer.content_region)
             assert bounded.viewport.region.overlaps(outer.content_region)
+
+
+@pytest.mark.asyncio
+async def test_mounted_context_activation_never_persists_but_toggle_writes_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Real ChatScreen mutation, focus, pointer, and [>] paths keep write scope."""
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = _ProductionConsoleHarness(app)
+
+    async with host.run_test(size=(120, 30)) as pilot:
+        console = host.screen_stack[-1]
+        rail = await _open_all_production_context_sections(host, pilot)
+        ordinary = next(
+            rail.query_one(f"#console-rail-section-toggle-{section_id}", Button)
+            for section_id in SECTION_IDS
+            if str(
+                rail.query_one(
+                    f"#console-rail-section-toggle-{section_id}", Button
+                ).label
+            )
+            != "[>]"
+            and rail.query_one(
+                f"#console-bounded-section-{section_id}", ConsoleBoundedSection
+            ).desired_content_lines
+            > 0
+        )
+        ordinary_section = ordinary.id.removeprefix("console-rail-section-toggle-")
+        ordinary_header = rail.query_one(
+            f"#console-rail-section-header-{ordinary_section}"
+        )
+        ordinary_body = rail.query_one(
+            f"#console-bounded-section-{ordinary_section}", ConsoleBoundedSection
+        )
+        ordinary.press()
+        await _wait_for_rail_condition(
+            pilot,
+            rail,
+            lambda: not ordinary_header.open and ordinary_body.allocation == 0,
+        )
+
+        persisted: list[tuple[str, dict[str, bool]]] = []
+        reconcile_runs = 0
+        original_save = console._save_console_rail_preferences
+        original_reconcile = rail._run_allocation_reconcile
+
+        def save_spy(
+            key: str,
+            serialized: dict[str, bool],
+            *,
+            notify_on_failure: bool = False,
+        ):
+            persisted.append((key, serialized))
+            return original_save(
+                key,
+                serialized,
+                notify_on_failure=notify_on_failure,
+            )
+
+        def reconcile_spy() -> None:
+            nonlocal reconcile_runs
+            reconcile_runs += 1
+            original_reconcile()
+
+        monkeypatch.setattr(console, "_save_console_rail_preferences", save_spy)
+        monkeypatch.setattr(rail, "_run_allocation_reconcile", reconcile_spy)
+
+        if str(ordinary.label) == "[>]":
+            assert await pilot.click(ordinary)
+            await _wait_for_rail_condition(
+                pilot,
+                rail,
+                lambda: (
+                    rail._active_section_id == ordinary_section
+                    and str(ordinary.label) != "[>]"
+                ),
+            )
+            assert persisted == []
+        assert await pilot.click(ordinary)
+        await _wait_for_rail_condition(
+            pilot,
+            rail,
+            lambda: ordinary_header.open,
+        )
+        assert len(persisted) == 1
+        assert ordinary_body.allocation == 0
+        assert str(ordinary.label) == "[>]"
+        assert ordinary_section in rail._no_room_section_ids
+        assert await pilot.click(ordinary)
+        await _wait_for_rail_condition(
+            pilot,
+            rail,
+            lambda: (
+                rail._active_section_id == ordinary_section
+                and (ordinary_body.allocation or 0) > 0
+                and str(ordinary.label) != "[>]"
+            ),
+        )
+        assert len(persisted) == 1
+        assert reconcile_runs >= 1
+        stable_runs = reconcile_runs
+        await pilot.pause()
+        assert reconcile_runs == stable_runs
+
+        model_toggle = rail.query_one("#console-rail-section-toggle-model", Button)
+        model_body = rail.query_one(
+            "#console-bounded-section-model", ConsoleBoundedSection
+        )
+        model_toggle.focus()
+        await _wait_for_rail_condition(
+            pilot,
+            rail,
+            lambda: (
+                rail._active_section_id == "model" and (model_body.allocation or 0) > 0
+            ),
+        )
+        assert len(persisted) == 1
+
+        provider_value = rail.query_one(
+            "#console-model-section-provider .console-model-section-value", Static
+        )
+        provider_value.scroll_visible(animate=False)
+        await pilot.pause()
+        assert await pilot.click(provider_value)
+        await _wait_for_rail_condition(
+            pilot,
+            rail,
+            lambda: rail._active_section_id == "model",
+        )
+        assert len(persisted) == 1
+        stable_runs = reconcile_runs
+        await pilot.pause()
+        assert reconcile_runs == stable_runs
+        assert rail._allocation_reconcile_scheduled is False
 
 
 @pytest.mark.asyncio
@@ -835,6 +995,89 @@ async def test_pointer_activation_preserves_the_pressed_toggle_target(
 
         assert app.section_toggles == ["details"]
         assert rail._active_section_id == "details"
+        assert rail._pointer_activation_pending is None
+        assert rail._pointer_activation_waits_for_button is False
+        await _settle(pilot)
+        assert app.section_toggles == ["details"]
+        assert rail._active_section_id == "details"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("remove_pressed_section", [False, True])
+async def test_canceled_header_press_releases_pointer_activation_latch(
+    monkeypatch: pytest.MonkeyPatch,
+    remove_pressed_section: bool,
+) -> None:
+    """A drag-away or removed press cannot block later focus reconciliation."""
+
+    demands = dict.fromkeys(SECTION_IDS, 3)
+    _install_demands(monkeypatch, demands)
+    app = _RailHarness()
+
+    async with app.run_test(size=(60, 30)) as pilot:
+        await _settle(pilot)
+        rail = app.query_one(ConsoleLeftRail)
+        requests = 0
+        original_request = rail.request_allocation_reconcile
+
+        def request_spy() -> None:
+            nonlocal requests
+            requests += 1
+            original_request()
+
+        monkeypatch.setattr(rail, "request_allocation_reconcile", request_spy)
+        pressed = rail.query_one("#console-rail-section-toggle-details", Button)
+        release = rail.query_one("#console-rail-section-title-model", Static)
+        pressed_offset = pressed.region.offset
+        pressed.post_message(
+            MouseDown(
+                pressed,
+                0,
+                0,
+                0,
+                0,
+                1,
+                False,
+                False,
+                False,
+                screen_x=pressed_offset.x,
+                screen_y=pressed_offset.y,
+            )
+        )
+        await pilot.pause()
+        assert rail._pointer_activation_pending == "details"
+        assert rail._pointer_activation_waits_for_button is True
+
+        if remove_pressed_section:
+            await rail.query_one("#console-rail-section-header-details").remove()
+            await rail.query_one("#console-bounded-section-details").remove()
+        release_offset = release.region.offset
+        release.post_message(
+            MouseUp(
+                release,
+                0,
+                0,
+                0,
+                0,
+                1,
+                False,
+                False,
+                False,
+                screen_x=release_offset.x,
+                screen_y=release_offset.y,
+            )
+        )
+        await _settle(pilot)
+
+        assert app.section_toggles == []
+        assert rail._pointer_activation_pending is None
+        assert rail._pointer_activation_waits_for_button is False
+        cleanup_requests = requests
+        configure = rail.query_one("#console-model-section-configure", Button)
+        configure.focus()
+        await _settle(pilot)
+        assert requests > cleanup_requests
+        assert app.section_toggles == []
 
 
 @pytest.mark.asyncio

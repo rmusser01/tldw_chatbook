@@ -324,6 +324,8 @@ class ConsoleLeftRail(Vertical):
         self._section_focus_history: dict[str, tuple[Widget, tuple[Widget, ...]]] = {}
         self._pointer_activation_pending: str | None = None
         self._pointer_activation_waits_for_button = False
+        self._pointer_activation_target: Widget | None = None
+        self._pointer_activation_generation = 0
 
     @staticmethod
     def _section_header(
@@ -634,22 +636,43 @@ class ConsoleLeftRail(Vertical):
         section_id = self._section_for_owned_target(target)
         if section_id is None:
             return
+        self._pointer_activation_generation += 1
         self._pointer_activation_pending = section_id
-        self._pointer_activation_waits_for_button = isinstance(target, Button)
+        self._pointer_activation_target = target
+        self._pointer_activation_waits_for_button = isinstance(target, Button) or any(
+            isinstance(ancestor, DestinationRailSectionHeader)
+            for ancestor in target.ancestors
+        )
         self.activate_section(section_id, request_reconcile=False)
 
-    def on_mouse_up(self, _event: MouseUp) -> None:
-        """Reconcile non-button pointer activation after its native press action."""
+    def on_mouse_up(self, event: MouseUp) -> None:
+        """Defer canceled-press cleanup until a native button action can win."""
 
-        if not self._pointer_activation_waits_for_button:
+        if (
+            self._pointer_activation_waits_for_button
+            and event.widget is self._pointer_activation_target
+        ):
+            return
+        generation = self._pointer_activation_generation
+        self.call_after_refresh(
+            self._finish_pointer_mouse_up,
+            generation,
+        )
+
+    def _finish_pointer_mouse_up(self, generation: int) -> None:
+        """Flush only the still-current press after its Click/Pressed lifecycle."""
+
+        if generation == self._pointer_activation_generation:
             self._flush_pointer_activation()
 
     def _flush_pointer_activation(self) -> None:
         """Commit allocation after the pressed control has retained its target."""
 
         pending = self._pointer_activation_pending
+        self._pointer_activation_generation += 1
         self._pointer_activation_pending = None
         self._pointer_activation_waits_for_button = False
+        self._pointer_activation_target = None
         if pending is not None:
             self.request_allocation_reconcile()
 

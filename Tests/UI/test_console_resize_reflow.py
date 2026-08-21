@@ -12,6 +12,7 @@ from textual.css.query import NoMatches
 from textual.widgets import Button, Static, Tooltip
 
 from tldw_chatbook.Chat.console_session_settings import ConsoleSettingsSummaryState
+from tldw_chatbook.UI.Console_Modules import left_rail as left_rail_module
 from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
 from tldw_chatbook.Widgets.Console.console_bounded_section import ConsoleBoundedSection
 
@@ -49,6 +50,33 @@ def _pane_layout(console) -> dict:
         "-console-compact"
     )
     return layout
+
+
+async def _wait_for_context_condition(
+    pilot,
+    condition,
+    *,
+    attempts: int = 20,
+) -> None:
+    """Wait through bounded refresh turns until one Context condition is stable."""
+
+    stable_passes = 0
+    for _ in range(attempts):
+        await pilot.pause()
+        if condition():
+            stable_passes += 1
+            if stable_passes == 2:
+                return
+        else:
+            stable_passes = 0
+    pytest.fail("Context condition did not stabilize within the refresh bound")
+
+
+def _context_allocation_idle(rail: ConsoleLeftRail) -> bool:
+    return not rail._allocation_reconcile_scheduled and all(
+        not section._reconcile_scheduled
+        for section in rail.query(ConsoleBoundedSection)
+    )
 
 
 @pytest.mark.asyncio
@@ -228,30 +256,60 @@ async def test_model_summary_sync_invalidates_mounted_context_allocation(
         console = host.screen_stack[-1]
         rail = console.query_one("#console-left-rail", ConsoleLeftRail)
         model = rail.query_one("#console-bounded-section-model", ConsoleBoundedSection)
-        for _ in range(5):
-            await pilot.pause()
-        before = model.desired_content_lines
-        recovery = rail.query_one("#console-model-section-recovery")
-        recovery.styles.height = 3
-        recovery.styles.min_height = 3
+        await _wait_for_context_condition(
+            pilot,
+            lambda: _context_allocation_idle(rail),
+        )
+        readiness = {"label": "Ready"}
         monkeypatch.setattr(
             console,
             "_build_console_settings_summary_state",
             lambda: ConsoleSettingsSummaryState(
+                provider_row="Provider: test",
                 model_row="Model: test",
                 context_row="Context: 0",
                 sampling_row="T 0.7 · max_tokens 100",
                 identity_row="Identity: character",
-                readiness_label="Provider recovery required",
+                readiness_label=readiness["label"],
             ),
         )
-        monkeypatch.setattr(console, "_sync_console_agent_section", lambda: None)
-
         console._sync_console_settings_summary()
-        for _ in range(6):
-            await pilot.pause()
+        rail.activate_section("model")
+        await _wait_for_context_condition(
+            pilot,
+            lambda: (
+                rail._active_section_id == "model"
+                and not rail.query_one("#console-model-section-recovery").display
+                and _context_allocation_idle(rail)
+            ),
+        )
+        before_demand = model.desired_content_lines
+        before_allocation = model.allocation
+        recovery = rail.query_one("#console-model-section-recovery")
+        reconcile_runs = 0
+        original_reconcile = rail._run_allocation_reconcile
 
-        assert model.desired_content_lines > before
+        def reconcile_spy() -> None:
+            nonlocal reconcile_runs
+            reconcile_runs += 1
+            original_reconcile()
+
+        monkeypatch.setattr(rail, "_run_allocation_reconcile", reconcile_spy)
+        readiness["label"] = "Provider recovery required"
+        console._sync_console_settings_summary()
+        await _wait_for_context_condition(
+            pilot,
+            lambda: recovery.display and _context_allocation_idle(rail),
+        )
+
+        assert recovery.display is True
+        assert model.desired_content_lines >= before_demand
+        assert model.allocation == before_allocation
+        assert reconcile_runs >= 1
+        stable_runs = reconcile_runs
+        await pilot.pause()
+        assert reconcile_runs == stable_runs
+        assert rail._allocation_reconcile_scheduled is False
 
 
 @pytest.mark.asyncio
@@ -264,13 +322,23 @@ async def test_height_resize_requests_one_coalesced_context_reconcile(
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         rail = console.query_one("#console-left-rail", ConsoleLeftRail)
-        for _ in range(5):
-            await pilot.pause()
+        await _wait_for_context_condition(
+            pilot,
+            lambda: _context_allocation_idle(rail),
+        )
+        before_allocations = tuple(
+            section.allocation for section in rail.query(ConsoleBoundedSection)
+        )
+        before_viewport_height = rail.query_one(
+            "#console-left-rail-body"
+        ).content_region.height
 
         helper_calls = 0
         reconcile_runs = 0
+        allocation_calls = []
         original_helper = console._request_console_context_allocation_reconcile
         original_reconcile = rail._run_allocation_reconcile
+        original_allocate = left_rail_module.allocate_context_sections
 
         def helper_spy() -> None:
             nonlocal helper_calls
@@ -282,19 +350,51 @@ async def test_height_resize_requests_one_coalesced_context_reconcile(
             reconcile_runs += 1
             original_reconcile()
 
+        def allocate_spy(**kwargs):
+            result = original_allocate(**kwargs)
+            allocation_calls.append((kwargs, result))
+            return result
+
         monkeypatch.setattr(
             console,
             "_request_console_context_allocation_reconcile",
             helper_spy,
         )
         monkeypatch.setattr(rail, "_run_allocation_reconcile", reconcile_spy)
+        monkeypatch.setattr(
+            left_rail_module,
+            "allocate_context_sections",
+            allocate_spy,
+        )
 
         await pilot.resize_terminal(160, 30)
-        await pilot.pause()
-
+        await _wait_for_context_condition(
+            pilot,
+            lambda: (
+                console.query_one("#console-shell").has_class("-console-compact")
+                and _context_allocation_idle(rail)
+            ),
+        )
+        after_allocations = tuple(
+            section.allocation for section in rail.query(ConsoleBoundedSection)
+        )
         assert console.query_one("#console-shell").has_class("-console-compact")
         assert helper_calls >= 1
         assert reconcile_runs == 1
+        assert len(allocation_calls) == 1
+        assert rail.query_one("#console-left-rail-body").content_region.height < (
+            before_viewport_height
+        )
+        allocation_kwargs, allocation_result = allocation_calls[0]
+        assert allocation_kwargs["viewport_height"] < before_viewport_height
+        assert after_allocations == tuple(
+            item.allocated_content_rows for item in allocation_result.allocations
+        )
+        assert len(after_allocations) == len(before_allocations)
+        stable_runs = reconcile_runs
+        await pilot.pause()
+        assert reconcile_runs == stable_runs
+        assert rail._allocation_reconcile_scheduled is False
 
 
 @pytest.mark.asyncio
