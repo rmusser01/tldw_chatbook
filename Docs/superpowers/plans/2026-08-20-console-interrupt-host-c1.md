@@ -807,7 +807,7 @@ Wrapper keeps: request_id mint, cancel binds, `owning_run_id`, registry-entry co
 
 - [ ] **Step 2: Migrate `request_skill_script_confirm`**
 
-Same shape, with this bridge's two deltas: **no** `human_wait_run_id` (pass `None` — the script confirm is dispatched in-loop, never hosted by a per-call wrapper; grep today's method and note the absent `use_human_input_wait` before assuming this plan is wrong), and the revoked mapping:
+Same shape, with this bridge's two deltas. **CORRECTION (Task 3 review):** this plan originally claimed the script bridge passes no `human_wait_run_id`; that was true when drafted but dev moved — the current method wraps its wait in `use_human_input_wait(str(script_round_state.get("run_id") or ""))` (grep it). Pass `human_wait_run_id=str(script_round_state.get("run_id") or "")`. The remaining true delta is the revoked mapping:
 
 ```python
         outcome = self._interrupt_host.run_round(
@@ -816,7 +816,7 @@ Same shape, with this bridge's two deltas: **no** `human_wait_run_id` (pass `Non
             owning_session_id=owning_session_id,
             deadline=deadline,
             is_parked=is_parked,
-            human_wait_run_id=None,
+            human_wait_run_id=str(script_round_state.get("run_id") or ""),
         )
         if outcome == "revoked":
             return {"allow": False, "remember": False}
