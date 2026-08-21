@@ -39,7 +39,6 @@ class LibraryLandingCanvasState:
     recent_items: tuple[LibraryLandingRecentItem, ...] = ()
     lifecycle: LibraryLifecycle = LibraryLifecycle.EXPANDED
     lifecycle_status: str = ""
-    persistence_warning: str = ""
     show_retry: bool = False
     show_explore: bool = False
 
@@ -169,10 +168,6 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
             self.state.lifecycle_status,
             "library-hub-lifecycle-status",
         )
-        yield self._status(
-            self.state.persistence_warning,
-            "library-hub-persistence-warning",
-        )
         if get_started:
             orientation = Static(
                 "1 Add · 2 Find · 3 Use",
@@ -215,7 +210,7 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
             if self.state.show_explore:
                 yield Button("Explore all tools", id="library-hub-explore-all")
         if self.state.show_retry:
-            yield Button("Retry", id="library-hub-retry-evidence")
+            yield Button("Retry source check", id="library-hub-retry-evidence")
         if not get_started:
             recents = Vertical(id="library-hub-recents")
             recents.styles.height = "auto"
@@ -236,9 +231,6 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
         lifecycle_status = self.query_one("#library-hub-lifecycle-status", Static)
         lifecycle_status.update(state.lifecycle_status)
         lifecycle_status.display = bool(state.lifecycle_status)
-        warning = self.query_one("#library-hub-persistence-warning", Static)
-        warning.update(state.persistence_warning)
-        warning.display = bool(state.persistence_warning)
         if self._is_get_started(state):
             orientation = self.query_one("#library-hub-orientation", Static)
             orientation.display = state.lifecycle is LibraryLifecycle.STARTER

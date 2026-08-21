@@ -151,19 +151,17 @@ def _landing_state(
     lifecycle: LibraryLifecycle,
     *,
     status: str = "",
-    warning: str = "",
     show_retry: bool = False,
     show_explore: bool = False,
     recent_items: tuple[LibraryLandingRecentItem, ...] = (),
 ) -> LibraryLandingCanvasState:
     """Build one explicit lifecycle presentation state for retained-owner tests."""
     return LibraryLandingCanvasState(
-        purpose="Keep your useful material in one place.",
+        purpose="Add something useful, then use it in Console or Study.",
         counts_line="Notes (3) · Media (2) · Conversations (1)",
         recent_items=recent_items,
         lifecycle=lifecycle,
         lifecycle_status=status,
-        persistence_warning=warning,
         show_retry=show_retry,
         show_explore=show_explore,
     )
@@ -188,6 +186,9 @@ async def test_library_landing_syncs_unknown_to_starter_without_duplicate_action
         assert str(
             app.query_one("#library-hub-lifecycle-status", Static).renderable
         ) == "Checking existing Library content…"
+        assert str(
+            app.query_one("#library-canvas-landing", Static).renderable
+        ) == "Add something useful, then use it in Console or Study."
 
         landing.sync_state(_landing_state(LibraryLifecycle.STARTER))
         await pilot.pause()
@@ -235,6 +236,7 @@ async def test_library_landing_partial_failure_shows_one_retry():
     async with app.run_test():
         retry = app.query("#library-hub-retry-evidence")
         assert len(retry) == 1
+        assert str(retry.first().label) == "Retry source check"
         assert str(app.query_one("#library-hub-lifecycle-status", Static).renderable) == (
             "Some Library sources are unavailable."
         )
@@ -243,19 +245,11 @@ async def test_library_landing_partial_failure_shows_one_retry():
 
 
 @pytest.mark.asyncio
-async def test_library_landing_persistence_warning_keeps_actions_enabled():
-    warning = (
-        "Library view is updated for this session, but the choice may not be "
-        "remembered."
-    )
-    app = _LandingCanvasHarness(
-        _landing_state(LibraryLifecycle.STARTER, warning=warning)
-    )
+async def test_library_landing_does_not_duplicate_screen_persistence_warning():
+    app = _LandingCanvasHarness(_landing_state(LibraryLifecycle.STARTER))
 
     async with app.run_test():
-        assert str(
-            app.query_one("#library-hub-persistence-warning", Static).renderable
-        ) == warning
+        assert not app.query("#library-hub-persistence-warning")
         assert app.query_one("#library-hub-action-import", Button).disabled is False
         assert (
             app.query_one("#library-hub-action-new-note", Button).disabled is False
@@ -317,7 +311,7 @@ async def test_library_graduation_header_survives_reconcile_and_same_route_repla
         assert screen.focused.id == focus.id
 
         assert "Library tools are now available." in str(
-            screen.query_one("#library-header-line", Static).renderable
+            screen.query_one("#library-lifecycle-status", Static).renderable
         )
 
         generation = screen._library_snapshot_state_generation
@@ -331,7 +325,7 @@ async def test_library_graduation_header_survives_reconcile_and_same_route_repla
 
         assert reconciled is LibraryEntryReconcileResult.APPLIED
         assert "Library tools are now available." in str(
-            screen.query_one("#library-header-line", Static).renderable
+            screen.query_one("#library-lifecycle-status", Static).renderable
         )
         assert screen.focused is not None
         assert screen.focused.id == focus.id
@@ -347,7 +341,7 @@ async def test_library_graduation_header_survives_reconcile_and_same_route_repla
 
         assert child_replaced is LibraryEntryReconcileResult.APPLIED
         assert "Library tools are now available." in str(
-            screen.query_one("#library-header-line", Static).renderable
+            screen.query_one("#library-lifecycle-status", Static).renderable
         )
         assert screen.focused is not None
         assert screen.focused.id == focus.id
@@ -361,7 +355,7 @@ async def test_library_graduation_header_survives_reconcile_and_same_route_repla
 
         assert replaced is True
         assert "Library tools are now available." in str(
-            screen.query_one("#library-header-line", Static).renderable
+            screen.query_one("#library-lifecycle-status", Static).renderable
         )
         assert screen.focused is not None
         assert screen.focused.id == focus.id
@@ -433,7 +427,7 @@ async def test_library_notes_recompose_does_not_steal_newer_focus(
 
             assert newer_target.has_focus
             assert "Library tools are now available." in str(
-                screen.query_one("#library-header-line", Static).renderable
+                screen.query_one("#library-lifecycle-status", Static).renderable
             )
         finally:
             release_recompose.set()

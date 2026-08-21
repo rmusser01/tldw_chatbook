@@ -2843,6 +2843,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_onboarding_status = LibraryEvidenceStatus.LOADING
         self._library_onboarding_status_copy = "Checking existing Library content…"
         self._library_onboarding_persistence_warning = ""
+        self._library_graduation_announcement_visible = False
         self._library_lifecycle_pending_persist: LibraryLifecycle | None = None
         self._library_lifecycle_persist_worker: Worker | None = None
         self._library_notes_source: Literal["database", "files"] = (
@@ -8892,7 +8893,7 @@ class LibraryScreen(BaseAppScreen):
         )
         return LibraryLandingCanvasState(
             purpose=(
-                "Add useful material now; find and use it as your Library grows."
+                "Add something useful, then use it in Console or Study."
                 if get_started
                 else LIBRARY_CANVAS_LANDING_COPY
             ),
@@ -8910,7 +8911,6 @@ class LibraryScreen(BaseAppScreen):
             else (),
             lifecycle=self._library_lifecycle,
             lifecycle_status=lifecycle_status,
-            persistence_warning=self._library_onboarding_persistence_warning,
             show_retry=(
                 get_started
                 and self._library_onboarding_status
@@ -8941,10 +8941,23 @@ class LibraryScreen(BaseAppScreen):
         )
 
     def _library_header_line(self, header_line: str) -> str:
-        """Keep the persistent graduation announcement on every canvas route."""
-        if self._library_lifecycle is LibraryLifecycle.GRADUATED:
-            return f"{header_line} · Library tools are now available."
+        """Return route-owned header copy without lifecycle feedback."""
         return header_line
+
+    def _library_lifecycle_status_copy(self) -> str:
+        """Combine session feedback in the screen-owned visible carrier."""
+        return "\n".join(
+            copy
+            for copy in (
+                (
+                    "Library tools are now available."
+                    if self._library_graduation_announcement_visible
+                    else ""
+                ),
+                self._library_onboarding_persistence_warning,
+            )
+            if copy
+        )
 
     @classmethod
     def _source_record_id(cls, record: Mapping[str, Any]) -> str | None:
@@ -9501,6 +9514,15 @@ class LibraryScreen(BaseAppScreen):
             id="library-header-line",
             classes="destination-status-row",
         )
+        lifecycle_status_copy = self._library_lifecycle_status_copy()
+        lifecycle_status = Static(
+            lifecycle_status_copy,
+            id="library-lifecycle-status",
+            classes="library-hub-meta",
+            markup=False,
+        )
+        lifecycle_status.display = bool(lifecycle_status_copy)
+        yield lifecycle_status
         install_progress = ModelInstallProgress(
             self._parakeet_v2_install_progress,
             id="library-model-install-progress",
@@ -15259,20 +15281,26 @@ class LibraryScreen(BaseAppScreen):
             onboarding_all_empty=self._library_onboarding_all_empty,
         )
         self._sync_library_landing_lifecycle_presentation()
-        self._sync_library_lifecycle_announcement()
+        self._sync_library_lifecycle_status()
         self._register_footer_shortcuts()
 
-    def _sync_library_lifecycle_announcement(self) -> None:
-        """Patch the screen-owned status seam without replacing canvas focus."""
+    def _sync_library_lifecycle_status(self) -> None:
+        """Patch the single screen-owned lifecycle feedback carrier."""
         try:
-            header = self.query_one("#library-header-line", Static)
+            status = self.query_one("#library-lifecycle-status", Static)
         except (NoMatches, QueryError):
             return
-        shell = build_library_shell_state(
-            self._build_library_shell_input(),
-            selected_row_id=self._library_selected_row_id,
-        )
-        header.update(self._library_header_line(shell.header_line))
+        copy = self._library_lifecycle_status_copy()
+        status.update(copy)
+        status.display = bool(copy)
+
+    def _clear_library_graduation_announcement(self) -> None:
+        """Acknowledge transition feedback at the next admitted navigation."""
+        if not self._library_graduation_announcement_visible:
+            return
+        self._library_graduation_announcement_visible = False
+        if self.is_mounted:
+            self._sync_library_lifecycle_status()
 
     def _sync_library_landing_lifecycle_presentation(self) -> None:
         """Sync the retained landing, preserving a still-current focused action."""
@@ -15491,6 +15519,11 @@ class LibraryScreen(BaseAppScreen):
             and lifecycle is self._library_lifecycle_last_persisted
         ):
             return
+        if (
+            self._library_lifecycle is not LibraryLifecycle.GRADUATED
+            and lifecycle is LibraryLifecycle.GRADUATED
+        ):
+            self._library_graduation_announcement_visible = True
         self._library_lifecycle = lifecycle
         self._queue_library_lifecycle_persistence(lifecycle)
 
@@ -15534,7 +15567,7 @@ class LibraryScreen(BaseAppScreen):
                 self.is_mounted
                 and previous_warning != self._library_onboarding_persistence_warning
             ):
-                self._sync_library_landing_lifecycle_presentation()
+                self._sync_library_lifecycle_status()
 
     def _library_rail_preferences(self):
         """Read persisted Library rail section preferences, defensively.
@@ -16124,6 +16157,7 @@ class LibraryScreen(BaseAppScreen):
         if not await self._flush_library_skill_save():
             self._notify_skill_dirty_veto()
             return
+        self._clear_library_graduation_announcement()
         if row_id != LIBRARY_ROW_BROWSE_MEDIA:
             self._library_media_browse_controller.invalidate()
         self._library_navigation_context_generation += 1

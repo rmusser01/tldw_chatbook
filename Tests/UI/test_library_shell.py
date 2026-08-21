@@ -1028,6 +1028,9 @@ async def test_library_starter_landing_orients_without_counts_or_search() -> Non
             await pilot.pause()
 
             assert "1 Add · 2 Find · 3 Use" in _visible_text(screen)
+            assert str(
+                screen.query_one("#library-canvas-landing", Static).renderable
+            ) == "Add something useful, then use it in Console or Study."
             assert screen.query_one("#library-hub-action-import", Button)
             assert screen.query_one("#library-hub-action-new-note", Button)
             assert not screen.query("#library-hub-counts")
@@ -1759,7 +1762,7 @@ async def test_library_onboarding_graduation_preserves_rail_focus_and_announces(
                 {"severity": "information"},
             )
             assert "Library tools are now available." in str(
-                screen.query_one("#library-header-line", Static).renderable
+                screen.query_one("#library-lifecycle-status", Static).renderable
             )
     finally:
         gates.release_all()
@@ -1797,15 +1800,50 @@ async def test_library_graduation_announcement_persists_on_note_creation_canvas(
 
             assert screen.query_one("#library-notes-canvas")
             assert creation_action.has_focus
-            header = screen.query_one("#library-header-line", Static)
-            assert "Library tools are now available." in str(header.renderable)
-            assert header in screen._compositor.visible_widgets
+            lifecycle_status = screen.query_one("#library-lifecycle-status", Static)
+            assert "Library tools are now available." in str(
+                lifecycle_status.renderable
+            )
+            assert lifecycle_status in screen._compositor.visible_widgets
             painted = "\n".join(
                 "".join(segment.text for segment in strip)
                 for strip in screen._compositor.render_strips()
             )
             assert "Library tools are now available." in painted
             assert not screen.query("#library-landing-canvas")
+
+            await screen._select_library_rail_row(LIBRARY_ROW_INGEST_MEDIA)
+            await _wait_for_selector(screen, pilot, "#library-ingest-canvas")
+            await pilot.pause()
+            assert "Library tools are now available." not in str(
+                lifecycle_status.renderable
+            )
+            assert "Library tools are now available." not in str(
+                screen.query_one("#library-header-line", Static).renderable
+            )
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+async def test_library_persisted_graduated_restart_has_no_transition_announcement():
+    gates = _LibraryEvidenceGates()
+    app = _new_library_onboarding_app(gates)
+    app.app_config["_first_run"] = False
+    app.app_config["library"]["rail_state"]["lifecycle"] = "graduated"
+    screen = LibraryScreen(app)
+    host = LibraryHarness(app, screen=screen)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            await _wait_for_evidence_round(pilot, gates)
+            await pilot.pause()
+
+            lifecycle_status = screen.query_one("#library-lifecycle-status", Static)
+            assert "Library tools are now available." not in str(
+                lifecycle_status.renderable
+            )
+            assert "Library tools are now available." not in _visible_text(screen)
     finally:
         gates.release_all()
 
@@ -2343,16 +2381,93 @@ async def test_library_onboarding_persistence_failure_keeps_session_and_warns(
                 "Library view is updated for this session, but the choice may not be remembered."
             )
             await pilot.pause()
-            assert str(
-                screen.query_one(
-                    "#library-hub-persistence-warning", Static
-                ).renderable
-            ) == screen._library_onboarding_persistence_warning
+            assert screen._library_onboarding_persistence_warning in str(
+                screen.query_one("#library-lifecycle-status", Static).renderable
+            )
+            assert not screen.query("#library-hub-persistence-warning")
             assert screen.query_one("#library-hub-action-import", Button).disabled is False
             assert (
                 screen.query_one("#library-hub-action-new-note", Button).disabled
                 is False
             )
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", ((100, 30), (170, 48)))
+@pytest.mark.parametrize(
+    ("row_id", "canvas_selector"),
+    (
+        (LIBRARY_ROW_INGEST_MEDIA, "#library-ingest-canvas"),
+        (LIBRARY_ROW_CREATE_NOTE, "#library-notes-canvas"),
+        (LIBRARY_ROW_BROWSE_CONVERSATIONS, "#library-conversations-canvas"),
+    ),
+)
+async def test_library_persistence_warning_is_screen_owned_on_non_landing_routes(
+    monkeypatch, size, row_id, canvas_selector
+) -> None:
+    attempts = []
+
+    def fail_once(*args):
+        attempts.append(args)
+        return len(attempts) > 1
+
+    monkeypatch.setattr(
+        library_screen_module,
+        "save_setting_to_cli_config",
+        fail_once,
+    )
+    gates = _LibraryEvidenceGates()
+    app = _new_library_onboarding_app(gates)
+    host = LibraryProductionCSSHarness(app)
+    warning = (
+        "Library view is updated for this session, but the choice may not be "
+        "remembered."
+    )
+
+    try:
+        async with host.run_test(size=size) as pilot:
+            assert host.CSS_PATH == TldwCli.CSS_PATH
+            screen = host.screen_stack[-1]
+            await _wait_for_evidence_round(pilot, gates)
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_onboarding_persistence_warning == warning,
+                message="lifecycle persistence warning did not surface",
+            )
+
+            await screen._select_library_rail_row(row_id)
+            await _wait_for_selector(screen, pilot, canvas_selector)
+            await pilot.pause()
+
+            carrier = screen.query_one("#library-lifecycle-status", Static)
+            assert str(carrier.renderable) == warning
+            assert carrier in screen._compositor.visible_widgets
+            assert carrier.region.width > 0 and carrier.region.height > 0
+            painted = "\n".join(
+                "".join(segment.text for segment in strip)
+                for strip in screen._compositor.render_strips()
+            )
+            assert warning in painted
+            assert not screen.query("#library-hub-persistence-warning")
+            assert screen.query_one(
+                f"#library-row-{LIBRARY_ROW_INGEST_MEDIA}", Button
+            ).disabled is False
+            assert screen.query_one(
+                f"#library-row-{LIBRARY_ROW_CREATE_NOTE}", Button
+            ).disabled is False
+
+            screen._set_library_lifecycle(screen._library_lifecycle)
+            await _wait_for_condition(
+                pilot,
+                lambda: len(attempts) == 2
+                and not screen._library_onboarding_persistence_warning,
+                message="successful lifecycle retry did not clear warning",
+            )
+            await pilot.pause()
+            assert str(carrier.renderable) == ""
+            assert carrier.display is False
     finally:
         gates.release_all()
 
