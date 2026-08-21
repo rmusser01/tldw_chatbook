@@ -36,7 +36,7 @@
 - Already controller-owned: `_refresh_active_character_avatar_if_scope_changed`
 - Already deleted: `_fetch_expression_image_bytes`
 - Focused baseline: 2 failed, 21 passed, 2 warnings. Both failures are the inherited `ChatScreen.__new__` avatar fixture reaching `console_view_hooks()` without `_skill`; all character production and architecture nodes in that command passed.
-- Clean test-commit RED at `ba58442d8`: 6 failed, 1 passed, 1 warning. The four no-mount policy tests fail because the new constructor/API is absent, the dependency contract fails on the old constructor shape, and ownership fails on the six methods still on `ChatScreen`; only the synthetic oracle passes.
+- Clean test-commit RED at `ba58442d8` in the original history (rebased as `e05a3971b`): 6 failed, 1 passed, 1 warning. The four no-mount policy tests fail because the new constructor/API is absent, the dependency contract fails on the old constructor shape, and ownership fails on the six methods still on `ChatScreen`; only the synthetic oracle passes.
 - Preserved dirty continuity checkpoint after the pre-existing partial controller additions: 1 failed, 6 passed, 1 warning. The sole failure is the ownership assertion listing those same six `ChatScreen` methods; controller-policy, dependency, and oracle nodes collect and pass.
 
 ## File map
@@ -56,9 +56,12 @@
 
 - [x] Record the exact worktree branch/base, source line/direct-method counts, task status, and current seven-method/latest-dev character inventory.
 - [x] Reproduce and classify the focused baseline. Record the inherited avatar-fixture failure caused by bypassing `ChatScreen.__init__` after TASK-3070.6 added `_skill` to runtime hooks; prove no character production path is involved.
-- [ ] Commit only this reviewed plan/task metadata before production implementation.
+- [x] Commit only this reviewed plan/task metadata before production implementation.
 
-The initial plan/task commit is `d6cd2640a`. Before resuming implementation, run:
+The initial plan/task commit was `d6cd2640a` in the original history and is
+`55747c257` after the final rebase. The reviewed plan hardening commit was
+`b651540f5` originally and is `b8b185fd9` after the final rebase. Before resuming
+implementation, run:
 
 ```bash
 git status --short
@@ -70,11 +73,11 @@ inspect existing dirty bytes; never overwrite them merely to obtain a clean tree
 
 ### Task 1: Lock controller ownership and behavior with RED tests
 
-- [ ] Add plain, no-mount controller tests for picker option projection/error containment, active rail conversation/character identity, card fetch containment, and new/swap character choice behavior.
-- [ ] Extend the Wave 6 inventory so all seven current M methods exist only on `ConsoleCharacterController`, the already-deleted expression helper stays absent, four compatibility descriptors remain controller-backed, and the controller has only named non-DOM dependencies.
-- [ ] Add a non-vacuity mutation/oracle proving a synthetic screen-owned moved method or DOM access fails the architecture contract.
-- [ ] On the clean production base, run only the new controller/architecture nodes and confirm the expected policy/API, dependency-shape, and ownership RED set, with no unrelated collection/fixture failure.
-- [ ] On the preserved dirty continuity state after partial controller additions, confirm only the six-method ownership assertion remains RED.
+- [x] Add plain, no-mount controller tests for picker option projection/error containment, active rail conversation/character identity, card fetch containment, and new/swap character choice behavior.
+- [x] Extend the Wave 6 inventory so all seven current M methods exist only on `ConsoleCharacterController`, the already-deleted expression helper stays absent, four compatibility descriptors remain controller-backed, and the controller has only named non-DOM dependencies.
+- [x] Add a non-vacuity mutation/oracle proving a synthetic screen-owned moved method or DOM access fails the architecture contract.
+- [x] On the clean production base, run only the new controller/architecture nodes and confirm the expected policy/API, dependency-shape, and ownership RED set, with no unrelated collection/fixture failure.
+- [x] On the preserved dirty continuity state after partial controller additions, confirm only the six-method ownership assertion remains RED.
 
 **Files:**
 
@@ -109,12 +112,12 @@ git commit -m "test(console): harden character extraction contract"
 
 ### Task 2: Move character policy into the controller
 
-- [ ] Move `_console_character_picker_options`, `_current_console_rail_conversation_id`, `_current_console_rail_character_id`, `_current_console_rail_character_name`, `_fetch_character_card_for_avatar`, and `_apply_console_character_choice_async` into `ConsoleCharacterController`.
-- [ ] Add the minimum explicit dependencies for DB access, active/current session identity, store/config access, default settings/swap, notifications, and final UI synchronization; keep all callbacks late-bound.
-- [ ] Repoint `character.py`'s existing avatar request name lookup to its own character-identity method and retain existing avatar request/stale-result behavior.
-- [ ] Route screen picker presentation and worker callback to `_character`; route screen/retrieval/agent and other production conversation/character consumers directly to `_character`; retain no moved-method screen shim.
-- [ ] Update the stale `session.py` ownership documentation and remove imports that lost their final screen caller.
-- [ ] Run isolated controller, architecture, wiring, picker, prompt-seed/handoff, avatar, composer-menu, and rail-focused nodes to GREEN.
+- [x] Move `_console_character_picker_options`, `_current_console_rail_conversation_id`, `_current_console_rail_character_id`, `_current_console_rail_character_name`, `_fetch_character_card_for_avatar`, and `_apply_console_character_choice_async` into `ConsoleCharacterController`.
+- [x] Add the minimum explicit dependencies for DB access, active/current session identity, store/config access, default settings/swap, notifications, and final UI synchronization; keep all callbacks late-bound.
+- [x] Repoint `character.py`'s existing avatar request name lookup to its own character-identity method and retain existing avatar request/stale-result behavior.
+- [x] Route screen picker presentation and worker callback to `_character`; route screen/retrieval/agent and other production conversation/character consumers directly to `_character`; retain no moved-method screen shim.
+- [x] Update the stale `session.py` ownership documentation and remove imports that lost their final screen caller.
+- [x] Run isolated controller, architecture, wiring, picker, prompt-seed/handoff, avatar, composer-menu, and rail-focused nodes to GREEN.
 
 **Files:**
 
@@ -157,10 +160,10 @@ git commit -m "refactor(console): extract character controller"
 
 ### Task 3: Repair affected fixtures without weakening product wiring
 
-- [ ] Replace the stale avatar bare-screen setup with the smallest real/controller-level fixture that does not attach runtime hooks through an incompletely initialized `ChatScreen`.
-- [ ] Update tests that monkeypatch or call moved screen methods to patch/call `_character` instead; preserve assertions, cardinality, copy, and durable-state oracles.
-- [ ] Keep presentation tests mounted where pixels/layout matter and controller tests unmounted where only policy/data matters.
-- [ ] Rerun the exact formerly failing avatar nodes and the focused affected matrix.
+- [x] Replace the stale avatar bare-screen setup with the smallest real/controller-level fixture that does not attach runtime hooks through an incompletely initialized `ChatScreen`.
+- [x] Update tests that monkeypatch or call moved screen methods to patch/call `_character` instead; preserve assertions, cardinality, copy, and durable-state oracles.
+- [x] Keep presentation tests mounted where pixels/layout matter and controller tests unmounted where only policy/data matters.
+- [x] Rerun the exact formerly failing avatar nodes and the focused affected matrix.
 
 **Files:**
 
@@ -203,11 +206,11 @@ git commit -m "test(console): cover character controller behavior"
 
 ### Task 4: Prove behavior and mutation sensitivity
 
-- [ ] Mutate picker validation/error containment and confirm the no-mount picker test fails, then restore.
-- [ ] Mutate new/swap placement or prompt seed/config propagation and confirm the focused handoff test fails, then restore.
-- [ ] Break one late-bound wiring edge and confirm the wiring test fails, then restore.
-- [ ] Reintroduce one moved method on a synthetic `ChatScreen` AST fixture and confirm the ownership oracle fails, then restore.
-- [ ] Re-run the affected functionality matrix and record exact passes, skips, warnings, and any inherited exceptions.
+- [x] Mutate picker validation/error containment and confirm the no-mount picker test fails, then restore.
+- [x] Mutate new/swap placement or prompt seed/config propagation and confirm the focused handoff test fails, then restore.
+- [x] Break one late-bound wiring edge and confirm the wiring test fails, then restore.
+- [x] Reintroduce one moved method on a synthetic `ChatScreen` AST fixture and confirm the ownership oracle fails, then restore.
+- [x] Re-run the affected functionality matrix and record exact passes, skips, warnings, and any inherited exceptions.
 
 Use `apply_patch` for each mutation and its inverse. Before each mutation, record
 `git diff --binary -- <mutated-paths> | shasum -a 256`; after the inverse patch, require
@@ -224,11 +227,11 @@ node to GREEN, and confirm `git diff --check` plus a focused residue scan are cl
 
 ### Task 5: Static checks, review, and closeout
 
-- [ ] Run Ruff lint/format checks on changed Python files only, `py_compile` for changed production modules under a validated temporary cache root, `git diff --check`, and the focused screen-size/Wave 6 architecture nodes.
-- [ ] Run the persistent-diagnostic checker; update its inventory only for a proven content-identical owner move and verify sink topology is unchanged.
-- [ ] Review the cumulative diff for Ponytail/YAGNI scope: one existing controller, no new abstraction/dependency/config/schema/copy/layout/DOM ID, no compatibility method shim, and no unrelated formatter churn.
-- [ ] Update plan checkboxes and TASK-3070.7 ACs/Implementation Notes with exact RED/GREEN/mutation/static evidence, ADR decision, modified files, and the affected-only test constraint.
-- [ ] Commit the candidate, rebase on latest `origin/dev`, rerun touched-functionality gates, push, open one atomic PR against `dev`, address validated Qodo/CI comments, and merge when required checks are green.
+- [x] Run Ruff lint/format checks on changed Python files only, `py_compile` for changed production modules under a validated temporary cache root, `git diff --check`, and the focused screen-size/Wave 6 architecture nodes.
+- [x] Run the persistent-diagnostic checker; update its inventory only for a proven content-identical owner move and verify sink topology is unchanged.
+- [x] Review the cumulative diff for Ponytail/YAGNI scope: one existing controller, no new abstraction/dependency/config/schema/copy/layout/DOM ID, no compatibility method shim, and no unrelated formatter churn.
+- [x] Update plan checkboxes and TASK-3070.7 ACs/Implementation Notes with exact RED/GREEN/mutation/static evidence, ADR decision, modified files, and the affected-only test constraint.
+- [x] Commit the candidate, rebase on latest `origin/dev` (`690435d0a54260164eb98b67b6389d39d43a4881`), and rerun the touched-functionality gates on the rebased candidate. Push/PR/Qodo/CI/merge delivery follows task closeout and is not claimed by this checkbox.
 
 Run Ruff on every changed Python path; the initial expected set is:
 
@@ -308,3 +311,56 @@ architecture command above on the rebased SHA. If the diagnostic checker is red,
 the same owner-transfer/count/topology review and conditional single writer sequence
 before proceeding. Only these fresh post-rebase results may support task Done, push, or
 merge.
+
+## Closeout evidence
+
+- Final post-rebase base: `690435d0a54260164eb98b67b6389d39d43a4881`.
+  The immutable original planning base remains recorded above; rebasing changed commit
+  identities without changing that starting-point history.
+- Ownership: all seven character methods are on `ConsoleCharacterController` only:
+  `_console_character_picker_options`, `_apply_console_character_choice_async`,
+  `_current_console_rail_conversation_id`, `_current_console_rail_character_id`,
+  `_current_console_rail_character_name`, `_fetch_character_card_for_avatar`, and
+  `_refresh_active_character_avatar_if_scope_changed`. `ChatScreen` retains only
+  `_open_console_character_picker`, `_apply_console_character_choice`, and
+  `_render_character_avatar_into_section` for modal, worker, and pixel presentation.
+- Dependency boundary: the existing controller remains DOM-free and receives explicit,
+  late-bound callables for app config, chat store, active/current session identity,
+  character DB access, store readiness, provider readiness/default settings, session
+  swap, temporary-chip/native-chat synchronization, notification, actor scope, manual
+  reaction key, visual identity, image-view setup/default mode, mount state, and avatar
+  rendering. No compatibility shim or new abstraction was added.
+- RED/GREEN: the clean test contract failed 6 and passed 1 with 1 warning; the preserved
+  partial-controller checkpoint failed only the six-method ownership node while 6 nodes
+  passed with 1 warning. The final fresh character matrix passed 87 tests, the exact
+  ownership-caller selection passed 27 tests, the inherited avatar fixture nodes passed
+  2 tests, the restored mutation selection passed 4 tests with 2 warnings, and the final
+  architecture selection passed 6 tests. The final reviewer also ran 372 directly
+  affected caller tests successfully. No full repository suite was run, honoring the
+  user's affected-only constraint.
+- Mutation evidence: the invalid empty-name picker-card mutation failed with unexpected
+  ID 8 and restored to 1 pass; the `new`-to-`swap` placement mutation failed because no
+  new session existed and restored to 1 pass; eager DB-edge binding failed because the
+  old `None` replaced the expected sentinel and restored to 1 pass; the synthetic moved
+  screen method failed as still owned by `ChatScreen` and restored to 1 pass. An initial
+  empty-system-prompt probe stayed GREEN because roleplay seeding correctly supplied a
+  prompt; it was restored immediately and replaced by the discriminating placement
+  probe. Each before/after path-scoped diff checksum was exactly
+  `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+- Static/scope verification: Ruff lint and format passed for all 16 changed Python
+  files. Changed production modules compiled under a fresh validated isolated pycache
+  root; entries were inspected, the exact root was removed, and absence was proven.
+  `git diff --check`, the exact moved-name ownership scan, and the cumulative
+  Ponytail/YAGNI scope review were clean. Modified paths comprise the existing
+  character/session/wiring/screen/agent boundary, focused character/controller consumer
+  tests, the Wave 6 inventory test, this plan, and the task record.
+- Diagnostic exception: current `origin/dev` already has 8 unrelated stale owner
+  deltas. This branch transfers 3 unchanged diagnostic calls from `chat_screen.py` to
+  `character.py`, changing owner counts from `145 + 1` to `142 + 4`; the combined exact
+  146-call `(method, digest)` multiset and sink topology are unchanged. The manifest was
+  intentionally not rewritten because doing so would bless unrelated upstream drift.
+  The non-write checker therefore remains inherited-red, while the metadata-only node
+  passes.
+- ADR required: no. This is a behavior-preserving implementation of the existing Wave 6
+  decomposition design. No new lesson was added because no genuinely new generalizable
+  incident arose beyond the repository's existing testing/backlog lessons.
