@@ -419,7 +419,16 @@ def _canonical_binding_root(
 
 
 def capture_binding_root_identity(binding_root: Path) -> BindingRootIdentity:
-    """Capture the selected root and ancestor identities once for a dispatch."""
+    """Capture the selected root and ancestor identities for one dispatch.
+
+    Args:
+        binding_root: Canonical selected workspace root to pin.
+
+    Returns:
+        The lexical root plus its fail-closed ancestor identity chain. An
+        unavailable chain is represented inside the returned value and makes
+        later resolution ineligible.
+    """
     root, ancestors = _canonical_binding_root(binding_root)
     return BindingRootIdentity(root, ancestors)
 

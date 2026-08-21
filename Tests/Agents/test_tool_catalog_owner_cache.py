@@ -228,6 +228,29 @@ def test_registration_cannot_be_overwritten_by_an_inflight_cache_build(monkeypat
     assert registry.resolve_owner_for_name("second") == ("second:y", second)
 
 
+def test_reentrant_catalog_mutation_fails_fast_instead_of_retrying_forever():
+    registry = ToolCatalogRegistry()
+
+    class ReentrantProvider(_CountingProvider):
+        def list_catalog(self):
+            self.list_calls += 1
+            if self.list_calls <= 2:
+                registry.reset_catalog_cache()
+            return [
+                ToolCatalogEntry(
+                    id="p:foo", name="foo", one_line_description="d", source="p"
+                )
+            ]
+
+    provider = ReentrantProvider()
+    registry.register_provider(provider)
+
+    with pytest.raises(RuntimeError, match="changed during cache build"):
+        registry.list_catalog()
+
+    assert provider.list_calls == 2
+
+
 @pytest.mark.parametrize("mutation", ["reset", "register"])
 @pytest.mark.parametrize(
     ("lookup", "expected"),

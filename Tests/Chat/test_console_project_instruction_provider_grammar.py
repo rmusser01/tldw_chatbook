@@ -66,6 +66,41 @@ def test_native_transport_keeps_each_tool_result_before_separate_context_row():
     assert _CANONICAL_NATIVE_ROWS == original
 
 
+def test_native_adapter_keeps_native_context_grammar_with_empty_tool_catalog(
+    monkeypatch,
+):
+    """Native transport mode must not be inferred from a non-empty tool list."""
+
+    class ExpectedStop(Exception):
+        pass
+
+    seen: list[bool] = []
+
+    def capture_mode(messages, *, native_tools):
+        seen.append(native_tools)
+        raise ExpectedStop
+
+    monkeypatch.setattr(
+        console_agent_bridge,
+        "_serialize_project_instruction_rows_for_transport",
+        capture_mode,
+    )
+    adapter = console_agent_bridge._StreamingModelAdapter(
+        store=None,
+        provider_gateway=None,
+        resolution=None,
+        assistant_message_id=None,
+        should_cancel=lambda: False,
+        loop=None,
+        native_tools=True,
+    )
+
+    with pytest.raises(ExpectedStop):
+        adapter.chat_call(messages_payload=_CANONICAL_NATIVE_ROWS, tools=None)
+
+    assert seen == [True]
+
+
 def test_fenced_transport_closes_complete_result_section_before_labeled_context():
     calls = (
         ToolCall("fs_read", {"path": "a"}, ""),

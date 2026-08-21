@@ -1159,13 +1159,16 @@ class ToolCatalogRegistry:
         # the lock and generation check keep such a build from publishing
         # after reset_catalog_cache() has invalidated its generation.
         with self._catalog_lock:
-            while self._catalog_snapshot is None:
+            for _attempt in range(2):
+                if self._catalog_snapshot is not None:
+                    return self._catalog_snapshot
                 generation = self._catalog_generation
                 built = self._build_owner_cache()
                 if generation != self._catalog_generation:
                     continue
                 self._catalog_snapshot = built
-            return self._catalog_snapshot
+                return built
+            raise RuntimeError("tool catalog changed during cache build")
 
     def _owner_and_id(self, tool_id: str):
         record = self._ensure_catalog_cache().by_id.get(tool_id)

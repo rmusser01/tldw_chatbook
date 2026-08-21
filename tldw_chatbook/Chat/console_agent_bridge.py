@@ -1865,6 +1865,7 @@ class _StreamingModelAdapter:
         assistant_message_id,
         should_cancel,
         loop,
+        native_tools: bool,
         provider_stream_signals: ConsoleProviderStreamSignals | None = None,
         continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
         continuation_target: ContinuationRestoreTarget | None = None,
@@ -1876,6 +1877,7 @@ class _StreamingModelAdapter:
         self._assistant_message_id = assistant_message_id
         self._should_cancel = should_cancel
         self._loop = loop
+        self._native_tools = native_tools
         self._provider_stream_signals = provider_stream_signals
         self._continuation_sidecar = tuple(continuation_sidecar)
         self._continuation_target = continuation_target
@@ -1990,7 +1992,7 @@ class _StreamingModelAdapter:
         **_ignored,
     ) -> dict:
         transport_messages = _serialize_project_instruction_rows_for_transport(
-            messages_payload, native_tools=tools is not None
+            messages_payload, native_tools=self._native_tools
         )
         is_subagent = self._is_subagent(transport_messages)
         gate = StreamGate()
@@ -3703,6 +3705,10 @@ class ConsoleAgentBridge:
             assistant_message_id=assistant_message_id,
             should_cancel=should_cancel,
             loop=turn_lifeline.loop,
+            native_tools=(
+                config.native_tools
+                and provider_supports_native_tools(first_request_plan.api_endpoint)
+            ),
             provider_stream_signals=provider_stream_signals,
             continuation_sidecar=continuation_sidecar,
             continuation_target=continuation_target,

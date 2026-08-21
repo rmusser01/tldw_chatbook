@@ -2331,6 +2331,7 @@ def test_concurrent_subagent_adapter_calls_keep_terminal_usage_call_scoped(tmp_p
         assistant_message_id=assistant.id,
         should_cancel=lambda: False,
         loop=loop,
+        native_tools=False,
         provider_stream_signals=signals,
     )
     responses: dict[str, dict] = {}

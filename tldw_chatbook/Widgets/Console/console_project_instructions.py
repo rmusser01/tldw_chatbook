@@ -64,7 +64,22 @@ async def recover_console_project_instruction_session(
     clear_delivery: Callable[[str], None],
     activation_controller: Any = None,
 ) -> ConsoleProjectInstructionState | None:
-    """Apply one race-safe recovery decision to the captured session."""
+    """Apply one race-safe recovery decision to the captured session.
+
+    Args:
+        session_id: Session captured when the recovery surface opened.
+        action: Requested ``enable``, ``choose``, or ``disable`` action.
+        store: Console session store mutated only after authority revalidation.
+        registry: Workspace binding registry used to list and revalidate choices.
+        select_binding: Async chooser for eligible binding options.
+        refresh_state: Async content-free display-state refresher.
+        clear_delivery: Callback that clears prior run activation metadata.
+        activation_controller: Optional source of current activation events.
+
+    Returns:
+        Refreshed content-free UI state, or ``None`` when the captured session
+        or requested action is no longer valid.
+    """
     if session_id is None or action not in {"enable", "choose", "disable"}:
         return None
     session = next((item for item in store.sessions() if item.id == session_id), None)
@@ -82,9 +97,8 @@ async def recover_console_project_instruction_session(
             )
         except ProjectInstructionBindingRecovery as exc:
             recovery_code = str(exc) or "binding_unavailable"
-        decision, binding_id = await select_binding(
-            session_id, options, recovery_code
-        )
+        decision, binding_id = await select_binding(session_id, options, recovery_code)
+
     def validate_decision():
         session_snapshot = copy.copy(session)
         pending_state = []
@@ -132,7 +146,17 @@ def project_instruction_ui_state(
     controller: Any,
     session_id: str | None = None,
 ) -> ConsoleProjectInstructionState:
-    """Add one captured session's content-free activation events to UI state."""
+    """Add one captured session's content-free activation events to UI state.
+
+    Args:
+        state: Base authority and source display state.
+        store: Console session store used to resolve the captured session.
+        controller: Optional activation-event source.
+        session_id: Explicit captured session, or the active session when absent.
+
+    Returns:
+        ``state`` enriched with matching content-free activation metadata.
+    """
     target_id = session_id or store.active_session_id
     events = (
         controller.project_instruction_activation_events(target_id)
@@ -150,7 +174,12 @@ def project_instruction_ui_state(
 
 
 def sync_project_instruction_status_row(screen: Any, state: Any) -> None:
-    """Refresh the mounted rail row without leaking DOM work into the screen."""
+    """Refresh the mounted project-instruction rail row.
+
+    Args:
+        screen: Mounted Console screen containing the optional status row.
+        state: Content-free state to publish into that row.
+    """
     try:
         row = screen.query_one(
             "#console-project-instruction-status", ConsoleProjectInstructionStatusRow
@@ -163,8 +192,18 @@ def sync_project_instruction_status_row(screen: Any, state: Any) -> None:
 def project_instruction_context_kwargs(
     screen: Any, controller: Any, session_id: str
 ) -> dict[str, Any]:
-    """Bind captured-session project state and recovery for Context."""
+    """Build captured-session project state and recovery arguments for Context.
+
+    Args:
+        screen: Console screen that owns the session UI controller.
+        controller: Console chat controller and session store owner.
+        session_id: Session captured when Context was opened.
+
+    Returns:
+        Keyword arguments for the shared Context modal.
+    """
     session_controller = screen._session
+
     def project_state(state):
         return project_instruction_ui_state(
             state,
@@ -200,7 +239,15 @@ def project_instruction_context_kwargs(
 def project_instruction_ui_state_for_screen(
     screen: Any, state: ConsoleProjectInstructionState | None = None
 ) -> ConsoleProjectInstructionState:
-    """Bind active-session activation metadata without growing ChatScreen."""
+    """Build active-session project-instruction UI state for a screen.
+
+    Args:
+        screen: Console screen owning the store and controller.
+        state: Optional prebuilt base display state.
+
+    Returns:
+        Content-free state enriched with active-session activation metadata.
+    """
     if state is None:
         state = screen._session._build_console_project_instruction_display_state()
     return project_instruction_ui_state(
@@ -211,7 +258,11 @@ def project_instruction_ui_state_for_screen(
 
 
 def sync_project_instruction_status_for_screen(screen: Any) -> None:
-    """Publish active-session activation state into the mounted rail row."""
+    """Publish active-session activation state into the mounted rail row.
+
+    Args:
+        screen: Mounted Console screen whose project status should refresh.
+    """
     sync_project_instruction_status_row(
         screen, project_instruction_ui_state_for_screen(screen)
     )
