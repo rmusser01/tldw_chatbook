@@ -2995,6 +2995,25 @@ class ChangeReviewScreen(Screen):
         root = str(request["root"])
         remote = request["remote"]
         info = request["info"]
+        # Defense in depth (T8 review): only a remote DETECTION actually
+        # reported may be forwarded. The engine carries the real guard
+        # against option-shaped names (a repository can ship a remote
+        # literally named `--force`, and git reads it as the flag), because
+        # such a name IS a detected remote and would pass this check; this
+        # one covers the other direction -- a caller naming a remote no
+        # detection ever saw.
+        known_remotes = {name for name, _url in info.remotes}
+        if remote is not None and remote not in known_remotes:
+            logger.warning(
+                f"change_review: refusing to push to an undetected remote "
+                f"{remote!r} at {root!r}"
+            )
+            self.notify(
+                f"Push refused: {remote!r} is not one of this repository's "
+                "configured remotes",
+                severity="error",
+            )
+            return
         token = self._git_action_token = object()
         self._set_git_busy(True)
         provider = self._provider
@@ -3019,7 +3038,12 @@ class ChangeReviewScreen(Screen):
                 logger.opt(exception=True).warning(
                     f"change_review: push failed for {root!r}"
                 )
-                _land_on_ui(app, self._land_push_refused, token, str(exc))
+                # A DIFFERENT landing from the typed refusal above (T8
+                # review): anything reaching here is a bug, not one of the
+                # engine's honest preconditions, and reporting a raw
+                # `str(exc)` at warning level would be indistinguishable
+                # from "no git remote configured".
+                _land_on_ui(app, self._land_push_error, token, str(exc))
                 return
             _land_on_ui(app, self._land_push_result, token, result, info, remote)
 
@@ -3031,7 +3055,12 @@ class ChangeReviewScreen(Screen):
         )
 
     def _land_push_refused(self, token: object, message: str) -> None:
-        """A push that never ran: report the reason, change nothing.
+        """A push the engine DECLINED to run: report its reason verbatim.
+
+        Only ``GitWorkspaceError`` reaches here -- the engine's own honest
+        preconditions ("no git remote configured", "no branch checked out",
+        "unsupported remote name"). An unexpected exception goes to
+        :meth:`_land_push_error` instead, so the two can never read alike.
 
         Args:
             token: The dispatch identity of the refused push.
@@ -3041,6 +3070,19 @@ class ChangeReviewScreen(Screen):
             return
         self._set_git_busy(False)
         self.notify(message, severity="warning")
+
+    def _land_push_error(self, token: object, message: str) -> None:
+        """A push that hit an UNEXPECTED error: say so, and say it loudly.
+
+        Args:
+            token: The dispatch identity of the failed push.
+            message: The exception's text, prefixed so it can never be
+                mistaken for one of the engine's refusals.
+        """
+        if not self._git_action_is_live(token):
+            return
+        self._set_git_busy(False)
+        self.notify(f"Push could not run: {message}", severity="error")
 
     def _land_push_result(
         self,
@@ -4309,7 +4351,7 @@ class ChangeGitPushModal(SafeModalDismissMixin, ModalScreen["dict | None"]):
                 filtered to the roots this action can actually use, so the
                 dialog never offers a target that would fail. Must be
                 non-empty.
-            
+
         Raises:
             ValueError: ``entries`` is empty (a dialog with no target is a
                 programming error, not a user-facing state).

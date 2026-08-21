@@ -951,9 +951,12 @@ def push_current(root: Path, info: GitWorkspaceInfo, remote: str | None) -> Push
         The push's :class:`PushResult`.
 
     Raises:
-        GitWorkspaceError: HEAD is detached (``"no branch checked out"``)
-            or no remote could be resolved
-            (``"no git remote configured"``).
+        GitWorkspaceError: HEAD is detached (``"no branch checked out"``),
+            no remote could be resolved
+            (``"no git remote configured"``), or the resolved remote's NAME
+            begins with ``"-"`` (``"unsupported remote name"``) -- git would
+            read it as an option rather than a remote, which is a
+            force-push vector; see the comment at the check.
     """
     if info.detached or info.branch is None:
         raise GitWorkspaceError("no branch checked out")
@@ -961,6 +964,25 @@ def push_current(root: Path, info: GitWorkspaceInfo, remote: str | None) -> Push
     target_remote = _resolve_push_remote(info, remote)
     if target_remote is None:
         raise GitWorkspaceError("no git remote configured")
+
+    # ARGUMENT INJECTION (T8 review, verified against real git): the remote
+    # name lands in argv position 1 of `git push <remote>`, and git reads a
+    # leading-dash argument there as an OPTION, not as a remote. A remote
+    # NAMED `--force` is perfectly legal to create -- `git remote add --
+    # --force <url>` exits 0 -- and a repository can simply SHIP one in
+    # `.git/config`, upstream and all. `git push --force` then rewrites the
+    # remote branch: the reproduction produced `+ 4fd1108...c1e7731 main ->
+    # main (forced update)`, destroying a second clone's commit, and this
+    # module's own "never force-push" rule was never violated by any
+    # literal we wrote. `--mirror` is the same shape and DELETES remote refs.
+    #
+    # Refused, never sanitized: stripping the dashes would push to a
+    # different remote than the one named, and a `--`/`=` escape does not
+    # exist for this positional (`git push -- <remote>` is not accepted).
+    # A repository whose remote is option-shaped simply cannot be pushed
+    # from here; it can be renamed with one `git remote rename`.
+    if target_remote.startswith("-"):
+        raise GitWorkspaceError("unsupported remote name")
 
     if info.upstream is not None:
         # The remote name comes from detection's `%(upstream:remotename)`

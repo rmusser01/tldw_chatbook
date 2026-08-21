@@ -30,6 +30,7 @@ stripped porcelain compare.
 from __future__ import annotations
 
 import inspect
+import re
 import subprocess
 import threading
 import time
@@ -58,6 +59,7 @@ from tldw_chatbook.UI.Screens.change_review_screen import (
     ChangeReviewScreen,
 )
 from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService
+from tldw_chatbook.Workspaces.git_workspace import PushResult as _PushResult
 
 BUNDLE = (
     Path(__file__).resolve().parents[2]
@@ -1008,3 +1010,322 @@ async def test_pr_asks_which_repository_when_several_qualify(
         modal.query_one("#change-git-push-yes", Button).press()
         await _wait_for(pilot, lambda: opened or None, "the browser open")
         assert opened == ["https://github.com/o2/beta/compare/main?expand=1"], opened
+
+
+# ---------------------------------------------------------------------------
+# Argument injection through the remote NAME (T8 review, FIX 1)
+# ---------------------------------------------------------------------------
+
+
+def _point_upstream_at(repo: Path, remote_name: str, branch: str = "main") -> None:
+    """Set ``branch``'s upstream to ``remote_name`` by writing `.git/config`.
+
+    `git config branch.<b>.remote -- --force` cannot express this: git eats
+    the `--` as the VALUE. Writing the config file is not a workaround for
+    the test's convenience — it is the exact shape a hostile repository
+    ships (a `.git/config` in a tarball, or a template a tool wrote), and
+    the resulting state is ordinary, fully-functional git state: after this,
+    `rev-parse --abbrev-ref @{upstream}` and `%(upstream:remotename)` both
+    resolve, which is verified inline below.
+    """
+    config = repo / ".git" / "config"
+    text = config.read_text()
+    text = re.sub(
+        r'\[branch "' + re.escape(branch) + r'"\]\n(\s*\w+ = .*\n)*',
+        f'[branch "{branch}"]\n\tremote = {remote_name}\n'
+        f"\tmerge = refs/heads/{branch}\n",
+        text,
+    )
+    config.write_text(text)
+    # The state must be REAL, or the test proves nothing about real git.
+    assert (
+        _git(repo, "for-each-ref", "--format=%(upstream:remotename)",
+             f"refs/heads/{branch}")
+        == remote_name
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_option_shaped_remote_can_never_force_push(monkeypatch, tmp_path):
+    """A remote NAMED `--force` must be refused, not handed to git.
+
+    This is argument injection, not a flag: `git remote add -- --force <url>`
+    succeeds, the name lands in argv position 1 of `git push <remote>`, and
+    git then reads it as the `--force` OPTION. Verified against real git
+    before the fix existed — the push reported success and the second
+    clone's commit was GONE from the bare remote (`+ 4fd1108...c1e7731
+    main -> main (forced update)`), which the UI reported as
+    "Pushed main to --force".
+
+    Every existing no-force assertion missed this because nothing in our
+    code ever writes the string `--force`; the repository supplies it.
+    """
+    _patch_git_actions(monkeypatch, True)
+    bare = _init_bare(tmp_path / "shared.git")
+    repo = _init_repo(tmp_path / "ours")
+    _git(repo, "remote", "add", "origin", str(bare))
+    _git(repo, "push", "-q", "-u", "origin", "main")
+
+    # A second clone lands a commit the remote must not lose.
+    other = tmp_path / "theirs"
+    subprocess.run(
+        ["git", "clone", "-q", str(bare), str(other)],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    _git(other, "config", "user.email", "o@o")
+    _git(other, "config", "user.name", "o")
+    (other / "a.txt").write_text("theirs\n")
+    _git(other, "commit", "-qam", "theirs must survive")
+    _git(other, "push", "-q", "origin", "main")
+    theirs_sha = _bare_sha(bare)
+
+    # The hostile bit: a remote literally named `--force`, tracked by the
+    # branch. Our own divergent commit makes the push a NON-fast-forward,
+    # so an honest push MUST be rejected — only a forced one can succeed.
+    _git(repo, "remote", "add", "--", "--force", str(bare))
+    _git(repo, "update-ref", "refs/remotes/--force/main", "HEAD")
+    _point_upstream_at(repo, "--force")
+    (repo / "a.txt").write_text("ours\n")
+    _git(repo, "commit", "-qam", "ours diverges")
+
+    provider, _db, _service = _make_provider(tmp_path, "conv-injection")
+    app = _Harness(provider, workspace_roots=[str(repo)])
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _enter_current_mode(pilot, app)
+        captured = _spy_on_git_argv(monkeypatch)
+        notes = _capture_notifies(app)
+
+        screen.query_one("#change-review-git-push-btn", Button).press()
+        modal = await _wait_for_push_modal(pilot, app)
+        modal.query_one("#change-git-push-yes", Button).press()
+        await _wait_for(pilot, lambda: notes or None, "the push outcome")
+        await _wait_idle(pilot, app, GIT_ACTION_WORKER_GROUP)
+
+        # THE assertion: the other clone's commit is still the remote's tip.
+        assert _bare_sha(bare) == theirs_sha, (
+            "a force-push destroyed another clone's commit — the remote is "
+            f"now {_bare_sha(bare)!r}, was {theirs_sha!r}"
+        )
+        assert not any("Pushed" in note for note in notes), (
+            f"an injected push must never report success; got {notes!r}"
+        )
+        # Nothing option-shaped may reach git in a remote/repository slot.
+        for argv in captured:
+            if argv and argv[0] == "push":
+                assert not any(
+                    arg.startswith("-") and arg not in ("-u",) for arg in argv[1:]
+                ), f"an option reached git's push argv: {argv!r}"
+
+
+def test_the_engine_refuses_an_option_shaped_remote_directly(tmp_path) -> None:
+    """The same guard at the ENGINE seam, independent of any UI.
+
+    `push_current` is public and takes `remote` from its caller, so the
+    refusal has to live there too — a future caller that does not go
+    through the screen must not be able to reintroduce this.
+    """
+    from tldw_chatbook.Workspaces.git_workspace import (
+        GitWorkspaceError,
+        detect_git_workspace,
+        push_current,
+    )
+
+    repo = _init_repo(tmp_path / "engine")
+    bare = _init_bare(tmp_path / "engine-remote.git")
+    _git(repo, "remote", "add", "origin", str(bare))
+    info = detect_git_workspace(repo)
+
+    for hostile in ("--force", "--mirror", "-f", "--delete"):
+        with pytest.raises(GitWorkspaceError) as excinfo:
+            push_current(repo, info, hostile)
+        assert "unsupported remote name" in str(excinfo.value), excinfo.value
+    assert _bare_sha(bare) is None, "no refused call may have pushed anything"
+
+    # The ordinary name still works, so the guard is a filter, not a wall.
+    assert push_current(repo, info, "origin").state == "pushed"
+
+
+@pytest.mark.asyncio
+async def test_the_ui_seam_only_ever_forwards_a_detected_remote(
+    monkeypatch, tmp_path
+):
+    """Defense in depth: the screen forwards only names detection found.
+
+    The engine's refusal is the real fix (the hostile name IS a detected
+    remote there); this second layer covers the other direction — a modal
+    result that names a remote no detection ever reported.
+    """
+    _patch_git_actions(monkeypatch, True)
+    repo, bare = _repo_with_remote(tmp_path)
+    provider, _db, _service = _make_provider(tmp_path, "conv-seam")
+    app = _Harness(provider, workspace_roots=[str(repo)])
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _enter_current_mode(pilot, app)
+        seen: list[object] = []
+        real_push = provider.push_current
+
+        def spy_push(root, info, remote):
+            seen.append(remote)
+            return real_push(root, info, remote)
+
+        provider.push_current = spy_push
+        notes = _capture_notifies(app)
+
+        info = screen._current_infos[str(repo.resolve())]
+        screen._dispatch_push(
+            {
+                "action": "push",
+                "root": str(repo.resolve()),
+                "remote": "--force",
+                "info": info,
+            }
+        )
+        await _wait_for(pilot, lambda: notes or None, "the refusal")
+        await _wait_idle(pilot, app, GIT_ACTION_WORKER_GROUP)
+
+        assert seen == [], (
+            f"an undetected remote must never reach the engine; got {seen!r}"
+        )
+        assert _bare_sha(bare) is None, "nothing may have been pushed"
+        assert not any("Pushed" in note for note in notes), notes
+
+
+@pytest.mark.asyncio
+async def test_push_targets_the_upstreams_remote_not_the_first_one(
+    monkeypatch, tmp_path
+):
+    """FIX 2: with an upstream, the UPSTREAM's remote is the target.
+
+    Two remotes and an upstream on the NON-first one — the case no earlier
+    test had. Dropping `if info.upstream is not None: return None` from the
+    modal's `_resolve_remote` survived mutation until this existed, and
+    silently pushed to whichever remote git happened to list first.
+    """
+    _patch_git_actions(monkeypatch, True)
+    repo = _init_repo(tmp_path / "upstream_pick")
+    # `git remote -v` lists alphabetically, so `alpha` is remotes[0] and
+    # `zulu` — the upstream's remote — is deliberately NOT first.
+    alpha = _init_bare(tmp_path / "alpha.git")
+    zulu = _init_bare(tmp_path / "zulu.git")
+    _git(repo, "remote", "add", "alpha", str(alpha))
+    _git(repo, "remote", "add", "zulu", str(zulu))
+    _git(repo, "push", "-q", "-u", "zulu", "main")
+    (repo / "a.txt").write_text("second\n")
+    _git(repo, "commit", "-qam", "second")
+    zulu_before = _bare_sha(zulu)
+
+    provider, _db, _service = _make_provider(tmp_path, "conv-upstream-pick")
+    app = _Harness(provider, workspace_roots=[str(repo)])
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _enter_current_mode(pilot, app)
+        info = screen._current_infos[str(repo.resolve())]
+        assert info.upstream_remote == "zulu", info
+        assert [name for name, _url in info.remotes][0] == "alpha", info.remotes
+
+        notes = _capture_notifies(app)
+        screen.query_one("#change-review-git-push-btn", Button).press()
+        modal = await _wait_for_push_modal(pilot, app)
+        assert modal.query_one("#change-git-push-remote", Select).display is False, (
+            "an upstream already names its remote — nothing to choose"
+        )
+        modal.query_one("#change-git-push-yes", Button).press()
+        await _wait_for_note(pilot, notes, "Pushed")
+        await _wait_idle(pilot, app, GIT_ACTION_WORKER_GROUP)
+
+        assert _bare_sha(zulu) == _git(repo, "rev-parse", "HEAD"), (
+            "the UPSTREAM's remote must have received the push"
+        )
+        assert _bare_sha(zulu) != zulu_before
+        assert _bare_sha(alpha) is None, (
+            "the first-listed remote must be untouched — it is not the upstream"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_superseded_push_landing_is_discarded(monkeypatch, tmp_path):
+    """FIX 3: a stale push landing must not re-enable the git affordances.
+
+    `_set_git_busy(False)` from a superseded landing would unlock all three
+    buttons while a NEWER git action is still running — the exact
+    double-dispatch the busy flag exists to prevent.
+    """
+    _patch_git_actions(monkeypatch, True)
+    repo, _bare = _repo_with_remote(tmp_path)
+    provider, _db, _service = _make_provider(tmp_path, "conv-superseded")
+    app = _Harness(provider, workspace_roots=[str(repo)])
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _enter_current_mode(pilot, app)
+        notes = _capture_notifies(app)
+        info = screen._current_infos[str(repo.resolve())]
+
+        # A landing from a dispatch that has since been superseded.
+        stale_token = object()
+        screen._git_action_token = stale_token
+        screen._set_git_busy(True)
+        screen._git_action_token = object()  # a newer action takes over
+
+        screen._land_push_result(
+            stale_token,
+            _PushResult("pushed"),
+            info,
+            "origin",
+        )
+        await pilot.pause()
+        assert screen._git_busy is True, (
+            "a superseded push landing must not unlock the affordances"
+        )
+        assert notes == [], f"nor announce an outcome; got {notes!r}"
+
+        # The PR landing carries the same guard.
+        screen._land_pr_url(stale_token, "https://github.com/o/r/compare/main")
+        await pilot.pause()
+        assert screen._git_busy is True
+        assert notes == []
+
+        # The LIVE token still lands, so the guard is not a blanket mute.
+        screen._land_push_result(
+            screen._git_action_token, _PushResult("pushed"), info, "origin"
+        )
+        await pilot.pause()
+        assert screen._git_busy is False
+        assert any("Pushed" in note for note in notes), notes
+
+
+@pytest.mark.asyncio
+async def test_an_unexpected_push_error_is_not_dressed_as_a_refusal(
+    monkeypatch, tmp_path
+):
+    """FIX 4: a BUG must not read like the engine's honest refusal copy."""
+    _patch_git_actions(monkeypatch, True)
+    repo, _bare = _repo_with_remote(tmp_path)
+    provider, _db, _service = _make_provider(tmp_path, "conv-bug")
+    app = _Harness(provider, workspace_roots=[str(repo)])
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _enter_current_mode(pilot, app)
+
+        def exploding_push(root, info, remote):
+            raise TypeError("a real bug inside the push path")
+
+        provider.push_current = exploding_push
+        seen: list[tuple] = []
+        app.notify = lambda *a, **kw: seen.append((str(a[0]) if a else "", kw))
+
+        screen.query_one("#change-review-git-push-btn", Button).press()
+        modal = await _wait_for_push_modal(pilot, app)
+        modal.query_one("#change-git-push-yes", Button).press()
+        await _wait_for(pilot, lambda: seen or None, "the failure report")
+        await _wait_idle(pilot, app, GIT_ACTION_WORKER_GROUP)
+
+        message, kwargs = seen[0]
+        assert "Push could not run" in message, (
+            f"an unexpected error must be marked as one; got {message!r}"
+        )
+        assert "a real bug inside the push path" in message, (
+            "and must still carry the original text"
+        )
+        assert kwargs.get("severity") == "error", (
+            f"a bug is not a warning-level refusal; got {kwargs!r}"
+        )
+        assert screen._git_busy is False, "the buttons must still come back"
