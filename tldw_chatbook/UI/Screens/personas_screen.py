@@ -76,6 +76,38 @@ from ...Image_Generation.config import get_image_generation_config
 from ...Image_Generation.listing import list_image_models_for_catalog
 from ...Image_Generation.worker import build_request, run_generation
 from ...Media_Creation.generation_templates import GenerationTemplate, get_template
+from ...Persona_Visual.assets import load_persona_visual_asset
+from ...Persona_Visual.authoring import (
+    PersonaVisualAuthoringDraft,
+    add_persona_visual_custom_state,
+    clear_persona_visual_draft_state,
+    create_persona_visual_draft,
+    inspect_persona_visual_draft,
+    persona_visual_draft_from_graph,
+    persona_visual_draft_publication_snapshot,
+    replace_persona_visual_draft_state,
+)
+from ...Persona_Visual.authoring_workspace import (
+    PersonaVisualAuthoringWorkspace,
+    adopt_persona_visual_draft_sources,
+    cleanup_persona_visual_authoring_workspace,
+    create_persona_visual_authoring_workspace,
+    stage_persona_visual_authoring_asset,
+)
+from ...Persona_Visual.importer import (
+    PersonaVisualImportError,
+    PersonaVisualImportReview,
+    cleanup_persona_visual_import_review,
+    import_persona_visual_pack,
+    persona_visual_import_source_root,
+)
+from ...Persona_Visual.publication import (
+    PersonaVisualPublicationError,
+    PersonaVisualPublicationResult,
+    cleanup_persona_visual_publication_candidate,
+    publish_persona_visual,
+)
+from ...Persona_Visual.repository import PersonaVisualIdentity, PersonaVisualRepository
 from ...TTS import (
     AssignedTTSProfileSnapshot,
     CharacterRef,
@@ -112,6 +144,17 @@ from ...Widgets.Persona_Widgets.persona_profile_card_widget import (
 )
 from ...Widgets.Persona_Widgets.persona_profile_editor_widget import (
     PersonaProfileEditorWidget,
+)
+from ...Widgets.Persona_Widgets.personas_persona_visual_pack_widget import (
+    PersonaVisualAddCustomRequested,
+    PersonaVisualCancelRequested,
+    PersonaVisualClearRequested,
+    PersonaVisualCustomStateDialog,
+    PersonaVisualImportRequested,
+    PersonaVisualPreviewRequested,
+    PersonaVisualReplaceRequested,
+    PersonaVisualSaveRequested,
+    PersonasPersonaVisualPackWidget,
 )
 from ...Widgets.Persona_Widgets.personas_character_card_widget import (
     PersonasCharacterCardWidget,
@@ -530,6 +573,36 @@ class _VisualIdentityAuthoringState:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class _PersonaVisualAuthorSnapshot:
+    """Exact local Persona editor authority for one isolated visual draft."""
+
+    editor_ref: weakref.ReferenceType[PersonaProfileEditorWidget]
+    browser_ref: weakref.ReferenceType[PersonasPersonaVisualPackWidget]
+    db: object
+    local_service: object
+    persona_id: str
+    persona_revision: int
+    screen_generation: int
+    editor_session_token: int
+
+
+@dataclasses.dataclass(slots=True)
+class _PersonaVisualAuthoringState:
+    """One unpublished Persona Visual draft plus its private source lease."""
+
+    snapshot: _PersonaVisualAuthorSnapshot
+    draft: PersonaVisualAuthoringDraft
+    source_root: Path = dataclasses.field(repr=False)
+    workspace: PersonaVisualAuthoringWorkspace | None = dataclasses.field(
+        default=None, repr=False
+    )
+    import_review: PersonaVisualImportReview | None = dataclasses.field(
+        default=None, repr=False
+    )
+    dirty: bool = False
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class _CharacterSaveAuthority:
     """Editor identity allowed to reconcile one completed character save."""
 
@@ -590,6 +663,12 @@ async def _drain_to_thread(
     return await _drain_async(
         asyncio.to_thread(function, *args, **kwargs), task_name=task_name
     )
+
+
+async def _join_task(task: asyncio.Task[Any]) -> Any:
+    """Await an existing task through the shared shield-and-drain boundary."""
+
+    return await task
 
 
 class PersonasScreen(BaseAppScreen):
@@ -869,7 +948,13 @@ class PersonasScreen(BaseAppScreen):
         self._visual_identity_operation_task: asyncio.Task[Any] | None = None
         self._visual_identity_operation_event: threading.Event | None = None
         self._visual_identity_publication_inflight: bool = False
+        self._persona_visual_authoring: _PersonaVisualAuthoringState | None = None
+        self._persona_visual_generation = 0
+        self._persona_visual_operation_task: asyncio.Task[Any] | None = None
+        self._persona_visual_operation_event: threading.Event | None = None
+        self._persona_visual_publication_inflight = False
         self._profile_save_inflight: bool = False
+        self._profile_save_operation_inflight: bool = False
         # Mirrors _profile_save_inflight for the character editor: guards
         # against a re-entrant Save (double-click/Ctrl+S) while an earlier
         # save for this session is still persisting.
@@ -5811,12 +5896,15 @@ class PersonasScreen(BaseAppScreen):
         self.call_after_refresh(self._focus_editor_name)
 
     async def _begin_create_profile(self) -> None:
+        await self._discard_persona_visual_authoring_async()
+        self._persona_visual_generation += 1
         self._edit_mode = "create"
         self.state.clear_selection()
         # A new session starts unclaimed - re-arms the save-in-place dedup
         # guard (see _handle_profile_save_requested) even if the previous
         # session ended on a successful save.
         self._profile_save_inflight = False
+        self._profile_save_operation_inflight = False
         # Change-based dirty tracking: the session starts clean (see
         # _begin_create_character).
         self.query_one(PersonaProfileEditorWidget).new_persona(
@@ -6156,18 +6244,985 @@ class PersonasScreen(BaseAppScreen):
         self._edit_mode = "edit"
         # A new session starts unclaimed (see _begin_create_profile).
         self._profile_save_inflight = False
+        self._profile_save_operation_inflight = False
         # Change-based dirty tracking: the session starts clean; the editor
         # posts EditorContentChanged on the first real modification.
-        self.query_one(PersonaProfileEditorWidget).load_persona(
+        await self._discard_persona_visual_authoring_async()
+        self._persona_visual_generation += 1
+        editor = self.query_one(PersonaProfileEditorWidget)
+        editor.load_persona(
             record,
             runtime_source=self.persona_handler.current_mode(),
         )
+        visual_snapshot = self._persona_visual_snapshot(editor)
+        if visual_snapshot is not None:
+            self.run_worker(
+                self._configure_persona_visual(visual_snapshot),
+                group="personas-persona-visual-load",
+                exit_on_error=False,
+                exclusive=True,
+            )
         self._show_center("#ccp-persona-editor-view")
         inspector = self.query_one(PersonasInspectorPane)
         inspector.set_unsaved(False)
         inspector.show_validation_editing()
         self._sync_title_and_console_actions()
         self.call_after_refresh(self._focus_editor_name)
+
+    def _persona_visual_snapshot(
+        self, editor: PersonaProfileEditorWidget | None = None
+    ) -> _PersonaVisualAuthorSnapshot | None:
+        """Capture one saved local Persona editor and its persistence authority."""
+
+        if self._edit_mode != "edit" or self.persona_handler.current_mode() != "local":
+            return None
+        try:
+            editor = editor or self.query_one(PersonaProfileEditorWidget)
+            browser = editor.query_one(PersonasPersonaVisualPackWidget)
+            data = editor.collect()
+        except (QueryError, ValueError):
+            return None
+        persona_id = data.get("id")
+        persona_revision = data.get("version")
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        scope = getattr(self.app_instance, "character_persona_scope_service", None)
+        local_service = getattr(scope, "local_service", None)
+        if (
+            type(persona_id) is not str
+            or not persona_id
+            or type(persona_revision) is not int
+            or isinstance(persona_revision, bool)
+            or persona_revision < 0
+            or db is None
+            or local_service is None
+        ):
+            return None
+        return _PersonaVisualAuthorSnapshot(
+            editor_ref=weakref.ref(editor),
+            browser_ref=weakref.ref(browser),
+            db=db,
+            local_service=local_service,
+            persona_id=persona_id,
+            persona_revision=persona_revision,
+            screen_generation=self._persona_visual_generation,
+            editor_session_token=editor.persona_visual_session_token,
+        )
+
+    def _persona_visual_snapshot_is_current(
+        self, snapshot: _PersonaVisualAuthorSnapshot
+    ) -> bool:
+        """Return whether the exact local editor/browser authority still owns UI."""
+
+        editor = snapshot.editor_ref()
+        browser = snapshot.browser_ref()
+        if editor is None or browser is None or not self.is_mounted:
+            return False
+        if (
+            self._persona_visual_generation != snapshot.screen_generation
+            or self._edit_mode != "edit"
+            or self.state.active_mode != "personas"
+            or self.persona_handler.current_mode() != "local"
+            or editor.persona_visual_session_token != snapshot.editor_session_token
+        ):
+            return False
+        try:
+            current_editor = self.query_one(PersonaProfileEditorWidget)
+            current_browser = current_editor.query_one(PersonasPersonaVisualPackWidget)
+            data = current_editor.collect()
+        except (QueryError, ValueError):
+            return False
+        return (
+            current_editor is editor
+            and current_browser is browser
+            and data.get("id") == snapshot.persona_id
+            and data.get("version") == snapshot.persona_revision
+        )
+
+    @staticmethod
+    def _load_persona_visual_authoring_draft(
+        snapshot: _PersonaVisualAuthorSnapshot,
+    ) -> PersonaVisualAuthoringDraft:
+        repository = PersonaVisualRepository(snapshot.db)
+        graph = repository.get_active_persona_pack(snapshot.persona_id)
+        if graph is None:
+            return create_persona_visual_draft(
+                persona_id=snapshot.persona_id,
+                persona_revision=snapshot.persona_revision,
+                title="Persona Visual",
+            )
+        source_keys = {
+            asset.asset_key: repository._get_active_asset_storage_key(
+                graph.identity, asset
+            )
+            for asset in graph.assets
+        }
+        return persona_visual_draft_from_graph(
+            graph,
+            source_storage_keys=source_keys,
+        )
+
+    async def _configure_persona_visual(
+        self, snapshot: _PersonaVisualAuthorSnapshot
+    ) -> None:
+        """Load path-free draft metadata off-loop and mount only if still current."""
+
+        browser = snapshot.browser_ref()
+        if browser is not None:
+            browser.set_availability("loading")
+        try:
+            draft = await asyncio.to_thread(
+                self._load_persona_visual_authoring_draft, snapshot
+            )
+            inventory = inspect_persona_visual_draft(draft)
+        except Exception:
+            logger.warning(
+                "Persona Visual draft load failed (category=repository_read_failed)."
+            )
+            if self._persona_visual_snapshot_is_current(snapshot):
+                browser = snapshot.browser_ref()
+                if browser is not None:
+                    browser.set_availability("unavailable")
+            return
+        if not self._persona_visual_snapshot_is_current(snapshot):
+            return
+        state = _PersonaVisualAuthoringState(
+            snapshot=snapshot,
+            draft=draft,
+            source_root=get_user_data_dir(),
+        )
+        self._persona_visual_authoring = state
+        browser = snapshot.browser_ref()
+        if browser is not None:
+            browser.show_inventory(inventory, dirty=False)
+
+    def _persona_visual_has_unsaved_authoring(self) -> bool:
+        state = self._persona_visual_authoring
+        task = self._persona_visual_operation_task
+        return bool(
+            (state is not None and state.dirty)
+            or self._persona_visual_publication_inflight
+            or (task is not None and not task.done())
+        )
+
+    def _cleanup_persona_visual_state(
+        self, state: _PersonaVisualAuthoringState
+    ) -> None:
+        if state.workspace is not None:
+            if not cleanup_persona_visual_authoring_workspace(state.workspace):
+                logger.warning(
+                    "Persona Visual draft cleanup refused (category=cleanup_failed)."
+                )
+        if state.import_review is not None:
+            try:
+                cleanup_persona_visual_import_review(
+                    state.import_review,
+                    staging_root=get_user_data_dir() / "persona_visual" / "imports",
+                )
+            except Exception:
+                logger.warning(
+                    "Persona Visual import cleanup refused (category=cleanup_failed)."
+                )
+
+    def _discard_persona_visual_authoring(self) -> None:
+        state = self._persona_visual_authoring
+        self._persona_visual_authoring = None
+        if state is not None:
+            self._cleanup_persona_visual_state(state)
+
+    async def _discard_persona_visual_authoring_async(self) -> None:
+        state = self._persona_visual_authoring
+        self._persona_visual_authoring = None
+        if state is not None:
+            outcome = await _drain_to_thread(
+                self._cleanup_persona_visual_state,
+                state,
+                task_name="personas-persona-visual-draft-cleanup",
+            )
+            if outcome.error is not None:
+                logger.warning(
+                    "Persona Visual draft cleanup failed (category=cleanup_failed)."
+                )
+            if outcome.cancellation is not None:
+                raise outcome.cancellation
+
+    def _begin_persona_visual_operation(
+        self, snapshot: _PersonaVisualAuthorSnapshot
+    ) -> tuple[asyncio.Task[Any], threading.Event] | None:
+        current = asyncio.current_task()
+        if (
+            current is None
+            or self._profile_save_operation_inflight
+            or self._persona_visual_publication_inflight
+            or not self._persona_visual_snapshot_is_current(snapshot)
+        ):
+            if self._profile_save_operation_inflight:
+                self._notify(
+                    "Wait for Persona Save to finish before editing visuals.",
+                    "warning",
+                )
+            return None
+        active = self._persona_visual_operation_task
+        if active is not None and not active.done():
+            return None
+        event = threading.Event()
+        self._persona_visual_operation_task = current
+        self._persona_visual_operation_event = event
+        return current, event
+
+    def _finish_persona_visual_operation(
+        self, task: asyncio.Task[Any], browser: PersonasPersonaVisualPackWidget | None
+    ) -> None:
+        if self._persona_visual_operation_task is task:
+            self._persona_visual_operation_task = None
+            self._persona_visual_operation_event = None
+        if browser is not None and browser.parent is not None:
+            browser.set_busy(None)
+
+    async def _drain_persona_visual_authoring(self) -> None:
+        event = self._persona_visual_operation_event
+        task = self._persona_visual_operation_task
+        cancellation: asyncio.CancelledError | None = None
+        if event is not None:
+            event.set()
+        if task is not None and task is not asyncio.current_task() and not task.done():
+            outcome = await _drain_async(
+                _join_task(task), task_name="personas-persona-visual-operation-drain"
+            )
+            cancellation = outcome.cancellation
+        await self._discard_persona_visual_authoring_async()
+        if cancellation is not None:
+            raise cancellation
+
+    def _show_persona_visual_state(self, state: _PersonaVisualAuthoringState) -> bool:
+        if (
+            self._persona_visual_authoring is not state
+            or not self._persona_visual_snapshot_is_current(state.snapshot)
+        ):
+            return False
+        browser = state.snapshot.browser_ref()
+        if browser is None:
+            return False
+        browser.show_inventory(
+            inspect_persona_visual_draft(state.draft),
+            dirty=state.dirty,
+        )
+        return True
+
+    @staticmethod
+    def _prepare_persona_visual_workspace(
+        state: _PersonaVisualAuthoringState,
+        profile_root: Path,
+    ) -> tuple[PersonaVisualAuthoringWorkspace, PersonaVisualAuthoringDraft]:
+        workspace = create_persona_visual_authoring_workspace(profile_root)
+        if not state.draft.assets:
+            return workspace, state.draft
+        return adopt_persona_visual_draft_sources(
+            workspace,
+            state.draft,
+            source_root=state.source_root,
+        )
+
+    async def _stage_persona_visual_clear(self, state_key: str) -> bool:
+        state = self._persona_visual_authoring
+        if state is None:
+            return False
+        admission = self._begin_persona_visual_operation(state.snapshot)
+        if admission is None:
+            return False
+        task, event = admission
+        browser = state.snapshot.browser_ref()
+        try:
+            if browser is not None:
+                browser.set_busy("preparing")
+            draft = clear_persona_visual_draft_state(state.draft, state=state_key)
+            if event.is_set() or not self._persona_visual_snapshot_is_current(
+                state.snapshot
+            ):
+                return False
+            state.draft = draft
+            state.dirty = True
+            return self._show_persona_visual_state(state)
+        except Exception:
+            self._notify("Persona Visual draft could not be changed.", "error")
+            return False
+        finally:
+            self._finish_persona_visual_operation(task, browser)
+
+    async def _stage_persona_visual_custom(
+        self, state_key: str, label: str, kind: str
+    ) -> bool:
+        state = self._persona_visual_authoring
+        if state is None:
+            return False
+        admission = self._begin_persona_visual_operation(state.snapshot)
+        if admission is None:
+            return False
+        task, event = admission
+        browser = state.snapshot.browser_ref()
+        try:
+            if browser is not None:
+                browser.set_busy("preparing")
+            draft = add_persona_visual_custom_state(
+                state.draft,
+                state=state_key,
+                label=label,
+                kind=kind,
+            )
+            if event.is_set() or not self._persona_visual_snapshot_is_current(
+                state.snapshot
+            ):
+                return False
+            state.draft = draft
+            state.dirty = True
+            return self._show_persona_visual_state(state)
+        except Exception:
+            self._notify("Custom Persona Visual state is invalid.", "error")
+            return False
+        finally:
+            self._finish_persona_visual_operation(task, browser)
+
+    async def _stage_persona_visual_replacement(
+        self, state_key: str, data: bytes
+    ) -> bool:
+        state = self._persona_visual_authoring
+        if state is None:
+            return False
+        admission = self._begin_persona_visual_operation(state.snapshot)
+        if admission is None:
+            return False
+        task, event = admission
+        browser = state.snapshot.browser_ref()
+        profile_root = get_user_data_dir()
+        cancellation: asyncio.CancelledError | None = None
+        pending_workspace: PersonaVisualAuthoringWorkspace | None = None
+        try:
+            if browser is not None:
+                browser.set_busy("preparing")
+            preparation = await _drain_to_thread(
+                self._prepare_persona_visual_workspace,
+                state,
+                profile_root,
+                task_name="personas-persona-visual-workspace-prepare",
+            )
+            cancellation = preparation.cancellation
+            if preparation.error is not None:
+                raise preparation.error
+            if not preparation.completed or not isinstance(preparation.value, tuple):
+                return False
+            workspace, draft = preparation.value
+            pending_workspace = workspace
+            if (
+                cancellation is not None
+                or event.is_set()
+                or not self._persona_visual_snapshot_is_current(state.snapshot)
+            ):
+                cleanup = await _drain_to_thread(
+                    cleanup_persona_visual_authoring_workspace,
+                    workspace,
+                    task_name="personas-persona-visual-workspace-cleanup",
+                )
+                cancellation = cancellation or cleanup.cancellation
+                pending_workspace = None
+                return False
+            staging = await _drain_to_thread(
+                stage_persona_visual_authoring_asset,
+                workspace,
+                data,
+                state=state_key,
+                task_name="personas-persona-visual-asset-stage",
+            )
+            cancellation = cancellation or staging.cancellation
+            if staging.error is not None:
+                raise staging.error
+            if not staging.completed or not isinstance(staging.value, tuple):
+                return False
+            workspace, asset = staging.value
+            draft = replace_persona_visual_draft_state(
+                draft,
+                state=state_key,
+                asset=asset,
+            )
+            if (
+                cancellation is not None
+                or event.is_set()
+                or not self._persona_visual_snapshot_is_current(state.snapshot)
+            ):
+                cleanup = await _drain_to_thread(
+                    cleanup_persona_visual_authoring_workspace,
+                    workspace,
+                    task_name="personas-persona-visual-workspace-cleanup",
+                )
+                cancellation = cancellation or cleanup.cancellation
+                pending_workspace = None
+                return False
+            old_workspace = state.workspace
+            old_review = state.import_review
+            state.workspace = workspace
+            pending_workspace = None
+            state.import_review = None
+            state.source_root = profile_root
+            state.draft = draft
+            state.dirty = True
+            if old_workspace is not None:
+                cleanup = await _drain_to_thread(
+                    cleanup_persona_visual_authoring_workspace,
+                    old_workspace,
+                    task_name="personas-persona-visual-old-workspace-cleanup",
+                )
+                cancellation = cancellation or cleanup.cancellation
+            if old_review is not None:
+                cleanup = await _drain_to_thread(
+                    cleanup_persona_visual_import_review,
+                    old_review,
+                    staging_root=profile_root / "persona_visual" / "imports",
+                    task_name="personas-persona-visual-old-import-cleanup",
+                )
+                cancellation = cancellation or cleanup.cancellation
+                if cleanup.error is not None:
+                    logger.warning(
+                        "Persona Visual import cleanup refused "
+                        "(category=cleanup_failed)."
+                    )
+            return self._show_persona_visual_state(state)
+        except Exception:
+            logger.warning(
+                "Persona Visual replacement failed (category=image_invalid)."
+            )
+            self._notify(
+                "Persona Visual replacement failed. Choose another image.", "error"
+            )
+            return False
+        finally:
+            if pending_workspace is not None:
+                cleanup = await _drain_to_thread(
+                    cleanup_persona_visual_authoring_workspace,
+                    pending_workspace,
+                    task_name="personas-persona-visual-failed-workspace-cleanup",
+                )
+                cancellation = cancellation or cleanup.cancellation
+                if cleanup.error is not None or cleanup.value is not True:
+                    logger.warning(
+                        "Persona Visual workspace cleanup refused "
+                        "(category=cleanup_failed)."
+                    )
+            self._finish_persona_visual_operation(task, browser)
+            if cancellation is not None:
+                raise cancellation
+
+    async def _preview_persona_visual_state(self, state_key: str) -> bool:
+        state = self._persona_visual_authoring
+        if state is None:
+            return False
+        admission = self._begin_persona_visual_operation(state.snapshot)
+        if admission is None:
+            return False
+        task, event = admission
+        browser = state.snapshot.browser_ref()
+        cancellation: asyncio.CancelledError | None = None
+        try:
+            if browser is not None:
+                browser.set_busy("previewing")
+            inventory = inspect_persona_visual_draft(state.draft)
+            row = next(
+                (item for item in inventory.rows if item.state == state_key), None
+            )
+            if row is None or row.asset_key is None:
+                if browser is not None:
+                    browser.set_preview_unavailable(state=state_key)
+                return False
+            asset = next(
+                item
+                for item in state.draft.assets
+                if item.metadata.asset_key == row.asset_key
+            )
+            loading = await _drain_to_thread(
+                load_persona_visual_asset,
+                state.source_root,
+                storage_key=asset.source_storage_key,
+                metadata=asset.metadata,
+                selected_frame=0,
+                task_name="personas-persona-visual-preview-load",
+            )
+            cancellation = loading.cancellation
+            if loading.error is not None:
+                raise loading.error
+            if not loading.completed:
+                return False
+            loaded = loading.value
+            if (
+                cancellation is not None
+                or event.is_set()
+                or not self._persona_visual_snapshot_is_current(state.snapshot)
+            ):
+                return False
+            from ...Chat.console_image_view import ConsoleImageRenderCache
+
+            if getattr(self, "_avatar_render_cache", None) is None:
+                self._avatar_render_cache = ConsoleImageRenderCache()
+            cache = self._avatar_render_cache
+            cache_key = (
+                f"persona-visual-{state.snapshot.persona_id}-"
+                f"{state.draft.revision}-{state_key}"
+            )
+            preparation = await _drain_to_thread(
+                cache.prepare,
+                cache_key,
+                loaded.data,
+                task_name="personas-persona-visual-preview-prepare",
+            )
+            cancellation = cancellation or preparation.cancellation
+            if preparation.error is not None:
+                raise preparation.error
+            ok = bool(preparation.value) if preparation.completed else False
+            if (
+                not ok
+                or cancellation is not None
+                or event.is_set()
+                or not self._persona_visual_snapshot_is_current(state.snapshot)
+            ):
+                if browser is not None:
+                    browser.set_preview_unavailable(state=state_key)
+                return False
+            renderable = self._build_avatar_pixels(cache, cache_key)
+            if browser is None or renderable is None:
+                return False
+            browser.set_preview(renderable, state=state_key)
+            return True
+        except Exception:
+            if browser is not None and self._persona_visual_snapshot_is_current(
+                state.snapshot
+            ):
+                browser.set_preview_unavailable(state=state_key)
+            return False
+        finally:
+            self._finish_persona_visual_operation(task, browser)
+            if cancellation is not None:
+                raise cancellation
+
+    async def _import_persona_visual_from_path(self, path: str) -> bool:
+        state = self._persona_visual_authoring
+        if state is None or Path(path).suffix.lower() != ".tldw-persona-vpack":
+            if state is not None:
+                self._notify("Choose a Persona Visual pack file.", "warning")
+            return False
+        admission = self._begin_persona_visual_operation(state.snapshot)
+        if admission is None:
+            return False
+        task, event = admission
+        browser = state.snapshot.browser_ref()
+        profile_root = get_user_data_dir()
+        staging_root = profile_root / "persona_visual" / "imports"
+        cancellation: asyncio.CancelledError | None = None
+
+        async def cleanup_review(review: PersonaVisualImportReview) -> None:
+            nonlocal cancellation
+            cleanup = await _drain_to_thread(
+                cleanup_persona_visual_import_review,
+                review,
+                staging_root=staging_root,
+                task_name="personas-persona-visual-import-cleanup",
+            )
+            cancellation = cancellation or cleanup.cancellation
+            if cleanup.error is not None:
+                logger.warning(
+                    "Persona Visual import cleanup refused (category=cleanup_failed)."
+                )
+
+        try:
+            if browser is not None:
+                browser.set_busy("importing")
+            outcome = await _drain_to_thread(
+                import_persona_visual_pack,
+                path,
+                staging_root=staging_root,
+                persona_id=state.snapshot.persona_id,
+                persona_revision=state.snapshot.persona_revision,
+                expected_identity=state.draft.expected_identity,
+                cancel_event=event,
+                task_name="personas-persona-visual-import",
+            )
+            cancellation = outcome.cancellation
+            if outcome.error is not None or not isinstance(
+                outcome.value, PersonaVisualImportReview
+            ):
+                category = (
+                    outcome.error.category
+                    if isinstance(outcome.error, PersonaVisualImportError)
+                    else "persona_visual_import_failed"
+                )
+                self._notify(f"Persona Visual import failed ({category}).", "error")
+                return False
+            review = outcome.value
+            if (
+                cancellation is not None
+                or event.is_set()
+                or not outcome.completed
+                or not self._persona_visual_snapshot_is_current(state.snapshot)
+            ):
+                await cleanup_review(review)
+                return False
+            source = await _drain_to_thread(
+                persona_visual_import_source_root,
+                review,
+                staging_root=staging_root,
+                task_name="personas-persona-visual-import-source",
+            )
+            cancellation = cancellation or source.cancellation
+            if source.error is not None or not source.completed:
+                await cleanup_review(review)
+                return False
+            source_root = source.value
+            if (
+                cancellation is not None
+                or event.is_set()
+                or not self._persona_visual_snapshot_is_current(state.snapshot)
+            ):
+                await cleanup_review(review)
+                return False
+            old_workspace = state.workspace
+            old_review = state.import_review
+            state.workspace = None
+            state.import_review = review
+            state.source_root = source_root
+            state.draft = review.draft
+            state.dirty = True
+            if old_workspace is not None:
+                cleanup = await _drain_to_thread(
+                    cleanup_persona_visual_authoring_workspace,
+                    old_workspace,
+                    task_name="personas-persona-visual-old-workspace-cleanup",
+                )
+                cancellation = cancellation or cleanup.cancellation
+            if old_review is not None:
+                await cleanup_review(old_review)
+            return self._show_persona_visual_state(state)
+        finally:
+            self._finish_persona_visual_operation(task, browser)
+            if cancellation is not None:
+                raise cancellation
+
+    def _persona_visual_authority_guard(
+        self, snapshot: _PersonaVisualAuthorSnapshot
+    ) -> bool:
+        """Re-read exact local Persona eligibility for publication."""
+
+        try:
+            record = snapshot.local_service.get_persona_profile(snapshot.persona_id)
+        except Exception:
+            return False
+        return bool(
+            isinstance(record, Mapping)
+            and str(record.get("id") or "") == snapshot.persona_id
+            and type(record.get("version")) is int
+            and record.get("version") == snapshot.persona_revision
+            and not bool(record.get("deleted", False))
+            and bool(record.get("is_active", True))
+        )
+
+    async def _invalidate_persona_visual_publication(
+        self, result: PersonaVisualPublicationResult
+    ) -> None:
+        """Invalidate only exact old/new Persona identities in mounted consumers."""
+
+        identities = tuple(
+            identity
+            for identity in (result.old_identity, result.new_identity)
+            if isinstance(identity, PersonaVisualIdentity)
+        )
+        for screen in tuple(getattr(self.app, "screen_stack", ())):
+            session = getattr(screen, "_session", None)
+            invalidate = getattr(session, "invalidate_persona_visual_identities", None)
+            if not callable(invalidate):
+                continue
+            try:
+                response = invalidate(result.new_identity.persona_id, identities)
+                if asyncio.iscoroutine(response):
+                    await response
+            except Exception:
+                logger.warning(
+                    "Persona Visual invalidation failed "
+                    "(category=cache_invalidation_failed)."
+                )
+
+    async def _save_persona_visual_pack(self) -> bool:
+        state = self._persona_visual_authoring
+        if state is None or not state.dirty:
+            return False
+        admission = self._begin_persona_visual_operation(state.snapshot)
+        if admission is None:
+            return False
+        task, _event = admission
+        browser = state.snapshot.browser_ref()
+        profile_root = get_user_data_dir()
+        cancellation: asyncio.CancelledError | None = None
+        published = False
+        try:
+            if browser is not None:
+                browser.set_busy("saving")
+            self._persona_visual_publication_inflight = True
+            try:
+                publication = persona_visual_draft_publication_snapshot(state.draft)
+            except Exception:
+                self._notify("Persona Visual draft is incomplete.", "warning")
+                return False
+            outcome = await _drain_to_thread(
+                publish_persona_visual,
+                PersonaVisualRepository(state.snapshot.db),
+                publication,
+                source_root=state.source_root,
+                profile_root=profile_root,
+                authority_guard=lambda: self._persona_visual_authority_guard(
+                    state.snapshot
+                ),
+                task_name="personas-persona-visual-publish",
+            )
+            cancellation = outcome.cancellation
+            if isinstance(outcome.error, PersonaVisualPublicationError):
+                cleanup_candidate = outcome.error.cleanup_candidate
+                if cleanup_candidate is not None:
+                    cleanup = await _drain_to_thread(
+                        cleanup_persona_visual_publication_candidate,
+                        PersonaVisualRepository(state.snapshot.db),
+                        cleanup_candidate,
+                        profile_root=profile_root,
+                        task_name="personas-persona-visual-cleanup",
+                    )
+                    cancellation = cancellation or cleanup.cancellation
+                if self._persona_visual_snapshot_is_current(state.snapshot):
+                    self._notify(
+                        f"Persona Visual pack was not saved ({outcome.error.category}).",
+                        "error",
+                    )
+                return False
+            if outcome.error is not None:
+                logger.warning(
+                    "Persona Visual publication failed (category=publication_failed)."
+                )
+                if self._persona_visual_snapshot_is_current(state.snapshot):
+                    self._notify("Persona Visual pack was not saved.", "error")
+                return False
+            if not outcome.completed or not isinstance(
+                outcome.value, PersonaVisualPublicationResult
+            ):
+                return False
+            result = outcome.value
+            published = True
+            self._persona_visual_authoring = None
+
+            async def reconcile() -> None:
+                await self._invalidate_persona_visual_publication(result)
+                if self._persona_visual_snapshot_is_current(state.snapshot):
+                    await self._configure_persona_visual(state.snapshot)
+
+            reconciliation = await _drain_async(
+                reconcile(), task_name="personas-persona-visual-reconcile"
+            )
+            cancellation = cancellation or reconciliation.cancellation
+            if reconciliation.error is not None:
+                logger.warning(
+                    "Persona Visual publication committed but refresh failed "
+                    "(category=refresh_failed)."
+                )
+                self._notify(
+                    "Persona Visual pack saved, but the editor could not refresh.",
+                    "warning",
+                )
+            else:
+                self._notify("Persona Visual pack saved.", "information")
+            return True
+        finally:
+            self._persona_visual_publication_inflight = False
+            if published:
+                cleanup = await _drain_to_thread(
+                    self._cleanup_persona_visual_state,
+                    state,
+                    task_name="personas-persona-visual-source-cleanup",
+                )
+                cancellation = cancellation or cleanup.cancellation
+                if cleanup.error is not None:
+                    logger.warning(
+                        "Persona Visual source cleanup failed "
+                        "(category=cleanup_failed)."
+                    )
+            self._finish_persona_visual_operation(task, browser)
+            if cancellation is not None:
+                raise cancellation
+
+    async def _cancel_persona_visual_authoring(self) -> None:
+        event = self._persona_visual_operation_event
+        task = self._persona_visual_operation_task
+        cancellation: asyncio.CancelledError | None = None
+        if self._persona_visual_publication_inflight:
+            return
+        if event is not None:
+            event.set()
+        if task is not None and task is not asyncio.current_task() and not task.done():
+            outcome = await _drain_async(
+                _join_task(task), task_name="personas-persona-visual-cancel-drain"
+            )
+            cancellation = outcome.cancellation
+        state = self._persona_visual_authoring
+        snapshot = state.snapshot if state is not None else None
+        await self._discard_persona_visual_authoring_async()
+        if snapshot is not None and self._persona_visual_snapshot_is_current(snapshot):
+            await self._configure_persona_visual(snapshot)
+        if cancellation is not None:
+            raise cancellation
+
+    @on(PersonaVisualPreviewRequested)
+    def _handle_persona_visual_preview_requested(
+        self, message: PersonaVisualPreviewRequested
+    ) -> None:
+        message.stop()
+        self.run_worker(
+            self._preview_persona_visual_state(message.state),
+            group="personas-persona-visual-preview",
+            exit_on_error=False,
+        )
+
+    @on(PersonaVisualClearRequested)
+    def _handle_persona_visual_clear_requested(
+        self, message: PersonaVisualClearRequested
+    ) -> None:
+        message.stop()
+        self.run_worker(
+            self._stage_persona_visual_clear(message.state),
+            group="personas-persona-visual-authoring",
+            exit_on_error=False,
+        )
+
+    @on(PersonaVisualReplaceRequested)
+    def _handle_persona_visual_replace_requested(
+        self, message: PersonaVisualReplaceRequested
+    ) -> None:
+        message.stop()
+        if self._io_dialog_active:
+            return
+        self._io_dialog_active = True
+        self.run_worker(
+            self._persona_visual_replace_dialog(message.state),
+            group="personas-io",
+            exit_on_error=False,
+        )
+
+    async def _persona_visual_replace_dialog(self, state_key: str) -> None:
+        from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
+
+        try:
+            path = await self.app.push_screen_wait(
+                EnhancedFileOpen(
+                    title=f"Replace {state_key} Persona Visual",
+                    filters=Filters(
+                        (
+                            "Image Files",
+                            lambda value: (
+                                value.suffix.lower()
+                                in {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+                            ),
+                        )
+                    ),
+                    context="persona_visual_replacement",
+                )
+            )
+            if not path:
+                return
+            try:
+                data = await asyncio.to_thread(self._read_avatar_image_bytes, str(path))
+            except (OSError, ValueError) as exc:
+                logger.warning(
+                    "Persona Visual replacement read failed "
+                    "(category=image_read_failed, error_type={}).",
+                    type(exc).__name__,
+                )
+                self._notify(
+                    "Persona Visual replacement failed. Choose another image.",
+                    "error",
+                )
+                return
+            await self._stage_persona_visual_replacement(state_key, data)
+        finally:
+            self._io_dialog_active = False
+
+    @on(PersonaVisualAddCustomRequested)
+    def _handle_persona_visual_add_custom_requested(
+        self, message: PersonaVisualAddCustomRequested
+    ) -> None:
+        message.stop()
+        if self._io_dialog_active:
+            return
+        self._io_dialog_active = True
+        self.run_worker(
+            self._persona_visual_custom_dialog(),
+            group="personas-io",
+            exit_on_error=False,
+        )
+
+    async def _persona_visual_custom_dialog(self) -> None:
+        try:
+            result = await self.app.push_screen_wait(PersonaVisualCustomStateDialog())
+            if result is None:
+                return
+            state_key, label, kind = result
+            await self._stage_persona_visual_custom(state_key, label, kind)
+        finally:
+            self._io_dialog_active = False
+
+    @on(PersonaVisualImportRequested)
+    def _handle_persona_visual_import_requested(
+        self, message: PersonaVisualImportRequested
+    ) -> None:
+        message.stop()
+        if self._io_dialog_active:
+            return
+        self._io_dialog_active = True
+        self.run_worker(
+            self._persona_visual_import_dialog(),
+            group="personas-io",
+            exit_on_error=False,
+        )
+
+    async def _persona_visual_import_dialog(self) -> None:
+        from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
+
+        try:
+            path = await self.app.push_screen_wait(
+                EnhancedFileOpen(
+                    title="Import Persona Visual Pack (.tldw-persona-vpack)",
+                    filters=Filters(
+                        (
+                            "Persona Visual Packs",
+                            lambda value: value.suffix.lower() == ".tldw-persona-vpack",
+                        )
+                    ),
+                    context="persona_visual_pack_import",
+                )
+            )
+            if path:
+                await self._import_persona_visual_from_path(str(path))
+        finally:
+            self._io_dialog_active = False
+
+    @on(PersonaVisualSaveRequested)
+    def _handle_persona_visual_save_requested(
+        self, message: PersonaVisualSaveRequested
+    ) -> None:
+        message.stop()
+        self.run_worker(
+            self._save_persona_visual_pack(),
+            group="personas-persona-visual-save",
+            exit_on_error=False,
+        )
+
+    @on(PersonaVisualCancelRequested)
+    def _handle_persona_visual_cancel_requested(
+        self, message: PersonaVisualCancelRequested
+    ) -> None:
+        message.stop()
+        self.run_worker(
+            self._cancel_persona_visual_authoring(),
+            group="personas-persona-visual-cancel",
+            exit_on_error=False,
+        )
 
     @on(EditCharacterRequested)
     def _handle_edit_requested(self, message: EditCharacterRequested) -> None:
@@ -9110,11 +10165,11 @@ class PersonasScreen(BaseAppScreen):
             if not self._local_character_actions_allowed():
                 return
             picker = EnhancedFileOpen(
-                title="Import Expression Set (.zip / .tldw-persona-vpack)",
+                title="Import Expression Set (.zip)",
                 filters=Filters(
                     (
                         "Archives",
-                        lambda p: p.suffix.lower() in (".zip", ".tldw-persona-vpack"),
+                        lambda p: p.suffix.lower() == ".zip",
                     ),
                 ),
                 context="character_expression_set_import",
@@ -9138,8 +10193,7 @@ class PersonasScreen(BaseAppScreen):
     async def _import_expression_set_from_path(
         self, character_id: int, path: str
     ) -> None:
-        """Resolve an archive at ``path`` (.zip or .tldw-persona-vpack --
-        format auto-detected by content) into an expression set and apply it.
+        """Resolve an expression-set ``.zip`` at ``path`` and apply it.
 
         Dialog-free (directly testable): the path is validated at this
         screen boundary (the pure ``expression_set_io`` module never imports
@@ -11099,14 +12153,15 @@ class PersonasScreen(BaseAppScreen):
         truth), so the screen only clears the inspector summary here.
         """
         message.stop()
-        if self._profile_save_inflight:
-            # Save-in-place keeps ``_edit_mode`` at "edit" after a successful
-            # save (it no longer flips back to "view"), so this flag is now
-            # the sole guard against a stale duplicate: it is claimed here
-            # and, on success, stays claimed until a genuinely NEW edit
-            # (_handle_editor_content_changed) or a new session
-            # (_begin_create_profile / edit-load) re-arms it. A failed save
-            # clears it immediately below so the user can retry at once.
+        if self._persona_visual_has_unsaved_authoring():
+            self._notify(
+                "Save or Cancel Persona Visual changes before saving the Persona.",
+                "warning",
+            )
+            return
+        if self._profile_save_inflight or self._profile_save_operation_inflight:
+            # Serialize the complete persistence and reconciliation interval;
+            # a later visual operation is admitted only after this releases.
             logger.debug(
                 "Persona save already in flight or already fulfilled for this "
                 "baseline; ignoring duplicate request."
@@ -11126,6 +12181,7 @@ class PersonasScreen(BaseAppScreen):
             self._notify("Save failed: personas are unavailable.", "error")
             return
         self._profile_save_inflight = True
+        self._profile_save_operation_inflight = True
         # mode/persona_id are read INSIDE the try (rather than before it) so
         # a raise from either (e.g. current_mode()) is caught below, which
         # resets the inflight flag; reading them ahead of the try would let
@@ -11185,6 +12241,7 @@ class PersonasScreen(BaseAppScreen):
             # Allow an immediate retry - only a real DB round trip (or a
             # fresh edit) may claim this flag again.
             self._profile_save_inflight = False
+            self._profile_save_operation_inflight = False
             return
         if hasattr(result, "model_dump"):
             result = result.model_dump(mode="json")
@@ -11193,7 +12250,10 @@ class PersonasScreen(BaseAppScreen):
             result = dict(data)
         saved = dict(result)
         saved.setdefault("id", persona_id)
-        await self._after_profile_save(saved)
+        try:
+            await self._after_profile_save(saved)
+        finally:
+            self._profile_save_operation_inflight = False
 
     async def _after_profile_save(self, saved: dict) -> None:
         # Refresh the cached profile list tolerantly even when the user has
@@ -11236,6 +12296,16 @@ class PersonasScreen(BaseAppScreen):
         # cache and must go back to the DB).
         editor = self.query_one(PersonaProfileEditorWidget)
         editor.mark_saved(saved)
+        await self._discard_persona_visual_authoring_async()
+        self._persona_visual_generation += 1
+        visual_snapshot = self._persona_visual_snapshot(editor)
+        if visual_snapshot is not None:
+            self.run_worker(
+                self._configure_persona_visual(visual_snapshot),
+                group="personas-persona-visual-load",
+                exit_on_error=False,
+                exclusive=True,
+            )
         self._show_center("#ccp-persona-editor-view")
         self._sync_title_and_console_actions()
         self._notify("Persona saved.", "information")
@@ -11282,6 +12352,8 @@ class PersonasScreen(BaseAppScreen):
         await self._run_guarded(_finish)
 
     def _finish_cancel_profile_edit(self) -> None:
+        self._discard_persona_visual_authoring()
+        self._persona_visual_generation += 1
         self._edit_mode = "view"
         self.state.has_unsaved_changes = False
         inspector = self.query_one(PersonasInspectorPane)
@@ -11412,6 +12484,7 @@ class PersonasScreen(BaseAppScreen):
         if not (
             self.state.has_unsaved_changes
             or self._visual_identity_has_unsaved_authoring()
+            or self._persona_visual_has_unsaved_authoring()
         ):
             await continuation()
             # Guarded continuations are exactly the transitions that change
@@ -11434,6 +12507,7 @@ class PersonasScreen(BaseAppScreen):
             # (the continuation may move the selection without a row rebuild).
             self._set_active_row_unsaved(False)
             await self._drain_visual_identity_authoring()
+            await self._drain_persona_visual_authoring()
             await continuation()
             self._sync_title_and_console_actions()
         finally:
@@ -11449,6 +12523,7 @@ class PersonasScreen(BaseAppScreen):
         if not (
             self.state.has_unsaved_changes
             or self._visual_identity_has_unsaved_authoring()
+            or self._persona_visual_has_unsaved_authoring()
         ):
             return True
         dialog = UnsavedChangesDialog(
