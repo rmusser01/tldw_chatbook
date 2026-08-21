@@ -8260,6 +8260,19 @@ class TldwCli(
     # wedged one costs a few seconds instead of the session.
     NAVIGATION_FLUSH_TIMEOUT_SECONDS: float = 5.0
 
+    async def reconcile_persona_buddy_view(self) -> None:
+        """Reconcile Buddy only on the active ordinary application screen."""
+
+        from .UI.Navigation.base_app_screen import BaseAppScreen
+
+        try:
+            screen = self.screen
+        except Exception:
+            return
+        if not isinstance(screen, BaseAppScreen) or not screen.is_active:
+            return
+        await screen.reconcile_persona_buddy_view()
+
     def _create_navigation_screen(self, screen_name: str, screen_class: type):
         """Build a FRESH screen instance for every navigation.
 

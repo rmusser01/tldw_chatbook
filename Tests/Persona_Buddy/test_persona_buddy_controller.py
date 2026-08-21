@@ -7,7 +7,11 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from tldw_chatbook.Persona_Buddy.controller import PersonaBuddyController
-from tldw_chatbook.Persona_Buddy.preferences import PersonaBuddySelection
+from tldw_chatbook.Persona_Buddy.preferences import (
+    PersonaBuddyGeometry,
+    PersonaBuddyPreferences,
+    PersonaBuddySelection,
+)
 
 
 def test_priority_is_exact_for_overlapping_sources() -> None:
@@ -208,6 +212,19 @@ def test_selection_never_changes_from_observed_persona() -> None:
         == selected_generation
     )
     assert controller.snapshot().selection == PersonaBuddySelection("local", "p-1")
+
+
+def test_current_preferences_returns_exact_immutable_snapshot() -> None:
+    preferences = PersonaBuddyPreferences(
+        enabled=True,
+        selection=PersonaBuddySelection("local", "p-1"),
+        collapsed=True,
+        geometry=PersonaBuddyGeometry(x=7, y=3, width=31, height=14),
+    )
+    controller = PersonaBuddyController(preferences=preferences)
+
+    assert controller.current_preferences() is preferences
+    assert controller.current_preferences() == preferences
 
 
 @pytest.mark.parametrize("contract_name", ("lease_token", "snapshot"))

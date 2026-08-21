@@ -3607,6 +3607,22 @@ def test_screen_lifecycle_methods():
 
 
 @pytest.mark.asyncio
+async def test_persona_buddy_app_reconcile_excludes_modal_screen():
+    """An active modal never becomes a Buddy mount target."""
+
+    from textual.screen import ModalScreen
+
+    from tldw_chatbook.app import TldwCli
+
+    class Modal(ModalScreen):
+        async def reconcile_persona_buddy_view(self) -> None:
+            raise AssertionError("modal must never receive Buddy reconciliation")
+
+    host = type("BuddyReconcileHost", (), {"screen": Modal()})()
+    await TldwCli.reconcile_persona_buddy_view(host)
+
+
+@pytest.mark.asyncio
 async def test_main_navigation_copy_and_order():
     expected_button_order = [
         ("nav-home", "\u23031 Home"),

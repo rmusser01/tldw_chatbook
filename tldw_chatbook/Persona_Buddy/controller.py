@@ -406,6 +406,12 @@ class PersonaBuddyController:
                 visual=self._visual,
             )
 
+    def current_preferences(self) -> PersonaBuddyPreferences:
+        """Return the exact immutable preference snapshot under the state lock."""
+
+        with self._lock:
+            return self._preferences
+
     def select_local_persona(self, persona_id: str) -> int:
         """Explicitly replace the selected local Persona and return generation."""
 

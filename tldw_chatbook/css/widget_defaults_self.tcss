@@ -1125,6 +1125,102 @@
         margin-top: 1;
     }
 
+/* ===== WIDGET: PersonaBuddyWidget (Widgets/Persona_Widgets/persona_buddy_widget.py) ===== */
+
+    PersonaBuddyWidget {
+        position: absolute;
+        overlay: screen;
+        layer: overlay;
+        width: 28;
+        height: 12;
+        min-width: 1;
+        min-height: 1;
+        padding: 0 1;
+        background: $panel;
+        color: $text;
+        border: round $accent;
+        overflow: hidden hidden;
+    }
+
+    PersonaBuddyWidget:focus {
+        outline: heavy $accent;
+    }
+
+    PersonaBuddyWidget #persona-buddy-header {
+        width: 100%;
+        height: 3;
+        layout: horizontal;
+        background: $surface;
+    }
+
+    PersonaBuddyWidget #persona-buddy-title {
+        width: 1fr;
+        height: 3;
+        padding: 1 0 0 1;
+        color: $text;
+        text-style: bold;
+    }
+
+    PersonaBuddyWidget .persona-buddy-control {
+        width: auto;
+        min-width: 7;
+        height: 3;
+        padding: 0 1;
+        margin: 0;
+        border: none;
+        background: $surface-darken-1;
+        color: $text-muted;
+    }
+
+    PersonaBuddyWidget .persona-buddy-control:focus {
+        outline: heavy $accent;
+        color: $text;
+    }
+
+    PersonaBuddyWidget #persona-buddy-frame {
+        width: 100%;
+        height: 1fr;
+        content-align: center middle;
+        color: $text;
+    }
+
+    PersonaBuddyWidget #persona-buddy-status,
+    PersonaBuddyWidget #persona-buddy-hints {
+        width: 100%;
+        height: 1;
+        color: $text-muted;
+        text-align: center;
+    }
+
+    PersonaBuddyWidget.persona-buddy-collapsed,
+    PersonaBuddyWidget.persona-buddy-compact {
+        height: 3;
+        padding: 0;
+    }
+
+    PersonaBuddyWidget.persona-buddy-collapsed #persona-buddy-frame,
+    PersonaBuddyWidget.persona-buddy-collapsed #persona-buddy-status,
+    PersonaBuddyWidget.persona-buddy-collapsed #persona-buddy-hints,
+    PersonaBuddyWidget.persona-buddy-compact #persona-buddy-frame,
+    PersonaBuddyWidget.persona-buddy-compact #persona-buddy-status,
+    PersonaBuddyWidget.persona-buddy-compact #persona-buddy-hints,
+    PersonaBuddyWidget.persona-buddy-collapsed .persona-buddy-control,
+    PersonaBuddyWidget.persona-buddy-compact .persona-buddy-control {
+        display: none;
+    }
+
+    PersonaBuddyWidget.persona-buddy-collapsed #persona-buddy-header,
+    PersonaBuddyWidget.persona-buddy-compact #persona-buddy-header,
+    PersonaBuddyWidget.persona-buddy-collapsed #persona-buddy-title,
+    PersonaBuddyWidget.persona-buddy-compact #persona-buddy-title {
+        height: 1;
+        width: 100%;
+        padding: 0;
+        content-align: center middle;
+        text-align: center;
+    }
+    
+
 /* ===== WIDGET: PersonaProfileCardWidget (Widgets/Persona_Widgets/persona_profile_card_widget.py) ===== */
 
     PersonaProfileCardWidget {
@@ -1919,7 +2015,6 @@
         width: 1fr;
         min-width: 0;
     }
-
 /* ===== WIDGET: PersonasPersonaVisualPackWidget (Widgets/Persona_Widgets/personas_persona_visual_pack_widget.py) ===== */
 
     PersonasPersonaVisualPackWidget {
