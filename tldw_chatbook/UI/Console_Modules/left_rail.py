@@ -51,6 +51,7 @@ from rich.cells import cell_len
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
+from textual.events import DescendantBlur, DescendantFocus, MouseDown, MouseUp
 from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Static
@@ -136,7 +137,11 @@ class _ContextBoundedSection(ConsoleBoundedSection):
         owner: "ConsoleLeftRail",
     ) -> None:
         self._allocation_owner = owner
-        super().__init__(*content, section_id=section_id)
+        super().__init__(
+            *content,
+            section_id=section_id,
+            on_focus_recovery=lambda: owner.recover_section_focus(section_id),
+        )
 
     def _run_scheduled_reconcile(self) -> None:
         previous_demand = self.desired_content_lines
@@ -172,9 +177,9 @@ class ConsoleLeftRail(Vertical):
 
             Args:
                 section_id: The toggled section's id (e.g. ``"session"``).
-                opened: Whether the section appears open in this rail's own
-                    last-synced header state (informational; the screen
-                    recomputes the authoritative next state itself).
+                opened: The mounted header's intended next open state. The
+                    screen persists this exact gesture after transient
+                    activation, avoiding a same-tick state-sync race.
             """
             self.section_id = section_id
             self.opened = opened
@@ -316,6 +321,9 @@ class ConsoleLeftRail(Vertical):
         self._no_room_section_ids: frozenset[str] = frozenset()
         self._outer_hint_exists = False
         self._outer_hint_text = ""
+        self._section_focus_history: dict[str, tuple[Widget, tuple[Widget, ...]]] = {}
+        self._pointer_activation_pending: str | None = None
+        self._pointer_activation_waits_for_button = False
 
     @staticmethod
     def _section_header(
@@ -391,7 +399,12 @@ class ConsoleLeftRail(Vertical):
             mounted.append(descriptor)
         return tuple(mounted)
 
-    def activate_section(self, section_id: str) -> None:
+    def activate_section(
+        self,
+        section_id: str,
+        *,
+        request_reconcile: bool = True,
+    ) -> None:
         """Prioritize one mounted direct Context section without persistence."""
 
         if section_id not in {
@@ -403,7 +416,210 @@ class ConsoleLeftRail(Vertical):
             self._active_transition_generation += 1
             self._pending_active_reveal_generation = self._active_transition_generation
             self._active_reveal_token += 1
+        if request_reconcile:
+            self.request_allocation_reconcile()
+
+    @staticmethod
+    def _is_enabled_focus_target(widget: Widget) -> bool:
+        """Return whether ``widget`` is a usable focus-recovery destination."""
+
+        return bool(
+            widget.is_mounted
+            and widget.focusable
+            and widget.display
+            and not getattr(widget, "disabled", False)
+            and all(
+                not isinstance(ancestor, Widget) or ancestor.display
+                for ancestor in widget.ancestors
+            )
+        )
+
+    def _section_for_owned_target(self, target: Widget | None) -> str | None:
+        """Resolve an activatable direct section from one focus/pointer target."""
+
+        if target is None:
+            return None
+        button_id = target.id or ""
+        if button_id.startswith(RAIL_SECTION_TOGGLE_PREFIX):
+            section_id = button_id.removeprefix(RAIL_SECTION_TOGGLE_PREFIX)
+            return section_id if not getattr(target, "disabled", False) else None
+
+        node: Widget | None = target
+        bounded: ConsoleBoundedSection | None = None
+        while node is not None and node is not self:
+            if isinstance(node, ConsoleBoundedSection):
+                bounded = node
+                break
+            parent = node.parent
+            node = parent if isinstance(parent, Widget) else None
+        if bounded is None:
+            return None
+        if target is bounded.viewport:
+            return bounded.section_id if bounded.viewport.can_focus else None
+        return bounded.section_id if self._is_enabled_focus_target(target) else None
+
+    def _focusable_body_controls(self, section_id: str) -> tuple[Widget, ...]:
+        """Return enabled body descendants in the same order as Textual Tab."""
+
+        try:
+            bounded = self.query_one(
+                f"#console-bounded-section-{section_id}", ConsoleBoundedSection
+            )
+        except (NoMatches, QueryError):
+            return ()
+        return tuple(
+            widget
+            for widget in bounded.viewport.query("*")
+            if isinstance(widget, Widget) and self._is_enabled_focus_target(widget)
+        )
+
+    def _record_section_focus(self, section_id: str, target: Widget) -> None:
+        self._section_focus_history[section_id] = (
+            target,
+            self._focusable_body_controls(section_id),
+        )
+
+    def recover_section_focus(self, section_id: str) -> None:
+        """Recover invalidated local focus next, previous, header, then rail toggle."""
+
+        try:
+            bounded = self.query_one(
+                f"#console-bounded-section-{section_id}", ConsoleBoundedSection
+            )
+        except (NoMatches, QueryError):
+            bounded = None
+        focused = self.app.focused
+        if focused is not None and self._is_enabled_focus_target(focused):
+            owned = bool(
+                bounded is not None
+                and (
+                    focused is bounded.viewport or bounded.viewport in focused.ancestors
+                )
+            )
+            if not owned:
+                return
+
+        previous_target, previous_controls = self._section_focus_history.get(
+            section_id,
+            (bounded.viewport if bounded is not None else self, ()),
+        )
+        if previous_target in previous_controls:
+            previous_index = previous_controls.index(previous_target)
+            ordered_candidates = previous_controls[previous_index + 1 :] + tuple(
+                reversed(previous_controls[:previous_index])
+            )
+        else:
+            ordered_candidates = previous_controls
+        for candidate in ordered_candidates:
+            if self._is_enabled_focus_target(candidate):
+                candidate.focus()
+                return
+
+        for selector in (
+            f"#{RAIL_SECTION_TOGGLE_PREFIX}{section_id}",
+            "#console-context-rail-collapse",
+        ):
+            try:
+                candidate = self.query_one(selector, Button)
+            except (NoMatches, QueryError):
+                continue
+            if self._is_enabled_focus_target(candidate):
+                candidate.focus()
+                return
+
+    def _paint_scroll_focus_owner(
+        self,
+        *,
+        section_id: str | None,
+        outer_active: bool,
+    ) -> None:
+        """Apply dimension-stable non-color ownership cues without stylesheet edits."""
+
+        for descriptor in self._mounted_descriptors():
+            try:
+                title = self.query_one(
+                    f"#console-rail-section-title-{descriptor.section_id}", Static
+                )
+            except (NoMatches, QueryError):
+                continue
+            title.styles.text_style = (
+                "bold underline" if descriptor.section_id == section_id else "bold"
+            )
+        try:
+            collapse = self.query_one("#console-context-rail-collapse", Button)
+        except (NoMatches, QueryError):
+            return
+        collapse.styles.text_style = "underline" if outer_active else "none"
+
+    def on_descendant_focus(self, event: DescendantFocus) -> None:
+        """Activate owned keyboard targets and paint the current scroll owner."""
+
+        target = event.widget
+        section_id = self._section_for_owned_target(target)
+        if section_id is not None:
+            self._record_section_focus(section_id, target)
+            self.activate_section(section_id, request_reconcile=False)
+            self.call_after_refresh(
+                self._finish_focus_activation,
+                section_id,
+                target,
+            )
+        outer_active = target.id == "console-left-rail-body"
+        self._paint_scroll_focus_owner(
+            section_id=section_id,
+            outer_active=outer_active,
+        )
+
+    def _finish_focus_activation(self, section_id: str, target: Widget) -> None:
+        """Reconcile keyboard focus unless a pointer press still owns the target."""
+
+        if (
+            self._pointer_activation_pending == section_id
+            and self.app.focused is target
+        ):
+            return
         self.request_allocation_reconcile()
+
+    def on_descendant_blur(self, _event: DescendantBlur) -> None:
+        """Clear transient underlines when keyboard focus leaves this rail."""
+
+        self.call_after_refresh(self._clear_focus_owner_if_focus_left)
+
+    def _clear_focus_owner_if_focus_left(self) -> None:
+        """Clear cues only after Textual has committed the replacement focus."""
+
+        focused = self.app.focused
+        if focused is self or (
+            isinstance(focused, Widget) and self in focused.ancestors
+        ):
+            return
+        self._paint_scroll_focus_owner(section_id=None, outer_active=False)
+
+    def on_mouse_down(self, event: MouseDown) -> None:
+        """Record an owned press without reallocating before its native action."""
+
+        target = event.widget
+        section_id = self._section_for_owned_target(target)
+        if section_id is None:
+            return
+        self._pointer_activation_pending = section_id
+        self._pointer_activation_waits_for_button = isinstance(target, Button)
+        self.activate_section(section_id, request_reconcile=False)
+
+    def on_mouse_up(self, _event: MouseUp) -> None:
+        """Reconcile non-button pointer activation after its native press action."""
+
+        if not self._pointer_activation_waits_for_button:
+            self._flush_pointer_activation()
+
+    def _flush_pointer_activation(self) -> None:
+        """Commit allocation after the pressed control has retained its target."""
+
+        pending = self._pointer_activation_pending
+        self._pointer_activation_pending = None
+        self._pointer_activation_waits_for_button = False
+        if pending is not None:
+            self.request_allocation_reconcile()
 
     def request_allocation_reconcile(self) -> None:
         """Coalesce one post-refresh, all-sibling allocation reconciliation."""
@@ -1284,6 +1500,10 @@ class ConsoleLeftRail(Vertical):
                 consulted here.
         """
         button_id = event.button.id or ""
+        self._flush_pointer_activation()
+        owned_section_id = self._section_for_owned_target(event.button)
+        if owned_section_id is not None:
+            self.activate_section(owned_section_id)
         if button_id == "console-character-reaction-open":
             event.stop()
             self.post_message(self.ReactionPickerRequested())
@@ -1292,8 +1512,8 @@ class ConsoleLeftRail(Vertical):
             return
         event.stop()
         section_id = button_id.removeprefix(RAIL_SECTION_TOGGLE_PREFIX)
-        if section_id in self._no_room_section_ids:
-            self.activate_section(section_id)
+        was_constrained = section_id in self._no_room_section_ids
+        if was_constrained:
             return
         try:
             header = self.query_one(
@@ -1348,4 +1568,6 @@ class ConsoleLeftRail(Vertical):
             return
         body.styles.display = "block" if section_open else "none"
         header.sync_open(section_open)
+        if not section_open and self._active_section_id == section_id:
+            self.recover_section_focus(section_id)
         self.request_allocation_reconcile()

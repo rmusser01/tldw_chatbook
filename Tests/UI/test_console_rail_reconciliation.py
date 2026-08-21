@@ -160,6 +160,10 @@ class _RailHarness(App[None]):
         self, event: ConsoleLeftRail.SectionToggled
     ) -> None:
         self.section_toggles.append(event.section_id)
+        self.query_one(ConsoleLeftRail).apply_section_open(
+            event.section_id,
+            event.opened,
+        )
 
 
 class _ProductionConsoleHarness(ConsoleHarness):
@@ -750,3 +754,195 @@ async def test_local_and_outer_hints_use_distinct_counterfactual_predicates(
         await _settle(pilot)
         assert cue.display is False
         assert str(cue.renderable) == ""
+
+
+@pytest.mark.asyncio
+async def test_focus_and_pointer_activation_are_transient_and_open_close_falls_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    demands = dict.fromkeys(SECTION_IDS, 3)
+    _install_demands(monkeypatch, demands)
+    app = _RailHarness()
+
+    async with app.run_test(size=(60, 36)) as pilot:
+        await _settle(pilot)
+        rail = app.query_one(ConsoleLeftRail)
+        _force_geometry(rail, viewport_height=28, header_chrome_height=14)
+        rail.request_allocation_reconcile()
+        await _settle(pilot)
+        assert rail._active_section_id is None
+
+        configure = rail.query_one("#console-model-section-configure", Button)
+        configure.focus()
+        await _settle(pilot)
+        assert rail._active_section_id == "model"
+        assert app.section_toggles == []
+
+        reaction = rail.query_one("#console-character-reaction-open", Button)
+        reaction.scroll_visible(animate=False)
+        await pilot.pause()
+        assert await pilot.click(reaction)
+        await _settle(pilot)
+        assert rail._active_section_id == "character"
+        assert app.section_toggles == []
+
+        rail.apply_section_open("workspace", False)
+        await _settle(pilot)
+        workspace_toggle = rail.query_one(
+            "#console-rail-section-toggle-workspace", Button
+        )
+        await pilot.click(workspace_toggle)
+        await _settle(pilot)
+        assert rail._active_section_id == "workspace"
+        assert app.section_toggles == ["workspace"]
+
+        await pilot.click(workspace_toggle)
+        await _settle(pilot)
+        assert rail._active_section_id == "session"
+        assert app.section_toggles == ["workspace", "workspace"]
+
+        session_toggle = rail.query_one("#console-rail-section-toggle-session", Button)
+        await pilot.click(session_toggle)
+        await _settle(pilot)
+        assert rail._active_section_id == "conversations"
+
+
+@pytest.mark.asyncio
+async def test_pointer_activation_preserves_the_pressed_toggle_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Activation reflow cannot turn a Details press into a neighboring press."""
+
+    demands = dict.fromkeys(SECTION_IDS, 3)
+    _install_demands(monkeypatch, demands)
+    app = _RailHarness()
+
+    async with app.run_test(size=(60, 30)) as pilot:
+        await _settle(pilot)
+        rail = app.query_one(ConsoleLeftRail)
+        rail.apply_section_open("details", False)
+        await _settle(pilot)
+        details = rail.query_one("#console-rail-section-toggle-details", Button)
+        details.scroll_visible(animate=False)
+        await pilot.pause()
+
+        assert await pilot.click(details)
+        await _settle(pilot)
+
+        assert app.section_toggles == ["details"]
+        assert rail._active_section_id == "details"
+
+
+@pytest.mark.asyncio
+async def test_overflow_focus_order_and_recovery_stay_within_context_section(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    demands = dict.fromkeys(SECTION_IDS, 0)
+    demands["model"] = 8
+    _install_demands(monkeypatch, demands)
+    app = _RailHarness()
+
+    async with app.run_test(size=(60, 30)) as pilot:
+        await _settle(pilot)
+        rail = app.query_one(ConsoleLeftRail)
+        _force_geometry(rail, viewport_height=18, header_chrome_height=14)
+        rail.request_allocation_reconcile()
+        await _settle(pilot)
+
+        toggle = rail.query_one("#console-rail-section-toggle-model", Button)
+        model = rail.query_one("#console-bounded-section-model")
+        model.query_one("#console-rail-section-body-model").styles.min_height = 8
+        model.request_reconcile()
+        rail.request_allocation_reconcile()
+        await _settle(pilot)
+        viewport = model.viewport
+        configure = rail.query_one("#console-model-section-configure", Button)
+        next_toggle = rail.query_one("#console-rail-section-toggle-agent", Button)
+        assert viewport.can_focus is True
+
+        toggle.focus()
+        await pilot.press("tab")
+        assert app.focused is viewport
+        title = rail.query_one("#console-rail-section-title-model", Static)
+        assert "underline" in str(title.styles.text_style)
+        await pilot.press("tab")
+        assert app.focused is configure
+        await pilot.press("tab")
+        assert app.focused is next_toggle
+        await pilot.press("shift+tab")
+        assert app.focused is configure
+        await pilot.press("shift+tab")
+        assert app.focused is viewport
+        await pilot.press("shift+tab")
+        assert app.focused is toggle
+
+        outer = rail.query_one("#console-left-rail-body")
+        collapse = rail.query_one("#console-context-rail-collapse", Button)
+        outer.can_focus = True
+        outer.focus()
+        await pilot.pause()
+        assert "underline" in str(collapse.styles.text_style)
+        assert "underline" not in str(title.styles.text_style)
+
+        body = rail.query_one("#console-rail-section-body-model")
+        first = Button("First", id="context-recovery-first", compact=True)
+        second = Button("Second", id="context-recovery-second", compact=True)
+        await body.mount(first, second, before=configure)
+        await _settle(pilot)
+        first.focus()
+        await pilot.pause()
+        await first.remove()
+        rail.request_allocation_reconcile()
+        await _settle(pilot)
+        assert app.focused is second
+
+        viewport.focus()
+        await pilot.pause()
+        demands["model"] = 1
+        rail.request_allocation_reconcile()
+        await _settle(pilot)
+        assert viewport.can_focus is False
+        assert app.focused is second
+
+
+@pytest.mark.asyncio
+async def test_active_section_falls_back_when_content_disappears_and_offsets_survive_sync(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    demands = dict.fromkeys(SECTION_IDS, 8)
+    _install_demands(monkeypatch, demands)
+    app = _RailHarness()
+
+    async with app.run_test(size=(60, 30)) as pilot:
+        await _settle(pilot)
+        rail = app.query_one(ConsoleLeftRail)
+        _force_geometry(rail, viewport_height=18, header_chrome_height=14)
+        rail.activate_section("agent")
+        await _settle(pilot)
+        agent = rail.query_one("#console-bounded-section-agent")
+        agent.query_one("#console-rail-section-body-agent").styles.min_height = 8
+        agent.request_reconcile()
+        rail.request_allocation_reconcile()
+        await _settle(pilot)
+        agent.viewport.scroll_to(y=2, animate=False, immediate=True)
+        await pilot.pause()
+        retained_offset = agent.viewport.scroll_y
+        assert retained_offset > 0
+
+        rail.sync_workspace_context(_workspace_state())
+        await _settle(pilot)
+        assert agent.viewport.scroll_y == retained_offset
+        assert rail._active_section_id == "agent"
+
+        rail.display = False
+        await _settle(pilot)
+        rail.display = True
+        rail.request_allocation_reconcile()
+        await _settle(pilot)
+        assert agent.viewport.scroll_y == retained_offset
+        assert rail._active_section_id == "agent"
+
+        demands["agent"] = 0
+        rail.request_allocation_reconcile()
+        await _settle(pilot)
+        assert rail._active_section_id == "model"

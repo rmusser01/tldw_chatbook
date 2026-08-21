@@ -9,8 +9,13 @@ also dismisses any visible tooltip so a mounted overlay can't survive the repain
 
 import pytest
 from textual.css.query import NoMatches
-from textual.widgets import Tooltip
+from textual.widgets import Button, Tooltip
 
+from tldw_chatbook.Chat.console_session_settings import ConsoleSettingsSummaryState
+from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
+from tldw_chatbook.Widgets.Console.console_bounded_section import ConsoleBoundedSection
+
+from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
@@ -21,6 +26,14 @@ _PANES = (
     "#console-transcript-surface",
     "#console-native-composer",
 )
+
+
+def _ready_console_host() -> ConsoleHarness:
+    """Build a Console whose setup modal cannot steal resize-test focus."""
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    return ConsoleHarness(app)
 
 
 def _pane_layout(console) -> dict:
@@ -41,7 +54,7 @@ def _pane_layout(console) -> dict:
 @pytest.mark.asyncio
 async def test_resize_priority_hands_context_focus_to_reveal_button() -> None:
     """Crossing 117-to-118 hides focused Context and focuses its handle."""
-    host = ConsoleHarness(_build_test_app())
+    host = _ready_console_host()
 
     async with host.run_test(size=(117, 40)) as pilot:
         console = host.screen_stack[-1]
@@ -63,7 +76,7 @@ async def test_resize_priority_hands_context_focus_to_reveal_button() -> None:
 @pytest.mark.asyncio
 async def test_consecutive_resize_keeps_focus_on_reopened_context_rail() -> None:
     """A focused Context handle hands focus back when Context reopens."""
-    host = ConsoleHarness(_build_test_app())
+    host = _ready_console_host()
 
     async with host.run_test(size=(117, 40)) as pilot:
         console = host.screen_stack[-1]
@@ -90,7 +103,7 @@ async def test_consecutive_resize_keeps_focus_on_reopened_context_rail() -> None
 @pytest.mark.asyncio
 async def test_resize_priority_hands_inspector_focus_to_reveal_button() -> None:
     """Crossing 128-to-129 hides focused Inspector and focuses its handle."""
-    host = ConsoleHarness(_build_test_app())
+    host = _ready_console_host()
 
     async with host.run_test(size=(128, 40)) as pilot:
         console = host.screen_stack[-1]
@@ -112,7 +125,7 @@ async def test_resize_priority_hands_inspector_focus_to_reveal_button() -> None:
 @pytest.mark.asyncio
 async def test_resize_event_width_drives_priority_and_focus(monkeypatch) -> None:
     """The Resize width wins over a stale screen-width lookup."""
-    host = ConsoleHarness(_build_test_app())
+    host = _ready_console_host()
 
     async with host.run_test(size=(117, 40)) as pilot:
         console = host.screen_stack[-1]
@@ -148,14 +161,14 @@ async def test_console_live_resize_converges_to_cold_start_layout() -> None:
     instead of overflowing the grid. The convergence contract itself --
     ``live == cold`` -- is unchanged.
     """
-    cold_host = ConsoleHarness(_build_test_app())
+    cold_host = _ready_console_host()
     async with cold_host.run_test(size=(90, 30)) as pilot:
         cold_console = cold_host.screen_stack[-1]
         await pilot.pause()
         await pilot.pause()
         cold = _pane_layout(cold_console)
 
-    live_host = ConsoleHarness(_build_test_app())
+    live_host = _ready_console_host()
     async with live_host.run_test(size=(160, 48)) as pilot:
         live_console = live_host.screen_stack[-1]
         await pilot.pause()
@@ -182,7 +195,7 @@ async def test_console_resize_dismisses_stale_tooltip() -> None:
     reflows. With a tooltip shown, a resize must hide the real overlay widget so
     it cannot survive the repaint.
     """
-    host = ConsoleHarness(_build_test_app())
+    host = _ready_console_host()
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await pilot.pause()
@@ -202,3 +215,141 @@ async def test_console_resize_dismisses_stale_tooltip() -> None:
         await pilot.pause()
 
         assert tooltip.display is False
+
+
+@pytest.mark.asyncio
+async def test_model_summary_sync_invalidates_mounted_context_allocation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The production Model mutation seam refreshes bounded demand afterward."""
+
+    host = _ready_console_host()
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        rail = console.query_one("#console-left-rail", ConsoleLeftRail)
+        model = rail.query_one("#console-bounded-section-model", ConsoleBoundedSection)
+        for _ in range(5):
+            await pilot.pause()
+        before = model.desired_content_lines
+        recovery = rail.query_one("#console-model-section-recovery")
+        recovery.styles.height = 3
+        recovery.styles.min_height = 3
+        monkeypatch.setattr(
+            console,
+            "_build_console_settings_summary_state",
+            lambda: ConsoleSettingsSummaryState(
+                model_row="Model: test",
+                context_row="Context: 0",
+                sampling_row="T 0.7 · max_tokens 100",
+                identity_row="Identity: character",
+                readiness_label="Provider recovery required",
+            ),
+        )
+        monkeypatch.setattr(console, "_sync_console_agent_section", lambda: None)
+
+        console._sync_console_settings_summary()
+        for _ in range(6):
+            await pilot.pause()
+
+        assert model.desired_content_lines > before
+
+
+@pytest.mark.asyncio
+async def test_all_named_context_mutation_seams_request_the_mounted_allocator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every production Context mutation seam delegates to the rail helper."""
+
+    host = _ready_console_host()
+    async with host.run_test(size=(160, 48)):
+        console = host.screen_stack[-1]
+        rail = console.query_one("#console-left-rail", ConsoleLeftRail)
+        requests: list[str] = []
+        current_seam = ""
+
+        def request_spy() -> None:
+            requests.append(current_seam)
+
+        monkeypatch.setattr(
+            console,
+            "_request_console_context_allocation_reconcile",
+            request_spy,
+        )
+
+        def assert_requested(label: str, mutation) -> None:
+            nonlocal current_seam
+            current_seam = label
+            before = len(requests)
+            mutation()
+            assert requests[before:] == [label]
+
+        console._console_rail_system_line_last = ("stale", False)
+        monkeypatch.setattr(
+            console,
+            "_console_rail_system_line_state",
+            lambda: ("System: changed", False),
+        )
+        assert_requested("session settings", console._sync_console_rail_system_line)
+
+        monkeypatch.setattr(console, "_sync_console_rail_system_line", lambda: None)
+        monkeypatch.setattr(console, "_sync_console_agent_section", lambda: None)
+        assert_requested("model rows", console._sync_console_settings_summary)
+
+        monkeypatch.undo()
+        requests.clear()
+        monkeypatch.setattr(
+            console,
+            "_request_console_context_allocation_reconcile",
+            request_spy,
+        )
+        console._console_agent_section_last = object()
+        assert_requested(
+            "agent status steps actions steering fleet and pinned summary",
+            console._sync_console_agent_section,
+        )
+        assert_requested(
+            "workspace conversations and details",
+            console._sync_console_workspace_context,
+        )
+
+        current_seam = "character remount and reaction"
+        before = len(requests)
+        await console._render_character_avatar_into_section(
+            spec=None,
+            name="Changed character",
+            manual_label="happy",
+            is_current=lambda: True,
+        )
+        assert requests[before:] == [current_seam]
+
+        rail_state = console._current_console_rail_state()
+        assert_requested(
+            "rail collapse and reopen",
+            lambda: console._sync_console_rail_visibility(rail_state),
+        )
+
+        monkeypatch.setattr(console, "_set_console_rail_preference", lambda **_: None)
+        assert_requested(
+            "section toggles and open state",
+            lambda: console._toggle_console_rail_section(
+                "details",
+                next_open=not rail_state.details_open,
+            ),
+        )
+
+        aliases = list(console.query("#console-new-workspace-conversation"))
+        if aliases and isinstance(aliases[0], Button):
+            await aliases[0].remove()
+        current_seam = "conversation alias mount"
+        before = len(requests)
+        await console._sync_console_legacy_workspace_context_aliases()
+        assert requests[before:] == [current_seam]
+
+        resize_requests: list[None] = []
+        monkeypatch.setattr(
+            rail,
+            "request_allocation_reconcile",
+            lambda: resize_requests.append(None),
+        )
+        rail.on_resize()
+        assert resize_requests == [None]

@@ -2131,7 +2131,10 @@ class ChatScreen(BaseAppScreen):
         close decision, persistence, and Inspector-rail interaction stay
         here unchanged: they reach beyond the rail's own DOM.
         """
-        self._toggle_console_rail_section(message.section_id)
+        self._toggle_console_rail_section(
+            message.section_id,
+            next_open=message.opened,
+        )
 
     @on(ConsoleLeftRail.ReactionPickerRequested)
     async def _console_reaction_picker_requested(
@@ -4995,6 +4998,16 @@ class ChatScreen(BaseAppScreen):
         system_line.update(line_text)
         system_line.set_class(is_dim, "console-rail-system-line-dim")
         self._console_rail_system_line_last = payload
+        self._request_console_context_allocation_reconcile()
+
+    def _request_console_context_allocation_reconcile(self) -> None:
+        """Safely invalidate the mounted Context allocator after a DOM mutation."""
+
+        try:
+            left_rail = self.query_one("#console-left-rail", ConsoleLeftRail)
+        except (NoMatches, QueryError):
+            return
+        left_rail.request_allocation_reconcile()
 
     def _sync_console_settings_summary(self) -> None:
         """Refresh the mounted Console settings summary surfaces if present."""
@@ -5049,6 +5062,7 @@ class ChatScreen(BaseAppScreen):
 
         self._sync_console_rail_system_line()
         self._sync_console_agent_section()
+        self._request_console_context_allocation_reconcile()
 
     def _request_console_agent_fleet_sync(self) -> None:
         """Coalesce Agent-fleet-section syncs into one trailing run (task-5).
@@ -5158,6 +5172,7 @@ class ChatScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             return
         self._console_agent_section_last = payload
+        self._request_console_context_allocation_reconcile()
 
     def _focus_console_workspace_conversation_search(self) -> None:
         """Restore focus to the conversation search input when it is mounted."""
@@ -9967,6 +9982,7 @@ class ChatScreen(BaseAppScreen):
                 )
             except QueryError:
                 pass
+            self._request_console_context_allocation_reconcile()
         except Exception:
             # Must never raise: called from `_refresh_active_character_avatar_
             # if_scope_changed` at two sites outside that method's own
@@ -10912,6 +10928,7 @@ class ChatScreen(BaseAppScreen):
             )
 
         self.refresh(layout=True)
+        self._request_console_context_allocation_reconcile()
 
     def _sync_console_rail_visibility_if_changed(
         self,
@@ -11035,12 +11052,18 @@ class ChatScreen(BaseAppScreen):
         self._sync_console_rail_visibility_if_changed(rail_state)
         return rail_state
 
-    def _toggle_console_rail_section(self, section_id: str) -> None:
+    def _toggle_console_rail_section(
+        self,
+        section_id: str,
+        *,
+        next_open: bool | None = None,
+    ) -> None:
         """Flip one left-rail section open state, then sync body and header."""
         if section_id not in CONSOLE_RAIL_SECTION_IDS:
             return
         rail_state = self._current_console_rail_state()
-        next_open = not getattr(rail_state, f"{section_id}_open")
+        if next_open is None:
+            next_open = not getattr(rail_state, f"{section_id}_open")
         if section_id == "agent":
             # TASK-915: track manual collapse/reopen of the Agent section
             # relative to the fleet's own busy signal -- never the
@@ -11060,6 +11083,7 @@ class ChatScreen(BaseAppScreen):
             pass
         else:
             left_rail.apply_section_open(section_id, next_open)
+            self._request_console_context_allocation_reconcile()
         if section_id == "character" and next_open:
             # A collapsed body has `display: none`, so
             # `_character_avatar_available_cols()` measures 0 and
@@ -11135,6 +11159,7 @@ class ChatScreen(BaseAppScreen):
                 self.query_one(
                     "#console-left-rail", ConsoleLeftRail
                 ).sync_workspace_context(state)
+                self._request_console_context_allocation_reconcile()
             # PR #660 review: a full-screen recompose constructs a FRESH tray
             # already carrying the current state, so `state_changed` alone
             # would never re-kick the legacy-alias worker after a recompose —
@@ -11182,6 +11207,7 @@ class ChatScreen(BaseAppScreen):
                 await workspace_context.mount(new_button, before=before_status)
             else:
                 await workspace_context.mount(new_button)
+            self._request_console_context_allocation_reconcile()
 
     @on(ConsoleWorkspaceContextTray.Relabeled)
     def _on_console_workspace_context_relabeled(self) -> None:
@@ -17821,6 +17847,7 @@ class ChatScreen(BaseAppScreen):
         # TASK-2154.1 (LY-10): the header (and its status badge) is hidden in
         # compact-height mode, so keep the control-bar marker mirroring it.
         self._sync_console_compact_status_marker()
+        self._request_console_context_allocation_reconcile()
         try:
             self.query_one("#console-workbench-mode-strip", ModeStrip).sync_modes(
                 workbench_state.modes
