@@ -13,7 +13,7 @@ Bound every direct named section body in the Console Context and Inspector rails
 scroll internally and expose a separate one-line `▼ more — scroll` affordance while
 content remains below. Context adapts the ceiling downward when necessary to keep all
 of its section headers visible; Inspector retains its outer scroll and gains a separate
-outer fold hint for entire sections below the viewport.
+outer fold hint for any outer content below the viewport.
 
 The primary usage target is a maximized, browser-like terminal. The design therefore
 optimizes 235x52 and 160x45 without abandoning the established 120x30 and 80x24
@@ -86,7 +86,8 @@ The contract applies to these named Inspector sections when present:
 - Chat Dictionaries
 - World Books
 - Session Settings
-- Live Work / live-work Source Readiness
+- Live Work or Live work sources (the mutually exclusive final card)
+- Other, when a visible `Review Changes` action or unrecognized run row/action exists
 
 The run-status summary and Scope row remain compact non-section rows. Disabled controls
 with zero rendered height do not consume a content line.
@@ -105,17 +106,32 @@ with zero rendered height do not consume a content line.
 
 `MAX_SECTION_CONTENT_LINES` is 20.
 
-For a direct section with desired rendered content height `D` and allocated content
-height `A`:
+For a direct section with uncapped desired rendered content height `D` and allocated
+content viewport height `A`:
 
 - `D == 0`: the body occupies zero content rows and has no hint.
 - `1 <= D <= A`: the body occupies `D` rows and has no scrollbar or hint.
-- `D > A`: the body occupies `A` scrollable content rows and reserves one additional
-  hint row below it.
+- `D > A > 0`: the body occupies `A` scrollable content rows and reserves one
+  additional hint row below it.
+- `A == 0`: the body and hint occupy zero rows even when `D > 0`; its visible header
+  remains the access and recovery target.
 - A header is always outside `A` and outside the scroll viewport.
 - The hint never overlays, covers, or replaces a content row.
 - Wrapped terminal rows count physically. A logical item that wraps to three screen
   rows consumes three of the 20 lines.
+
+`A` is the laid-out `VerticalScroll.content_region.height`. `D` is the corresponding
+uncapped physical content height before viewport clipping. Vertical child margins and
+padding laid out inside that viewport count in `D`; the direct header, the hint slot,
+and margins outside the viewport are fixed chrome and do not. The migration removes
+the existing Context body bottom padding and Inspector heading top margin from the
+scrollable body box, so those legacy decorations cannot consume an invisible 21st
+content row.
+
+While `D > A`, the hint slot remains exactly one row high. Its text is visible while
+more content remains below and becomes blank/visually hidden at scroll end without
+collapsing the slot, so reaching the end cannot shift following content. When `D <= A`
+there is no overflow and the entire slot is removed from layout.
 
 Inspector direct sections normally receive `A = min(D, 20)`. Context uses the
 adaptive allocation below. A section never reserves blank rows to reach 20.
@@ -137,7 +153,8 @@ A reusable Console widget owns the common behavior. Its public inputs are:
 - already-built content children;
 - `max_content_lines`, fixed at 20 by the rail contract;
 - an optional current allocation below 20 for Context;
-- the outer scroll owner used for boundary handoff.
+- the outer scroll owner used for boundary handoff;
+- an owner-supplied focus-recovery callback.
 
 It renders:
 
@@ -167,21 +184,30 @@ height efficiently. Allocation is a pure deterministic function of:
 - the Context body viewport height;
 - measured visible header and inter-section chrome height;
 - each direct section's open state;
-- each open section's desired rendered content height, capped at 20.
+- each open section's uncapped desired rendered content height `D`.
 
 The allocator follows these rules:
 
 1. Reserve every visible direct header and required fixed inter-section chrome.
 2. Closed or empty section bodies receive zero rows and no hint.
-3. Give short sections only the rows they request.
-4. Distribute remaining content rows among longer sections by progressive water
-   filling, never exceeding 20 content rows for a section.
-5. An allocation smaller than a section's desired height also reserves one hint row.
-6. Re-run the distribution when hint-row requirements change, until the allocation is
-   stable.
-7. At supported heights, every open non-empty section receives at least one content
-   row plus its hint before any longer section receives additional rows.
-8. Deterministic DOM order breaks allocation ties.
+3. Walk open non-empty sections in DOM order and fund a base allocation only while the
+   remaining budget can represent it honestly: one row for `D == 1`, or one content
+   row plus one hint row for `D > 1`. Sections that cannot be funded receive `A = 0`
+   and no false hint; their visible header remains the discovery and recovery target.
+4. Only after that base pass, distribute remaining content rows among funded longer
+   sections by progressive water filling, never exceeding 20 content rows for a
+   section. An unfunded later section is considered before an already funded section
+   receives a second content row.
+5. Derive hint cost from the uncapped predicate `D > A`, not from a value already
+   capped at 20. Thus `D == 20, A == 20` has no hint, while `D == 21, A == 20` does.
+6. When increasing `A` makes `A == D <= 20`, release that section's hint row back to
+   the pool and re-run distribution until stable.
+7. DOM order is the sole deterministic priority when the budget cannot fund every
+   body. The order is Sessions, Workspaces, Conversations, Model, Agent, Details,
+   Character.
+8. Headers have absolute priority over bodies. At short explicit-open heights, an
+   open section may therefore have a zero-height body; the design does not claim that
+   every open body is simultaneously readable at 80x24.
 
 This replaces the fixed `max-height: 20%` rule. Short open sections return unused rows
 to the pool, allowing another open section to approach the 20-line ceiling. At smaller
@@ -196,8 +222,10 @@ The Inspector outer rail remains:
 3. a separate pinned outer fold hint.
 
 The outer hint uses the outer body's own `scroll_y` and `max_scroll_y`. It communicates
-that complete rows or sections remain below the rail viewport and is independent of
-all per-section hints.
+that any outer content remains below the rail viewport, including the remainder of a
+partially visible section, and is independent of all per-section hints. Its pinned slot
+remains one row high while the outer body overflows, becomes blank at scroll end, and
+leaves layout only when outer overflow disappears.
 
 `ConsoleRunInspector` currently emits flat headings followed by rows and actions. It
 will group each existing `_ROW_GROUPS` entry into a stable heading plus bounded body.
@@ -208,7 +236,45 @@ only changes.
 
 Specialized top-level widgets such as Sources, Changed Files, Session Settings, and
 live-work cards retain their header and business-state seams. Their content regions
-adopt the shared bounded body without moving or duplicating their header.
+adopt the shared bounded body without moving or duplicating their header. Existing
+child-owned vertical caps are retired: this includes Sources' inline 6/10-row cap and
+CSS 6-row cap, Session Settings' CSS 9-row minimum and inline 9-row maximum, and
+equivalent specialized-section constraints. Content-specific product limits that
+deliberately summarize data, such as
+Changed Files' `MAX_VISIBLE_ROWS` plus its honest remainder row, remain data contracts;
+the bounded viewport owns only the rendered-height ceiling.
+
+### Definitive Inspector ownership map
+
+Every currently emitted row, action, or specialized card belongs to exactly one
+direct section boundary:
+
+| Direct boundary | Owned content |
+| --- | --- |
+| Sources | `ConsoleStagedContextTray`: summary, staged-source rows, empty state, and recovery. |
+| Scope (compact row, not a section) | `ConsoleRetrievalScopeRow`. |
+| Changed Files | `ConsoleChangedFilesSection` header/body/tails. |
+| Run status (compact row, not a section) | `console-inspector-run-status-summary`. |
+| Run | Run recipe, Live work, Setup, Send blocked, Recovery action, Blocked impact, Next action, Provider. |
+| Source Readiness | Sources, RAG/source, Evidence, Authority. |
+| Tools | Tools, MCP. |
+| Approvals | Approvals and `Review approval`. |
+| Artifacts | Artifacts and `Save as Chatbook`. |
+| Selected Conversation | Selected conversation, Conversation source, Workspace, Resume state, both Prefill rows. |
+| Session Defaults | Session provider, model, endpoint, sampling, persona. |
+| Selected Message | Selected message, Message actions, Keyboard, Variants, Excerpt, Delete confirmation. |
+| Other | The currently unheaded `Review Changes` action plus any future or otherwise unrecognized run rows/actions. It preserves the existing tail order (rows in source order, then actions in source order) after Selected Message and before Chat Dictionaries. It mounts only when at least one owned child has nonzero rendered height; disabled zero-height actions alone do not mount it. |
+| Chat Dictionaries | Dictionary rows and dictionary actions. |
+| World Books | World Book rows and World Book actions. |
+| Session Settings | `ConsoleSettingsSummary` rows and Open Settings action. |
+| Live Work / Live work sources | The mutually exclusive pending-launch status card or no-launch source-readiness card, including its RAG controls and source rows. |
+
+This table replaces `_ACTION_GROUPS["Changes"]`'s unheaded fall-through with the
+bounded Other boundary at the same position. It also assigns `Send blocked`,
+`Recovery action`, and `RAG/source`, which currently fall through `_ROW_GROUPS`.
+Known row/action IDs and their relative order within each boundary remain unchanged.
+Only the new body and hint nodes receive derived IDs; compatibility wrappers retain
+the old section and header IDs.
 
 ## Interaction contract
 
@@ -218,8 +284,10 @@ adopt the shared bounded body without moving or duplicating their header.
 - A short, empty, closed, or absent body adds no keyboard stop.
 - The hint is never focusable.
 - Focus styling uses the existing Console focus tokens without changing dimensions.
-- If a focused section stops overflowing, focus moves to that section's visible
-  header or nearest valid rail control rather than disappearing.
+- If a focused section stops overflowing, the shared body invokes its owner-supplied
+  recovery callback. Context targets the same section's toggle. Inspector first
+  targets the nearest enabled visible control in that section, then its collapse
+  button.
 - Responsive hiding continues to hand focus to the appropriate rail reveal control.
 
 ### Keyboard scrolling
@@ -281,6 +349,8 @@ waiver changes in this task.
 ### Isolated widget tests
 
 - Natural height with 0, 1, and 20 content rows.
+- Session Settings with one content row occupies one row under the production CSS;
+  neither its former 9-row minimum nor maximum remains.
 - Exactly 20 rows: no scroll or hint.
 - 21 rows: 20-row viewport plus one separate hint row.
 - Hint visible before the end, hidden at the end, and visible again after scrolling up.
@@ -291,7 +361,11 @@ waiver changes in this task.
 
 ### Production-CSS compositor tests
 
-At 235x52, 160x45, 120x30, and 80x24:
+At 235x52 and 160x45, exercise both rails expanded with every Context section open.
+At 120x30, exercise the default responsive state and an explicitly opened, all-open
+Context rail. At 80x24, assert the default hidden-rail state and separately exercise
+an explicitly opened, all-open Context rail to prove deterministic zero-body
+allocations without overflow or lost headers. Across those states:
 
 - every visible Context header remains within the Context viewport;
 - Context short sections do not waste height and long sections receive redistributed
@@ -310,8 +384,9 @@ substitute the repository-wide suite for these behavior-specific tests.
 
 ## Migration and documentation
 
-- Replace only the fixed Context `20%` body-cap CSS after the allocator is proven red
-  and green.
+- Replace the fixed Context `20%` body-cap CSS and the specialized Inspector vertical
+  caps named above only after the bounded component and allocator are proven red and
+  green.
 - Keep old stable IDs or provide explicit compatibility assertions wherever a wrapper
   changes nesting.
 - Update the Console user guide to explain the 20-line section ceiling, local hints,

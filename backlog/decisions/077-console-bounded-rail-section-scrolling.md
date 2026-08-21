@@ -23,14 +23,15 @@ record count does not.
 
 The Context rail preserves TASK-15110's outcome that every direct section header is
 visible at supported terminal heights. A deterministic, content-aware allocator will
-reserve the headers first, give short open sections only the rows they need, and
-redistribute remaining rows among longer open sections up to the 20-line ceiling.
-When the available shared height is insufficient, a Context section scrolls before 20
-lines. This replaces the fixed `20%` body cap while retaining the reason for that cap.
+reserve the headers first, then fund body-plus-hint allocations in DOM order before
+redistributing remaining rows among funded longer sections up to the 20-line ceiling.
+When the shared height cannot fund every body honestly, later open sections receive a
+zero-height body while their headers remain visible. This replaces the fixed `20%`
+body cap without making an infeasible all-bodies-visible promise at 24-row heights.
 
 Inspector sections use the full 20-line ceiling independently and the Inspector's
 outer body remains scrollable so later sections can be reached. The outer Inspector
-also reserves its own pinned `▼ more — scroll` hint while complete sections remain
+also reserves its own pinned `▼ more — scroll` hint while any outer content remains
 below the rail viewport. Scope remains a compact row rather than a named section.
 Nested subsections do not create additional scroll owners: only direct section bodies
 of each rail receive this contract.
@@ -45,6 +46,22 @@ Section scroll offsets are session-local presentation state. They survive in-pla
 content updates and rail collapse/reopen, clamp when content shrinks, and are not
 written to Console rail preferences. Existing responsive rail priority, explicit-open
 floors, focus transfer, ordering, badges, and data semantics remain unchanged.
+
+Desired section height is measured before the 20-line cap, so exactly 20 physical
+content rows do not overflow and 21 do. A hint slot remains one row high while the
+section overflows, becoming blank at scroll end rather than shifting later content.
+Existing specialized child constraints that compete with this rule are retired,
+including Sources' 6/10-row caps and Session Settings' CSS 9-row minimum plus inline
+9-row maximum; product-level summarization such as Changed Files' honest remainder row
+remains.
+
+Every known Inspector row and action is assigned to the direct section named in the
+approved design. `Send blocked` and `Recovery action` belong to Run, and `RAG/source`
+belongs to Source Readiness. The currently unheaded `Review Changes` action and
+unknown future run rows/actions enter a bounded Other section at the existing tail
+position instead of silently falling through without a header. Other mounts only when
+one of those children has nonzero rendered height; hidden disabled actions do not
+create an empty section.
 
 ## Context
 
@@ -76,6 +93,8 @@ visible and long sections behave consistently.
   their different outer-rail behavior.
 - The Context rail gains a pure height-allocation policy and no longer relies on the
   fixed `20%` CSS cap.
+- At constrained explicit-open heights, some open Context bodies may receive zero
+  rows; their headers remain visible and allocation priority is deterministic.
 - Run Inspector's flat groups need stable section body containers, but their row IDs,
   order, actions, and in-place update contract remain unchanged.
 - Nested scrolling becomes intentional and must include boundary handoff, conditional
