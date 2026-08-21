@@ -23,7 +23,11 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
+from contextlib import nullcontext
 from typing import Any
+
+from tldw_chatbook.Agents.human_input_wait import use_human_input_wait
 
 #: Kind -> the controller attribute holding that kind's UI setter. The
 #: setters are attach-time assignments and may be absent entirely
@@ -154,3 +158,98 @@ class InterruptRoundHost:
             setter(self.head_round_payload(kind, session_id))
 
         app.call_from_thread(_apply)
+
+    # -- generic round lifecycle ----------------------------------------
+
+    def run_round(
+        self,
+        kind: str,
+        round_id: str,
+        payload: dict[str, Any],
+        state: dict[str, Any],
+        *,
+        session_id: str | None,
+        owning_session_id: str,
+        deadline: float | None,
+        is_parked: bool,
+        announce_detached: Callable[[], None] | None = None,
+        human_wait_run_id: str | None = None,
+        on_cancelled: Callable[[], None] | None = None,
+        on_timeout: Callable[[], None] | None = None,
+        check_revoked: bool = True,
+    ) -> str:
+        """One blocking interrupt round, registration through teardown.
+
+        WORKER THREAD. Reproduces the (converged) bridge lifecycle:
+        register -> badge -> park -> announce/park-toast/mount -> poll ->
+        teardown (pop, unpark, badge-discard, head re-derive). The
+        per-bridge deltas ride the hooks: ``announce_detached`` is the
+        MCP detached-view leg; ``on_cancelled``/``on_timeout`` let the
+        approvals wrapper stamp its decisions box and audit-log;
+        ``human_wait_run_id`` wraps the wait in ``use_human_input_wait``
+        (the script bridge passes None -- it is dispatched in-loop and
+        never hosted by a per-call wrapper); ``check_revoked`` is False
+        for skill-install, which is never swept.
+        """
+        event: threading.Event = state["event"]
+        with self.lock:
+            self.registries[kind][round_id] = state
+        is_head = True
+        if session_id is not None:
+            add = getattr(self._seams, "add_pending_round", None)
+            if add is not None:
+                add(session_id, round_id)
+            is_head = self.park_round_payload(kind, round_id, payload)
+        try:
+            app = getattr(self._seams, "app", None)
+            park_toast = getattr(self._seams, "park_pending_approval", None)
+            if announce_detached is not None:
+                announce_detached()
+            elif is_parked:
+                if app is not None and park_toast is not None:
+                    app.call_from_thread(park_toast, session_id)
+            elif is_head:
+                setter = self._setter(kind)
+                if app is not None and setter is not None:
+                    app.call_from_thread(setter, payload)
+            outcome = "decided"
+            wait_cm = (
+                use_human_input_wait(human_wait_run_id)
+                if human_wait_run_id is not None
+                else nullcontext()
+            )
+            with wait_cm:
+                while not event.wait(self.POLL_SECONDS):
+                    if self._seams._is_session_cancelled(
+                        session_id,
+                        cancel_event=state.get("cancel_event"),
+                        visit_event=state.get("visit_event"),
+                    ):
+                        if on_cancelled is not None:
+                            on_cancelled()
+                        outcome = "cancelled"
+                        break
+                    if deadline is not None and time.monotonic() >= deadline:
+                        if on_timeout is not None:
+                            on_timeout()
+                        outcome = "timeout"
+                        break
+            if check_revoked:
+                with self.lock:
+                    if bool(state.get("revoked")):
+                        outcome = "revoked"
+            return outcome
+        finally:
+            with self.lock:
+                self.registries[kind].pop(round_id, None)
+            self.unpark_round_payload(kind, round_id)
+            if session_id is not None:
+                discard = getattr(self._seams, "discard_pending_round", None)
+                if discard is not None:
+                    discard(session_id, round_id)
+            try:
+                self.remount_head(
+                    kind, owning_session_id if session_id is not None else None
+                )
+            except Exception:  # noqa: BLE001 -- teardown must never raise
+                pass

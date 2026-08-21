@@ -4669,14 +4669,17 @@ class ConsoleChatController:
             # approval` snapshots the box before writing to it) can never
             # turn a revoked round back into an approval.
             "revoked": False,
+            # C1: the host's `run_round` reads these off `state` itself
+            # (worker thread, generic across all three bridges) rather
+            # than taking them as call arguments -- see
+            # `InterruptRoundHost.run_round`.
+            "cancel_event": round_cancel_event,
+            "visit_event": visit_cancel_event,
         }
-        # F2b fix (Qodo wave): guard the round registration -- the UI
-        # thread's `resolve_pending_approval` (TASK-913: fails closed by
-        # round_id now, no more active-session scan) and the
-        # `fleet_summary_counts` sync tick can read/iterate this map
-        # concurrently with this worker thread's own writes.
-        with self._approval_state_lock:
-            self._pending_approval_rounds[round_id] = round_state
+        # C1: registration (`self._pending_approval_rounds[round_id] =
+        # round_state`, guarded by `_approval_state_lock`) now happens
+        # inside `run_round` itself, under the same lock object (aliased
+        # at construction -- see `InterruptRoundHost.__init__`).
 
         timeout_seconds = self._resolve_mcp_approval_timeout_seconds()
         # ADR-067: <= 0 arms NO deadline -- the round waits for a decision
@@ -4716,189 +4719,104 @@ class ConsoleChatController:
         is_parked = session_id is not None and session_id != (
             self.store.active_session_id or ""
         )
-        # PR0: legacy `session_id is None` callers never park and never
-        # queue -- they keep the unconditional mount below.
-        is_head = True
-        if session_id is not None:
-            # Register THIS round's own id directly here (worker thread,
-            # plain-dict/set mutation -- same no-marshal convention as
-            # `_active_cancel_events` elsewhere in this class) so it is
-            # authoritative regardless of whether a UI bridge happens to be
-            # wired. TASK-1050 (Defect A): round-keyed, not a plain
-            # boolean -- a sibling round from this bridge or either of the
-            # other two (skill-install/skill-script confirms) for the SAME
-            # session stays independently tracked, so THIS round's own
-            # teardown can never clear a badge a sibling still needs.
-            # `park_pending_approval`/`ChatScreen._park_console_approval`
-            # only falls back to the deprecated boolean shim when NO round
-            # is registered yet (`has_pending_approval_round`), so it never
-            # double-counts against this call.
-            self.add_pending_round(session_id, round_id)
-            # Fix wave (CRITICAL 1, final review): retain THIS round's
-            # payload for EVERY session-attributed round -- mounted or
-            # parked -- not just a parked one. `switch_session` re-derives
-            # the card EXCLUSIVELY from `_parked_approval_payloads` (never
-            # from whatever the card happened to already be showing), so a
-            # round that mounted immediately (session_id was the active
-            # session at round-start) was previously unrecoverable the
-            # moment the user switched away and back: the lookup found
-            # nothing, mounted `None`, and the round silently hung with a
-            # stale NEEDS_APPROVAL badge and no card until its 120s
-            # timeout. The `finally` below already pops this key
-            # unconditionally (whenever `session_id is not None`,
-            # regardless of `is_parked`) -- storing it unconditionally
-            # here too makes retention symmetric with that cleanup, per
-            # spec §5 ("card state survives tab switches") for every round,
-            # not only parked ones.
-            # PR0: keyed by ROUND, and the return says whether THIS round
-            # is its session's FIFO head. A non-head round must not mount:
-            # an older sibling is still holding the card, and evicting it
-            # is exactly the task-15661 defect this replaced.
-            is_head = self._park_round_payload(
-                self._parked_approval_payloads, round_id, payload
-            )
+        # C1: `is_head` (whether THIS round owns the card slot, computed
+        # from `park_round_payload`) and the `add_pending_round` badge
+        # call both moved into `run_round` -- see its own docstring for
+        # why it now owns them (they are identical across all three
+        # bridges; only the announce/park/mount BRANCH choice, made by
+        # the hooks below, was ever bridge-specific).
 
-        try:
-            if self._approval_view_is_detached():
-                # task-15860 Task 5: no Console view exists, so BOTH the
-                # mount seam and the park seam are `None` and neither
-                # branch below would surface anything at all. Announce
-                # app-wide instead -- the toast renders on whatever screen
-                # the user is actually on, which is the only seam that can
-                # reach them here.
-                self._announce_detached_approval(owning_session_id)
-            elif is_parked:
-                if self.app is not None and self.park_pending_approval is not None:
-                    self.app.call_from_thread(self.park_pending_approval, session_id)
-            elif is_head:
-                self._marshal_pending_approval(payload)
-            # ADR-067: mark this run as waiting on a human decision for the
-            # duration of the wait, so a per-call wrapper hosting this round
-            # (the invoke-path fallback approval) pauses its deadline -- an
-            # indefinite wait must not trip `max_tool_call_seconds`.
-            with use_human_input_wait(owning_run_id):
-                while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
-                    if self._is_session_cancelled(
-                        session_id,
-                        cancel_event=round_cancel_event,
-                        visit_event=visit_cancel_event,
-                    ):
-                        # Finding I3: a stop/unmount that resolves THIS round
-                        # denies every still-undecided call, but
-                        # `run_agent_loop`'s own `should_cancel()` check fires
-                        # for every call in this turn's batch BEFORE any of
-                        # them reaches `invoke()` -- so the "deny" verdict
-                        # stamped below is never consumed there and would
-                        # otherwise leave no audit record at all (contrast
-                        # with the timeout branch, whose calls DO still reach
-                        # `invoke()`'s own gate and get logged there, since a
-                        # timeout is not itself a cancellation). Log directly
-                        # here, best-effort, for exactly the names this branch
-                        # is about to fail closed.
-                        cancelled_names = [
-                            name for name in unique_names if name not in decisions
-                        ]
-                        for name in unique_names:
-                            decisions.setdefault(name, "deny")
-                        self._record_cancelled_approval_decisions(
-                            cancelled_names,
-                            call_by_name,
-                        )
-                        break
-                    if deadline is not None and time.monotonic() >= deadline:
-                        for name in unique_names:
-                            decisions.setdefault(name, "timeout")
-                        break
-            # PR2a Task 7: a revoked round answers "deny" for every name,
-            # unconditionally -- it does not consult `decisions` at all.
-            # The run this round belongs to has been cancelled or
-            # abandoned, and `resolve_pending_approval` can still write
-            # into the shared `decisions` box after revocation (it
-            # snapshots the box under the lock, then updates it outside),
-            # so honouring that box here would let a click delivered
-            # microseconds after the cancellation execute the tool for
-            # real. `revoke_approval_rounds_for_run` already filled every
-            # name with "deny"; this is the guard that makes it stick.
-            with self._approval_state_lock:
-                was_revoked = bool(round_state.get("revoked"))
-            if was_revoked:
-                # Same audit gap Finding I3 documents for the cancellation
-                # branch above: the child's loop is being torn down, so
-                # these calls never reach `invoke()`'s own gate and would
-                # otherwise leave no record of having been denied.
-                self._record_cancelled_approval_decisions(
-                    list(unique_names), call_by_name
-                )
-                return {name: "deny" for name in unique_names}
-            # Any name the resolution path above didn't already cover (e.g.
-            # a partial/empty decisions dict handed to `resolve_pending_
-            # approval`) fails closed to "deny" rather than silently
-            # dropping the call from the returned mapping.
+        def _on_cancelled() -> None:
+            # Finding I3: a stop/unmount that resolves THIS round denies
+            # every still-undecided call, but `run_agent_loop`'s own
+            # `should_cancel()` check fires for every call in this turn's
+            # batch BEFORE any of them reaches `invoke()` -- so the "deny"
+            # verdict stamped below is never consumed there and would
+            # otherwise leave no audit record at all (contrast with the
+            # timeout hook, whose calls DO still reach `invoke()`'s own
+            # gate and get logged there, since a timeout is not itself a
+            # cancellation). Log directly here, best-effort, for exactly
+            # the names this branch is about to fail closed.
+            cancelled_names = [
+                name for name in unique_names if name not in decisions
+            ]
             for name in unique_names:
                 decisions.setdefault(name, "deny")
-            # Finding F4: build the snapshot by keyed lookup over the
-            # (locally-owned, never-mutated) `unique_names` list rather
-            # than `dict(decisions)` -- the latter iterates `decisions`
-            # itself, which `resolve_pending_approval` can concurrently
-            # `.update()` from the UI thread; a same-size update can't
-            # change dict length, so this is unreachable today, but a
-            # keyed `.get()` per name can never raise "dictionary changed
-            # size during iteration" regardless. The `setdefault` pass
-            # above already guarantees every name resolves, so `.get`'s
-            # own "deny" fallback here is a belt-and-suspenders no-op, not
-            # a second source of truth.
-            return {name: decisions.get(name, "deny") for name in unique_names}
-        finally:
-            # F2b fix (Qodo wave): guard the pop -- `resolve_pending_
-            # approval`'s round_id lookup and the `fleet_summary_counts`
-            # sync tick can each observe this map from the UI thread while
-            # this worker thread tears the round down.
-            with self._approval_state_lock:
-                self._pending_approval_rounds.pop(round_id, None)
-            # PR0: drop exactly THIS round's retained payload. Pre-PR0 the
-            # slot was shared per session, so the pop had to be guarded by
-            # an order-dependent "is this the last armed round for the
-            # session" test to avoid discarding a still-armed sibling's
-            # only copy. Per-round storage makes that guard meaningless --
-            # each round owns its own key -- and takes the accepted
-            # last-armed-wins limitation (task-15661) with it.
-            self._unpark_round_payload(self._parked_approval_payloads, round_id)
-            if session_id is not None:
-                # TASK-1050 (Defect A): discard ONLY this round's own id --
-                # the badge clears only once every bridge round for this
-                # session (this one included) has resolved.
-                self.discard_pending_round(session_id, round_id)
-            # PR0: re-derive the card from the session's remaining FIFO
-            # head rather than deciding whether to CLEAR it. This
-            # subsumes `_clear_pending_approval_if_round_is_current`'s
-            # two-part TOCTOU guard: clearing was order-dependent, so the
-            # decision could go stale between a worker-thread snapshot and
-            # the UI thread running it; a head re-derive is a pure
-            # function of current state. The race-proofing principle is
-            # unchanged -- `_remount_head` still computes the answer
-            # INSIDE the callable that runs on the UI thread, never from a
-            # snapshot taken here.
-            # `owning_session_id`, not `session_id`: a legacy no-session
-            # caller retains no payload, so its head resolves to `None` and
-            # the card clears exactly as the pre-PR0 unconditional clear
-            # did -- unless a real session-attributed sibling is armed for
-            # the session it mounted over, in which case that sibling's
-            # card is (correctly) what stays up.
-            try:
-                # Qodo PR #1836 finding 2: a legacy no-session round's card
-                # mounted unconditionally and may sit over ANY session by
-                # now -- pass None so `_remount_head` re-derives for the
-                # session active when the callback runs, not the arm-time
-                # snapshot (whose mismatch would strand the card).
-                self._remount_head(
-                    self._parked_approval_payloads,
-                    self.set_pending_approval,
-                    owning_session_id if session_id is not None else None,
-                )
-            except Exception:  # noqa: BLE001 -- suppress teardown-time errors
-                logger.opt(exception=True).debug(
-                    "Failed to marshal approval remount during teardown"
-                )
+            self._record_cancelled_approval_decisions(
+                cancelled_names,
+                call_by_name,
+            )
+
+        def _on_timeout() -> None:
+            for name in unique_names:
+                decisions.setdefault(name, "timeout")
+
+        # ADR-067: `human_wait_run_id` marks this run as waiting on a
+        # human decision for the duration of the wait inside `run_round`,
+        # so a per-call wrapper hosting this round (the invoke-path
+        # fallback approval) pauses its deadline -- an indefinite wait
+        # must not trip `max_tool_call_seconds`.
+        outcome = self._interrupt_host.run_round(
+            "approval",
+            round_id,
+            payload,
+            round_state,
+            session_id=session_id,
+            owning_session_id=owning_session_id,
+            deadline=deadline,
+            is_parked=is_parked,
+            announce_detached=(
+                # task-15860 Task 5: no Console view exists, so BOTH the
+                # mount seam and the park seam are `None` and neither
+                # branch would surface anything at all. Announce app-wide
+                # instead -- the toast renders on whatever screen the user
+                # is actually on, which is the only seam that can reach
+                # them here.
+                (lambda: self._announce_detached_approval(owning_session_id))
+                if self._approval_view_is_detached()
+                else None
+            ),
+            human_wait_run_id=owning_run_id,
+            on_cancelled=_on_cancelled,
+            on_timeout=_on_timeout,
+        )
+        # PR2a Task 7: a revoked round answers "deny" for every name,
+        # unconditionally -- it does not consult `decisions` at all. The
+        # run this round belongs to has been cancelled or abandoned, and
+        # `resolve_pending_approval` can still write into the shared
+        # `decisions` box after revocation (it snapshots the box under
+        # the lock, then updates it outside), so honouring that box here
+        # would let a click delivered microseconds after the cancellation
+        # execute the tool for real. `revoke_approval_rounds_for_run`
+        # already filled every name with "deny"; this is the guard that
+        # makes it stick.
+        if outcome == "revoked":
+            # Same audit gap Finding I3 documents for the cancellation
+            # hook above: the child's loop is being torn down, so these
+            # calls never reach `invoke()`'s own gate and would otherwise
+            # leave no record of having been denied.
+            self._record_cancelled_approval_decisions(
+                list(unique_names), call_by_name
+            )
+            return {name: "deny" for name in unique_names}
+        # Any name the resolution path above didn't already cover (e.g. a
+        # partial/empty decisions dict handed to `resolve_pending_
+        # approval`) fails closed to "deny" rather than silently dropping
+        # the call from the returned mapping.
+        for name in unique_names:
+            decisions.setdefault(name, "deny")
+        # Finding F4: build the snapshot by keyed lookup over the
+        # (locally-owned, never-mutated) `unique_names` list rather than
+        # `dict(decisions)` -- the latter iterates `decisions` itself,
+        # which `resolve_pending_approval` can concurrently `.update()`
+        # from the UI thread; a same-size update can't change dict
+        # length, so this is unreachable today, but a keyed `.get()` per
+        # name can never raise "dictionary changed size during
+        # iteration" regardless. The `setdefault` pass above already
+        # guarantees every name resolves, so `.get`'s own "deny" fallback
+        # here is a belt-and-suspenders no-op, not a second source of
+        # truth.
+        return {name: decisions.get(name, "deny") for name in unique_names}
 
     def _record_cancelled_approval_decisions(
         self,

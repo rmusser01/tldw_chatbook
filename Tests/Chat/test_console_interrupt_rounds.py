@@ -98,3 +98,120 @@ def test_missing_setter_attr_is_a_safe_no_op(host):
     delattr(seams, KIND_SETTER_ATTRS["question"])
     host.park_round_payload("question", "q1", _payload("q1"))
     host.remount_head("question", "sess-A")  # must not raise
+
+
+import threading
+
+
+class FakeSeamsFull(FakeSeams):
+    """Adds the probe/badge surface run_round touches."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.cancelled = False
+        self.badges: list[tuple[str, str, str]] = []
+        self.park_pending_approval = None
+
+    def _is_session_cancelled(self, session_id, *, cancel_event=None, visit_event=None):
+        return self.cancelled
+
+    def add_pending_round(self, session_id, round_id):
+        self.badges.append(("add", session_id, round_id))
+
+    def discard_pending_round(self, session_id, round_id):
+        self.badges.append(("discard", session_id, round_id))
+
+
+def test_run_round_decided_when_the_event_is_set():
+    host = InterruptRoundHost(FakeSeamsFull())
+    state = {"event": threading.Event(), "session_id": "sess-A"}
+    state["event"].set()  # pre-resolved: loop exits immediately
+    outcome = host.run_round(
+        "approval", "r1", _payload("r1"), state,
+        session_id="sess-A", owning_session_id="sess-A",
+        deadline=None, is_parked=False,
+    )
+    assert outcome == "decided"
+    assert host.registries["approval"] == {}
+    assert host.payloads["approval"] == {}
+
+
+def test_run_round_times_out_and_calls_on_timeout():
+    host = InterruptRoundHost(FakeSeamsFull())
+    fired = []
+    state = {"event": threading.Event(), "session_id": "sess-A"}
+    outcome = host.run_round(
+        "approval", "r1", _payload("r1"), state,
+        session_id="sess-A", owning_session_id="sess-A",
+        deadline=time.monotonic() - 1.0, is_parked=False,
+        on_timeout=lambda: fired.append("t"),
+    )
+    assert outcome == "timeout" and fired == ["t"]
+
+
+def test_run_round_cancelled_calls_on_cancelled():
+    seams = FakeSeamsFull()
+    seams.cancelled = True
+    host = InterruptRoundHost(seams)
+    fired = []
+    state = {"event": threading.Event(), "session_id": "sess-A"}
+    outcome = host.run_round(
+        "approval", "r1", _payload("r1"), state,
+        session_id="sess-A", owning_session_id="sess-A",
+        deadline=None, is_parked=False,
+        on_cancelled=lambda: fired.append("c"),
+    )
+    assert outcome == "cancelled" and fired == ["c"]
+
+
+def test_run_round_revoked_wins_over_decided():
+    host = InterruptRoundHost(FakeSeamsFull())
+    state = {"event": threading.Event(), "session_id": "sess-A", "revoked": True}
+    state["event"].set()
+    outcome = host.run_round(
+        "approval", "r1", _payload("r1"), state,
+        session_id="sess-A", owning_session_id="sess-A",
+        deadline=None, is_parked=False,
+    )
+    assert outcome == "revoked"
+
+
+def test_run_round_teardown_promotes_the_queued_sibling():
+    seams = FakeSeamsFull()
+    host = InterruptRoundHost(seams)
+    host.park_round_payload("approval", "r0", _payload("r0"))  # will be head
+    state = {"event": threading.Event(), "session_id": "sess-A"}
+    state["event"].set()
+    host.run_round(
+        "approval", "r1", _payload("r1"), state,
+        session_id="sess-A", owning_session_id="sess-A",
+        deadline=None, is_parked=False,
+    )
+    assert seams.mounted["approval"][-1]["round_id"] == "r0"
+
+
+def test_run_round_badge_add_and_discard_bracket_the_wait():
+    seams = FakeSeamsFull()
+    host = InterruptRoundHost(seams)
+    state = {"event": threading.Event(), "session_id": "sess-A"}
+    state["event"].set()
+    host.run_round(
+        "approval", "r1", _payload("r1"), state,
+        session_id="sess-A", owning_session_id="sess-A",
+        deadline=None, is_parked=False,
+    )
+    assert seams.badges == [("add", "sess-A", "r1"), ("discard", "sess-A", "r1")]
+
+
+def test_run_round_legacy_none_session_skips_badge_and_park():
+    seams = FakeSeamsFull()
+    host = InterruptRoundHost(seams)
+    state = {"event": threading.Event(), "session_id": ""}
+    state["event"].set()
+    host.run_round(
+        "approval", "r1", _payload("r1", session_id=""), state,
+        session_id=None, owning_session_id="",
+        deadline=None, is_parked=False,
+    )
+    assert seams.badges == []
+    assert host.payloads["approval"] == {}
