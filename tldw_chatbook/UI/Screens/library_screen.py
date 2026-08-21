@@ -1460,6 +1460,8 @@ def _apply_library_row_toggle(
         for matching_button in matching_buttons:
             label_rest = matching_button._library_row_label_rest
             matching_button.label = f"{glyph}{label_rest}"
+            if kind == "media":
+                matching_button._library_media_checked = checked
         count_static.update(f"{selection.count} selected")
         export_button.disabled = selection.count == 0
         # F-018: the reason/action tooltip flips in place with `disabled`
@@ -2813,16 +2815,32 @@ class LibraryScreen(BaseAppScreen):
 
     #library-canvas.library-notes-compact #library-media-workbench {
         layout: vertical;
-        height: auto;
+        height: 1fr;
+        min-height: 0;
     }
 
-    #library-canvas.library-notes-compact #library-media-list,
-    #library-canvas.library-notes-compact #library-media-preview {
+    #library-canvas.library-notes-compact #library-media-list {
         width: 100%;
-        height: auto;
+        height: 100%;
+        min-height: 0;
         margin: 0;
         padding: 0;
         overflow-y: hidden;
+    }
+
+    #library-canvas.library-notes-compact #library-media-row-scroll {
+        height: 1fr;
+        min-height: 0;
+    }
+
+    #library-canvas.library-notes-compact .library-media-row {
+        height: 1;
+        min-height: 1;
+        margin: 0;
+    }
+
+    #library-canvas.library-notes-compact #library-media-preview {
+        display: none;
     }
 
     #library-canvas.library-notes-compact #library-media-detail-empty {
@@ -3723,6 +3741,13 @@ class LibraryScreen(BaseAppScreen):
         # -- checks and consumes this flag on every run, re-requesting the
         # focus after whichever recompose turns out to be the last one.
         self._library_pending_list_entry_focus: bool = False
+        self._library_list_entry_focus_generation: int = 0
+        self._library_pending_list_entry_media_return: (
+            tuple[str, tuple[int, int] | None] | None
+        ) = None
+        self._library_media_viewer_return: (
+            tuple[str, tuple[int, int] | None] | None
+        ) = None
         # task-2856 review (PR #1410, Qodo): the settle-window timer
         # ``_arm_library_list_entry_focus`` schedules used to be fire-and-
         # forget -- the ``Timer`` ``set_timer`` returns was never kept, so
@@ -4247,6 +4272,20 @@ class LibraryScreen(BaseAppScreen):
             if placement_id:
                 return f"note-placement:{placement_id}"
             return f"note-row:{note_id}"
+        media_id = str(getattr(focused, "media_id", "") or "")
+        if media_id and focused.has_class("library-media-row"):
+            return f"media-row:{media_id}"
+        if focused.id == "library-media-open-viewer":
+            try:
+                media_canvas = self.query_one(
+                    "#library-media-canvas", LibraryMediaCanvas
+                )
+            except (NoMatches, QueryError):
+                pass
+            else:
+                selected_id = str(media_canvas.canvas.selected_id or "")
+                if selected_id:
+                    return f"media-preview-open:{selected_id}"
         if focused.has_class("library-notes-folder-row"):
             placement_id = str(getattr(focused, "placement_id", "") or "")
             if placement_id:
@@ -4347,6 +4386,11 @@ class LibraryScreen(BaseAppScreen):
 
         owner_region = "rail" if stage == "rail" else region
         scroll_owner = self._library_notes_scroll_owner(owner_region)
+        if role.startswith(("media-row:", "media-preview-open:")):
+            try:
+                scroll_owner = self.query_one("#library-media-row-scroll", Widget)
+            except (NoMatches, QueryError):
+                scroll_owner = None
         scroll_offset = (
             (int(scroll_owner.scroll_x), int(scroll_owner.scroll_y))
             if scroll_owner is not None
@@ -4526,6 +4570,17 @@ class LibraryScreen(BaseAppScreen):
                 return workspace.query_one(f"#{widget_id}", Widget)
             except (NoMatches, QueryError):
                 return None
+        elif role.startswith(("media-row:", "media-preview-open:")):
+            media_id = role.split(":", 1)[1]
+            if role.startswith("media-preview-open:") and not self._library_notes_compact:
+                try:
+                    return self.query_one("#library-media-open-viewer", Widget)
+                except (NoMatches, QueryError):
+                    return None
+            for row in self.query(".library-media-row"):
+                if str(getattr(row, "media_id", "") or "") == media_id:
+                    return row
+            return None
         if selector is not None:
             try:
                 return self.query_one(selector, Widget)
@@ -4712,6 +4767,13 @@ class LibraryScreen(BaseAppScreen):
             "rail" if identity.stage == "rail" else self._library_notes_focus_region()
         )
         owner = self._library_notes_scroll_owner(owner_region)
+        if identity.semantic_role.startswith(
+            ("media-row:", "media-preview-open:")
+        ):
+            try:
+                owner = self.query_one("#library-media-row-scroll", Widget)
+            except (NoMatches, QueryError):
+                owner = None
         if owner is not None and identity.scroll_offset is not None:
             owner.scroll_to(
                 x=identity.scroll_offset[0],
@@ -4798,6 +4860,11 @@ class LibraryScreen(BaseAppScreen):
             return "notes"
         if identity.stage == "rail":
             return "rail"
+        if (
+            identity.stage == "notes"
+            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+        ):
+            return "notes"
         if identity.stage == "notes" and self._library_notes_compact_workflow_active():
             return "notes"
         if self._library_notes_focus_region() in {
@@ -4847,6 +4914,17 @@ class LibraryScreen(BaseAppScreen):
         else:
             if notes_canvas.compact != self._library_notes_compact:
                 notes_canvas.apply_compact_presentation(self._library_notes_compact)
+        try:
+            media_canvas = canvas.query_one(
+                "#library-media-canvas", LibraryMediaCanvas
+            )
+        except (NoMatches, QueryError):
+            pass
+        else:
+            if media_canvas.compact != self._library_notes_compact:
+                media_canvas.apply_compact_presentation(
+                    self._library_notes_compact
+                )
         compact_single_stage = (
             self._library_notes_compact and self._library_notes_compact_stage_applies()
         )
@@ -5151,6 +5229,10 @@ class LibraryScreen(BaseAppScreen):
         if (
             not self._library_notes_workflow_active()
             and self._library_notes_focus_stage(self.focused) != "rail"
+            and not (
+                self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+                and self._library_media_view == "list"
+            )
         ):
             return
         self._install_library_notes_scroll_observers()
@@ -5245,6 +5327,12 @@ class LibraryScreen(BaseAppScreen):
                 cached is not None
                 and cached.region == current.region
                 and cached.note_id == current.note_id
+                and (
+                    not current.semantic_role.startswith(
+                        ("media-row:", "media-preview-open:")
+                    )
+                    or cached.semantic_role == current.semantic_role
+                )
             ):
                 identity = dataclasses.replace(
                     cached,
@@ -5258,6 +5346,12 @@ class LibraryScreen(BaseAppScreen):
             user_scroll is not None
             and user_scroll.region == current.region
             and user_scroll.note_id == current.note_id
+            and (
+                not current.semantic_role.startswith(
+                    ("media-row:", "media-preview-open:")
+                )
+                or user_scroll.semantic_role == current.semantic_role
+            )
         ):
             identity = dataclasses.replace(
                 identity,
@@ -5274,16 +5368,22 @@ class LibraryScreen(BaseAppScreen):
         """Let click-driven focus changes supersede resize memory."""
         del event
         self._mark_library_notes_user_interaction()
+        if self._library_pending_list_entry_focus:
+            self._disarm_library_list_entry_focus()
 
     def on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
-        """Let wheel scrolling supersede resize memory."""
+        """Let wheel scrolling supersede resize and list-return memory."""
         del event
         self._mark_library_notes_user_interaction()
+        if self._library_pending_list_entry_focus:
+            self._disarm_library_list_entry_focus()
 
     def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
-        """Let wheel scrolling supersede resize memory."""
+        """Let wheel scrolling supersede resize and list-return memory."""
         del event
         self._mark_library_notes_user_interaction()
+        if self._library_pending_list_entry_focus:
+            self._disarm_library_list_entry_focus()
 
     def _notes_footer_tier(
         self,
@@ -6431,7 +6531,11 @@ class LibraryScreen(BaseAppScreen):
             return getattr(self, "_library_skills_view", "list") == "list"
         return False
 
-    def _arm_library_list_entry_focus(self) -> None:
+    def _arm_library_list_entry_focus(
+        self,
+        *,
+        media_return: tuple[str, tuple[int, int] | None] | None = None,
+    ) -> None:
         """Request the primary list's first row be focused (task-2856 AC1).
 
         Call this (never ``call_after_refresh(self._focus_library_list_entry)``
@@ -6464,8 +6568,16 @@ class LibraryScreen(BaseAppScreen):
         new one is scheduled, so only the most recent arm's timer is ever
         live.
         """
+        self._library_list_entry_focus_generation += 1
         self._library_pending_list_entry_focus = True
-        self.call_after_refresh(self._focus_library_list_entry)
+        self._library_pending_list_entry_media_return = media_return
+        if media_return is None:
+            self.call_after_refresh(self._focus_library_list_entry)
+        else:
+            self.call_after_refresh(
+                self._focus_library_list_entry_if_current,
+                self._library_list_entry_focus_generation,
+            )
         if self._library_list_entry_focus_timer is not None:
             self._library_list_entry_focus_timer.stop()
         self._library_list_entry_focus_timer = self.set_timer(
@@ -6487,7 +6599,9 @@ class LibraryScreen(BaseAppScreen):
         so an interaction-driven disarm never leaves the settle-window
         timer dangling behind it.
         """
+        self._library_list_entry_focus_generation += 1
         self._library_pending_list_entry_focus = False
+        self._library_pending_list_entry_media_return = None
         if self._library_list_entry_focus_timer is not None:
             self._library_list_entry_focus_timer.stop()
             self._library_list_entry_focus_timer = None
@@ -6515,7 +6629,14 @@ class LibraryScreen(BaseAppScreen):
         focused = event.widget
         if self.is_mounted:
             stage = self._library_notes_focus_stage(focused)
-            relevant = self._library_notes_workflow_active() or stage == "rail"
+            relevant = bool(
+                self._library_notes_workflow_active()
+                or stage == "rail"
+                or (
+                    self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+                    and self._library_media_view == "list"
+                )
+            )
             target_restore = self._library_notes_programmatic_focus_target is focused
             if target_restore:
                 self._library_notes_programmatic_focus_target = None
@@ -6541,7 +6662,20 @@ class LibraryScreen(BaseAppScreen):
         widget = event.widget
         if row_class is not None and widget is not None and widget.has_class(row_class):
             return
+        if (
+            self._library_notes_restoring_focus
+            and self._library_pending_list_entry_media_return is not None
+        ):
+            return
         self._disarm_library_list_entry_focus()
+
+    def _focus_library_list_entry_if_current(self, generation: int) -> None:
+        """Apply one semantic Media return only while its arm still owns focus."""
+        if (
+            self._library_pending_list_entry_focus
+            and generation == self._library_list_entry_focus_generation
+        ):
+            self._focus_library_list_entry()
 
     def _focus_library_list_entry(self) -> None:
         """Focus the primary list's first row -- see ``_arm_library_list_entry_focus``.
@@ -6567,10 +6701,23 @@ class LibraryScreen(BaseAppScreen):
         row_class = _LIBRARY_LIST_ROW_CLASS_BY_ROW_ID.get(self._library_selected_row_id)
         if row_class is None:
             return
-        try:
-            rows = self.query(f".{row_class}")
-            first_row = rows.first()
-        except NoMatches:
+        rows = list(self.query(f".{row_class}"))
+        if not rows:
+            if row_class == "library-media-row":
+                for selector in (
+                    "#library-media-type-filter",
+                    "#library-media-empty-clear-type",
+                    "#library-media-empty-import",
+                    "#library-media-retry",
+                ):
+                    try:
+                        control = self.query_one(selector, Widget)
+                    except (NoMatches, QueryError):
+                        continue
+                    if not getattr(control, "disabled", False):
+                        self._library_notes_programmatic_focus_target = control
+                        control.focus()
+                        return
             return
         if (
             row_class == "library-media-row"
@@ -6583,7 +6730,37 @@ class LibraryScreen(BaseAppScreen):
                 ):
                     row.focus()
                     return
-        first_row.focus()
+        target = rows[0]
+        media_return = self._library_pending_list_entry_media_return
+        if row_class == "library-media-row" and media_return is not None:
+            media_id, _scroll_offset = media_return
+            target = next(
+                (
+                    row
+                    for row in rows
+                    if str(getattr(row, "media_id", "") or "") == media_id
+                ),
+                target,
+            )
+        if media_return is None:
+            target.focus()
+        else:
+            self._library_notes_programmatic_focus_target = target
+            self.set_focus(target, scroll_visible=False)
+        if row_class == "library-media-row" and media_return is not None:
+            _media_id, scroll_offset = media_return
+            if scroll_offset is not None:
+                try:
+                    scroll = self.query_one("#library-media-row-scroll", Widget)
+                except (NoMatches, QueryError):
+                    return
+                scroll.scroll_to(
+                    x=max(0, min(scroll_offset[0], int(scroll.max_scroll_x))),
+                    y=max(0, min(scroll_offset[1], int(scroll.max_scroll_y))),
+                    animate=False,
+                    force=True,
+                    immediate=True,
+                )
 
     async def _flush_active_file_notes(self) -> bool:
         """Delegate the common leave guard only while Files owns Notes."""
@@ -9663,7 +9840,13 @@ class LibraryScreen(BaseAppScreen):
         # covers an arbitrary-length chain of these workers instead of
         # exactly one.
         if self._library_pending_list_entry_focus:
-            self.call_after_refresh(self._focus_library_list_entry)
+            if self._library_pending_list_entry_media_return is None:
+                self.call_after_refresh(self._focus_library_list_entry)
+            else:
+                self.call_after_refresh(
+                    self._focus_library_list_entry_if_current,
+                    self._library_list_entry_focus_generation,
+                )
         preferences = self._library_rail_preferences()
 
         yield Static(
@@ -10628,6 +10811,7 @@ class LibraryScreen(BaseAppScreen):
                 if self._library_media_bulk_delete_in_flight
                 else ""
             ),
+            "compact": self._library_notes_compact,
         }
 
     def _library_media_type_options(self) -> tuple[str | None, ...]:
@@ -10751,8 +10935,15 @@ class LibraryScreen(BaseAppScreen):
             "library-media-retry",
             "library-media-type-filter",
         }
+        semantic_return_generation = (
+            self._library_list_entry_focus_generation
+            if self._library_pending_list_entry_focus
+            and self._library_pending_list_entry_media_return is not None
+            else None
+        )
         if (
-            isinstance(focused_id, str)
+            semantic_return_generation is None
+            and isinstance(focused_id, str)
             and focused_id
             and any(widget.id == "library-media-canvas" for widget in focused.ancestors)
             and not (
@@ -10766,9 +10957,17 @@ class LibraryScreen(BaseAppScreen):
             )
         ):
             focus_identity = f"#{focused_id}"
-        elif self._library_pending_list_entry_focus:
-            focus_identity = "#library-media-row-0"
-        if focus_identity in {
+        if semantic_return_generation is not None:
+            def focus_semantic_return() -> None:
+                try:
+                    self._focus_library_list_entry_if_current(
+                        semantic_return_generation
+                    )
+                finally:
+                    self._library_notes_restoring_focus = False
+
+            then = focus_semantic_return
+        elif focus_identity in {
             "#library-media-previous",
             "#library-media-next",
             "#library-media-retry",
@@ -10783,6 +10982,11 @@ class LibraryScreen(BaseAppScreen):
                 if focus_identity
                 else None
             )
+        if semantic_return_generation is not None:
+            # Canvas recompose temporarily drops DOM focus outside Media.
+            # Treat that automatic fallback as part of this guarded restore;
+            # keyboard and mouse input disarm the generation before callback.
+            self._library_notes_restoring_focus = True
         _sync_library_canvas(self, "media", then=then)
 
     def _focus_library_media_page_control(self, invoked: str) -> None:
@@ -17694,6 +17898,15 @@ class LibraryScreen(BaseAppScreen):
                 row-press behavior for a row missing its ``media_id``).
         """
         media_id = str(media_id or "")
+        self._library_media_viewer_return = None
+        if media_id and self._library_media_view == "list" and self.is_mounted:
+            try:
+                scroll = self.query_one("#library-media-row-scroll", Widget)
+            except (NoMatches, QueryError):
+                scroll_offset = None
+            else:
+                scroll_offset = (int(scroll.scroll_x), int(scroll.scroll_y))
+            self._library_media_viewer_return = (media_id, scroll_offset)
         if media_id:
             self._acknowledge_library_destination_change()
             self._selected_media_id = media_id
@@ -30123,7 +30336,9 @@ class LibraryScreen(BaseAppScreen):
         self.refresh(recompose=True)
         # task-2856 AC1: every "back to list" exit re-focuses the list's
         # first row so Up/Down/Enter work immediately.
-        self._arm_library_list_entry_focus()
+        media_return = self._library_media_viewer_return
+        self._library_media_viewer_return = None
+        self._arm_library_list_entry_focus(media_return=media_return)
 
     def action_library_media_viewer_back(self) -> None:
         """Escape: step back ONE level in the media viewer (task-2856 AC2).
