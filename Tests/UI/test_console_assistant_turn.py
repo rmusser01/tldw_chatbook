@@ -28,7 +28,7 @@ class ActivityHarness(App[None]):
     def on_console_activity_activated(self, event: ConsoleActivityActivated) -> None:
         self.activations.append(event)
         disclosure = self.query_one(
-            f"#console-activity-disclosure-{event.activity_message_id}",
+            f"#console-activity-disclosure-{event.message_id}",
             ConsoleActivityDisclosure,
         )
         disclosure.sync_state(
@@ -97,8 +97,7 @@ async def test_expandable_header_click_enter_and_space_emit_original_id() -> Non
         await pilot.click("#console-activity-header-activity-expandable")
         await pilot.pause()
         assert [
-            (event.activity_message_id, event.toggle_requested)
-            for event in app.activations
+            (event.message_id, event.toggle_requested) for event in app.activations
         ] == [("activity-expandable", True)]
         assert header.renderable.plain == "▾ fs_[literal] · success"
 
@@ -109,7 +108,7 @@ async def test_expandable_header_click_enter_and_space_emit_original_id() -> Non
         await pilot.pause()
 
     assert [
-        (event.activity_message_id, event.toggle_requested) for event in app.activations
+        (event.message_id, event.toggle_requested) for event in app.activations
     ] == [
         ("activity-expandable", True),
         ("activity-expandable", True),
@@ -137,7 +136,7 @@ async def test_no_detail_activity_is_focusable_and_selects_without_toggle() -> N
         assert not disclosure.expanded
 
     assert [
-        (event.activity_message_id, event.toggle_requested) for event in app.activations
+        (event.message_id, event.toggle_requested) for event in app.activations
     ] == [("thinking-empty", False)]
 
 

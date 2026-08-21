@@ -18,9 +18,14 @@ class ConsoleActivityActivated(Message):
     """Request selection and, when available, disclosure-state toggling."""
 
     def __init__(self, activity_message_id: str, *, toggle_requested: bool) -> None:
-        self.activity_message_id = activity_message_id
+        self.message_id = activity_message_id
         self.toggle_requested = toggle_requested
         super().__init__()
+
+    @property
+    def activity_message_id(self) -> str:
+        """Backward-compatible alias for the canonical original message ID."""
+        return self.message_id
 
 
 class ConsoleActivityHeader(Static):
