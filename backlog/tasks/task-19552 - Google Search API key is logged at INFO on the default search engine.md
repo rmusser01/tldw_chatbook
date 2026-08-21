@@ -231,8 +231,10 @@ to this worktree, confirmed via a `tldw_chatbook.__file__` path assert):**
   unrelated).
 - `Tests/Tools/test_web_search_tool.py` (the `web_search` local-tool entry
   point) — 2 passed.
-- `Tests/Internal_Prompts/test_websearch_prompt_parity.py` — 5 passed,
-  1 pre-existing failure (`test_result_relevance_eval_parity`, a Jinja2
+- `Tests/Internal_Prompts/test_websearch_prompt_parity.py` — 3 passed,
+  1 pre-existing failure (the file has 4 tests, not 6; the earlier "5 passed"
+  in this note was a bookkeeping error caught in review) —
+  (`test_result_relevance_eval_parity`, a Jinja2
   whitespace assertion unrelated to logging/credentials). Confirmed
   pre-existing and unrelated to this change by running the identical test
   against a throwaway `origin/dev` worktree at the same base commit
