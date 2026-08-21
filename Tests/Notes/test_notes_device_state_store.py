@@ -126,6 +126,31 @@ def test_empty_v0_initializes_current_schema_in_an_isolated_database(
         )
 
 
+def test_nonempty_unversioned_database_is_not_adopted_or_changed(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "notes-sync.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.execute("CREATE TABLE unrelated_private_owner (value TEXT)")
+        connection.execute("INSERT INTO unrelated_private_owner VALUES ('sentinel')")
+        connection.commit()
+    database.chmod(0o600)
+    before = database.read_bytes()
+
+    with pytest.raises(NotesDeviceStateError, match="incompatible"):
+        NotesDeviceStateStore(database).initialize()
+
+    assert database.read_bytes() == before
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone() == (0,)
+        assert connection.execute(
+            "SELECT value FROM unrelated_private_owner"
+        ).fetchone() == ("sentinel",)
+        assert connection.execute(
+            "SELECT COUNT(*) FROM sqlite_schema WHERE name LIKE 'notes_sync_%'"
+        ).fetchone() == (0,)
+
+
 def test_pinned_historical_v1_receipt_rows_survive_value_for_value_and_indexes_repair(
     tmp_path: Path,
 ) -> None:
@@ -404,6 +429,102 @@ def test_active_root_requires_logical_folder_owner_and_root_transitions_fail_clo
         store.transition_root("root-1", NotesSyncRootState.PENDING)
 
 
+def test_root_pause_and_disconnect_propagate_child_binding_lifecycle_atomically(
+    tmp_path: Path,
+) -> None:
+    store = NotesDeviceStateStore(tmp_path / "notes-sync.sqlite3")
+    store.create_root(
+        _root(logical_folder_id="folder-1", state=NotesSyncRootState.ACTIVE)
+    )
+    store.create_root(
+        NotesSyncRootRecord(
+            root_id="root-2",
+            note_scope_id="scope-1",
+            logical_folder_id="folder-2",
+            canonical_path="/private/other-notes",
+            direction=NotesSyncDirection.BIDIRECTIONAL,
+            state=NotesSyncRootState.ACTIVE,
+        )
+    )
+    store.create_binding(_binding())
+    store.create_binding(
+        _binding(
+            binding_id="binding-attention",
+            note_id="note-attention",
+            relative_path="attention.md",
+            identity_digest="c" * 64,
+            state=NotesSyncBindingState.NEEDS_ATTENTION,
+        )
+    )
+    store.create_binding(
+        _binding(
+            binding_id="binding-candidate",
+            note_id="note-candidate",
+            relative_path="candidate.md",
+            identity_digest="d" * 64,
+            state=NotesSyncBindingState.CANDIDATE,
+        )
+    )
+
+    paused = store.transition_root("root-1", NotesSyncRootState.PAUSED)
+
+    assert paused.state is NotesSyncRootState.PAUSED
+    assert store.get_binding("binding-1").state is NotesSyncBindingState.PAUSED
+    assert (
+        store.get_binding("binding-attention").state
+        is NotesSyncBindingState.NEEDS_ATTENTION
+    )
+    assert (
+        store.get_binding("binding-candidate").state is NotesSyncBindingState.CANDIDATE
+    )
+    released = store.create_binding(
+        _binding(
+            binding_id="binding-replacement",
+            root_id="root-2",
+            note_id="note-1",
+            relative_path="replacement.md",
+            identity_digest="a" * 64,
+        )
+    )
+    assert released.root_id == "root-2"
+
+    disconnected = store.transition_root("root-1", NotesSyncRootState.DISCONNECTED)
+
+    assert disconnected.state is NotesSyncRootState.DISCONNECTED
+    assert {binding.state for binding in store.list_bindings("root-1")} == {
+        NotesSyncBindingState.DISCONNECTED
+    }
+
+
+def test_root_and_child_lifecycle_propagation_rolls_back_together(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "notes-sync.sqlite3"
+    store = NotesDeviceStateStore(database)
+    store.create_root(
+        _root(logical_folder_id="folder-1", state=NotesSyncRootState.ACTIVE)
+    )
+    store.create_binding(_binding())
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            """
+            CREATE TRIGGER reject_binding_pause
+            BEFORE UPDATE OF state ON notes_sync_bindings
+            WHEN NEW.state = 'paused'
+            BEGIN
+                SELECT RAISE(ABORT, 'injected');
+            END
+            """
+        )
+        connection.commit()
+
+    with pytest.raises(sqlite3.IntegrityError):
+        store.transition_root("root-1", NotesSyncRootState.PAUSED)
+
+    assert store.get_root("root-1").state is NotesSyncRootState.ACTIVE
+    assert store.get_binding("binding-1").state is NotesSyncBindingState.ACTIVE
+
+
 def test_active_binding_ownership_is_transactionally_unique(tmp_path: Path) -> None:
     store = NotesDeviceStateStore(tmp_path / "notes-sync.sqlite3")
     store.create_root(
@@ -650,6 +771,59 @@ def test_root_cursor_latest_status_settings_and_public_projections_are_bounded(
         store.set_setting(
             NotesSyncStoreSetting(key="recovery_capacity", value="x" * 257)
         )
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("recovery_capacity", "0"),
+        ("recovery_capacity", "01"),
+        ("recovery_capacity", "-1"),
+        ("recovery_capacity", "9223372036854775808"),
+        ("cutover_marker", "contains space"),
+        ("cutover_marker", "/private/path"),
+        ("cutover_marker", "x" * 257),
+    ],
+)
+def test_store_settings_validate_each_allowlisted_key(key: str, value: str) -> None:
+    with pytest.raises(ValueError, match="setting"):
+        NotesSyncStoreSetting(key=key, value=value)
+
+
+def test_store_settings_accept_canonical_values_and_fail_closed_on_corrupt_rows(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "notes-sync.sqlite3"
+    store = NotesDeviceStateStore(database)
+    capacity = NotesSyncStoreSetting(key="recovery_capacity", value="1048576")
+    marker = NotesSyncStoreSetting(key="cutover_marker", value="cutover:v1")
+
+    store.set_setting(capacity)
+    store.set_setting(marker)
+
+    assert store.get_setting("recovery_capacity") == capacity
+    assert store.get_setting("cutover_marker") == marker
+    with sqlite3.connect(database) as connection:
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                """
+                INSERT INTO notes_sync_store_settings (
+                    setting_key, setting_value, updated_at
+                ) VALUES ('recovery_capacity', '01', 1)
+                ON CONFLICT(setting_key) DO UPDATE SET setting_value = excluded.setting_value
+                """
+            )
+        connection.execute("PRAGMA ignore_check_constraints = ON")
+        connection.execute(
+            """
+            UPDATE notes_sync_store_settings
+            SET setting_value = '01' WHERE setting_key = 'recovery_capacity'
+            """
+        )
+        connection.commit()
+
+    with pytest.raises(ValueError, match="setting"):
+        store.get_setting("recovery_capacity")
 
 
 def test_read_only_connect_requires_existing_database_and_cannot_write(

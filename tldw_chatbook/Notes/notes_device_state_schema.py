@@ -291,7 +291,20 @@ _LASTING_TABLE_STATEMENTS = (
         setting_value TEXT NOT NULL,
         updated_at INTEGER NOT NULL CHECK (updated_at > 0),
         CHECK (length(setting_key) BETWEEN 1 AND 64 AND setting_key NOT GLOB '*[^a-z0-9_]*'),
-        CHECK (length(setting_value) BETWEEN 1 AND 256)
+        CHECK (length(setting_value) BETWEEN 1 AND 256),
+        CHECK (
+            (
+                setting_key = 'recovery_capacity'
+                AND length(setting_value) BETWEEN 1 AND 19
+                AND substr(setting_value, 1, 1) GLOB '[1-9]'
+                AND setting_value NOT GLOB '*[^0-9]*'
+                AND printf('%d', CAST(setting_value AS INTEGER)) = setting_value
+            ) OR (
+                setting_key = 'cutover_marker'
+                AND substr(setting_value, 1, 1) GLOB '[A-Za-z0-9]'
+                AND setting_value NOT GLOB '*[^A-Za-z0-9_.:-]*'
+            )
+        )
     )
     """,
 )
@@ -414,15 +427,14 @@ def initialize_notes_device_schema(connection: sqlite3.Connection) -> None:
                 "Unsupported private Notes device schema version."
             )
         if version == 0:
-            reserved_names = {
-                _object_name(statement)
-                for statement in (*_CURRENT_TABLES, *_CURRENT_INDEXES)
-            }
-            existing = reserved_names & {
-                str(row[0])
-                for row in connection.execute("SELECT name FROM sqlite_schema")
-            }
-            if existing:
+            user_object = connection.execute(
+                """
+                SELECT 1 FROM sqlite_schema
+                WHERE name NOT LIKE 'sqlite_%'
+                LIMIT 1
+                """
+            ).fetchone()
+            if user_object is not None:
                 raise NotesDeviceSchemaError(
                     "The private Notes device schema is incompatible with canonical v0."
                 )

@@ -345,6 +345,27 @@ class NotesSyncStoreSetting:
             raise ValueError("setting key is not supported.")
         if type(self.value) is not str or not self.value or len(self.value) > 256:
             raise ValueError("setting value must be between 1 and 256 characters.")
+        if self.key == "recovery_capacity":
+            if (
+                not self.value.isascii()
+                or not self.value.isdecimal()
+                or self.value.startswith("0")
+                or len(self.value) > 19
+                or int(self.value) > 2**63 - 1
+            ):
+                raise ValueError(
+                    "recovery_capacity setting must be a canonical positive decimal."
+                )
+        elif self.key == "cutover_marker":
+            try:
+                validate_notes_sync_opaque_id(
+                    self.value,
+                    field_name="cutover_marker setting",
+                )
+            except ValueError:
+                raise ValueError(
+                    "cutover_marker setting must be a bounded machine token."
+                ) from None
 
 
 @dataclass(frozen=True, slots=True)
@@ -510,23 +531,53 @@ class NotesDeviceStateStore:
         root_id: str,
         state: NotesSyncRootState,
     ) -> NotesSyncRootRecord:
-        current = self.get_root(root_id)
-        if (
-            type(state) is not NotesSyncRootState
-            or state not in _ROOT_TRANSITIONS[current.state]
-        ):
-            raise NotesDeviceStateError("The requested root transition is not allowed.")
-        if state is NotesSyncRootState.ACTIVE and current.logical_folder_id is None:
-            raise NotesDeviceStateError(
-                "The requested root transition requires a logical folder owner."
-            )
+        validate_notes_sync_opaque_id(root_id, field_name="root_id")
+        if type(state) is not NotesSyncRootState:
+            raise TypeError("state must be a NotesSyncRootState.")
         with self.transaction(immediate=True) as connection:
+            row = connection.execute(
+                """
+                SELECT state, logical_folder_id
+                FROM notes_sync_roots WHERE root_id = ?
+                """,
+                (root_id,),
+            ).fetchone()
+            if row is None:
+                raise NotesDeviceStateError("The requested sync root does not exist.")
+            current_state = NotesSyncRootState(row[0])
+            if state not in _ROOT_TRANSITIONS[current_state]:
+                raise NotesDeviceStateError(
+                    "The requested root transition is not allowed."
+                )
+            if state is NotesSyncRootState.ACTIVE and row[1] is None:
+                raise NotesDeviceStateError(
+                    "The requested root transition requires a logical folder owner."
+                )
+            timestamp = _now()
+            if state is NotesSyncRootState.PAUSED:
+                connection.execute(
+                    """
+                    UPDATE notes_sync_bindings
+                    SET state = 'paused', updated_at = ?
+                    WHERE root_id = ? AND state = 'active'
+                    """,
+                    (timestamp, root_id),
+                )
+            elif state is NotesSyncRootState.DISCONNECTED:
+                connection.execute(
+                    """
+                    UPDATE notes_sync_bindings
+                    SET state = 'disconnected', updated_at = ?
+                    WHERE root_id = ? AND state != 'disconnected'
+                    """,
+                    (timestamp, root_id),
+                )
             changed = connection.execute(
                 """
                 UPDATE notes_sync_roots SET state = ?, updated_at = ?
                 WHERE root_id = ? AND state = ?
                 """,
-                (state.value, _now(), root_id, current.state.value),
+                (state.value, timestamp, root_id, current_state.value),
             ).rowcount
         if changed != 1:
             raise NotesDeviceStateError("The requested root transition is stale.")
