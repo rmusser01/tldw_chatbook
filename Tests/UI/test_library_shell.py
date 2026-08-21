@@ -160,9 +160,18 @@ from Tests.UI.test_library_content_hub import StaticLibraryCollectionsService
 from Tests.UI.app_factory import _build_test_app as _build_tldw_test_app
 
 
-def _build_test_app(*, preserve_profile_admission: bool = False):
-    """Build the legacy profile assumed by Library harness tests by default."""
-    app = _build_tldw_test_app()
+def _build_test_app(
+    configured_default: str | None = None,
+    *,
+    preserve_profile_admission: bool = False,
+):
+    """Build the legacy profile assumed by Library harness tests by default.
+
+    Forwards ``configured_default`` to the shared factory (TASK-19602: two
+    call sites pass it; this local wrapper used to shadow the shared
+    signature and reject it).
+    """
+    app = _build_tldw_test_app(configured_default)
     if not preserve_profile_admission:
         app.library_new_profile_admission = False
     return app
@@ -15808,7 +15817,7 @@ async def test_library_shell_note_back_returns_to_list():
         screen.query_one("#library-notes-row-0").press()
         await _wait_for_selector(screen, pilot, "#library-note-title")
 
-        screen.query_one("#library-note-back").press()
+        _press_note_back(screen)
         await _wait_for_selector(screen, pilot, "#library-notes-row-0")
 
         assert screen._library_notes_view == "list"
@@ -16030,6 +16039,22 @@ async def _open_note_editor(screen, pilot, note_id_suffix: str = "n-1"):
     await pilot.pause()
 
 
+def _press_note_back(screen) -> None:
+    """Press whichever editor Back control is live at this terminal width.
+
+    TASK-19602: wide terminals (this suite's 170-col default) hide
+    ``#library-note-back`` while a focused task owns the canvas and show
+    ``#library-notes-task-return`` instead -- both handlers route to the
+    same ``_exit_library_note_editor_guarded`` seam, so the flush/exits
+    under test are identical either way.
+    """
+    back = screen.query_one("#library-note-back", Button)
+    if back.display:
+        back.press()
+        return
+    screen.query_one("#library-notes-task-return", Button).press()
+
+
 def _bump_note_version_externally(service, note_id: str, **field_overrides) -> None:
     """Simulate another writer changing a note: bump its stored version (and
     optionally other fields) on the fake, out from under a screen that still
@@ -16198,7 +16223,7 @@ async def test_library_shell_note_save_then_back_refreshes_list_title_age_and_or
             raise AssertionError("Save never completed.")
 
         list_calls_before = len(app.notes_scope_service.calls)
-        screen.query_one("#library-note-back").press()
+        _press_note_back(screen)
         await _wait_for_selector(screen, pilot, "#library-notes-row-0")
 
         first_label = str(screen.query_one("#library-notes-row-0", Button).label)
@@ -16438,7 +16463,7 @@ async def test_library_shell_note_flush_on_back_saves_before_view_switches():
         ).text = "alpha budget line, flushed"
         await pilot.pause()
 
-        screen.query_one("#library-note-back").press()
+        _press_note_back(screen)
         for _ in range(50):
             if service.save_started:
                 break
@@ -16631,7 +16656,7 @@ async def test_library_shell_flush_waits_for_inflight_autosave(monkeypatch):
         # can finish and the whole Back->flush->navigate sequence settles;
         # then assert on the OUTCOME.
         threading.Timer(0.2, release_event.set).start()
-        screen.query_one("#library-note-back").press()
+        _press_note_back(screen)
 
         for _ in range(300):
             if screen._library_notes_view == "list":
@@ -18202,7 +18227,7 @@ async def test_library_shell_note_back_flushes_while_previewing():
         await _wait_for_display(screen, pilot, "#library-note-preview-region")
         assert screen.query_one("#library-note-editor-region").display is False
 
-        screen.query_one("#library-note-back").press()
+        _press_note_back(screen)
         for _ in range(50):
             if service.save_started:
                 break
@@ -19039,7 +19064,7 @@ async def test_library_shell_blank_note_untouched_is_gc_from_real_db_on_back(
         assert screen._library_note_pending_blank_gc_id == screen._selected_note_id
 
         # Leave without typing anything -- Back must GC the untouched row.
-        screen.query_one("#library-note-back").press()
+        _press_note_back(screen)
         for _ in range(150):
             if (
                 await app.notes_scope_service.count_notes(
@@ -19198,7 +19223,7 @@ async def test_library_shell_blank_note_edited_then_back_survives_in_real_db(
             "A real edit must clear GC eligibility."
         )
 
-        screen.query_one("#library-note-back").press()
+        _press_note_back(screen)
         for _ in range(150):
             if screen._library_notes_view == "list":
                 break
@@ -19271,7 +19296,7 @@ async def test_library_shell_blank_note_typed_then_deleted_all_is_gc_from_real_d
             "mishandled."
         )
 
-        screen.query_one("#library-note-back").press()
+        _press_note_back(screen)
         for _ in range(150):
             if (
                 await app.notes_scope_service.count_notes(
@@ -19331,7 +19356,7 @@ async def test_library_shell_pre_existing_note_emptied_out_still_saves_in_real_d
         await pilot.pause()
         assert screen._library_note_dirty is True
 
-        screen.query_one("#library-note-back").press()
+        _press_note_back(screen)
         for _ in range(150):
             if screen._library_notes_view == "list":
                 break
@@ -19409,7 +19434,7 @@ async def test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back
         screen.query_one("#library-note-body", TextArea).text = ""
         await pilot.pause()
 
-        screen.query_one("#library-note-back").press()
+        _press_note_back(screen)
         for _ in range(150):
             if (
                 await real_service.count_notes(
@@ -19466,7 +19491,7 @@ async def test_library_shell_blank_note_titled_untitled_by_hand_survives_back(
             "longer untouched."
         )
 
-        screen.query_one("#library-note-back").press()
+        _press_note_back(screen)
         for _ in range(150):
             if screen._library_notes_view == "list":
                 break
@@ -19521,7 +19546,7 @@ async def test_library_shell_untouched_blank_note_still_gcs_after_body_round_tri
         await pilot.pause()
         assert screen._library_note_title_user_edited is False
 
-        screen.query_one("#library-note-back").press()
+        _press_note_back(screen)
         for _ in range(150):
             if (
                 await real_service.count_notes(
@@ -28028,7 +28053,7 @@ async def test_library_note_compact_stage_drills_in_and_back_without_losing_orig
         await pilot.pause()
         assert screen._library_notes_active_region() == "editor"
 
-        screen.query_one("#library-note-back").press()
+        _press_note_back(screen)
         await _wait_for_selector(screen, pilot, "#library-notes-filter")
         assert screen._library_notes_active_region() == "navigator"
         await _wait_for_condition(
@@ -29408,7 +29433,7 @@ async def test_library_note_pilot_coalesces_three_edits_and_back_waits_for_chain
             screen.query_one("#library-note-save").press()
             body.text = "revision three"
             await pilot.pause()
-            screen.query_one("#library-note-back").press()
+            _press_note_back(screen)
 
             await asyncio.sleep(0.05)
             assert screen._library_notes_view == "editor"

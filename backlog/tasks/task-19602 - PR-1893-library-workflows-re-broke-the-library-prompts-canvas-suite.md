@@ -3,7 +3,7 @@ id: TASK-19602
 title: >-
   PR #1893 (library first-run/power-user workflows) re-broke the
   library-prompts-canvas suite
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-21'
 updated_date: '2026-08-21'
@@ -64,3 +64,27 @@ Related: TASK-18611 (whose AC#1 fix this regresses), TASK-19601/19573
 merge; `git log 2a15a72bb -- tldw_chatbook/UI/Screens/library_screen.py`
 around the workspace-registry commits is the starting point.
 <!-- SECTION:NOTES:END -->
+
+## CI confirmation (2026-08-21 ~19:30Z, post-merge shard logs)
+
+#1893's own (post-merge) shard runs confirm the local repro, with a third
+signature beyond the two predicted:
+
+1. `test_library_prompts_canvas.py` — "Prompt browse never settled"
+   (result shows status=ready/error with matching scope but the wait
+   predicate never satisfied) and "#library-prompt-row-25 never mounted
+   within 30s (1078 polls)" with visible text "Loading page 1… Page is
+   loading." — the new pagination path (page_size=20) is stalling in the
+   harness.
+2. `test_library_shell.py` — a cluster of Back/flush/autosave failures
+   ("Back never triggered the flush save", "Back never completed after
+   the in-flight autosave resolved", blank-note GC failure) — broader
+   Library fallout from the same PR, NOT limited to the prompts canvas.
+3. `_build_test_app() got an unexpected keyword argument
+   'configured_default'` — #1893 (or a sibling same-day merge) CHANGED
+   the shared test factory's signature, breaking callers across the
+   suite. Also a `NoActiveAppError` in canvas kwargs separation.
+
+Scope note: this is bigger than the prompts canvas — treat as the
+#1893 Library regression umbrella; the local repro (20 failed) plus
+these CI signatures are the evidence base.
