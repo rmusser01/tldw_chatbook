@@ -2034,6 +2034,84 @@
     }
     
 
+/* ===== WIDGET: PersonasPersonaVisualPackWidget (Widgets/Persona_Widgets/personas_persona_visual_pack_widget.py) ===== */
+
+    PersonasPersonaVisualPackWidget {
+        width: 100%;
+        height: 27;
+        min-height: 20;
+        margin-top: 1;
+        padding: 1;
+        border: round $surface-lighten-1;
+        background: $panel;
+    }
+
+    PersonasPersonaVisualPackWidget .persona-visual-copy {
+        width: 100%;
+        height: auto;
+    }
+
+    PersonasPersonaVisualPackWidget #personas-persona-visual-notice,
+    PersonasPersonaVisualPackWidget #personas-persona-visual-status {
+        color: $text-muted;
+    }
+
+    PersonasPersonaVisualPackWidget #personas-persona-visual-body {
+        width: 100%;
+        height: 1fr;
+        min-height: 8;
+        margin-top: 1;
+    }
+
+    PersonasPersonaVisualPackWidget #personas-persona-visual-results {
+        width: 2fr;
+        height: 100%;
+        min-width: 20;
+    }
+
+    PersonasPersonaVisualPackWidget #personas-persona-visual-preview-host {
+        width: 1fr;
+        height: 100%;
+        min-width: 18;
+        margin-left: 1;
+        padding: 1;
+        background: $surface;
+        content-align: center middle;
+    }
+
+    PersonasPersonaVisualPackWidget #personas-persona-visual-actions {
+        width: 100%;
+        height: 6;
+        layout: grid;
+        grid-size: 3 2;
+        grid-gutter: 0 1;
+        margin-top: 1;
+    }
+
+    PersonasPersonaVisualPackWidget #personas-persona-visual-actions Button {
+        width: 1fr;
+        height: 3;
+        min-width: 0;
+        border: none;
+    }
+
+    PersonasPersonaVisualPackWidget #personas-persona-visual-actions Button:focus {
+        outline: heavy $accent;
+    }
+
+    PersonasPersonaVisualPackWidget.-narrow {
+        height: 31;
+    }
+
+    PersonasPersonaVisualPackWidget.-narrow #personas-persona-visual-body {
+        height: 12;
+    }
+
+    PersonasPersonaVisualPackWidget.-narrow #personas-persona-visual-preview-host {
+        min-width: 14;
+        padding: 0 1;
+    }
+
 /* ===== WIDGET: PersonasPreviewPane (Widgets/Persona_Widgets/personas_preview_pane.py) ===== */
 
     PersonasPreviewPane {

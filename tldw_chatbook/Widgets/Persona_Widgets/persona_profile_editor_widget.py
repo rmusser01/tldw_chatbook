@@ -16,6 +16,7 @@ from .personas_pane_messages import (
     PersonaProfileEditCancelled,
     PersonaProfileSaveRequested,
 )
+from .personas_persona_visual_pack_widget import PersonasPersonaVisualPackWidget
 
 #: The `PersonaMode` literal's values, for the editor's mode `Select` options.
 PERSONA_MODES: tuple[str, ...] = get_args(PersonaMode)
@@ -125,6 +126,7 @@ class PersonaProfileEditorWidget(Container):
             with Horizontal(classes="ds-field-row"):
                 yield Label("Enabled")
                 yield Switch(id="personas-editor-enabled", value=True)
+            yield PersonasPersonaVisualPackWidget()
         # Validation stays outside the scroll body so it is always visible
         # next to Save (anchored-footer principle, same as the character editor).
         yield Static("", id="personas-editor-validation")
@@ -164,9 +166,7 @@ class PersonaProfileEditorWidget(Container):
         self.query_one(
             "#personas-editor-personality-traits", TextArea
         ).disabled = is_server
-        self.query_one(
-            "#personas-editor-local-fields-note", Static
-        ).display = is_server
+        self.query_one("#personas-editor-local-fields-note", Static).display = is_server
 
     def load_persona(
         self,
@@ -195,9 +195,9 @@ class PersonaProfileEditorWidget(Container):
             self.query_one("#personas-editor-system-prompt", TextArea).text = str(
                 data.get("system_prompt", "")
             )
-            self.query_one(
-                "#personas-editor-personality-traits", TextArea
-            ).text = str(data.get("personality_traits", "") or "")
+            self.query_one("#personas-editor-personality-traits", TextArea).text = str(
+                data.get("personality_traits", "") or ""
+            )
             mode = data.get("mode") or _DEFAULT_MODE
             self.query_one("#personas-editor-mode", Select).value = (
                 mode if mode in PERSONA_MODES else _DEFAULT_MODE
@@ -205,6 +205,13 @@ class PersonaProfileEditorWidget(Container):
             self.query_one("#personas-editor-enabled", Switch).value = bool(
                 data.get("is_active", True)
             )
+            visual = self.query_one(PersonasPersonaVisualPackWidget)
+            if self._runtime_source == "server":
+                visual.set_availability("server")
+            elif self._persona_id is None:
+                visual.set_availability("unsaved")
+            else:
+                visual.set_availability("loading")
             self.query_one("#personas-editor-validation", Static).update("")
             # Clear any stale per-field invalid marks left by a prior session:
             # if the reopened record's values are byte-identical to what's
@@ -238,6 +245,8 @@ class PersonaProfileEditorWidget(Container):
         """
         self._persona_id = str(record.get("id", "")) or self._persona_id
         self._version = record.get("version", self._version)
+        if self._runtime_source == "local" and self._persona_id is not None:
+            self.query_one(PersonasPersonaVisualPackWidget).set_availability("loading")
         self._loaded_snapshot = self._form_snapshot()
         self._dirty_posted = False
         self.query_one("#personas-editor-validation", Static).update("")
