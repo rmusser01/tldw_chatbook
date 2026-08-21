@@ -474,8 +474,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 7,
-      "diagnostic_digest": "a872185128dda8da2366",
+      "call_count": 6,
+      "diagnostic_digest": "97b2820afc325424cb3e",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Chunking/engine/security_logger.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -3826,6 +3826,6 @@
     "owner_files": 519,
     "persistent_sink_files": 7,
     "task_492_calls": 1213,
-    "task_494_calls": 7149
+    "task_494_calls": 7148
   }
 }

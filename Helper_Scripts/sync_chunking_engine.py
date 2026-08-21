@@ -479,9 +479,116 @@ def _patch_tokens_offset_diagnostics(text: str) -> str:
     return text
 
 
+def _patch_vendored_security_logger(text: str) -> str:
+    name = "security_logger.py"
+    # TASK-19323 repair 1: declare the metadata-only privacy contract and drop
+    # the json import that only served the retired export below.
+    text = _replace_once(
+        text,
+        '''# security_logger.py
+"""
+Security event logging for the Chunking module.
+Logs security-related events for audit and monitoring.
+"""
+
+import json
+import threading
+''',
+        '''# security_logger.py
+"""
+Security event logging for the Chunking module.
+Logs security-related events for audit and monitoring.
+
+Privacy contract (TASK-19323): the in-memory event store and every log line
+carry METADATA ONLY -- event types, severities, counts, and lengths -- never
+user document content. The module's sole persistence surface is the loguru
+sink declared in ``SecurityLogger.__init__``; adding any other file write
+here trips ``Tests/Architecture/test_security_logger_write_surface.py``.
+"""
+
+import threading
+''',
+        name,
+    )
+    # TASK-19323 repair 2: capture the LENGTH of the offending XML, never the
+    # XML itself (user document content must not sit in the event store).
+    text = _replace_once(
+        text,
+        '''    def log_xxe_attempt(self, xml_content: str, source: Optional[str] = None) -> None:
+        """
+        Log an XXE attack attempt.
+
+        Args:
+            xml_content: The malicious XML content (truncated)
+            source: Optional source identifier
+        """
+        self.log_event(
+            SecurityEventType.XXE_ATTEMPT,
+            "XML External Entity (XXE) attack attempt blocked",
+            {
+                "xml_sample": xml_content[:500] if xml_content else "",
+                "source": source,
+                "blocked_patterns": ["DOCTYPE", "ENTITY", "SYSTEM"]
+            },
+            severity="ERROR"
+        )
+''',
+        '''    def log_xxe_attempt(self, xml_content: str, source: Optional[str] = None) -> None:
+        """
+        Log an XXE attack attempt.
+
+        Only the LENGTH of the offending XML is retained: the content itself
+        is user document data and must never sit in the event store, where a
+        future export or dump would ship it outside the redaction guarantees
+        (TASK-19323).
+
+        Args:
+            xml_content: The malicious XML content (used for its length only)
+            source: Optional source identifier
+        """
+        self.log_event(
+            SecurityEventType.XXE_ATTEMPT,
+            "XML External Entity (XXE) attack attempt blocked",
+            {
+                "xml_length": len(xml_content) if xml_content else 0,
+                "source": source,
+                "blocked_patterns": ["DOCTYPE", "ENTITY", "SYSTEM"]
+            },
+            severity="ERROR"
+        )
+''',
+        name,
+    )
+    # TASK-19323 repair 3: retire the zero-caller export_events — a bare
+    # open()+json.dump of the event store, invisible to the persistent-sink
+    # topology (SINK_CALL_NAMES does not track bare open).
+    text = _replace_once(
+        text,
+        '''    def export_events(self, output_file: Path) -> None:
+        """
+        Export security events to a JSON file.
+
+        Args:
+            output_file: Path to output file
+        """
+        with open(output_file, 'w') as f:
+            json.dump(self._events, f, indent=2, default=str)
+
+        logger.info(f"Exported {len(self._events)} security events to {output_file}")
+
+    def clear_events(self) -> None:
+''',
+        '''    def clear_events(self) -> None:
+''',
+        name,
+    )
+    return text
+
+
 ENGINE_PATCHES = {
     "chunker.py": _patch_chunker_stream_diagnostics,
     "strategies/tokens.py": _patch_tokens_offset_diagnostics,
+    "security_logger.py": _patch_vendored_security_logger,
 }
 
 
