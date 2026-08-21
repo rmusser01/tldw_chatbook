@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import re
 import threading
 from copy import deepcopy
 from collections.abc import Callable, Mapping, Sequence
@@ -34,6 +37,7 @@ _OUTCOME_CODES = {
 _DEFERRAL_TEXT = (
     "Deferred because project instructions were loaded; reconsider and retry."
 )
+_IDENTIFIER_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,9 +52,17 @@ class InstructionDeliveryReceipt:
     row_keys: tuple[str, ...]
 
     def __post_init__(self) -> None:
-        if not self.receipt_id or not self.chain_id or self.through_revision < 0:
+        if (
+            not _safe_identifier(self.receipt_id)
+            or not _safe_identifier(self.chain_id)
+            or self.through_revision < 0
+        ):
             raise ValueError("invalid instruction delivery receipt")
-        if not self.row_keys or len(set(self.row_keys)) != len(self.row_keys):
+        if (
+            not self.row_keys
+            or len(set(self.row_keys)) != len(self.row_keys)
+            or any(not _safe_identifier(key) for key in self.row_keys)
+        ):
             raise ValueError("invalid instruction receipt row keys")
         if any(
             len(digest) != 64
@@ -207,6 +219,7 @@ class _PendingDelivery:
     receipt: InstructionDeliveryReceipt
     source_paths: tuple[Path, ...]
     outcome_keys: tuple[str, ...]
+    row_hashes: tuple[str, ...]
 
 
 @dataclass(slots=True)
@@ -362,48 +375,16 @@ class InstructionActivationLedger:
                     dispatch_started_wall_ns=self._snapshot.dispatch_started_wall_ns,
                     pinned_by_canonical_path=self._sources,
                     terminal_scopes=frozenset(self._terminal_scopes),
+                    admission_bytes=self._remaining_nested_bytes,
                 )
                 changed = False
-                newly_resolved = [
-                    source
-                    for source in batch.sources
-                    if source.canonical_path not in self._sources
-                    and source.scope not in self._terminal_scopes
-                ]
-                admitted_new: set[Path] = set()
-                for source in sorted(
-                    newly_resolved,
-                    key=lambda item: (
-                        -len(Path(item.scope).parts),
-                        item.relative_path,
-                    ),
-                ):
-                    if source.byte_count <= self._remaining_nested_bytes:
-                        admitted_new.add(source.canonical_path)
-                        self._remaining_nested_bytes -= source.byte_count
-                    else:
-                        outcome = InstructionOutcome(
-                            source.relative_path,
-                            source.scope,
-                            "omitted_byte_budget",
-                        )
-                        key = _outcome_key(outcome)
-                        required_outcomes.add(key)
-                        if key not in self._global_outcomes:
-                            self._global_outcomes[key] = outcome
-                            self._terminal_scopes.add(outcome.scope)
-                            changed = True
                 for source in batch.sources:
                     if source.scope in self._terminal_scopes:
-                        continue
-                    if (
-                        source.canonical_path not in self._sources
-                        and source.canonical_path not in admitted_new
-                    ):
                         continue
                     required_paths.add(source.canonical_path)
                     if source.canonical_path not in self._sources:
                         self._sources[source.canonical_path] = source
+                        self._remaining_nested_bytes -= source.byte_count
                         changed = True
                 for outcome in batch.outcomes:
                     if outcome.scope in self._terminal_scopes:
@@ -427,11 +408,16 @@ class InstructionActivationLedger:
                 payload_state,
             )
 
-    def mark_payload_sent(self, receipt: InstructionDeliveryReceipt) -> None:
+    def mark_payload_sent(
+        self,
+        receipt: InstructionDeliveryReceipt,
+        payload_rows: Sequence[Mapping[str, Any]],
+    ) -> None:
         """Advance one chain only for the exact receipt previously issued.
 
         Args:
             receipt: Exact staged receipt whose tagged rows survived bounding.
+            payload_rows: Actual bounded outgoing rows immediately before send.
 
         Raises:
             ValueError: If the receipt is forged, stale, repeated, or unknown.
@@ -442,6 +428,18 @@ class InstructionActivationLedger:
             if pending is None or pending.receipt != receipt:
                 raise ValueError("unknown or stale instruction delivery receipt")
             assert state is not None
+            matched_rows = [
+                row
+                for row in payload_rows
+                if row.get(PROJECT_INSTRUCTION_ROW_KEY) in receipt.row_keys
+            ]
+            if (
+                tuple(row.get(PROJECT_INSTRUCTION_ROW_KEY) for row in matched_rows)
+                != receipt.row_keys
+                or tuple(_row_hash(row) for row in matched_rows)
+                != pending.row_hashes
+            ):
+                raise ValueError("instruction receipt payload rows are missing or changed")
             state.delivered_sources.update(pending.source_paths)
             state.delivered_outcomes.update(pending.outcome_keys)
             state.delivered_revision = max(
@@ -450,8 +448,8 @@ class InstructionActivationLedger:
             state.pending = None
 
     def _chain(self, chain_id: str) -> _ChainState:
-        if not chain_id:
-            raise ValueError("chain_id must not be empty")
+        if not _safe_identifier(chain_id):
+            raise ValueError("invalid instruction chain_id")
         return self._chains.setdefault(chain_id, _ChainState())
 
     def _issue_delivery(
@@ -483,9 +481,37 @@ class InstructionActivationLedger:
         if not source_paths and not outcome_keys:
             return InstructionPreparation("proceed")
 
-        candidate_rows = [_source_row(self._sources[path]) for path in source_paths]
+        omissions = {
+            path: InstructionOutcome(
+                self._sources[path].relative_path,
+                self._sources[path].scope,
+                "omitted_token_budget",
+            )
+            for path in source_paths
+        }
+
+        def rows_for(admitted: set[Path]) -> list[dict[str, Any]]:
+            rows = [
+                _source_row(self._sources[path])
+                for path in sorted(
+                    admitted,
+                    key=lambda item: (
+                        len(Path(self._sources[item].scope).parts),
+                        self._sources[item].relative_path,
+                    ),
+                )
+            ]
+            rows.extend(self._row_for_outcome_key(key, state) for key in outcome_keys)
+            rows.extend(
+                _outcome_row(omissions[path])
+                for path in source_paths
+                if path not in admitted
+            )
+            return rows
+
+        candidate_rows = rows_for(set(source_paths))
         candidate_rows.extend(
-            self._row_for_outcome_key(key, state) for key in outcome_keys
+            _outcome_row(omissions[path]) for path in source_paths
         )
         try:
             allowance = payload_state.safe_input_tokens(candidate_rows)
@@ -503,21 +529,47 @@ class InstructionActivationLedger:
             ),
         ):
             try:
-                needed = payload_state.count_input_tokens([_source_row(self._sources[path])])
-            except Exception:
-                needed = 0
-            if type(needed) is int and needed > 0 and needed <= allowance:
-                admitted_paths.add(path)
-                allowance -= needed
-            else:
-                source = self._sources[path]
-                omission = InstructionOutcome(
-                    source.relative_path, source.scope, "omitted_token_budget"
+                staged_tokens = payload_state.count_input_tokens(
+                    rows_for(admitted_paths | {path})
                 )
+            except Exception:
+                staged_tokens = 0
+            if (
+                type(staged_tokens) is int
+                and staged_tokens > 0
+                and staged_tokens <= allowance
+            ):
+                admitted_paths.add(path)
+
+        final_rows = rows_for(admitted_paths)
+        try:
+            staged_tokens = payload_state.count_input_tokens(final_rows)
+        except Exception:
+            staged_tokens = 0
+        if (
+            not final_rows
+            or type(staged_tokens) is not int
+            or staged_tokens <= 0
+            or staged_tokens > allowance
+        ):
+            for path, omission in omissions.items():
                 state.token_outcomes[path] = omission
                 key = _outcome_key(omission)
-                if key not in outcome_keys and key not in state.delivered_outcomes:
-                    outcome_keys.append(key)
+                state.delivered_outcomes.add(key)
+                self._warning_keys.add(omission.code)
+            state.delivered_outcomes.update(outcome_keys)
+            for key in outcome_keys:
+                self._warning_keys.add(key.split(_OUTCOME_SEPARATOR, 1)[0])
+            return InstructionPreparation("proceed")
+
+        for path, omission in omissions.items():
+            if path in admitted_paths:
+                continue
+            state.token_outcomes[path] = omission
+            self._warning_keys.add(omission.code)
+            key = _outcome_key(omission)
+            if key not in outcome_keys and key not in state.delivered_outcomes:
+                outcome_keys.append(key)
 
         ordered_sources = sorted(
             admitted_paths,
@@ -548,12 +600,21 @@ class InstructionActivationLedger:
             outcome_keys=ordered_outcomes,
             row_keys=row_keys,
         )
+        source_path_tuple = tuple(ordered_sources)
+        pending = _PendingDelivery(
+            receipt=receipt,
+            source_paths=source_path_tuple,
+            outcome_keys=ordered_outcomes,
+            row_hashes=(),
+        )
+        preparation = self._render_pending(pending)
         state.pending = _PendingDelivery(
             receipt=receipt,
-            source_paths=tuple(ordered_sources),
+            source_paths=source_path_tuple,
             outcome_keys=ordered_outcomes,
+            row_hashes=tuple(_row_hash(row) for row in preparation.rows),
         )
-        return self._render_pending(state.pending)
+        return preparation
 
     def _render_pending(self, pending: _PendingDelivery) -> InstructionPreparation:
         rows = [_source_row(self._sources[path]) for path in pending.source_paths]
@@ -620,6 +681,20 @@ def _outcome_key(outcome: InstructionOutcome) -> str:
 
 def _warning_key(code: str) -> str:
     return _OUTCOME_SEPARATOR.join((code, ".", "."))
+
+
+def _safe_identifier(value: object) -> bool:
+    return isinstance(value, str) and _IDENTIFIER_PATTERN.fullmatch(value) is not None
+
+
+def _row_hash(row: Mapping[str, Any]) -> str:
+    try:
+        encoded = json.dumps(
+            dict(row), sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")
+    except (TypeError, ValueError) as error:
+        raise ValueError("instruction payload row is not canonical") from error
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _is_safe_relative_label(value: str) -> bool:

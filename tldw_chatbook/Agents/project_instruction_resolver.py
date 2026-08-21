@@ -7,7 +7,7 @@ import os
 import stat
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Literal
 
 InstructionKind = Literal["override", "standard"]
@@ -207,6 +207,7 @@ class ProjectInstructionResolver:
         dispatch_started_wall_ns: int,
         pinned_by_canonical_path: Mapping[Path, InstructionSource],
         terminal_scopes: frozenset[str] = frozenset(),
+        admission_bytes: int | None = None,
     ) -> NestedResolutionBatch:
         """Resolve effective files on the union of root-to-target chains.
 
@@ -221,6 +222,8 @@ class ProjectInstructionResolver:
             dispatch_started_wall_ns: Dispatch cutoff for stale-file checks.
             pinned_by_canonical_path: Sources already frozen for this dispatch.
             terminal_scopes: Scopes with a prior terminal no-content outcome.
+            admission_bytes: Current cumulative ledger allowance. Defaults to
+                ``max_bytes`` for standalone resolver calls.
 
         Returns:
             Sources in broad-to-specific order plus content-free outcomes.
@@ -230,6 +233,8 @@ class ProjectInstructionResolver:
         """
         if max_bytes < 0:
             raise ValueError("max_bytes must be non-negative")
+        if admission_bytes is not None and admission_bytes < 0:
+            raise ValueError("admission_bytes must be non-negative")
         root, expected_root = _canonical_binding_root(binding_root)
         if expected_root is None:
             return NestedResolutionBatch(
@@ -287,7 +292,7 @@ class ProjectInstructionResolver:
             elif result.outcome is not None:
                 outcomes.append(result.outcome)
 
-        remaining = max_bytes
+        remaining = max_bytes if admission_bytes is None else admission_bytes
         admitted: set[int] = {
             index for index, (_source, pinned) in enumerate(found) if pinned
         }
@@ -515,12 +520,6 @@ def _resolve_nested_directory(
     scope = directory.relative_to(root).as_posix()
     override_path = directory / "AGENTS.override.md"
     standard_path = directory / "AGENTS.md"
-    pinned = pinned_by_canonical_path.get(override_path)
-    if pinned is None:
-        pinned = pinned_by_canonical_path.get(standard_path)
-    if pinned is not None:
-        return _ReadResult(source=pinned), True
-
     try:
         expected_ancestors = _capture_ancestor_identities(directory)
         depth = len(directory.relative_to(root).parts)
@@ -535,6 +534,34 @@ def _resolve_nested_directory(
             ),
             False,
         )
+    pinned_path = override_path
+    pinned = pinned_by_canonical_path.get(pinned_path)
+    if pinned is None:
+        pinned_path = standard_path
+        pinned = pinned_by_canonical_path.get(pinned_path)
+    if pinned is not None:
+        try:
+            valid = _valid_pinned_source(
+                root=root,
+                directory=directory,
+                pinned_path=pinned_path,
+                source=pinned,
+            )
+            if (
+                not valid
+                or _capture_ancestor_identities(directory) != expected_ancestors
+            ):
+                raise _UnsafeMetadata
+        except (OSError, RuntimeError, ValueError, _UnsafeMetadata):
+            return (
+                _ReadResult(
+                    outcome=InstructionOutcome(
+                        f"{scope}/AGENTS.md", scope, "resolution_failed"
+                    )
+                ),
+                False,
+            )
+        return _ReadResult(source=pinned), True
     override_relative = f"{scope}/AGENTS.override.md"
     override = _read_candidate(
         root=directory,
@@ -587,6 +614,45 @@ def _fallback_changed_result(
         return rechecked
     return _ReadResult(
         outcome=InstructionOutcome(relative_path, scope, "resolution_failed")
+    )
+
+
+def _valid_pinned_source(
+    *,
+    root: Path,
+    directory: Path,
+    pinned_path: Path,
+    source: InstructionSource,
+) -> bool:
+    expected_scope = directory.relative_to(root).as_posix()
+    expected_relative = pinned_path.relative_to(root).as_posix()
+    expected_kind: InstructionKind = (
+        "override" if pinned_path.name == "AGENTS.override.md" else "standard"
+    )
+    return (
+        pinned_path == source.canonical_path
+        and source.canonical_path.is_absolute()
+        and ".." not in source.canonical_path.parts
+        and source.canonical_path.is_relative_to(root)
+        and source.relative_path == expected_relative
+        and source.scope == expected_scope
+        and source.kind == expected_kind
+        and _safe_relative_label(source.relative_path)
+        and _safe_relative_label(source.scope)
+    )
+
+
+def _safe_relative_label(value: str) -> bool:
+    posix = PurePosixPath(value)
+    windows = PureWindowsPath(value)
+    return (
+        bool(value)
+        and not posix.is_absolute()
+        and not windows.is_absolute()
+        and ".." not in posix.parts
+        and ".." not in windows.parts
+        and "\n" not in value
+        and "\r" not in value
     )
 
 
