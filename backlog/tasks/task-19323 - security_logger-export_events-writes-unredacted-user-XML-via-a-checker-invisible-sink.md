@@ -176,6 +176,15 @@ loguru's `add`, which is not a write-capable *call name* — so the assertion
 is a clean "none", and a second test cross-checks the checker's own census
 still reports exactly one `loguru_sink` in `SecurityLogger.__init__`.
 
+Scope of that guard, stated precisely (review finding): it is a fixed
+name-list AST scan, so its coverage is that list plus `SINK_CALL_NAMES` —
+not literally every way to write a file. A write routed through an
+arbitrarily-named helper defined in another module escapes it (the reviewer
+demonstrated one such escape, alongside two shapes it does catch). Closing
+that would need dataflow analysis, which was rejected as the too-clever
+option; the reason it is acceptable is the other half of this fix: the event
+store is now metadata-only, so a missed export leaks nothing.
+
 Why this over the alternatives in the brief: adding bare `open` to
 `SINK_CALL_NAMES` was explicitly ruled out (it would flood the topology with
 every file write in the repo); the "flag `json.dump` whose first arg derives
