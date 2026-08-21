@@ -274,10 +274,13 @@ def test_an_infinite_token_count_degrades_instead_of_raising():
 
 
 def test_openai_chat_payload_reads_cache_creation_tokens_as_write():
-    # TASK-18607: the Console gateway's normalization preserves Anthropic's
-    # write bucket as `prompt_tokens_details.cache_creation_tokens`;
-    # `prompt_tokens` still INCLUDES it (readers of the flat sum are
-    # unchanged), so it must be subtracted like the read bucket.
+    """The chat-completions branch splits our cache-write extension key.
+
+    TASK-18607: the Console gateway's normalization preserves Anthropic's
+    write bucket as ``prompt_tokens_details.cache_creation_tokens``;
+    ``prompt_tokens`` still INCLUDES it (readers of the flat sum are
+    unchanged), so it must be subtracted like the read bucket.
+    """
     payload = {
         "prompt_tokens": 2000,
         "completion_tokens": 150,

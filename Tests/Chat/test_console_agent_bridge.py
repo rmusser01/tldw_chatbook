@@ -1508,10 +1508,13 @@ def test_openai_usage_handoff_preserves_chat_completion_cache_details():
 
 
 def test_normalized_usage_round_trips_cache_write_bucket():
-    # TASK-18607 AC#3/#4: normalization must preserve Anthropic's write
-    # bucket so the native and normalized shapes account identically, while
-    # the flat `prompt_tokens` sum -- what the cost ticker and persistence
-    # read -- keeps the full billed total.
+    """Native and gateway-normalized usage parse to identical buckets.
+
+    TASK-18607 AC#3/#4: normalization must preserve Anthropic's write
+    bucket so the native and normalized shapes account identically, while
+    the flat ``prompt_tokens`` sum -- what the cost ticker and persistence
+    read -- keeps the full billed total.
+    """
     from tldw_chatbook.Chat.provider_usage import ProviderUsage
 
     native = {
