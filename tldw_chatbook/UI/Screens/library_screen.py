@@ -3047,6 +3047,7 @@ class LibraryScreen(BaseAppScreen):
         self._pending_library_source_open: tuple[str, str] | None = None
         self._selected_conversation_id = ""
         self._library_selected_row_id: str = ""
+        self._library_continue_receipt: dict[str, Any] | None = None
         self._library_navigation_context_generation: int = 0
         self._library_conversation_query: str = ""
         self._library_conversation_requested_page = 1
@@ -6159,6 +6160,12 @@ class LibraryScreen(BaseAppScreen):
         it is a derived/bulk snapshot recomputed from the saved notes filter.
         """
         state = super().save_state()
+        continue_receipt = self._library_continue_receipt_for_current_route()
+        if continue_receipt is not None:
+            self._library_continue_receipt = continue_receipt
+        state["library_continue_receipt"] = self._copy_library_continue_receipt(
+            self._library_continue_receipt
+        )
         state["library_selected_row_id"] = self._library_selected_row_id
         state["selected_conversation_id"] = self._selected_conversation_id
         state["selected_note_id"] = self._selected_note_id
@@ -6207,6 +6214,232 @@ class LibraryScreen(BaseAppScreen):
         state["library_export_last_at"] = self._library_export_last_at
         return state
 
+    @staticmethod
+    def _copy_library_continue_receipt(
+        receipt: Mapping[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        """Detach the small primitive returning-Library receipt."""
+
+        if receipt is None:
+            return None
+        scope = dict(receipt["scope"])
+        deselected = scope.get("scope_deselected")
+        if isinstance(deselected, list):
+            scope["scope_deselected"] = list(deselected)
+        return {
+            "version": receipt["version"],
+            "row_id": receipt["row_id"],
+            "scope": scope,
+            "source_list_adjusted": receipt["source_list_adjusted"],
+        }
+
+    def _library_continue_receipt_for_current_route(self) -> dict[str, Any] | None:
+        """Return an authoritative, content-free receipt for the active source."""
+
+        row_id = self._library_selected_row_id
+        scope: dict[str, Any]
+        source_list_adjusted = False
+
+        if row_id == LIBRARY_ROW_BROWSE_MEDIA:
+            if self._library_media_view == "trash":
+                return None
+            applied = self._library_media_browse_controller.applied_result
+            if applied is None:
+                return None
+            media_scope = applied.scope
+            scope = {
+                "query": media_scope.query,
+                "media_type": media_scope.media_type,
+                "sort_by": media_scope.sort_by,
+                "page": media_scope.page,
+            }
+            source_list_adjusted = self._library_media_view != "list"
+        elif row_id == LIBRARY_ROW_BROWSE_PROMPTS:
+            applied = self._library_prompt_browse_controller.applied_result
+            if applied is None:
+                return None
+            prompt_scope = applied.scope
+            scope = {
+                "query": prompt_scope.query,
+                "collection_id": prompt_scope.collection_id,
+                "sort_by": prompt_scope.sort_by,
+                "sort_order": prompt_scope.sort_order,
+                "page": prompt_scope.page,
+            }
+            source_list_adjusted = self._library_prompts_view != "list"
+        elif row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
+            if (
+                not self._library_conversation_page_loaded
+                or self._library_conversation_freshness not in {"fresh", "stale"}
+            ):
+                return None
+            scope = {
+                "page": self._library_conversation_page,
+                "query": self._library_conversation_query,
+            }
+        elif row_id == LIBRARY_ROW_BROWSE_NOTES:
+            if (
+                self._library_notes_source != LIBRARY_NOTES_SOURCE_DATABASE
+                or not self._library_loaded
+                or self._library_lookup_error
+            ):
+                return None
+            scope = {
+                "sort": self._library_notes_sort,
+                "filter": self._library_notes_filter,
+            }
+            source_list_adjusted = self._library_notes_view != "list"
+        elif row_id == LIBRARY_ROW_BROWSE_SKILLS:
+            if not self._library_loaded or self._library_lookup_error:
+                return None
+            scope = {
+                "sort": self._library_skills_sort,
+                "filter": self._library_skills_filter,
+            }
+            source_list_adjusted = self._library_skills_view != "list"
+        elif row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
+            if not self._library_collections_loaded or self._library_collections_error:
+                return None
+            scope = {}
+        elif row_id == LIBRARY_ROW_BROWSE_SEARCH:
+            if self._library_rag_retrieval_status not in {"ready", "empty"}:
+                return None
+            scope = {
+                "query": self._library_rag_searched_query,
+                "mode": self._library_rag_mode,
+                "scope_deselected": sorted(self._library_rag_scope_deselected),
+            }
+        else:
+            return None
+
+        return {
+            "version": 1,
+            "row_id": row_id,
+            "scope": scope,
+            "source_list_adjusted": source_list_adjusted,
+        }
+
+    @classmethod
+    def _restore_library_continue_receipt(
+        cls,
+        value: object,
+    ) -> dict[str, Any] | None:
+        """Validate one versioned receipt without recovering private row data."""
+
+        if type(value) is not dict or set(value) != {
+            "version",
+            "row_id",
+            "scope",
+            "source_list_adjusted",
+        }:
+            return None
+        if type(value["version"]) is not int or value["version"] != 1:
+            return None
+        if type(value["source_list_adjusted"]) is not bool:
+            return None
+        row_id = value["row_id"]
+        raw_scope = value["scope"]
+        if type(row_id) is not str or type(raw_scope) is not dict:
+            return None
+
+        try:
+            if row_id == LIBRARY_ROW_BROWSE_MEDIA:
+                if set(raw_scope) != {"query", "media_type", "sort_by", "page"}:
+                    return None
+                normalized = MediaBrowseScope(**raw_scope)
+                scope = {
+                    "query": normalized.query,
+                    "media_type": normalized.media_type,
+                    "sort_by": normalized.sort_by,
+                    "page": normalized.page,
+                }
+            elif row_id == LIBRARY_ROW_BROWSE_PROMPTS:
+                if set(raw_scope) != {
+                    "query",
+                    "collection_id",
+                    "sort_by",
+                    "sort_order",
+                    "page",
+                }:
+                    return None
+                normalized_prompt = PromptBrowseScope(**raw_scope)
+                scope = {
+                    "query": normalized_prompt.query,
+                    "collection_id": normalized_prompt.collection_id,
+                    "sort_by": normalized_prompt.sort_by,
+                    "sort_order": normalized_prompt.sort_order,
+                    "page": normalized_prompt.page,
+                }
+            elif row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
+                if set(raw_scope) != {"page", "query"}:
+                    return None
+                page = raw_scope["page"]
+                query = raw_scope["query"]
+                if (
+                    type(page) is not int
+                    or cls._normalize_library_conversation_page(page) != page
+                    or type(query) is not str
+                ):
+                    return None
+                scope = {"page": page, "query": query.strip()[:200]}
+            elif row_id == LIBRARY_ROW_BROWSE_NOTES:
+                if set(raw_scope) != {"sort", "filter"}:
+                    return None
+                sort = raw_scope["sort"]
+                filter_value = raw_scope["filter"]
+                if sort not in {"newest", "oldest", "title"} or type(
+                    filter_value
+                ) is not str:
+                    return None
+                scope = {"sort": sort, "filter": filter_value}
+            elif row_id == LIBRARY_ROW_BROWSE_SKILLS:
+                if set(raw_scope) != {"sort", "filter"}:
+                    return None
+                sort = raw_scope["sort"]
+                filter_value = raw_scope["filter"]
+                if sort not in _LIBRARY_SKILLS_SORT_MODES or type(
+                    filter_value
+                ) is not str:
+                    return None
+                scope = {"sort": sort, "filter": filter_value}
+            elif row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
+                if raw_scope:
+                    return None
+                scope = {}
+            elif row_id == LIBRARY_ROW_BROWSE_SEARCH:
+                if set(raw_scope) != {"query", "mode", "scope_deselected"}:
+                    return None
+                query = raw_scope["query"]
+                mode = raw_scope["mode"]
+                deselected = raw_scope["scope_deselected"]
+                if (
+                    type(query) is not str
+                    or mode not in {"search", "rag"}
+                    or type(deselected) is not list
+                    or any(type(item) is not str for item in deselected)
+                    or len(set(deselected)) != len(deselected)
+                    or not set(deselected).issubset(
+                        LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES
+                    )
+                ):
+                    return None
+                scope = {
+                    "query": query,
+                    "mode": mode,
+                    "scope_deselected": sorted(deselected),
+                }
+            else:
+                return None
+        except (TypeError, ValueError):
+            return None
+
+        return {
+            "version": 1,
+            "row_id": row_id,
+            "scope": scope,
+            "source_list_adjusted": value["source_list_adjusted"],
+        }
+
     def restore_state(self, state: dict[str, Any]) -> None:
         """Restore Library selection/view state saved by ``save_state``.
 
@@ -6246,7 +6479,16 @@ class LibraryScreen(BaseAppScreen):
         if not isinstance(state, dict):
             return
 
-        self._library_selected_row_id = str(state.get("library_selected_row_id") or "")
+        has_continue_receipt = "library_continue_receipt" in state
+        continue_receipt = self._restore_library_continue_receipt(
+            state.get("library_continue_receipt")
+        )
+        self._library_continue_receipt = continue_receipt
+        self._library_selected_row_id = (
+            ""
+            if has_continue_receipt
+            else str(state.get("library_selected_row_id") or "")
+        )
         self._selected_conversation_id = str(
             state.get("selected_conversation_id") or ""
         )
@@ -6367,6 +6609,43 @@ class LibraryScreen(BaseAppScreen):
                 state.get("library_conversation_page")
             )
         )
+        if continue_receipt is not None:
+            scope = continue_receipt["scope"]
+            row_id = continue_receipt["row_id"]
+            if row_id == LIBRARY_ROW_BROWSE_MEDIA:
+                receipt_media_scope = MediaBrowseScope(**scope)
+                self._library_media_browse_controller.invalidate(receipt_media_scope)
+                self._library_media_type_filter = receipt_media_scope.media_type
+                self._library_media_view = "list"
+                self._selected_media_id = ""
+            elif row_id == LIBRARY_ROW_BROWSE_PROMPTS:
+                receipt_prompt_scope = PromptBrowseScope(**scope)
+                self._library_prompt_browse_controller.invalidate(
+                    receipt_prompt_scope
+                )
+                self._library_prompts_view = "list"
+                self._selected_prompt_id = None
+            elif row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
+                self._library_conversation_requested_page = scope["page"]
+                self._library_conversation_requested_query = scope["query"]
+                self._selected_conversation_id = ""
+            elif row_id == LIBRARY_ROW_BROWSE_NOTES:
+                self._library_notes_source = LIBRARY_NOTES_SOURCE_DATABASE
+                self._library_notes_sort = scope["sort"]
+                self._library_notes_filter = scope["filter"]
+                self._library_notes_view = "list"
+                self._selected_note_id = ""
+            elif row_id == LIBRARY_ROW_BROWSE_SKILLS:
+                self._library_skills_sort = scope["sort"]
+                self._library_skills_filter = scope["filter"]
+                self._library_skills_view = "list"
+                self._selected_skill_name = ""
+            elif row_id == LIBRARY_ROW_BROWSE_SEARCH:
+                self._library_rag_query = scope["query"]
+                self._library_rag_mode = scope["mode"]
+                self._library_rag_scope_deselected = set(
+                    scope["scope_deselected"]
+                )
         # task-2858 AC#3 (LIB-12): restore the durable export receipt
         # (see the field's ``__init__`` comment) -- a foreign/corrupted
         # dict degrades to "no receipt yet" rather than raising.
