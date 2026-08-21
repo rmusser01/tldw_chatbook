@@ -459,8 +459,9 @@ def _coerce_autowake_enabled(value) -> bool:
 
 
 # Task 7: appended to config.system_prompt only when THIS run wired the
-# search_run_log tool (see the `log_active` gate in _run_one, reused
-# verbatim by _make_call_model) -- so the model is never told a log exists
+# search_run_log tool and its writer remains active (the bind-time gate in
+# _run_one is rechecked by _make_call_model on every request) -- so the
+# model is never told a log exists
 # when it can't actually search it. Phase 2 (task-1271): the same gate now
 # also wires run_log_stats/run_log_slice, so this section mentions all
 # three -- a model that only ever hears about search_run_log has no reason
@@ -1392,7 +1393,7 @@ class AgentService:
         # enabled` flag, off by default so existing runs stay byte-identical
         # until a user turns it on (requirement #5). Resolved once here,
         # not per turn: neither operand can change during a run.
-        evict_enabled = log_active and _setting(RUN_LOG_EVICT_ENABLED_KEY, False)
+        evict_requested = bool(_setting(RUN_LOG_EVICT_ENABLED_KEY, False))
         # TASK-1272 follow-up (live-verified 2026-07-28): the minimum-
         # recent-rounds floor, resolved once alongside evict_enabled for
         # the same reason -- it cannot change during a run. Unused when
@@ -1411,6 +1412,11 @@ class AgentService:
         # 2026-07-17-provider-prompt-caching-note.md).
         protocol_key: tuple | None = None
         protocol_text = ""
+        run_log_schema_names = {
+            SEARCH_RUN_LOG_TOOL_SCHEMA.name,
+            RUN_LOG_STATS_TOOL_SCHEMA.name,
+            RUN_LOG_SLICE_TOOL_SCHEMA.name,
+        }
 
         def call_model(
             messages: list[dict],
@@ -1418,7 +1424,17 @@ class AgentService:
             current_continuation: ProviderContinuationCheckpoint | None = None,
         ) -> ModelTurn:
             nonlocal protocol_key, protocol_text
-            schemas = runtime_schemas + list(active_schemas)
+            effective_log_active = bool(
+                log_active
+                and self.run_log_writer is not None
+                and self.run_log_writer.is_active
+            )
+            effective_runtime_schemas = [
+                schema
+                for schema in runtime_schemas
+                if effective_log_active or schema.name not in run_log_schema_names
+            ]
+            schemas = effective_runtime_schemas + list(active_schemas)
             system_content = config.system_prompt
             call_kwargs: dict = {}
             if native:
@@ -1434,7 +1450,7 @@ class AgentService:
                     protocol_key = key
                 if protocol_text:
                     system_content = f"{config.system_prompt}\n\n{protocol_text}"
-            if log_active:
+            if effective_log_active:
                 system_content = f"{system_content}\n\n{RUN_LOG_PROMPT_SECTION}"
             if config.workspace_context_note:
                 # Non-default workspace: append the environment note LAST, as a
@@ -1489,7 +1505,7 @@ class AgentService:
                 model=config.model,
                 provider=api_endpoint,
                 native=native,
-                enabled=evict_enabled,
+                enabled=effective_log_active and evict_requested,
                 min_recent_rounds=min_recent_rounds,
                 continuation_groups=(
                     () if gateway_prepares_continuation else effective_groups
