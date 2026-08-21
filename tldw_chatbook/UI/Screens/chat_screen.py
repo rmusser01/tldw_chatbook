@@ -290,6 +290,7 @@ from ...Chat.console_display_state import (
     ConsoleControlState,
     ConsoleDisplayRow,
     ConsoleInspectorState,
+    ConsoleProjectInstructionState,
     ConsoleRetrievalScopeState,
     ConsoleStagedContextState,
     ConsoleStagedEvidenceStripState,
@@ -9601,8 +9602,12 @@ class ChatScreen(BaseAppScreen):
         chip renders real content, not stale/empty data.
         """
         controller = self._ensure_console_chat_controller()
+        session_id = controller.store.active_session_id
+        if not session_id:
+            self.notify("No active conversation.", severity="warning")
+            return
         factory, estimate_factory, token_estimate, in_progress = (
-            self._console_inspector_next_send_factories(controller)
+            self._console_inspector_next_send_factories(controller, session_id)
         )
         self._push_console_inspector(
             initial_tab=TAB_COSTS,
@@ -9620,6 +9625,16 @@ class ChatScreen(BaseAppScreen):
         estimate_factory: Callable[[], int | None] | None = None,
         token_estimate: int | None = None,
         in_progress: bool = False,
+        project_instruction_state: ConsoleProjectInstructionState | None = None,
+        project_instruction_state_factory: Callable[
+            [], Awaitable[ConsoleProjectInstructionState]
+        ]
+        | None = None,
+        project_instruction_session_id: str | None = None,
+        project_instruction_recovery: Callable[
+            [str | None, str], Awaitable[ConsoleProjectInstructionState | None]
+        ]
+        | None = None,
     ) -> None:
         """Build the Costs-tab inputs and push the shared inspector (task-8).
 
@@ -9629,6 +9644,13 @@ class ChatScreen(BaseAppScreen):
         itself never queries the store directly, the same "already
         computed, just render it" shape the standalone modal it replaced
         (pre-task-8) used.
+
+        The ``project_instruction_*`` kwargs (task-18300) all default to
+        ``None`` -- ``_open_console_cost_breakdown`` (the cost-chip entry
+        point) never passes them, so its Next Send tab simply mounts no
+        project-instructions panel; only ``action_view_chat_context``
+        supplies them, via ``project_instruction_ui.
+        project_instruction_context_kwargs``.
         """
         rows, totals, turns, exchanges_loader = self._build_console_inspector_cost_data()
         self.app.push_screen(
@@ -9643,6 +9665,10 @@ class ChatScreen(BaseAppScreen):
                 in_progress=in_progress,
                 ephemeral=self._console_active_session_is_ephemeral(),
                 initial_tab=initial_tab,
+                project_instruction_state=project_instruction_state,
+                project_instruction_state_factory=project_instruction_state_factory,
+                project_instruction_session_id=project_instruction_session_id,
+                project_instruction_recovery=project_instruction_recovery,
             )
         )
 

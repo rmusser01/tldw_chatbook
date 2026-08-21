@@ -1,6 +1,20 @@
 """Console Conversation Inspector modal (task-8: scaffold + Costs tab;
 task-9: the Exchange tab; task-10: the Next Send tab, and retirement of
-the two modals it replaces).
+the two modals it replaces; task-18300: the Next Send tab's project-
+instructions panel).
+
+task-18300: ``dev`` added a metadata-only project-instructions section
+(status, sources, warnings, one-click recovery) to the retired standalone
+context modal while this branch had already replaced that modal with this
+one. Ported here: the four ``project_instruction_*`` constructor kwargs
+(all default ``None`` -- the cost-chip entry point never passes them),
+mounting ``ConsoleProjectInstructionContextPanel`` on the Next Send pane
+when a state is given, ``_focus_initial_control``/``AUTO_FOCUS = None``,
+the ``RecoveryRequested`` handler, and -- the load-bearing part --
+``_format_export_text``: Copy JSON and Save to File must never carry an
+automatically-injected project-instruction message body (tagged
+``EPHEMERAL_ORIGIN_KEY == "project_instructions"``); only the disposable
+raw-JSON/Collapsible preview (``_format_next_send_text``) may show it.
 
 Replaced the two standalone modals that used to live in this directory
 (one opened from the cost chip, the other via Ctrl+Shift+P / the command
@@ -49,6 +63,7 @@ a caller actually drills into one.
 
 from __future__ import annotations
 
+import copy
 import json
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import asdict, dataclass
@@ -80,12 +95,17 @@ from textual.worker import Worker, WorkerState
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
 from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostRow, ConsoleCostRowTotals
+from tldw_chatbook.Chat.console_display_state import ConsoleProjectInstructionState
 from tldw_chatbook.Chat.console_ephemeral import blocked_reason
 from tldw_chatbook.Chat.console_exchange_capture import ExchangeCapture
+from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.LLM_Calls.pricing_catalog import get_pricing_catalog
 from tldw_chatbook.Utils.token_counter import estimate_tokens
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
+from tldw_chatbook.Widgets.Console.console_project_instructions import (
+    ConsoleProjectInstructionContextPanel,
+)
 
 MODAL_ID = "console-inspector-modal"
 CLOSE_BUTTON_ID = "console-inspector-close"
@@ -266,6 +286,15 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
     ]
     SAFE_MODAL_CONTENT = f"#{MODAL_ID}"
 
+    # Next Send tab (task-18300, ported from the retired standalone context
+    # modal): with a project-instruction recovery action available, letting
+    # Textual's default AUTO_FOCUS land on whatever's first in DOM order can
+    # skip right past it. ``_focus_initial_control`` (called from
+    # ``on_mount``, after a snapshot refresh, and after a recovery decision)
+    # picks the single most relevant control instead, without shifting any
+    # layout.
+    AUTO_FOCUS = None
+
     # Next Send tab (task-10) reactives, ported from the retired standalone
     # context modal.
     # task-16843: a bare instance default (`reactive(ConsoleContextSnapshot(...))`)
@@ -301,6 +330,16 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         estimate_factory: Callable[[], int | None] | None = None,
         in_progress: bool = False,
         ephemeral: bool = False,
+        project_instruction_state: ConsoleProjectInstructionState | None = None,
+        project_instruction_state_factory: Callable[
+            [], Awaitable[ConsoleProjectInstructionState]
+        ]
+        | None = None,
+        project_instruction_session_id: str | None = None,
+        project_instruction_recovery: Callable[
+            [str | None, str], Awaitable[ConsoleProjectInstructionState | None]
+        ]
+        | None = None,
         initial_tab: str = TAB_COSTS,
     ) -> None:
         """Initialize the inspector.
@@ -329,6 +368,24 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                 its Refresh button).
             ephemeral: Whether the active session is temporary (blocks
                 Next Send's Save-to-file affordance via ``blocked_reason``).
+            project_instruction_state: Metadata-only project-instruction
+                display state (task-18300, ported from the retired
+                standalone context modal). ``None`` (the default, and what
+                the cost-chip entry point always passes) mounts no project
+                instructions panel on the Next Send tab at all.
+            project_instruction_state_factory: Async re-fetch of the above,
+                called from ``_load_snapshot`` alongside ``snapshot_factory``
+                on mount and on Refresh/"r".
+            project_instruction_session_id: The session captured when this
+                modal was opened, threaded through to
+                ``ConsoleProjectInstructionContextPanel`` and echoed back on
+                a ``RecoveryRequested`` event so recovery always targets the
+                session that was active when the panel was built, not
+                whatever is active by the time the user acts.
+            project_instruction_recovery: Async handler for one explicit
+                recovery decision (enable / choose folder / disable),
+                returning the refreshed display state or ``None`` when the
+                captured session or action is no longer valid.
             initial_tab: Which tab id starts active -- ``"inspector-costs"``
                 from the cost chip, ``"inspector-next-send"`` from Ctrl+Shift+P.
         """
@@ -368,6 +425,10 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         self._estimate_factory = estimate_factory
         self._in_progress = in_progress
         self._ephemeral = ephemeral
+        self._project_instruction_state = project_instruction_state
+        self._project_instruction_state_factory = project_instruction_state_factory
+        self._project_instruction_session_id = project_instruction_session_id
+        self._project_instruction_recovery = project_instruction_recovery
         self._initial_tab = initial_tab or TAB_COSTS
         self._loaded_row_indices: set[int] = set()
 
@@ -412,7 +473,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                     with VerticalScroll(id="console-inspector-exchange-turns"):
                         yield from self._build_exchange_turn_widgets()
                 with TabPane("Next Send", id=TAB_NEXT_SEND):
-                    with Vertical(id="console-inspector-next-send-pane"):
+                    with VerticalScroll(id="console-inspector-next-send-pane"):
                         yield Static(
                             "Chat Context",
                             id="console-inspector-next-send-header",
@@ -423,6 +484,21 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                             id="console-inspector-next-send-warning",
                             markup=False,
                         )
+                        if self._project_instruction_state is not None:
+                            # task-18300: ported from the retired standalone
+                            # context modal -- id kept as
+                            # ``console-context-project-instructions``
+                            # (unchanged from that modal) rather than
+                            # adopting this pane's own ``console-inspector-
+                            # next-send-*`` prefix, since it is not part of
+                            # this pane's own frame -- it is the SAME
+                            # metadata-only panel widget the retired modal
+                            # mounted, unmodified.
+                            yield ConsoleProjectInstructionContextPanel(
+                                self._project_instruction_state,
+                                session_id=self._project_instruction_session_id,
+                                id="console-context-project-instructions",
+                            )
                         yield LoadingIndicator(id="console-inspector-next-send-loading")
 
                         with TabbedContent(id="console-inspector-next-send-tabs"):
@@ -480,6 +556,113 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             group=_NEXT_SEND_WORKER_GROUP,
             name="load_snapshot",
         )
+        self.call_after_refresh(self._focus_initial_control)
+
+    def _focus_initial_control(self) -> None:
+        """Focus the most relevant available action (task-18300, ported from
+        the retired standalone context modal's own ``_focus_initial_
+        control``, adapted to this widget's own button ids).
+
+        Tried in order: a project-instruction recovery action (the panel is
+        only mounted -- and only ever offers one -- when
+        ``project_instruction_state`` was passed at construction, which the
+        cost-chip entry point never does), then the Next Send tab's own
+        Refresh button, then the modal's shared Close button. The first
+        available (focusable, not disabled) control wins.
+
+        The first two selectors are scoped to when the Next Send tab is
+        the ACTIVE one: they live inside ``#console-inspector-next-send-
+        pane``, a ``VerticalScroll`` nested inside the OUTER Costs/
+        Exchange/Next-Send ``TabbedContent`` -- and ``scroll_visible()``
+        below walks every scrollable ancestor, including that outer
+        TabbedContent, to bring its target into view. Left unscoped, a
+        Costs-tab open (the cost-chip entry point, which always has a
+        mounted-but-inactive Next Send Refresh button since all three tabs'
+        widgets exist up front) would get its OWN active tab silently
+        yanked to Next Send by this method's own focus/scroll call -- a
+        real bug this branch shipped and caught via
+        ``test_cost_chip_press_opens_the_breakdown_modal``. Close is tried
+        regardless of which tab is active: it lives OUTSIDE the
+        TabbedContent (in ``#console-inspector-actions``), so focusing/
+        scrolling to it can never drag the active tab away.
+
+        Unlike the retired modal (which always had enough of its own
+        95x40 frame that every control was already on screen), this pane
+        can be shorter than its own content at the smallest supported
+        viewport -- ``#console-inspector-next-send-pane`` is a
+        ``VerticalScroll`` for exactly that reason. ``.focus()`` alone
+        does not reliably scroll a widget into view here: it only does so
+        as an incidental side effect, and a SECOND focus call on an
+        already-focused control (this method runs again after every
+        snapshot reload and after every recovery decision) is a no-op that
+        skips it entirely. ``scroll_visible()`` is called explicitly so the
+        newly-focused control is reachable regardless of when this runs.
+        """
+        try:
+            next_send_active = (
+                self.query_one("#console-inspector-tabs", TabbedContent).active
+                == TAB_NEXT_SEND
+            )
+        except NoMatches:
+            next_send_active = False
+        next_send_selectors = (
+            (
+                ".console-project-instruction-recovery-action",
+                "#console-inspector-next-send-refresh",
+            )
+            if next_send_active
+            else ()
+        )
+        for selector in (*next_send_selectors, f"#{CLOSE_BUTTON_ID}"):
+            controls = list(self.query(selector))
+            available = [
+                control
+                for control in controls
+                if control.can_focus and not getattr(control, "disabled", False)
+            ]
+            if available:
+                available[0].focus()
+                # ``immediate=True``: the default (``False``) DEFERS the
+                # actual scroll to "after a screen refresh" -- i.e. one
+                # more async round trip -- which left the target reachable
+                # by `.region` (a layout-time property, already correct)
+                # for a query, but not for real mouse-click hit-testing on
+                # the smallest supported viewport (80x24) for at least one
+                # more event-loop turn.
+                # ``top=True``: without it, the minimal scroll needed to
+                # bring the LAST line of a multi-row recovery panel's
+                # bottom edge exactly level with this pane's own bottom
+                # edge -- an exact boundary, not a comfortable margin --
+                # measurably left it unclickable at 80x24 even though
+                # ``.region`` reported it on-screen (a real, reproduced
+                # off-by-one at the viewport edge, not a test artifact).
+                # Scrolling to the TOP instead lands the target control
+                # comfortably inside the viewport rather than pinned to
+                # its very edge.
+                available[0].scroll_visible(animate=False, immediate=True, top=True)
+                return
+
+    @on(ConsoleProjectInstructionContextPanel.RecoveryRequested)
+    async def _recover_project_instructions(
+        self, event: ConsoleProjectInstructionContextPanel.RecoveryRequested
+    ) -> None:
+        """Apply one explicit recovery decision and refresh the panel in
+        place (task-18300, ported verbatim from the retired standalone
+        context modal)."""
+        if self._project_instruction_recovery is None:
+            return
+        event.stop()
+        state = await self._project_instruction_recovery(
+            event.session_id, event.action
+        )
+        if state is None:
+            return
+        self._project_instruction_state = state
+        self.query_one(
+            "#console-context-project-instructions",
+            ConsoleProjectInstructionContextPanel,
+        ).sync_state(state)
+        self.call_after_refresh(self._focus_initial_control)
 
     def _build_costs_widgets(self) -> list[Widget]:
         """Costs-tab row widgets: one lazily-drillable Collapsible per row.
@@ -1211,6 +1394,25 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         # empty state still renders its own guidance copy below
         # (``_build_current_context_widgets``); it just no longer resizes
         # the pane's own container to match.
+        if self._project_instruction_state is not None:
+            # task-18300, ported verbatim from the retired standalone
+            # context modal: sync the panel's content-free authority/source
+            # metadata every render, then -- only when the binding is
+            # actually authoritative for THIS folder (``enabled`` and a
+            # matching locator) -- layer in the disposable preview this
+            # snapshot carries. A stale/mismatched binding must not show a
+            # preview of content that would not actually be sent.
+            project_panel = self.query_one(
+                "#console-context-project-instructions",
+                ConsoleProjectInstructionContextPanel,
+            )
+            project_panel.sync_state(self._project_instruction_state)
+            if (
+                self._project_instruction_state.enabled
+                and self._project_instruction_state.locator_match == "match"
+            ):
+                project_panel.sync_preview(self.snapshot.project_instruction_preview)
+
         warning = self.query_one("#console-inspector-next-send-warning", Static)
         if self._in_progress:
             warning.update("A response is in progress; snapshot may change.")
@@ -1358,6 +1560,41 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
     def _format_next_send_text(self) -> str:
         return self._json_block(self.snapshot.next_send_payload)
 
+    def _format_export_text(self) -> str:
+        """Serialize a body-free payload for clipboard and filesystem export
+        (task-18300, ported verbatim from the retired standalone context
+        modal's own ``_format_export_text``).
+
+        PRIVACY: ``_format_next_send_text`` above (the raw-JSON checkbox and
+        the per-field Collapsible rendering) is this tab's own DISPOSABLE
+        preview -- gone the moment this modal closes, never leaving the
+        process. Copy JSON and Save to File are the opposite: they persist
+        OUTSIDE this modal (the OS clipboard, a file under Downloads), so
+        this is the one formatter ``_copy_json``/``_save_json`` below are
+        allowed to call. Any message the ephemeral-injection path tagged
+        ``EPHEMERAL_ORIGIN_KEY == "project_instructions"`` -- an
+        automatically-assembled project-instruction body, never something
+        the user typed -- is dropped before serializing; a
+        ``project_instructions_export`` marker notes the omission so the
+        exported JSON is self-describing about what's missing rather than
+        silently short.
+        """
+        payload = copy.deepcopy(self.snapshot.next_send_payload)
+        messages = payload.get("messages")
+        if isinstance(messages, list):
+            retained = [
+                message
+                for message in messages
+                if not (
+                    isinstance(message, dict)
+                    and message.get(EPHEMERAL_ORIGIN_KEY) == "project_instructions"
+                )
+            ]
+            if len(retained) != len(messages):
+                payload["messages"] = retained
+                payload["project_instructions_export"] = "automatic body omitted"
+        return self._json_block(payload)
+
     # ``_json_block`` itself is not redefined here -- the Exchange tab
     # above already carries the identical idiom (``json.dumps(obj,
     # indent=2, default=str)``, its own docstring notes it mirrors the
@@ -1369,6 +1606,16 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         self.next_send_loading = True
         try:
             new_snapshot = await self._snapshot_factory()
+            # Project-instruction state refreshed BEFORE the snapshot
+            # assignment below too (task-18300, same rule as the token
+            # estimate's own comment right below): ``_update_view`` reads
+            # ``self._project_instruction_state`` synchronously off
+            # ``watch_snapshot``, so assigning the snapshot first would
+            # sync the panel against the STALE state for one refresh.
+            if self._project_instruction_state_factory is not None:
+                self._project_instruction_state = (
+                    await self._project_instruction_state_factory()
+                )
             # Estimate refreshed BEFORE the snapshot assignment below
             # (task-10 review finding 6): ``self.snapshot = ...`` is a
             # reactive that triggers ``watch_snapshot`` -> ``_update_view``
@@ -1379,6 +1626,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             if self._estimate_factory is not None:
                 self._token_estimate = self._estimate_factory()
             self.snapshot = new_snapshot
+            self.call_after_refresh(self._focus_initial_control)
         finally:
             self.next_send_loading = False
 
@@ -1414,7 +1662,11 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
     @on(Button.Pressed, "#console-inspector-next-send-copy")
     def _copy_json(self, event: Button.Pressed) -> None:
         event.stop()
-        text = self._format_next_send_text()
+        # ``_format_export_text``, NOT ``_format_next_send_text`` (task-18300):
+        # this leaves the modal for the OS clipboard, so any automatically
+        # injected project-instruction message body must be scrubbed first --
+        # see that method's own docstring for the privacy contract.
+        text = self._format_export_text()
         try:
             import pyperclip
 
@@ -1422,9 +1674,9 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             self.notify("JSON copied to clipboard.")
         except Exception as exc:
             # No exception text: ``text`` in this frame's locals is the
-            # FULL next-send payload (system prompt, messages, staged
-            # sources), and loguru's diagnose formatter would otherwise
-            # annotate the failing source line's names (including
+            # export-scrubbed next-send payload (system prompt, messages,
+            # staged sources), and loguru's diagnose formatter would
+            # otherwise annotate the failing source line's names (including
             # ``text``) with their values. type(exc).__name__ is enough to
             # diagnose a clipboard failure without echoing payload content
             # (hard constraint 2/3 -- the retired standalone context
@@ -1440,7 +1692,10 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
     @on(Button.Pressed, "#console-inspector-next-send-save")
     def _save_json(self, event: Button.Pressed) -> None:
         event.stop()
-        text = self._format_next_send_text()
+        # ``_format_export_text``, NOT ``_format_next_send_text`` (task-18300)
+        # -- same privacy contract as ``_copy_json`` above, this text lands
+        # on disk.
+        text = self._format_export_text()
         filename = f"chatbook_context_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         path = Path.home() / "Downloads" / filename
         try:
@@ -1450,11 +1705,11 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         except OSError as exc:
             # No exception text, no traceback -- same rationale as this
             # file's ``_save_exchange_capture``: ``text`` in this frame is
-            # the full next-send payload, and an OSError's own str() can
-            # also embed the offending path. type(exc).__name__ plus the
-            # path we attempted is enough to diagnose (permissions, disk
-            # full, path too long) without echoing content into the log OR
-            # the user-facing toast -- the retired standalone context
+            # the export-scrubbed next-send payload, and an OSError's own
+            # str() can also embed the offending path. type(exc).__name__
+            # plus the path we attempted is enough to diagnose (permissions,
+            # disk full, path too long) without echoing content into the
+            # log OR the user-facing toast -- the retired standalone context
             # modal's own ``_save_json`` put the raw exception text in a
             # USER-VISIBLE notify() (hard constraint 3); this names the
             # failure class and path instead.

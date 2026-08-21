@@ -51,6 +51,7 @@ from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostRowTotals
 from tldw_chatbook.Widgets.Console import console_conversation_inspector
 from tldw_chatbook.Widgets.Console.console_conversation_inspector import (
     CLOSE_BUTTON_ID,
+    MODAL_ID,
     SIZE_THRESHOLD_BYTES,
     TAB_NEXT_SEND,
     ConsoleConversationInspector,
@@ -182,7 +183,7 @@ async def test_context_modal_shows_metadata_only_project_instruction_section():
     app = ActionHarness()
     async with app.run_test(size=(100, 40)) as pilot:
         app.push_screen(
-            ConsoleContextModal(
+            _inspector(
                 _project_snapshot_factory,
                 project_instruction_state=state,
             )
@@ -233,7 +234,7 @@ async def test_context_modal_in_progress_warning():
             "#console-inspector-next-send-refresh", Button
         )
         assert refresh_button.disabled
-        assert app.focused is modal.query_one("#console-context-close", Button)
+        assert app.focused is modal.query_one(f"#{CLOSE_BUTTON_ID}", Button)
 
 
 class ActionHarness(App):
@@ -258,10 +259,19 @@ class RecoveryHarness(ActionHarness):
 async def test_context_modal_stays_within_supported_viewports(size):
     app = ActionHarness()
     async with app.run_test(size=size) as pilot:
-        app.push_screen(ConsoleContextModal(_snapshot_factory))
+        app.push_screen(_inspector(_snapshot_factory))
         await pilot.pause()
-        modal = app.screen.query_one("#console-context-modal", Vertical)
-        actions = app.screen.query_one("#console-context-actions", Horizontal)
+        modal = app.screen.query_one(f"#{MODAL_ID}", Vertical)
+        # The retired standalone modal's own "#console-context-actions" held
+        # the Raw JSON checkbox, Refresh, Copy JSON, Save to File, AND
+        # Close, all inside the ONE frame it owned. In the inspector, Close
+        # moved to "#console-inspector-actions" (shared across all three
+        # tabs, outside the TabbedContent) -- this pane's own action row
+        # ("#console-inspector-next-send-actions") is the direct analog for
+        # the rest, so that's what this viewport-containment pin now checks.
+        actions = app.screen.query_one(
+            "#console-inspector-next-send-actions", Horizontal
+        )
         assert modal.region.x >= 0
         assert modal.region.y >= 0
         assert modal.region.right <= size[0]
@@ -292,14 +302,14 @@ async def test_project_warning_recovery_and_metadata_fit_supported_viewports(siz
     app = RecoveryHarness()
     async with app.run_test(size=size) as pilot:
         app.push_screen(
-            ConsoleContextModal(
+            _inspector(
                 _empty_factory,
                 project_instruction_state=state,
                 project_instruction_session_id="captured-session",
             )
         )
         await pilot.pause()
-        modal = app.screen.query_one("#console-context-modal", Vertical)
+        modal = app.screen.query_one(f"#{MODAL_ID}", Vertical)
         panel = app.screen.query_one(
             "#console-context-project-instructions",
             ConsoleProjectInstructionContextPanel,
@@ -327,7 +337,7 @@ async def test_project_off_state_focuses_enable_and_context_escape_closes():
     app = RecoveryHarness()
     async with app.run_test(size=(80, 24)) as pilot:
         app.push_screen(
-            ConsoleContextModal(
+            _inspector(
                 _empty_factory,
                 project_instruction_state=state,
                 project_instruction_session_id="captured-session",
@@ -338,7 +348,7 @@ async def test_project_off_state_focuses_enable_and_context_escape_closes():
         assert app.focused is enable
         await pilot.press("escape")
         await pilot.pause()
-        assert not isinstance(app.screen, ConsoleContextModal)
+        assert not isinstance(app.screen, ConsoleConversationInspector)
 
 
 @pytest.mark.asyncio
@@ -357,7 +367,7 @@ async def test_project_recovery_uses_captured_session_and_replaces_panel_state()
     app = RecoveryHarness()
     async with app.run_test(size=(80, 24)) as pilot:
         app.push_screen(
-            ConsoleContextModal(
+            _inspector(
                 _empty_factory,
                 project_instruction_state=enabled,
                 project_instruction_session_id="captured-session",
@@ -437,14 +447,14 @@ async def test_context_modal_refreshes_project_metadata_in_place():
     app = ActionHarness()
     async with app.run_test(size=(100, 40)) as pilot:
         app.push_screen(
-            ConsoleContextModal(
+            _inspector(
                 changing_factory,
                 project_instruction_state=display,
             )
         )
         await pilot.pause()
         modal = app.screen
-        await pilot.click("#console-context-refresh")
+        await pilot.click("#console-inspector-next-send-refresh")
         await pilot.pause()
         assert app.screen is modal
         assert modal.snapshot.project_instruction_preview is not None
@@ -484,7 +494,7 @@ async def test_context_modal_none_preview_replaces_stale_loaded_state():
     app = ActionHarness()
     async with app.run_test(size=(80, 24)) as pilot:
         app.push_screen(
-            ConsoleContextModal(
+            _inspector(
                 changing_factory,
                 project_instruction_state=loaded,
                 project_instruction_state_factory=changing_state_factory,
@@ -497,7 +507,7 @@ async def test_context_modal_none_preview_replaces_stale_loaded_state():
             str(item.renderable) for item in panel.query(Static)
         )
 
-        await pilot.click("#console-context-refresh")
+        await pilot.click("#console-inspector-next-send-refresh")
         await pilot.pause()
 
         assert app.screen is modal
@@ -527,7 +537,7 @@ async def test_context_modal_authority_warning_suppresses_stale_preview_rows():
     app = ActionHarness()
     async with app.run_test(size=(80, 24)) as pilot:
         app.push_screen(
-            ConsoleContextModal(
+            _inspector(
                 _project_snapshot_factory,
                 project_instruction_state=loaded,
                 project_instruction_state_factory=state_factory,
@@ -618,10 +628,10 @@ async def test_context_modal_copy_omits_automatic_project_instruction_body(
     monkeypatch.setitem(sys.modules, "pyperclip", fake_copy)
     app = ActionHarness()
     async with app.run_test(size=(100, 40)) as pilot:
-        app.push_screen(ConsoleContextModal(factory))
+        app.push_screen(_inspector(factory))
         await pilot.pause()
         assert sentinel in app.screen._format_next_send_text()
-        await pilot.click("#console-context-copy")
+        await pilot.click("#console-inspector-next-send-copy")
         await pilot.pause()
 
     exported = fake_copy.copy.call_args.args[0]
@@ -704,13 +714,13 @@ async def test_context_modal_save_omits_automatic_project_instruction_body(
         def __getattr__(self, name: str):
             return getattr(self._path, name)
 
-    monkeypatch.setattr(console_context_modal, "Path", FakePath)
+    monkeypatch.setattr(console_conversation_inspector, "Path", FakePath)
     app = ActionHarness()
     async with app.run_test(size=(80, 24)) as pilot:
-        app.push_screen(ConsoleContextModal(factory))
+        app.push_screen(_inspector(factory))
         await pilot.pause()
         assert sentinel in app.screen._format_next_send_text()
-        await pilot.click("#console-context-save")
+        await pilot.click("#console-inspector-next-send-save")
         await pilot.pause()
 
     saved = next((tmp_path / "Downloads").glob("*.json")).read_text(encoding="utf-8")
