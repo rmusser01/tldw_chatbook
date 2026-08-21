@@ -68,6 +68,21 @@ DEFAULT_DIFF_DISPLAY_MAX_LINES = 2000
 #: (TASK-1976; Qodo #1254 asked for the limit to be discoverable).
 NESTED_BANNER_NAMED_LIMIT = 5
 
+#: TASK-16801 arc B (spec §4): the turn ``Select``'s ONE pseudo-entry value,
+#: standing for "the real working tree" rather than a recorded turn. Run ids
+#: are UUIDs, so this literal can never collide with one.
+CURRENT_MODE_SENTINEL = "__git_current__"
+
+#: The pseudo-entry's label stem; the branch state is appended per repo.
+CURRENT_MODE_LABEL = "Working tree (current)"
+
+#: Spec §4.1's row-consumers table, verbatim. Revert is snapshot-anchored
+#: (it restores a turn's baseline) and notes anchor to ``change_snapshots``
+#: rows -- neither has any meaning against the real working tree, so both
+#: refuse with copy instead of acting on the pseudo row.
+CURRENT_MODE_REVERT_REFUSAL = "revert works on recorded turns — select a turn"
+CURRENT_MODE_COMMENT_REFUSAL = "comments attach to recorded turns"
+
 #: Group headings in display order. "Other" carries the rare git letters
 #: (T typechange, C copy) that pass through verbatim rather than being
 #: coerced — see ``ChangedFile.status``.
@@ -907,6 +922,51 @@ def _note_matches_leaf(note: dict, snapshot_id: "int | None") -> bool:
     return note_snapshot_id == snapshot_id
 
 
+def _head_label(info: "GitWorkspaceInfo") -> str:
+    """One repository's HEAD state as display copy.
+
+    Args:
+        info: A detected repository.
+
+    Returns:
+        The branch name; ``"detached HEAD"`` when HEAD is not on a branch;
+        ``"<branch> (no commits yet)"`` on an unborn branch (spec §4 --
+        a fresh ``git init`` is a plausible Console workspace and must
+        read as a state, not as an error).
+    """
+    if info.detached or not info.branch:
+        return "detached HEAD"
+    if info.unborn:
+        return f"{info.branch} (no commits yet)"
+    return info.branch
+
+
+def _root_summary_line(
+    info: "GitWorkspaceInfo", *, name_root: bool
+) -> str:
+    """The `current` mode's per-root header line (spec §4).
+
+    Args:
+        info: The root's detected repository state.
+        name_root: Whether to prefix the root's directory name -- done
+            only when more than one repository is listed, matching the
+            leaf labels' own multi-root rule.
+
+    Returns:
+        e.g. ``"feat/x ↑2 ↓0 → origin/feat/x"``, or ``"main · no
+        upstream"`` when the branch has none (ahead/behind are
+        meaningless then, so they are not rendered as a misleading 0/0).
+    """
+    head = _head_label(info)
+    if info.upstream:
+        summary = f"{head} ↑{info.ahead} ↓{info.behind} → {info.upstream}"
+    else:
+        summary = f"{head} · no upstream"
+    if name_root:
+        return f"{info.root.name}: {summary}"
+    return summary
+
+
 def _hunk_containing_line(
     hunks: "list[DiffHunk]", line_index: int
 ) -> "tuple[int, DiffHunk | None]":
@@ -1059,6 +1119,7 @@ class ChangeReviewScreen(Screen):
         initial_run_id: str | None = None,
         initial_path: str | None = None,
         initial_snapshot_id: int | None = None,
+        workspace_roots: "Sequence[str] | None" = None,
     ) -> None:
         """Args are stored; all loading happens in ``on_mount``.
 
@@ -1083,12 +1144,21 @@ class ChangeReviewScreen(Screen):
                 that cover the same path (spec §2's same-run
                 turn/subagent-post-turn overlap). ``None`` matches the
                 first leaf whose path matches, same as today.
+            workspace_roots: The conversation's LIVE workspace roots
+                (TASK-16801 arc B, spec §4), unioned with the roots of the
+                recorded snapshot rows to form the `current` mode's
+                detection candidates. ``None`` (every legacy caller) keeps
+                today's behavior exactly -- candidates are then the
+                recorded rows' roots alone.
         """
         super().__init__()
         self._provider = provider
         self._initial_run_id = initial_run_id
         self._initial_path = initial_path
         self._initial_snapshot_id = initial_snapshot_id
+        self._workspace_roots: tuple[str, ...] = tuple(
+            str(root) for root in (workspace_roots or ()) if str(root)
+        )
         self._turns: list[ReviewTurn] = []
         self._active_turn: ReviewTurn | None = None
         #: Flattened (row, ChangedFile) leaves in tree order, for j/k.
@@ -1122,6 +1192,38 @@ class ChangeReviewScreen(Screen):
         self._diff_cache_key: "tuple[int, int, str] | None" = None
         self._diff_cache_text: "str | None" = None
         self._diff_cache_error: "ChangeTrackingError | None" = None
+        # -- `current` mode state (TASK-16801 arc B, spec §4) -------------
+        #: The turn Select's options as this screen last set them, blank
+        #: entry excluded -- the read seam ``turn_select_options`` serves
+        #: this rather than reaching into Textual's private ``_options``.
+        self._select_options: list[tuple[str, str]] = []
+        #: Detected repositories, keyed by RESOLVED root string (the same
+        #: key ``provider.detect_git`` uses, and the same spelling
+        #: ``CurrentRootStatus.root`` carries -- so a lookup can never
+        #: silently miss). Populated by the detection worker's landing and
+        #: refreshed by every current-mode load's own fresh detection.
+        self._current_infos: "dict[str, GitWorkspaceInfo]" = {}
+        #: Per-root untracked paths from the last current-mode load. What
+        #: routes a leaf's diff through ``untracked_preview`` instead of
+        #: ``current_diff_text`` (which is a fatal git error on an
+        #: untracked path or an unborn HEAD).
+        self._current_untracked: "dict[str, frozenset[str]]" = {}
+        #: Identity token for the in-flight current-mode load. Captured
+        #: before dispatch and re-checked in the landing -- see
+        #: ``_land_current_mode``.
+        self._current_load_token: "object | None" = None
+        #: Whether repo detection has settled (landed, or been skipped
+        #: because the kill switch is off / there are no candidate roots).
+        #: Read by tests to wait on the mode's availability.
+        self._git_detection_settled: bool = False
+        #: Banner lines contributed by the active view (turn or current).
+        self._turn_banner_lines: list[str] = []
+        #: Banner lines for roots that failed BETWEEN detection and status
+        #: within one current-mode load (per-root degradation).
+        self._current_root_errors: list[str] = []
+        #: Banner lines for detection refusals (root inside a repository).
+        #: Live truth about the workspace, so they survive turn switches.
+        self._git_refusal_banners: list[str] = []
 
     # -- compose -----------------------------------------------------------
 
@@ -1203,9 +1305,10 @@ class ChangeReviewScreen(Screen):
         except Exception:  # noqa: BLE001 -- screen dismissed before refresh
             return
         self._turns = self._provider.turns()
-        select.set_options(
+        self._select_options = [
             (turn.label, turn.run_id) for turn in self._turns
-        )
+        ]
+        select.set_options(list(self._select_options))
         if self._turns:
             wanted = self._initial_run_id
             if wanted and not any(t.run_id == wanted for t in self._turns):
@@ -1216,6 +1319,167 @@ class ChangeReviewScreen(Screen):
             select.value = wanted or self._turns[0].run_id
         else:
             self._show_empty("No file changes recorded for this conversation.")
+        # TASK-16801 arc B: the `current` mode is OFFERED (never opened on)
+        # -- so detection runs AFTER the turn view is already up, keeping
+        # this open path byte-compatible, and off-thread because probing a
+        # real repository spawns git subprocesses.
+        self._dispatch_git_detection()
+
+    # -- `current` mode: detection (TASK-16801 arc B, spec §4) ------------
+
+    def turn_select_options(self) -> list[tuple[str, str]]:
+        """The turn selector's options as set by this screen (test seam).
+
+        Returns:
+            ``(label, value)`` pairs in display order, blank entry
+            excluded. The `current` pseudo-entry (when offered) is first.
+        """
+        return list(self._select_options)
+
+    @property
+    def git_detection_settled(self) -> bool:
+        """Whether repo detection has finished (or was skipped).
+
+        Returns:
+            True once the detection worker's result has landed, or as soon
+            as detection was skipped entirely (kill switch off, or no
+            candidate roots).
+        """
+        return self._git_detection_settled
+
+    def _candidate_git_roots(self) -> list[str]:
+        """Roots to probe: the recorded rows' roots ∪ the live workspace roots.
+
+        Returns:
+            Distinct root strings in a stable order (row roots first, in
+            turn order). ``provider.detect_git`` dedupes further by
+            RESOLVED spelling, so two spellings of one directory still
+            cost one probe.
+        """
+        roots: list[str] = []
+        seen: set[str] = set()
+        for turn in self._turns:
+            for row in turn.rows:
+                root = str(row.get("root") or "")
+                if root and root not in seen:
+                    seen.add(root)
+                    roots.append(root)
+        for root in self._workspace_roots:
+            if root and root not in seen:
+                seen.add(root)
+                roots.append(root)
+        return roots
+
+    def _dispatch_git_detection(self) -> None:
+        """Probe the candidate roots for real repositories, off-thread.
+
+        Skipped entirely (no worker, no git) when the kill switch is off or
+        there are no candidate roots -- spec §8's "off ⇒ zero behavior
+        change". Any failure degrades to "no mode offered"; detection is
+        an affordance, never a precondition for reviewing turns.
+        """
+        enabled = getattr(self._provider, "git_actions_enabled", None)
+        detect = getattr(self._provider, "detect_git", None)
+        try:
+            if not callable(enabled) or not callable(detect) or not enabled():
+                self._git_detection_settled = True
+                return
+        except Exception:  # noqa: BLE001 -- a bad config never breaks review
+            logger.opt(exception=True).warning(
+                "change_review: git kill-switch read failed; mode not offered"
+            )
+            self._git_detection_settled = True
+            return
+        candidates = self._candidate_git_roots()
+        if not candidates:
+            self._git_detection_settled = True
+            return
+        app = self.app
+
+        def _detect() -> None:
+            try:
+                detected = detect(candidates)
+            except Exception:  # noqa: BLE001 -- never kill the worker
+                logger.opt(exception=True).warning(
+                    "change_review: git detection failed; mode not offered"
+                )
+                detected = {}
+            app.call_from_thread(self._land_git_detection, detected)
+
+        self.run_worker(
+            _detect,
+            thread=True,
+            exclusive=True,
+            group="change-review-git-detect",
+        )
+
+    def _land_git_detection(self, detected: dict) -> None:
+        """Apply detection: refusal copy, then the pseudo-entry (if any).
+
+        Args:
+            detected: ``provider.detect_git``'s result -- one
+                ``GitWorkspaceInfo | GitWorkspaceRefusal | None`` per
+                resolved root.
+        """
+        from tldw_chatbook.Workspaces.git_workspace import (
+            GitWorkspaceInfo as _Info,
+            GitWorkspaceRefusal as _Refusal,
+        )
+
+        self._git_detection_settled = True
+        infos: "dict[str, GitWorkspaceInfo]" = {}
+        refusals: list[str] = []
+        for root, result in (detected or {}).items():
+            if isinstance(result, _Info):
+                infos[str(result.root)] = result
+            elif isinstance(result, _Refusal):
+                refusals.append(
+                    f"git actions unavailable for {root}: {result.reason}"
+                )
+        self._current_infos = infos
+        self._git_refusal_banners = refusals
+        if refusals:
+            self._update_banner()
+        if not infos:
+            return
+        try:
+            select = self.query_one("#change-review-turn-select", Select)
+        except Exception:  # noqa: BLE001 -- screen dismissed before landing
+            return
+        # Prepend, preserving the turn the screen already opened on. A
+        # `set_options` call resets the value to blank and posts a
+        # `Select.Changed` for the restore too -- `_on_turn_changed`'s
+        # already-loaded guard is what keeps that from re-running the
+        # turn's git work.
+        previous = select.value
+        self._select_options = [
+            (self._current_mode_label(infos), CURRENT_MODE_SENTINEL),
+            *((turn.label, turn.run_id) for turn in self._turns),
+        ]
+        select.set_options(list(self._select_options))
+        if previous != Select.BLANK and any(
+            value == previous for _label, value in self._select_options
+        ):
+            select.value = previous
+
+    @staticmethod
+    def _current_mode_label(infos: "dict[str, GitWorkspaceInfo]") -> str:
+        """The pseudo-entry's label for the detected repositories.
+
+        Args:
+            infos: Detected repositories, keyed by resolved root.
+
+        Returns:
+            ``"Working tree (current) — <branch>"`` for one repository
+            (``detached HEAD`` when HEAD is detached, ``<branch> (no
+            commits yet)`` on an unborn branch); a repository count when
+            more than one root was detected, since no single branch names
+            them all.
+        """
+        if len(infos) != 1:
+            return f"{CURRENT_MODE_LABEL} — {len(infos)} repositories"
+        info = next(iter(infos.values()))
+        return f"{CURRENT_MODE_LABEL} — {_head_label(info)}"
 
     # -- turn loading ------------------------------------------------------
 
@@ -1263,7 +1527,22 @@ class ChangeReviewScreen(Screen):
 
     @on(Select.Changed, "#change-review-turn-select")
     def _on_turn_changed(self, event: Select.Changed) -> None:
+        if event.value == CURRENT_MODE_SENTINEL:
+            # TASK-16801 arc B: the real working tree gets its own
+            # worker-backed load; the snapshot path below is untouched.
+            self._load_current_mode()
+            return
         if isinstance(event.value, str) and event.value:
+            if (
+                self._active_turn is not None
+                and self._active_turn.run_id == event.value
+            ):
+                # Already loaded. Reached when `set_options` (the
+                # pseudo-entry prepend) resets the value to blank and this
+                # screen restores it -- reloading here would re-run the
+                # turn's whole git diff for no visible change and would
+                # throw away the user's focused leaf.
+                return
             for turn in self._turns:
                 if turn.run_id == event.value:
                     self._load_turn(turn)
@@ -1365,44 +1644,12 @@ class ChangeReviewScreen(Screen):
                 return True
             return change.path not in touched
 
-        known = {code for code, _label in _GROUPS}
-        for code, label in _GROUPS:
-            entries = grouped.get(code, [])
-            if not entries:
-                continue
-            branch = tree.root.add(f"{label} ({len(entries)})", expand=True)
-            for row, change in entries:
-                # TASK-2032: the node carries its leaf index so a MOUSE
-                # selection can load the diff (j/k was the only loader).
-                branch.add_leaf(
-                    self._leaf_label(
-                        row, change, multi_root, badge=_badged(row, change)
-                    ),
-                    data=len(self._leaves),
-                )
-                self._leaves.append((row, change))
-        other = [
-            entry
-            for code, entries in grouped.items()
-            if code not in known
-            for entry in entries
-        ]
-        if other:
-            branch = tree.root.add(f"{_OTHER_GROUP} ({len(other)})", expand=True)
-            for row, change in other:
-                # TASK-2032: the node carries its leaf index so a MOUSE
-                # selection can load the diff (j/k was the only loader).
-                branch.add_leaf(
-                    self._leaf_label(
-                        row, change, multi_root, badge=_badged(row, change)
-                    ),
-                    data=len(self._leaves),
-                )
-                self._leaves.append((row, change))
+        self._populate_tree(tree, grouped, multi_root, _badged)
 
-        banner = self.query_one("#change-review-banner", Static)
-        banner.update("\n".join(banners))
-        banner.display = bool(banners)
+        self._turn_banner_lines = banners
+        # A turn view carries no current-mode per-root failures.
+        self._current_root_errors = []
+        self._update_banner()
 
         totals = self.query_one("#change-review-totals", Static)
         adds = sum(int(r["adds"] or 0) for r in turn.rows)
@@ -1441,6 +1688,287 @@ class ChangeReviewScreen(Screen):
             # choke point, but a zero-leaf turn never reaches it — clear
             # (hide) any stale strip content from a previously focused
             # turn explicitly.
+            self._refresh_notes_strip()
+
+    def _populate_tree(
+        self,
+        tree: Tree,
+        grouped: "dict[str, list[tuple[dict, ChangedFile]]]",
+        multi_root: bool,
+        badge: "Callable[[dict, ChangedFile], bool]",
+    ) -> None:
+        """Fill the changed-file tree and ``self._leaves`` from ``grouped``.
+
+        The ONE grouping/labeling path, shared by the snapshot turn view
+        and the `current` working-tree view (TASK-16801 arc B) so the two
+        can never drift on group order, the "Other" bucket, or the leaf
+        index each node carries.
+
+        Args:
+            tree: The (already cleared) changed-file tree.
+            grouped: Entries bucketed by ``ChangedFile.status``.
+            multi_root: Whether leaf labels should name their root.
+            badge: Per-leaf "changed outside direct file tools" predicate
+                (TASK-1978). Always False in `current` mode -- provenance
+                is a property of a recorded run, not of the working tree.
+        """
+        known = {code for code, _label in _GROUPS}
+        for code, label in _GROUPS:
+            entries = grouped.get(code, [])
+            if not entries:
+                continue
+            branch = tree.root.add(f"{label} ({len(entries)})", expand=True)
+            for row, change in entries:
+                # TASK-2032: the node carries its leaf index so a MOUSE
+                # selection can load the diff (j/k was the only loader).
+                branch.add_leaf(
+                    self._leaf_label(
+                        row, change, multi_root, badge=badge(row, change)
+                    ),
+                    data=len(self._leaves),
+                )
+                self._leaves.append((row, change))
+        other = [
+            entry
+            for code, entries in grouped.items()
+            if code not in known
+            for entry in entries
+        ]
+        if other:
+            branch = tree.root.add(f"{_OTHER_GROUP} ({len(other)})", expand=True)
+            for row, change in other:
+                # TASK-2032: the node carries its leaf index so a MOUSE
+                # selection can load the diff (j/k was the only loader).
+                branch.add_leaf(
+                    self._leaf_label(
+                        row, change, multi_root, badge=badge(row, change)
+                    ),
+                    data=len(self._leaves),
+                )
+                self._leaves.append((row, change))
+
+    def _update_banner(self) -> None:
+        """Render the honesty banner from every live source, deduped.
+
+        Three sources, in display order: the active view's own lines
+        (tracking errors, nested repos, oversize files, or `current`
+        mode's per-root headers), that load's per-root git failures, and
+        the standing detection refusals (a workspace inside a repository
+        -- live truth about the workspace, so it survives turn switches
+        and is the "why unavailable" copy spec §8 requires).
+        """
+        try:
+            banner = self.query_one("#change-review-banner", Static)
+        except Exception:  # noqa: BLE001 -- screen dismissed before refresh
+            return
+        lines: list[str] = []
+        seen: set[str] = set()
+        for line in (
+            *self._turn_banner_lines,
+            *self._current_root_errors,
+            *self._git_refusal_banners,
+        ):
+            if line and line not in seen:
+                seen.add(line)
+                lines.append(line)
+        banner.update("\n".join(lines))
+        banner.display = bool(lines)
+
+    # -- `current` mode: load and land (TASK-16801 arc B, spec §4) --------
+
+    def _current_mode_active(self) -> bool:
+        """Whether the screen is showing the REAL working tree.
+
+        The single predicate spec §4.1's row-consumers table gates on --
+        the turn ``Select``'s value IS the mode, so there is no second
+        flag that can disagree with what the user sees selected.
+
+        Returns:
+            True while the pseudo-entry is the selected option.
+        """
+        try:
+            select = self.query_one("#change-review-turn-select", Select)
+        except Exception:  # noqa: BLE001 -- screen dismissed / not composed
+            return False
+        return select.value == CURRENT_MODE_SENTINEL
+
+    def _load_current_mode(self) -> None:
+        """Read the real working tree off-thread and land it.
+
+        Deliberately NOT ``_load_turn``'s synchronous posture (spec §4):
+        a status scan of a large cold repository would stall the UI
+        thread. The snapshot path keeps its existing synchronous posture
+        unchanged; only this mode is worker-backed.
+        """
+        self._close_any_open_comment_input()
+        # A reload must refetch: the working tree moves under the view,
+        # and the pseudo rows/paths are byte-identical between loads.
+        self._diff_cache_generation += 1
+        self._diff_cache_key = None
+        self._diff_cache_text = None
+        self._diff_cache_error = None
+        # No recorded turn is in view: this is what makes every
+        # notes/comment path (which anchors to `change_snapshots` rows)
+        # inert here, on top of the explicit gates.
+        self._active_turn = None
+        self._leaves = []
+        self._focused_leaf = -1
+        self._marked_diff_lines = set()
+        self._current_untracked = {}
+        self._current_root_errors = []
+        self._turn_banner_lines = []
+        self._update_banner()
+        try:
+            tree = self.query_one("#change-review-tree", Tree)
+            tree.clear()
+            tree.root.expand()
+            self.query_one("#change-review-totals", Static).update("")
+        except Exception:  # noqa: BLE001 -- screen dismissed before load
+            return
+        self._refresh_notes_strip()
+        self._show_empty("Loading working tree…")
+
+        token = self._current_load_token = object()
+        roots = list(self._current_infos)
+        provider = self._provider
+        app = self.app
+
+        def _read_working_trees() -> None:
+            from tldw_chatbook.Workspaces.git_workspace import GitWorkspaceError
+
+            statuses: list["CurrentRootStatus"] = []
+            for root in roots:
+                # ONE try/except PER ROOT, never one around the batch: a
+                # root that vanished (or moved inside another repository)
+                # between detection and this read must degrade alone --
+                # aborting here would blank the other roots' changes too,
+                # and letting it propagate would kill the worker.
+                try:
+                    statuses.append(provider.current_status(root))
+                except GitWorkspaceError as exc:
+                    app.call_from_thread(
+                        self._land_current_root_failure, token, root, str(exc)
+                    )
+                    continue
+                except Exception as exc:  # noqa: BLE001 -- worker must live
+                    logger.opt(exception=True).warning(
+                        f"change_review: working-tree status failed for {root!r}"
+                    )
+                    app.call_from_thread(
+                        self._land_current_root_failure, token, root, str(exc)
+                    )
+                    continue
+            app.call_from_thread(self._land_current_mode, token, statuses)
+
+        self.run_worker(
+            _read_working_trees,
+            thread=True,
+            exclusive=True,
+            group="change-review-current",
+        )
+
+    def _current_load_is_live(self, token: object) -> bool:
+        """Whether a landing from ``token``'s dispatch may still apply.
+
+        Two independent ways a landing goes stale, both real: a NEWER
+        current-mode load was dispatched (token superseded), or the user
+        moved the ``Select`` back to a recorded turn while this read was
+        in flight. Textual's exclusive-worker group cancels the prior
+        worker TASK, but a ``call_from_thread`` callback it had already
+        queued still runs -- without this check those working-tree rows
+        land inside a turn view (the ``chat_screen``
+        ``_land_console_changed_files`` precedent).
+
+        Args:
+            token: The identity captured at dispatch time.
+
+        Returns:
+            True when this load is still the live one.
+        """
+        if token is not self._current_load_token:
+            logger.debug(
+                "change_review: dropping a superseded current-mode landing"
+            )
+            return False
+        if not self._current_mode_active():
+            logger.debug(
+                "change_review: dropping a current-mode landing -- the "
+                "selector moved back to a recorded turn"
+            )
+            return False
+        return True
+
+    def _land_current_root_failure(
+        self, token: object, root: str, message: str
+    ) -> None:
+        """Degrade ONE root to an honest banner line and keep going.
+
+        Args:
+            token: The dispatch identity of the load that failed.
+            root: The root whose status read failed.
+            message: The engine's error text (already excerpt-capped).
+        """
+        if not self._current_load_is_live(token):
+            return
+        from pathlib import Path as _P
+
+        line = f"⚠ working tree unavailable for {_P(root).name}: {message}"
+        if line not in self._current_root_errors:
+            self._current_root_errors.append(line)
+        self._update_banner()
+
+    def _land_current_mode(
+        self, token: object, statuses: "Sequence[CurrentRootStatus]"
+    ) -> None:
+        """Render one current-mode read: pseudo rows, tree, header, totals.
+
+        Args:
+            token: The dispatch identity captured by ``_load_current_mode``.
+            statuses: One :class:`CurrentRootStatus` per root that could be
+                read (a root that failed is already on the banner).
+        """
+        if not self._current_load_is_live(token):
+            return
+        try:
+            tree = self.query_one("#change-review-tree", Tree)
+            totals = self.query_one("#change-review-totals", Static)
+        except Exception:  # noqa: BLE001 -- screen dismissed before landing
+            return
+        tree.clear()
+        tree.root.expand()
+        self._leaves = []
+        self._focused_leaf = -1
+        self._marked_diff_lines = set()
+        self._current_untracked = {}
+        multi_root = len(statuses) > 1
+        grouped: "dict[str, list[tuple[dict, ChangedFile]]]" = {}
+        headers: list[str] = []
+        adds = 0
+        dels = 0
+        for status in statuses:
+            root_key = str(status.root)
+            self._current_infos[root_key] = status.info
+            self._current_untracked[root_key] = status.untracked
+            headers.append(_root_summary_line(status.info, name_root=multi_root))
+            # ONE pseudo row per root (spec §4's pinned shape) -- its
+            # IDENTITY is half the diff memo's key, so it must be created
+            # once here, never per leaf.
+            row = {"root": root_key, "kind": "git_current", "id": -1}
+            for change in status.files:
+                grouped.setdefault(change.status, []).append((row, change))
+                adds += int(change.adds or 0)
+                dels += int(change.dels or 0)
+        self._populate_tree(tree, grouped, multi_root, lambda _row, _c: False)
+        self._turn_banner_lines = headers
+        self._update_banner()
+        totals.update(f"{len(self._leaves)} files  +{adds} −{dels}")
+        if self._leaves:
+            self._focus_leaf(0)
+        else:
+            # A clean tree still ENTERS the mode (spec §4): commit is
+            # meaningless but unpushed commits are exactly the case for
+            # push/PR right after committing.
+            self._show_empty("working tree clean")
             self._refresh_notes_strip()
 
     @staticmethod
@@ -1603,7 +2131,14 @@ class ChangeReviewScreen(Screen):
     # -- comment creation + notes strip (TASK-18060 Task 7, spec §3) ------
 
     async def action_comment_file(self) -> None:
-        """`C`: open a whole-file comment on the focused leaf."""
+        """`C`: open a whole-file comment on the focused leaf.
+
+        The current-mode refusal (spec §4.1) lives at the top of
+        ``_open_comment_input`` -- the ONE choke point both this action,
+        the header button, and the diff pane's ``c`` reclaim funnel
+        through, so every comment path refuses with the same copy exactly
+        once per attempt.
+        """
         await self._open_comment_input("file")
 
     @on(Button.Pressed, "#change-review-comment-file-btn")
@@ -1624,6 +2159,14 @@ class ChangeReviewScreen(Screen):
                 including on those same renders.
         """
         try:
+            # TASK-16801 arc B (spec §4.1): notes anchor to
+            # `change_snapshots` rows -- the pseudo row's `id=-1` must
+            # never reach the notes DB. Gated at the TOP, ahead of the
+            # focus checks, so `C`, the button, and the pane's `c` all
+            # refuse with copy rather than no-oping silently.
+            if self._current_mode_active():
+                self.notify(CURRENT_MODE_COMMENT_REFUSAL, severity="warning")
+                return
             if not self._leaves or self._focused_leaf < 0:
                 return
             row, change = self._leaves[self._focused_leaf]
@@ -1894,6 +2437,13 @@ class ChangeReviewScreen(Screen):
             order); empty when the read itself fails (logged, never
             raised — a note-load failure must never break the pane).
         """
+        # TASK-16801 arc B (spec §4.1): the notes strip and the inline
+        # marker set are skipped ENTIRELY in current mode -- there is no
+        # snapshot id to query by, so the read must not happen at all
+        # (`_active_turn` is already None there; this is the explicit,
+        # named guard the row-consumers table asks for).
+        if self._current_mode_active():
+            return []
         if self._active_turn is None:
             return []
         try:
@@ -2035,6 +2585,12 @@ class ChangeReviewScreen(Screen):
 
     def action_revert_file(self) -> None:
         """Revert the focused file (confirmed)."""
+        # TASK-16801 arc B (spec §4.1): revert restores a TURN's baseline;
+        # the working tree has none. Gated at the top so the refusal is
+        # visible copy rather than a silently dead key.
+        if self._current_mode_active():
+            self.notify(CURRENT_MODE_REVERT_REFUSAL, severity="warning")
+            return
         if not self._leaves or self._focused_leaf < 0:
             return
         row, change = self._leaves[self._focused_leaf]
@@ -2042,6 +2598,13 @@ class ChangeReviewScreen(Screen):
 
     def action_undo_all(self) -> None:
         """Revert every file in the active turn, per root (confirmed)."""
+        # TASK-16801 arc B (spec §4.1): same gate as `action_revert_file`,
+        # and it must come BEFORE the `_active_turn is None` check below --
+        # current mode holds no active turn, so without this the key would
+        # be silently dead instead of refusing with copy.
+        if self._current_mode_active():
+            self.notify(CURRENT_MODE_REVERT_REFUSAL, severity="warning")
+            return
         if self._active_turn is None or not self._leaves:
             return
         by_row: dict[int, tuple[dict, list[str]]] = {}
@@ -2162,13 +2725,54 @@ class ChangeReviewScreen(Screen):
             self._diff_cache_text = None
             self._diff_cache_error = None
             try:
-                self._diff_cache_text = self._provider.diff_text(row, change.path)
+                if row.get("kind") == "git_current":
+                    self._diff_cache_text = self._current_diff_text(row, change)
+                else:
+                    self._diff_cache_text = self._provider.diff_text(
+                        row, change.path
+                    )
             except ChangeTrackingError as exc:
                 self._diff_cache_error = exc
         if self._diff_cache_error is not None:
             raise self._diff_cache_error
         assert self._diff_cache_text is not None
         return self._diff_cache_text
+
+    def _current_diff_text(self, row: dict, change: ChangedFile) -> str:
+        """One `current`-mode leaf's diff text (TASK-16801 arc B, spec §4).
+
+        Routes on untracked-ness, which is why
+        :attr:`CurrentRootStatus.untracked` is carried separately from the
+        collapsed status letter: ``git diff HEAD`` is a FATAL error against
+        an untracked path and against an unborn HEAD (spec §2 probe 4),
+        where EVERY file is untracked and the whole tree therefore renders
+        through the synthesized preview.
+
+        Args:
+            row: The leaf's pseudo row (``kind == "git_current"``).
+            change: The leaf's :class:`ChangedFile`.
+
+        Returns:
+            The tracked file's unified diff, or the untracked file's
+            bounded preview.
+
+        Raises:
+            ChangeTrackingError: Translated from the engine's
+                ``GitWorkspaceError`` so this mode's failures render
+                through the SAME "diff unavailable: …" path every other
+                leaf already uses -- ``_render_diff`` and the comment
+                paths catch exactly one error type, and current mode must
+                not become the one place that can crash them.
+        """
+        from tldw_chatbook.Workspaces.git_workspace import GitWorkspaceError
+
+        root = str(row.get("root") or "")
+        if change.path in self._current_untracked.get(root, frozenset()):
+            return self._provider.untracked_preview(root, change.path)
+        try:
+            return self._provider.current_diff_text(root, change)
+        except GitWorkspaceError as exc:
+            raise ChangeTrackingError(str(exc)) from exc
 
     def _render_diff(self, row: dict, change: ChangedFile) -> None:
         content = self.query_one("#change-review-diff-content", Static)
