@@ -23982,6 +23982,156 @@ def test_library_landing_continue_projects_scope_without_private_query_copy() ->
     assert screen._library_landing_canvas_state().continue_action is None
 
 
+def test_library_landing_attention_prefers_recoverable_import_and_never_persists() -> None:
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    screen._library_lifecycle = LibraryLifecycle.GRADUATED
+    screen._library_media_browse_controller.freshness = "stale"
+    screen._library_media_browse_controller.stale_copy = "PRIVATE MEDIA COPY"
+    job = app.library_ingest_jobs.submit(source_path="/PRIVATE/path/report.pdf")
+    app.library_ingest_jobs.mark_failed(
+        job.job_id,
+        error="PRIVATE stack and token",
+        permanent=False,
+    )
+
+    action = screen._library_landing_canvas_state().attention_action
+
+    assert action is not None
+    assert action.action_kind == "ingest-review"
+    assert action.action_label == "Review"
+    assert action.message == "An import needs review."
+    assert "PRIVATE" not in repr(action)
+    persisted = screen.save_state()
+    persisted_text = repr(persisted)
+    assert "attention" not in persisted_text.casefold()
+    assert "PRIVATE" not in persisted_text
+
+    app.library_ingest_jobs.requeue(job.job_id)
+    fallback = screen._library_landing_canvas_state().attention_action
+    assert fallback is not None
+    assert fallback.action_kind == "media-retry"
+    assert fallback.message == "Media may be out of date."
+
+
+def test_library_landing_attention_omits_nonrecoverable_and_unsettled_state() -> None:
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    screen._library_lifecycle = LibraryLifecycle.EXPANDED
+    permanent = app.library_ingest_jobs.submit(source_path="/tmp/missing.pdf")
+    app.library_ingest_jobs.mark_failed(
+        permanent.job_id,
+        error="unsupported",
+        permanent=True,
+    )
+
+    assert screen._library_landing_canvas_state().attention_action is None
+
+    screen._library_prompt_browse_controller.freshness = "stale"
+    screen._library_prompt_browse_controller.stale_copy = "raw prompt failure"
+    action = screen._library_landing_canvas_state().attention_action
+    assert action is not None
+    assert action.action_kind == "prompts-retry"
+    assert action.message == "Prompts may be out of date."
+
+    screen._library_prompt_browse_controller.freshness = "fresh"
+    screen._library_conversation_freshness = "stale"
+    screen._library_conversation_stale_copy = "raw conversation failure"
+    action = screen._library_landing_canvas_state().attention_action
+    assert action is not None
+    assert action.action_kind == "conversations-retry"
+    assert action.message == "Conversations may be out of date."
+
+    screen._library_conversation_freshness = "uninitialized"
+    assert screen._library_landing_canvas_state().attention_action is None
+
+
+@pytest.mark.asyncio
+async def test_library_landing_attention_tracks_failed_import_and_opens_review() -> None:
+    app = _build_test_app()
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        job = app.library_ingest_jobs.submit(source_path="/tmp/flaky.pdf")
+        app.library_ingest_jobs.mark_failed(
+            job.job_id,
+            error="private failure",
+            permanent=False,
+        )
+        await _wait_for_selector(screen, pilot, "#library-hub-attention-action")
+        button = screen.query_one("#library-hub-attention-action", Button)
+        assert str(button.label) == "Review"
+        assert "An import needs review." in _visible_text(screen)
+
+        app.library_ingest_jobs.requeue(job.job_id)
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query("#library-hub-attention-action"),
+            message="Retrying the failed import did not clear attention.",
+        )
+
+        replacement = app.library_ingest_jobs.submit(source_path="/tmp/review.pdf")
+        app.library_ingest_jobs.mark_failed(
+            replacement.job_id,
+            error="review me",
+            permanent=False,
+        )
+        await _wait_for_selector(screen, pilot, "#library-hub-attention-action")
+        app.library_ingest_jobs.dismiss(replacement.job_id)
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query("#library-hub-attention-action"),
+            message="Dismissing the failed import did not clear attention.",
+        )
+
+        review = app.library_ingest_jobs.submit(source_path="/tmp/review-again.pdf")
+        app.library_ingest_jobs.mark_failed(
+            review.job_id,
+            error="review again",
+            permanent=False,
+        )
+        await _wait_for_selector(screen, pilot, "#library-hub-attention-action")
+        screen.query_one("#library-hub-attention-action", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA,
+            message="Review did not open the existing Import recovery surface.",
+        )
+        assert screen.query("#library-ingest-canvas")
+
+
+@pytest.mark.asyncio
+async def test_library_landing_attention_retries_stale_media_through_source_owner() -> None:
+    app = _build_test_app()
+    _seed_conversations(app, [], media=_two_media_items())
+    screen = LibraryScreen(app)
+    screen._library_media_browse_controller.freshness = "stale"
+    screen._library_media_browse_controller.stale_copy = "private stale detail"
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-hub-attention-action")
+        button = screen.query_one("#library-hub-attention-action", Button)
+        assert str(button.label) == "Retry"
+        assert "private stale detail" not in _visible_text(screen)
+        button.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+                and screen._library_media_browse_controller.freshness == "fresh"
+            ),
+            message="Landing Retry did not use the existing Media refresh path.",
+        )
+
+        service = app.media_reading_scope_service
+        assert len(service.search_calls) == 1
+        assert service.search_calls[0]["offset"] == 0
+
+
 @pytest.mark.asyncio
 async def test_library_landing_continue_dispatches_full_media_page_scope() -> None:
     app = _build_test_app()

@@ -404,6 +404,7 @@ from ...Widgets.Library import (
     LibraryIngestQueuePanel,
     LibraryLandingCanvas,
     LibraryLandingCanvasState,
+    LibraryLandingAttentionAction,
     LibraryLandingContinueAction,
     LibraryLandingRecentItem,
     LibraryMediaCanvas,
@@ -3049,6 +3050,9 @@ class LibraryScreen(BaseAppScreen):
         self._selected_conversation_id = ""
         self._library_selected_row_id: str = ""
         self._library_continue_receipt: dict[str, Any] | None = None
+        self._library_landing_attention_signature: (
+            LibraryLandingAttentionAction | None
+        ) = None
         self._library_navigation_context_generation: int = 0
         self._library_conversation_query: str = ""
         self._library_conversation_requested_page = 1
@@ -9505,6 +9509,12 @@ class LibraryScreen(BaseAppScreen):
         lifecycle_status = (
             self._library_onboarding_status_copy if get_started else ""
         )
+        attention_action = (
+            self._library_landing_attention_action()
+            if not get_started and not self._library_notes_compact
+            else None
+        )
+        self._library_landing_attention_signature = attention_action
         return LibraryLandingCanvasState(
             purpose=(
                 "Add something useful, then use it in Console or Study."
@@ -9536,7 +9546,58 @@ class LibraryScreen(BaseAppScreen):
                 if not get_started and not self._library_notes_compact
                 else None
             ),
+            attention_action=attention_action,
         )
+
+    def _library_landing_attention_action(
+        self,
+    ) -> LibraryLandingAttentionAction | None:
+        """Return one bounded recovery derived only from current live state."""
+
+        registry = self._library_ingest_registry()
+        jobs_fn = getattr(registry, "jobs", None)
+        if callable(jobs_fn):
+            for job in jobs_fn():
+                if (
+                    job.state is IngestJobState.FAILED
+                    and not job.permanent
+                    and not job.dismissed
+                    and not job.superseded
+                ):
+                    return LibraryLandingAttentionAction(
+                        message="An import needs review.",
+                        action_label="Review",
+                        action_kind="ingest-review",
+                    )
+
+        if (
+            self._library_media_browse_controller.freshness == "stale"
+            and self._library_media_browse_controller.stale_copy
+        ):
+            return LibraryLandingAttentionAction(
+                message="Media may be out of date.",
+                action_label="Retry",
+                action_kind="media-retry",
+            )
+        if (
+            self._library_prompt_browse_controller.freshness == "stale"
+            and self._library_prompt_browse_controller.stale_copy
+        ):
+            return LibraryLandingAttentionAction(
+                message="Prompts may be out of date.",
+                action_label="Retry",
+                action_kind="prompts-retry",
+            )
+        if (
+            self._library_conversation_freshness == "stale"
+            and self._library_conversation_stale_copy
+        ):
+            return LibraryLandingAttentionAction(
+                message="Conversations may be out of date.",
+                action_label="Retry",
+                action_kind="conversations-retry",
+            )
+        return None
 
     def _library_landing_continue_action(
         self,
@@ -14381,6 +14442,11 @@ class LibraryScreen(BaseAppScreen):
             self._library_ingest_last_done_count = done_count
             if grew:
                 self._refresh_local_source_snapshot()
+        attention = self._library_landing_attention_action()
+        if attention != self._library_landing_attention_signature:
+            self._library_landing_attention_signature = attention
+            if not self._library_selected_row_id:
+                self._sync_library_landing_lifecycle_presentation()
 
     def _handle_library_ingest_progress_changed(
         self,
@@ -16647,6 +16713,37 @@ class LibraryScreen(BaseAppScreen):
                 )
             else:
                 _sync_library_canvas(self, "notes")
+
+    @on(Button.Pressed, "#library-hub-attention-action")
+    async def _recover_library_landing_attention(
+        self, event: Button.Pressed
+    ) -> None:
+        """Open the existing owner recovery for the current live attention."""
+
+        event.stop()
+        action = self._library_landing_attention_action()
+        action_kind = str(getattr(event.button, "action_kind", "") or "")
+        if action is None or action.action_kind != action_kind:
+            return
+        row_id = {
+            "ingest-review": LIBRARY_ROW_INGEST_MEDIA,
+            "media-retry": LIBRARY_ROW_BROWSE_MEDIA,
+            "prompts-retry": LIBRARY_ROW_BROWSE_PROMPTS,
+            "conversations-retry": LIBRARY_ROW_BROWSE_CONVERSATIONS,
+        }.get(action_kind)
+        if row_id is None:
+            return
+        await self._select_library_rail_row(row_id)
+        if (
+            action_kind == "conversations-retry"
+            and self._library_selected_row_id == row_id
+            and not self._library_conversation_loading
+        ):
+            self._start_library_conversation_page_request(
+                self._library_conversation_requested_page,
+                self._library_conversation_requested_query,
+                focus_after_apply="#library-conversations-retry",
+            )
 
     @on(Button.Pressed, "#library-rail-back-to-starter")
     async def _return_library_rail_to_starter(self, event: Button.Pressed) -> None:
