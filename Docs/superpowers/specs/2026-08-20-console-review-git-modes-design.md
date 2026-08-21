@@ -84,6 +84,19 @@ pinned test in §9):
    `?? dir/` row without `-uall`.
 3. `git check-ref-format --branch "-bad"` exits 128 with a clear
    message — branch-name validation and option-injection guard in one.
+4. **Unborn HEAD** (fresh `git init`, no commits — a plausible Console
+   workspace): `rev-parse --abbrev-ref HEAD` exits 128 and
+   `git diff HEAD` is a fatal error, while
+   `symbolic-ref --short -q HEAD` returns the branch (exit 0),
+   `rev-parse --verify -q HEAD` exits 1 (the clean unborn probe),
+   status works, and the pathspec commit works (first commit).
+5. `git commit -m "--amend"` commits the literal message — `-m`'s
+   sticky-arg consumption makes dash-leading messages safe as argv.
+6. **`git remote add "a/b"` SUCCEEDS** (exit 0) — remote names CAN
+   contain `/` on current git, so splitting an upstream string
+   (`origin/feat/x`) on the first `/` to find its remote is UNSOUND.
+7. `rev-list --left-right --count @{upstream}...HEAD` prints
+   `<behind>\t<ahead>` (left = upstream-only, right = HEAD-only).
 
 ## 3. Detection groundwork — `Workspaces/git_workspace.py`
 
@@ -98,7 +111,9 @@ class GitWorkspaceInfo:
     repo_root: Path         # `rev-parse --show-toplevel`
     branch: str | None      # current branch, None when detached
     detached: bool
+    unborn: bool            # branch exists but has no commits yet
     upstream: str | None    # e.g. "origin/feat/x", None when unset
+    upstream_remote: str | None  # remote NAME of the upstream (§6)
     remotes: tuple[tuple[str, str], ...]  # (name, push URL) pairs
     ahead: int              # vs upstream; 0 when no upstream
     behind: int
@@ -117,12 +132,19 @@ Rules:
   "workspace is inside a repository — git actions need the workspace
   root to be the repository root".
 - Not a repo at all, or no git binary → `None` (mode absent, AC #4).
-- Detection is read-only plumbing: `rev-parse --show-toplevel`,
-  `rev-parse --abbrev-ref HEAD` (detached → `HEAD`),
-  `rev-parse --abbrev-ref @{upstream}` (check=False),
-  `remote -v` (push lines), and, when upstream exists,
-  `rev-list --left-right --count @{upstream}...HEAD` for
-  behind/ahead.
+- Detection is read-only plumbing: `rev-parse --show-toplevel`;
+  `symbolic-ref --short -q HEAD` for the branch (exit 1 = detached;
+  works on unborn branches where `rev-parse --abbrev-ref HEAD` is a
+  fatal error — §2 probe 4); `rev-parse --verify -q HEAD`
+  (check=False, exit 1 = `unborn=True`);
+  `rev-parse --abbrev-ref @{upstream}` (check=False) plus
+  `for-each-ref --format=%(upstream:remotename) refs/heads/<branch>`
+  for `upstream_remote` (NEVER derived by splitting the upstream
+  string on `/` — remote names can contain `/`, §2 probe 6);
+  `remote -v` (push lines); and, when upstream exists,
+  `rev-list --left-right --count @{upstream}...HEAD` — left is
+  BEHIND, right is AHEAD (§2 probe 7; a swapped parse is the obvious
+  bug here).
 - Runs ONLY on screen open / explicit reload, inside the screen's
   load worker. Never on the Inspector rail's 0.2s tick (arc A hard
   invariant: no DB/git on the sync tick — the rail is untouched by
@@ -145,7 +167,8 @@ Git-modes runner (`_run_user_git(root, *args, timeout, check)`):
 - Scrub (case-insensitive, Windows): `GIT_DIR`, `GIT_WORK_TREE`,
   `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`,
   `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_NAMESPACE`,
-  `GIT_COMMON_DIR` — a stray targeting var must not redirect a commit
+  `GIT_COMMON_DIR`, `GIT_CEILING_DIRECTORIES` — a stray targeting
+  var must not redirect a commit
   into the wrong repo (the app itself sets none, but the app may be
   LAUNCHED from a hook or an env that does).
 - Set `GIT_TERMINAL_PROMPT=0` (fail honestly, never hang a TUI on a
@@ -183,21 +206,38 @@ Git-modes runner (`_run_user_git(root, *args, timeout, check)`):
   result. This deliberately does NOT copy `_load_turn`'s synchronous
   posture — real-repo status/diff on a large cold repo can stall the
   UI thread; snapshot turns keep their existing sync path unchanged.
+- The worker's per-root result is a pinned shape (implementers must
+  not invent one — the fixture-invented-shapes trap):
+  `CurrentRootStatus(root: Path, info: GitWorkspaceInfo,
+  files: tuple[ChangedFile, ...], untracked: frozenset[str])`.
+  Porcelain XY codes collapse to the single letters `ChangedFile`
+  consumers already group (`??` → `A` with the path in `untracked`;
+  unknown letters pass through verbatim, matching `ChangedFile`'s
+  contract). Tracked adds/dels come from ONE
+  `git diff HEAD --numstat -z` call in the same worker (skipped when
+  `unborn`); untracked files render the label "new" with no counts —
+  counting their lines would mean reading every new file at load.
 - Landed rows reuse the existing tree/leaf plumbing by synthesizing
   ONE pseudo-row dict per root:
   `{"root": str(root), "kind": "git_current", "id": -1}` — the
   `(row, ChangedFile)` leaf shape, per-root tree grouping, and the
   diff memo key `(generation, id(row), path)` all survive unchanged.
-  `ChangedFile` is reused with porcelain-derived status letters
-  (`??` → `A`-like with an `untracked=True` marker carried in a
-  parallel set on the screen, not a ChangedFile field change).
-- Diffs: tracked files via `git diff HEAD -- <path>` (worker-fetched
-  through the SAME `_diff_text_for` memo — the provider method
-  branches on the pseudo-row kind); untracked files synthesized in
-  Python: bounded read (display-cap lines), NUL-byte sniff → "binary
-  file" label — never `git diff --no-index` (exit-code-1 semantics,
-  platform quirks) and never index tricks like `--intent-to-add`
-  (mutating the user's index from a VIEW is forbidden).
+- Diffs: tracked files via `git diff HEAD -- <path>`, fetched through
+  the SAME `_diff_text_for` memo (the provider method branches on the
+  pseudo-row kind). This per-file read is deliberately SYNCHRONOUS on
+  focus, exactly like today's shadow-diff leaf focus — a single-file
+  diff is bounded and comparable in cost; it is the whole-tree status
+  scan and the mutations that must be worker-side. Untracked files
+  are synthesized in Python: bounded read (display-cap lines),
+  NUL-byte sniff → "binary file" label — never `git diff --no-index`
+  (exit-code-1 semantics, platform quirks) and never index tricks
+  like `--intent-to-add` (mutating the user's index from a VIEW is
+  forbidden).
+- **Unborn HEAD** (§2 probe 4): `git diff HEAD` is a fatal error and
+  every file is effectively new — the whole tree renders through the
+  untracked/preview path and `--numstat` is skipped; commit works
+  (it is the first commit), push works, the header shows the branch
+  with "no commits yet".
 - Header/banner in current mode: branch, upstream, ahead/behind
   (e.g. `feat/x ↑2 ↓0 → origin/feat/x`), and the totals line the
   turns already get.
@@ -240,10 +280,12 @@ Button `Commit…` + binding, visible/enabled only in current mode with
    - warnings (never blocks): detached HEAD ("commit will not be on
      any branch"), branch in `{main, master}` ("committing directly
      to <branch>");
-   - a merge/rebase in progress (`rev-parse --verify MERGE_HEAD` /
-     `REBASE_HEAD`, check=False) → commit REFUSED with reason
-     ("finish or abort the merge/rebase first") — a pathspec commit
-     is invalid mid-merge and the raw git error is worse copy.
+   - an operation in progress (`rev-parse --verify -q` on
+     `MERGE_HEAD`, `REBASE_HEAD`, `CHERRY_PICK_HEAD` — check=False)
+     → commit REFUSED with reason ("finish or abort the
+     merge/rebase/cherry-pick first") — git refuses a partial
+     (pathspec) commit during a merge OR a cherry-pick, and the raw
+     git error is worse copy.
 4. **Engine** (`commit_selected(root, files, message, new_branch)`)
    runs per-step, stopping at the first failure, each step an
    outcome row:
@@ -278,7 +320,9 @@ only — the working tree is untouched; the spec says this explicitly
 because commit IS refused). Flow: confirm modal naming branch,
 target remote, and upstream state:
 
-- upstream set → `git push <remote-of-upstream>` (no refspec games);
+- upstream set → `git push <upstream_remote>` (no refspec games; the
+  remote name comes from detection's `%(upstream:remotename)` field,
+  never from splitting the upstream string — §2 probe 6);
 - no upstream → `git push -u <remote> <branch>`; remote = the sole
   remote when exactly one, else a `Select` in the modal;
 - detached HEAD → push disabled with reason ("no branch checked
@@ -366,8 +410,17 @@ rules).
   pre-staged unrelated file survives a selected-files commit staged
   and uncommitted.
 - **Detection**: non-repo → None; root inside a repo → refusal with
-  copy; detached HEAD; no-remote; ahead/behind counts; no-git-binary
-  → None (service-unavailable path).
+  copy; detached HEAD; no-remote; ahead/behind counts (order pinned:
+  left=behind, right=ahead — §2 probe 7); no-git-binary → None
+  (service-unavailable path); a remote literally named `a/b` with the
+  upstream on it → `upstream_remote == "a/b"` (§2 probe 6 as a
+  regression pin).
+- **Unborn HEAD e2e** (§2 probe 4): fresh `git init` + files → mode
+  present, all files listed via the preview path (no `git diff HEAD`
+  in captured argv), first commit lands, `-u` push to the bare
+  remote works.
+- **Dash-leading message pin** (§2 probe 5): message `--amend`
+  commits literally.
 - **Status parsing**: rename record NEW-then-OLD; `-uall` per-file
   untracked (directory case pinned); paths with spaces/UTF-8.
 - **Untracked preview**: text bounded at cap; NUL byte → binary
