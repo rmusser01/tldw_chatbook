@@ -2,16 +2,27 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Static
 
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleActivityPresentation,
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+)
 from tldw_chatbook.Widgets.Console.console_assistant_turn import (
     ConsoleActivityActivated,
     ConsoleActivityDisclosure,
     ConsoleActivityHeader,
     ConsoleAssistantTurnWidget,
 )
+from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
+
+
+_CSS_DIR = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
 
 
 class ActivityHarness(App[None]):
@@ -37,6 +48,16 @@ class ActivityHarness(App[None]):
             else disclosure.expanded,
             selected=True,
         )
+
+
+class StyledActivityHarness(ActivityHarness):
+    """Activity harness loading the exact production stylesheet stack."""
+
+    CSS_PATH = [
+        str(_CSS_DIR / "screen_css_scoped.tcss"),
+        str(_CSS_DIR / "tldw_cli_modular.tcss"),
+        str(_CSS_DIR / "screen_css_self.tcss"),
+    ]
 
 
 def _disclosure(
@@ -117,6 +138,42 @@ async def test_expandable_header_click_enter_and_space_emit_original_id() -> Non
 
 
 @pytest.mark.asyncio
+async def test_activity_header_child_regions_preserve_literal_copy_and_activation() -> (
+    None
+):
+    """Split label/status children stay literal and bubble activation to the header."""
+    disclosure = _disclosure(
+        "child-activation",
+        label="fs_[literal]",
+        status="success",
+        details=(Static("detail"),),
+    )
+    app = StyledActivityHarness(disclosure)
+
+    async with app.run_test(size=(42, 12)) as pilot:
+        label = app.query_one("#console-activity-label-child-activation", Static)
+        status = app.query_one("#console-activity-status-child-activation", Static)
+        assert label.renderable.plain == "▸ fs_[literal]"
+        assert status.renderable.plain == "· success"
+
+        await pilot.click(label)
+        await pilot.click(status)
+        disclosure.header.focus()
+        await pilot.press("enter")
+        await pilot.press("space")
+        await pilot.pause()
+
+    assert [
+        (event.message_id, event.toggle_requested) for event in app.activations
+    ] == [
+        ("child-activation", True),
+        ("child-activation", True),
+        ("child-activation", True),
+        ("child-activation", True),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_no_detail_activity_is_focusable_and_selects_without_toggle() -> None:
     app = ActivityHarness(_disclosure("thinking-empty"))
 
@@ -185,6 +242,37 @@ async def test_parent_applied_expansion_leaves_sibling_collapsed() -> None:
         assert not second.query_one(".console-activity-detail-stack").display
 
 
+@pytest.mark.asyncio
+async def test_activity_sync_preserves_child_identity_and_replaces_status_class() -> (
+    None
+):
+    disclosure = _disclosure(
+        "sync-status",
+        label="fs_list",
+        status="success",
+        details=(Static("detail"),),
+    )
+    app = ActivityHarness(disclosure)
+
+    async with app.run_test():
+        label = disclosure.header.label_widget
+        status = disclosure.header.status_widget
+
+        disclosure.sync_activity(
+            "fs_list retry",
+            "failed",
+            expanded=False,
+            selected=True,
+        )
+
+        assert disclosure.header.label_widget is label
+        assert disclosure.header.status_widget is status
+        assert label.renderable.plain == "▸ fs_list retry"
+        assert status.renderable.plain == "· failed"
+        assert status.has_class("console-activity-status-failed")
+        assert not status.has_class("console-activity-status-success")
+
+
 class AssistantTurnHarness(App[None]):
     def __init__(self) -> None:
         super().__init__()
@@ -241,3 +329,114 @@ async def test_replacing_activities_preserves_turn_header_and_answer_identity() 
             "activity-old",
             "activity-new",
         ]
+
+
+class StyledTranscriptHarness(App[None]):
+    """Production-shaped transcript host loading the exact app CSS stack."""
+
+    CSS_PATH = [
+        str(_CSS_DIR / "screen_css_scoped.tcss"),
+        str(_CSS_DIR / "tldw_cli_modular.tcss"),
+        str(_CSS_DIR / "screen_css_self.tcss"),
+    ]
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.transcript = ConsoleTranscript(id="console-native-transcript")
+
+    def compose(self) -> ComposeResult:
+        yield self.transcript
+
+
+def _styled_turn_messages() -> tuple[ConsoleChatMessage, ConsoleChatMessage]:
+    assistant = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="The requested files are listed below, with their current status.",
+        id="styled-assistant",
+    )
+    activity = ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL,
+        content="short preview",
+        id="styled-tool",
+        activity_presentation=ConsoleActivityPresentation(
+            "tool",
+            "fs_list · a deliberately long literal workspace label [not markup]",
+            "success",
+        ),
+        tool_output_full="short preview\nfull detail line that remains visibly nested",
+    )
+    return assistant, activity
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_size", [(120, 32), (42, 24)])
+async def test_assistant_turn_geometry_under_production_bundle(
+    terminal_size: tuple[int, int],
+) -> None:
+    """Wide and narrow Console sizes keep the complete Assistant unit contained."""
+    app = StyledTranscriptHarness()
+
+    async with app.run_test(size=terminal_size) as pilot:
+        assistant, activity = _styled_turn_messages()
+        transcript = app.transcript
+        transcript.set_messages([assistant, activity])
+        await transcript.refresh_messages()
+        transcript.toggle_tool_output(activity.id)
+        await pilot.pause(0.2)
+
+        turn = transcript.query_one("#console-assistant-turn-styled-assistant")
+        header = transcript.query_one("#console-activity-header-styled-tool")
+        label = transcript.query_one("#console-activity-label-styled-tool", Static)
+        status = transcript.query_one("#console-activity-status-styled-tool", Static)
+        detail = transcript.query_one("#console-activity-detail-styled-tool")
+        answer = transcript.query_one("#console-message-styled-assistant")
+
+        for name, widget in {
+            "turn": turn,
+            "activity header": header,
+            "activity label": label,
+            "activity status": status,
+            "expanded detail": detail,
+            "Assistant answer": answer,
+        }.items():
+            assert widget.region.width > 0, f"{name} collapsed to zero width"
+            assert widget.region.height > 0, f"{name} collapsed to zero height"
+
+        content = turn.content_region
+        for name, widget in {
+            "activity header": header,
+            "expanded detail": detail,
+            "Assistant answer": answer,
+        }.items():
+            assert widget.region.x >= content.x, f"{name} overflows left"
+            assert widget.region.right <= content.right, f"{name} overflows right"
+
+        assert label.region.right <= status.region.x
+        assert status.region.width == 9
+        assert status.region.right <= header.content_region.right
+        assert detail.region.width >= header.region.width - 4
+        assert "success" in app.export_screenshot(), "status text is compositor-clipped"
+
+
+@pytest.mark.asyncio
+async def test_narrow_activity_label_ellipsizes_before_fixed_status() -> None:
+    """The bounded status never yields its columns to a worst-case literal label."""
+    app = StyledTranscriptHarness()
+
+    async with app.run_test(size=(42, 24)) as pilot:
+        assistant, activity = _styled_turn_messages()
+        app.transcript.set_messages([assistant, activity])
+        await app.transcript.refresh_messages()
+        await pilot.pause(0.2)
+
+        header = app.query_one("#console-activity-header-styled-tool")
+        label = app.query_one("#console-activity-label-styled-tool", Static)
+        status = app.query_one("#console-activity-status-styled-tool", Static)
+        screenshot = app.export_screenshot()
+
+        assert label.region.width < len(activity.activity_presentation.label)
+        assert label.region.right <= status.region.x
+        assert status.region.width == 9
+        assert status.region.right <= header.content_region.right
+        assert "…" in screenshot
+        assert "success" in screenshot

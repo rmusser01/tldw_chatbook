@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from textual import events
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.content import Content
 from textual.message import Message
 from textual.widget import Widget
@@ -28,7 +28,7 @@ class ConsoleActivityActivated(Message):
         return self.message_id
 
 
-class ConsoleActivityHeader(Static):
+class ConsoleActivityHeader(Horizontal):
     """Focusable literal-text header for one Assistant activity marker."""
 
     can_focus = True
@@ -49,25 +49,51 @@ class ConsoleActivityHeader(Static):
         self.expanded = expanded
         self.expandable = expandable
         self.selected = selected
+        self.label_widget = Static(
+            self._label_content(),
+            id=f"console-activity-label-{activity_message_id}",
+            classes="console-activity-label",
+            markup=False,
+        )
+        self.status_widget = Static(
+            self._status_content(),
+            id=f"console-activity-status-{activity_message_id}",
+            classes="console-activity-status",
+            markup=False,
+        )
         super().__init__(
-            self._content(),
+            self.label_widget,
+            self.status_widget,
             id=f"console-activity-header-{activity_message_id}",
             classes="console-activity-header",
-            markup=False,
         )
         self._sync_classes()
 
-    def _content(self) -> Content:
-        """Build semantic copy without interpreting the structured label."""
+    def _label_content(self) -> Content:
+        """Build the flexible literal label without interpreting its text."""
         chevron = ""
         if self.expandable:
             chevron = "▾ " if self.expanded else "▸ "
-        return Content(f"{chevron}{self.label} · {self.status}")
+        return Content(f"{chevron}{self.label}")
+
+    def _status_content(self) -> Content:
+        """Build the fixed terminal-status copy kept separate from the label."""
+        return Content(f"· {self.status}")
+
+    @property
+    def renderable(self) -> Content:
+        """Retain the former combined-text inspection seam for callers/tests."""
+        return Content(f"{self._label_content().plain} · {self.status}")
 
     def _sync_classes(self) -> None:
         self.set_class(self.selected, "console-activity-header-selected")
         self.set_class(self.expanded, "console-activity-header-expanded")
         self.set_class(self.expandable, "console-activity-header-expandable")
+        for status in ("success", "blocked", "failed", "done"):
+            self.status_widget.set_class(
+                self.status == status,
+                f"console-activity-status-{status}",
+            )
 
     def sync_header(
         self,
@@ -85,7 +111,8 @@ class ConsoleActivityHeader(Static):
         self.expandable = expandable
         self.selected = selected
         self._sync_classes()
-        self.update(self._content())
+        self.label_widget.update(self._label_content())
+        self.status_widget.update(self._status_content())
 
     def _activate(self) -> None:
         self.post_message(
