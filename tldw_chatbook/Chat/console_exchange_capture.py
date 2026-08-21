@@ -15,6 +15,17 @@ import zlib
 from dataclasses import asdict, dataclass, fields, replace
 from typing import Any, Mapping
 
+from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
+
+#: Value ``EPHEMERAL_ORIGIN_KEY`` carries on an automatically-injected
+#: project-instruction row (``Agents/project_instruction_runtime.py``'s
+#: ``_source_row``/``_outcome_row``/``_warning_row``,
+#: ``Agents/agent_service.py``'s ``build_project_instruction_row``). Kept as
+#: a local literal rather than importing ``PROJECT_INSTRUCTION_ORIGIN`` from
+#: either of those modules -- both define the same literal independently and
+#: neither is this module's natural dependency.
+_PROJECT_INSTRUCTION_ORIGIN = "project_instructions"
+
 CAPTURE_REQUEST_ALLOWLIST: frozenset[str] = frozenset({
     "api_endpoint", "api_base_url", "system_message", "messages_payload",
     "tools", "model", "streaming", "temp", "topp", "maxp", "topk", "minp",
@@ -67,7 +78,14 @@ def _stub_for(data: str, mime: str) -> str:
 
 
 def _maybe_stub_string(value: str, mime_hint: str | None = None) -> str:
-    if len(value) < _STUB_MIN_CHARS:
+    # Review finding M1: this gate used to measure the RAW value's length
+    # while the hash/size below already measure the CANONICAL
+    # (whitespace-stripped) bytes -- so line-wrapping alone could push
+    # otherwise-identical content across the threshold in one direction
+    # but not the other (canonical len=4088 vs. wrapped len=4141 straddling
+    # a 4096 gate), stubbing one variant of the same bytes and not the
+    # other. Gate on the same canonical length the hash/size actually use.
+    if len("".join(value.split())) < _STUB_MIN_CHARS:
         return value
     match = _DATA_URI_RE.match(value)
     if match:
@@ -130,12 +148,72 @@ def _jsonable(obj: Any) -> Any:
         return json.loads(json.dumps(obj, default=str))
 
 
+def _redact_project_instruction_rows(messages_payload: Any) -> tuple[Any, tuple[str, ...]]:
+    """Replace any project-instruction row's body with a content-free marker.
+
+    C1 (privacy): ``messages_payload`` is on ``CAPTURE_REQUEST_ALLOWLIST``
+    verbatim, but a row the ephemeral-injection path tagged with
+    ``EPHEMERAL_ORIGIN_KEY == "project_instructions"`` (the automatically
+    loaded AGENTS.md/CLAUDE.md instruction rider -- ``Agents/
+    project_instruction_runtime.py``'s ``_source_row``/``_outcome_row``/
+    ``_warning_row``, ``Agents/agent_service.py``'s
+    ``build_project_instruction_row``) is never something the user typed,
+    and the shipped user guide (``Docs/User_Guide/console/context-and-
+    rag.md``) promises its exact body appears ONLY in the Next Send tab's
+    disposable preview -- never in an export, a display, or at rest.
+
+    This is the ONE seam that redaction has to sit at to keep that promise:
+    ``build_request_capture``'s output is what gets displayed on the
+    Exchange tab, exported via Copy JSON/Save to File, AND persisted to
+    ``message_exchanges`` -- filtering only the two export methods would
+    still leave the body sitting in the DB and on screen.
+
+    The row's ``role`` and its origin tag both survive unchanged -- only
+    ``content`` is replaced -- so the Inspector can still show that such a
+    row was sent, and roughly how large it was, rather than a permanently
+    empty-looking gap.
+    """
+    if not isinstance(messages_payload, list):
+        return messages_payload, ()
+    redacted_paths: list[str] = []
+    rows: list[Any] = []
+    for index, row in enumerate(messages_payload):
+        if not (
+            isinstance(row, Mapping)
+            and row.get(EPHEMERAL_ORIGIN_KEY) == _PROJECT_INSTRUCTION_ORIGIN
+        ):
+            rows.append(row)
+            continue
+        content = row.get("content")
+        char_count = len(content) if isinstance(content, str) else 0
+        new_row = dict(row)
+        new_row["content"] = (
+            f"[project instruction body omitted by capture policy -- "
+            f"{char_count} chars]"
+        )
+        rows.append(new_row)
+        redacted_paths.append(f"messages_payload[{index}].content")
+    return rows, tuple(redacted_paths)
+
+
 def build_request_capture(kwargs: Mapping[str, Any]) -> tuple[dict, tuple[str, ...]]:
-    """Return (allowlisted+stubbed request dict, names of dropped keys)."""
+    """Return (allowlisted+stubbed request dict, names of dropped keys).
+
+    ``omitted_keys`` doubles as the redaction-visibility signal (C1): when
+    ``messages_payload`` contains a project-instruction row, its
+    ``messages_payload[<index>].content`` path is folded into this same
+    tuple alongside genuinely dropped top-level keys (e.g. ``api_key``) --
+    the Inspector already renders this tuple verbatim as an "Omitted by
+    capture policy" line, so a viewer sees the withholding without any new
+    UI surface.
+    """
     request: dict = {}
     omitted: list[str] = []
     for key, value in kwargs.items():
         if key in CAPTURE_REQUEST_ALLOWLIST:
+            if key == "messages_payload":
+                value, redacted_paths = _redact_project_instruction_rows(value)
+                omitted.extend(redacted_paths)
             request[key] = stub_binary_strings(_jsonable(value))
         else:
             omitted.append(str(key))

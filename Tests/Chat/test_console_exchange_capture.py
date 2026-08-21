@@ -13,6 +13,12 @@ from tldw_chatbook.Chat.console_exchange_capture import (
     capture_to_blob,
     stub_binary_strings,
 )
+from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
+
+_PROJECT_INSTRUCTION_SENTINEL = (
+    "SENTINEL: this is the automatically-injected project instruction body "
+    "and must never reach an export, a display, or a persisted capture."
+)
 
 
 def _kwargs():
@@ -202,3 +208,139 @@ def test_line_wrapped_base64_is_still_stubbed():
     text = json.dumps(stubbed)
     assert "QUJDQUJD" not in text
     assert "sha256:" in text
+
+
+# ---------------------------------------------------------------------------
+# C1 (CRITICAL): a project-instruction row's body must never survive into a
+# captured request -- it is on the wire (Chat_Functions.py's
+# ``_project_instruction_messages_for_handler`` only strips the ORIGIN TAG
+# before the provider call, never the body), but the Console's own captured
+# request is a separate, retained artifact (export, display, at rest in
+# ``message_exchanges``) the shipped user guide promises never carries it
+# outside the Next Send tab's disposable preview.
+# ---------------------------------------------------------------------------
+
+
+def _project_instruction_row(content: str = _PROJECT_INSTRUCTION_SENTINEL) -> dict:
+    return {
+        "role": "user",
+        "content": content,
+        EPHEMERAL_ORIGIN_KEY: "project_instructions",
+    }
+
+
+def test_project_instruction_row_body_is_redacted_from_capture():
+    kwargs = {
+        **_kwargs(),
+        "messages_payload": [
+            {"role": "user", "content": "hi"},
+            _project_instruction_row(),
+        ],
+    }
+
+    request, omitted = build_request_capture(kwargs)
+
+    text = json.dumps(request)
+    assert _PROJECT_INSTRUCTION_SENTINEL not in text
+    rows = request["messages_payload"]
+    assert len(rows) == 2
+    tagged_row = rows[1]
+    # Role and the origin tag both survive -- only the body is replaced --
+    # so the Inspector can still show that such a row was sent.
+    assert tagged_row["role"] == "user"
+    assert tagged_row[EPHEMERAL_ORIGIN_KEY] == "project_instructions"
+    assert "omitted by capture policy" in tagged_row["content"]
+    assert str(len(_PROJECT_INSTRUCTION_SENTINEL)) in tagged_row["content"]
+    # The row is not silently emptied -- something legible marks the
+    # withholding, and it's surfaced through the same visibility mechanism
+    # the Inspector already renders as "Omitted by capture policy: ...".
+    assert any("messages_payload[1].content" == entry for entry in omitted)
+
+
+def test_non_tagged_message_with_identical_text_is_not_redacted():
+    """Proves the filter keys off the ``EPHEMERAL_ORIGIN_KEY`` tag, not the
+    content -- a user who happens to type the exact same text as an
+    automatic project instruction body must see it captured verbatim."""
+    kwargs = {
+        **_kwargs(),
+        "messages_payload": [
+            {"role": "user", "content": _PROJECT_INSTRUCTION_SENTINEL},
+        ],
+    }
+
+    request, omitted = build_request_capture(kwargs)
+
+    assert request["messages_payload"] == [
+        {"role": "user", "content": _PROJECT_INSTRUCTION_SENTINEL}
+    ]
+    assert not any("messages_payload" in entry for entry in omitted)
+
+
+def test_project_instruction_redaction_survives_blob_round_trip():
+    """The redaction happens in ``build_request_capture``, upstream of
+    ``capture_to_blob`` -- confirms the persisted-at-rest form (what
+    actually lands in ``message_exchanges``) carries the redacted row, not
+    the original."""
+    request, omitted = build_request_capture(
+        {**_kwargs(), "messages_payload": [_project_instruction_row()]}
+    )
+    cap = ExchangeCapture(
+        run_tag="r1", seq=0, created_at="t", provider="p", model="m",
+        endpoint=None, request=request, response={}, status="complete",
+        usage_json=None, omitted_keys=omitted,
+    )
+
+    restored = capture_from_blob(capture_to_blob(cap))
+
+    text = json.dumps(restored.request)
+    assert _PROJECT_INSTRUCTION_SENTINEL not in text
+    assert "omitted by capture policy" in text
+
+
+def test_non_list_messages_payload_is_left_alone_not_raised():
+    """Defensive: an unexpected ``messages_payload`` shape (e.g. ``None``,
+    already-frozen tuple) must degrade, not raise, same contract as the
+    rest of this module."""
+    request, _ = build_request_capture({**_kwargs(), "messages_payload": None})
+    assert request["messages_payload"] is None
+
+
+# ---------------------------------------------------------------------------
+# M1: the stub-eligibility length gate must measure the same canonical
+# (whitespace-stripped) length the hash/size below it already use -- not the
+# raw string length -- so line-wrapping alone cannot push otherwise-
+# identical content across the threshold in one direction but not the other.
+# ---------------------------------------------------------------------------
+
+
+def test_stub_gate_uses_canonical_length_not_raw_wrapped_length():
+    """Boundary case from the review finding: canonical (whitespace-
+    stripped) length just under ``_STUB_MIN_CHARS`` (4096), but line-
+    wrapping inflates the RAW length past it. Must NOT be stubbed -- the
+    content itself doesn't warrant it."""
+    from tldw_chatbook.Chat.console_exchange_capture import _STUB_MIN_CHARS
+
+    canonical = "Q" * (_STUB_MIN_CHARS - 8)  # 4088 chars, under the gate
+    assert len(canonical) < _STUB_MIN_CHARS
+    wrapped = "\n".join(canonical[i : i + 76] for i in range(0, len(canonical), 76))
+    assert len(wrapped) >= _STUB_MIN_CHARS  # raw length crosses the old gate
+
+    row = {"role": "user", "content": wrapped}
+    stubbed = stub_binary_strings(row)
+
+    assert stubbed["content"] == wrapped  # passed through untouched
+
+
+def test_stub_gate_still_fires_at_canonical_length_over_threshold():
+    """Companion: canonical length AT/OVER the gate must still stub,
+    whitespace or not."""
+    from tldw_chatbook.Chat.console_exchange_capture import _STUB_MIN_CHARS
+
+    canonical = "QUJD" * ((_STUB_MIN_CHARS // 4) + 1)
+    assert len(canonical) >= _STUB_MIN_CHARS
+    row = {"role": "user", "content": canonical}
+
+    stubbed = stub_binary_strings(row)
+
+    assert stubbed["content"] != canonical
+    assert stubbed["content"].startswith("[")
