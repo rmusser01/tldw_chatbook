@@ -5,7 +5,12 @@ import threading
 import time
 from pathlib import Path
 
-from tldw_chatbook.Agents.agent_models import ToolCall, ToolCatalogEntry, ToolResult, ToolSchema
+from tldw_chatbook.Agents.agent_models import (
+    ToolCall,
+    ToolCatalogEntry,
+    ToolResult,
+    ToolSchema,
+)
 from tldw_chatbook.Agents.project_instruction_resolver import (
     InstructionChainDelivery,
     InstructionSnapshot,
@@ -158,7 +163,10 @@ def test_concurrent_later_chain_receives_first_chains_activated_source(tmp_path:
     for thread in threads:
         thread.join()
 
-    assert all(any("shared" in row["content"] for row in result.rows) for result in results.values())
+    assert all(
+        any("shared" in row["content"] for row in result.rows)
+        for result in results.values()
+    )
     assert ledger.remaining_nested_bytes == 0
 
 

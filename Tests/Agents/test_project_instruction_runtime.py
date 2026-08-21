@@ -8,7 +8,12 @@ from pathlib import Path
 import pytest
 
 from tldw_chatbook.Agents import project_instruction_resolver as resolver_module
-from tldw_chatbook.Agents.agent_models import ToolCall, ToolCatalogEntry, ToolResult, ToolSchema
+from tldw_chatbook.Agents.agent_models import (
+    ToolCall,
+    ToolCatalogEntry,
+    ToolResult,
+    ToolSchema,
+)
 from tldw_chatbook.Agents.project_instruction_resolver import (
     InstructionChainDelivery,
     InstructionOutcome,
@@ -28,7 +33,9 @@ from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry, ToolPathTarge
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 
 
-def _source(root: Path, relative_path: str, body: str = "guidance") -> InstructionSource:
+def _source(
+    root: Path, relative_path: str, body: str = "guidance"
+) -> InstructionSource:
     raw = body.encode()
     return InstructionSource(
         canonical_path=root / relative_path,
@@ -45,9 +52,11 @@ def _snapshot(root: Path, *, root_delivered: bool = True) -> InstructionSnapshot
     source = _source(root, "AGENTS.md", "root-secret")
     delivery = InstructionChainDelivery(
         source_digests=(source.digest,) if root_delivered else (),
-        outcomes=(() if root_delivered else (
-            InstructionOutcome("AGENTS.md", ".", "omitted_token_budget"),
-        )),
+        outcomes=(
+            ()
+            if root_delivered
+            else (InstructionOutcome("AGENTS.md", ".", "omitted_token_budget"),)
+        ),
     )
     return InstructionSnapshot(
         binding_id="binding",
@@ -140,7 +149,9 @@ def test_receipt_rejects_absolute_or_escaping_outcome_paths(relative_path):
         )
 
 
-def test_primary_cursor_starts_at_snapshot_delivery_but_child_gets_active_root(tmp_path):
+def test_primary_cursor_starts_at_snapshot_delivery_but_child_gets_active_root(
+    tmp_path,
+):
     ledger = InstructionActivationLedger(_snapshot(tmp_path), nested_max_bytes=100)
     payload, _ = _payload()
 
@@ -241,9 +252,7 @@ def test_payload_capture_counts_canonical_deferral_rows_and_current_schema():
 
 def test_payload_capture_is_not_changed_by_later_nested_message_mutation():
     payload, built = _payload(allowance=123)
-    messages = [
-        {"role": "user", "content": [{"type": "text", "text": "captured"}]}
-    ]
+    messages = [{"role": "user", "content": [{"type": "text", "text": "captured"}]}]
     payload.capture(messages=messages, active_schemas=(), calls=[])
     messages[0]["content"][0]["text"] = "mutated"
 
@@ -304,7 +313,10 @@ def test_child_first_context_racing_later_activation_gets_next_revision(tmp_path
         _registry(nested / "file.py"),
         payload,
     )
-    assert nested_delivery.receipt.through_revision > root_delivery.receipt.through_revision
+    assert (
+        nested_delivery.receipt.through_revision
+        > root_delivery.receipt.through_revision
+    )
     ledger.mark_payload_sent(root_delivery.receipt, root_delivery.rows)
 
     child_update = ledger.initial_context_for_chain("child", payload)
@@ -345,8 +357,7 @@ def _wrapped_row_tokens(rows):
     if not rows:
         return 0
     return 2 + sum(
-        5 if row["content"].startswith("Project instructions (") else 2
-        for row in rows
+        5 if row["content"].startswith("Project instructions (") else 2 for row in rows
     )
 
 
@@ -458,7 +469,9 @@ def test_nested_invalid_outcome_remains_terminal_after_file_becomes_valid(
 
     retry = ledger.prepare(calls, "primary", registry, payload)
     assert retry.status == "proceed"
-    assert all("must wait until next dispatch" not in row["content"] for row in retry.rows)
+    assert all(
+        "must wait until next dispatch" not in row["content"] for row in retry.rows
+    )
 
 
 def test_outside_binding_warning_defers_once_without_exposing_path(tmp_path: Path):
@@ -622,9 +635,7 @@ def test_nested_pinned_source_is_reused_by_identity_after_delete(tmp_path):
     ("relative_path", "scope"),
     [("../outside/AGENTS.md", "src"), ("src/AGENTS.md", "../outside")],
 )
-def test_nested_rejects_injected_pinned_source_metadata(
-    tmp_path, relative_path, scope
-):
+def test_nested_rejects_injected_pinned_source_metadata(tmp_path, relative_path, scope):
     target = tmp_path / "src"
     target.mkdir()
     expected_path = target / "AGENTS.md"
@@ -700,9 +711,7 @@ def test_nested_pinned_reuse_rechecks_root_after_metadata_validation(
         (root / "src").mkdir(parents=True)
         return valid
 
-    monkeypatch.setattr(
-        resolver_module, "_valid_pinned_source", validate_then_swap
-    )
+    monkeypatch.setattr(resolver_module, "_valid_pinned_source", validate_then_swap)
 
     batch = ProjectInstructionResolver().resolve_targets(
         root,

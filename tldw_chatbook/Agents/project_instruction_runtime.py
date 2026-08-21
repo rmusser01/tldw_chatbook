@@ -180,7 +180,8 @@ class InstructionChainPayloadState:
         self._messages = tuple(deepcopy(dict(message)) for message in messages)
         self._active_schemas = tuple(deepcopy(tuple(active_schemas)))
         self._calls = tuple(
-            ToolCall(call.name, deepcopy(dict(call.args)), call.call_id) for call in calls
+            ToolCall(call.name, deepcopy(dict(call.args)), call.call_id)
+            for call in calls
         )
 
     def safe_input_tokens(self, candidate_rows: Sequence[Mapping[str, Any]]) -> int:
@@ -261,9 +262,7 @@ class InstructionActivationLedger:
         self._global_outcomes = {
             _outcome_key(outcome): outcome for outcome in snapshot.global_outcomes
         }
-        self._terminal_scopes = {
-            outcome.scope for outcome in snapshot.global_outcomes
-        }
+        self._terminal_scopes = {outcome.scope for outcome in snapshot.global_outcomes}
         self._warning_keys: set[str] = set()
         self._chains: dict[str, _ChainState] = {}
         primary = self._chain(primary_chain_id)
@@ -436,10 +435,11 @@ class InstructionActivationLedger:
             if (
                 tuple(row.get(PROJECT_INSTRUCTION_ROW_KEY) for row in matched_rows)
                 != receipt.row_keys
-                or tuple(_row_hash(row) for row in matched_rows)
-                != pending.row_hashes
+                or tuple(_row_hash(row) for row in matched_rows) != pending.row_hashes
             ):
-                raise ValueError("instruction receipt payload rows are missing or changed")
+                raise ValueError(
+                    "instruction receipt payload rows are missing or changed"
+                )
             state.delivered_sources.update(pending.source_paths)
             state.delivered_outcomes.update(pending.outcome_keys)
             state.delivered_revision = max(
@@ -510,9 +510,7 @@ class InstructionActivationLedger:
             return rows
 
         candidate_rows = rows_for(set(source_paths))
-        candidate_rows.extend(
-            _outcome_row(omissions[path]) for path in source_paths
-        )
+        candidate_rows.extend(_outcome_row(omissions[path]) for path in source_paths)
         try:
             allowance = payload_state.safe_input_tokens(candidate_rows)
         except Exception:
@@ -586,9 +584,7 @@ class InstructionActivationLedger:
         receipt_id = f"pir-{self._receipt_sequence}"
         row_keys = tuple(
             f"{receipt_id}-row-{index}"
-            for index in range(
-                1, len(ordered_sources) + len(ordered_outcomes) + 1
-            )
+            for index in range(1, len(ordered_sources) + len(ordered_outcomes) + 1)
         )
         receipt = InstructionDeliveryReceipt(
             receipt_id=receipt_id,
@@ -635,7 +631,9 @@ class InstructionActivationLedger:
         outcome = self._global_outcomes.get(key)
         if outcome is None:
             outcome = next(
-                item for item in state.token_outcomes.values() if _outcome_key(item) == key
+                item
+                for item in state.token_outcomes.values()
+                if _outcome_key(item) == key
             )
         return _outcome_row(outcome)
 
@@ -674,9 +672,7 @@ def _warning_row(code: str) -> dict[str, Any]:
 
 
 def _outcome_key(outcome: InstructionOutcome) -> str:
-    return _OUTCOME_SEPARATOR.join(
-        (outcome.code, outcome.relative_path, outcome.scope)
-    )
+    return _OUTCOME_SEPARATOR.join((outcome.code, outcome.relative_path, outcome.scope))
 
 
 def _warning_key(code: str) -> str:
