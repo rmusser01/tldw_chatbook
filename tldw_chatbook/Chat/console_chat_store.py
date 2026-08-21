@@ -7177,7 +7177,11 @@ class ConsoleChatStore:
         """
         parent_native_id: str | None = None
         for message in messages:
-            restored = replace(message, citation_presentation=None)
+            restored = replace(
+                message,
+                citation_presentation=None,
+                activity_presentation=None,
+            )
             if restored.role is ConsoleMessageRole.TOOL:
                 self._message_session_index[restored.id] = session_id
                 continue
@@ -7215,7 +7219,11 @@ class ConsoleChatStore:
         registered: list[ConsoleChatMessage] = []
         persisted_to_native: dict[str, str] = {}
         for node in all_nodes:
-            restored = replace(node, citation_presentation=None)
+            restored = replace(
+                node,
+                citation_presentation=None,
+                activity_presentation=None,
+            )
             if restored.role is ConsoleMessageRole.TOOL:
                 self._message_session_index[restored.id] = session_id
                 continue

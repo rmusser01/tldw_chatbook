@@ -135,6 +135,51 @@ def test_activity_presentation_never_enters_persistence_or_restore_payload() -> 
     assert restored[0].activity_presentation is None
 
 
+def test_restore_state_clears_incoming_session_only_activity_presentation() -> None:
+    source = ConsoleChatStore()
+    session = source.ensure_session()
+    presentation = ConsoleActivityPresentation("activity", "Working", "done")
+    incoming = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="answer",
+        activity_presentation=presentation,
+    )
+    restored_store = ConsoleChatStore()
+
+    restored_store.restore_state(
+        sessions=[session],
+        messages_by_session={session.id: [incoming]},
+        active_session_id=session.id,
+    )
+
+    restored = restored_store.messages_for_session(session.id)
+    assert incoming.activity_presentation == presentation
+    assert restored[0].activity_presentation is None
+
+
+def test_persisted_restore_clears_incoming_session_only_activity_presentation() -> None:
+    presentation = ConsoleActivityPresentation("tool", "fs_list", "success")
+    incoming = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="answer",
+        persisted_message_id="message-1",
+        activity_presentation=presentation,
+    )
+    restored_store = ConsoleChatStore()
+
+    session = restored_store.restore_persisted_session(
+        title="Restored",
+        workspace_id=None,
+        persisted_conversation_id="conv-1",
+        all_nodes=[incoming],
+        active_leaf_persisted_id="message-1",
+    )
+
+    restored = restored_store.messages_for_session(session.id)
+    assert incoming.activity_presentation == presentation
+    assert restored[0].activity_presentation is None
+
+
 def test_legacy_tool_message_can_omit_activity_presentation() -> None:
     message = ConsoleChatMessage(
         role=ConsoleMessageRole.TOOL,
