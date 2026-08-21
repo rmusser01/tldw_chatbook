@@ -33,6 +33,8 @@ from .preferences import (
     persist_persona_buddy_preferences,
 )
 from .rendering import (
+    MAX_PERSONA_BUDDY_PREPARED_CELLS,
+    MAX_PERSONA_BUDDY_PREPARED_FRAMES,
     PERSONA_BUDDY_FRAME_UNAVAILABLE,
     PersonaBuddyFrameError,
     PersonaBuddyPreparedFrame,
@@ -648,20 +650,25 @@ class PersonaBuddyController:
         async def serialized() -> PersonaBuddySnapshot:
             async with self._operation_lock:
                 expected_authority = self._preference_authority()
-                written = await self._drain_owned(
-                    asyncio.to_thread(self._preference_writer, preferences),
-                    name="preferences:write",
-                )
-                if not written.completed or written.value is not True:
-                    return self.snapshot()
-                with self._lock:
-                    if expected_authority != self._preference_authority():
+                candidate = preferences
+                last_successful: PersonaBuddyPreferences | None = None
+                while True:
+                    written = await self._drain_owned(
+                        asyncio.to_thread(self._preference_writer, candidate),
+                        name="preferences:write",
+                    )
+                    if not written.completed or written.value is not True:
+                        if last_successful is not None:
+                            with self._lock:
+                                self._apply_preferences_locked(last_successful)
                         return self.snapshot()
-                    self._preferences = preferences
-                    self._selection = preferences.selection
-                    self._preferences_generation += 1
-                    self._generation += 1
-                return self.snapshot()
+                    last_successful = candidate
+                    with self._lock:
+                        if expected_authority == self._preference_authority():
+                            self._apply_preferences_locked(candidate)
+                            return self.snapshot()
+                        candidate = self._preferences
+                        expected_authority = self._preference_authority()
 
         outcome = await self._drain_owned(serialized(), name="preferences")
         if outcome.cancellation is not None:
@@ -920,21 +927,21 @@ class PersonaBuddyController:
             return True
         return value if type(value) is bool else True
 
-    def _preference_authority(self) -> tuple[object, ...]:
+    def _preference_authority(
+        self,
+    ) -> tuple[int, PersonaBuddyPreferences]:
         """Snapshot every controller authority relevant to a preference commit."""
 
         with self._lock:
-            self._discard_expired_locked()
-            lease = self._resolve_locked()
-            return (
-                self._selection,
-                lease.token.state if lease else "idle",
-                self._generation,
-                self._preferences_generation,
-                self._profile_generation,
-                self._viewport_generation,
-                self._preferences,
-            )
+            return self._preferences_generation, self._preferences
+
+    def _apply_preferences_locked(self, preferences: PersonaBuddyPreferences) -> None:
+        if preferences == self._preferences:
+            return
+        self._preferences = preferences
+        self._selection = preferences.selection
+        self._preferences_generation += 1
+        self._generation += 1
 
     async def _after_phase(self, phase: str, ticket: _ResolutionTicket) -> bool:
         barrier = self._phase_barrier
@@ -1013,15 +1020,26 @@ class PersonaBuddyController:
     ) -> tuple[PersonaBuddyPreparedFrame, ...] | None:
         try:
             if resolution.frames:
-                return tuple(
-                    prepare_persona_buddy_frame(
+                if len(resolution.frames) > MAX_PERSONA_BUDDY_PREPARED_FRAMES:
+                    return None
+                prepared: list[PersonaBuddyPreparedFrame] = []
+                prepared_cells = 0
+                for frame in resolution.frames:
+                    remaining_cells = (
+                        MAX_PERSONA_BUDDY_PREPARED_CELLS - prepared_cells
+                    )
+                    if remaining_cells < 1:
+                        return None
+                    painted = prepare_persona_buddy_frame(
                         frame,
                         resolution_cache_identity=resolution.cache_identity,
                         cols=cols,
                         lines=lines,
+                        max_cells=remaining_cells,
                     )
-                    for frame in resolution.frames
-                )
+                    prepared_cells += painted.width * painted.height
+                    prepared.append(painted)
+                return tuple(prepared)
             if resolution.portrait is not None:
                 return (
                     prepare_persona_buddy_portrait(

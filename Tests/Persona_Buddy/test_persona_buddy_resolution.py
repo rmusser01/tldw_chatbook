@@ -7,6 +7,7 @@ import hashlib
 import inspect
 import json
 import threading
+from dataclasses import replace
 from functools import partial
 from io import BytesIO
 from pathlib import Path
@@ -14,6 +15,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+import tldw_chatbook.Persona_Buddy.controller as buddy_controller_module
 from tldw_chatbook.Character_Chat.local_character_persona_service import (
     LocalCharacterPersonaService,
 )
@@ -36,6 +38,7 @@ from tldw_chatbook.Persona_Visual.runtime import (
     PersonaVisualCacheAsset,
     PersonaVisualCacheIdentity,
     PersonaVisualPortrait,
+    PersonaVisualResolution,
     PersonaVisualResolvedFrame,
 )
 
@@ -287,7 +290,7 @@ async def test_state_idle_portrait_fallback_never_blanks(tmp_path: Path) -> None
     assert fallback.available is True
     assert fallback.source == "persona_portrait"
     assert fallback.requested_state == "idle"
-    assert fallback.frames[0].cells
+    assert fallback.frames[0].paint_digest
     assert fallback.cache_identity is not None
     assert fallback.cache_identity.portrait_id == "local-portrait"
 
@@ -469,8 +472,8 @@ def test_sprite_frames_prepare_distinct_painted_frames() -> None:
         lines=4,
     )
 
-    assert first.cells and second.cells
-    assert first.cells != second.cells
+    assert first.paint_digest and second.paint_digest
+    assert first.paint_digest != second.paint_digest
     assert first.selected_frame == 0
     assert second.selected_frame == 1
 
@@ -510,6 +513,139 @@ async def test_decode_failure_keeps_previous_or_portrait_frame(tmp_path: Path) -
     assert failed.reason == "persona_buddy_frame_unavailable"
 
 
+@pytest.mark.asyncio
+async def test_aggregate_frame_budget_rejects_240_large_frames_before_prepare(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller, db, graph = _runtime(tmp_path)
+    assert graph is not None
+    previous = await controller.resolve_current_visual(cols=256, lines=128)
+    data = _png((80, 120, 160, 255), size=(256, 256))
+    frame = PersonaVisualResolvedFrame(
+        asset_id=999,
+        asset_key="large-repeated",
+        sha256=hashlib.sha256(data).hexdigest(),
+        data=data,
+        duration_ms=40,
+        region=None,
+        manifest_frame_index=0,
+        selected_frame=0,
+    )
+    cache_identity = PersonaVisualCacheIdentity(
+        graph=graph.identity,
+        requested_state="idle",
+        resolved_state="idle",
+        animation_id="large",
+        reduced_motion=False,
+        assets=(
+            PersonaVisualCacheAsset(
+                asset_id=frame.asset_id,
+                asset_key=frame.asset_key,
+                sha256=frame.sha256,
+                manifest_frame_index=frame.manifest_frame_index,
+                selected_frame=frame.selected_frame,
+            ),
+        ),
+    )
+    excessive = PersonaVisualResolution(
+        source="persona_visual",
+        reason=None,
+        requested_state="idle",
+        resolved_state="idle",
+        animation_id="large",
+        frames=(frame,) * 240,
+        frame_rate=25.0,
+        loop=True,
+        alignment=None,
+        animate=True,
+        static_reason=None,
+        portrait=None,
+        cache_identity=cache_identity,
+    )
+    prepare_calls = 0
+
+    def counted_prepare(*args: object, **kwargs: object) -> object:
+        nonlocal prepare_calls
+        del args, kwargs
+        prepare_calls += 1
+        if prepare_calls > 2:
+            raise AssertionError("aggregate frame budget missing")
+        return previous.frames[0]
+
+    monkeypatch.setattr(
+        buddy_controller_module, "prepare_persona_buddy_frame", counted_prepare
+    )
+    controller._resolve_runtime = lambda *_args: excessive  # type: ignore[method-assign]
+    controller.invalidate_profile()
+    try:
+        bounded = await controller.resolve_current_visual(cols=256, lines=128)
+    finally:
+        await controller.shutdown()
+        db.close_connection()
+
+    assert prepare_calls == 0
+    assert bounded.frames == previous.frames
+    assert bounded.reason == "persona_buddy_frame_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_aggregate_cell_budget_stops_retention_at_fixed_bound(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller, db, graph = _runtime(tmp_path)
+    assert graph is not None
+    previous = await controller.resolve_current_visual(cols=256, lines=128)
+    data = _png((30, 60, 90, 255), size=(256, 256))
+    frame = _resolved_frame(data)
+    cache_identity = replace(
+        _cache(data),
+        graph=graph.identity,
+        requested_state="idle",
+        resolved_state="idle",
+        animation_id="bounded-cells",
+    )
+    resolution = PersonaVisualResolution(
+        source="persona_visual",
+        reason=None,
+        requested_state="idle",
+        resolved_state="idle",
+        animation_id="bounded-cells",
+        frames=(frame,) * 20,
+        frame_rate=25.0,
+        loop=True,
+        alignment=None,
+        animate=True,
+        static_reason=None,
+        portrait=None,
+        cache_identity=cache_identity,
+    )
+    painted = replace(previous.frames[0], width=256, height=256)
+    prepare_calls = 0
+
+    def counted_prepare(*args: object, **kwargs: object) -> object:
+        nonlocal prepare_calls
+        del args, kwargs
+        prepare_calls += 1
+        return painted
+
+    monkeypatch.setattr(
+        buddy_controller_module, "prepare_persona_buddy_frame", counted_prepare
+    )
+    controller._resolve_runtime = lambda *_args: resolution  # type: ignore[method-assign]
+    controller.invalidate_profile()
+    try:
+        bounded = await controller.resolve_current_visual(cols=256, lines=128)
+    finally:
+        await controller.shutdown()
+        db.close_connection()
+
+    assert prepare_calls == 16
+    assert bounded.frames == previous.frames
+    assert bounded.reason == "persona_buddy_frame_unavailable"
+
+
 def test_direct_decode_failure_is_path_free() -> None:
     with pytest.raises(
         PersonaBuddyFrameError, match="^persona_buddy_frame_unavailable$"
@@ -522,6 +658,21 @@ def test_direct_decode_failure_is_path_free() -> None:
         )
 
 
+def test_frame_prepare_rejects_remaining_cell_budget_before_pixels() -> None:
+    data = _png((30, 60, 90, 255))
+
+    with pytest.raises(
+        PersonaBuddyFrameError, match="^persona_buddy_frame_unavailable$"
+    ):
+        prepare_persona_buddy_frame(
+            _resolved_frame(data),
+            resolution_cache_identity=_cache(data),
+            cols=8,
+            lines=4,
+            max_cells=1,
+        )
+
+
 def test_render_snapshot_repr_is_byte_and_path_free() -> None:
     data = _png((1, 2, 3, 255))
     prepared = prepare_persona_buddy_frame(
@@ -529,7 +680,7 @@ def test_render_snapshot_repr_is_byte_and_path_free() -> None:
     )
 
     rendered = repr(prepared)
-    assert prepared.cells
+    assert prepared.paint_digest
     assert prepared.renderable is not None
     assert "renderable=" not in rendered
     assert "data=" not in rendered
@@ -738,6 +889,78 @@ async def test_preference_commit_survives_outer_cancellation() -> None:
 
     assert controller.snapshot().enabled is True
     assert controller.snapshot().selection == updated.selection
+    await controller.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_preference_commit_ignores_unrelated_runtime_authority_changes() -> None:
+    entered = threading.Event()
+    release = threading.Event()
+    persisted: list[PersonaBuddyPreferences] = []
+
+    def writer(preferences: PersonaBuddyPreferences) -> bool:
+        entered.set()
+        release.wait(2)
+        persisted.append(preferences)
+        return True
+
+    controller = PersonaBuddyController(preference_writer=writer)
+    updated = PersonaBuddyPreferences(enabled=True)
+    operation = asyncio.create_task(controller.update_preferences(updated))
+    assert await asyncio.to_thread(entered.wait, 2)
+    lease = controller.acquire_state(source="voice", owner="turn", state="listening")
+    controller.set_viewport_generation(3)
+    controller.invalidate_profile()
+    release.set()
+    result = await operation
+
+    assert persisted == [updated]
+    assert result.enabled is True
+    assert controller.snapshot().enabled is True
+    assert controller.snapshot().state == "listening"
+    assert controller.release_state(token=lease) is True
+    await controller.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_superseded_preference_commit_reconciles_persisted_and_live_state() -> (
+    None
+):
+    entered = threading.Event()
+    release = threading.Event()
+    persisted: list[PersonaBuddyPreferences] = []
+
+    def writer(preferences: PersonaBuddyPreferences) -> bool:
+        if not persisted:
+            entered.set()
+            release.wait(2)
+        persisted.append(preferences)
+        return True
+
+    initial = PersonaBuddyPreferences(
+        selection=PersonaBuddySelection("local", "original")
+    )
+    controller = PersonaBuddyController(
+        preferences=initial,
+        preference_writer=writer,
+    )
+    requested = PersonaBuddyPreferences(
+        enabled=True,
+        selection=PersonaBuddySelection("local", "original"),
+    )
+    operation = asyncio.create_task(controller.update_preferences(requested))
+    assert await asyncio.to_thread(entered.wait, 2)
+    controller.select_local_persona("replacement")
+    release.set()
+    result = await operation
+
+    reconciled = PersonaBuddyPreferences(
+        selection=PersonaBuddySelection("local", "replacement")
+    )
+    assert persisted == [requested, reconciled]
+    assert result.selection == reconciled.selection
+    assert result.enabled == reconciled.enabled
+    assert controller.snapshot().selection == reconciled.selection
     await controller.shutdown()
 
 

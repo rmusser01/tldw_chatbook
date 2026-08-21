@@ -20,12 +20,11 @@ from tldw_chatbook.Persona_Visual.runtime import (
 
 
 PERSONA_BUDDY_FRAME_UNAVAILABLE = "persona_buddy_frame_unavailable"
+MAX_PERSONA_BUDDY_PREPARED_FRAMES = 128
+MAX_PERSONA_BUDDY_PREPARED_CELLS = 1_048_576
 _MAX_FRAME_BYTES = 100 * 1024 * 1024
 _MAX_COLS = 256
 _MAX_LINES = 128
-
-PersonaBuddyCell = tuple[int, int, int, int]
-PersonaBuddyCells = tuple[tuple[PersonaBuddyCell, ...], ...]
 
 
 class PersonaBuddyFrameError(ValueError):
@@ -52,7 +51,7 @@ class PersonaBuddyPreparedFrame:
     duration_ms: int | None
     width: int
     height: int
-    cells: PersonaBuddyCells = field(repr=False)
+    paint_digest: str
     renderable: Pixels = field(repr=False, compare=False, hash=False)
 
 
@@ -62,6 +61,7 @@ def prepare_persona_buddy_frame(
     resolution_cache_identity: PersonaVisualCacheIdentity,
     cols: int,
     lines: int,
+    max_cells: int | None = None,
 ) -> PersonaBuddyPreparedFrame:
     """Decode and scale the exact embedded frame into bounded Rich pixels.
 
@@ -77,6 +77,7 @@ def prepare_persona_buddy_frame(
             or type(lines) is not int
             or not 1 <= cols <= _MAX_COLS
             or not 1 <= lines <= _MAX_LINES
+            or (max_cells is not None and (type(max_cells) is not int or max_cells < 1))
         ):
             raise ValueError
         data = resolved_frame.data
@@ -127,12 +128,12 @@ def prepare_persona_buddy_frame(
             )
 
         image.thumbnail((cols, lines * 2), Image.Resampling.LANCZOS)
-        if image.width < 1 or image.height < 1:
+        if (
+            image.width < 1
+            or image.height < 1
+            or (max_cells is not None and image.width * image.height > max_cells)
+        ):
             raise ValueError
-        cells: PersonaBuddyCells = tuple(
-            tuple(image.getpixel((x, y)) for x in range(image.width))
-            for y in range(image.height)
-        )
         return PersonaBuddyPreparedFrame(
             cache_identity=resolution_cache_identity,
             graph_identity=resolution_cache_identity.graph,
@@ -144,7 +145,7 @@ def prepare_persona_buddy_frame(
             duration_ms=resolved_frame.duration_ms,
             width=image.width,
             height=image.height,
-            cells=cells,
+            paint_digest=hashlib.sha256(image.tobytes()).hexdigest(),
             renderable=Pixels.from_image(image),
         )
     except PersonaBuddyFrameError:
@@ -192,10 +193,6 @@ def prepare_persona_buddy_portrait(
             source.load()
             image = source.convert("RGBA")
         image.thumbnail((cols, lines * 2), Image.Resampling.LANCZOS)
-        cells: PersonaBuddyCells = tuple(
-            tuple(image.getpixel((x, y)) for x in range(image.width))
-            for y in range(image.height)
-        )
         return PersonaBuddyPreparedFrame(
             cache_identity=resolution_cache_identity,
             graph_identity=resolution_cache_identity.graph,
@@ -207,7 +204,7 @@ def prepare_persona_buddy_portrait(
             duration_ms=None,
             width=image.width,
             height=image.height,
-            cells=cells,
+            paint_digest=hashlib.sha256(image.tobytes()).hexdigest(),
             renderable=Pixels.from_image(image),
         )
     except PersonaBuddyFrameError:
@@ -217,6 +214,8 @@ def prepare_persona_buddy_portrait(
 
 
 __all__ = (
+    "MAX_PERSONA_BUDDY_PREPARED_CELLS",
+    "MAX_PERSONA_BUDDY_PREPARED_FRAMES",
     "PERSONA_BUDDY_FRAME_UNAVAILABLE",
     "PersonaBuddyFrameError",
     "PersonaBuddyPreparedFrame",

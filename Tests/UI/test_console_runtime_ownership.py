@@ -21,6 +21,7 @@ dead view.
 from __future__ import annotations
 
 import ast
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -428,3 +429,59 @@ def test_persona_buddy_is_app_owned_and_shutdown_before_other_lifecycles():
     assert buddy < console, source
     disposer = inspect.getsource(TldwCli._shutdown_persona_buddy)
     assert "persona_buddy_controller.shutdown" in disposer, disposer
+
+
+@pytest.mark.asyncio
+async def test_app_waits_for_buddy_drain_before_profile_service_teardown(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The app-owned await settles Buddy work before profile resources close."""
+    from textual.app import App
+
+    from tldw_chatbook.app import TldwCli
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    events: list[str] = []
+
+    class Buddy:
+        async def shutdown(self) -> None:
+            events.append("buddy-start")
+            entered.set()
+            await release.wait()
+            events.append("buddy-finished")
+
+    class ProfileService:
+        def teardown(self) -> None:
+            events.append("profile-teardown")
+
+    class AsyncOwner:
+        async def shutdown(self) -> None:
+            events.append("later-owner")
+
+    async def later_lifecycle() -> None:
+        events.append("later-lifecycle")
+
+    app = object.__new__(TldwCli)
+    app.persona_buddy_controller = Buddy()
+    app._persona_buddy_shutdown_task = None
+    app._audio_cpp_artifact_lease_coordinator = None
+    app.audio_cpp_model_install_owner = AsyncOwner()
+    app._shutdown_console_image_edits = later_lifecycle
+    app._shutdown_console_runtime = later_lifecycle
+    app._shutdown_file_notes_session_owner = later_lifecycle
+    profile_service = ProfileService()
+
+    async def profile_teardown(_app: App[None]) -> None:
+        profile_service.teardown()
+
+    monkeypatch.setattr(App, "_shutdown", profile_teardown)
+    draining = asyncio.create_task(TldwCli._shutdown(app))
+    await entered.wait()
+    assert events == ["buddy-start"]
+    assert not draining.done()
+    release.set()
+    await draining
+
+    assert events[:2] == ["buddy-start", "buddy-finished"]
+    assert events[-1] == "profile-teardown"
