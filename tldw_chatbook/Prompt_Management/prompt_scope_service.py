@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import sqlite3
 from collections.abc import Mapping, Sequence
@@ -1451,7 +1452,12 @@ class PromptScopeService:
                 "Server prompt counts are not supported; use list_prompts for a scoped total."
             )
         service = self._service_for_mode(normalized_mode)
-        return int(await self._maybe_await(service.count_prompts()))
+
+        def count_local_prompts() -> Any:
+            result = service.count_prompts()
+            return asyncio.run(result) if inspect.isawaitable(result) else result
+
+        return int(await asyncio.to_thread(count_local_prompts))
 
     async def get_library_user_content_evidence(
         self, *, mode: PromptBackend | str = "local"

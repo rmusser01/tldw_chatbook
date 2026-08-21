@@ -812,6 +812,11 @@ class MediaReadingScopeService:
             query=None,
             limit=1,
             offset=0,
+            **(
+                {"library_summary": True}
+                if normalized_mode == MediaReadingBackend.LOCAL
+                else {}
+            ),
             **filters,
         )
         if not isinstance(payload, Mapping):
@@ -831,6 +836,12 @@ class MediaReadingScopeService:
                 if not items
                 else LibraryContentEvidence.UNKNOWN
             )
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            return (
+                LibraryContentEvidence.HAS_USER_CONTENT
+                if len(items) == 1 and isinstance(items[0], Mapping)
+                else LibraryContentEvidence.UNKNOWN
+            )
         if items and isinstance(items[0], Mapping):
             record = items[0]
             if record.get("deleted") or record.get("is_trash"):
@@ -839,23 +850,10 @@ class MediaReadingScopeService:
                     if total == 1
                     else LibraryContentEvidence.UNKNOWN
                 )
-            status_field = (
-                "chunking_status"
-                if normalized_mode == MediaReadingBackend.LOCAL
-                else "processing_status"
-            )
+            status_field = "processing_status"
             status = str(record.get(status_field) or "").strip().lower()
             if status == "completed":
                 return LibraryContentEvidence.HAS_USER_CONTENT
-            if normalized_mode == MediaReadingBackend.LOCAL and status in {
-                "pending",
-                "incomplete",
-            }:
-                return (
-                    LibraryContentEvidence.EMPTY
-                    if total == 1
-                    else LibraryContentEvidence.UNKNOWN
-                )
         return LibraryContentEvidence.UNKNOWN
 
     async def list_library_media_types(

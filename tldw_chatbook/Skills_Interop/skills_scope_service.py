@@ -207,23 +207,21 @@ class SkillsScopeService:
         ):
             return LibraryContentEvidence.UNKNOWN
         available = context["available_skills"]
+        if normalized_mode == SkillsBackend.LOCAL:
+            if not all(isinstance(item, dict) for item in available):
+                return LibraryContentEvidence.UNKNOWN
+            return (
+                LibraryContentEvidence.HAS_USER_CONTENT
+                if available
+                else LibraryContentEvidence.EMPTY
+            )
         if normalized_mode == SkillsBackend.SERVER:
             return (
                 LibraryContentEvidence.EMPTY
                 if not available
                 else LibraryContentEvidence.UNKNOWN
             )
-        if not all(isinstance(item, dict) for item in available):
-            return LibraryContentEvidence.UNKNOWN
-        for item in available:
-            source = str(item.get("source") or "").strip().lower()
-            if not (
-                item.get("bundled")
-                or item.get("is_sample")
-                or source in {"bundled", "sample", "system"}
-            ):
-                return LibraryContentEvidence.HAS_USER_CONTENT
-        return LibraryContentEvidence.EMPTY
+        return LibraryContentEvidence.UNKNOWN
 
     async def count_skills(
         self, *, mode: SkillsBackend | str | None = None, **kwargs: Any

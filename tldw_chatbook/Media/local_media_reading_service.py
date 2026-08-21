@@ -101,7 +101,9 @@ class LocalMediaReadingService:
 
     # --- Library read seams (task-1337) ---
 
-    def list_library_media(self, *, limit: int = 20, offset: int = 0) -> dict[str, Any]:
+    def list_library_media(
+        self, *, limit: int = 20, offset: int = 0
+    ) -> dict[str, Any]:
         """Page the active local media library for agent-facing list tools.
 
         Args:

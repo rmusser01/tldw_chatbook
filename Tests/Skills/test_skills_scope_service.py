@@ -183,7 +183,7 @@ async def test_skills_scope_service_preserves_blocked_local_context_trust_fields
 
 
 @pytest.mark.asyncio
-async def test_skills_user_content_evidence_uses_only_available_user_skills():
+async def test_skills_user_content_evidence_uses_only_available_managed_skills():
     class ContextService:
         def __init__(self, context):
             self.context = context
@@ -203,15 +203,6 @@ async def test_skills_user_content_evidence_uses_only_available_user_skills():
     result = await service.get_library_user_content_evidence(mode="local")
     assert type(result) is LibraryContentEvidence
     assert result is LibraryContentEvidence.EMPTY
-
-    bundled_only = ContextService(
-        {"available_skills": [{"name": "sample", "source": "bundled"}]}
-    )
-    service = SkillsScopeService(local_service=bundled_only)
-    assert (
-        await service.get_library_user_content_evidence(mode="local")
-        is LibraryContentEvidence.EMPTY
-    )
 
     user_skill = ContextService({"available_skills": [{"name": "user-skill"}]})
     service = SkillsScopeService(local_service=user_skill)
@@ -250,6 +241,34 @@ async def test_skills_user_content_evidence_runs_real_local_scan_off_loop(
     )
     assert scan_threads
     assert all(thread_id != loop_thread for thread_id in scan_threads)
+
+
+@pytest.mark.asyncio
+async def test_skills_local_evidence_owner_has_no_bundled_or_sample_population(
+    tmp_path,
+):
+    local = LocalSkillsService(
+        store_dir=tmp_path,
+        allow_untrusted_without_trust_service=True,
+    )
+    assert local.get_library_user_content_evidence_context() == {"available_skills": []}
+
+    await local.import_skill(
+        name="user-import",
+        content="---\ndescription: Imported by the user\n---\n# User import\n",
+    )
+    context = local.get_library_user_content_evidence_context()
+    assert [item["name"] for item in context["available_skills"]] == ["user-import"]
+    assert all(
+        key not in context["available_skills"][0]
+        for key in ("bundled", "is_sample", "source")
+    )
+    assert (
+        await SkillsScopeService(local_service=local).get_library_user_content_evidence(
+            mode="local"
+        )
+        is LibraryContentEvidence.HAS_USER_CONTENT
+    )
 
 
 @pytest.mark.asyncio

@@ -2825,7 +2825,7 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         super().__init__(app_instance, "library", **kwargs)
         self._library_new_profile_admission = bool(
-            app_instance.app_config.get("_first_run")
+            getattr(app_instance, "library_new_profile_admission", False)
         )
         lifecycle_raw, lifecycle_stored = self._load_library_lifecycle_value()
         self._library_lifecycle_was_stored = lifecycle_stored
@@ -15252,6 +15252,7 @@ class LibraryScreen(BaseAppScreen):
                 self._library_onboarding_admission_key(),
             ),
             group="library_onboarding_evidence",
+            exclusive=True,
         )
 
     def _sync_library_rail_lifecycle_presentation(self) -> None:
@@ -15853,6 +15854,8 @@ class LibraryScreen(BaseAppScreen):
         )
         if lifecycle is not LibraryLifecycle.STARTER:
             return
+        self._library_selected_row_id = ""
+        self._register_footer_shortcuts()
         self._set_library_lifecycle(lifecycle)
         await self.recompose()
         self._focus_library_rail_action(

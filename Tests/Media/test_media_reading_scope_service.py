@@ -3,6 +3,7 @@ import asyncio
 
 import pytest
 
+import tldw_chatbook.DB.Client_Media_DB_v2 as media_db_module
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase as Database
 from tldw_chatbook.Media.media_reading_scope_service import (
     ALLOWED_SERVER_CREATE_SOURCE_TYPES,
@@ -2805,8 +2806,9 @@ async def test_media_user_content_evidence_uses_active_complete_local_summary():
             "items": [
                 {
                     "id": 41,
-                    "chunking_status": "completed",
-                    "content": "PRIVATE_BODY",
+                    "title": "Summary title",
+                    "type": "article",
+                    "last_modified": "2026-08-20T00:00:00Z",
                 }
             ],
             "total": 1,
@@ -2825,6 +2827,7 @@ async def test_media_user_content_evidence_uses_active_complete_local_summary():
             "query": None,
             "limit": 1,
             "offset": 0,
+            "library_summary": True,
             "include_deleted": False,
             "include_trash": False,
             "chunking_status": "completed",
@@ -2877,28 +2880,50 @@ async def test_media_user_content_evidence_filters_completed_real_local_populati
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "excluded_row",
-    [
-        {"id": 1, "deleted": True},
-        {"id": 2, "is_trash": True},
-        {"id": 3, "chunking_status": "pending"},
-    ],
-)
-async def test_media_user_content_evidence_excludes_deleted_trash_and_incomplete(
-    excluded_row,
+async def test_media_evidence_uses_bounded_summary_without_private_enrichment_or_logs(
+    tmp_path, monkeypatch
 ):
-    class LocalEvidenceService:
-        def search_media(self, **kwargs):
-            return {"items": [excluded_row], "total": 1, "offset": 0, "limit": 1}
-
-    local = LocalEvidenceService()
-    scope_service = MediaReadingScopeService(local_service=local, server_service=None)
-
-    assert (
-        await scope_service.get_library_user_content_evidence(mode="local")
-        is LibraryContentEvidence.EMPTY
+    db = Database(db_path=tmp_path / "media.db", client_id="private-client-sentinel")
+    private_title = "PRIVATE_TITLE_SENTINEL"
+    db.add_media_with_keywords(
+        title=private_title,
+        content="PRIVATE_BODY_SENTINEL",
+        media_type="article",
+        keywords=[],
+        chunks=[],
     )
+    local = LocalMediaReadingService(db)
+    enriched = []
+    monkeypatch.setattr(
+        local,
+        "_enrich_rows_with_read_it_later_state",
+        lambda rows: (enriched.append(rows), rows)[1],
+    )
+    logs = []
+    monkeypatch.setattr(
+        media_db_module.logger,
+        "info",
+        lambda template, *args, **_kwargs: logs.append((template, args)),
+    )
+    service = MediaReadingScopeService(local_service=local, server_service=None)
+    try:
+        assert (
+            await service.get_library_user_content_evidence(mode="local")
+            is LibraryContentEvidence.HAS_USER_CONTENT
+        )
+        assert enriched == []
+        rendered_logs = repr(logs)
+        for private_value in (
+            private_title,
+            "PRIVATE_BODY_SENTINEL",
+            "private-client-sentinel",
+            str(tmp_path),
+            "result_count",
+            "total=",
+        ):
+            assert private_value not in rendered_logs
+    finally:
+        db.close_connection()
 
 
 @pytest.mark.asyncio

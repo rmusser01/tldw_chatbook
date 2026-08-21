@@ -13,7 +13,9 @@ that a hand-rolled fake could get wrong silently; these tests pin the real
 behavior down.
 """
 
+import asyncio
 from datetime import datetime
+import threading
 
 import pytest
 
@@ -554,6 +556,37 @@ async def test_notes_user_content_evidence_does_not_log_exact_local_count(
         labels for name, labels in calls if name == "notes_library_count_notes_success"
     ]
     assert success_labels == [None]
+
+
+@pytest.mark.asyncio
+async def test_notes_user_content_evidence_runs_sync_leaf_off_loop_and_is_cancellable():
+    entered = threading.Event()
+    release = threading.Event()
+    thread_ids = []
+
+    class BlockingNotes:
+        def count_notes(self, _user_id):
+            thread_ids.append(threading.get_ident())
+            entered.set()
+            release.wait(2)
+            return 0
+
+    service = NotesScopeService(
+        local_notes_service=BlockingNotes(), server_service=None
+    )
+    loop_thread = threading.get_ident()
+    task = asyncio.create_task(
+        service.get_library_user_content_evidence(scope="local_note", user_id=USER_ID)
+    )
+    try:
+        assert await asyncio.to_thread(entered.wait, 1)
+        await asyncio.sleep(0)
+        assert thread_ids == [thread_ids[0]]
+        assert thread_ids[0] != loop_thread
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(task, timeout=0.01)
+    finally:
+        release.set()
 
 
 @pytest.mark.asyncio

@@ -1258,7 +1258,10 @@ class NotesScopeService:
         normalized_scope = self._normalize_scope(scope)
         self._enforce_policy(self._note_action_id(normalized_scope, "list"))
         if normalized_scope == ScopeType.LOCAL_NOTE:
-            return self.local_notes_service.count_notes(self._require_user_id(user_id))
+            return await asyncio.to_thread(
+                self.local_notes_service.count_notes,
+                self._require_user_id(user_id),
+            )
         # Neither the server nor workspace note backends expose a dedicated
         # count-only seam today: ``server_service.list_server_notes`` only
         # surfaces a total as a side effect of fetching a page of notes

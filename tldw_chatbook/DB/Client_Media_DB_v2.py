@@ -733,7 +733,9 @@ class MediaDatabase:
                 try:
                     conn.execute("SELECT 1")  # Simple check
                 except (sqlite3.ProgrammingError, sqlite3.OperationalError):
-                    logging.warning("Media database connection was closed; reopening.")
+                    logging.warning(
+                        "Media database connection was closed; reopening."
+                    )
                     is_closed = True
                     try:
                         conn.close()
@@ -958,7 +960,9 @@ class MediaDatabase:
             raise
 
     @staticmethod
-    def _execute_transactional_script(conn: sqlite3.Connection, script: str) -> None:
+    def _execute_transactional_script(
+        conn: sqlite3.Connection, script: str
+    ) -> None:
         """Execute a multi-statement SQL script without implicit commits.
 
         ``sqlite3.Connection.executescript`` commits a pending transaction
@@ -975,7 +979,9 @@ class MediaDatabase:
             sqlite3.Error: If SQLite rejects any complete statement.
         """
         if not conn.in_transaction:
-            raise SchemaError("Transactional SQL script requires an active transaction")
+            raise SchemaError(
+                "Transactional SQL script requires an active transaction"
+            )
         statement = ""
         for character in script:
             statement += character
@@ -2226,9 +2232,7 @@ class MediaDatabase:
             ):
                 base_select_parts.append("fts.rank AS relevance_score")
             relevance_column = "fts.rank" if library_summary else "relevance_score"
-            order_by_clause_str = (
-                f"ORDER BY {relevance_column} DESC, m.last_modified DESC, m.id DESC"
-            )
+            order_by_clause_str = f"ORDER BY {relevance_column} DESC, m.last_modified DESC, m.id DESC"
             resolved_sort_by = "relevance"
         else:
             if sort_by == "date_desc":
@@ -2277,23 +2281,32 @@ class MediaDatabase:
                     page_params = tuple(params + [results_per_page, resolved_offset])
                     results_list = [
                         dict(row)
-                        for row in connection.execute(
-                            results_sql, page_params
-                        ).fetchall()
+                        for row in connection.execute(results_sql, page_params).fetchall()
                     ]
         except Exception as error:
-            logger.error("Media search failed (error_type={}).", type(error).__name__)
+            logger.error(
+                "Media search failed (error_type={}).", type(error).__name__
+            )
             raise DatabaseError("Media search failed.") from None
 
-        logger.info(
-            "Media search completed (mode={}, limit={}, offset={}, result_count={}, total={}, sort={}).",
-            "fts" if fts_search_active else "browse",
-            results_per_page,
-            resolved_offset,
-            len(results_list),
-            total_matches,
-            resolved_sort_by,
-        )
+        if library_summary:
+            logger.info(
+                "Media search completed (mode={}, limit={}, offset={}, sort={}, summary=true).",
+                "fts" if fts_search_active else "browse",
+                results_per_page,
+                resolved_offset,
+                resolved_sort_by,
+            )
+        else:
+            logger.info(
+                "Media search completed (mode={}, limit={}, offset={}, result_count={}, total={}, sort={}).",
+                "fts" if fts_search_active else "browse",
+                results_per_page,
+                resolved_offset,
+                len(results_list),
+                total_matches,
+                resolved_sort_by,
+            )
         return results_list, total_matches
 
     # --- Public Mutating Methods (Modified for Python Sync/FTS Logging) ---
@@ -3925,9 +3938,7 @@ class MediaDatabase:
                                     # already-canonical source url (e.g. the
                                     # https:// the row was first imported
                                     # from).
-                                    update_fields.extend(
-                                        ["is_trash = ?", "trash_date = ?"]
-                                    )
+                                    update_fields.extend(["is_trash = ?", "trash_date = ?"])
                                     update_params.extend([0, None])
                                     if restore_canonicalizes_url:
                                         update_fields.append("url = ?")

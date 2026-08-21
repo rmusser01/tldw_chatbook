@@ -75,7 +75,7 @@ from Tests.UI.test_library_shell import (
     LibraryHarness,
     _FakeSkillsScopeService,
     _active_library_screen,
-    _build_test_app,
+    _build_test_app as _build_library_test_app,
     _seed_conversations,
     _two_conversations,
     _two_media_items,
@@ -84,6 +84,13 @@ from Tests.UI.test_library_shell import (
     _wait_for_library_shell,
     _wait_for_selector,
 )
+
+
+def _build_test_app():
+    """Build the legacy-profile app assumed by retained-entry owner tests."""
+    app = _build_library_test_app()
+    app.library_new_profile_admission = False
+    return app
 
 
 @dataclasses.dataclass(frozen=True)
