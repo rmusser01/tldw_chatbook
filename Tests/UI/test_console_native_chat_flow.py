@@ -1799,8 +1799,8 @@ def _static_plain_text(widget: Static) -> str:
 def _message_row_plain_text(console, message_id: str) -> str:
     """Renderer-agnostic plain text of one transcript message row (TASK-1990).
 
-    Plain rows carry one Content renderable; markdown rows expose header and
-    footer Statics plus the Markdown source.
+    Grouped Assistant messages carry their sole role label on the outer turn
+    surface. Standalone rows retain their pre-grouping message-row shape.
     """
     from textual.widgets import Markdown
 
@@ -1808,12 +1808,18 @@ def _message_row_plain_text(console, message_id: str) -> str:
         ConsoleMarkdownMessage,
     )
 
+    try:
+        surface = console.query_one(f"#console-assistant-turn-{message_id}")
+    except NoMatches:
+        surface = console.query_one(f"#console-message-{message_id}")
     row = console.query_one(f"#console-message-{message_id}")
     if isinstance(row, ConsoleMarkdownMessage):
-        parts = [_static_plain_text(static) for static in row.query(Static)]
+        parts = [_static_plain_text(static) for static in surface.query(Static)]
         parts.append(row.query_one(Markdown).source)
         return "\n".join(parts)
-    return _static_plain_text(row)
+    if surface is row:
+        return _static_plain_text(row)
+    return "\n".join(_static_plain_text(static) for static in surface.query(Static))
 
 
 def _widget_text(widget) -> str:
@@ -3818,9 +3824,12 @@ async def test_transcript_role_label_renders_dim_body_full_contrast():
 
         row = console.query_one(f"#console-message-{message.id}")
         if isinstance(row, ConsoleMarkdownMessage):
-            # The dim role label lives inside the stable header; the body is a
-            # separate Markdown widget and keeps full contrast by construction.
-            rendered = row.query_one(
+            # The one dim role label belongs to the outer Assistant turn; the
+            # headerless Markdown answer remains a separate full-contrast body.
+            turn = console.query_one(f"#console-assistant-turn-{message.id}")
+            labels = list(turn.query(".console-transcript-speaker-label"))
+            assert len(labels) == 1
+            rendered = turn.query_one(
                 ".console-transcript-speaker-label", Static
             ).renderable
             body_text = _message_row_plain_text(console, message.id)

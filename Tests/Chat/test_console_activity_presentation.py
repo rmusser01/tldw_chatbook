@@ -239,16 +239,12 @@ def test_direct_controller_review_results_are_blocked(verdict: str) -> None:
     ],
 )
 def test_error_wrapped_provider_refusals_are_blocked(refusal: str) -> None:
-    assert (
-        classify_activity_status(STEP_TOOL_RESULT, f"ERROR: {refusal}")
-        == "blocked"
-    )
+    assert classify_activity_status(STEP_TOOL_RESULT, f"ERROR: {refusal}") == "blocked"
 
 
 def test_unknown_error_wrapped_tool_failure_is_failed() -> None:
     assert (
-        classify_activity_status(STEP_TOOL_RESULT, "ERROR: disk exploded")
-        == "failed"
+        classify_activity_status(STEP_TOOL_RESULT, "ERROR: disk exploded") == "failed"
     )
 
 
