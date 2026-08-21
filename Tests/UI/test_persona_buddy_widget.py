@@ -351,6 +351,80 @@ async def test_exact_cell_layouts_keep_complete_labelled_controls(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("viewport", [(18, 6), (12, 4), (10, 2)])
+async def test_compact_keyboard_move_preserves_preferred_size_on_restore(
+    viewport: tuple[int, int],
+):
+    controller = _FakeController(size=(28, 12))
+    app = _BuddyApp(controller)
+    async with app.run_test(size=viewport) as pilot:
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: buddy.has_class("persona-buddy-compact"))
+        start = buddy.absolute_offset
+        buddy.focus(scroll_visible=False)
+
+        await pilot.press("k")
+        await _wait_until(lambda: len(controller.persisted) == 1)
+
+        preferred = controller.preferences.geometry
+        assert (preferred.width, preferred.height) == (28, 12)
+        assert preferred.y == max(0, start.y - 1)
+        await pilot.resize_terminal(28, 12)
+        await _wait_until(lambda: not buddy.has_class("persona-buddy-compact"))
+        assert (buddy.region.width, buddy.region.height) == (28, 12)
+
+
+@pytest.mark.asyncio
+async def test_drag_while_viewport_becomes_compact_preserves_preferred_size():
+    controller = _FakeController(size=(28, 12))
+    app = _BuddyApp(controller)
+    async with app.run_test(size=(80, 24)) as pilot:
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: buddy.region.width == 28)
+        handle = buddy.query_one("#persona-buddy-drag-handle", Static)
+        buddy.on_mouse_down(
+            _mouse(
+                events.MouseDown,
+                x=handle.region.x + 1,
+                y=handle.region.y,
+                widget=handle,
+            )
+        )
+        assert app.mouse_captured is buddy
+
+        await pilot.resize_terminal(12, 4)
+        await _wait_until(lambda: buddy.has_class("persona-buddy-compact"))
+        buddy.on_mouse_move(_mouse(events.MouseMove, x=0, y=0))
+        buddy.on_mouse_up(_mouse(events.MouseUp, x=0, y=0))
+        await _wait_until(lambda: len(controller.persisted) == 1)
+
+        preferred = controller.preferences.geometry
+        assert (preferred.width, preferred.height) == (28, 12)
+        await pilot.resize_terminal(28, 12)
+        await _wait_until(lambda: not buddy.has_class("persona-buddy-compact"))
+        await _wait_until(
+            lambda: (buddy.region.width, buddy.region.height) == (28, 12)
+        )
+
+
+@pytest.mark.asyncio
+async def test_compact_keyboard_resize_intentionally_updates_preferred_size():
+    controller = _FakeController(size=(28, 12))
+    app = _BuddyApp(controller)
+    async with app.run_test(size=(10, 2)) as pilot:
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: buddy.has_class("persona-buddy-compact"))
+        buddy.focus(scroll_visible=False)
+
+        await pilot.press("L")
+        await _wait_until(lambda: len(controller.persisted) == 1)
+
+        preferred = controller.preferences.geometry
+        assert (preferred.width, preferred.height) == (29, 12)
+        assert (buddy.region.width, buddy.region.height) == (10, 1)
+
+
+@pytest.mark.asyncio
 async def test_labelled_buttons_click_without_starting_drag_and_reopen_collapsed():
     controller = _FakeController()
     app = _BuddyApp(controller)

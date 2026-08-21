@@ -610,11 +610,11 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         if not resize and not in_handle:
             return
         mode = "resize" if resize else "drag"
-        geometry = PersonaBuddyGeometry(
+        preferred = self._working_preferences.geometry
+        geometry = replace(
+            preferred,
             x=self.absolute_offset.x,
             y=self.absolute_offset.y,
-            width=region.width,
-            height=region.height,
         )
         self._interaction = (mode, screen_x, screen_y, geometry)
         self.focus(scroll_visible=False)
@@ -644,9 +644,11 @@ class PersonaBuddyWidget(Widget, can_focus=True):
                 width=max(1, original.width + dx),
                 height=max(1, original.height + dy),
             )
-        clamped = self._clamped_geometry(candidate)
-        self._working_preferences = replace(self._working_preferences, geometry=clamped)
-        self._apply_geometry(clamped)
+        preferred = self._preferred_geometry_at_clamped_position(candidate)
+        self._working_preferences = replace(
+            self._working_preferences, geometry=preferred
+        )
+        self._apply_geometry(preferred)
         event.stop()
 
     def on_mouse_up(self, event: events.MouseUp) -> None:
@@ -681,18 +683,29 @@ class PersonaBuddyWidget(Widget, can_focus=True):
     ) -> None:
         if not self._is_current_view():
             return
-        geometry = self._clamped_geometry(self._working_preferences.geometry)
+        geometry = self._working_preferences.geometry
+        displayed = self._clamped_geometry(geometry)
         candidate = replace(
             geometry,
-            x=max(0, geometry.x + dx),
-            y=max(0, geometry.y + dy),
+            x=max(0, displayed.x + dx),
+            y=max(0, displayed.y + dy),
             width=max(1, geometry.width + dw),
             height=max(1, geometry.height + dh),
         )
-        clamped = self._clamped_geometry(candidate)
-        self._working_preferences = replace(self._working_preferences, geometry=clamped)
-        self._apply_geometry(clamped)
-        self._apply_and_schedule_preferences(geometry=clamped, reconcile=False)
+        preferred = self._preferred_geometry_at_clamped_position(candidate)
+        self._working_preferences = replace(
+            self._working_preferences, geometry=preferred
+        )
+        self._apply_geometry(preferred)
+        self._apply_and_schedule_preferences(geometry=preferred, reconcile=False)
+
+    def _preferred_geometry_at_clamped_position(
+        self, geometry: PersonaBuddyGeometry
+    ) -> PersonaBuddyGeometry:
+        """Keep preferred dimensions while constraining the displayed position."""
+
+        displayed = self._clamped_geometry(geometry)
+        return replace(geometry, x=displayed.x, y=displayed.y)
 
     def action_move_left(self) -> None:
         self._geometry_action(dx=-1)
@@ -722,10 +735,12 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         if not self._is_current_view():
             return
         geometry = PersonaBuddyGeometry(width=_DEFAULT_WIDTH, height=_DEFAULT_HEIGHT)
-        clamped = self._clamped_geometry(geometry)
-        self._working_preferences = replace(self._working_preferences, geometry=clamped)
-        self._apply_geometry(clamped)
-        self._apply_and_schedule_preferences(geometry=clamped, reconcile=False)
+        preferred = self._preferred_geometry_at_clamped_position(geometry)
+        self._working_preferences = replace(
+            self._working_preferences, geometry=preferred
+        )
+        self._apply_geometry(preferred)
+        self._apply_and_schedule_preferences(geometry=preferred, reconcile=False)
 
     def action_toggle_collapse(self) -> None:
         if not self._is_current_view():

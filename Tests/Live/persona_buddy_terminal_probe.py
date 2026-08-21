@@ -36,6 +36,7 @@ _CHECK_NAMES = (
     "navigation",
     "viewport_clamp",
     "compact_controls",
+    "compact_move_restore",
     "capture_release",
     "paint",
     "geometry_restore",
@@ -197,6 +198,7 @@ def _child(preferences_path: Path, report_path: Path) -> int:
             Binding("m", "probe_modal", "Modal", priority=True),
             Binding("n", "probe_navigate", "Navigate", priority=True),
             Binding("o", "probe_reopen", "Reopen", priority=True),
+            Binding("p", "probe_focus_buddy", "Focus Buddy", priority=True),
             Binding("q", "probe_finish", "Finish", priority=True),
         ]
 
@@ -274,6 +276,11 @@ def _child(preferences_path: Path, report_path: Path) -> int:
             )
             await self.reconcile_persona_buddy_view()
 
+        def action_probe_focus_buddy(self) -> None:
+            buddies = list(self.screen.query(PersonaBuddyWidget))
+            if buddies:
+                buddies[0].focus(scroll_visible=False)
+
         def action_probe_finish(self) -> None:
             self.graceful_exit_requested = True
             self._write_probe_report()
@@ -322,6 +329,7 @@ def _child(preferences_path: Path, report_path: Path) -> int:
                     modal_region = None
             payload = {
                 "capture_released": self.mouse_captured is None,
+                "buddy_focused": buddy is not None and screen.focused is buddy,
                 "collapsed": preferences_now.collapsed,
                 "controls": controls,
                 "focus_guard": self.focus_guard_observed,
@@ -381,25 +389,6 @@ def _child(preferences_path: Path, report_path: Path) -> int:
 
 def _set_size(fd: int, columns: int, rows: int) -> None:
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, columns, 0, 0))
-
-
-def _wait_for_output(fd: int, process: subprocess.Popen[bytes], needle: bytes) -> bytes:
-    deadline = time.monotonic() + _TIMEOUT_SECONDS
-    captured = bytearray()
-    while time.monotonic() < deadline:
-        if process.poll() is not None:
-            break
-        ready, _, _ = select.select([fd], [], [], 0.1)
-        if not ready:
-            continue
-        try:
-            captured.extend(os.read(fd, 65536))
-        except OSError:
-            break
-        if needle in captured:
-            return bytes(captured)
-    tail = bytes(captured[-4000:]).decode("utf-8", errors="replace")
-    raise RuntimeError(f"persona_buddy_terminal_not_ready\n{tail}")
 
 
 def _drain_for(fd: int, duration: float) -> bytes:
@@ -469,12 +458,27 @@ def _run_child(
     os.close(slave)
     current_phase = f"{phase}:startup"
     try:
-        _wait_for_output(master, process, b"Persona Buddy")
-        initial_deadline = time.monotonic() + 2.0
-        while not report.exists() and time.monotonic() < initial_deadline:
-            time.sleep(0.02)
-        if not report.exists():
-            raise RuntimeError("persona_buddy_terminal_initial_report_missing")
+        initial_deadline = time.monotonic() + _TIMEOUT_SECONDS
+        startup_output = bytearray()
+        initial = None
+        while time.monotonic() < initial_deadline and process.poll() is None:
+            if report.exists():
+                candidate = json.loads(report.read_text(encoding="utf-8"))
+                region = candidate.get("region")
+                if (
+                    candidate.get("view_present")
+                    and region is not None
+                    and region["width"] > 0
+                    and region["height"] > 0
+                ):
+                    initial = candidate
+                    break
+            startup_output.extend(_drain_for(master, 0.02))
+        if initial is None:
+            tail = bytes(startup_output[-4000:]).decode("utf-8", errors="replace")
+            raise RuntimeError(
+                f"persona_buddy_terminal_initial_report_missing\n{tail}"
+            )
 
         def wait_for_report(predicate: Any, *, timeout: float = 2.0) -> dict[str, Any]:
             deadline = time.monotonic() + timeout
@@ -491,7 +495,6 @@ def _run_child(
                 f"payload={payload!r} terminal_tail={tail!r}"
             )
 
-        initial = json.loads(report.read_text(encoding="utf-8"))
         current_phase = f"{phase}:interaction"
         observed = {
             "drag": False,
@@ -506,6 +509,7 @@ def _run_child(
             "paint": initial["painted"],
             "viewport_clamp": False,
             "compact_controls": False,
+            "compact_move_restore": False,
             "graceful_exit": False,
         }
         if drive:
@@ -651,6 +655,8 @@ def _run_child(
                     if attempt == 1:
                         raise
             observed["navigation_view"] = navigated["view_present"]
+            os.write(master, b"p")
+            wait_for_report(lambda payload: payload["buddy_focused"])
             _set_size(master, 18, 6)
             process.send_signal(signal.SIGWINCH)
             compact_dual = wait_for_report(
@@ -680,6 +686,35 @@ def _run_child(
             observed["viewport_clamp"] = compact_minimal["viewport_clamped"]
             observed["compact_controls"] = bool(
                 compact_dual["compact"] and compact_minimal["compact"]
+            )
+            compact_preferred = compact_minimal["geometry"]
+            compact_display_y = compact_minimal["region"]["y"]
+            os.write(master, b"k")
+            compact_moved = wait_for_report(
+                lambda payload: (
+                    payload["geometry"]["y"]
+                    == max(0, compact_display_y - 1)
+                    and payload["geometry"]["width"]
+                    == compact_preferred["width"]
+                    and payload["geometry"]["height"]
+                    == compact_preferred["height"]
+                )
+            )
+            _set_size(master, 28, 12)
+            process.send_signal(signal.SIGWINCH)
+            compact_restored = wait_for_report(
+                lambda payload: (
+                    not payload["compact"]
+                    and payload["region"]["width"] == compact_preferred["width"]
+                    and payload["region"]["height"]
+                    == compact_preferred["height"]
+                )
+            )
+            observed["compact_move_restore"] = bool(
+                compact_moved["geometry"]["width"] == 28
+                and compact_moved["geometry"]["height"] == 12
+                and compact_restored["region"]["width"] == 28
+                and compact_restored["region"]["height"] == 12
             )
         else:
             _drain_for(master, 0.30)
@@ -795,6 +830,9 @@ def _parent(
                 ),
                 "viewport_clamp": first["observed"]["viewport_clamp"],
                 "compact_controls": first["observed"]["compact_controls"],
+                "compact_move_restore": first["observed"][
+                    "compact_move_restore"
+                ],
                 "capture_release": first["capture_released"],
                 "paint": first["observed"]["paint"],
                 "geometry_restore": second["loaded_geometry"] == first["geometry"],

@@ -19569,7 +19569,8 @@ class ChatScreen(BaseAppScreen):
             self.run_worker(
                 self._skill._refresh_console_skill_candidates(), exclusive=False
             )
-        # Note: BaseAppScreen doesn't have on_screen_resume, so no super() call
+        # Textual's MRO dispatch also invokes BaseAppScreen's shared reconciliation;
+        # this handler extends that resume event with Console-owned replay work.
 
     def set_task_resume_state(self, task_state: TaskResumeState) -> None:
         """Update native Console task-resume state and refresh its cards."""
