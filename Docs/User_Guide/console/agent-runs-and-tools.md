@@ -218,6 +218,26 @@ already streaming.
 
 ### Change review — reviewing a turn's file changes
 
+Change Review is **off for every new workspace until you explicitly enable
+it** in **Settings > Workspaces**. The global `[change_review] enabled`
+setting is only a capability switch; it never opts a workspace in by itself.
+If Git, the global capability, or the workspace registry is unavailable, the
+toggle is not offered and Console continues without change tracking.
+
+Enabling prepares each bound folder in a bounded background queue. Settings
+shows `preparing`, `ready`, or `failed` state and offers a retry for failures;
+chat and file tools never wait for that preparation. A turn that starts while
+a folder is still preparing or failed continues normally and gets an
+alias-only warning explaining that Change Review skipped that folder. The
+warning is not a snapshot and cannot enter Review, revert, retention, or
+cleanup state.
+
+The privacy tradeoff is explicit: Change Review stores shadow Git history in
+the application's data directory, including file contents, for 30 days by
+default (or the configured `[change_review] retention_days`). Disabling a
+workspace stops new review snapshots but does **not** erase history already
+retained; normal retention cleanup still governs that existing history.
+
 When an agent turn edits files, the transcript shows a **turn file card**
 directly under that turn instead of a plain summary line: a header with the
 counts ("✎ Edited 3 files  +92 −468"), an **expand/collapse-all** toggle, a

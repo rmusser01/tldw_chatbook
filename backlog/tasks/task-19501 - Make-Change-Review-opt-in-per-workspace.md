@@ -1,7 +1,7 @@
 ---
 id: TASK-19501
 title: Make Change Review opt-in per workspace
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-21'
@@ -22,14 +22,14 @@ Stop ordinary Console chats from silently creating and retaining shadow Git hist
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Missing or unreadable per-workspace Change Review state is disabled; only an explicit stored true enables tracking
-- [ ] #2 The global Change Review capability distinguishes enabled, disabled, and unavailable without treating a read/coercion failure as enabled
-- [ ] #3 Workspace reads return an opaque durable revision and compare-and-set writes reject stale or ABA toggle attempts without changing runtime state
-- [ ] #4 Admission, toggle publication, and initializer completion share one app-owned consent lock and obey the documented linearization rules
-- [ ] #5 Enabling initializes each canonical root in the background with preparing, ready, failed, and bounded retry states; chat never waits for initialization
-- [ ] #6 Disabled workspaces create no initial-snapshot or per-turn snapshot work
-- [ ] #7 Settings disables unavailable toggles and discloses shadow Git file-content retention, including that disabling does not erase existing history
-- [ ] #8 Real-database, mounted Settings, and barrier-controlled concurrency tests cover missing, failure, stale revision, admission/toggle ordering, and disable-reenable initializer ABA
+- [x] #1 Missing or unreadable per-workspace Change Review state is disabled; only an explicit stored true enables tracking
+- [x] #2 The global Change Review capability distinguishes enabled, disabled, and unavailable without treating a read/coercion failure as enabled
+- [x] #3 Workspace reads return an opaque durable revision and compare-and-set writes reject stale or ABA toggle attempts without changing runtime state
+- [x] #4 Admission, toggle publication, and initializer completion share one app-owned consent lock and obey the documented linearization rules
+- [x] #5 Enabling initializes each canonical root in the background with preparing, ready, failed, and bounded retry states; chat never waits for initialization
+- [x] #6 Disabled workspaces create no initial-snapshot or per-turn snapshot work
+- [x] #7 Settings disables unavailable toggles and discloses shadow Git file-content retention, including that disabling does not erase existing history
+- [x] #8 Real-database, mounted Settings, and barrier-controlled concurrency tests cover missing, failure, stale revision, admission/toggle ordering, and disable-reenable initializer ABA
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -46,3 +46,20 @@ ADR required: yes
 ADR path: `backlog/decisions/077-change-review-consent-and-asynchronous-finalization.md`
 Reason: This changes privacy-sensitive shadow-content ownership, workspace consent, cross-module state, and lifecycle policy.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+Implemented explicit per-workspace consent with typed unavailable state,
+opaque revisions, and compare-and-set toggles under one app-owned lifecycle
+lock. Replaced the registry's unowned snapshot thread with a fixed bounded
+daemon initializer pool, immutable turn admission, alias-only skipped-root
+warnings, revision/generation-safe completion, bounded retry, and bounded
+shutdown. Settings now renders the same revision-consistent service snapshot,
+discloses shadow Git file-content retention, and keeps chat/tools available
+through preparation or failure. No schema migration was needed; the design
+follows ADR-077.
+
+Verification covered real SQLite registry behavior, deterministic concurrency
+barriers, mounted Settings flows, Console turn-context capture, bridge warning
+isolation from `change_snapshots`, shutdown ordering, focused Ruff checks, and
+whitespace validation.
