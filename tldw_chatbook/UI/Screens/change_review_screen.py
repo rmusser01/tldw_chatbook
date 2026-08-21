@@ -106,6 +106,31 @@ COMMIT_TURN_MODE_REFUSAL = (
     "commit works on the working tree — select “Working tree (current)”"
 )
 
+#: The same sentence, under the name push/PR read it by (T8). One literal,
+#: so the three git affordances can never disagree about what "busy" means.
+GIT_BUSY_REASON = COMMIT_BUSY_REASON
+
+#: TASK-16801 arc B (spec §6): push/PR refusal + tooltip copy.
+#:
+#: The two push reasons are the ENGINE's own sentences
+#: (``git_workspace.push_current`` raises ``GitWorkspaceError`` with exactly
+#: these strings), reused here on purpose: the disabled tooltip a user reads
+#: before pressing and the error they would read after must be one literal,
+#: never two that can drift apart.
+PUSH_NO_REMOTE_REASON = "no git remote configured"
+PUSH_DETACHED_REASON = "no branch checked out"
+#: Likewise ``pr_compare_url``'s own no-upstream refusal.
+PR_NO_UPSTREAM_REASON = "push the branch first"
+#: Neither action has a repository to act on at all (detection found none,
+#: or the only detected root has since gone).
+GIT_NO_REPO_REASON = "no git repository detected"
+PUSH_TURN_MODE_REFUSAL = (
+    "push works on the working tree — select “Working tree (current)”"
+)
+PR_TURN_MODE_REFUSAL = (
+    "opening a PR works on the working tree — select “Working tree (current)”"
+)
+
 #: The footer's key legend, per mode. In `current` mode the snapshot-only
 #: keys stop being advertised and the line says WHY (T6 re-review finding
 #: (a): the affordances must present as unavailable rather than looking live
@@ -114,8 +139,8 @@ FOOTER_TURN_MODE = (
     "j/k files · Enter diff · c comment line · C comment file · Esc back"
 )
 FOOTER_CURRENT_MODE = (
-    "j/k files · Enter diff · g commit · Esc back · revert (u/U) and "
-    "comments (c/C) need a recorded turn"
+    "j/k files · Enter diff · g commit · p push · P open PR · Esc back · "
+    "revert (u/U) and comments (c/C) need a recorded turn"
 )
 
 #: Group headings in display order. "Other" carries the rare git letters
@@ -1024,6 +1049,76 @@ def _commit_warnings(info: "GitWorkspaceInfo") -> list[str]:
     return []
 
 
+def _push_refusal_for_info(info: "GitWorkspaceInfo | None") -> "str | None":
+    """Why ``info``'s repository cannot be pushed, or ``None`` when it can.
+
+    Spec §6's two preconditions, in the engine's own words (see
+    :data:`PUSH_DETACHED_REASON` / :data:`PUSH_NO_REMOTE_REASON`) so the
+    tooltip a user reads before pressing and the error they would read
+    after can never say different things.
+
+    Args:
+        info: A detected repository, or ``None`` when detection has no
+            entry for the root at all.
+
+    Returns:
+        The refusal copy, or ``None`` when a push is possible.
+    """
+    if info is None:
+        return GIT_NO_REPO_REASON
+    if info.detached or not info.branch:
+        return PUSH_DETACHED_REASON
+    if not info.remotes:
+        return PUSH_NO_REMOTE_REASON
+    return None
+
+
+def _pr_refusal_for_info(info: "GitWorkspaceInfo | None") -> "str | None":
+    """Why ``info``'s branch has no PR page yet — the CHEAP half only.
+
+    Deliberately does not judge the HOST: that answer costs a remote-URL
+    parse and, for the Gitea family, a git invocation, so it is computed
+    once per load off-thread (``provider.pr_url``) and cached instead --
+    see ``ChangeReviewScreen._pr_refusal``. This half is pure attribute
+    reads and is safe to call on every affordance refresh.
+
+    Args:
+        info: A detected repository, or ``None``.
+
+    Returns:
+        The refusal copy, or ``None`` when the branch has an upstream.
+    """
+    if info is None:
+        return GIT_NO_REPO_REASON
+    if info.upstream is None:
+        return PR_NO_UPSTREAM_REASON
+    return None
+
+
+def _combined_refusal(reasons: "Sequence[tuple[str, str]]") -> str:
+    """Fold per-root refusals into ONE honest line.
+
+    With a single candidate root there is exactly one truth to tell, so it
+    is told verbatim. With several, naming each root's own reason is the
+    only honest option -- picking one root's reason and presenting it as
+    the whole answer would misdescribe the others.
+
+    Args:
+        reasons: ``(root, reason)`` pairs, one per candidate root.
+
+    Returns:
+        The refusal copy for the affordance's tooltip and its notify.
+    """
+    if not reasons:
+        return GIT_NO_REPO_REASON
+    if len(reasons) == 1:
+        return reasons[0][1]
+    from pathlib import Path as _P
+
+    detail = "; ".join(f"{_P(root).name}: {reason}" for root, reason in reasons)
+    return f"no repository here can be used — {detail}"
+
+
 def _commit_entries(
     files: "Sequence[ChangedFile]",
 ) -> list[tuple[str, tuple[str, ...]]]:
@@ -1259,6 +1354,13 @@ class ChangeReviewScreen(Screen):
         # rather than being conditionally unbound -- see
         # `_refresh_mode_affordances` for why `check_action` is NOT used.
         Binding("g", "git_commit", "Commit…", show=False),
+        # TASK-16801 arc B (spec §6): push and the PR compare link. Same
+        # posture as `g` -- plain letters nothing else on this screen or in
+        # the diff pane claims (the pane reclaims only up/down/`c`/escape),
+        # and they refuse with copy outside `current` mode rather than
+        # being conditionally unbound.
+        Binding("p", "git_push", "Push…", show=False),
+        Binding("P", "git_pr", "Open PR", show=False),
     ]
 
     def __init__(
@@ -1356,6 +1458,17 @@ class ChangeReviewScreen(Screen):
         #: ``current_diff_text`` (which is a fatal git error on an
         #: untracked path or an unborn HEAD).
         self._current_untracked: "dict[str, frozenset[str]]" = {}
+        #: TASK-16801 arc B (spec §6): the last load's ``provider.pr_url``
+        #: answer per root -- a URL, or a
+        #: ``GitWorkspaceRefusal`` naming why there is none. Computed IN
+        #: THE LOAD WORKER, never on the UI thread: answering it costs a
+        #: remote-URL parse and, for the Gitea family, a git invocation,
+        #: and ``_refresh_mode_affordances`` runs on every busy flip (this
+        #: repo has already shipped one "git subprocess per keypress"
+        #: regression). Consulted READ-ONLY by the PR button's tooltip;
+        #: the press path always re-reads rather than opening this URL,
+        #: which can be as stale as the last load.
+        self._current_pr_results: "dict[str, object]" = {}
         #: Identity token for the in-flight current-mode load. Captured
         #: before dispatch and re-checked in the landing -- see
         #: ``_land_current_mode``.
@@ -1424,6 +1537,26 @@ class ChangeReviewScreen(Screen):
                 )
                 commit_button.display = False
                 yield commit_button
+                # TASK-16801 arc B (spec §6): push and PR. Hidden on the
+                # same terms as commit -- but unlike commit these stay
+                # OFFERED on a clean tree, because unpushed commits are
+                # exactly the state they exist for.
+                push_button = Button(
+                    "Push…",
+                    id="change-review-git-push-btn",
+                    classes="change-review-git-push-btn",
+                    compact=True,
+                )
+                push_button.display = False
+                yield push_button
+                pr_button = Button(
+                    "Open PR",
+                    id="change-review-git-pr-btn",
+                    classes="change-review-git-pr-btn",
+                    compact=True,
+                )
+                pr_button.display = False
+                yield pr_button
             yield Static(
                 "",
                 id="change-review-banner",
@@ -2001,6 +2134,75 @@ class ChangeReviewScreen(Screen):
             return None
         return str(row.get("root") or "") or None
 
+    def _git_target_roots(self) -> list[str]:
+        """The roots a PUSH or a PR may act on (spec §6's targeting rule).
+
+        Returns:
+            ``[focused leaf's root]`` when a `current`-mode leaf is
+            focused; otherwise EVERY detected root, in detection order.
+            The second case is what makes spec §6's ">1 detected root and
+            no focused leaf" branch reachable at all -- unlike commit
+            (``_commit_target_root``), push and PR are offered on a CLEAN
+            tree, which is precisely the state with no leaf to target
+            from. The ambiguity is resolved by the modal's root ``Select``,
+            never guessed at here.
+        """
+        focused = self._commit_target_root()
+        if focused is not None:
+            return [focused]
+        return list(self._current_infos)
+
+    def _push_refusal(self) -> "str | None":
+        """Why the `Push…` affordance is unavailable, or ``None``.
+
+        Returns:
+            The refusal copy. ``None`` as soon as ANY candidate root can be
+            pushed -- with several roots the modal's ``Select`` offers only
+            the ones that can, so one unusable sibling must not disable the
+            control (spec §6, AC #2: a reason, never a dead control, but
+            also never a needless one).
+        """
+        roots = self._git_target_roots()
+        reasons: list[tuple[str, str]] = []
+        for root in roots:
+            reason = _push_refusal_for_info(self._current_infos.get(root))
+            if reason is None:
+                return None
+            reasons.append((root, reason))
+        return _combined_refusal(reasons)
+
+    def _pr_refusal(self) -> "str | None":
+        """Why the `Open PR` affordance is unavailable, or ``None``.
+
+        Two layers, cheap first: no upstream is answerable from detection
+        alone (:func:`_pr_refusal_for_info`), while "this host has no PR
+        page we can link" is the CACHED answer from the last load's
+        off-thread ``provider.pr_url`` call. Before a load has landed the
+        cache is empty and only the cheap layer applies -- so the button
+        can be live for a moment against an unsupported host, and pressing
+        it then reports the host refusal honestly rather than opening
+        anything (``_land_pr_url``).
+
+        Returns:
+            The refusal copy, or ``None`` when a PR link is available.
+        """
+        from tldw_chatbook.Workspaces.git_workspace import (
+            GitWorkspaceRefusal as _Refusal,
+        )
+
+        roots = self._git_target_roots()
+        reasons: list[tuple[str, str]] = []
+        for root in roots:
+            reason = _pr_refusal_for_info(self._current_infos.get(root))
+            if reason is None:
+                cached = self._current_pr_results.get(root)
+                if isinstance(cached, _Refusal):
+                    reason = cached.reason
+            if reason is None:
+                return None
+            reasons.append((root, reason))
+        return _combined_refusal(reasons)
+
     def _refresh_mode_affordances(self) -> None:
         """Make every mode-scoped control LOOK like what it will actually do.
 
@@ -2023,6 +2225,8 @@ class ChangeReviewScreen(Screen):
         """
         try:
             commit_btn = self.query_one("#change-review-git-commit-btn", Button)
+            push_btn = self.query_one("#change-review-git-push-btn", Button)
+            pr_btn = self.query_one("#change-review-git-pr-btn", Button)
             comment_btn = self.query_one(
                 "#change-review-comment-file-btn", Button
             )
@@ -2034,19 +2238,35 @@ class ChangeReviewScreen(Screen):
         comment_btn.tooltip = CURRENT_MODE_COMMENT_REFUSAL if current else None
         footer.update(FOOTER_CURRENT_MODE if current else FOOTER_TURN_MODE)
         commit_btn.display = current
+        push_btn.display = current
+        pr_btn.display = current
         if not current:
-            commit_btn.disabled = False
-            commit_btn.tooltip = None
+            for button in (commit_btn, push_btn, pr_btn):
+                button.disabled = False
+                button.tooltip = None
             return
         if self._git_busy:
             commit_btn.disabled = True
-            commit_btn.tooltip = COMMIT_BUSY_REASON
+            commit_btn.tooltip = GIT_BUSY_REASON
         elif self._commit_target_root() is None:
             commit_btn.disabled = True
             commit_btn.tooltip = COMMIT_CLEAN_TREE_REASON
         else:
             commit_btn.disabled = False
             commit_btn.tooltip = None
+        # Spec §6: push and PR are NOT gated on the tree having changes --
+        # a clean tree with unpushed commits is their whole reason to exist.
+        for button, refusal in (
+            (push_btn, self._push_refusal),
+            (pr_btn, self._pr_refusal),
+        ):
+            if self._git_busy:
+                button.disabled = True
+                button.tooltip = GIT_BUSY_REASON
+                continue
+            reason = refusal()
+            button.disabled = reason is not None
+            button.tooltip = reason
 
     def _set_git_busy(self, busy: bool) -> None:
         """Flip the git-action busy flag and re-render what it gates.
@@ -2080,6 +2300,7 @@ class ChangeReviewScreen(Screen):
         self._focused_leaf = -1
         self._marked_diff_lines = set()
         self._current_untracked = {}
+        self._current_pr_results = {}
         self._current_root_errors = []
         self._turn_banner_lines = []
         self._update_banner()
@@ -2137,6 +2358,10 @@ class ChangeReviewScreen(Screen):
                     )
 
             statuses: list["CurrentRootStatus"] = []
+            #: TASK-16801 T8 (spec §6): the PR link's availability per root,
+            #: answered HERE (off-thread) so the affordance refresh never
+            #: has to spawn git to decide whether to enable a button.
+            pr_results: "dict[str, object]" = {}
             for root in roots:
                 # ONE try/except PER ROOT, never one around the batch: a
                 # root that vanished (or moved inside another repository)
@@ -2154,6 +2379,25 @@ class ChangeReviewScreen(Screen):
                     )
                     _land(self._land_current_root_failure, token, root, str(exc))
                     continue
+                # Its OWN try/except, never folded into the status read's:
+                # `pr_url` is contractually non-raising, so a raise here is
+                # a BUG in it -- and a bug in the PR link must not cost the
+                # user the working-tree read they actually asked for.
+                try:
+                    pr_results[str(statuses[-1].root)] = provider.pr_url(
+                        str(statuses[-1].root), statuses[-1].info
+                    )
+                except Exception:  # noqa: BLE001 -- the read must survive
+                    logger.opt(exception=True).warning(
+                        f"change_review: PR link probe failed for {root!r}"
+                    )
+            # Its OWN landing, deliberately, rather than a third argument to
+            # `_land_current_mode`: that landing's two-argument shape is
+            # pinned by T6's swallow/don't-swallow tests, and this is the
+            # same per-concern landing shape `_land_current_root_failure`
+            # already uses. `call_from_thread` preserves order, so the cache
+            # is in place before the render below refreshes the affordances.
+            _land(self._land_current_pr_links, token, pr_results)
             _land(self._land_current_mode, token, statuses)
 
         self.run_worker(
@@ -2212,6 +2456,21 @@ class ChangeReviewScreen(Screen):
         if line not in self._current_root_errors:
             self._current_root_errors.append(line)
         self._update_banner()
+
+    def _land_current_pr_links(
+        self, token: object, pr_results: "dict[str, object]"
+    ) -> None:
+        """Adopt the load's per-root PR-link answers (TASK-16801 T8).
+
+        Args:
+            token: The dispatch identity of the load that produced them.
+            pr_results: Root → URL or
+                :class:`~tldw_chatbook.Workspaces.git_workspace.GitWorkspaceRefusal`,
+                as computed off-thread by the load worker.
+        """
+        if not self._current_load_is_live(token):
+            return
+        self._current_pr_results = dict(pr_results or {})
 
     def _land_current_mode(
         self, token: object, statuses: "Sequence[CurrentRootStatus]"
@@ -2547,6 +2806,349 @@ class ChangeReviewScreen(Screen):
         # bumps the diff-cache generation, so no pre-commit diff survives.
         if self._current_mode_active():
             self._load_current_mode()
+
+    # -- push and PR (TASK-16801 arc B, spec §6) ---------------------------
+
+    @on(Button.Pressed, "#change-review-git-push-btn")
+    def _on_push_button(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.action_git_push()
+
+    @on(Button.Pressed, "#change-review-git-pr-btn")
+    def _on_pr_button(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.action_git_pr()
+
+    def action_git_push(self) -> None:
+        """`p` / `Push…`: confirm and push the current branch.
+
+        **Deliberately NOT gated on ``provider.run_active()``**, and the
+        contrast with :meth:`action_git_commit` is the point (spec §6 states
+        it explicitly): a push ships state that is ALREADY committed and
+        leaves the working tree untouched, so an agent run still editing
+        that tree is not endangered by it -- whereas a commit, which writes
+        the tree the run is mid-edit on, is refused.
+        """
+        if not self._current_mode_active():
+            self.notify(PUSH_TURN_MODE_REFUSAL, severity="warning")
+            return
+        if self._git_busy:
+            self.notify(GIT_BUSY_REASON, severity="warning")
+            return
+        refusal = self._push_refusal()
+        if refusal is not None:
+            self.notify(refusal, severity="warning")
+            return
+        self._dispatch_git_target_preflight("push")
+
+    def action_git_pr(self) -> None:
+        """`P` / `Open PR`: open the branch's compare/merge-request page."""
+        if not self._current_mode_active():
+            self.notify(PR_TURN_MODE_REFUSAL, severity="warning")
+            return
+        if self._git_busy:
+            self.notify(GIT_BUSY_REASON, severity="warning")
+            return
+        refusal = self._pr_refusal()
+        if refusal is not None:
+            self.notify(refusal, severity="warning")
+            return
+        self._dispatch_git_target_preflight("pr")
+
+    def _dispatch_git_target_preflight(self, action: str) -> None:
+        """Re-detect the candidate roots FRESH, then pick a target.
+
+        ``_current_infos`` is never pruned, so a cached entry can name a
+        repository that has since moved, lost its remote, or had its
+        upstream deleted -- and a push modal built on that would describe a
+        push that cannot happen. Detection is the right primitive here (not
+        ``current_status``): push and PR need branch/upstream/remotes, never
+        the file list, so this stays a cheap probe.
+
+        Args:
+            action: ``"push"`` or ``"pr"`` -- which landing to take.
+        """
+        roots = self._git_target_roots()
+        token = self._git_action_token = object()
+        self._set_git_busy(True)
+        provider = self._provider
+        app = self.app
+
+        def _preflight() -> None:
+            try:
+                detected = provider.detect_git(roots)
+            except Exception as exc:  # noqa: BLE001 -- the worker must live
+                logger.opt(exception=True).warning(
+                    f"change_review: {action} preflight failed for {roots!r}"
+                )
+                _land_on_ui(app, self._land_git_target_failure, token, str(exc))
+                return
+            _land_on_ui(
+                app,
+                self._land_git_target_preflight,
+                token,
+                action,
+                detected,
+                tuple(roots),
+            )
+
+        self.run_worker(
+            _preflight,
+            thread=True,
+            exclusive=True,
+            group=GIT_ACTION_WORKER_GROUP,
+        )
+
+    def _land_git_target_failure(self, token: object, message: str) -> None:
+        """A preflight that never produced a target: say so, do nothing.
+
+        Args:
+            token: The dispatch identity of the failed preflight.
+            message: The failure text.
+        """
+        if not self._git_action_is_live(token):
+            return
+        self._set_git_busy(False)
+        self.notify(f"Could not read the repository: {message}", severity="error")
+
+    def _land_git_target_preflight(
+        self,
+        token: object,
+        action: str,
+        detected: dict,
+        roots: "Sequence[str]",
+    ) -> None:
+        """Choose the target root (asking when ambiguous) and proceed.
+
+        Spec §6's multi-root rule: with more than one usable root and no
+        focused leaf, the action's modal carries a root ``Select`` -- and
+        the modal ALWAYS names the root it will act on, whether it asked or
+        not.
+
+        Args:
+            token: The dispatch identity of this preflight.
+            action: ``"push"`` or ``"pr"``.
+            detected: ``provider.detect_git``'s fresh result.
+            roots: The candidate roots, in the order they were probed.
+        """
+        if not self._git_action_is_live(token):
+            return
+        self._set_git_busy(False)
+        if not self._current_mode_active():
+            # The user left the mode while the fresh read ran; acting on a
+            # repository the view no longer shows would be a context lie.
+            return
+        from tldw_chatbook.Workspaces.git_workspace import (
+            GitWorkspaceInfo as _Info,
+            GitWorkspaceRefusal as _Refusal,
+        )
+
+        judge = _push_refusal_for_info if action == "push" else _pr_refusal_for_info
+        entries: "list[tuple[str, GitWorkspaceInfo]]" = []
+        refused: list[tuple[str, str]] = []
+        for root in roots:
+            result = (detected or {}).get(root)
+            if isinstance(result, _Info):
+                reason = judge(result)
+                if reason is None:
+                    entries.append((root, result))
+                else:
+                    refused.append((root, reason))
+            elif isinstance(result, _Refusal):
+                refused.append((root, result.reason))
+            else:
+                refused.append((root, GIT_NO_REPO_REASON))
+        if not entries:
+            # Every candidate went away or became unusable between the
+            # affordance refresh and this read -- git's live answer wins
+            # over what the button believed a moment ago.
+            self.notify(_combined_refusal(refused), severity="warning")
+            self._refresh_mode_affordances()
+            return
+        if action == "pr" and len(entries) == 1:
+            # Nothing to confirm: opening a page is not a mutation, so the
+            # single-repository case goes straight through.
+            self._dispatch_pr(entries[0][0], entries[0][1])
+            return
+
+        def _apply(result: "dict | None") -> None:
+            if not result:
+                return
+            if result.get("action") == "pr":
+                self._dispatch_pr(str(result["root"]), result["info"])
+            else:
+                self._dispatch_push(result)
+
+        self.app.push_screen(
+            ChangeGitPushModal(action=action, entries=entries), callback=_apply
+        )
+
+    def _dispatch_push(self, request: dict) -> None:
+        """Run the confirmed push off-thread.
+
+        Args:
+            request: The modal's result -- ``{"action", "root", "remote",
+                "info"}``. ``remote`` is ``None`` when the branch already
+                has an upstream (the engine then pushes to
+                ``info.upstream_remote``; spec §6 forbids refspec games).
+        """
+        root = str(request["root"])
+        remote = request["remote"]
+        info = request["info"]
+        token = self._git_action_token = object()
+        self._set_git_busy(True)
+        provider = self._provider
+        app = self.app
+
+        def _push() -> None:
+            from tldw_chatbook.Workspaces.git_workspace import GitWorkspaceError
+
+            # ASYMMETRIC by contract (the T5 seam comment), and deliberately
+            # NOT wrapped symmetrically: `push_current` RAISES only for the
+            # two preconditions (detached HEAD, no remote), while a push git
+            # actually REJECTED comes back as a returned `PushResult` whose
+            # `state` is "failed". Catching the returned case as an
+            # exception -- or reporting the raised case as a push outcome --
+            # would each misdescribe what happened to the user's remote.
+            try:
+                result = provider.push_current(root, info, remote)
+            except GitWorkspaceError as exc:
+                _land_on_ui(app, self._land_push_refused, token, str(exc))
+                return
+            except Exception as exc:  # noqa: BLE001 -- the worker must live
+                logger.opt(exception=True).warning(
+                    f"change_review: push failed for {root!r}"
+                )
+                _land_on_ui(app, self._land_push_refused, token, str(exc))
+                return
+            _land_on_ui(app, self._land_push_result, token, result, info, remote)
+
+        self.run_worker(
+            _push,
+            thread=True,
+            exclusive=True,
+            group=GIT_ACTION_WORKER_GROUP,
+        )
+
+    def _land_push_refused(self, token: object, message: str) -> None:
+        """A push that never ran: report the reason, change nothing.
+
+        Args:
+            token: The dispatch identity of the refused push.
+            message: The engine's own sentence.
+        """
+        if not self._git_action_is_live(token):
+            return
+        self._set_git_busy(False)
+        self.notify(message, severity="warning")
+
+    def _land_push_result(
+        self,
+        token: object,
+        result: "PushResult",
+        info: "GitWorkspaceInfo",
+        remote: "str | None",
+    ) -> None:
+        """Report the push's outcome, then re-read detection.
+
+        A FAILED push is a returned result, not an exception, and its
+        ``detail`` is git's own stderr excerpt -- surfaced VERBATIM (the
+        engine has already appended the credential-helper hint when the
+        excerpt looks like one; re-mapping it here would either duplicate
+        or contradict that).
+
+        Args:
+            token: The dispatch identity of this push.
+            result: The engine's :class:`PushResult`.
+            info: The fresh info the push ran against (names the branch).
+            remote: The explicit remote, or ``None`` when the upstream's
+                own remote was used.
+        """
+        if not self._git_action_is_live(token):
+            return
+        self._set_git_busy(False)
+        branch = info.branch or "HEAD"
+        target = remote or info.upstream_remote or "the remote"
+        if result.state == "pushed":
+            self.notify(f"Pushed {branch} to {target}")
+        elif result.state == "up_to_date":
+            self.notify(f"{target} is already up to date — nothing to push")
+        else:
+            detail = result.detail or "git reported no detail"
+            self.notify(f"Push failed: {detail}", severity="error")
+        # Re-read on EVERY outcome (spec §6: ahead/behind is re-read after a
+        # push): a first `-u` push sets an upstream, and even a rejected one
+        # means the header's ahead/behind is now describing a remote whose
+        # state we have just learned is not what we thought.
+        if self._current_mode_active():
+            self._load_current_mode()
+
+    def _dispatch_pr(self, root: str, info: "GitWorkspaceInfo") -> None:
+        """Build the compare URL off-thread, then open it.
+
+        Args:
+            root: The resolved root whose branch gets the PR page.
+            info: That root's FRESH detection.
+        """
+        token = self._git_action_token = object()
+        self._set_git_busy(True)
+        provider = self._provider
+        app = self.app
+
+        def _build() -> None:
+            # `pr_url` NEVER raises by contract -- it returns a URL or a
+            # typed refusal, so `isinstance` is the check, never try/except.
+            # The guard below is for a BUG in it, not for its normal
+            # refusal path.
+            try:
+                outcome = provider.pr_url(root, info)
+            except Exception as exc:  # noqa: BLE001 -- the worker must live
+                logger.opt(exception=True).warning(
+                    f"change_review: PR link failed for {root!r}"
+                )
+                _land_on_ui(app, self._land_git_target_failure, token, str(exc))
+                return
+            _land_on_ui(app, self._land_pr_url, token, outcome)
+
+        self.run_worker(
+            _build,
+            thread=True,
+            exclusive=True,
+            group=GIT_ACTION_WORKER_GROUP,
+        )
+
+    def _land_pr_url(self, token: object, outcome: object) -> None:
+        """Open the compare URL, or say why there is none.
+
+        ``self.app.open_url`` and never ``webbrowser.open`` (spec §6):
+        ``webbrowser`` can write to the terminal's stdout, which corrupts a
+        running TUI.
+
+        Args:
+            token: The dispatch identity of this PR build.
+            outcome: ``provider.pr_url``'s result -- a URL string or a
+                :class:`~tldw_chatbook.Workspaces.git_workspace.GitWorkspaceRefusal`.
+        """
+        if not self._git_action_is_live(token):
+            return
+        self._set_git_busy(False)
+        from tldw_chatbook.Workspaces.git_workspace import (
+            GitWorkspaceRefusal as _Refusal,
+        )
+
+        if isinstance(outcome, _Refusal):
+            self.notify(outcome.reason, severity="warning")
+            return
+        url = str(outcome)
+        try:
+            self.app.open_url(url)
+        except Exception:  # noqa: BLE001 -- never raise out of a landing
+            logger.opt(exception=True).warning("change_review: open_url failed")
+            # The URL itself is the recovery: a user who can read it can
+            # paste it, which a bare "could not open a browser" would deny.
+            self.notify(f"Could not open a browser — {url}", severity="error")
+            return
+        self.notify(f"Opening {url}")
 
     @staticmethod
     def _leaf_label(
@@ -3666,5 +4268,278 @@ class ChangeGitCommitModal(SafeModalDismissMixin, ModalScreen["dict | None"]):
         self._submit()
 
     @on(Button.Pressed, "#change-git-commit-no")
+    async def _cancel_button(self) -> None:
+        await self.request_safe_cancel(source="button")
+
+
+class ChangeGitPushModal(SafeModalDismissMixin, ModalScreen["dict | None"]):
+    """Confirm WHICH repository (and remote) a push -- or a PR link -- targets.
+
+    Spec §6's multi-root rule gives push and PR the same shape, so they
+    share one dialog rather than two near-identical ones: it always NAMES
+    the root it will act on, carries a root ``Select`` when more than one
+    detected repository qualifies and no leaf is focused (the clean-tree
+    case commit can never reach), and -- for a push with no upstream and
+    more than one remote -- a remote ``Select`` instead of a guess.
+
+    The ``action`` flag is what the two uses differ by: ``"push"`` confirms
+    a write to a remote, ``"pr"`` only disambiguates which repository's
+    compare page to open (a single-repository PR skips this dialog
+    entirely, since opening a page is not a mutation).
+
+    Dismisses with ``{"action", "root", "remote", "info"}`` on confirm, or
+    ``None`` on any cancellation (escape, Cancel, a backdrop click) -- the
+    mixin's default cancel result.
+    """
+
+    BINDINGS = [Binding("escape", "request_safe_cancel", "Cancel")]
+    SAFE_MODAL_CONTENT = "#change-git-push"
+
+    def __init__(
+        self,
+        *,
+        action: str,
+        entries: "Sequence[tuple[str, GitWorkspaceInfo]]",
+    ) -> None:
+        """Args are stored; the selectors are built in ``compose``.
+
+        Args:
+            action: ``"push"`` or ``"pr"``.
+            entries: ``(resolved root, FRESH detection)`` pairs -- already
+                filtered to the roots this action can actually use, so the
+                dialog never offers a target that would fail. Must be
+                non-empty.
+            
+        Raises:
+            ValueError: ``entries`` is empty (a dialog with no target is a
+                programming error, not a user-facing state).
+        """
+        super().__init__()
+        if not entries:
+            raise ValueError("ChangeGitPushModal needs at least one target root")
+        self._action = action
+        self._entries = list(entries)
+        self._infos = {root: info for root, info in self._entries}
+        self._selected_root = self._entries[0][0]
+
+    # -- copy ---------------------------------------------------------------
+
+    def _title(self, root: str) -> str:
+        """The dialog's first line -- it always names the repository.
+
+        Args:
+            root: The root currently targeted.
+
+        Returns:
+            Title copy for :data:`root`.
+        """
+        if self._action == "pr":
+            return f"Open a pull request for {root}"
+        return f"Push from {root}"
+
+    def _remote_names(self, root: str) -> list[str]:
+        """The remote NAMES configured at ``root``.
+
+        Args:
+            root: The root currently targeted.
+
+        Returns:
+            Remote names in ``git remote -v`` order.
+        """
+        return [name for name, _url in self._infos[root].remotes]
+
+    def _needs_remote_choice(self, root: str) -> bool:
+        """Whether the user must pick a remote for ``root``.
+
+        Args:
+            root: The root currently targeted.
+
+        Returns:
+            True only for a PUSH of a branch with no upstream on a
+            repository with more than one remote -- an upstream already
+            names its remote (spec §6: ``push <upstream_remote>``), and a
+            PR never pushes anything.
+        """
+        if self._action != "push":
+            return False
+        info = self._infos[root]
+        return info.upstream is None and len(info.remotes) > 1
+
+    def _summary_line(self, root: str) -> str:
+        """The branch/upstream/remote state this action will act on.
+
+        Args:
+            root: The root currently targeted.
+
+        Returns:
+            One line of copy naming the branch and what happens to it.
+        """
+        info = self._infos[root]
+        head = _head_label(info)
+        if self._action == "pr":
+            return f"{head} → {info.upstream}"
+        if info.upstream is not None:
+            target = info.upstream_remote or "the upstream's remote"
+            return f"{head} ↑{info.ahead} → {info.upstream}  ·  pushes to {target}"
+        if self._needs_remote_choice(root):
+            return f"{head}  ·  no upstream — choose a remote to track"
+        names = self._remote_names(root)
+        target = names[0] if names else "the remote"
+        return f"{head}  ·  no upstream — will push -u to {target}"
+
+    # -- layout -------------------------------------------------------------
+
+    def compose(self) -> ComposeResult:
+        """Target + (root Select) + summary + (remote Select) + buttons.
+
+        Returns:
+            The modal's widget tree.
+        """
+        root = self._selected_root
+        with Vertical(id="change-git-push"):
+            # Rich `Text`, never a plain string: a repository path or a
+            # branch name can contain brackets, and `Static`'s markup would
+            # eat them as a tag (this screen's own leaf-label scar).
+            yield Static(
+                Text(self._title(root)), id="change-git-push-target", markup=False
+            )
+            if len(self._entries) > 1:
+                from pathlib import Path as _P
+
+                yield Select(
+                    [(f"{_P(r).name} — {r}", r) for r, _info in self._entries],
+                    id="change-git-push-root",
+                    allow_blank=False,
+                    value=root,
+                )
+            yield Static(
+                Text(self._summary_line(root)),
+                id="change-git-push-summary",
+                markup=False,
+            )
+            names = self._remote_names(root)
+            remote_select = Select(
+                [(name, name) for name in names],
+                id="change-git-push-remote",
+                # `allow_blank=True` on purpose: `set_options` blanks the
+                # value on every root switch, and a non-blankable Select
+                # raises on exactly that.
+                allow_blank=True,
+                value=names[0] if names else Select.BLANK,
+            )
+            remote_select.display = self._needs_remote_choice(root)
+            yield remote_select
+            with Horizontal(id="change-git-push-buttons"):
+                yield Button(
+                    "Open PR" if self._action == "pr" else "Push",
+                    id="change-git-push-yes",
+                    variant="primary",
+                )
+                yield Button("Cancel", id="change-git-push-no")
+
+    def on_mount(self) -> None:
+        """Focus the confirm button, keeping the mixin's own mount work.
+
+        ``super().on_mount()`` is mandatory, not politeness: Textual
+        resolves ``on_mount`` by ordinary attribute lookup, so defining one
+        here SHADOWS :class:`SafeModalDismissMixin`'s -- which is what
+        records the mount generation and the opener's focus for the
+        restore-on-dismiss contract.
+        """
+        super().on_mount()
+        try:
+            self.query_one("#change-git-push-yes", Button).focus()
+        except Exception:  # noqa: BLE001 -- focus is never load-bearing
+            logger.opt(exception=True).warning(
+                "change_review: push modal focus failed"
+            )
+
+    @on(Select.Changed, "#change-git-push-root")
+    def _on_root_changed(self, event: Select.Changed) -> None:
+        """Re-render the dialog for the newly chosen repository.
+
+        Scoped to the ROOT selector by id: the remote selector's own
+        ``set_options`` below posts a ``Select.Changed`` too, and an
+        unscoped handler would re-enter this on it.
+
+        Args:
+            event: The selector's change event.
+        """
+        event.stop()
+        value = event.value
+        if not isinstance(value, str) or value not in self._infos:
+            return
+        self._apply_root(value)
+
+    def _apply_root(self, root: str) -> None:
+        """Point the dialog's copy and remote choice at ``root``.
+
+        Args:
+            root: The newly selected repository root.
+        """
+        try:
+            self._selected_root = root
+            self.query_one("#change-git-push-target", Static).update(
+                Text(self._title(root))
+            )
+            self.query_one("#change-git-push-summary", Static).update(
+                Text(self._summary_line(root))
+            )
+            names = self._remote_names(root)
+            remote_select = self.query_one("#change-git-push-remote", Select)
+            remote_select.set_options([(name, name) for name in names])
+            remote_select.value = names[0] if names else Select.BLANK
+            remote_select.display = self._needs_remote_choice(root)
+        except Exception:  # noqa: BLE001 -- never raise out of a handler
+            logger.opt(exception=True).warning(
+                "change_review: push modal root switch failed"
+            )
+
+    def _resolve_remote(self) -> "str | None":
+        """The remote to hand the engine, or ``None`` to let it derive one.
+
+        Returns:
+            ``None`` when the branch has an upstream -- spec §6 pushes to
+            ``info.upstream_remote``, and the engine reads that from
+            detection's ``%(upstream:remotename)`` rather than by splitting
+            the upstream string (remote names may contain ``"/"``).
+            Otherwise the chosen remote, or the sole one.
+        """
+        info = self._infos[self._selected_root]
+        if info.upstream is not None:
+            return None
+        names = self._remote_names(self._selected_root)
+        if self._needs_remote_choice(self._selected_root):
+            value = self.query_one("#change-git-push-remote", Select).value
+            if isinstance(value, str) and value in names:
+                return value
+        return names[0] if names else None
+
+    def _submit(self) -> None:
+        """Dismiss with the confirmed target."""
+        try:
+            root = self._selected_root
+            self.dismiss(
+                {
+                    "action": self._action,
+                    "root": root,
+                    "remote": self._resolve_remote(),
+                    # The FRESH detection this dialog was built over, so the
+                    # worker pushes what the user was just shown rather than
+                    # re-deriving it from the screen's never-pruned cache.
+                    "info": self._infos[root],
+                }
+            )
+        except Exception:  # noqa: BLE001 -- never raise out of a handler
+            logger.opt(exception=True).warning(
+                "change_review: push modal submit failed"
+            )
+
+    @on(Button.Pressed, "#change-git-push-yes")
+    def _confirm(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._submit()
+
+    @on(Button.Pressed, "#change-git-push-no")
     async def _cancel_button(self) -> None:
         await self.request_safe_cancel(source="button")

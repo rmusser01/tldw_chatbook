@@ -40,6 +40,15 @@
     min-width: 8;
     margin-left: 1;
 }
+/* TASK-16801 arc B (spec §6): push and the PR compare link, beside commit.
+   Same hidden-by-default treatment — `compose()` starts both with
+   `display = False` and `_refresh_mode_affordances` owns them from there. */
+.change-review-git-push-btn,
+.change-review-git-pr-btn {
+    width: auto;
+    min-width: 8;
+    margin-left: 1;
+}
 .change-review-banner {
     height: auto;
     padding: 0 1;
@@ -197,6 +206,43 @@ ChangeGitCommitModal {
     color: $ds-status-error;
 }
 #change-git-commit-buttons {
+    height: auto;
+    min-height: 1;
+    margin-top: 1;
+}
+
+/* TASK-16801 arc B (spec §6): the push / PR target-confirmation modal. Same
+   bordered discipline as the commit modal above; it holds no scrolling
+   region (at most two selectors and three lines of copy), so every
+   container carries an explicit auto height. */
+ChangeGitPushModal {
+    align: center middle;
+}
+#change-git-push {
+    width: 80;
+    height: auto;
+    max-height: 20;
+    padding: 1 2;
+    background: $ds-surface-panel;
+    border: round $ds-status-approval-required;
+}
+#change-git-push-target {
+    height: auto;
+    text-style: bold;
+}
+#change-git-push-root {
+    width: 1fr;
+    margin-top: 1;
+}
+#change-git-push-summary {
+    height: auto;
+    margin-top: 1;
+}
+#change-git-push-remote {
+    width: 1fr;
+    margin-top: 1;
+}
+#change-git-push-buttons {
     height: auto;
     min-height: 1;
     margin-top: 1;
