@@ -4,7 +4,7 @@ title: Add local Persona Visual pack foundation
 status: Done
 assignee: []
 created_date: '2026-08-20 17:12'
-updated_date: '2026-08-21 02:24'
+updated_date: '2026-08-21 02:40'
 labels: []
 dependencies: []
 references:
@@ -59,6 +59,8 @@ ADR required: no. ADR path: backlog/decisions/074-portable-actor-packs-and-local
 Verification: focused Persona Visual plus migration 473 passed; touched ChaChaNotes and Shared Visual Identity adjacency 563 passed and 1 Windows-only skip; architecture guard born-RED 1 failed/2 passed under a temporary forbidden UI import, then GREEN 3 passed. Isolated HOME/XDG/config/data verification migrated real SQLite to schema 41, published and resolved a pack from this assigned worktree, asserted six module provenances, zero writes outside the isolated root, and zero private-root token leaks. Scoped Ruff format/check, compileall, git diff --check, scope exclusions, and relevant privacy gates passed (17 ChaChaNotes owner cases; 40 database-path and Persona architecture cases).
 
 Born-RED/mutation evidence across Tasks 1-5 and the closeout guard covers required-state validation, recursive fallback then idle, repository/publication authority CAS and ABA, late-write transaction rollback, source/final inode substitution, cleanup reference races and pinned candidate substitution, every full graph/cache identity field, and path/exception redaction. The focused owning regressions are included in the 473-pass gate; the architecture boundary mutation was rerun during closeout.
+
+Final publication review added two discriminating barriers: caller Persona authority that expires between the early check and the reserved transaction now fails closed with no graph, and an interrupt immediately after activation preserves the committed graph and files while reference-reserved cleanup refuses deletion. The repaired publication file passes 46 focused tests; the final publication/repository/assets/contract gate passes 375 tests.
 
 The prescribed broad diagnostic/privacy command also produced 187 passes and 7 proven unrelated baseline failures: one stale generated diagnostic inventory mismatch and six Client_Media_DB_v2 exception-chaining cases. Read-only semantic review found no Persona Visual diagnostics and no sink/classification change; unrelated delta was one new library_media_browse_controller owner, Client_Media_DB_v2 354 to 338 calls, library_screen 110 to 109 calls, plus digest-only console_chat_controller/enhanced_file_picker changes. The generated inventory was therefore intentionally left untouched. The two plan paths for visual identity migration/repository were stale; their canonical Tests/ChaChaNotesDB files ran within the 563-pass adjacency gate.
 
