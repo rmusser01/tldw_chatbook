@@ -178,27 +178,27 @@ Tasks 19006, 19007, and 19008 may run concurrently after their prerequisites bec
 - Modify: `Tests/Notes/test_notes_scope_service_folders.py`
 - Create: `Helper_Scripts/Benchmarks/benchmark_notes_sync_recovery_capacity.py`
 
-- [ ] Write RED service-boundary tests.
+- [x] Write RED service-boundary tests.
 
   Add bounded `get_note_summaries(user_id, note_ids)` and `get_note_sync_summaries(...)`, plus a `reconcile_note_folder_owner_memberships(...)` wrapper over the existing managed-membership repository. Assert one bounded query, optimistic version propagation, and owner-isolated membership changes. `LocalNotesSyncAuthority` may call only `NotesScopeService`.
 
-- [ ] Write a fault-injection test for every durable stage.
+- [x] Write a fault-injection test for every durable stage.
 
   Pin the order: revalidate -> admit recovery/intent -> mutate first authority -> persist -> mutate counterpart -> persist -> update binding/membership -> verify -> complete. Inject failure/cancellation after each boundary, reopen the real temporary private DB, and assert matching observations resume deterministically while changed observations become attention.
 
-- [ ] Add journal/recovery store operations and the executor.
+- [x] Add journal/recovery store operations and the executor.
 
   Implement `admit_operation`, `advance_operation`, `mark_needs_attention`, `complete_operation`, `list_incomplete_operations`, `load_recovery`, `expire_recovery`, and capacity accounting. Recovery admission and journal intent share one private transaction. Pending, unresolved, and Undo-eligible bytes cannot be evicted; normal completed recovery retention is 30 days.
 
-- [ ] Establish a measured recovery capacity.
+- [x] Establish a measured recovery capacity.
 
   Benchmark representative replacement and managed-move recovery payloads using temporary files. Record the largest representative operation and the safety factor in task notes, then expose one bounded `get_notes_sync_recovery_capacity_bytes()` setting with that documented default. Tests inject smaller capacities to prove rejection occurs before mutation. Do not add multiple quotas or adaptive policy.
 
-- [ ] Prove privacy and cancellation semantics.
+- [x] Prove privacy and cancellation semantics.
 
   Capture logs around every failure stage and assert no content, absolute path, hash, recovery bytes, credential, or raw exception text. Cancellation is delayed only through the current mutation-or-durable-stage boundary and then re-delivered.
 
-- [ ] Run and commit.
+- [x] Run and commit.
 
   ```bash
   ../../.venv/bin/python -B -m pytest -q -p no:cacheprovider -o addopts="" Tests/Notes/test_notes_sync_authority.py Tests/Notes/test_notes_sync_executor.py Tests/Notes/test_notes_scope_service_folders.py Tests/Notes/test_notes_device_state_store.py

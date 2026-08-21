@@ -6245,3 +6245,20 @@ verified device/inode), including ancestor relationships. Resolution removes
 `..` and symlink spellings; it does not guarantee case, mount, or lexical aliases
 have one string representation. Identity-comparison failures must also reject,
 not fall back to a spelling-based allow decision.
+
+## Reopening the database is not restart evidence if the request survives (TASK-19007, 2026-08-21)
+
+The first durable sync executor tests reopened the private SQLite store after
+each injected journal-stage failure, but then resumed with the original
+in-memory execution request. Those tests passed while fresh reconstruction
+still trusted corrupted recovery bytes, accepted a same-content file on a new
+inode, and dropped a persisted direction override. A real process restart would
+have rebuilt all three authorities from private recovery and current Notes/file
+observations, so the reused request hid exactly the unsafe boundary under test.
+
+For resumable work, a restart test must discard the controller, executor,
+request, snapshots, and service fakes that carry reviewed authority. Construct
+a fresh store and executor, enumerate incomplete operations, reconstruct only
+from durable intent plus fresh authority observations, and then exercise every
+advertised Resume, Restore, and Disconnect path. Reopening SQLite alone proves
+storage durability; it does not prove process-durable reconstruction.
