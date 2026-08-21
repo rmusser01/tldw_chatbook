@@ -4150,6 +4150,19 @@ class LibraryScreen(BaseAppScreen):
             return None
         return operation
 
+    def _library_note_import_execution_active(self) -> bool:
+        """Return whether reviewed import currently owns Notes mutations."""
+        controller = getattr(self, "_library_note_import_controller", None)
+        snapshot = getattr(controller, "snapshot", None)
+        return getattr(snapshot, "phase", None) is NoteImportPhase.IMPORTING
+
+    def _library_notes_mutation_fenced(self) -> bool:
+        """Keep Database Notes single-writer while reviewed import executes."""
+        return bool(
+            getattr(self, "_library_notes_mutation_in_flight", False)
+            or self._library_note_import_execution_active()
+        )
+
     def _library_notes_operation_is_current_and_active(
         self, operation: LibraryNotesOperationState
     ) -> bool:
@@ -4184,6 +4197,8 @@ class LibraryScreen(BaseAppScreen):
         self, kind: Literal["import", "export", "copy", "console"]
     ) -> LibraryNotesOperationState | None:
         """Claim one typed transfer token before invoking an external seam."""
+        if self._library_notes_mutation_fenced():
+            return None
         current = self._library_notes_operation
         if current is not None and current.running:
             return None
@@ -11757,7 +11772,7 @@ class LibraryScreen(BaseAppScreen):
             ),
             operation_running=(
                 bool(operation and operation.running)
-                or self._library_notes_mutation_in_flight
+                or self._library_notes_mutation_fenced()
             ),
             delete_receipt=self._library_note_delete_receipt,
         )
@@ -12069,6 +12084,10 @@ class LibraryScreen(BaseAppScreen):
     ) -> bool:
         """Run one guarded normalized folder or placement mutation."""
         preclaimed = bool(payload.pop("_preclaimed", False))
+        if self._library_note_import_execution_active():
+            if preclaimed:
+                self._library_notes_mutation_in_flight = False
+            return False
         if payload.get("protected"):
             self._library_notes_notice = (
                 "This item is managed by sync; change its sync root instead."
@@ -12207,7 +12226,7 @@ class LibraryScreen(BaseAppScreen):
         self, operation: str, **payload: Any
     ) -> None:
         """Synchronously claim the mutation interlock before starting a worker."""
-        if self._library_notes_mutation_in_flight:
+        if self._library_notes_mutation_fenced():
             return
         self._library_notes_mutation_in_flight = True
         self.run_worker(
@@ -18689,6 +18708,8 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the notes sort control.
         """
         event.stop()
+        if self._library_notes_mutation_fenced():
+            return
         self._library_notes_sort_choices_visible = (
             not self._library_notes_sort_choices_visible
         )
@@ -18698,6 +18719,8 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_notes_sort_choice(self, event: Button.Pressed) -> None:
         """Apply the exact sort value carried by one direct choice."""
         event.stop()
+        if self._library_notes_mutation_fenced():
+            return
         # task-14902: the shared strip composer stashes the payload as
         # ``choice_value`` (the sync panel's convention).
         requested = str(getattr(event.button, "choice_value", "") or "")
@@ -18713,6 +18736,8 @@ class LibraryScreen(BaseAppScreen):
     async def handle_library_notes_new(self, event: Button.Pressed) -> None:
         """Open the in-Library Create surface from Navigator."""
         event.stop()
+        if self._library_notes_mutation_fenced():
+            return
         await self._select_library_rail_row(LIBRARY_ROW_CREATE_NOTE)
 
     @on(Button.Pressed, "#library-notes-filter-clear")
@@ -26419,6 +26444,8 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the "Sync" action.
         """
         event.stop()
+        if self._library_notes_mutation_fenced():
+            return
         note_flush = await self._flush_library_note_save()
         if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
             return
@@ -26634,7 +26661,10 @@ class LibraryScreen(BaseAppScreen):
 
     def _begin_library_notes_sync_run(self, folder: Path) -> int | None:
         """Claim one sync token synchronously before worker dispatch."""
-        if self._library_notes_sync_active_token is not None:
+        if (
+            self._library_notes_sync_active_token is not None
+            or self._library_notes_mutation_fenced()
+        ):
             return None
         self._library_notes_sync_counter += 1
         token = self._library_notes_sync_counter
@@ -29707,6 +29737,8 @@ class LibraryScreen(BaseAppScreen):
                 "Export…" action.
         """
         event.stop()
+        if self._library_notes_mutation_fenced():
+            return
         await self._open_library_export_canvas(ExportScope(kind="notes"))
 
     # ----- Export canvas: form fields ------------------------------------
@@ -29868,7 +29900,7 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by a note row button.
         """
         event.stop()
-        if self._library_notes_mutation_in_flight:
+        if self._library_notes_mutation_fenced():
             return
         self._library_notes_tree_selected_placement_id = str(
             getattr(event.button, "placement_id", "") or ""
@@ -30150,6 +30182,8 @@ class LibraryScreen(BaseAppScreen):
                 Select/Done toggle.
         """
         event.stop()
+        if self._library_notes_mutation_fenced():
+            return
         note_flush = await self._flush_library_note_save()
         if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
             return
@@ -30164,6 +30198,8 @@ class LibraryScreen(BaseAppScreen):
         Rebuilds only the mounted Notes canvas.
         """
         event.stop()
+        if self._library_notes_mutation_fenced():
+            return
         projection = self._build_library_notes_tree_projection()
         if projection is None:
             note_ids = (
@@ -30185,6 +30221,8 @@ class LibraryScreen(BaseAppScreen):
         Rebuilds only the mounted Notes canvas.
         """
         event.stop()
+        if self._library_notes_mutation_fenced():
+            return
         self._library_notes_row_selection.clear()
         _sync_library_canvas(self, "notes")
 
@@ -30192,6 +30230,8 @@ class LibraryScreen(BaseAppScreen):
     async def handle_library_notes_export_selected(self, event: Button.Pressed) -> None:
         """Open the export canvas scoped to the currently selected note ids."""
         event.stop()
+        if self._library_notes_mutation_fenced():
+            return
         # Defensive: an empty selection would resolve to a whole-source export
         # (empty ids == whole source); the button is disabled at 0 selected.
         if not self._library_notes_row_selection.count:
@@ -30319,7 +30359,7 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the editor's "Delete" action.
         """
         event.stop()
-        if self._library_notes_mutation_in_flight:
+        if self._library_notes_mutation_fenced():
             return
         initiating_snapshot = self._library_note_session.snapshot
         if (
@@ -30626,7 +30666,7 @@ class LibraryScreen(BaseAppScreen):
             event: Press event emitted by the receipt's Undo button.
         """
         event.stop()
-        if self._library_notes_mutation_in_flight:
+        if self._library_notes_mutation_fenced():
             return
         receipt = self._library_note_delete_receipt
         if receipt is None:
@@ -30800,7 +30840,7 @@ class LibraryScreen(BaseAppScreen):
         """Claim one monotonic Create token before a worker can be scheduled."""
         if (
             self._library_note_create_running
-            or self._library_notes_mutation_in_flight
+            or self._library_notes_mutation_fenced()
         ):
             return None
         self._library_notes_notice = ""

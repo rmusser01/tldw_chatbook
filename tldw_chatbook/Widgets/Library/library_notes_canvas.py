@@ -605,12 +605,18 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     (import_label, "library-notes-import"),
                     ("Export", "library-notes-export"),
                 ):
+                    view_import = (
+                        button_id == "library-notes-import"
+                        and import_phase == "importing"
+                    )
+                    disabled = list_state.operation_running and not view_import
                     yield Button(
-                        label,
+                        library_disabled_action_label(label, disabled),
                         id=button_id,
                         classes="library-canvas-action",
                         compact=True,
-                        disabled=list_state.operation_running,
+                        disabled=disabled,
+                        tooltip=running_tooltip if disabled else None,
                     )
                 if self.import_receipt_available:
                     yield Button(
@@ -705,6 +711,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     id=f"library-notes-row-{index}",
                     classes="library-notes-row",
                     compact=True,
+                    disabled=list_state.operation_running,
                 )
                 button.note_id = row.note_id
                 # task-281 (PR #665 review): raw marker-less label for the
@@ -776,6 +783,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     classes=classes,
                     compact=True,
                     tooltip=row.breadcrumb,
+                    disabled=list_state.operation_running,
                 )
                 if row.placement_id == self.tree_selected_placement_id:
                     button.add_class("is-selected")

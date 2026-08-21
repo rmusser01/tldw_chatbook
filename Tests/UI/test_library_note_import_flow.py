@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 from uuid import uuid4
 
 import pytest
+from textual.widgets import Button
 
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_library_shell import (
@@ -338,3 +339,89 @@ async def test_real_file_backed_screen_check_is_read_only_then_import_refreshes(
     finally:
         interop.close_all_user_connections()
         database.close_connection()
+
+
+async def test_hidden_import_fences_notes_mutations_until_receipt(
+    tmp_path: Path,
+) -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+    receipt = ImportExecutionReceipt(
+        approval_id=str(uuid4()),
+        state=ImportSessionState.COMPLETED,
+        total=1,
+        completed=1,
+        imported=1,
+        updated=0,
+        skipped=0,
+        failed=0,
+        retryable=0,
+    )
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-import")
+        controller = screen._library_note_import_controller
+        active = replace(controller.snapshot, phase=NoteImportPhase.IMPORTING)
+        controller._state = active
+        controller.publish()
+        screen._library_notes_view = "import"
+        library_screen_module._sync_library_canvas(screen, "notes")
+        await _wait_for_selector(screen, pilot, "#library-notes-import-back")
+        screen.query_one("#library-notes-import-back").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-import")
+
+        for selector in (
+            "#library-notes-new",
+            "#library-notes-sort",
+            "#library-notes-select-toggle",
+            "#library-notes-sync-open",
+            "#library-notes-export",
+        ):
+            assert screen.query_one(selector, Button).disabled is True
+        assert all(button.disabled for button in screen.query(".library-notes-row"))
+        view_import = screen.query_one("#library-notes-import", Button)
+        assert view_import.disabled is False
+        assert view_import.label.plain == "View import"
+        assert screen._begin_library_notes_sync_run(tmp_path) is None
+        assert screen._begin_library_notes_operation("export") is None
+        with patch.object(screen, "run_worker") as run_worker:
+            screen._schedule_library_notes_tree_mutation(
+                "create_folder", name="Blocked", parent_id=None
+            )
+        run_worker.assert_not_called()
+        assert screen._begin_library_note_create() is None
+
+        view_import.press()
+        await _wait_for_selector(screen, pilot, "#note-import-cancel")
+        assert controller.snapshot is active
+        screen.query_one("#library-notes-import-back").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-import")
+
+        settled = replace(
+            active,
+            phase=NoteImportPhase.RECEIPT,
+            receipt=receipt,
+            latest_receipt=receipt,
+            cancel_requested=False,
+        )
+        controller._state = settled
+        controller.publish()
+        library_screen_module._sync_library_canvas(screen, "notes")
+        await pilot.pause()
+
+        for selector in (
+            "#library-notes-new",
+            "#library-notes-sort",
+            "#library-notes-select-toggle",
+            "#library-notes-sync-open",
+            "#library-notes-export",
+        ):
+            assert screen.query_one(selector, Button).disabled is False
+        assert all(not button.disabled for button in screen.query(".library-notes-row"))
+        screen.query_one("#library-notes-sync-open").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-sync-folder")
+        assert screen._library_notes_view == "sync"
