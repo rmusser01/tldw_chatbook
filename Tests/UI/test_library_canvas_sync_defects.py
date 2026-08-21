@@ -24,7 +24,7 @@ from functools import partial
 import pytest
 from textual.widgets import Button, OptionList, Static
 
-from Tests.UI.app_factory import _build_test_app
+from Tests.UI.app_factory import _build_test_app as _build_tldw_test_app
 from Tests.UI.test_library_selection_updates import _spy_screen_recomposes
 from Tests.UI.test_library_shell import (
     _FakePromptScopeService,
@@ -44,6 +44,13 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_SKILLS,
 )
 from tldw_chatbook.UI.Screens.library_screen import _sync_library_canvas
+
+
+def _build_test_app():
+    """Build the legacy/full Library surface these canvas tests exercise."""
+    app = _build_tldw_test_app()
+    app.library_new_profile_admission = False
+    return app
 
 
 def _notes(count: int = 6):

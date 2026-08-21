@@ -20,6 +20,8 @@ from textual.widgets import Button, Static
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
+    DoubleShrinkLibraryMediaScopeService,
+    GatedFailingSecondLibraryMediaScopeService,
     LibraryHarness,
     LibraryProductionCSSHarness,
     _active_library_screen,
@@ -793,6 +795,122 @@ async def test_select_mode_keyboard_toggle_and_footer_wide():
 @pytest.mark.asyncio
 async def test_select_mode_keyboard_toggle_and_footer_narrow():
     await _assert_select_mode_keyboard_toggle_and_footer(NARROW_SIZE)
+
+
+@pytest.mark.asyncio
+async def test_compact_media_stale_and_retry_actions_remain_truthful():
+    media = _many_media_items()
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=media)
+    service = GatedFailingSecondLibraryMediaScopeService(media)
+    app.media_reading_scope_service = service
+    host = LibraryProductionCSSHarness(app)
+
+    try:
+        async with host.run_test(size=NARROW_SIZE) as pilot:
+            screen = await _open_media_list(host, pilot)
+            controller = screen._library_media_browse_controller
+            screen.query_one("#library-media-next", Button).press()
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    service.page_two_entered.is_set()
+                    and controller.loading
+                    and len(screen.query(".library-media-row")) == 20
+                ),
+                message="Compact page-2 loading never retained its mounted rows.",
+            )
+            assert controller.loading is True
+            assert len(screen.query(".library-media-row")) == 20
+            assert screen.query_one("#library-media-next", Button).disabled
+            assert screen.query_one("#library-media-previous", Button).disabled
+
+            service.page_two_release.set()
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    bool(controller.error_copy)
+                    and bool(screen.query("#library-media-retry"))
+                ),
+                message="Compact page failure never exposed retained Retry.",
+            )
+            assert len(screen.query(".library-media-row")) == 20
+            assert not screen.query_one("#library-media-retry", Button).disabled
+
+            screen._library_media_delete_receipt_ids = ("local:media:1",)
+            app.media_reading_scope_service = DoubleShrinkLibraryMediaScopeService(
+                media
+            )
+            screen._request_library_media_page(3, focus_identity=None)
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    controller.freshness == "stale"
+                    and bool(screen.query("#library-media-retry"))
+                ),
+                message="Compact double shrink never reached stale recovery.",
+            )
+            for selector in (
+                "#library-media-row-0",
+                "#library-media-select-toggle",
+                "#library-media-export",
+                "#library-media-bulk-delete-undo",
+            ):
+                action = screen.query_one(selector, Button)
+                assert action.disabled, selector
+                assert str(action.label).startswith("○"), selector
+                assert action.tooltip == controller.stale_copy, selector
+            assert not screen.query_one("#library-media-retry", Button).disabled
+            assert not screen.query_one("#library-media-type-filter", Button).disabled
+
+            screen._sync_library_media_browse_state(None)
+            await _wait_for_condition(
+                pilot,
+                lambda: screen.query_one("#library-media-row-0", Button).disabled,
+                message="Compact stale action gate did not survive recompose.",
+            )
+    finally:
+        service.page_two_release.set()
+
+
+@pytest.mark.asyncio
+async def test_compact_media_pager_receipt_and_empty_states_remain_contained():
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=NARROW_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        canvas = screen.query_one("#library-media-canvas")
+        pager = screen.query_one("#library-media-pager")
+        assert "1-20 of 45" in str(
+            screen.query_one("#library-media-page-status", Static).renderable
+        )
+        assert canvas.region.contains_region(pager.region)
+
+        screen._library_media_delete_receipt_ids = ("local:media:1",)
+        screen._sync_library_media_browse_state(None)
+        receipt = await _wait_for_selector(
+            screen, pilot, "#library-media-bulk-delete-receipt"
+        )
+        canvas = screen.query_one("#library-media-canvas")
+        assert canvas.region.contains_region(receipt.region)
+        assert screen.query_one("#library-media-bulk-delete-undo", Button).can_focus
+
+    empty_app = _build_media_test_app()
+    _seed_conversations(empty_app, _two_conversations(), media=[])
+    empty_host = LibraryProductionCSSHarness(empty_app)
+    async with empty_host.run_test(size=NARROW_SIZE) as pilot:
+        empty_screen = _active_library_screen(empty_host)
+        await _wait_for_library_shell(empty_screen, pilot)
+        empty_screen.query_one("#library-row-browse-media", Button).press()
+        empty_action = await _wait_for_selector(
+            empty_screen, pilot, "#library-media-empty-import"
+        )
+        empty_canvas = empty_screen.query_one("#library-media-canvas")
+        assert empty_canvas.region.contains_region(empty_action.region)
+        assert empty_action.can_focus
+        assert not empty_screen.query("#library-media-pager")
 
 
 # ---------------------------------------------------------------------------
