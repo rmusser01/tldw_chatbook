@@ -250,6 +250,23 @@ class ProjectSkillsImportModal(SafeModalDismissMixin, ModalScreen[ImportDecision
         while an import the user already committed to is mid-flight. All
         three must be inert then -- dismissing (or re-running) would either
         discard a partial import silently or race the in-flight worker.
+
+        TASK-17964 (dismissal posture, decided and NOT changed): the
+        consequence of this guard is that a permanently-hung importer
+        (``self._importer`` never returning/raising) leaves no in-modal
+        exit -- Escape, backdrop-click, and "Not now"/"Never" all stay
+        inert for as long as ``_import_in_flight()`` is true, with no
+        timeout. This is an accepted trade-off, not an oversight: imports
+        here are local-filesystem only (directory copy or loose-file read,
+        see ``_project_skills_importer``), so a hung importer implies a
+        hung filesystem -- the same failure class the off-thread-discovery
+        decision above names for ``_add_folder``. Discarding a partial
+        import silently (what an escape hatch would have to do while the
+        worker is still running) is worse than leaving no exit for a
+        pathological, previously-unseen case: it risks a half-imported
+        skill directory with no way for the user to know it happened. If a
+        real hang is ever observed in practice, a bounded timeout on the
+        importer call is the fix to file -- not reopening the guard here.
         """
         return self._committed and self._outcomes is None
 
