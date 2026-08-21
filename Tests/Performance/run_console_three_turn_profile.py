@@ -14,14 +14,28 @@ import signal
 import statistics
 import subprocess
 import sys
-from collections.abc import Sequence
-from dataclasses import dataclass
+import time
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
+from threading import Lock
 from typing import IO, Any, Mapping
 
 
 ARMS = ("control", "disabled", "enabled")
 CONTROL_SHA = "5f720a40417eaa78f33619d5cbc82effc470104b"
+FIXED_MUTATION = b"task-19641 deterministic mutation\n"
+TURN_PROMPTS = (
+    "Reply with exactly turn one complete and do not use any tools.",
+    (
+        "Use exactly two tool calls and no others. First call load_tools with "
+        "ids containing local:fs_write. Then call fs_write with path "
+        "measured/turn-two.txt and content exactly task-19641 deterministic "
+        "mutation followed by one newline. After the tool result reply with "
+        "exactly turn two complete."
+    ),
+    "Reply with exactly turn three complete and do not use any tools.",
+)
 EXPECTED_ROUND_COUNTS = {"1": 1, "2": 3, "3": 1}
 ALL_REVIEW_EVENTS = frozenset(
     {
@@ -114,13 +128,16 @@ class ChildResult:
     last_event: dict[str, Any] | None
 
 
-@dataclass(frozen=True)
+@dataclass
 class TargetAdapter:
     """Contain revision-specific Change Review discovery behind one seam."""
 
     target_root: Path
     arm: str
     revision_kind: str
+    _review_events: dict[str, int] = field(default_factory=dict, init=False)
+    _restorations: list[Callable[[], None]] = field(default_factory=list, init=False)
+    _event_lock: Lock = field(default_factory=Lock, init=False, repr=False)
 
     @classmethod
     def for_arm(cls, target_root: Path, arm: str) -> "TargetAdapter":
@@ -129,13 +146,23 @@ class TargetAdapter:
         tracker = workspace_package / "change_turn_tracker.py"
         consent = workspace_package / "change_review_consent.py"
         finalization = workspace_package / "change_review_finalization.py"
+        bridge = root / "tldw_chatbook" / "Chat" / "console_agent_bridge.py"
         tracker_text = tracker.read_text(encoding="utf-8") if tracker.is_file() else ""
+        bridge_text = bridge.read_text(encoding="utf-8") if bridge.is_file() else ""
         has_legacy_tracker = (
-            "class ChangeTurnTracker" in tracker_text and "def end_turn" in tracker_text
+            "class ChangeTurnTracker" in tracker_text
+            and "def begin_turn" in tracker_text
+            and "def populate_baseline" in tracker_text
+            and "def end_turn" in tracker_text
         )
         has_candidate = consent.is_file() and finalization.is_file()
         if arm == "control":
-            if not has_legacy_tracker or has_candidate:
+            has_legacy_bridge = (
+                "_change_tracker.begin_turn" in bridge_text
+                and "_change_tracker.end_turn" in bridge_text
+                and "_change_finalization_coordinator" not in bridge_text
+            )
+            if not has_legacy_tracker or not has_legacy_bridge or has_candidate:
                 raise RuntimeError("target_fingerprint_mismatch:control")
             kind = "legacy"
         elif arm in {"disabled", "enabled"}:
@@ -147,12 +174,211 @@ class TargetAdapter:
                 "class ChangeReviewConsentService" not in consent_text
                 or "class ChangeReviewFinalizationCoordinator" not in finalization_text
                 or "def finalize" not in finalization_text
+                or "def _worker_loop" not in finalization_text
+                or "def finish_turn" not in tracker_text
+                or "_change_finalization_coordinator.register" not in bridge_text
+                or "_change_finalization_coordinator.finalize" not in bridge_text
             ):
                 raise RuntimeError(f"target_fingerprint_mismatch:{arm}")
             kind = "candidate"
         else:
             raise RuntimeError("target_fingerprint_mismatch:unknown_arm")
         return cls(root, arm, kind)
+
+    def _require_shape(self, expected_arm: str, expected_kind: str) -> None:
+        if self.arm != expected_arm or self.revision_kind != expected_kind:
+            raise RuntimeError(f"target_adapter_mismatch:{expected_arm}")
+
+    def configure_control_review(self, app: Any, runtime: "WorkspaceRuntime") -> None:
+        """Configure the legacy control without importing candidate services."""
+        self._require_shape("control", "legacy")
+        if runtime.consent_service is not None or runtime.review_state != "legacy":
+            raise RuntimeError("target_adapter_mismatch:control_runtime")
+        app.change_review_consent_service = None
+
+    def configure_candidate_disabled_review(
+        self, app: Any, runtime: "WorkspaceRuntime"
+    ) -> None:
+        """Install the explicit disabled consent service on the candidate app."""
+        self._require_shape("disabled", "candidate")
+        if runtime.consent_service is None or runtime.review_state != "disabled":
+            raise RuntimeError("target_adapter_mismatch:disabled_runtime")
+        app.change_review_consent_service = runtime.consent_service
+
+    def configure_candidate_enabled_review(
+        self, app: Any, runtime: "WorkspaceRuntime"
+    ) -> None:
+        """Install the ready, explicitly enabled consent service on the app."""
+        self._require_shape("enabled", "candidate")
+        if (
+            runtime.consent_service is None
+            or runtime.review_state != "enabled"
+            or not runtime.review_ready
+        ):
+            raise RuntimeError("target_adapter_mismatch:enabled_runtime")
+        app.change_review_consent_service = runtime.consent_service
+
+    def configure_review(self, app: Any, runtime: "WorkspaceRuntime") -> None:
+        """Dispatch arm configuration without leaking revision checks to the driver."""
+        methods = {
+            "control": self.configure_control_review,
+            "disabled": self.configure_candidate_disabled_review,
+            "enabled": self.configure_candidate_enabled_review,
+        }
+        methods[self.arm](app, runtime)
+
+    def _record_review_event(self, name: str) -> None:
+        with self._event_lock:
+            self._review_events.setdefault(name, time.perf_counter_ns())
+
+    def _wrap_method(
+        self,
+        owner: type[Any],
+        name: str,
+        wrapper_factory: Callable[[Callable[..., Any]], Callable[..., Any]],
+    ) -> None:
+        original = getattr(owner, name, None)
+        if not callable(original):
+            raise RuntimeError(f"target_fingerprint_mismatch:{self.arm}:{name}")
+        replacement = wrapper_factory(original)
+        setattr(owner, name, replacement)
+
+        def restore() -> None:
+            setattr(owner, name, original)
+
+        self._restorations.append(restore)
+
+    def install_timing_wrappers(
+        self,
+        *,
+        tracker_type: type[Any] | None = None,
+        coordinator_type: type[Any] | None = None,
+    ) -> None:
+        """Install observational review-boundary wrappers before runtime creation."""
+        if self._restorations:
+            raise RuntimeError("target_adapter_wrappers_already_installed")
+        if tracker_type is None:
+            from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker
+
+            tracker_type = ChangeTurnTracker
+
+        def before(event: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+            def factory(original: Callable[..., Any]) -> Callable[..., Any]:
+                def wrapped(*args: Any, **kwargs: Any) -> Any:
+                    self._record_review_event(event)
+                    return original(*args, **kwargs)
+
+                return wrapped
+
+            return factory
+
+        def after(event: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+            def factory(original: Callable[..., Any]) -> Callable[..., Any]:
+                def wrapped(*args: Any, **kwargs: Any) -> Any:
+                    result = original(*args, **kwargs)
+                    self._record_review_event(event)
+                    return result
+
+                return wrapped
+
+            return factory
+
+        def around(
+            started: str, completed: str
+        ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+            def factory(original: Callable[..., Any]) -> Callable[..., Any]:
+                def wrapped(*args: Any, **kwargs: Any) -> Any:
+                    self._record_review_event(started)
+                    try:
+                        return original(*args, **kwargs)
+                    finally:
+                        self._record_review_event(completed)
+
+                return wrapped
+
+            return factory
+
+        if self.revision_kind == "legacy":
+            self._require_shape("control", "legacy")
+            self._wrap_method(tracker_type, "begin_turn", before("baseline_started"))
+            self._wrap_method(tracker_type, "populate_baseline", after("baseline_ready"))
+            self._wrap_method(
+                tracker_type,
+                "end_turn",
+                around("review_e_started", "review_e_completed"),
+            )
+            return
+
+        if self.revision_kind != "candidate" or self.arm not in {
+            "disabled",
+            "enabled",
+        }:
+            raise RuntimeError(f"target_adapter_mismatch:{self.arm}")
+        if coordinator_type is None:
+            from tldw_chatbook.Workspaces.change_review_finalization import (
+                ChangeReviewFinalizationCoordinator,
+            )
+
+            coordinator_type = ChangeReviewFinalizationCoordinator
+        self._wrap_method(
+            coordinator_type, "register", before("baseline_started")
+        )
+        self._wrap_method(
+            coordinator_type, "await_baseline", after("baseline_ready")
+        )
+        # Timestamp the scheduling boundary before delegating: finalize can
+        # wake a worker immediately, so recording after return can invert E.
+        self._wrap_method(
+            coordinator_type,
+            "finalize",
+            before("finalization_scheduled"),
+        )
+        self._wrap_method(
+            tracker_type,
+            "finish_turn",
+            around("review_e_started", "review_e_completed"),
+        )
+
+    def review_events(self) -> dict[str, int]:
+        """Return the content-free first observation for each review boundary."""
+        with self._event_lock:
+            return dict(self._review_events)
+
+    def reset_review_events(self) -> None:
+        """Start a fresh timing window after an unmeasured setup turn settles."""
+        with self._event_lock:
+            self._review_events.clear()
+
+    def close(self) -> None:
+        """Restore every wrapped target method in reverse installation order."""
+        for restore in reversed(self._restorations):
+            restore()
+        self._restorations.clear()
+
+
+@dataclass
+class WorkspaceRuntime:
+    """Owned workspace, review, and local-tool resources for one child sample."""
+
+    workspace_id: str
+    workspace_root: Path
+    shadow_root: Path
+    database: Any
+    registry: Any
+    binding: Any
+    consent_service: Any
+    review_state: str
+    review_ready: bool
+    control_plane: Any
+    local_provider: Any
+    hub: Any
+    gate: Any
+    permission_definition_hash: str
+
+    def close(self) -> None:
+        if self.consent_service is not None:
+            self.consent_service.shutdown(timeout=2.0)
+        self.database.close()
 
 
 def balanced_arm_order(iteration: int) -> tuple[str, str, str]:
@@ -880,3 +1106,1051 @@ def generate_corpus(
         }
     )
     return {"files": manifest, "content_tree_digest": content_tree_digest(root)}
+
+
+def prepare_workspace_runtime(
+    sample_root: Path,
+    *,
+    arm: str,
+    readiness_timeout: float = 30.0,
+) -> WorkspaceRuntime:
+    """Build real isolated workspace/review/permission services for one sample."""
+    if arm not in ARMS:
+        raise ValueError("unknown benchmark arm")
+    root = sample_root.resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    workspace_root = root / "workspace"
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    database_root = root / "database"
+    database_root.mkdir(parents=True, exist_ok=True)
+    shadow_root = root / "shadow" / "change_review"
+
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.MCP.local_store import LocalMCPStore
+    from tldw_chatbook.MCP.permission_store import definition_hash
+    from tldw_chatbook.MCP.unified_control_plane_service import (
+        UnifiedMCPControlPlaneService,
+    )
+    from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
+    from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService
+
+    database = WorkspaceDB(
+        database_root / "workspaces.sqlite", client_id="task-19641-benchmark"
+    )
+    registry = LocalWorkspaceRegistryService(database)
+    workspace_id = "benchmark-workspace"
+    registry.create_workspace(workspace_id=workspace_id, name="Benchmark")
+    registry.set_active_workspace(workspace_id)
+    binding = registry.add_folder_binding(
+        workspace_id, workspace_root, allow_write=True
+    )
+
+    consent_service = None
+    review_ready = False
+    review_state = "legacy" if arm == "control" else arm
+    shadow_service = ShadowRepoService(data_dir=shadow_root)
+    if arm == "control":
+        registry.set_change_review_enabled(workspace_id, True)
+        shadow_service.repo_for_root(workspace_root).snapshot("root registered")
+        review_ready = True
+    else:
+        from tldw_chatbook.Workspaces.change_review_consent import (
+            ChangeReviewCapability,
+            ChangeReviewConsentService,
+            ChangeReviewState,
+            RootReadinessState,
+        )
+
+        registry.set_change_review_enabled(workspace_id, arm == "enabled")
+        consent_service = ChangeReviewConsentService(
+            registry,
+            initialize_root=lambda path: shadow_service.repo_for_root(path).snapshot(
+                "root registered"
+            ),
+            capability_reader=lambda: ChangeReviewCapability(
+                ChangeReviewState.ENABLED
+            ),
+            worker_count=1,
+        )
+        registry.attach_change_review_consent_service(consent_service)
+        admission = consent_service.admit_turn(workspace_id)
+        if arm == "disabled":
+            if admission.ready_roots or admission.skipped_roots:
+                raise RuntimeError("disabled_review_scheduled_work")
+        else:
+            deadline = time.monotonic() + readiness_timeout
+            while True:
+                status = consent_service.status(workspace_id)
+                if status.roots and all(
+                    item.state is RootReadinessState.READY for item in status.roots
+                ):
+                    review_ready = True
+                    break
+                if status.roots and any(
+                    item.state is RootReadinessState.FAILED for item in status.roots
+                ):
+                    raise RuntimeError("change_review_initialization_failed")
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("change_review_initialization_timed_out")
+                time.sleep(0.01)
+
+    store_root = root / "permissions"
+    store_root.mkdir(parents=True, exist_ok=True)
+    local_store = LocalMCPStore(store_root / "local_mcp.json")
+    control_plane = UnifiedMCPControlPlaneService(
+        target_store=None,
+        context_store=None,
+        local_service=SimpleNamespace(store=local_store),
+        server_service=None,
+    )
+    local_provider = LocalToolProvider(workspace_root=workspace_root, allow_write=True)
+    hub = local_provider.hub_tool_for("fs_write")
+    control_plane.set_tool_state(
+        hub.server_key,
+        hub.name,
+        "allow",
+        tool=hub,
+    )
+    gate = control_plane.gate_tool_test(hub)
+    if gate.state != "allow" or gate.origin != "tool_override":
+        raise RuntimeError("fs_write_permission_not_allowed")
+    return WorkspaceRuntime(
+        workspace_id=workspace_id,
+        workspace_root=workspace_root,
+        shadow_root=shadow_root,
+        database=database,
+        registry=registry,
+        binding=binding,
+        consent_service=consent_service,
+        review_state=review_state,
+        review_ready=review_ready,
+        control_plane=control_plane,
+        local_provider=local_provider,
+        hub=hub,
+        gate=gate,
+        permission_definition_hash=definition_hash(
+            hub.description,
+            hub.input_schema,
+        ),
+    )
+
+
+async def run_scripted_mounted_sample(
+    sample_root: Path,
+    *,
+    arm: str,
+) -> dict[str, Any]:
+    """Drive the real mounted composer/queue/tool path with no network calls."""
+    import asyncio
+    import threading
+
+    from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+        _visible_text,
+    )
+    from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_project_instructions import (
+        ProjectInstructionControlState,
+    )
+    from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.Widgets.Console import ConsoleComposerBar
+
+    runtime = prepare_workspace_runtime(sample_root, arm=arm)
+    (runtime.workspace_root / "measured").mkdir(exist_ok=True)
+
+    class ScriptedGateway:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.turn_two_started = threading.Event()
+            self.turn_two_terminal = threading.Event()
+            self.third_terminal = threading.Event()
+            self.third_provider_started_ns: int | None = None
+            self.tool_calls: list[str] = []
+
+        async def resolve_for_send(self, selection: Any) -> ConsoleProviderResolution:
+            return ConsoleProviderResolution(
+                provider="llama_cpp",
+                base_url=selection.base_url or "http://127.0.0.1:9099",
+                model="scripted-model",
+                ready=True,
+                readiness_key="llama_cpp",
+                execution_key="llama_cpp",
+            )
+
+        async def stream_chat(self, _resolution: Any, _messages: Any, **_kwargs: Any):
+            self.calls += 1
+            call = self.calls
+            if call == 1:
+                yield "turn-one-complete"
+                return
+            if call == 2:
+                self.turn_two_started.set()
+                self.tool_calls.append("load_tools")
+                payload = {
+                    "name": "load_tools",
+                    "arguments": {"ids": ["local:fs_write"]},
+                }
+                yield f"{FENCE_OPEN}\n{json.dumps(payload)}\n```"
+                return
+            if call == 3:
+                self.tool_calls.append("fs_write")
+                payload = {
+                    "name": "fs_write",
+                    "arguments": {
+                        "path": "measured/turn-two.txt",
+                        "content": FIXED_MUTATION.decode("utf-8"),
+                    },
+                }
+                yield f"{FENCE_OPEN}\n{json.dumps(payload)}\n```"
+                return
+            if call == 4:
+                try:
+                    yield "turn-two-complete"
+                finally:
+                    self.turn_two_terminal.set()
+                return
+            if call == 5:
+                self.third_provider_started_ns = time.perf_counter_ns()
+                try:
+                    yield "turn-three-complete"
+                finally:
+                    self.third_terminal.set()
+                return
+            raise AssertionError(f"unexpected provider call {call}")
+
+    gateway = ScriptedGateway()
+    app = _build_test_app()
+    old_consent = getattr(app, "change_review_consent_service", None)
+    if old_consent is not None:
+        old_consent.shutdown(timeout=1.0)
+    old_workspace_db = getattr(app, "local_workspace_db", None)
+    if old_workspace_db is not None:
+        old_workspace_db.close()
+    app.local_workspace_db = runtime.database
+    app.workspace_registry_service = runtime.registry
+    app.change_review_consent_service = runtime.consent_service
+    app.unified_mcp_service = runtime.control_plane
+    app.app_config["chat_defaults"] = {
+        "provider": "llama_cpp",
+        "model": "scripted-model",
+    }
+    app.app_config["api_settings"] = {
+        "llama_cpp": {
+            "api_url": "http://127.0.0.1:9099",
+            "model": "scripted-model",
+            "temperature": 0.0,
+            "max_tokens": 512,
+        }
+    }
+    app.app_config.setdefault("console", {})["workspace_root"] = str(
+        runtime.workspace_root
+    )
+    # ChatScreen deliberately refreshes disk-shaped snapshots through
+    # load_settings(). This benchmark owns an injected, sample-scoped
+    # snapshot instead, so remove the two live-config marker sections and
+    # make its workspace/provider values authoritative for the mounted run.
+    app.app_config.pop("general", None)
+    app.app_config.pop("logging", None)
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "scripted-model"
+    chat_db = CharactersRAGDB(
+        sample_root / "database" / "chatbook.sqlite",
+        client_id="task-19641-mounted",
+    )
+    app.chachanotes_db = chat_db
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+    third_send_requested_ns: int | None = None
+    turn_2_release_ns: int | None = None
+    allow_turn_2_release = asyncio.Event()
+    console_runtime: Any | None = None
+
+    async def wait_until(predicate: Any, *, timeout: float = 10.0) -> None:
+        deadline = time.monotonic() + timeout
+        while not predicate():
+            if time.monotonic() >= deadline:
+                raise AssertionError("mounted sample did not settle before timeout")
+            await asyncio.sleep(0.005)
+
+    try:
+        async with host.run_test(size=(160, 48)) as pilot:
+            console = host.screen_stack[-1]
+            await _wait_for_selector(console, pilot, "#console-native-composer")
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+            controller = console._ensure_console_chat_controller()
+            benchmark_session = next(
+                session
+                for session in controller.store.sessions()
+                if session.id == controller.store.active_session_id
+            )
+            if benchmark_session.workspace_id != runtime.workspace_id:
+                raise AssertionError(
+                    "mounted session selected the wrong workspace: "
+                    f"{benchmark_session.workspace_id!r} != {runtime.workspace_id!r}"
+                )
+            # Project-instruction disclosure is a separate, one-time consent
+            # interaction. Disable it for benchmark-owned sessions; the
+            # explicit Console workspace_root above keeps local tools confined
+            # to this same isolated workspace without timing an unrelated
+            # unattended modal.
+            controller.store.set_session_project_instruction_state(
+                controller.store.active_session_id,
+                ProjectInstructionControlState.legacy_disabled(),
+            )
+            coordinator = controller.prompt_queue_coordinator
+            original_after_turn = coordinator._after_turn
+
+            async def observed_after_turn(session_id: str, result: Any) -> None:
+                nonlocal turn_2_release_ns
+                if gateway.calls == 4 and turn_2_release_ns is None:
+                    await allow_turn_2_release.wait()
+                    turn_2_release_ns = time.perf_counter_ns()
+                await original_after_turn(session_id, result)
+
+            coordinator._after_turn = observed_after_turn
+
+            async def type_text(text: str) -> None:
+                composer.focus()
+                await pilot.press(*tuple(text.lower()))
+
+            await type_text(TURN_PROMPTS[0])
+            await pilot.press("enter")
+            try:
+                await wait_until(
+                    lambda: "turn-one-complete" in _visible_text(console)
+                )
+            except AssertionError as exc:
+                send_button = console.query_one("#console-send-message")
+                setup_modals = list(console.query("#console-setup-modal"))
+                raise AssertionError(
+                    "turn-one diagnostics: "
+                    f"gateway_calls={gateway.calls}, "
+                    f"draft_length={len(composer.draft_text())}, "
+                    f"focused={type(host.focused).__name__}, "
+                    f"send_disabled={send_button.disabled}, "
+                    f"setup={[modal.display for modal in setup_modals]}, "
+                    f"run_status={controller.run_state.status.value}, "
+                    f"visible_copy={controller.run_state.visible_copy!r}, "
+                    "messages="
+                    f"{[(message.role.value, message.status, len(message.content)) for message in controller.store.messages_for_session(controller.store.active_session_id)]!r}"
+                ) from exc
+
+            await type_text(TURN_PROMPTS[1])
+            await pilot.press("enter")
+            await wait_until(gateway.turn_two_started.is_set)
+            await type_text(TURN_PROMPTS[2])
+            assert composer.draft_text() == TURN_PROMPTS[2].lower()
+            await wait_until(gateway.turn_two_terminal.is_set)
+            third_send_requested_ns = time.perf_counter_ns()
+            try:
+                await pilot.press("enter")
+            finally:
+                allow_turn_2_release.set()
+            await wait_until(gateway.third_terminal.is_set)
+            await wait_until(lambda: "turn-three-complete" in _visible_text(console))
+            await pilot.pause(0.05)
+
+            store = console._ensure_console_chat_store()
+            assistants = [
+                message
+                for message in store.messages_for_session(store.active_session_id)
+                if message.role is ConsoleMessageRole.ASSISTANT
+            ]
+            terminal = assistants[-1].content
+            mutation_path = runtime.workspace_root / "measured/turn-two.txt"
+            if not mutation_path.exists():
+                rows = store.messages_for_session(store.active_session_id)
+                raise AssertionError(
+                    "fs_write did not create the benchmark mutation: "
+                    f"{[(message.role.value, message.status, len(message.content)) for message in rows]!r}"
+                )
+            console_runtime = console._console_runtime()
+            await console_runtime.dispose()
+    finally:
+        if console_runtime is not None:
+            await console_runtime.dispose()
+        close_chat_db = getattr(chat_db, "close_connection", None)
+        if callable(close_chat_db):
+            close_chat_db()
+        runtime.close()
+
+    if third_send_requested_ns is None or turn_2_release_ns is None:
+        raise RuntimeError("mounted sample missed queue timing boundaries")
+    return {
+        "provider_round_counts": {"1": 1, "2": 3, "3": 1},
+        "tool_calls": gateway.tool_calls,
+        "third_send_requested_ns": third_send_requested_ns,
+        "turn_2_release_ns": turn_2_release_ns,
+        "third_provider_started_ns": gateway.third_provider_started_ns,
+        "terminal_third_assistant": terminal,
+    }
+
+
+class _MountedObservation:
+    """Thread-safe, body-free observations for one mounted real-provider sample."""
+
+    def __init__(
+        self,
+        *,
+        ui_loop: Any,
+        turn_two_terminal: Any,
+        third_assistant_terminal: Any,
+        permission_hash: str,
+    ) -> None:
+        self._lock = Lock()
+        self._ui_loop = ui_loop
+        self._turn_two_terminal = turn_two_terminal
+        self._third_assistant_terminal = third_assistant_terminal
+        self._permission_hash = permission_hash
+        self.dispatch_count = 0
+        self.accepted_count = 0
+        self.drain_count = 0
+        self.worker_count = 0
+        self.after_turn_count = 0
+        self.durable_count = 0
+        self.provider_call_count = 0
+        self.provider_round_counts = {"1": 0, "2": 0, "3": 0}
+        self.provider_calls: list[dict[str, int | None]] = []
+        self.tool_calls: list[dict[str, Any]] = []
+        self.conversation_started_ns: int | None = None
+        self.third_send_requested_ns: int | None = None
+        self.third_worker_started_ns: int | None = None
+        self.turn_2_release_ns: int | None = None
+        self.turn_2_assistant_durable_ns: int | None = None
+        self.terminal_third_assistant_ns: int | None = None
+
+    def dispatch_requested(self) -> None:
+        now = time.perf_counter_ns()
+        with self._lock:
+            self.dispatch_count += 1
+            if self.dispatch_count == 1:
+                self.conversation_started_ns = now
+            elif self.dispatch_count == 3:
+                self.third_send_requested_ns = now
+
+    def worker_started(self) -> None:
+        now = time.perf_counter_ns()
+        with self._lock:
+            self.worker_count += 1
+            if self.worker_count == 3:
+                self.third_worker_started_ns = now
+
+    def turn_accepted(self) -> None:
+        with self._lock:
+            self.accepted_count += 1
+
+    def drain_started(self) -> None:
+        with self._lock:
+            self.drain_count += 1
+
+    def after_turn_started(self) -> None:
+        now = time.perf_counter_ns()
+        with self._lock:
+            self.after_turn_count += 1
+            if self.after_turn_count == 2:
+                self.turn_2_release_ns = now
+
+    def assistant_durable(self) -> None:
+        now = time.perf_counter_ns()
+        terminal = False
+        with self._lock:
+            self.durable_count += 1
+            if self.durable_count == 2:
+                self.turn_2_assistant_durable_ns = now
+            elif self.durable_count == 3:
+                self.terminal_third_assistant_ns = now
+                terminal = True
+        if terminal:
+            self._third_assistant_terminal.set()
+
+    def provider_started(self) -> tuple[int, int, int]:
+        now = time.perf_counter_ns()
+        with self._lock:
+            self.provider_call_count += 1
+            call_index = self.provider_call_count
+            turn = self.worker_count
+            if str(turn) in self.provider_round_counts:
+                self.provider_round_counts[str(turn)] += 1
+                provider_round = self.provider_round_counts[str(turn)]
+            else:
+                provider_round = 0
+            self.provider_calls.append(
+                {
+                    "call": call_index,
+                    "turn": turn,
+                    "round": provider_round,
+                    "started_ns": now,
+                    "first_chunk_ns": None,
+                    "completed_ns": None,
+                }
+            )
+            return call_index, turn, provider_round
+
+    def provider_first_chunk(self, call_index: int) -> None:
+        now = time.perf_counter_ns()
+        with self._lock:
+            call = self.provider_calls[call_index - 1]
+            if call["first_chunk_ns"] is None:
+                call["first_chunk_ns"] = now
+
+    def provider_completed(self, call_index: int) -> None:
+        now = time.perf_counter_ns()
+        with self._lock:
+            self.provider_calls[call_index - 1]["completed_ns"] = now
+        if call_index == 4:
+            self._ui_loop.call_soon_threadsafe(self._turn_two_terminal.set)
+
+    def schema_loaded(self, tool_id: str) -> None:
+        if tool_id != "local:fs_write":
+            return
+        with self._lock:
+            self.tool_calls.append(
+                {
+                    "name": "load_tools",
+                    "turn": self.worker_count,
+                    "provider_round": self.provider_round_counts.get(
+                        str(self.worker_count), 0
+                    ),
+                    "requested_tool_id": tool_id,
+                    "permission": "allow",
+                    "definition_hash": self._permission_hash,
+                }
+            )
+
+    def local_tool_invoked(self, tool_id: str, args: Mapping[str, Any]) -> None:
+        name = tool_id.split(":", 1)[-1]
+        if name != "fs_write":
+            return
+        raw_payload = args.get("content", "")
+        payload = (
+            raw_payload.encode("utf-8")
+            if isinstance(raw_payload, str)
+            else bytes(raw_payload)
+            if isinstance(raw_payload, (bytes, bytearray))
+            else b""
+        )
+        with self._lock:
+            self.tool_calls.append(
+                {
+                    "name": "fs_write",
+                    "turn": self.worker_count,
+                    "provider_round": self.provider_round_counts.get(
+                        str(self.worker_count), 0
+                    ),
+                    "tool_id": "local:fs_write",
+                    "path": str(args.get("path", "")),
+                    "payload_sha256": hashlib.sha256(payload).hexdigest(),
+                    "permission": "allow",
+                    "definition_hash": self._permission_hash,
+                }
+            )
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "dispatch_count": self.dispatch_count,
+                "accepted_count": self.accepted_count,
+                "drain_count": self.drain_count,
+                "worker_count": self.worker_count,
+                "after_turn_count": self.after_turn_count,
+                "durable_count": self.durable_count,
+                "provider_call_count": self.provider_call_count,
+                "provider_round_counts": dict(self.provider_round_counts),
+                "provider_calls": [dict(call) for call in self.provider_calls],
+                "tool_calls": [dict(call) for call in self.tool_calls],
+                "conversation_started_ns": self.conversation_started_ns,
+                "third_send_requested_ns": self.third_send_requested_ns,
+                "third_worker_started_ns": self.third_worker_started_ns,
+                "turn_2_release_ns": self.turn_2_release_ns,
+                "turn_2_assistant_durable_ns": self.turn_2_assistant_durable_ns,
+                "terminal_third_assistant_ns": self.terminal_third_assistant_ns,
+            }
+
+
+def _target_tree_inventory(root: Path, excluded_root: Path) -> dict[str, tuple[int, int]]:
+    """Return source-tree size/mtime inventory outside the owned sample root."""
+    inventory: dict[str, tuple[int, int]] = {}
+    excluded = excluded_root.resolve()
+    for directory, names, files in os.walk(root.resolve()):
+        current = Path(directory)
+        names[:] = [
+            name
+            for name in names
+            if name != ".git"
+            and not (current / name).resolve().is_relative_to(excluded)
+        ]
+        if current.resolve().is_relative_to(excluded):
+            names[:] = []
+            continue
+        for name in files:
+            path = current / name
+            if path.resolve().is_relative_to(excluded):
+                continue
+            stat = path.stat()
+            inventory[path.relative_to(root).as_posix()] = (
+                stat.st_size,
+                stat.st_mtime_ns,
+            )
+    return inventory
+
+
+def _install_common_timing_wrappers(
+    observation: _MountedObservation,
+) -> list[Callable[[], None]]:
+    """Install shared target wrappers and fail before provider construction."""
+    from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+    from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+    from tldw_chatbook.Chat.console_prompt_queue_coordinator import (
+        ConsolePromptQueueCoordinator,
+    )
+    from tldw_chatbook.UI.Console_Modules.prompt_queue import (
+        ConsolePromptQueueUIController,
+    )
+
+    restorations: list[Callable[[], None]] = []
+
+    def replace(owner: type[Any], name: str, replacement: Callable[..., Any]) -> None:
+        original = getattr(owner, name, None)
+        if not callable(original):
+            raise RuntimeError(f"target_common_seam_missing:{name}")
+        setattr(owner, name, replacement(original))
+
+        def restore() -> None:
+            setattr(owner, name, original)
+
+        restorations.append(restore)
+
+    def dispatch_wrapper(original: Callable[..., Any]) -> Callable[..., Any]:
+        async def wrapped(owner: Any, *args: Any, **kwargs: Any) -> Any:
+            observation.dispatch_requested()
+            return await original(owner, *args, **kwargs)
+
+        return wrapped
+
+    def accepted_wrapper(original: Callable[..., Any]) -> Callable[..., Any]:
+        def wrapped(owner: Any, *args: Any, **kwargs: Any) -> Any:
+            result = original(owner, *args, **kwargs)
+            observation.turn_accepted()
+            return result
+
+        return wrapped
+
+    def after_turn_wrapper(original: Callable[..., Any]) -> Callable[..., Any]:
+        async def wrapped(owner: Any, *args: Any, **kwargs: Any) -> Any:
+            observation.after_turn_started()
+            return await original(owner, *args, **kwargs)
+
+        return wrapped
+
+    def drain_wrapper(original: Callable[..., Any]) -> Callable[..., Any]:
+        async def wrapped(owner: Any, *args: Any, **kwargs: Any) -> Any:
+            observation.drain_started()
+            return await original(owner, *args, **kwargs)
+
+        return wrapped
+
+    def worker_wrapper(original: Callable[..., Any]) -> Callable[..., Any]:
+        async def wrapped(owner: Any, *args: Any, **kwargs: Any) -> Any:
+            observation.worker_started()
+            return await original(owner, *args, **kwargs)
+
+        return wrapped
+
+    def durable_wrapper(original: Callable[..., Any]) -> Callable[..., Any]:
+        def wrapped(owner: Any, *args: Any, **kwargs: Any) -> Any:
+            result = original(owner, *args, **kwargs)
+            observation.assistant_durable()
+            return result
+
+        return wrapped
+
+    def schema_wrapper(original: Callable[..., Any]) -> Callable[..., Any]:
+        def wrapped(owner: Any, tool_id: str, *args: Any, **kwargs: Any) -> Any:
+            result = original(owner, tool_id, *args, **kwargs)
+            observation.schema_loaded(tool_id)
+            return result
+
+        return wrapped
+
+    def invoke_wrapper(original: Callable[..., Any]) -> Callable[..., Any]:
+        def wrapped(
+            owner: Any,
+            tool_id: str,
+            args: Mapping[str, Any],
+            *extra: Any,
+            **kwargs: Any,
+        ) -> Any:
+            result = original(owner, tool_id, args, *extra, **kwargs)
+            observation.local_tool_invoked(tool_id, args)
+            return result
+
+        return wrapped
+
+    replace(ConsolePromptQueueUIController, "dispatch", dispatch_wrapper)
+    replace(ConsolePromptQueueCoordinator, "turn_accepted", accepted_wrapper)
+    replace(ConsolePromptQueueCoordinator, "_after_turn", after_turn_wrapper)
+    replace(ConsolePromptQueueCoordinator, "_drain_waiting", drain_wrapper)
+    replace(ConsoleChatController, "_run_agent_reply", worker_wrapper)
+    replace(
+        ConsoleChatController,
+        "_record_run_assistant_message",
+        durable_wrapper,
+    )
+    replace(ToolCatalogRegistry, "load_schema", schema_wrapper)
+    replace(LocalToolProvider, "invoke", invoke_wrapper)
+    return restorations
+
+
+async def run_mounted_sample(
+    sample_root: Path,
+    *,
+    arm: str,
+    endpoint: str,
+    model: str,
+    adapter: TargetAdapter,
+    isolated_env: Mapping[str, str],
+) -> dict[str, Any]:
+    """Drive one real gateway sample through the mounted composer and queue."""
+    import asyncio
+    import threading
+
+    from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+    )
+    from tldw_chatbook.Chat.console_chat_models import (
+        ConsoleMessageRole,
+        ConsoleRunStatus,
+    )
+    from tldw_chatbook.Chat.console_project_instructions import (
+        ProjectInstructionControlState,
+    )
+    from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.Tools import workspace_file_roots
+    from tldw_chatbook.Widgets.Console import ConsoleComposerBar
+
+    root = sample_root.resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    source_before = _target_tree_inventory(adapter.target_root, root)
+    baseline_threads = {id(thread) for thread in threading.enumerate()}
+    ui_loop = asyncio.get_running_loop()
+    turn_two_terminal = asyncio.Event()
+    third_assistant_terminal = asyncio.Event()
+    heartbeat_stop = asyncio.Event()
+    heartbeat = HeartbeatBuffer(capacity=100_000)
+    runtime: WorkspaceRuntime | None = None
+    chat_db: Any | None = None
+    gateway: Any | None = None
+    console_runtime: Any | None = None
+    registry_factory = workspace_file_roots._registry_factory
+    common_restorations: list[Callable[[], None]] = []
+    adapter.install_timing_wrappers()
+
+    async def heartbeat_loop() -> None:
+        interval = 0.01
+        target = ui_loop.time() + interval
+        while not heartbeat_stop.is_set():
+            await asyncio.sleep(max(0.0, target - ui_loop.time()))
+            now = ui_loop.time()
+            heartbeat.record(max(0, int((now - target) * 1_000_000_000)))
+            target += interval
+
+    heartbeat_task = asyncio.create_task(heartbeat_loop())
+    observation: _MountedObservation | None = None
+    store: Any | None = None
+    active_session_id: str | None = None
+    try:
+        runtime = prepare_workspace_runtime(root, arm=arm)
+        generate_corpus(runtime.workspace_root)
+        observation = _MountedObservation(
+            ui_loop=ui_loop,
+            turn_two_terminal=turn_two_terminal,
+            third_assistant_terminal=third_assistant_terminal,
+            permission_hash=runtime.permission_definition_hash,
+        )
+        common_restorations = _install_common_timing_wrappers(observation)
+        workspace_file_roots._registry_factory = lambda: runtime.registry
+
+        app = _build_test_app()
+        old_consent = getattr(app, "change_review_consent_service", None)
+        if old_consent is not None:
+            old_consent.shutdown(timeout=1.0)
+        old_workspace_db = getattr(app, "local_workspace_db", None)
+        if old_workspace_db is not None:
+            old_workspace_db.close()
+        app.local_workspace_db = runtime.database
+        app.workspace_registry_service = runtime.registry
+        adapter.configure_review(app, runtime)
+        app.unified_mcp_service = runtime.control_plane
+        app.app_config["chat_defaults"] = {
+            "provider": "llama_cpp",
+            "model": model,
+        }
+        app.app_config["api_settings"] = {
+            "llama_cpp": {
+                "api_url": endpoint,
+                "model": model,
+                "temperature": 0.0,
+                "max_tokens": 512,
+                "timeout": 120,
+                "retries": 0,
+                "streaming": True,
+            }
+        }
+        app.app_config.setdefault("console", {})["workspace_root"] = str(
+            runtime.workspace_root
+        )
+        app.app_config.pop("general", None)
+        app.app_config.pop("logging", None)
+        app.chat_api_provider_value = "llama_cpp"
+        app.chat_api_model_value = model
+        chat_db = CharactersRAGDB(
+            root / "database" / "chatbook.sqlite",
+            client_id="task-19641-real-provider",
+        )
+        app.chachanotes_db = chat_db
+        gateway = ConsoleProviderGateway(
+            config_provider=lambda: app.app_config,
+            environ=dict(isolated_env),
+        )
+        original_stream_chat = gateway.stream_chat
+
+        async def observed_stream_chat(*args: Any, **kwargs: Any):
+            assert observation is not None
+            call_index, _turn, _provider_round = observation.provider_started()
+            try:
+                async for chunk in original_stream_chat(*args, **kwargs):
+                    observation.provider_first_chunk(call_index)
+                    yield chunk
+            finally:
+                observation.provider_completed(call_index)
+
+        gateway.stream_chat = observed_stream_chat
+        app.console_provider_gateway_factory = lambda: gateway
+        host = ConsoleHarness(app)
+
+        async def wait_until(predicate: Callable[[], bool], timeout: float = 180.0) -> None:
+            deadline = time.monotonic() + timeout
+            while not predicate():
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("mounted_sample_timeout")
+                await asyncio.sleep(0.005)
+
+        async def wait_review_idle(screen: Any) -> None:
+            coordinator = getattr(screen._console_runtime(), "change_review_coordinator", None)
+            if coordinator is not None:
+                idle = await asyncio.to_thread(coordinator.wait_idle, 30.0)
+                if not idle:
+                    raise RuntimeError("change_review_idle_timeout")
+                if coordinator.publication_signal.snapshot().pending:
+                    raise RuntimeError("change_review_publication_pending")
+
+        async with host.run_test(size=(160, 48)) as pilot:
+            console = host.screen_stack[-1]
+            await _wait_for_selector(console, pilot, "#console-native-composer")
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+            controller = console._ensure_console_chat_controller()
+            store = console._ensure_console_chat_store()
+            active_session_id = store.active_session_id
+            session = next(
+                item for item in store.sessions() if item.id == active_session_id
+            )
+            if session.workspace_id != runtime.workspace_id:
+                raise RuntimeError("mounted_sample_workspace_mismatch")
+            store.set_session_project_instruction_state(
+                active_session_id,
+                ProjectInstructionControlState.legacy_disabled(),
+            )
+
+            async def type_prompt(text: str) -> None:
+                composer.focus()
+                await pilot.press(*tuple(text.lower()))
+
+            await type_prompt(TURN_PROMPTS[0])
+            await pilot.press("enter")
+            await wait_until(lambda: observation.snapshot()["durable_count"] >= 1)
+            await wait_review_idle(console)
+            adapter.reset_review_events()
+
+            await type_prompt(TURN_PROMPTS[1])
+            await pilot.press("enter")
+            await wait_until(lambda: observation.snapshot()["worker_count"] >= 2)
+            await type_prompt(TURN_PROMPTS[2])
+            if composer.draft_text() != TURN_PROMPTS[2].lower():
+                raise RuntimeError("third_prompt_draft_loss")
+            await asyncio.wait_for(turn_two_terminal.wait(), timeout=180.0)
+            await pilot.press("enter")
+            await asyncio.wait_for(third_assistant_terminal.wait(), timeout=180.0)
+            await wait_until(lambda: observation.snapshot()["provider_call_count"] >= 5)
+            await wait_review_idle(console)
+            await pilot.pause(0.05)
+
+            snapshot = observation.snapshot()
+            messages = store.messages_for_session(active_session_id)
+            user_count = sum(
+                message.role is ConsoleMessageRole.USER for message in messages
+            )
+            completed_assistants = [
+                message
+                for message in messages
+                if message.role is ConsoleMessageRole.ASSISTANT
+                and message.status == "complete"
+            ]
+            if (
+                len(completed_assistants) != 3
+                or controller.run_state.status is not ConsoleRunStatus.COMPLETED
+            ):
+                raise RuntimeError("terminal_assistant_contract_failed")
+            queue_snapshot = controller.prompt_queue_registry.snapshot(
+                active_session_id
+            )
+            prompt_loss_count = abs(3 - user_count) + queue_snapshot.total_count
+            console_runtime = console._console_runtime()
+            await console_runtime.dispose()
+
+        heartbeat_stop.set()
+        await heartbeat_task
+        mutation_path = runtime.workspace_root / "measured" / "turn-two.txt"
+        mutation_success = (
+            mutation_path.is_file() and mutation_path.read_bytes() == FIXED_MUTATION
+        )
+        if not mutation_success:
+            raise RuntimeError("benchmark_mutation_contract_failed")
+        assert observation is not None
+        snapshot = observation.snapshot()
+        provider_calls = snapshot["provider_calls"]
+        if (
+            snapshot["dispatch_count"] != 3
+            or snapshot["accepted_count"] != 3
+            or snapshot["drain_count"] != 2
+            or snapshot["worker_count"] != 3
+            or snapshot["after_turn_count"] != 2
+            or snapshot["durable_count"] != 3
+        ):
+            raise RuntimeError("mounted_queue_contract_failed")
+        if len(provider_calls) != 5:
+            raise RuntimeError("provider_round_contract_failed")
+        required_times = (
+            snapshot["conversation_started_ns"],
+            snapshot["third_send_requested_ns"],
+            snapshot["third_worker_started_ns"],
+            snapshot["turn_2_release_ns"],
+            snapshot["turn_2_assistant_durable_ns"],
+            snapshot["terminal_third_assistant_ns"],
+            provider_calls[3]["completed_ns"],
+            provider_calls[4]["started_ns"],
+            provider_calls[4]["completed_ns"],
+        )
+        if not all(isinstance(value, int) for value in required_times):
+            raise RuntimeError("mounted_sample_timing_missing")
+        provider_total_ns = sum(
+            int(call["completed_ns"]) - int(call["started_ns"])
+            for call in provider_calls
+        )
+        result = {
+            "status": "complete",
+            "provider_round_counts": snapshot["provider_round_counts"],
+            "terminal_turn_2_provider_completed_ns": provider_calls[3][
+                "completed_ns"
+            ],
+            "third_send_requested_ns": snapshot["third_send_requested_ns"],
+            "turn_2_release_ns": snapshot["turn_2_release_ns"],
+            "third_worker_started_ns": snapshot["third_worker_started_ns"],
+            "third_provider_started_ns": provider_calls[4]["started_ns"],
+            "terminal_third_provider_completed_ns": provider_calls[4][
+                "completed_ns"
+            ],
+            "terminal_third_assistant_ns": snapshot[
+                "terminal_third_assistant_ns"
+            ],
+            "prompt_loss_count": prompt_loss_count,
+            "selected_binding_access": runtime.binding.metadata["access"],
+            "expected_payload_sha256": hashlib.sha256(FIXED_MUTATION).hexdigest(),
+            "expected_permission_definition_hash": (
+                runtime.permission_definition_hash
+            ),
+            "tool_calls": snapshot["tool_calls"],
+            "mutation": {
+                "path": "measured/turn-two.txt",
+                "payload_sha256": hashlib.sha256(FIXED_MUTATION).hexdigest(),
+                "success": mutation_success,
+            },
+            "review_events": adapter.review_events(),
+            "metrics": {
+                "third_send_to_worker_ns": (
+                    int(snapshot["third_worker_started_ns"])
+                    - int(snapshot["third_send_requested_ns"])
+                ),
+                "event_loop_lag_p95_ns": sample_heartbeat_p95_ns(
+                    heartbeat.values()
+                ),
+                "assistant_durable_to_release_ns": (
+                    int(snapshot["turn_2_release_ns"])
+                    - int(snapshot["turn_2_assistant_durable_ns"])
+                ),
+                "terminal_to_third_provider_ns": (
+                    int(provider_calls[4]["started_ns"])
+                    - int(provider_calls[3]["completed_ns"])
+                ),
+                "provider_total_ns": provider_total_ns,
+                "conversation_wall_ns": (
+                    int(snapshot["terminal_third_assistant_ns"])
+                    - int(snapshot["conversation_started_ns"])
+                ),
+            },
+        }
+    finally:
+        heartbeat_stop.set()
+        if not heartbeat_task.done():
+            await heartbeat_task
+        if console_runtime is not None:
+            try:
+                await console_runtime.dispose()
+            except Exception:
+                pass
+        if gateway is not None:
+            try:
+                await gateway.aclose()
+            except Exception:
+                pass
+        if chat_db is not None:
+            close_chat_db = getattr(chat_db, "close_connection", None)
+            if callable(close_chat_db):
+                close_chat_db()
+        if runtime is not None:
+            runtime.close()
+        workspace_file_roots._registry_factory = registry_factory
+        for restore in reversed(common_restorations):
+            restore()
+        adapter.close()
+
+    deadline = time.monotonic() + 2.0
+    while True:
+        survivors = [
+            thread
+            for thread in threading.enumerate()
+            if id(thread) not in baseline_threads and thread.is_alive()
+        ]
+        if not survivors or time.monotonic() >= deadline:
+            break
+        await asyncio.sleep(0.01)
+    if survivors:
+        raise RuntimeError("benchmark_owned_thread_survivor")
+    if _target_tree_inventory(adapter.target_root, root) != source_before:
+        raise RuntimeError("target_source_write_detected")
+    result["final_ownership"] = {
+        "live_threads": 0,
+        "provider_closed": True,
+        "sqlite_closed": True,
+        "shadow_operations_pending": 0,
+        "target_source_writes": 0,
+    }
+    return result

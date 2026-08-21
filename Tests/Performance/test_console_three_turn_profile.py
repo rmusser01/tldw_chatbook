@@ -11,6 +11,7 @@ import sys
 import textwrap
 import tomllib
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -734,13 +735,32 @@ def test_prepare_control_worktree_preserves_command_failure(tmp_path: Path) -> N
 def _write_fingerprint_tree(root: Path, *, candidate: bool) -> None:
     tracker = root / "tldw_chatbook/Workspaces/change_turn_tracker.py"
     tracker.parent.mkdir(parents=True, exist_ok=True)
-    tracker.write_text("class ChangeTurnTracker:\n    def end_turn(self): pass\n")
+    tracker.write_text(
+        "class ChangeTurnTracker:\n"
+        "    def begin_turn(self): pass\n"
+        "    def populate_baseline(self): pass\n"
+        "    def end_turn(self): pass\n"
+        + ("    def finish_turn(self): pass\n" if candidate else "")
+    )
+    bridge = root / "tldw_chatbook/Chat/console_agent_bridge.py"
+    bridge.parent.mkdir(parents=True, exist_ok=True)
     if candidate:
+        bridge.write_text(
+            "self._change_finalization_coordinator.register(roots)\n"
+            "self._change_finalization_coordinator.finalize(reservation)\n"
+        )
         (tracker.parent / "change_review_consent.py").write_text(
             "class ChangeReviewConsentService: pass\n"
         )
         (tracker.parent / "change_review_finalization.py").write_text(
-            "class ChangeReviewFinalizationCoordinator:\n    def finalize(self): pass\n"
+            "class ChangeReviewFinalizationCoordinator:\n"
+            "    def finalize(self): pass\n"
+            "    def _worker_loop(self): pass\n"
+        )
+    else:
+        bridge.write_text(
+            "self._change_tracker.begin_turn(roots)\n"
+            "self._change_tracker.end_turn(handle)\n"
         )
 
 
@@ -760,6 +780,147 @@ def test_target_adapter_accepts_only_the_expected_revision_shape(tmp_path: Path)
     with pytest.raises(RuntimeError, match="target_fingerprint_mismatch"):
         target_adapter_type.for_arm(control, "enabled")
 
+    candidate_finalization = (
+        candidate
+        / "tldw_chatbook/Workspaces/change_review_finalization.py"
+    )
+    candidate_finalization.write_text(
+        "class ChangeReviewFinalizationCoordinator:\n"
+        "    def finalize(self): pass\n"
+    )
+    with pytest.raises(RuntimeError, match="target_fingerprint_mismatch"):
+        target_adapter_type.for_arm(candidate, "enabled")
+
+
+def test_target_adapter_wraps_and_restores_legacy_review_boundaries(
+    tmp_path: Path,
+) -> None:
+    class Tracker:
+        def begin_turn(self):
+            return object()
+
+        def populate_baseline(self):
+            return None
+
+        def end_turn(self):
+            return []
+
+    originals = (Tracker.begin_turn, Tracker.populate_baseline, Tracker.end_turn)
+    adapter = profile.TargetAdapter(tmp_path, "control", "legacy")
+
+    adapter.install_timing_wrappers(tracker_type=Tracker)
+    tracker = Tracker()
+    tracker.begin_turn()
+    tracker.populate_baseline()
+    tracker.end_turn()
+
+    events = adapter.review_events()
+    assert set(events) == {
+        "baseline_started",
+        "baseline_ready",
+        "review_e_started",
+        "review_e_completed",
+    }
+    assert events["baseline_started"] <= events["baseline_ready"]
+    assert events["review_e_started"] <= events["review_e_completed"]
+
+    adapter.close()
+    assert (Tracker.begin_turn, Tracker.populate_baseline, Tracker.end_turn) == originals
+
+
+def test_target_adapter_candidate_schedule_precedes_worker_review_e(
+    tmp_path: Path,
+) -> None:
+    class Tracker:
+        def finish_turn(self):
+            return []
+
+    class Coordinator:
+        def __init__(self, tracker):
+            self.tracker = tracker
+
+        def register(self):
+            return object()
+
+        def await_baseline(self):
+            return None
+
+        def finalize(self):
+            # Exercise the real race shape: scheduling may let the worker
+            # enter E before finalize itself returns.
+            self.tracker.finish_turn()
+            return "scheduled"
+
+    original_finalize = Coordinator.finalize
+    adapter = profile.TargetAdapter(tmp_path, "enabled", "candidate")
+
+    adapter.install_timing_wrappers(
+        tracker_type=Tracker,
+        coordinator_type=Coordinator,
+    )
+    coordinator = Coordinator(Tracker())
+    coordinator.register()
+    coordinator.await_baseline()
+    coordinator.finalize()
+
+    events = adapter.review_events()
+    assert set(events) == set(profile.ARM_CONTRACTS["enabled"].required_review)
+    assert events["finalization_scheduled"] <= events["review_e_started"]
+    assert events["review_e_started"] <= events["review_e_completed"]
+
+    adapter.close()
+    assert Coordinator.finalize is original_finalize
+
+
+@pytest.mark.parametrize(
+    ("arm", "kind", "runtime", "expected_service"),
+    (
+        (
+            "control",
+            "legacy",
+            SimpleNamespace(
+                consent_service=None,
+                review_state="legacy",
+                review_ready=True,
+            ),
+            None,
+        ),
+        (
+            "disabled",
+            "candidate",
+            SimpleNamespace(
+                consent_service="disabled-service",
+                review_state="disabled",
+                review_ready=False,
+            ),
+            "disabled-service",
+        ),
+        (
+            "enabled",
+            "candidate",
+            SimpleNamespace(
+                consent_service="enabled-service",
+                review_state="enabled",
+                review_ready=True,
+            ),
+            "enabled-service",
+        ),
+    ),
+)
+def test_target_adapter_configures_only_its_matching_review_arm(
+    tmp_path: Path,
+    arm: str,
+    kind: str,
+    runtime: SimpleNamespace,
+    expected_service: object,
+) -> None:
+    app = SimpleNamespace(change_review_consent_service="old")
+    adapter = profile.TargetAdapter(tmp_path, arm, kind)
+
+    adapter.configure_review(app, runtime)
+
+    assert app.change_review_consent_service == expected_service
+
 
 def test_generate_corpus_is_deterministic_and_uses_content_digest(tmp_path: Path) -> None:
     generate_corpus = getattr(profile, "generate_corpus", None)
@@ -775,3 +936,62 @@ def test_generate_corpus_is_deterministic_and_uses_content_digest(tmp_path: Path
     assert first_result["content_tree_digest"] == profile.content_tree_digest(first)
     (second / "corpus/0001.bin").write_bytes(b"changed")
     assert first_result["content_tree_digest"] != profile.content_tree_digest(second)
+
+
+def test_prepare_workspace_runtime_disabled_has_rw_allow_without_shadow(
+    tmp_path: Path,
+) -> None:
+    prepare_workspace_runtime = getattr(profile, "prepare_workspace_runtime", None)
+
+    assert callable(prepare_workspace_runtime)
+    runtime = prepare_workspace_runtime(tmp_path / "disabled", arm="disabled")
+    try:
+        assert runtime.registry.get_active_workspace().workspace_id == runtime.workspace_id
+        assert runtime.binding.metadata["access"] == "rw"
+        assert runtime.review_state == "disabled"
+        assert runtime.review_ready is False
+        assert runtime.gate.state == "allow"
+        assert runtime.gate.origin == "tool_override"
+        assert runtime.hub.name == "fs_write"
+        assert runtime.permission_definition_hash
+        assert not runtime.shadow_root.exists()
+    finally:
+        runtime.close()
+
+
+def test_prepare_workspace_runtime_enabled_waits_for_real_ready_snapshot(
+    tmp_path: Path,
+) -> None:
+    prepare_workspace_runtime = getattr(profile, "prepare_workspace_runtime", None)
+
+    assert callable(prepare_workspace_runtime)
+    runtime = prepare_workspace_runtime(tmp_path / "enabled", arm="enabled")
+    try:
+        assert runtime.review_state == "enabled"
+        assert runtime.review_ready is True
+        assert runtime.consent_service.admit_turn(runtime.workspace_id).ready_roots == (
+            str(runtime.workspace_root.resolve()),
+        )
+        assert any(runtime.shadow_root.rglob("HEAD"))
+        assert runtime.gate.state == "allow"
+    finally:
+        runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_scripted_mounted_sample_uses_real_composer_queue_and_fs_write(
+    tmp_path: Path,
+) -> None:
+    run_scripted_mounted_sample = getattr(profile, "run_scripted_mounted_sample", None)
+
+    assert callable(run_scripted_mounted_sample)
+    result = await run_scripted_mounted_sample(tmp_path / "mounted", arm="disabled")
+
+    assert result["provider_round_counts"] == {"1": 1, "2": 3, "3": 1}
+    assert result["tool_calls"] == ["load_tools", "fs_write"]
+    assert result["third_send_requested_ns"] < result["turn_2_release_ns"]
+    assert result["third_provider_started_ns"] is not None
+    assert result["terminal_third_assistant"] == "turn-three-complete"
+    assert (tmp_path / "mounted/workspace/measured/turn-two.txt").read_bytes() == (
+        profile.FIXED_MUTATION
+    )
