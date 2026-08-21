@@ -25,6 +25,11 @@ from pathlib import Path
 
 from loguru import logger
 
+from tldw_chatbook.Workspaces.change_review_consent import (
+    ChangeReviewCapability,
+    ChangeReviewState,
+)
+
 DEFAULT_MAX_FILES = 20_000
 DEFAULT_MAX_TOTAL_BYTES = 2 * 1024**3
 DEFAULT_MAX_FILE_BYTES = 10 * 1024**2
@@ -32,25 +37,55 @@ DEFAULT_RETENTION_DAYS = 30
 DEFAULT_MAX_SUB_ROOTS = 20
 
 
+def _change_review_enabled_setting() -> object:
+    """Read the global capability setting, preserving invalid values."""
+    from tldw_chatbook.config import get_cli_setting
+
+    return get_cli_setting("change_review", "enabled", True)
+
+
+def _coerce_change_review_enabled(value: object) -> bool:
+    """Strictly coerce one supported Boolean representation.
+
+    Raises:
+        ValueError: If ``value`` is not a supported Boolean representation.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    raise ValueError("unsupported Change Review capability value")
+
+
+def read_change_review_capability() -> ChangeReviewCapability:
+    """Read the global master capability without failing tracking open."""
+    try:
+        raw = os.environ.get("TLDW_CHANGE_REVIEW_ENABLED")
+        if raw is None:
+            raw = _change_review_enabled_setting()
+        enabled = _coerce_change_review_enabled(raw)
+    except Exception:  # noqa: BLE001 -- invalid config is unavailable
+        logger.debug("change_review: global capability unavailable")
+        return ChangeReviewCapability(ChangeReviewState.UNAVAILABLE)
+    return ChangeReviewCapability(
+        ChangeReviewState.ENABLED if enabled else ChangeReviewState.DISABLED
+    )
+
+
 def change_review_enabled_globally() -> bool:
-    """The flat ``[change_review] enabled`` knob, env-overridable, read live.
+    """Whether the global Change Review capability is explicitly available.
 
     Returns:
-        False only when the knob is explicitly 0/false — the feature is
-        opt-out (TASK-1979).
+        True only for an enabled capability. Disabled and unreadable state
+        both fail runtime tracking off.
     """
-    env = os.environ.get("TLDW_CHANGE_REVIEW_ENABLED")
-    if env is not None:
-        return env.strip().lower() not in {"0", "false", "no", "off"}
-    try:
-        from tldw_chatbook.config import get_cli_setting
-
-        value = get_cli_setting("change_review", "enabled", True)
-    except Exception:  # noqa: BLE001 -- a broken config never disables review
-        return True
-    if isinstance(value, str):
-        return value.strip().lower() not in {"0", "false", "no", "off"}
-    return bool(value)
+    return read_change_review_capability().state is ChangeReviewState.ENABLED
 
 #: Directory names the scan prunes — mirrors the shadow repo's
 #: ``FORCED_EXCLUDES`` (change_tracking.py): untracked trees must not count.

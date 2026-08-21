@@ -16,6 +16,43 @@ from tldw_chatbook.Workspaces.change_bounds import (
 )
 
 
+def test_missing_global_setting_keeps_capability_available(monkeypatch):
+    """A missing master switch preserves capability, not workspace consent."""
+    import tldw_chatbook.Workspaces.change_bounds as change_bounds
+
+    monkeypatch.delenv("TLDW_CHANGE_REVIEW_ENABLED", raising=False)
+    monkeypatch.setattr(
+        change_bounds,
+        "_change_review_enabled_setting",
+        lambda: True,
+        raising=False,
+    )
+
+    result = change_bounds.read_change_review_capability()
+
+    assert result.state.value == "enabled"
+    assert change_bounds.change_review_enabled_globally() is True
+
+
+@pytest.mark.parametrize("raw", ["maybe", "", object()])
+def test_invalid_global_setting_is_unavailable(monkeypatch, raw):
+    """Unreadable/coercion-failed capability state must fail tracking off."""
+    import tldw_chatbook.Workspaces.change_bounds as change_bounds
+
+    monkeypatch.delenv("TLDW_CHANGE_REVIEW_ENABLED", raising=False)
+    monkeypatch.setattr(
+        change_bounds,
+        "_change_review_enabled_setting",
+        lambda: raw,
+        raising=False,
+    )
+
+    result = change_bounds.read_change_review_capability()
+
+    assert result.state.value == "unavailable"
+    assert change_bounds.change_review_enabled_globally() is False
+
+
 class TestKnobs:
     def test_defaults_come_back_untouched(self):
         assert change_review_setting("max_files", DEFAULT_MAX_FILES) == (

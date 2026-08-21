@@ -28,6 +28,12 @@ from .models import (
     WorkspaceTransferPolicy,
     utc_now_iso,
 )
+from .change_review_consent import (
+    ChangeReviewConsent,
+    ChangeReviewState,
+    ChangeReviewStateConflict,
+    MISSING_CHANGE_REVIEW_REVISION,
+)
 
 
 _STORAGE_FAILURE_MESSAGE = "Workspace registry storage failed."
@@ -955,40 +961,121 @@ class LocalWorkspaceRegistryService:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         return tuple(_runtime_binding_from_row(row) for row in rows)
 
-    def change_review_enabled(self, workspace_id: str) -> bool:
-        """Whether change review tracks this workspace's roots (TASK-1979).
-
-        Absent row reads as ENABLED (the toggle is an opt-out); a storage
-        error also reads as enabled — tracking availability must not flip
-        off because a read failed.
+    def read_change_review_consent(
+        self, workspace_id: str
+    ) -> ChangeReviewConsent:
+        """Read explicit per-workspace Change Review consent and revision.
 
         Args:
             workspace_id: Workspace identifier.
 
         Returns:
-            The stored toggle, default True.
+            Enabled/disabled state with its opaque revision. A missing row is
+            disabled with the missing sentinel; storage failure is unavailable.
         """
         safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
         try:
             with self.db.connection() as conn:
                 row = conn.execute(
                     """
-                    SELECT enabled FROM workspace_change_review
+                    SELECT enabled, updated_at FROM workspace_change_review
                     WHERE workspace_id = ?
                     """,
                     (safe_workspace_id,),
                 ).fetchone()
         except sqlite3.Error:
-            logger.opt(exception=True).debug(
-                "change_review toggle read failed; treating as enabled"
-            )
-            return True
+            logger.debug("change_review: workspace consent read unavailable")
+            return ChangeReviewConsent(ChangeReviewState.UNAVAILABLE)
         if row is None:
-            return True
-        return bool(row["enabled"])
+            return ChangeReviewConsent(
+                ChangeReviewState.DISABLED,
+                MISSING_CHANGE_REVIEW_REVISION,
+            )
+        return ChangeReviewConsent(
+            ChangeReviewState.ENABLED
+            if bool(row["enabled"])
+            else ChangeReviewState.DISABLED,
+            str(row["updated_at"]),
+        )
+
+    def change_review_enabled(self, workspace_id: str) -> bool:
+        """Whether this workspace has explicit enabled Change Review consent."""
+        return (
+            self.read_change_review_consent(workspace_id).state
+            is ChangeReviewState.ENABLED
+        )
+
+    def compare_and_set_change_review_consent(
+        self,
+        workspace_id: str,
+        *,
+        expected: ChangeReviewConsent,
+        enabled: bool,
+    ) -> ChangeReviewConsent:
+        """Persist consent only when state and opaque revision still match.
+
+        Args:
+            workspace_id: Workspace identifier.
+            expected: Exact state/revision previously observed by the caller.
+            enabled: New explicit consent value.
+
+        Returns:
+            The newly committed consent observation.
+
+        Raises:
+            ChangeReviewStateConflict: If ``expected`` is stale.
+            WorkspaceRegistryServiceError: If the transaction fails.
+        """
+        safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
+        new_revision = f"{self._now_factory()}:{uuid4().hex}"
+        try:
+            with self.db.transaction() as conn:
+                row = conn.execute(
+                    """
+                    SELECT enabled, updated_at FROM workspace_change_review
+                    WHERE workspace_id = ?
+                    """,
+                    (safe_workspace_id,),
+                ).fetchone()
+                current = (
+                    ChangeReviewConsent(
+                        ChangeReviewState.DISABLED,
+                        MISSING_CHANGE_REVIEW_REVISION,
+                    )
+                    if row is None
+                    else ChangeReviewConsent(
+                        ChangeReviewState.ENABLED
+                        if bool(row["enabled"])
+                        else ChangeReviewState.DISABLED,
+                        str(row["updated_at"]),
+                    )
+                )
+                if current != expected:
+                    raise ChangeReviewStateConflict(
+                        "Change Review state changed; refresh and try again."
+                    )
+                conn.execute(
+                    """
+                    INSERT INTO workspace_change_review
+                        (workspace_id, enabled, updated_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(workspace_id) DO UPDATE SET
+                        enabled = excluded.enabled,
+                        updated_at = excluded.updated_at
+                    """,
+                    (safe_workspace_id, 1 if enabled else 0, new_revision),
+                )
+        except ChangeReviewStateConflict:
+            raise
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        return ChangeReviewConsent(
+            ChangeReviewState.ENABLED if enabled else ChangeReviewState.DISABLED,
+            new_revision,
+        )
 
     def set_change_review_enabled(self, workspace_id: str, enabled: bool) -> None:
-        """Persist the per-workspace change-review toggle (TASK-1979).
+        """Unconditionally persist explicit consent for administrative callers.
 
         Args:
             workspace_id: Workspace identifier.
@@ -998,6 +1085,7 @@ class LocalWorkspaceRegistryService:
             WorkspaceRegistryServiceError: If the write fails.
         """
         safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
+        new_revision = f"{self._now_factory()}:{uuid4().hex}"
         try:
             with self.db.transaction() as conn:
                 conn.execute(
@@ -1012,7 +1100,7 @@ class LocalWorkspaceRegistryService:
                     (
                         safe_workspace_id,
                         1 if enabled else 0,
-                        self._now_factory(),
+                        new_revision,
                     ),
                 )
         except sqlite3.Error as exc:
