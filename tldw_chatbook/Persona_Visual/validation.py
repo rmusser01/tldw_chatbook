@@ -161,6 +161,130 @@ def validate_persona_visual_manifest(
     )
 
 
+def revalidate_persona_visual_manifest(
+    manifest: object,
+    known_assets: Mapping[str, tuple[int, int] | None],
+) -> PersonaVisualManifest:
+    """Revalidate an exact immutable manifest graph into a fresh snapshot."""
+
+    if type(manifest) is not PersonaVisualManifest:
+        raise PersonaVisualManifestError()
+    asset_ids, dimensions = _known_assets(known_assets)
+    assets: dict[str, tuple[int, int] | None] = {
+        asset_id: dimensions.get(asset_id) for asset_id in asset_ids
+    }
+    states = _immutable_mapping(manifest.states, MAX_ANIMATIONS)
+    animations = _immutable_mapping(manifest.animations, MAX_ANIMATIONS)
+    fallbacks = _immutable_mapping(manifest.fallbacks, MAX_ANIMATIONS)
+    catalog = _immutable_mapping(manifest.state_catalog, MAX_CUSTOM_STATES)
+    if type(manifest.triggers) is not tuple or len(manifest.triggers) > MAX_TRIGGERS:
+        raise PersonaVisualManifestError()
+
+    animation_documents: dict[str, object] = {}
+    for animation_id, animation in animations.items():
+        if type(animation) is not PersonaVisualAnimation:
+            raise PersonaVisualManifestError()
+        animation_documents[animation_id] = _animation_document(animation, assets)
+
+    document = {
+        "renderer_type": manifest.renderer_type,
+        "manifest_version": manifest.manifest_version,
+        "states": {
+            state: {"animation_id": animation_id}
+            for state, animation_id in states.items()
+        },
+        "animations": animation_documents,
+        "fallbacks": {
+            state: list(_immutable_tuple(chain, MAX_FALLBACK_WIDTH))
+            for state, chain in fallbacks.items()
+        },
+        "authored_triggers": [
+            _record_document(
+                trigger,
+                PersonaVisualTrigger,
+                "id source match state duration_ms priority",
+            )
+            for trigger in manifest.triggers
+        ],
+        "state_catalog": {
+            state: _catalog_document(entry) for state, entry in catalog.items()
+        },
+    }
+    return validate_persona_visual_manifest(document, assets)
+
+
+def _animation_document(
+    animation: PersonaVisualAnimation,
+    known_assets: dict[str, tuple[int, int] | None],
+) -> dict[str, object]:
+    frames = _immutable_tuple(animation.frames, MAX_FRAMES_PER_ANIMATION, required=True)
+    documents = []
+    for frame in frames:
+        if type(frame) is not PersonaVisualFrame:
+            raise PersonaVisualManifestError()
+        document = _record_document(frame, PersonaVisualFrame, "asset_id duration_ms")
+        if frame.region is not None:
+            document["region"] = _record_document(
+                frame.region, PersonaVisualRegion, "x y width height"
+            )
+        documents.append(document)
+        if type(frame.asset_id) is str:
+            known_assets.setdefault(frame.asset_id, None)
+    document = {
+        "frames": documents,
+        "frame_rate": animation.frame_rate,
+        "loop": animation.loop,
+    }
+    if animation.alignment is not None:
+        document["alignment"] = _record_document(
+            animation.alignment, PersonaVisualAlignment, "x y"
+        )
+    if animation.preview_frame is not None:
+        document["preview_frame"] = animation.preview_frame
+    if animation.preview_asset_id is not None:
+        document["preview_asset_id"] = animation.preview_asset_id
+    return document
+
+
+def _catalog_document(entry: object) -> dict[str, object]:
+    document = _record_document(
+        entry, PersonaVisualCatalogEntry, "label kind description"
+    )
+    document["tags"] = list(_immutable_tuple(entry.tags, 16))
+    return document
+
+
+def _immutable_mapping(value: object, maximum: int) -> Mapping[str, object]:
+    if (
+        type(value) is not MappingProxyType
+        or len(value) > maximum
+        or any(type(key) is not str for key in value)
+    ):
+        raise PersonaVisualManifestError()
+    return value
+
+
+def _immutable_tuple(
+    value: object,
+    maximum: int,
+    *,
+    required: bool = False,
+) -> tuple[object, ...]:
+    if type(value) is not tuple or len(value) > maximum or required and not value:
+        raise PersonaVisualManifestError()
+    return value
+
+
+def _record_document(
+    value: object,
+    expected: type[object],
+    field_names: str,
+) -> dict[str, object]:
+    if type(value) is not expected:
+        raise PersonaVisualManifestError()
+    return {name: getattr(value, name) for name in field_names.split()}
+
+
 def _load_document(payload: object) -> dict[str, Any]:
     if isinstance(payload, bytes):
         if len(payload) > MAX_MANIFEST_JSON_BYTES:
@@ -628,4 +752,4 @@ def _freeze(values: Mapping[str, Any]) -> Mapping[str, Any]:
     return MappingProxyType(dict(values))
 
 
-__all__ = ["validate_persona_visual_manifest"]
+__all__ = ["revalidate_persona_visual_manifest", "validate_persona_visual_manifest"]

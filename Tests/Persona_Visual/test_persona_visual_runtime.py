@@ -18,6 +18,7 @@ from tldw_chatbook.Persona_Visual.assets import (
     PersonaVisualAssetError,
     PersonaVisualAssetMetadata,
 )
+from tldw_chatbook.Persona_Visual.contracts import PersonaVisualTrigger
 from tldw_chatbook.Persona_Visual.repository import (
     PersonaVisualAssetRecord,
     PersonaVisualBindingRecord,
@@ -384,6 +385,129 @@ def test_authoritative_unicode_space_and_slash_persona_id_remains_valid() -> Non
     assert result.source == "persona_visual"
     assert result.cache_identity.graph is not None
     assert result.cache_identity.graph.persona_id == persona_id
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "states_container",
+        "state_scalar",
+        "animations_container",
+        "frames_container",
+        "frame_type",
+        "frame_asset_id",
+        "frame_duration",
+        "frame_region_type",
+        "region_scalar",
+        "frame_rate",
+        "loop",
+        "alignment_type",
+        "alignment_scalar",
+        "preview_frame",
+        "preview_asset",
+        "fallbacks_container",
+        "fallback_scalar",
+        "triggers_container",
+        "trigger_scalar",
+        "catalog_container",
+        "catalog_scalar",
+        "catalog_tags_container",
+    ],
+)
+def test_hostile_manifest_graph_is_revalidated_before_loader(case: str) -> None:
+    marker = "/private/runtime/manifest-marker"
+    graph = _graph()
+    manifest = graph.version.manifest
+    animations = dict(manifest.animations)
+    animation = animations["listening-animation"]
+    frames = animation.frames
+    frame = frames[0]
+
+    if case == "states_container":
+        manifest = replace(manifest, states=dict(manifest.states))
+    elif case == "state_scalar":
+        manifest = replace(
+            manifest, states=MappingProxyType({**manifest.states, "idle": [marker]})
+        )
+    elif case == "animations_container":
+        manifest = replace(manifest, animations=animations)
+    elif case == "frames_container":
+        animations["listening-animation"] = replace(animation, frames=list(frames))
+        manifest = replace(manifest, animations=MappingProxyType(animations))
+    elif case == "frame_type":
+        animations["listening-animation"] = replace(
+            animation, frames=(marker, *frames[1:])
+        )
+        manifest = replace(manifest, animations=MappingProxyType(animations))
+    elif case in {"frame_asset_id", "frame_duration", "frame_region_type"}:
+        field = {
+            "frame_asset_id": "asset_id",
+            "frame_duration": "duration_ms",
+            "frame_region_type": "region",
+        }[case]
+        hostile = replace(frame, **{field: [marker]})
+        animations["listening-animation"] = replace(
+            animation, frames=(hostile, *frames[1:])
+        )
+        manifest = replace(manifest, animations=MappingProxyType(animations))
+    elif case == "region_scalar":
+        hostile_region = replace(frame.region, x=[marker])  # type: ignore[arg-type]
+        hostile = replace(frame, region=hostile_region)
+        animations["listening-animation"] = replace(
+            animation, frames=(hostile, *frames[1:])
+        )
+        manifest = replace(manifest, animations=MappingProxyType(animations))
+    elif case in {
+        "frame_rate",
+        "loop",
+        "alignment_type",
+        "preview_frame",
+        "preview_asset",
+    }:
+        field = {
+            "frame_rate": "frame_rate",
+            "loop": "loop",
+            "alignment_type": "alignment",
+            "preview_frame": "preview_frame",
+            "preview_asset": "preview_asset_id",
+        }[case]
+        animations["listening-animation"] = replace(animation, **{field: [marker]})
+        manifest = replace(manifest, animations=MappingProxyType(animations))
+    elif case == "alignment_scalar":
+        hostile_alignment = replace(animation.alignment, x=[marker])  # type: ignore[arg-type]
+        animations["listening-animation"] = replace(
+            animation, alignment=hostile_alignment
+        )
+        manifest = replace(manifest, animations=MappingProxyType(animations))
+    elif case == "fallbacks_container":
+        manifest = replace(manifest, fallbacks=dict(manifest.fallbacks))
+    elif case == "fallback_scalar":
+        manifest = replace(
+            manifest,
+            fallbacks=MappingProxyType(
+                {**manifest.fallbacks, "tool.missing": ([marker],)}
+            ),
+        )
+    elif case == "triggers_container":
+        manifest = replace(manifest, triggers=[])
+    elif case == "trigger_scalar":
+        trigger = PersonaVisualTrigger(
+            "trigger-1", "live_state", marker, "thinking", 100, 1
+        )
+        manifest = replace(manifest, triggers=(replace(trigger, priority=[marker]),))
+    elif case == "catalog_container":
+        manifest = replace(manifest, state_catalog=dict(manifest.state_catalog))
+    else:
+        catalog = dict(manifest.state_catalog)
+        entry = catalog["tool.notes"]
+        field = "tags" if case == "catalog_tags_container" else "label"
+        catalog["tool.notes"] = replace(entry, **{field: [marker]})
+        manifest = replace(manifest, state_catalog=MappingProxyType(catalog))
+
+    _assert_hostile_graph_is_path_free_invalid(
+        replace(graph, version=replace(graph.version, manifest=manifest)),
+        marker=marker,
+    )
 
 
 @pytest.mark.parametrize(

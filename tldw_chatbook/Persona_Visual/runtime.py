@@ -25,12 +25,10 @@ from .contracts import (
     MAX_ASSET_COUNT,
     MAX_ASSET_DIMENSION,
     MAX_ASSET_TOTAL_BYTES,
-    MAX_FALLBACK_DEPTH,
     MAX_FRAME_DURATION_MS,
     MAX_FRAMES_PER_ANIMATION,
     PersonaVisualAlignment,
     PersonaVisualAnimation,
-    PersonaVisualFrame,
     PersonaVisualManifest,
     PersonaVisualRegion,
 )
@@ -43,6 +41,7 @@ from .repository import (
     PersonaVisualRepository,
     PersonaVisualVersionRecord,
 )
+from .validation import revalidate_persona_visual_manifest
 
 
 STATE_FALLBACK_REASON = "persona_visual_state_fallback"
@@ -366,14 +365,10 @@ def _validated_graph(
             raise ValueError
         record_ids.add(record.id)
         records[record.asset_key] = record
-    manifest = version.manifest
-    for animation in manifest.animations.values():
-        if type(animation) is not PersonaVisualAnimation:
-            raise ValueError
-        for frame in animation.frames:
-            if type(frame) is not PersonaVisualFrame:
-                raise ValueError
-    _reject_fallback_cycles(manifest)
+    manifest = revalidate_persona_visual_manifest(
+        version.manifest,
+        {key: (record.width, record.height) for key, record in records.items()},
+    )
     return identity, manifest, records
 
 
@@ -521,22 +516,6 @@ def _runtime_timestamp(value: object) -> str:
     value = _runtime_text(value, 19)
     datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
     return value
-
-
-def _reject_fallback_cycles(manifest: PersonaVisualManifest) -> None:
-    done: set[str] = set()
-
-    def visit(state: str, active: frozenset[str] = frozenset()) -> None:
-        if state in active or len(active) >= MAX_FALLBACK_DEPTH:
-            raise ValueError
-        if state in done:
-            return
-        for child in manifest.fallbacks.get(state, ()):
-            visit(child, active | {state})
-        done.add(state)
-
-    for state in manifest.fallbacks:
-        visit(state)
 
 
 def _candidate_states(
