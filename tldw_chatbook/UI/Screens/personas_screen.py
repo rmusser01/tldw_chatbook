@@ -972,6 +972,7 @@ class PersonasScreen(BaseAppScreen):
         self._profile_save_inflight: bool = False
         self._profile_save_operation_inflight: bool = False
         self._persona_buddy_session_generation: int = 0
+        self._persona_buddy_action_lock = asyncio.Lock()
         # Mirrors _profile_save_inflight for the character editor: guards
         # against a re-entrant Save (double-click/Ctrl+S) while an earlier
         # save for this session is still persisting.
@@ -3996,6 +3997,7 @@ class PersonasScreen(BaseAppScreen):
         inspector.set_avatar_thumbnail(None)
         inspector.set_unsaved(False)
         inspector.show_validation(())
+        self._sync_inspector_buddy_status()
         self._sync_inspector_console_actions()
         # Persona profiles have no conversation linkage in the local data.
         self.conversations.reset()
@@ -5725,6 +5727,29 @@ class PersonasScreen(BaseAppScreen):
             provider_block_reason=self._provider_send_block_reason(),
         )
 
+    def _sync_inspector_buddy_status(self) -> None:
+        """Push exact app-owned Buddy ownership and visibility into Inspector."""
+
+        try:
+            inspector = self.query_one(PersonasInspectorPane)
+        except QueryError:
+            return
+        controller = getattr(self.app, "persona_buddy_controller", None)
+        snapshot = controller.snapshot() if controller is not None else None
+        selection = getattr(snapshot, "selection", None)
+        inspector.set_buddy_status(
+            source=(
+                selection.source if type(selection) is PersonaBuddySelection else None
+            ),
+            persona_id=(
+                selection.local_persona_id
+                if type(selection) is PersonaBuddySelection
+                else None
+            ),
+            enabled=getattr(snapshot, "enabled", False) is True,
+            open=getattr(snapshot, "open", True) is True,
+        )
+
     async def _selection_handoff_body(self) -> str | None:
         """Readable card summary for the selected item, or ``None`` when stale."""
         kind = self.state.selected_entity_kind
@@ -5885,7 +5910,9 @@ class PersonasScreen(BaseAppScreen):
         return record if isinstance(record, Mapping) else None
 
     @on(PersonaBuddyActionRequested)
-    def _handle_persona_buddy_action(self, message: PersonaBuddyActionRequested) -> None:
+    def _handle_persona_buddy_action(
+        self, message: PersonaBuddyActionRequested
+    ) -> None:
         """Capture one action session and run it as a replaceable screen worker."""
 
         message.stop()
@@ -5939,55 +5966,74 @@ class PersonasScreen(BaseAppScreen):
                 )
             return
 
-        current = controller.current_preferences()
         selection = PersonaBuddySelection("local", authority.persona_id)
-        if authority.action == "use":
-            changes: dict[str, object] = {
-                "selection": selection,
-                "enabled": True,
-                "open": True,
-            }
-        elif current.selection != selection:
-            self._notify("Use this Persona for Buddy first.", "warning")
-            return
-        elif authority.action == "show":
-            changes = {"enabled": True, "open": True}
-        elif authority.action == "close":
-            changes = {"open": False}
-        else:
-            changes = {"enabled": False}
+        async with self._persona_buddy_action_lock:
+            if not self._persona_buddy_action_context_is_current(authority):
+                return
+            current = controller.current_preferences()
+            if authority.action == "use":
+                changes: dict[str, object] = {
+                    "selection": selection,
+                    "enabled": True,
+                    "open": True,
+                }
+            elif current.selection != selection:
+                self._notify("Use this Persona for Buddy first.", "warning")
+                return
+            elif authority.action == "show":
+                changes = {"enabled": True, "open": True}
+            elif authority.action == "close":
+                changes = {"open": False}
+            else:
+                changes = {"enabled": False}
 
-        try:
-            preferences_revision = controller.apply_preferences_patch(**changes)
-            persisted = await controller.persist_preferences_revision(
-                preferences_revision
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.warning(
-                "Persona Buddy preference update failed "
-                "(category=preference_update_failed)."
-            )
-            if self._persona_buddy_action_context_is_current(authority):
-                self._notify("Persona Buddy preference could not be saved.", "error")
-            return
-        if not self._persona_buddy_action_context_is_current(authority):
-            return
-        if not persisted:
-            self._notify("Persona Buddy preference could not be saved.", "error")
-            return
+            candidate = dataclasses.replace(current, **changes)
+            if candidate != current:
+
+                async def restore_previous_action_fields() -> None:
+                    latest_preferences = controller.current_preferences()
+                    rollback = dataclasses.replace(
+                        latest_preferences,
+                        **{field: getattr(current, field) for field in changes},
+                    )
+                    if rollback != latest_preferences:
+                        await controller.update_preferences(rollback)
+
+                try:
+                    await controller.update_preferences(candidate)
+                except asyncio.CancelledError:
+                    if not self._persona_buddy_action_context_is_current(authority):
+                        await restore_previous_action_fields()
+                    raise
+                except Exception:
+                    logger.warning(
+                        "Persona Buddy preference update failed "
+                        "(category=preference_update_failed)."
+                    )
+                    if self._persona_buddy_action_context_is_current(authority):
+                        self._notify(
+                            "Persona Buddy preference could not be saved.", "error"
+                        )
+                    return
+                if not self._persona_buddy_action_context_is_current(authority):
+                    await restore_previous_action_fields()
+                    return
+                preferences = controller.current_preferences()
+                if any(
+                    getattr(preferences, field) != value
+                    for field, value in changes.items()
+                ):
+                    self._notify(
+                        "Persona Buddy preference could not be saved.", "error"
+                    )
+                    return
+            self._sync_inspector_buddy_status()
+
         record = await self._fetch_persona_buddy_action_record(authority)
         if (
             record is None
             or not self._persona_buddy_action_context_is_current(authority)
             or not self._persona_buddy_record_is_eligible(record, authority)
-        ):
-            return
-        latest = controller.snapshot()
-        preferences = controller.current_preferences()
-        if latest.preferences_generation < preferences_revision or any(
-            getattr(preferences, field) != value for field, value in changes.items()
         ):
             return
         reconcile = getattr(self.app, "reconcile_persona_buddy_view", None)
@@ -12165,6 +12211,7 @@ class PersonasScreen(BaseAppScreen):
         if snapshot.selection != PersonaBuddySelection("local", str(persona_id)):
             return
         controller.invalidate_profile()
+        self._sync_inspector_buddy_status()
         reconcile = getattr(self.app, "reconcile_persona_buddy_view", None)
         if not callable(reconcile):
             return
@@ -12685,6 +12732,7 @@ class PersonasScreen(BaseAppScreen):
         )
         inspector.set_unsaved(False)
         inspector.show_validation(())
+        self._sync_inspector_buddy_status()
         self._sync_inspector_console_actions()
         await self._render_profile_rows()
         # Save-in-place: the returned ``saved`` dict already carries the

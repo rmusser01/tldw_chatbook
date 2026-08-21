@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal, Self
+from typing import Literal
 
 from textual.message import Message
 
@@ -40,47 +40,57 @@ PersonaBuddySource = Literal["local", "server"]
 
 
 @dataclass(frozen=True, slots=True)
-class PersonaBuddyActionRequested(Message):
-    """Request one explicit Buddy ownership or visibility change."""
-
+class _PersonaBuddyActionPayload:
     action: PersonaBuddyAction
     source: PersonaBuddySource
     persona_id: str
     revision: int
 
-    def __post_init__(self) -> None:
+
+class PersonaBuddyActionRequested(Message):
+    """Request one explicit Buddy ownership or visibility change."""
+
+    __slots__ = ("_payload",)
+
+    def __init__(
+        self,
+        *,
+        action: PersonaBuddyAction,
+        source: PersonaBuddySource,
+        persona_id: str,
+        revision: int,
+    ) -> None:
+        super().__init__()
         if (
-            self.action not in {"use", "show", "close", "disable"}
-            or self.source not in {"local", "server"}
-            or not self.persona_id
-            or type(self.revision) is not int
-            or self.revision < 1
+            action not in {"use", "show", "close", "disable"}
+            or source not in {"local", "server"}
+            or not persona_id
+            or type(revision) is not int
+            or revision < 1
         ):
             raise ValueError("invalid Persona Buddy action")
-        # Textual mutates Message's private delivery slots. Keep those slots
-        # operational while the public action payload remains frozen.
-        initialized = Message()
-        for attribute in Message.__slots__:
-            object.__setattr__(self, attribute, getattr(initialized, attribute))
+        self._payload = _PersonaBuddyActionPayload(
+            action=action,
+            source=source,
+            persona_id=persona_id,
+            revision=revision,
+        )
 
-    def set_sender(self, sender: Any) -> Self:
-        object.__setattr__(self, "_sender", sender)
-        return self
+    @property
+    def action(self) -> PersonaBuddyAction:
+        return self._payload.action
 
-    def _set_forwarded(self) -> None:
-        object.__setattr__(self, "_forwarded", True)
+    @property
+    def source(self) -> PersonaBuddySource:
+        return self._payload.source
 
-    def prevent_default(self, prevent: bool = True) -> Self:
-        object.__setattr__(self, "_no_default_action", prevent)
-        return self
+    @property
+    def persona_id(self) -> str:
+        return self._payload.persona_id
 
-    def stop(self, stop: bool = True) -> Self:
-        object.__setattr__(self, "_stop_propagation", stop)
-        return self
-
-    def _bubble_to(self, widget: Any) -> None:
-        object.__setattr__(self, "_no_default_action", False)
-        widget.post_message(self)
+    @property
+    def revision(self) -> int:
+        return self._payload.revision
 
 
 class PersonaModeChanged(Message):

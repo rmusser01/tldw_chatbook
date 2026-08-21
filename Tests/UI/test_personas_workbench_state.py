@@ -25,11 +25,11 @@ code): construct a new screen, call ``restore_state`` on it, THEN push it -
 never mount a screen before its saved state has been seeded.
 """
 
-from unittest.mock import AsyncMock
+import tomllib
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
-from textual.app import App
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -43,11 +43,13 @@ from tldw_chatbook.Persona_Buddy import (
     PersonaBuddyPreferences,
     PersonaBuddySelection,
     parse_persona_buddy_preferences,
-    serialize_persona_buddy_preferences,
 )
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
     PersonasPreviewPane,
+)
+from tldw_chatbook.Widgets.Persona_Widgets.personas_messages import (
+    PersonaBuddyActionRequested,
 )
 
 from Tests.UI.test_personas_dictionaries import (
@@ -59,7 +61,73 @@ from Tests.UI.test_personas_dictionaries import (
 pytestmark = pytest.mark.asyncio
 
 
-async def test_restart_restores_selection_open_collapsed_and_geometry():
+async def test_restart_restores_selection_open_collapsed_and_geometry(
+    mock_app_instance,
+    stub_characters,
+    monkeypatch,
+    tmp_path,
+):
+    config_path = tmp_path / "restart" / "config.toml"
+    config_path.parent.mkdir(mode=0o700)
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    record = {
+        "id": "persona-7",
+        "name": "Archivist",
+        "version": 3,
+        "is_active": True,
+        "deleted": False,
+    }
+
+    def local_record(persona_id: str):
+        return dict(record) if persona_id == "persona-7" else None
+
+    async def scoped_record(persona_id: str, *, mode: str):
+        assert mode == "local"
+        found = local_record(persona_id)
+        if found is None:
+            raise ValueError("persona missing")
+        return found
+
+    scope = SimpleNamespace(
+        local_service=SimpleNamespace(get_persona_profile=local_record),
+        list_persona_profiles=AsyncMock(
+            return_value={"items": [dict(record)], "total": 1}
+        ),
+        get_persona_profile=AsyncMock(side_effect=scoped_record),
+    )
+    initial = PersonaBuddyPreferences(
+        enabled=True,
+        selection=PersonaBuddySelection("local", "persona-7"),
+        open=True,
+        collapsed=True,
+        geometry=PersonaBuddyGeometry(x=17, y=9, width=42, height=14),
+    )
+    controller = PersonaBuddyController(
+        preferences=initial,
+        local_persona_service=scope.local_service,
+    )
+    mock_app_instance.runtime_backend = "local"
+    mock_app_instance.character_persona_scope_service = scope
+    mock_app_instance.persona_buddy_controller = controller
+    mock_app_instance.reconcile_persona_buddy_view = AsyncMock(return_value=True)
+
+    app = PersonasTestApp(mock_app_instance)
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        await screen._apply_mode("personas")
+        await screen._select_profile("persona-7", "Archivist")
+        screen.post_message(
+            PersonaBuddyActionRequested(
+                action="close",
+                source="local",
+                persona_id="persona-7",
+                revision=3,
+            )
+        )
+        await pilot.app.workers.wait_for_complete()
+    await controller.shutdown()
+
+    raw = tomllib.loads(config_path.read_text(encoding="utf-8"))
     expected = PersonaBuddyPreferences(
         enabled=True,
         selection=PersonaBuddySelection("local", "persona-7"),
@@ -67,14 +135,38 @@ async def test_restart_restores_selection_open_collapsed_and_geometry():
         collapsed=True,
         geometry=PersonaBuddyGeometry(x=17, y=9, width=42, height=14),
     )
+    assert parse_persona_buddy_preferences(raw["persona_buddy"]) == expected
 
     restarted = PersonaBuddyController(
-        preferences=parse_persona_buddy_preferences(
-            serialize_persona_buddy_preferences(expected)
-        )
+        preferences=parse_persona_buddy_preferences(raw["persona_buddy"]),
+        local_persona_service=scope.local_service,
     )
+    assert restarted.current_preferences() == expected
+
+    durable_before = config_path.read_bytes()
+    restarted._preference_writer = lambda _preferences: False
+    mock_app_instance.persona_buddy_controller = restarted
+    mock_app_instance.reconcile_persona_buddy_view.reset_mock()
+    restarted_app = PersonasTestApp(mock_app_instance)
+    async with restarted_app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        await screen._apply_mode("personas")
+        await screen._select_profile("persona-7", "Archivist")
+        screen.post_message(
+            PersonaBuddyActionRequested(
+                action="show",
+                source="local",
+                persona_id="persona-7",
+                revision=3,
+            )
+        )
+        await pilot.app.workers.wait_for_complete()
+    await restarted.shutdown()
 
     assert restarted.current_preferences() == expected
+    assert config_path.read_bytes() == durable_before
+    mock_app_instance.reconcile_persona_buddy_view.assert_not_awaited()
+
 
 CHARACTERS = [
     {

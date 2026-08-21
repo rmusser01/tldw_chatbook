@@ -6,7 +6,7 @@ import re
 
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import QueryError
 from textual.widgets import Button, Checkbox, ListItem, ListView, Static
 
@@ -53,7 +53,7 @@ _THUMB_BOX_COLS = 24
 _THUMB_BOX_LINES = 10
 
 
-class PersonasInspectorPane(Vertical):
+class PersonasInspectorPane(VerticalScroll):
     """Identity, validation, conversations, readiness, and actions."""
 
     # Structure only: colors come from the app stylesheet. The conversations
@@ -154,6 +154,10 @@ class PersonasInspectorPane(Vertical):
         self._buddy_revision: int | None = None
         self._buddy_active = False
         self._buddy_profile_current = False
+        self._buddy_owner_source: str | None = None
+        self._buddy_owner_persona_id: str | None = None
+        self._buddy_enabled = False
+        self._buddy_open = True
         # F-040: marked library rows drive bulk Delete/Export JSON affordances.
         self._marked_count = 0
 
@@ -349,6 +353,22 @@ class PersonasInspectorPane(Vertical):
 
     def set_unsaved(self, is_unsaved: bool) -> None:
         self._is_unsaved = is_unsaved
+        self._apply_action_state()
+
+    def set_buddy_status(
+        self,
+        *,
+        source: str | None,
+        persona_id: str | None,
+        enabled: bool,
+        open: bool,
+    ) -> None:
+        """Apply the screen-owned Buddy selection and visibility snapshot."""
+
+        self._buddy_owner_source = source
+        self._buddy_owner_persona_id = persona_id
+        self._buddy_enabled = enabled is True
+        self._buddy_open = open is True
         self._apply_action_state()
 
     def set_tts_export_available(self, available: bool) -> None:
@@ -654,10 +674,52 @@ class PersonasInspectorPane(Vertical):
             buddy_tooltip = "Activate this Persona first."
         else:
             buddy_tooltip = "Select a saved local Persona."
-        for button in self.query(".persona-buddy-action").results(Button):
+        use_button = self.query_one("#personas-buddy-use", Button)
+        use_button.display = buddy_applies
+        use_button.disabled = not buddy_eligible
+        use_button.tooltip = None if buddy_eligible else buddy_tooltip
+        owner = bool(
+            buddy_eligible
+            and self._buddy_owner_source == "local"
+            and self._buddy_owner_persona_id == self._buddy_persona_id
+        )
+        owner_tooltip = "Select the Persona currently used by Buddy"
+        if not buddy_eligible:
+            state = {
+                "personas-buddy-show": (False, buddy_tooltip),
+                "personas-buddy-close": (False, buddy_tooltip),
+                "personas-buddy-disable": (False, buddy_tooltip),
+            }
+        elif not owner:
+            state = {
+                "personas-buddy-show": (False, owner_tooltip),
+                "personas-buddy-close": (False, owner_tooltip),
+                "personas-buddy-disable": (False, owner_tooltip),
+            }
+        elif not self._buddy_enabled:
+            disabled_tooltip = "Buddy is disabled. Use for Buddy to enable it."
+            state = {
+                "personas-buddy-show": (False, disabled_tooltip),
+                "personas-buddy-close": (False, disabled_tooltip),
+                "personas-buddy-disable": (False, "Buddy is already disabled."),
+            }
+        elif self._buddy_open:
+            state = {
+                "personas-buddy-show": (False, "Buddy is already open."),
+                "personas-buddy-close": (True, None),
+                "personas-buddy-disable": (True, None),
+            }
+        else:
+            state = {
+                "personas-buddy-show": (True, None),
+                "personas-buddy-close": (False, "Buddy is already closed."),
+                "personas-buddy-disable": (True, None),
+            }
+        for button_id, (enabled, tooltip) in state.items():
+            button = self.query_one(f"#{button_id}", Button)
             button.display = buddy_applies
-            button.disabled = not buddy_eligible
-            button.tooltip = None if buddy_eligible else buddy_tooltip
+            button.disabled = not enabled
+            button.tooltip = tooltip
 
     @on(Button.Pressed, ".persona-buddy-action")
     def _buddy_action_pressed(self, event: Button.Pressed) -> None:

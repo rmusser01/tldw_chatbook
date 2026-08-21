@@ -1,9 +1,7 @@
 """Mounted tests for the Personas inspector pane."""
 
-from dataclasses import FrozenInstanceError, is_dataclass
-
 import pytest
-from textual.app import App
+from textual.message import Message
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -41,9 +39,11 @@ class InspectorApp(ConsolidatedCSSApp):
 async def test_persona_buddy_action_message_is_typed_frozen_and_slotted():
     message_type = getattr(personas_messages, "PersonaBuddyActionRequested", None)
     assert message_type is not None
-    assert is_dataclass(message_type)
-    assert message_type.__dataclass_params__.frozen is True
+    assert message_type.__slots__ == ("_payload",)
     assert "__dict__" not in message_type.__slots__
+    assert message_type.set_sender is Message.set_sender
+    assert message_type.prevent_default is Message.prevent_default
+    assert message_type.stop is Message.stop
 
     message = message_type(
         action="use",
@@ -58,8 +58,25 @@ async def test_persona_buddy_action_message_is_typed_frozen_and_slotted():
         "persona-7",
         4,
     )
-    with pytest.raises(FrozenInstanceError):
+    with pytest.raises(AttributeError):
         message.action = "show"
+
+
+async def test_persona_buddy_action_message_uses_normal_textual_delivery():
+    app = InspectorApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        message = personas_messages.PersonaBuddyActionRequested(
+            action="use",
+            source="local",
+            persona_id="persona-7",
+            revision=4,
+        )
+
+        pane.post_message(message)
+        await pilot.pause()
+
+        assert app.buddy_messages == [message]
 
 
 @pytest.mark.parametrize(
@@ -88,6 +105,12 @@ async def test_active_local_persona_buddy_actions_are_explicit_and_typed(
             active=True,
             profile_current=True,
         )
+        pane.set_buddy_status(
+            source="local",
+            persona_id="persona-7",
+            enabled=True,
+            open=action != "show",
+        )
         await pilot.pause()
 
         button = pilot.app.query_one(button_id, Button)
@@ -97,7 +120,12 @@ async def test_active_local_persona_buddy_actions_are_explicit_and_typed(
         await pilot.pause()
 
         message = app.buddy_messages[-1]
-        assert (message.action, message.source, message.persona_id, message.revision) == (
+        assert (
+            message.action,
+            message.source,
+            message.persona_id,
+            message.revision,
+        ) == (
             action,
             "local",
             "persona-7",
@@ -129,6 +157,38 @@ async def test_server_persona_buddy_actions_are_disabled_with_exact_recovery_cop
             button = pilot.app.query_one(button_id, Button)
             assert button.disabled is True
             assert button.tooltip == "Save a local copy first"
+
+
+async def test_non_owner_highlight_only_enables_use_with_truthful_tooltip():
+    app = InspectorApp()
+    async with app.run_test(size=(170, 50)) as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        pane.show_selection(
+            name="Navigator",
+            kind="persona",
+            source="local",
+            entity_id="persona-2",
+            revision=5,
+            active=True,
+            profile_current=True,
+        )
+        pane.set_buddy_status(
+            source="local",
+            persona_id="persona-1",
+            enabled=True,
+            open=True,
+        )
+        await pilot.pause()
+
+        assert pane.query_one("#personas-buddy-use", Button).disabled is False
+        for button_id in (
+            "#personas-buddy-show",
+            "#personas-buddy-close",
+            "#personas-buddy-disable",
+        ):
+            button = pane.query_one(button_id, Button)
+            assert button.disabled is True
+            assert button.tooltip == "Select the Persona currently used by Buddy"
 
 
 async def test_persona_highlight_alone_emits_no_buddy_action():
@@ -172,6 +232,12 @@ async def test_buddy_actions_keep_exact_labels_and_focus_without_keybindings(siz
             ("#personas-buddy-disable", "Disable Buddy"),
         )
         for button_id, label in expected:
+            pane.set_buddy_status(
+                source="local",
+                persona_id="persona-7",
+                enabled=True,
+                open=button_id != "#personas-buddy-show",
+            )
             button = pilot.app.query_one(button_id, Button)
             assert str(button.label) == label
             assert button.can_focus is True
