@@ -40,6 +40,11 @@ class _BuddyScreen(BaseAppScreen):
 class _BuddyApp(ConsolidatedCSSApp):
     CSS_PATH = BUNDLED_STYLESHEET
     reconcile_persona_buddy_view = TldwCli.reconcile_persona_buddy_view
+    _persona_buddy_authority = staticmethod(TldwCli._persona_buddy_authority)
+    is_persona_buddy_confirmed_unavailable = (
+        TldwCli.is_persona_buddy_confirmed_unavailable
+    )
+    confirm_persona_buddy_unavailable = TldwCli.confirm_persona_buddy_unavailable
 
     def __init__(
         self,
@@ -52,6 +57,7 @@ class _BuddyApp(ConsolidatedCSSApp):
             preferences=preferences,
             preference_writer=lambda _preferences: True,
         )
+        self._persona_buddy_unavailable_authority = None
         if not production_resolution:
 
             async def unresolved_until_test_requests_it(*, cols: int, lines: int):
@@ -254,6 +260,69 @@ async def test_confirmed_unavailable_unmounts_then_profile_invalidation_remounts
         await _wait_until(lambda: len(list(app.screen.query(PersonaBuddyWidget))) == 1)
         await _wait_until(lambda: calls == 2)
         gates[1].set()
+
+
+@pytest.mark.asyncio
+async def test_confirmed_unavailable_authority_survives_fresh_screens():
+    app = _BuddyApp(_enabled_preferences(), production_resolution=True)
+    controller = app.persona_buddy_controller
+    original_resolve = controller.resolve_current_visual
+    gates = (asyncio.Event(), asyncio.Event())
+    calls = 0
+
+    async def counted_resolve(*, cols: int, lines: int):
+        nonlocal calls
+        index = min(calls, 1)
+        calls += 1
+        await gates[index].wait()
+        return await original_resolve(cols=cols, lines=lines)
+
+    controller.resolve_current_visual = counted_resolve
+    async with app.run_test(size=(100, 30)):
+        first = app.screen
+        await _wait_until(lambda: calls == 1)
+        first_view = first.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: controller.snapshot().viewport_generation >= 1)
+        gates[0].set()
+        await _wait_until(lambda: not list(first.query(PersonaBuddyWidget)))
+        first_snapshot = controller.snapshot()
+
+        second = _BuddyScreen(app, "second")
+        await app.switch_screen(second)
+        await asyncio.sleep(0.2)
+        assert not list(second.query(PersonaBuddyWidget))
+        assert calls == 1
+
+        controller.invalidate_profile()
+        await app.reconcile_persona_buddy_view()
+        await _wait_until(lambda: calls == 2)
+        await _wait_until(
+            lambda: (
+                controller.snapshot().viewport_generation
+                > first_snapshot.viewport_generation
+            )
+        )
+        gates[1].set()
+        await _wait_until(lambda: not list(second.query(PersonaBuddyWidget)))
+
+        current_marker = app._persona_buddy_unavailable_authority
+        assert current_marker == app._persona_buddy_authority(
+            controller, controller.snapshot()
+        )
+        assert not app.confirm_persona_buddy_unavailable(
+            screen=first,
+            view=first_view,
+            view_generation=first_view.view_generation,
+            controller=controller,
+            snapshot=first_snapshot,
+            visual=first_snapshot.visual,
+        )
+        assert app._persona_buddy_unavailable_authority == current_marker
+        third = _BuddyScreen(app, "third")
+        await app.switch_screen(third)
+        await asyncio.sleep(0.2)
+        assert not list(third.query(PersonaBuddyWidget))
+        assert calls == 2
 
 
 @pytest.mark.asyncio

@@ -5791,6 +5791,7 @@ class TldwCli(
             reduced_motion=bool(get_cli_setting("appearance", "reduce_motion", False)),
             scheduler=self.call_after_refresh,
         )
+        self._persona_buddy_unavailable_authority = None
         self._persona_buddy_shutdown_task: asyncio.Task[None] | None = None
 
         # --- Initialize worker handler registry ---
@@ -8259,6 +8260,70 @@ class TldwCli(
     # Generous enough that a real save is never cut short, small enough that a
     # wedged one costs a few seconds instead of the session.
     NAVIGATION_FLUSH_TIMEOUT_SECONDS: float = 5.0
+
+    @staticmethod
+    def _persona_buddy_authority(controller: Any, snapshot: Any) -> tuple[Any, ...]:
+        """Return the exact app-lifetime authority for one visual decision."""
+
+        return (
+            id(controller),
+            snapshot.generation,
+            snapshot.selection,
+            snapshot.preferences_generation,
+            snapshot.profile_generation,
+        )
+
+    def is_persona_buddy_confirmed_unavailable(
+        self, controller: Any, snapshot: Any
+    ) -> bool:
+        """Query and clear the app-owned unavailable marker by exact authority."""
+
+        authority = self._persona_buddy_authority(controller, snapshot)
+        marker = getattr(self, "_persona_buddy_unavailable_authority", None)
+        if marker is not None and marker != authority:
+            self._persona_buddy_unavailable_authority = None
+            return False
+        return marker == authority
+
+    def confirm_persona_buddy_unavailable(
+        self,
+        *,
+        screen: Any,
+        view: Any,
+        view_generation: int,
+        controller: Any,
+        snapshot: Any,
+        visual: Any,
+    ) -> bool:
+        """Publish unavailable only for the exact current app/screen/view authority."""
+
+        current_controller = getattr(self, "persona_buddy_controller", None)
+        try:
+            current_screen = self.screen
+        except Exception:
+            return False
+        if (
+            controller is not current_controller
+            or current_screen is not screen
+            or not screen.is_attached
+            or screen._persona_buddy_view is not view
+            or screen.persona_buddy_view_generation != view_generation
+            or not view.is_attached
+        ):
+            return False
+        current = controller.snapshot()
+        if (
+            self._persona_buddy_authority(controller, current)
+            != self._persona_buddy_authority(controller, snapshot)
+            or current.visual is not visual
+            or visual is None
+            or visual.available
+        ):
+            return False
+        self._persona_buddy_unavailable_authority = self._persona_buddy_authority(
+            controller, current
+        )
+        return True
 
     async def reconcile_persona_buddy_view(self) -> None:
         """Reconcile Buddy only on the active ordinary application screen."""

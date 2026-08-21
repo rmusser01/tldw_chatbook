@@ -241,6 +241,17 @@ class PersonaBuddyWidget(Widget, can_focus=True):
                     and not visual.available
                     and current_visual is visual
                 ):
+                    confirm = getattr(
+                        self.screen, "confirm_persona_buddy_unavailable", None
+                    )
+                    if not callable(confirm) or not confirm(
+                        view=self,
+                        controller=self._controller,
+                        snapshot=self._controller.snapshot(),
+                        visual=visual,
+                    ):
+                        await asyncio.sleep(_POLL_SECONDS)
+                        continue
                     pending = self._reconcile()
                     if inspect.isawaitable(pending):
                         self.app.run_worker(
@@ -254,6 +265,8 @@ class PersonaBuddyWidget(Widget, can_focus=True):
     def on_resize(self, _event: events.Resize) -> None:
         """Re-clamp geometry whenever the terminal viewport changes."""
 
+        if not self._is_current_view():
+            return
         setter = getattr(self._controller, "set_viewport_generation", None)
         if callable(setter):
             snapshot = self._controller.snapshot()

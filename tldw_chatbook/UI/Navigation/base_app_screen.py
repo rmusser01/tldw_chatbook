@@ -57,7 +57,6 @@ class BaseAppScreen(Screen):
         self.nav_bar_active: str = screen_name
         self._persona_buddy_view = None
         self._persona_buddy_view_generation = 0
-        self._persona_buddy_unavailable_authority = None
         self._persona_buddy_reconcile_lock = asyncio.Lock()
 
         logger.debug(f"Initializing {self.__class__.__name__} screen: {screen_name}")
@@ -385,6 +384,29 @@ class BaseAppScreen(Screen):
 
         return self._persona_buddy_view_generation
 
+    def confirm_persona_buddy_unavailable(
+        self,
+        *,
+        view: Any,
+        controller: Any,
+        snapshot: Any,
+        visual: Any,
+    ) -> bool:
+        """Publish unavailable through the app's exact screen/view fence."""
+
+        confirm = getattr(self.app_instance, "confirm_persona_buddy_unavailable", None)
+        return bool(
+            callable(confirm)
+            and confirm(
+                screen=self,
+                view=view,
+                view_generation=view.view_generation,
+                controller=controller,
+                snapshot=snapshot,
+                visual=visual,
+            )
+        )
+
     def _schedule_persona_buddy_reconcile(self) -> None:
         """Schedule one idempotent mount reconciliation after screen paint."""
 
@@ -407,24 +429,13 @@ class BaseAppScreen(Screen):
             controller = getattr(self.app_instance, "persona_buddy_controller", None)
             active = self.is_attached and self.app.screen is self
             snapshot = controller.snapshot() if controller is not None else None
-            visual = getattr(snapshot, "visual", None)
-            authority = (
-                getattr(snapshot, "selection", None),
-                getattr(snapshot, "preferences_generation", None),
-                getattr(snapshot, "profile_generation", None),
+            unavailable = getattr(
+                self.app_instance, "is_persona_buddy_confirmed_unavailable", None
             )
-            if visual is not None and visual.available:
-                self._persona_buddy_unavailable_authority = None
-            elif (
-                self._persona_buddy_view is not None
-                and visual is not None
-                and not visual.available
-            ):
-                self._persona_buddy_unavailable_authority = authority
-            confirmed_unavailable = (
-                visual is not None
-                and not visual.available
-                and self._persona_buddy_unavailable_authority == authority
+            confirmed_unavailable = bool(
+                snapshot is not None
+                and callable(unavailable)
+                and unavailable(controller, snapshot)
             )
             desired = bool(
                 active
