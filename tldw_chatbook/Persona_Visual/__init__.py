@@ -43,6 +43,14 @@ from .contracts import (
     inspect_persona_visual_capability,
     resolve_manifest_state,
 )
+from .importer import (
+    PERSONA_VISUAL_PACK_SCHEMA,
+    PersonaVisualImportError,
+    PersonaVisualImportReview,
+    cleanup_persona_visual_import_review,
+    import_persona_visual_pack,
+    persona_visual_import_source_root,
+)
 from .validation import validate_persona_visual_manifest
 
 __all__ = [
@@ -69,19 +77,25 @@ __all__ = [
     "PersonaVisualCapability",
     "PersonaVisualCatalogEntry",
     "PersonaVisualFrame",
+    "PersonaVisualImportError",
+    "PersonaVisualImportReview",
     "PersonaVisualManifest",
     "PersonaVisualManifestError",
     "PersonaVisualRegion",
     "PersonaVisualStateSelection",
     "PersonaVisualStaticSelection",
     "PersonaVisualTrigger",
+    "PERSONA_VISUAL_PACK_SCHEMA",
     "inspect_persona_visual_capability",
     "add_persona_visual_custom_state",
     "clear_persona_visual_draft_state",
+    "cleanup_persona_visual_import_review",
     "create_persona_visual_draft",
     "inspect_persona_visual_draft",
+    "import_persona_visual_pack",
     "persona_visual_draft_from_graph",
     "persona_visual_draft_publication_snapshot",
+    "persona_visual_import_source_root",
     "replace_persona_visual_draft_state",
     "resolve_manifest_state",
     "validate_persona_visual_manifest",

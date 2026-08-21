@@ -36,6 +36,7 @@ _MANIFEST_LIMIT = 2 * 1024 * 1024
 _SOURCE_CONTEXT_KEYS = frozenset(
     {"source_id", "provenance", "license", "source_server_commit"}
 )
+_SOURCE_KINDS = frozenset({"imported", "manual"})
 _SUFFIXES = {
     "image/png": ".png",
     "image/jpeg": ".jpg",
@@ -534,7 +535,7 @@ def _validate_snapshot(
             or type(snapshot.description) is not str
             or len(snapshot.description) > 4096
             or type(snapshot.source_kind) is not str
-            or snapshot.source_kind != "manual"
+            or snapshot.source_kind not in _SOURCE_KINDS
             or type(snapshot.manifest_json) is not str
             or len(snapshot.manifest_json.encode("utf-8")) > _MANIFEST_LIMIT
             or type(snapshot.assets) is not tuple

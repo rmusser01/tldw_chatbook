@@ -128,6 +128,33 @@ def create_persona_visual_draft(
     return _validated_draft(draft)
 
 
+def create_persona_visual_import_draft(
+    *,
+    persona_id: str,
+    persona_revision: int,
+    expected_identity: PersonaVisualIdentity | None,
+    title: str,
+    description: str,
+    manifest_json: str,
+    assets: tuple[PersonaVisualDraftAsset, ...],
+) -> PersonaVisualAuthoringDraft:
+    """Create a validated review draft from already-confined imported sources."""
+
+    return _validated_draft(
+        PersonaVisualAuthoringDraft(
+            persona_id=persona_id,
+            persona_revision=persona_revision,
+            expected_identity=expected_identity,
+            title=title,
+            description=description,
+            source_kind="imported",
+            source_context=(("provenance", "untrusted-import"),),
+            manifest_json=manifest_json,
+            assets=assets,
+        )
+    )
+
+
 def persona_visual_draft_from_graph(
     graph: PersonaVisualGraph,
     *,
@@ -664,6 +691,7 @@ __all__ = [
     "add_persona_visual_custom_state",
     "clear_persona_visual_draft_state",
     "create_persona_visual_draft",
+    "create_persona_visual_import_draft",
     "inspect_persona_visual_draft",
     "persona_visual_draft_from_graph",
     "persona_visual_draft_publication_snapshot",
