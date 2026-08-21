@@ -3653,7 +3653,10 @@ UPDATE db_schema_version
 
         Raises:
             OSError: If the file cannot be read.
-            SchemaError: If the file ends with an incomplete statement.
+            SchemaError: If the file ends with an incomplete statement -- which
+                includes a trailing comment after the final statement. That is
+                pre-existing behaviour, preserved byte-for-byte from the eleven
+                inline copies this replaced; no shipped ``.sql`` file trips it.
         """
         return _split_sql_statements(migration_path.read_text(encoding="utf-8"))
 
