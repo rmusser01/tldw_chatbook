@@ -4,6 +4,7 @@ Token-based chunking strategy.
 Splits text into chunks based on token count using transformers or fallback methods.
 """
 
+import hashlib
 import threading
 from collections.abc import Generator
 from typing import Optional, Protocol
@@ -776,9 +777,13 @@ class TokenChunkingStrategy(BaseChunkingStrategy):
             if idx == -1:
                 # Fallback: token piece not found in text - use current position
                 # This may produce incorrect offsets for unusual tokenization
+                # TASK-19322 (ADR-029): the piece is decoded user document
+                # text, so the diagnostic records only its length, the scan
+                # position, and a short stable digest for correlation.
+                piece_digest = hashlib.sha256(piece.encode("utf-8")).hexdigest()[:10]
                 logger.debug(
-                    f"Token piece not found in text during offset reconstruction: "
-                    f"piece={repr(piece[:50] + '...' if len(piece) > 50 else piece)}, pos={pos}"
+                    "Token piece not found in text during offset reconstruction: "
+                    f"piece_len={len(piece)}, piece_sha256={piece_digest}, pos={pos}"
                 )
                 idx = pos
             start = max(0, min(idx, n))
