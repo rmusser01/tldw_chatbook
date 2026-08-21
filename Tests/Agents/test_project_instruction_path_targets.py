@@ -25,9 +25,9 @@ def test_local_file_tools_report_exact_targets(tmp_path, name):
     provider = _local_provider(tmp_path)
     expected = tmp_path / "src" / "pkg" / "module.py"
 
-    assert provider.path_targets(
-        f"local:{name}", {"path": "src/pkg/module.py"}
-    ) == (_target(expected, "exact"),)
+    assert provider.path_targets(f"local:{name}", {"path": "src/pkg/module.py"}) == (
+        _target(expected, "exact"),
+    )
 
 
 def test_local_list_reports_directory_target(tmp_path):
@@ -159,9 +159,9 @@ def test_git_blame_reports_repository_through_file_parent(tmp_path):
     root = _git_repo(tmp_path)
     provider = _local_provider(root)
 
-    assert provider.path_targets(
-        "local:git_blame", {"path": "src/pkg/live.py"}
-    ) == (_target(root / "src" / "pkg", "repository"),)
+    assert provider.path_targets("local:git_blame", {"path": "src/pkg/live.py"}) == (
+        _target(root / "src" / "pkg", "repository"),
+    )
 
 
 @pytest.mark.parametrize(
@@ -194,9 +194,9 @@ def _enable_builtin_file_tools(monkeypatch):
     monkeypatch.setattr(
         config,
         "get_cli_setting",
-        lambda section, key, default=None: key in enabled
-        if section == "tools"
-        else default,
+        lambda section, key, default=None: (
+            key in enabled if section == "tools" else default
+        ),
     )
 
 
@@ -260,9 +260,12 @@ def test_builtin_file_tools_report_no_targets_when_instruction_scope_disabled(
     _enable_builtin_file_tools(monkeypatch)
     provider = BuiltinToolProvider(instruction_root=None)
 
-    assert provider.path_targets(
-        "builtin:read_file", {"file_path": str(tmp_path / "file.py")}
-    ) == ()
+    assert (
+        provider.path_targets(
+            "builtin:read_file", {"file_path": str(tmp_path / "file.py")}
+        )
+        == ()
+    )
 
 
 def test_config_disabled_builtin_reports_no_targets(monkeypatch, tmp_path):
@@ -271,6 +274,9 @@ def test_config_disabled_builtin_reports_no_targets(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "get_cli_setting", lambda *_args, **_kwargs: False)
     provider = BuiltinToolProvider(instruction_root=tmp_path)
 
-    assert provider.path_targets(
-        "builtin:read_file", {"file_path": str(tmp_path / "file.py")}
-    ) == ()
+    assert (
+        provider.path_targets(
+            "builtin:read_file", {"file_path": str(tmp_path / "file.py")}
+        )
+        == ()
+    )
