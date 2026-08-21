@@ -1,12 +1,17 @@
 from tldw_chatbook.Library.library_skills_state import (
+    coerce_skill_editor_mode,
+    reconcile_skill_allowed_tools,
     SkillEditorSupportingFile,
     build_skill_editor_state,
     build_skills_list_state,
     classify_skill_save_error,
     compose_skill_markdown,
     save_marks_needs_review,
+    skill_allowed_tools_sequence,
     skill_flags_line,
+    skill_invocation_copy,
     skill_name_shadows_builtin,
+    skill_trust_requires_details,
 )
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 
@@ -81,6 +86,59 @@ def test_flags_line_variants():
     assert skill_flags_line(True, True) == "invocable: user only"
     assert skill_flags_line(False, False) == "invocable: agent only"
     assert skill_flags_line(False, True) == "not invocable"
+
+
+def test_skill_editor_mode_defaults_to_basic_and_accepts_only_known_values():
+    assert coerce_skill_editor_mode(None) == "basic"
+    assert coerce_skill_editor_mode("") == "basic"
+    assert coerce_skill_editor_mode("expert") == "basic"
+    assert coerce_skill_editor_mode("basic") == "basic"
+    assert coerce_skill_editor_mode("advanced") == "advanced"
+
+
+def test_skill_invocation_copy_treats_user_and_agent_as_independent_choices():
+    assert skill_invocation_copy(True, False) == "You and the agent can invoke this Skill."
+    assert skill_invocation_copy(True, True) == "Only you can invoke this Skill."
+    assert skill_invocation_copy(False, False) == "Only the agent can invoke this Skill."
+    assert skill_invocation_copy(False, True) == (
+        "Reference only — neither you nor the agent can invoke this Skill."
+    )
+
+
+def test_skill_trust_details_expand_only_for_actionable_safety_state():
+    assert skill_trust_requires_details("trusted", False, ()) is False
+    assert skill_trust_requires_details("pending_review", False, ()) is True
+    assert skill_trust_requires_details("trusted", True, ()) is True
+    assert skill_trust_requires_details("trusted", False, ("scripts/check.py",)) is True
+
+
+def test_skill_allowed_tools_sequence_preserves_order_duplicates_and_unknowns():
+    assert skill_allowed_tools_sequence("read_file, mystery, read_file, calculator") == (
+        "read_file",
+        "mystery",
+        "read_file",
+        "calculator",
+    )
+
+
+def test_skill_allowed_tools_stay_exact_until_the_picker_is_explicitly_edited():
+    captured = ("read_file", "mystery", "read_file", "calculator")
+    assert reconcile_skill_allowed_tools(
+        captured,
+        selected=("calculator",),
+        catalog_order=("calculator", "read_file", "write_file"),
+        picker_changed=False,
+    ) == captured
+
+
+def test_skill_allowed_tools_reconcile_only_known_user_edits_losslessly():
+    captured = ("read_file", "mystery", "read_file", "calculator")
+    assert reconcile_skill_allowed_tools(
+        captured,
+        selected=("read_file", "write_file"),
+        catalog_order=("calculator", "read_file", "write_file"),
+        picker_changed=True,
+    ) == ("read_file", "mystery", "read_file", "write_file")
 
 
 def test_shadow_predicate():

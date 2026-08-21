@@ -39,6 +39,7 @@ from textual.widgets import (
     Collapsible,
     Input,
     OptionList,
+    SelectionList,
     Static,
     TextArea,
 )
@@ -56,6 +57,7 @@ from ...Chatbooks.chatbook_models import ContentType
 from ...config import (
     TLDW_API_PLACEHOLDER_AUTH_TOKEN,
     TLDW_API_PLACEHOLDER_BASE_URL,
+    coerce_bool_setting,
     get_cli_setting,
     resolve_tldw_api_config,
     save_setting_to_cli_config,
@@ -239,7 +241,11 @@ from ...Library.library_skills_state import (
     build_skill_editor_state,
     build_skills_list_state,
     classify_skill_save_error,
+    coerce_skill_editor_mode,
     compose_skill_markdown,
+    reconcile_skill_allowed_tools,
+    skill_allowed_tools_sequence,
+    skill_invocation_copy,
 )
 from ...Prompt_Management.prompt_markdown_export import render_prompt_markdown
 from ...Prompt_Management.prompt_artifact_codec import deserialize_definition
@@ -3244,6 +3250,18 @@ class LibraryScreen(BaseAppScreen):
             if isinstance(library_config, Mapping)
             else None
         )
+        self._library_skill_editor_mode = coerce_skill_editor_mode(
+            library_config.get("skill_editor_mode")
+            if isinstance(library_config, Mapping)
+            else None
+        )
+        self._library_skill_tool_catalog: tuple[str, ...] = ()
+        self._library_skill_tool_filter: str = ""
+        self._library_skill_tool_captured: tuple[str, ...] = ()
+        self._library_skill_tool_picker_changed: bool = False
+        self._library_skill_more_actions_open: bool = False
+        self._library_skill_trust_details_open: bool = False
+        self._library_skill_mutation_in_flight: bool = False
         # Explicit provenance for an unsaved canonical structured copy.
         # Legacy block edits can clear both lane origins, so origins cannot
         # truthfully distinguish conversion/duplication from ordinary edits.
@@ -3827,7 +3845,18 @@ class LibraryScreen(BaseAppScreen):
         ):
             return self.LIBRARY_DETAIL_BACK_SHORTCUTS
         if self._library_skill_editor_active():
-            return self.LIBRARY_SKILL_EDITOR_SHORTCUTS
+            shortcuts = [("/", "focus search"), ("F6", "next pane")]
+            if self._library_skill_save_available():
+                shortcuts.append(("ctrl+s", "save skill"))
+            shortcuts.append(
+                (
+                    "esc",
+                    "close more actions"
+                    if self._library_skill_more_actions_open
+                    else "back to skills list",
+                )
+            )
+            return tuple(shortcuts)
         if self._library_media_confirming_bulk_delete:
             return self.LIBRARY_MEDIA_BULK_DELETE_CONFIRM_SHORTCUTS
         # task-14902 AC#3: an open choice strip advertises its own keys.
@@ -11424,6 +11453,41 @@ class LibraryScreen(BaseAppScreen):
         )
         return values
 
+    def _build_library_skill_tool_catalog(self) -> tuple[str, ...]:
+        """Return the existing builtin/local tool names a Skill may restrict."""
+        try:
+            from ...Agents.tool_catalog import BuiltinToolProvider
+
+            names = [entry.name for entry in BuiltinToolProvider().list_catalog()]
+            console_config = getattr(self.app_instance, "app_config", {}).get(
+                "console", {}
+            )
+            local_enabled = bool(
+                isinstance(console_config, Mapping)
+                and coerce_bool_setting(
+                    console_config.get("local_tools_enabled"), False
+                )
+            )
+            if local_enabled:
+                from ...Agents.local_tool_provider import LocalToolProvider
+
+                configured_root = console_config.get("workspace_root")
+                workspace_root = (
+                    Path(str(configured_root)).expanduser()
+                    if configured_root
+                    else Path.cwd()
+                )
+                names.extend(
+                    entry.name
+                    for entry in LocalToolProvider(
+                        workspace_root=workspace_root
+                    ).list_catalog()
+                )
+        except Exception:
+            logger.warning("Library Skill tool catalog is temporarily unavailable.")
+            return ()
+        return tuple(dict.fromkeys(names))
+
     def _library_skills_canvas_kwargs(self) -> dict[str, Any]:
         """Return every compose input for the mounted Skills canvas."""
         values: dict[str, Any] = {
@@ -11448,6 +11512,13 @@ class LibraryScreen(BaseAppScreen):
             "import_status": "",
             "import_review_name": "",
             "sort_choices_visible": False,
+            "editor_mode": self._library_skill_editor_mode,
+            "tool_catalog": self._library_skill_tool_catalog,
+            "tool_filter": self._library_skill_tool_filter,
+            "mutation_in_flight": self._library_skill_mutation_in_flight,
+            "more_actions_open": self._library_skill_more_actions_open,
+            "trust_details_open": self._library_skill_trust_details_open,
+            "script_access_granted": self._library_skill_script_grant,
         }
         if self._library_skills_view == "editor":
             editor_state = self._library_skill_editor_state
@@ -18629,6 +18700,15 @@ class LibraryScreen(BaseAppScreen):
         self._library_skill_conflict = False
         self._library_skill_active_review = None
         self._library_skill_script_grant = False
+        self._library_skill_tool_catalog = self._build_library_skill_tool_catalog()
+        self._library_skill_tool_filter = ""
+        self._library_skill_tool_captured = skill_allowed_tools_sequence(
+            self._library_skill_editor_state.allowed_tools_csv
+        )
+        self._library_skill_tool_picker_changed = False
+        self._library_skill_more_actions_open = False
+        self._library_skill_trust_details_open = False
+        self._library_skill_mutation_in_flight = False
         self._library_skill_editor_armed = False
         if self.is_mounted:
             # Deterministic (task-15457 review I4b): arming is
@@ -18683,6 +18763,13 @@ class LibraryScreen(BaseAppScreen):
         self._library_skill_conflict = False
         self._library_skill_active_review = None
         self._library_skill_script_grant = False
+        self._library_skill_tool_catalog = self._build_library_skill_tool_catalog()
+        self._library_skill_tool_filter = ""
+        self._library_skill_tool_captured = ()
+        self._library_skill_tool_picker_changed = False
+        self._library_skill_more_actions_open = False
+        self._library_skill_trust_details_open = False
+        self._library_skill_mutation_in_flight = False
         self._library_skill_confirming_delete = False
         self._library_skill_scroll_pending = False
         self._library_skill_editor_armed = False
@@ -18717,6 +18804,12 @@ class LibraryScreen(BaseAppScreen):
         self._library_skill_conflict = False
         self._library_skill_active_review = None
         self._library_skill_script_grant = False
+        self._library_skill_tool_filter = ""
+        self._library_skill_tool_captured = ()
+        self._library_skill_tool_picker_changed = False
+        self._library_skill_more_actions_open = False
+        self._library_skill_trust_details_open = False
+        self._library_skill_mutation_in_flight = False
         self._library_skill_confirming_delete = False
         self._library_skill_trust_confirming_reset = False
         self._library_skill_scroll_pending = False
@@ -19011,6 +19104,106 @@ class LibraryScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             pass
         try:
+            self.query_one("#library-skill-invocation-copy", Static).update(
+                skill_invocation_copy(
+                    state.user_invocable, state.disable_model_invocation
+                )
+            )
+            self.query_one("#library-skill-argument-fields").display = bool(
+                self._library_skill_editor_mode == "advanced"
+                or state.user_invocable
+            )
+        except (NoMatches, QueryError):
+            pass
+
+    @on(Button.Pressed, "#library-skill-editor-mode")
+    async def handle_library_skill_editor_mode(self, event: Button.Pressed) -> None:
+        """Switch mounted Skill presentations and remember the display choice."""
+        event.stop()
+        self._snapshot_library_skill_live_fields()
+        requested = (
+            "basic" if self._library_skill_editor_mode == "advanced" else "advanced"
+        )
+        try:
+            canvas = self.query_one(
+                "#library-skills-canvas", LibrarySkillsListCanvas
+            )
+        except NoMatches:
+            return
+        await canvas.set_editor_mode(requested)
+        self._library_skill_editor_mode = requested
+        library_config = self.app_instance.app_config.setdefault("library", {})
+        if isinstance(library_config, dict):
+            library_config["skill_editor_mode"] = requested
+        self.run_worker(
+            self._persist_library_skill_editor_mode(requested),
+            group="library_skill_editor_mode",
+            exclusive=True,
+        )
+
+    async def _persist_library_skill_editor_mode(self, mode: str) -> None:
+        """Persist one admitted Skill display mode without blocking Textual."""
+        try:
+            saved = await asyncio.to_thread(
+                save_setting_to_cli_config,
+                "library",
+                "skill_editor_mode",
+                mode,
+            )
+        except Exception:
+            saved = False
+        if saved is not True:
+            self.app.notify(
+                "Skill view changed for this session, but could not be saved.",
+                severity="warning",
+            )
+
+    @on(Input.Changed, "#library-skill-tool-filter")
+    def handle_library_skill_tool_filter(self, event: Input.Changed) -> None:
+        """Filter picker rows without changing the Skill's allowlist content."""
+        self._library_skill_tool_filter = event.value
+        try:
+            self.query_one(
+                "#library-skills-canvas", LibrarySkillsListCanvas
+            ).set_tool_filter(event.value)
+        except (NoMatches, QueryError):
+            return
+
+    @on(SelectionList.SelectedChanged, "#library-skill-tool-picker")
+    def handle_library_skill_tool_selection(
+        self, event: SelectionList.SelectedChanged
+    ) -> None:
+        """Apply only a user-driven tool restriction edit to the canonical draft."""
+        try:
+            canvas = self.query_one(
+                "#library-skills-canvas", LibrarySkillsListCanvas
+            )
+        except (NoMatches, QueryError):
+            return
+        if canvas.rebuilding_tool_picker or not self._library_skill_editor_armed:
+            return
+        state = self._library_skill_editor_state
+        if state is None:
+            return
+        visible = {selection.value for selection in event.selection_list.options}
+        selected = set(skill_allowed_tools_sequence(state.allowed_tools_csv))
+        selected.difference_update(visible)
+        selected.update(str(value) for value in event.selection_list.selected)
+        current_selected = set(skill_allowed_tools_sequence(state.allowed_tools_csv))
+        if selected == current_selected:
+            return
+        reconciled = reconcile_skill_allowed_tools(
+            self._library_skill_tool_captured,
+            selected=tuple(selected),
+            catalog_order=self._library_skill_tool_catalog,
+            picker_changed=True,
+        )
+        self._library_skill_tool_picker_changed = True
+        self._library_skill_editor_state = dataclasses.replace(
+            state, allowed_tools_csv=", ".join(reconciled)
+        )
+        self._mark_library_skill_dirty(force=True)
+        try:
             self.query_one(
                 "#library-skill-disable-model", Button
             ).label = skill_disable_model_label(state.disable_model_invocation)
@@ -19088,13 +19281,14 @@ class LibraryScreen(BaseAppScreen):
             name = self.query_one("#library-skill-name", Input).value
             description = self.query_one("#library-skill-description", Input).value
             argument_hint = self.query_one("#library-skill-argument-hint", Input).value
-            allowed_tools_csv = self.query_one(
-                "#library-skill-allowed-tools", Input
-            ).value
-            model = self.query_one("#library-skill-model", Input).value
             body = self.query_one("#library-skill-body", TextArea).text
         except (NoMatches, QueryError):
             return None
+        state = self._library_skill_editor_state
+        if state is None:
+            return None
+        allowed_tools_csv = state.allowed_tools_csv
+        model = state.model or ""
         return name, description, argument_hint, allowed_tools_csv, model, body
 
     @on(Button.Pressed, "#library-skill-save")
@@ -19105,11 +19299,30 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the editor's "Save" action.
         """
         event.stop()
+        self._begin_library_skill_save()
+
+    def _begin_library_skill_save(self) -> bool:
+        """Admit one save and expose its shared lifecycle interlock."""
+        if not self._library_skill_save_available():
+            return False
+        self._snapshot_library_skill_live_fields()
+        self._library_skill_mutation_in_flight = True
+        self._sync_library_skill_lifecycle_actions()
         self.run_worker(
-            self._save_library_skill(),
+            self._run_library_skill_save(),
             exclusive=True,
             group="library_skill_save",
         )
+        return True
+
+    async def _run_library_skill_save(self) -> None:
+        """Hold the shared editor interlock for one durable Skill save."""
+        try:
+            await self._save_library_skill()
+        finally:
+            self._library_skill_mutation_in_flight = False
+            if self.is_mounted:
+                self._sync_library_skill_lifecycle_actions()
 
     async def _save_library_skill(self) -> None:
         """Save the open Library skill's current editor text.
@@ -19284,6 +19497,10 @@ class LibraryScreen(BaseAppScreen):
         self._library_skill_editor_state = build_skill_editor_state(
             self._library_skill_detail
         )
+        self._library_skill_tool_captured = skill_allowed_tools_sequence(
+            self._library_skill_editor_state.allowed_tools_csv
+        )
+        self._library_skill_tool_picker_changed = False
         self._library_skill_original_name = self._library_skill_editor_state.name
         self._library_skill_dirty = False
         # task-449: this success tail deliberately never recomposes, so the
@@ -19300,11 +19517,28 @@ class LibraryScreen(BaseAppScreen):
             # fire-and-forget, mirrors ``_save_library_prompt``'s equivalent
             # post-create refresh.
             self._refresh_local_source_snapshot()
-        self._update_library_skill_status_static(LIBRARY_SKILL_SAVE_STATUS_COPY["ok"])
+        self._update_library_skill_status_static(
+            (
+                "Saved. Review trust before using this Skill with the agent."
+                if is_create
+                else LIBRARY_SKILL_SAVE_STATUS_COPY["ok"]
+            )
+        )
         self._update_library_skill_warnings_static(
             name=self._read_library_skill_live_name()
         )
         self._render_library_skill_trust_panel()
+        if is_create and self.is_mounted:
+            # The first durable save changes the editor's structural truth:
+            # it gains a real trust panel and saved-clean lifecycle. Replace
+            # the canvas once at that commit point, never for display-mode or
+            # ordinary lifecycle changes.
+            self._library_skill_editor_armed = False
+            _sync_library_canvas(
+                self,
+                "skills",
+                then=self._arm_library_skill_editor,
+            )
         # Task 7: saved content changes the skill's fingerprint, which
         # invalidates any prior standing script grant -- re-check off-thread
         # rather than let a just-invalidated grant keep showing as active.
@@ -19319,10 +19553,8 @@ class LibraryScreen(BaseAppScreen):
         """
         self._library_skill_conflict = True
         self._library_skill_status = ""
-        self._library_skill_editor_armed = False
         if self.is_mounted:
-            self.refresh(recompose=True)
-            self.call_after_refresh(self._arm_library_skill_editor)
+            self._sync_library_skill_lifecycle_actions()
 
     @on(Button.Pressed, "#library-skill-conflict-reload")
     def handle_library_skill_conflict_reload(self, event: Button.Pressed) -> None:
@@ -19375,6 +19607,7 @@ class LibraryScreen(BaseAppScreen):
         Discard button's initial ``disabled=not dirty`` render must be
         kept current by hand at those two transitions.
         """
+        self._sync_library_skill_lifecycle_actions()
         for button in self.query("#library-skill-discard"):
             if isinstance(button, Button):
                 button.disabled = not enabled
@@ -19387,12 +19620,40 @@ class LibraryScreen(BaseAppScreen):
                     else SKILL_DISCARD_TOOLTIP_CLEAN
                 )
 
+    def _sync_library_skill_lifecycle_actions(self) -> bool:
+        """Patch the mounted Skill action strip from screen-owned state."""
+        try:
+            canvas = self.query_one(
+                "#library-skills-canvas", LibrarySkillsListCanvas
+            )
+            canvas.sync_lifecycle_actions(
+                dirty=self._library_skill_dirty,
+                conflict=self._library_skill_conflict,
+                confirming_delete=self._library_skill_confirming_delete,
+                mutation_in_flight=self._library_skill_mutation_in_flight,
+                more_actions_open=self._library_skill_more_actions_open,
+                is_create=not self._selected_skill_name,
+            )
+        except (NoMatches, QueryError):
+            return False
+        return True
+
     def _library_skill_editor_active(self) -> bool:
         """True while the in-canvas skill editor is the live view (task-424)."""
         return (
             self._library_selected_row_id
             in (LIBRARY_ROW_BROWSE_SKILLS, LIBRARY_ROW_CREATE_SKILL)
             and self._library_skills_view == "editor"
+        )
+
+    def _library_skill_save_available(self) -> bool:
+        """Return whether the lifecycle currently exposes a Skill save."""
+        return bool(
+            self._library_skill_editor_active()
+            and (self._library_skill_dirty or not self._selected_skill_name)
+            and not self._library_skill_conflict
+            and not self._library_skill_confirming_delete
+            and not self._library_skill_mutation_in_flight
         )
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
@@ -19447,7 +19708,9 @@ class LibraryScreen(BaseAppScreen):
             if action == "library_notes_save":
                 return visible_notes and region in {"editor", "preview", "context"}
             return visible_notes
-        if action in ("library_skill_save", "library_skill_back"):
+        if action == "library_skill_save":
+            return self._library_skill_save_available()
+        if action == "library_skill_back":
             return self._library_skill_editor_active()
         if action == "library_notes_files_back":
             return self._file_notes_active()
@@ -19682,17 +19945,25 @@ class LibraryScreen(BaseAppScreen):
         # in both states the Save button is gone, so the accelerator must
         # not fire an action the visible chrome no longer offers (review
         # finding for the delete-confirm case).
-        if self._library_skill_conflict or self._library_skill_confirming_delete:
+        if (
+            self._library_skill_conflict
+            or self._library_skill_confirming_delete
+            or self._library_skill_mutation_in_flight
+        ):
             return
-        self.run_worker(
-            self._save_library_skill(),
-            exclusive=True,
-            group="library_skill_save",
-        )
+        self._begin_library_skill_save()
 
     async def action_library_skill_back(self) -> None:
         """Escape: leave the editor, honoring the unsaved-changes guard (task-424)."""
         if not self._library_skill_editor_active():
+            return
+        if self._library_skill_more_actions_open:
+            self._library_skill_more_actions_open = False
+            self._sync_library_skill_lifecycle_actions()
+            try:
+                self.query_one("#library-skill-more-actions", Button).focus()
+            except (NoMatches, QueryError):
+                pass
             return
         await self._exit_library_skill_editor_guarded()
 
@@ -19827,6 +20098,38 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         await self._exit_library_skill_editor_guarded()
 
+    @on(Button.Pressed, "#library-skill-cancel")
+    def handle_library_skill_cancel(self, event: Button.Pressed) -> None:
+        """Cancel a never-saved Skill draft and return to the list."""
+        event.stop()
+        if self._selected_skill_name or self._library_skill_mutation_in_flight:
+            return
+        self._reset_library_skill_editor_state()
+        self._refresh_local_source_snapshot()
+        _sync_library_canvas(self, "skills")
+
+    @on(Button.Pressed, "#library-skill-more-actions")
+    def handle_library_skill_more_actions(self, event: Button.Pressed) -> None:
+        """Reveal saved-clean secondary actions without changing the draft."""
+        event.stop()
+        if self._library_skill_dirty or self._library_skill_mutation_in_flight:
+            return
+        self._snapshot_library_skill_live_fields()
+        self._library_skill_more_actions_open = not self._library_skill_more_actions_open
+        self._sync_library_skill_lifecycle_actions()
+        try:
+            self.query_one("#library-skill-more-actions", Button).focus()
+        except (NoMatches, QueryError):
+            pass
+
+    @on(Button.Pressed, "#library-skill-trust-view-details")
+    def handle_library_skill_trust_view_details(self, event: Button.Pressed) -> None:
+        """Open the healthy trust detail region without changing editor mode."""
+        event.stop()
+        self._snapshot_library_skill_live_fields()
+        self._library_skill_trust_details_open = True
+        _sync_library_canvas(self, "skills")
+
     @on(Button.Pressed, "#library-skill-discard")
     def handle_library_skill_discard(self, event: Button.Pressed) -> None:
         """Leave the skill editor WITHOUT saving the dirty edit (task-449).
@@ -19868,18 +20171,11 @@ class LibraryScreen(BaseAppScreen):
         self._snapshot_library_skill_live_fields()
         self._library_skill_confirming_delete = True
         if self.is_mounted:
-            # Disarm across the recompose (mirrors the bootstrap-trust
-            # tail): remounting Inputs fires their initial ``Changed``,
-            # which still-armed dirty-tracking would misread as an edit.
-            # The dirty flag itself is deliberately left untouched.
-            self._library_skill_editor_armed = False
-            # The confirm copy + Delete/Cancel row render at the very bottom
-            # of a tall editor; without the scroll-back the arm recompose
-            # (a fresh VerticalScroll at y=0) leaves them below the fold and
-            # the Delete press reads as a no-op (review finding).
-            self._library_skill_scroll_pending = True
-            self.refresh(recompose=True)
-            self.call_after_refresh(self._arm_library_skill_editor)
+            self._sync_library_skill_lifecycle_actions()
+            try:
+                self.query_one("#library-skill-delete-confirm-copy").scroll_visible()
+            except (NoMatches, QueryError):
+                pass
 
     def _snapshot_library_skill_live_fields(self) -> None:
         """Fold the editor's live (possibly unsaved) field values back into
@@ -19928,13 +20224,28 @@ class LibraryScreen(BaseAppScreen):
                 "Delete" action.
         """
         event.stop()
-        if self._library_skills_view != "editor" or not self._selected_skill_name:
+        if (
+            self._library_skills_view != "editor"
+            or not self._selected_skill_name
+            or self._library_skill_mutation_in_flight
+        ):
             return
+        self._library_skill_mutation_in_flight = True
+        self._sync_library_skill_lifecycle_actions()
         self.run_worker(
-            self._delete_library_skill(self._selected_skill_name),
+            self._run_library_skill_delete(self._selected_skill_name),
             exclusive=True,
             group="library_skill_delete",
         )
+
+    async def _run_library_skill_delete(self, skill_name: str) -> None:
+        """Hold the shared editor interlock for one durable Skill delete."""
+        try:
+            await self._delete_library_skill(skill_name)
+        finally:
+            self._library_skill_mutation_in_flight = False
+            if self.is_mounted:
+                self._sync_library_skill_lifecycle_actions()
 
     @on(Button.Pressed, "#library-skill-delete-cancel")
     def handle_library_skill_delete_cancel(self, event: Button.Pressed) -> None:
@@ -19953,12 +20264,11 @@ class LibraryScreen(BaseAppScreen):
         self._snapshot_library_skill_live_fields()
         self._library_skill_confirming_delete = False
         if self.is_mounted:
-            self._library_skill_editor_armed = False
-            # Return the viewport to the action row the user was at, matching
-            # the arm recompose's scroll-back.
-            self._library_skill_scroll_pending = True
-            self.refresh(recompose=True)
-            self.call_after_refresh(self._arm_library_skill_editor)
+            self._sync_library_skill_lifecycle_actions()
+            try:
+                self.query_one("#library-skill-more-actions", Button).focus()
+            except (NoMatches, QueryError):
+                pass
 
     async def _delete_library_skill(self, skill_name: str) -> None:
         """Delete the selected Library skill, then return to the list view.
@@ -20202,9 +20512,12 @@ class LibraryScreen(BaseAppScreen):
         # button absent). Ride the same canvas post-recompose hook the
         # caller's arming follow-up already rides; it runs `then` only once
         # the canvas's new children are actually mounted.
-        _sync_library_canvas(
-            self, "skills", then=self._render_library_skill_trust_panel
-        )
+        def _render_then_arm() -> None:
+            self._render_library_skill_trust_panel()
+            if not self._library_skill_editor_armed:
+                self._arm_library_skill_editor()
+
+        _sync_library_canvas(self, "skills", then=_render_then_arm)
 
     async def _request_library_skill_trust_bootstrap_passphrase(self) -> str | None:
         """Push the confirm-passphrase bootstrap modal and await a passphrase.

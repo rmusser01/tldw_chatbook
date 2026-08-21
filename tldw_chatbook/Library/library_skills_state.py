@@ -22,7 +22,7 @@ never drift from the service's actual parsing behavior), and the
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping
 
 import yaml
 
@@ -122,6 +122,64 @@ _SHADOWED_BUILTIN_NAMES = frozenset(
         "grep_files",
     )
 )
+
+SkillEditorMode = Literal["basic", "advanced"]
+
+
+def coerce_skill_editor_mode(value: Any) -> SkillEditorMode:
+    """Return a supported Skill editor mode, defaulting safely to Basic."""
+    return "advanced" if value == "advanced" else "basic"
+
+
+def skill_invocation_copy(user_invocable: bool, disable_model_invocation: bool) -> str:
+    """Describe the independently configured user and agent invocation paths."""
+    agent_invocable = not disable_model_invocation
+    if user_invocable and agent_invocable:
+        return "You and the agent can invoke this Skill."
+    if user_invocable:
+        return "Only you can invoke this Skill."
+    if agent_invocable:
+        return "Only the agent can invoke this Skill."
+    return "Reference only — neither you nor the agent can invoke this Skill."
+
+
+def skill_trust_requires_details(
+    trust_status: str,
+    trust_blocked: bool,
+    changed_files: tuple[str, ...],
+) -> bool:
+    """Return whether safety details must remain expanded in either editor mode."""
+    return trust_status != "trusted" or trust_blocked or bool(changed_files)
+
+
+def skill_allowed_tools_sequence(value: str) -> tuple[str, ...]:
+    """Parse the editor's captured tool list without sorting or deduplicating it."""
+    return tuple(_split_csv(value))
+
+
+def reconcile_skill_allowed_tools(
+    captured: tuple[str, ...],
+    *,
+    selected: tuple[str, ...],
+    catalog_order: tuple[str, ...],
+    picker_changed: bool,
+) -> tuple[str, ...]:
+    """Apply an explicit picker edit without rewriting untouched Skill content."""
+    if not picker_changed:
+        return captured
+
+    known = set(catalog_order)
+    selected_known = set(selected) & known
+    reconciled = [
+        name for name in captured if name not in known or name in selected_known
+    ]
+    captured_names = set(captured)
+    reconciled.extend(
+        name
+        for name in catalog_order
+        if name in selected_known and name not in captured_names
+    )
+    return tuple(reconciled)
 
 
 @dataclass(frozen=True)
