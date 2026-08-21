@@ -11988,10 +11988,23 @@ class ChatScreen(BaseAppScreen):
         message_id = transcript.selected_message_id
         if message_id is None:
             return ()
+        store = self._ensure_console_chat_store()
         try:
-            message = self._ensure_console_chat_store().get_message(message_id)
+            owner_session_id = store.session_id_for_message(message_id)
         except KeyError:
             return ()
+        if owner_session_id != store.active_session_id:
+            return ()
+        try:
+            message = store.get_message(message_id)
+        except KeyError:
+            # Display-only TOOL/Thinking activity markers deliberately never
+            # enter the store tree. Resolve only from this transcript's
+            # current session projection; the store-owned session check above
+            # prevents the pre-transcript phase of a switch reviving stale UI.
+            message = transcript.display_message(message_id)
+            if message is None:
+                return ()
 
         rows = [
             ConsoleDisplayRow(
