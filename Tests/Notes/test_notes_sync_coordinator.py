@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import stat
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -300,3 +301,297 @@ def test_release_is_idempotent_and_revokes_authority(tmp_path: Path) -> None:
     assert not admission.can_write
     with pytest.raises(module.RootAuthorityError, match="admission_closed"):
         admission.require_authority("write")
+
+
+def test_replacing_live_lock_file_revokes_old_owner_before_new_owner(
+    tmp_path: Path,
+) -> None:
+    module = _coordinator_module()
+    root = tmp_path / "root"
+    root.mkdir()
+    lock_directory = tmp_path / "locks"
+    first = module.NotesSyncRootCoordinator(lock_directory)
+    second = module.NotesSyncRootCoordinator(lock_directory)
+    old_owner = first.try_acquire(root)
+    lock_path = next(lock_directory.glob("*.lock"))
+    lock_path.rename(lock_directory / "displaced.lock")
+    lock_path.touch(mode=0o600)
+
+    assert not old_owner.can_write
+    new_owner = second.try_acquire(root)
+
+    assert new_owner.state is module.RootAdmissionState.OWNER
+    assert new_owner.can_write
+    assert not old_owner.can_write
+    first.release(old_owner.lease)
+    second.release(new_owner.lease)
+
+
+def test_replacing_live_lock_directory_revokes_old_owner_and_old_coordinator(
+    tmp_path: Path,
+) -> None:
+    module = _coordinator_module()
+    root = tmp_path / "root"
+    root.mkdir()
+    lock_directory = tmp_path / "locks"
+    first = module.NotesSyncRootCoordinator(lock_directory)
+    old_owner = first.try_acquire(root)
+    lock_directory.rename(tmp_path / "displaced-locks")
+    lock_directory.mkdir(mode=0o700)
+
+    assert not old_owner.can_write
+    stale_attempt = first.try_acquire(root)
+    second = module.NotesSyncRootCoordinator(lock_directory)
+    new_owner = second.try_acquire(root)
+
+    assert stale_attempt.state is module.RootAdmissionState.REJECTED
+    assert stale_attempt.reason_code == "lock_unavailable"
+    assert new_owner.state is module.RootAdmissionState.OWNER
+    assert new_owner.can_write
+    assert not old_owner.can_write
+    first.release(old_owner.lease)
+    second.release(new_owner.lease)
+
+
+def test_recreating_root_inode_revokes_old_owner_before_new_root_owner(
+    tmp_path: Path,
+) -> None:
+    module = _coordinator_module()
+    root = tmp_path / "root"
+    root.mkdir()
+    lock_directory = tmp_path / "locks"
+    first = module.NotesSyncRootCoordinator(lock_directory)
+    second = module.NotesSyncRootCoordinator(lock_directory)
+    old_owner = first.try_acquire(root)
+    root.rename(tmp_path / "displaced-root")
+    root.mkdir()
+
+    assert not old_owner.can_write
+    new_owner = second.try_acquire(root)
+
+    assert new_owner.state is module.RootAdmissionState.OWNER
+    assert new_owner.root_digest != old_owner.root_digest
+    assert new_owner.can_write
+    assert not old_owner.can_write
+    first.release(old_owner.lease)
+    second.release(new_owner.lease)
+
+
+def test_acquire_rechecks_lock_file_identity_after_os_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _coordinator_module()
+    root = tmp_path / "root"
+    root.mkdir()
+    lock_directory = tmp_path / "locks"
+    coordinator = module.NotesSyncRootCoordinator(lock_directory)
+    real_lock = module.portalocker.lock
+
+    def lock_then_replace(handle, flags) -> None:
+        real_lock(handle, flags)
+        lock_path = next(lock_directory.glob("*.lock"))
+        lock_path.rename(lock_directory / "displaced.lock")
+        lock_path.touch(mode=0o600)
+
+    monkeypatch.setattr(module.portalocker, "lock", lock_then_replace)
+
+    admission = coordinator.try_acquire(root)
+
+    assert admission.state is module.RootAdmissionState.REJECTED
+    assert admission.reason_code == "lock_unavailable"
+    assert admission.lease is None
+
+
+def test_release_waits_for_close_admission_settlement(tmp_path: Path) -> None:
+    module = _coordinator_module()
+    root = tmp_path / "root"
+    root.mkdir()
+    lock_directory = tmp_path / "locks"
+    owner = module.NotesSyncRootCoordinator(lock_directory)
+    contender = module.NotesSyncRootCoordinator(lock_directory)
+    admission = owner.try_acquire(root)
+    settlement_started = threading.Event()
+    allow_settlement = threading.Event()
+    release_finished = threading.Event()
+    errors: list[BaseException] = []
+
+    def settle() -> None:
+        settlement_started.set()
+        assert allow_settlement.wait(3.0)
+
+    def close_owner() -> None:
+        try:
+            owner.close_admission(admission.lease, settle)
+        except BaseException as exc:
+            errors.append(exc)
+
+    def release_owner() -> None:
+        try:
+            owner.release(admission.lease)
+            release_finished.set()
+        except BaseException as exc:
+            errors.append(exc)
+
+    close_thread = threading.Thread(target=close_owner)
+    release_thread = threading.Thread(target=release_owner)
+    close_thread.start()
+    assert settlement_started.wait(3.0)
+    release_thread.start()
+
+    assert not release_finished.wait(0.1)
+    assert contender.try_acquire(root).state is module.RootAdmissionState.PASSIVE
+    allow_settlement.set()
+    close_thread.join(3.0)
+    release_thread.join(3.0)
+
+    assert not close_thread.is_alive()
+    assert not release_thread.is_alive()
+    assert release_finished.is_set()
+    assert errors == []
+    replacement = contender.try_acquire(root)
+    assert replacement.state is module.RootAdmissionState.OWNER
+    contender.release(replacement.lease)
+
+
+def test_concurrent_close_admission_settles_once(tmp_path: Path) -> None:
+    module = _coordinator_module()
+    root = tmp_path / "root"
+    root.mkdir()
+    owner = module.NotesSyncRootCoordinator(tmp_path / "locks")
+    admission = owner.try_acquire(root)
+    settlement_started = threading.Event()
+    allow_settlement = threading.Event()
+    calls = 0
+    errors: list[BaseException] = []
+
+    def settle() -> None:
+        nonlocal calls
+        calls += 1
+        settlement_started.set()
+        assert allow_settlement.wait(3.0)
+
+    def close_owner() -> None:
+        try:
+            owner.close_admission(admission.lease, settle)
+        except BaseException as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=close_owner) for _index in range(2)]
+    threads[0].start()
+    assert settlement_started.wait(3.0)
+    threads[1].start()
+    allow_settlement.set()
+    for thread in threads:
+        thread.join(3.0)
+
+    assert calls == 1
+    assert all(not thread.is_alive() for thread in threads)
+    assert errors == []
+
+
+def test_waiting_release_does_not_block_settlement_admission_check(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _coordinator_module()
+    root = tmp_path / "root"
+    root.mkdir()
+    owner = module.NotesSyncRootCoordinator(tmp_path / "locks")
+    admission = owner.try_acquire(root)
+    settlement_started = threading.Event()
+    release_waiting = threading.Event()
+    outcomes: list[object] = []
+    errors: list[BaseException] = []
+    real_take_handle = module.RootLease._take_handle
+
+    def observed_take_handle(lease):
+        release_waiting.set()
+        return real_take_handle(lease)
+
+    monkeypatch.setattr(module.RootLease, "_take_handle", observed_take_handle)
+
+    def settle() -> None:
+        settlement_started.set()
+        assert release_waiting.wait(3.0)
+        outcomes.append(owner.try_acquire(root).state)
+
+    def close_owner() -> None:
+        try:
+            owner.close_admission(admission.lease, settle)
+        except BaseException as exc:
+            errors.append(exc)
+
+    def release_owner() -> None:
+        try:
+            owner.release(admission.lease)
+        except BaseException as exc:
+            errors.append(exc)
+
+    close_thread = threading.Thread(target=close_owner, daemon=True)
+    release_thread = threading.Thread(target=release_owner, daemon=True)
+    close_thread.start()
+    assert settlement_started.wait(3.0)
+    release_thread.start()
+    close_thread.join(1.0)
+    release_thread.join(1.0)
+
+    assert outcomes == [module.RootAdmissionState.PASSIVE]
+    assert not close_thread.is_alive()
+    assert not release_thread.is_alive()
+    assert errors == []
+
+
+@pytest.mark.parametrize(
+    "lock_error",
+    [
+        portalocker.exceptions.AlreadyLocked(),
+        portalocker.exceptions.LockException(),
+    ],
+)
+def test_acquire_bounds_cleanup_failure_without_path_disclosure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    lock_error: Exception,
+) -> None:
+    module = _coordinator_module()
+    root = tmp_path / "root"
+    root.mkdir()
+    coordinator = module.NotesSyncRootCoordinator(tmp_path / "locks")
+
+    class FailingClose:
+        def close(self) -> None:
+            raise OSError("PRIVATE/path/lock")
+
+    monkeypatch.setattr(
+        module,
+        "open_private_text_append_stream",
+        lambda *_args, **_kwargs: FailingClose(),
+    )
+    monkeypatch.setattr(
+        module.portalocker,
+        "lock",
+        lambda *_args: (_ for _ in ()).throw(lock_error),
+    )
+
+    admission = coordinator.try_acquire(root)
+
+    expected = (
+        module.RootAdmissionState.PASSIVE
+        if isinstance(lock_error, portalocker.exceptions.AlreadyLocked)
+        else module.RootAdmissionState.REJECTED
+    )
+    assert admission.state is expected
+    assert "PRIVATE" not in repr(admission)
+
+
+def test_released_owner_label_does_not_claim_active(tmp_path: Path) -> None:
+    module = _coordinator_module()
+    root = tmp_path / "root"
+    root.mkdir()
+    coordinator = module.NotesSyncRootCoordinator(tmp_path / "locks")
+    admission = coordinator.try_acquire(root)
+
+    coordinator.release(admission.lease)
+
+    assert admission.label == "Inactive in this process"

@@ -10,7 +10,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from threading import RLock
+from threading import Condition, RLock
 from typing import IO, Literal
 
 import portalocker
@@ -26,6 +26,12 @@ from tldw_chatbook.Utils.sensitive_paths import find_root_binding_conflict
 
 _REPARSE_ATTRIBUTE = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 _AUTHORITY_OPERATIONS = frozenset({"watch", "plan", "write"})
+_PRIVATE_DIRECTORY_MODE = 0o700
+_PRIVATE_FILE_MODE = 0o600
+
+
+def _identity(metadata: os.stat_result) -> tuple[int, int]:
+    return metadata.st_dev, metadata.st_ino
 
 
 class RootAdmissionState(StrEnum):
@@ -148,17 +154,47 @@ class RootLease:
     __slots__ = (
         "root_digest",
         "_admission_open",
+        "_canonical_root",
         "_handle",
-        "_lifecycle_lock",
+        "_lifecycle",
+        "_lock_directory",
+        "_lock_directory_identity",
+        "_lock_identity",
+        "_lock_path",
         "_owner_token",
+        "_root_identity",
+        "_settlement_complete",
+        "_settlement_reason",
+        "_settlement_running",
     )
 
-    def __init__(self, root_digest: str, handle: IO[str], owner_token: object):
+    def __init__(
+        self,
+        root_digest: str,
+        handle: IO[str],
+        owner_token: object,
+        *,
+        canonical_root: Path,
+        root_identity: tuple[int, int],
+        lock_directory: Path,
+        lock_directory_identity: tuple[int, int],
+        lock_path: Path,
+        lock_identity: tuple[int, int],
+    ):
         self.root_digest = root_digest
         self._handle: IO[str] | None = handle
         self._owner_token = owner_token
+        self._canonical_root = canonical_root
+        self._root_identity = root_identity
+        self._lock_directory = lock_directory
+        self._lock_directory_identity = lock_directory_identity
+        self._lock_path = lock_path
+        self._lock_identity = lock_identity
         self._admission_open = True
-        self._lifecycle_lock = RLock()
+        self._settlement_running = False
+        self._settlement_complete = False
+        self._settlement_reason: str | None = None
+        self._lifecycle = Condition(RLock())
 
     def __repr__(self) -> str:
         return "RootLease(<private>)"
@@ -167,19 +203,76 @@ class RootLease:
     def authoritative(self) -> bool:
         """Whether this lease can admit new privileged work."""
 
-        with self._lifecycle_lock:
-            return self._handle is not None and self._admission_open
+        with self._lifecycle:
+            if self._handle is None or not self._admission_open:
+                return False
+            if not self._identity_matches():
+                self._admission_open = False
+                return False
+            return True
 
-    def _close_admission(self) -> None:
-        with self._lifecycle_lock:
+    def _identity_matches(self) -> bool:
+        handle = self._handle
+        if handle is None:
+            return False
+        try:
+            opened_lock = os.fstat(handle.fileno())
+            current_lock = os.stat(self._lock_path, follow_symlinks=False)
+            current_directory = os.stat(
+                self._lock_directory,
+                follow_symlinks=False,
+            )
+            current_root = os.stat(self._canonical_root, follow_symlinks=False)
+        except (OSError, ValueError):
+            return False
+        return (
+            stat.S_ISREG(opened_lock.st_mode)
+            and opened_lock.st_nlink == 1
+            and opened_lock.st_uid == os.geteuid()
+            and stat.S_IMODE(opened_lock.st_mode) == _PRIVATE_FILE_MODE
+            and _identity(opened_lock) == self._lock_identity
+            and _identity(current_lock) == self._lock_identity
+            and stat.S_ISDIR(current_directory.st_mode)
+            and current_directory.st_uid == os.geteuid()
+            and stat.S_IMODE(current_directory.st_mode) == _PRIVATE_DIRECTORY_MODE
+            and _identity(current_directory) == self._lock_directory_identity
+            and stat.S_ISDIR(current_root.st_mode)
+            and not _is_reparse(current_root)
+            and _identity(current_root) == self._root_identity
+        )
+
+    def _begin_settlement(self) -> tuple[bool, str | None]:
+        with self._lifecycle:
+            while self._settlement_running:
+                self._lifecycle.wait()
+            if self._settlement_complete or self._handle is None:
+                return False, None
+            if self._settlement_reason is not None:
+                return False, self._settlement_reason
             self._admission_open = False
+            self._settlement_running = True
+            return True, None
+
+    def _finish_settlement(self, reason: str | None) -> None:
+        with self._lifecycle:
+            self._settlement_running = False
+            self._settlement_reason = reason
+            self._settlement_complete = reason is None
+            self._lifecycle.notify_all()
 
     def _take_handle(self) -> IO[str] | None:
-        with self._lifecycle_lock:
+        with self._lifecycle:
+            while self._settlement_running:
+                self._lifecycle.wait()
             handle = self._handle
             self._handle = None
             self._admission_open = False
             return handle
+
+    def _restore_handle(self, handle: IO[str]) -> None:
+        with self._lifecycle:
+            if self._handle is None:
+                self._handle = handle
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -213,6 +306,8 @@ class RootAdmission:
 
     @property
     def label(self) -> str:
+        if self.state is RootAdmissionState.OWNER and not self._has_authority():
+            return "Inactive in this process"
         return {
             RootAdmissionState.OWNER: "Active in this process",
             RootAdmissionState.PASSIVE: "Passive in this process",
@@ -284,6 +379,16 @@ class NotesSyncRootCoordinator:
         if not result.usable:
             raise RootCoordinatorError("lock_directory_unavailable")
         self._lock_directory = result.lexical_path
+        try:
+            lock_directory_metadata = os.stat(
+                self._lock_directory,
+                follow_symlinks=False,
+            )
+        except OSError:
+            raise RootCoordinatorError("lock_directory_unavailable") from None
+        if not stat.S_ISDIR(lock_directory_metadata.st_mode):
+            raise RootCoordinatorError("lock_directory_unavailable")
+        self._lock_directory_identity = _identity(lock_directory_metadata)
         self._owner_token = object()
         self._leases: dict[str, RootLease] = {}
         self._lifecycle_lock = RLock()
@@ -296,6 +401,25 @@ class NotesSyncRootCoordinator:
             raise RootAdmissionError("root_unavailable") from None
         payload = f"{identity.st_dev}\0{identity.st_ino}".encode("ascii")
         return hashlib.sha256(payload).hexdigest()
+
+    def _lock_directory_matches(self) -> bool:
+        try:
+            current = os.stat(self._lock_directory, follow_symlinks=False)
+        except OSError:
+            return False
+        return (
+            stat.S_ISDIR(current.st_mode)
+            and current.st_uid == os.geteuid()
+            and stat.S_IMODE(current.st_mode) == _PRIVATE_DIRECTORY_MODE
+            and _identity(current) == self._lock_directory_identity
+        )
+
+    @staticmethod
+    def _close_quietly(handle: IO[str]) -> None:
+        try:
+            handle.close()
+        except Exception:
+            pass
 
     def try_acquire(
         self,
@@ -325,10 +449,32 @@ class NotesSyncRootCoordinator:
                 digest,
                 exc.reason_code,
             )
+        try:
+            root_metadata = os.stat(canonical, follow_symlinks=False)
+        except OSError:
+            return RootAdmission(
+                RootAdmissionState.OFFLINE,
+                digest,
+                "root_unavailable",
+            )
+        root_identity = _identity(root_metadata)
+        payload = f"{root_identity[0]}\0{root_identity[1]}".encode("ascii")
+        if hashlib.sha256(payload).hexdigest() != digest:
+            return RootAdmission(
+                RootAdmissionState.OFFLINE,
+                digest,
+                "root_unavailable",
+            )
         with self._lifecycle_lock:
             existing = self._leases.get(digest)
             if existing is not None and existing.authoritative:
                 return RootAdmission(RootAdmissionState.OWNER, digest, lease=existing)
+            if not self._lock_directory_matches():
+                return RootAdmission(
+                    RootAdmissionState.REJECTED,
+                    digest,
+                    "lock_unavailable",
+                )
             lock_path = self._lock_directory / f"{digest}.lock"
             try:
                 handle = open_private_text_append_stream(
@@ -359,20 +505,54 @@ class NotesSyncRootCoordinator:
             try:
                 portalocker.lock(handle, flags)
             except portalocker.exceptions.AlreadyLocked:
-                handle.close()
+                self._close_quietly(handle)
                 return RootAdmission(
                     RootAdmissionState.PASSIVE,
                     digest,
                     "passive_process",
                 )
             except Exception:
-                handle.close()
+                self._close_quietly(handle)
                 return RootAdmission(
                     RootAdmissionState.REJECTED,
                     digest,
                     "lock_unavailable",
                 )
-            lease = RootLease(digest, handle, self._owner_token)
+            try:
+                lock_identity = _identity(os.fstat(handle.fileno()))
+            except (OSError, ValueError):
+                try:
+                    portalocker.unlock(handle)
+                except Exception:
+                    pass
+                self._close_quietly(handle)
+                return RootAdmission(
+                    RootAdmissionState.REJECTED,
+                    digest,
+                    "lock_unavailable",
+                )
+            lease = RootLease(
+                digest,
+                handle,
+                self._owner_token,
+                canonical_root=canonical,
+                root_identity=root_identity,
+                lock_directory=self._lock_directory,
+                lock_directory_identity=self._lock_directory_identity,
+                lock_path=lock_path,
+                lock_identity=lock_identity,
+            )
+            if not lease.authoritative:
+                try:
+                    portalocker.unlock(handle)
+                except Exception:
+                    pass
+                self._close_quietly(handle)
+                return RootAdmission(
+                    RootAdmissionState.REJECTED,
+                    digest,
+                    "lock_unavailable",
+                )
             self._leases[digest] = lease
             return RootAdmission(RootAdmissionState.OWNER, digest, lease=lease)
 
@@ -385,20 +565,21 @@ class NotesSyncRootCoordinator:
         """Release one owned OS lock idempotently without unlinking its file."""
 
         selected = self._validate_lease(lease)
+        handle = selected._take_handle()
+        if handle is None:
+            return
+        try:
+            portalocker.unlock(handle)
+        except Exception:
+            selected._restore_handle(handle)
+            raise RootCoordinatorError("lock_release_failed") from None
         with self._lifecycle_lock:
-            handle = selected._take_handle()
-            if handle is None:
-                return
-            try:
-                portalocker.unlock(handle)
-            except Exception:
-                selected._handle = handle
-                raise RootCoordinatorError("lock_release_failed") from None
-            self._leases.pop(selected.root_digest, None)
-            try:
-                handle.close()
-            except OSError:
-                raise RootCoordinatorError("lock_close_failed") from None
+            if self._leases.get(selected.root_digest) is selected:
+                self._leases.pop(selected.root_digest)
+        try:
+            handle.close()
+        except OSError:
+            raise RootCoordinatorError("lock_close_failed") from None
 
     def close_admission(
         self,
@@ -410,16 +591,27 @@ class NotesSyncRootCoordinator:
         selected = self._validate_lease(lease)
         if not callable(settle):
             raise TypeError("settle must be callable.")
-        selected._close_admission()
+        should_settle, prior_reason = selected._begin_settlement()
+        if prior_reason is not None:
+            raise RootCoordinatorError(prior_reason)
+        if not should_settle:
+            self.release(selected)
+            return
         try:
             settlement = settle()
         except BaseException:
+            selected._finish_settlement("settlement_failed")
             raise RootCoordinatorError("settlement_failed") from None
         if inspect.isawaitable(settlement):
             close = getattr(settlement, "close", None)
             if callable(close):
-                close()
+                try:
+                    close()
+                except Exception:
+                    pass
+            selected._finish_settlement("settlement_not_completed")
             raise RootCoordinatorError("settlement_not_completed")
+        selected._finish_settlement(None)
         self.release(selected)
 
 
