@@ -110,7 +110,7 @@ def test_assistant_turn_stylesheet_contract_in_source_and_bundle() -> None:
         ),
     }
     status_contract = {
-        ".console-activity-status-success": "$ds-status-ready 16%",
+        ".console-activity-status-success": "$ds-status-ready 10%",
         ".console-activity-status-blocked": "$ds-status-blocked 16%",
         ".console-activity-status-failed": "$ds-status-error 16%",
         ".console-activity-status-done": "$ds-surface-panel",

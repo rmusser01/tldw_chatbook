@@ -4327,9 +4327,9 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 /* TASK-19426: one causal Assistant turn owns its activity disclosures,
-   final answer, and adjuncts. The full perimeter is the single ownership
-   accent; nested activity rows stay quiet so they read as evidence inside
-   the turn rather than as neighboring transcript cards. */
+   final answer, and adjuncts. The left-edge ownership accent is singular;
+   nested activity rows stay quiet so they read as evidence inside the turn
+   rather than as neighboring transcript cards. */
 .console-assistant-turn {
     width: 100%;
     height: auto;
@@ -4419,7 +4419,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 .console-activity-status-success {
-    background: $ds-status-ready 16%;
+    background: $ds-status-ready 10%;
     color: $ds-text-primary;
 }
 

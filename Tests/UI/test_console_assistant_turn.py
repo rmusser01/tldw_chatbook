@@ -14,6 +14,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
 )
 from tldw_chatbook.Chat.console_roleplay_identity import ConsolePresentationContext
+from tldw_chatbook.css.Themes.themes import ALL_THEMES
 from tldw_chatbook.Widgets.Console.console_assistant_turn import (
     ConsoleActivityActivated,
     ConsoleActivityDisclosure,
@@ -71,9 +72,14 @@ def _painted_foreground_and_background(app: App, widget) -> tuple[object, object
         for segment in strips[y]:
             next_cursor = cursor + segment.cell_length
             overlaps = cursor < widget.region.right and next_cursor > widget.region.x
-            if overlaps and segment.text.strip() and segment.style is not None:
-                foreground = segment.style.color
-                background = segment.style.bgcolor
+            if overlaps:
+                overlap_start = max(0, widget.region.x - cursor)
+                overlap_end = min(segment.cell_length, widget.region.right - cursor)
+                _, overlap = segment.split_cells(overlap_start)
+                overlap, _ = overlap.split_cells(overlap_end - overlap_start)
+            if overlaps and overlap.text.strip() and overlap.style is not None:
+                foreground = overlap.style.color
+                background = overlap.style.bgcolor
                 if foreground is not None and background is not None:
                     return foreground, background
             cursor = next_cursor
@@ -403,6 +409,15 @@ class StyledTranscriptHarness(App[None]):
         yield self.transcript
 
 
+class AllThemesStyledTranscriptHarness(StyledTranscriptHarness):
+    """Production transcript harness with every shipped theme registered."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        for theme in ALL_THEMES:
+            self.register_theme(theme)
+
+
 def _styled_turn_messages() -> tuple[ConsoleChatMessage, ConsoleChatMessage]:
     assistant = ConsoleChatMessage(
         role=ConsoleMessageRole.ASSISTANT,
@@ -599,4 +614,32 @@ async def test_activity_status_compositor_contrast(
         assert ratio >= 4.5, (
             f"{status} status contrast is {ratio:.2f}:1 under {theme}/{state}; "
             f"foreground={foreground}, background={background}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_success_status_rest_contrast_in_every_shipped_theme() -> None:
+    """Success remains readable against every shipped theme's resolved tokens."""
+    app = AllThemesStyledTranscriptHarness()
+
+    async with app.run_test(size=(48, 12)) as pilot:
+        assistant, activity = _styled_turn_messages()
+        app.transcript.set_messages([assistant, activity])
+        await app.transcript.refresh_messages()
+        await pilot.pause(0.2)
+        status_widget = app.query_one("#console-activity-status-styled-tool", Static)
+        results: dict[str, float] = {}
+        for theme in ALL_THEMES:
+            app.theme = theme.name
+            await pilot.pause()
+            foreground, background = _painted_foreground_and_background(
+                app, status_widget
+            )
+            results[theme.name] = _contrast(foreground, background)
+
+        theme_name, ratio = min(results.items(), key=lambda item: item[1])
+        assert len(results) == len(ALL_THEMES)
+        assert ratio >= 4.5, (
+            f"success status contrast is {ratio:.3f}:1 under {theme_name}; "
+            f"all results={results}"
         )
