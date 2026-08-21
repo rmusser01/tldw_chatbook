@@ -114,16 +114,24 @@ last screen the user can still cancel from — the next step starts writing on
 The controller's bar for implementing was "only if the repo already has a
 safe, reachable primitive you can call". It does not, quite:
 
-- The primitives exist but are owner-gated. `ChaChaNotes_DB.backup_database`,
+- The primitives are owner-gated. `ChaChaNotes_DB.backup_database`,
   `Client_Media_DB_v2.backup_database` and `Prompts_DB.backup_database` all
   route through `DB/private_sqlite.py`, whose `SQLITE_OWNER_REGISTRY` keys each
-  backup to a named owning module. Reusing `settings.bulk_backup` (owned by
-  `UI/Tools_Settings_Window`) from the wizard is registry misuse; doing it
-  properly means a **new registry row**, which
-  `Tests/DB/test_private_sqlite_inventory.py:1009` pins against
-  `backlog/docs/sqlite-private-owner-inventory.md`
-  (`set(SQLITE_OWNER_REGISTRY) == documented_owner_ids`) — a security-registry
-  change plus an inventory derivation, not a call.
+  backup to a named owning module, pinned by
+  `Tests/DB/test_private_sqlite_inventory.py:1009` against
+  `backlog/docs/sqlite-private-owner-inventory.md`. Reusing
+  `settings.bulk_backup` (owned by `UI/Tools_Settings_Window`) from the wizard
+  would be registry misuse.
+  **Correction (review finding — this bullet originally overstated the case):**
+  a new registry row is NOT required. `db.chachanotes.backup`, `db.media.backup`
+  and `db.prompts.backup` already exist with `centralized_backup_allowed=True`,
+  already back one-line public `backup_database(path)` methods that carry their
+  own tests, and the app already holds live instances of all three reachable
+  from the wizard. A minimal three-call backup was therefore available. The
+  REMOVE disposition does not rest on this bullet — it rests on the two below
+  (a naive three-call backup has no staging or atomicity, unlike the Settings
+  implementation) and, decisively, on the absence of any user-reachable
+  RESTORE. Recorded so a future task does not inherit the wrong premise.
 - A correct backup here is three databases, not one. `get_chatbook_database_paths()`
   hands the importer ChaChaNotes, Prompts **and** Media; backing up a subset
   and saying "✓ Created backup" is the same defect with a smaller blast
