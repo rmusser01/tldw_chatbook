@@ -521,6 +521,30 @@ then verify with `backlog task <id> --plain`.
 
 ---
 
+## ADR numbers collide across concurrent branches — re-verify at merge time
+
+**What happened.** 2026-08-20, two independent sessions in the same window: the
+chunking-parity branch drafted its engine ADR as 072 and found at PR time that other
+branches had contended for the same number (it shipped as ADR-073); the hermes-parity
+branch (PR #1832) drafted its server-offload ADR as 072 on 2026-08-19 and discovered
+the collision only as a merge conflict in `backlog/decisions/README.md` — by merge
+time on 2026-08-21, dev had claimed 072 (checkpoint harness), 073, 074, AND 075 from
+other branches, forcing a rename to ADR-076 (file, `# ADR-NNN` header, README row,
+and the owning task's plan references) mid-merge.
+
+**What to do.** ADR numbers have exactly the same collision dynamics as task IDs
+(see "assign against origin/dev" above), but no CI guard. Treat the drafted number
+as provisional until merge. At merge time, before resolving any README conflict:
+`git ls-tree --name-only origin/dev backlog/decisions/` for the authoritative taken
+list, plus a sweep of open PRs' changed files for `backlog/decisions/` claims. If
+renumbering, grep the repo for `NNN-<slug>` AND both header forms — `ADR-NNN`
+(hyphenated, ~90 files today) and `ADR NNN` (spaced, e.g. `# ADR 008 - ...`; a
+`ADR[- ]NNN` character class covers both) — the owning task's plan section
+references the ADR by number and path, and stale references in either form
+mislead the next session.
+
+---
+
 ## Related
 
 - `lessons-testing-evidence.md`
