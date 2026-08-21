@@ -53,3 +53,11 @@ and defence-in-depth argues for owner-only bits regardless.
 Related: TASK-17963 (`Skills_Interop/atomic_write.py` is the natural seam —
 its `replace_atomically` already owns the pre-replace window). ADR-009
 defines the trust boundary this protects.
+
+This hardening uses existing OS controls rather than superseding them. It can
+protect trust material from other unprivileged POSIX users when directory
+traversal or a permissive umask would otherwise allow access, but it does not
+separate application users sharing one OS identity, restrict same-UID or
+root/administrator processes, replace disk encryption, or implement Windows
+and storage-specific ACL policy. Effective ACL and mount semantics remain
+authoritative; the change is defence in depth, not a new tenant boundary.

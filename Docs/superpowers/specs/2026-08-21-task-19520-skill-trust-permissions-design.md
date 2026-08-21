@@ -33,6 +33,12 @@ TASK-17963 moved these writes to writer-unique temporary paths before an atomic 
 - Eagerly mutating trust files during reads or application startup. Legacy files are tightened when the store next writes them.
 - Adding durability changes such as file or directory `fsync`; atomic-write durability is unchanged.
 
+## Relationship to OS Access Controls
+
+This change does not supersede the operating system's access-control model; it selects stricter defaults within that model. It is useful when separate unprivileged POSIX users share a host and directory traversal or a permissive umask would otherwise make trust material readable or writable. It is mostly redundant when an existing parent directory already prevents access, but preserves the invariant if parent permissions later change.
+
+The modes do not separate application users that share one OS identity, restrict another process running under the same UID, override root or administrator authority, replace filesystem encryption for offline access, or implement Windows and storage-specific ACL policy. On ACL-backed or network filesystems, the effective ACL and mount semantics remain authoritative. TASK-19520 is therefore low-cost defence in depth around ADR-009's existing trust root, not a new authentication or tenant-isolation boundary.
+
 ## Security Invariants
 
 1. On POSIX, every temporary file used for trust material is created with no group or other permissions before any path-based content write can occur.
