@@ -2103,7 +2103,11 @@ def test_normalize_generic_provider_response_shapes() -> None:
 def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload() -> (
     None
 ):
-    signals = gateway_module.ConsoleProviderStreamSignals()
+    # Explicit opt-in: the dataclass default is False (review finding I1) --
+    # this test exercises begin_exchange/record_exchange_content/
+    # close_exchange and needs capture actually happening to prove the
+    # privacy claim.
+    signals = gateway_module.ConsoleProviderStreamSignals(exchange_capture_enabled=True)
 
     signal_fields = dataclasses.fields(signals)
     assert [item.name for item in signal_fields] == [
@@ -6115,7 +6119,7 @@ class TestSignalsExchangeCapture:
         )
 
     def test_per_call_boundaries_never_merge(self):
-        aggregate = ConsoleProviderStreamSignals()
+        aggregate = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
         call0 = aggregate.new_usage_call()
         self._begin(call0, "call0")
         call0.record_exchange_content("hel")
@@ -6132,7 +6136,7 @@ class TestSignalsExchangeCapture:
         assert captures[0].run_tag == captures[1].run_tag == aggregate.run_tag
 
     def test_in_flight_tail_reports_stopped(self):
-        aggregate = ConsoleProviderStreamSignals()
+        aggregate = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
         call = aggregate.new_usage_call()
         self._begin(call)
         call.record_exchange_content("part")
@@ -6142,7 +6146,7 @@ class TestSignalsExchangeCapture:
         assert captures[0].response["content"] == "part"
 
     def test_close_moves_never_copies(self):
-        aggregate = ConsoleProviderStreamSignals()
+        aggregate = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
         call = aggregate.new_usage_call()
         self._begin(call)
         call.close_exchange()
@@ -6150,7 +6154,7 @@ class TestSignalsExchangeCapture:
         assert len(aggregate.exchange_captures()) == 1
 
     def test_tool_calls_recorded(self):
-        aggregate = ConsoleProviderStreamSignals()
+        aggregate = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
         call = aggregate.new_usage_call()
         self._begin(call)
         call.record_exchange_tool_calls([{"id": "t1", "function": {"name": "get_time"}}])
@@ -6158,7 +6162,7 @@ class TestSignalsExchangeCapture:
         assert aggregate.exchange_captures()[0].response["tool_calls"][0]["id"] == "t1"
 
     def test_close_attaches_this_calls_normalized_usage(self):
-        aggregate = ConsoleProviderStreamSignals()
+        aggregate = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
         call = aggregate.new_usage_call()
         self._begin(call)
         call.record_usage_payload({"prompt_tokens": 10, "completion_tokens": 5})
@@ -6207,7 +6211,7 @@ class TestGatewayExchangeCapture:
             return {"choices": [{"message": {"content": "pong"}}]}
 
         gateway = ConsoleProviderGateway(chat_api_call_fn=fake_chat_api_call)
-        signals = ConsoleProviderStreamSignals()
+        signals = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
         resolution = self._resolution()
         messages = [
             {"role": "system", "content": "sys"},
@@ -6239,7 +6243,8 @@ class TestGatewayExchangeCapture:
         messages = [{"role": "user", "content": "q"}]
         with_signals = await self._drain(
             ConsoleProviderGateway(chat_api_call_fn=fake_chat_api_call).stream_chat(
-                resolution, messages, signals=ConsoleProviderStreamSignals()
+                resolution, messages,
+                signals=ConsoleProviderStreamSignals(exchange_capture_enabled=True),
             )
         )
         without = await self._drain(
@@ -6255,7 +6260,7 @@ class TestGatewayExchangeCapture:
             raise RuntimeError("boom")
 
         gateway = ConsoleProviderGateway(chat_api_call_fn=fake_chat_api_call)
-        signals = ConsoleProviderStreamSignals()
+        signals = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
         # Narrowed from bare Exception: a capture-code explosion must not be
         # mistaken for the provider error this test actually targets.
         with pytest.raises(ChatProviderError):
@@ -6286,6 +6291,44 @@ class TestGatewayExchangeCapture:
         assert signals.exchange_captures() == []
 
     @pytest.mark.asyncio
+    async def test_disabled_capture_never_calls_build_request_capture(
+        self, monkeypatch
+    ):
+        """Review finding I1: ``begin_exchange``'s own early-return guard
+        only skips STORING the capture -- with capture off, the caller must
+        never even CALL ``build_request_capture`` (a full ``json.dumps`` of
+        ``messages_payload`` plus a recursive ``stub_binary_strings`` walk)
+        in the first place. Patches the CONSUMER namespace and proves the
+        patch took with a call counter, same idiom as
+        ``test_never_break_send_when_build_request_capture_raises``."""
+        call_count = {"n": 0}
+        original = gateway_module.build_request_capture
+
+        def counting_build_request_capture(kwargs):
+            call_count["n"] += 1
+            return original(kwargs)
+
+        monkeypatch.setattr(
+            gateway_module, "build_request_capture", counting_build_request_capture
+        )
+
+        def fake_chat_api_call(**kwargs):
+            return {"choices": [{"message": {"content": "pong"}}]}
+
+        gateway = ConsoleProviderGateway(chat_api_call_fn=fake_chat_api_call)
+        signals = ConsoleProviderStreamSignals(exchange_capture_enabled=False)
+        items = await self._drain(
+            gateway.stream_chat(
+                self._resolution(),
+                [{"role": "user", "content": "q"}],
+                signals=signals,
+            )
+        )
+        assert items == ["pong"]
+        assert call_count["n"] == 0
+        assert signals.exchange_captures() == []
+
+    @pytest.mark.asyncio
     async def test_not_ready_resolution_emits_no_phantom_capture(self):
         """The early ``not resolution.ready`` return never reaches the
         worker, so no exchange ever begins -- confirm the finally's
@@ -6295,7 +6338,7 @@ class TestGatewayExchangeCapture:
             pytest.fail("chat_api_call must not run for a not-ready resolution")
 
         gateway = ConsoleProviderGateway(chat_api_call_fn=fake_chat_api_call)
-        signals = ConsoleProviderStreamSignals()
+        signals = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
         not_ready = dataclasses.replace(self._resolution(), ready=False)
         await self._drain(
             gateway.stream_chat(
@@ -6314,7 +6357,7 @@ class TestGatewayExchangeCapture:
             return {"choices": [{"message": {"content": ""}}]}
 
         gateway = ConsoleProviderGateway(chat_api_call_fn=fake_chat_api_call)
-        signals = ConsoleProviderStreamSignals()
+        signals = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
         with pytest.raises(ChatProviderError):
             await self._drain(
                 gateway.stream_chat(
@@ -6361,7 +6404,7 @@ class TestGatewayExchangeCapture:
             return iterator
 
         gateway = ConsoleProviderGateway(chat_api_call_fn=fake_chat_api_call)
-        signals = ConsoleProviderStreamSignals()
+        signals = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
         gen = gateway.stream_chat(
             self._resolution(), [{"role": "user", "content": "q"}], signals=signals
         )
@@ -6400,7 +6443,7 @@ class TestGatewayExchangeCapture:
             return response
 
         gateway = ConsoleProviderGateway(chat_api_call_fn=fake_chat_api_call)
-        signals = ConsoleProviderStreamSignals()
+        signals = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
         items = await self._drain(
             gateway.stream_chat(
                 self._resolution(),
@@ -6436,7 +6479,7 @@ class TestGatewayExchangeCapture:
             return {"choices": [{"message": {"content": "pong"}}]}
 
         gateway = ConsoleProviderGateway(chat_api_call_fn=fake_chat_api_call)
-        signals = ConsoleProviderStreamSignals()
+        signals = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
         items = await self._drain(
             gateway.stream_chat(
                 self._resolution(),
@@ -6474,7 +6517,7 @@ class TestLlamaCppExchangeCapture:
                 yield chunk
 
         monkeypatch.setattr(ConsoleProviderGateway, "stream_llamacpp_chat", fake_stream)
-        aggregate = ConsoleProviderStreamSignals()
+        aggregate = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
         resolution = self._resolution(streaming=True)
         out = [
             c
@@ -6506,7 +6549,7 @@ class TestLlamaCppExchangeCapture:
         monkeypatch.setattr(
             ConsoleProviderGateway, "complete_llamacpp_chat", fake_complete
         )
-        aggregate = ConsoleProviderStreamSignals()
+        aggregate = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
         resolution = self._resolution(streaming=False)
         out = [
             c
@@ -6541,7 +6584,7 @@ class TestLlamaCppExchangeCapture:
         monkeypatch.setattr(
             ConsoleProviderGateway, "complete_llamacpp_chat", fake_complete
         )
-        aggregate = ConsoleProviderStreamSignals()
+        aggregate = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
         resolution = self._resolution(streaming=False)
         gen = gateway.stream_chat(
             resolution, [{"role": "user", "content": "q"}], signals=aggregate
@@ -6554,3 +6597,44 @@ class TestLlamaCppExchangeCapture:
         assert len(captures) == 1
         assert captures[0].status == "stopped"
         assert captures[0].response["content"] == "done"
+
+    @pytest.mark.asyncio
+    async def test_disabled_capture_never_builds_wire_payload_for_capture(
+        self, monkeypatch
+    ):
+        """Review finding I1: with capture off, the llama.cpp branch must
+        not build a SECOND wire payload purely for capture
+        (``build_llamacpp_chat_payload`` at the capture call site) -- the
+        real send's own payload build is bypassed here too (the fake
+        ``stream_llamacpp_chat`` never calls it), so zero calls proves the
+        capture-only build never ran."""
+        call_count = {"n": 0}
+        original = gateway_module.build_llamacpp_chat_payload
+
+        def counting_build(*args, **kwargs):
+            call_count["n"] += 1
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(
+            gateway_module, "build_llamacpp_chat_payload", counting_build
+        )
+
+        gateway = ConsoleProviderGateway()
+        streamed = ["hel", "lo"]
+
+        async def fake_stream(self, **kwargs):
+            for chunk in streamed:
+                yield chunk
+
+        monkeypatch.setattr(ConsoleProviderGateway, "stream_llamacpp_chat", fake_stream)
+        aggregate = ConsoleProviderStreamSignals(exchange_capture_enabled=False)
+        resolution = self._resolution(streaming=True)
+        out = [
+            c
+            async for c in gateway.stream_chat(
+                resolution, [{"role": "user", "content": "q"}], signals=aggregate
+            )
+        ]
+        assert out == streamed
+        assert call_count["n"] == 0
+        assert aggregate.exchange_captures() == []

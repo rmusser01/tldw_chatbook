@@ -93,7 +93,9 @@ def _captured_signals() -> ConsoleProviderStreamSignals:
     (llama.cpp branch): ``new_usage_call()`` for the per-call view, then
     begin/close_exchange on it (the aggregate itself has no begin_exchange
     method -- only the per-call view does)."""
-    signals = ConsoleProviderStreamSignals()
+    # Explicit opt-in: the dataclass default is False (review finding I1) --
+    # this helper builds a signals object with a real capture in it.
+    signals = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
     call_signals = signals.new_usage_call()
     call_signals.begin_exchange(
         provider="p", model="m", endpoint=None, request={}, omitted_keys=()
@@ -197,7 +199,7 @@ def test_attach_site_forwards_captures_to_store():
     and its ``finally`` close-out order). Driven the same way
     ``test_re_attaching_the_same_signals_is_idempotent`` drives usage."""
     controller, store, message_id = _controller_with_placeholder()
-    signals = ConsoleProviderStreamSignals()
+    signals = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
     call_signals = signals.new_usage_call()
     call_signals.record_usage_payload(
         {"prompt_tokens": 100, "completion_tokens": 20}

@@ -127,6 +127,18 @@ _NO_CAPTURES_MESSAGE = (
 _LOAD_FAILURE_MESSAGE = (
     "Could not load captures for this turn -- expand again to retry."
 )
+# Review finding I2: the spec requires this caveat stated IN the UI (twice),
+# not just the User Guide -- a user in this tab has no other in-surface
+# signal that capture happens at the provider-adapter boundary, not the raw
+# HTTP layer (so provider-internal framing and injected `cache_control`
+# markers never appear here), and that llama.cpp is the one exception (its
+# capture IS the literal wire payload).
+_EXCHANGE_ADAPTER_BOUNDARY_CAVEAT = (
+    "Captured where Console hands the request to the provider adapter, not "
+    "at the raw HTTP layer -- provider-internal framing and injected "
+    "prompt-cache markers are not visible here (llama.cpp is the exception: "
+    "its capture is the literal wire payload)."
+)
 
 # Exchange tab (task-9) DOM id prefixes -- the four-level lazy chain (turn
 # -> call -> section -> message) is dispatched by a single
@@ -217,6 +229,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
     #console-inspector-costs-rows { height: 1fr; }
     .console-inspector-cost-row { height: auto; }
     #console-inspector-costs-totals { height: auto; margin-top: 1; text-style: bold; }
+    #console-inspector-exchange-caveat { height: auto; color: gray; margin-bottom: 1; }
     #console-inspector-exchange-turns { height: 1fr; }
     .console-inspector-exchange-turn { height: auto; }
     .console-inspector-exchange-call { height: auto; }
@@ -365,6 +378,11 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                         markup=False,
                     )
                 with TabPane("Exchange", id=TAB_EXCHANGE):
+                    yield Static(
+                        _EXCHANGE_ADAPTER_BOUNDARY_CAVEAT,
+                        id="console-inspector-exchange-caveat",
+                        markup=False,
+                    )
                     with VerticalScroll(id="console-inspector-exchange-turns"):
                         yield from self._build_exchange_turn_widgets()
                 with TabPane("Next Send", id=TAB_NEXT_SEND):

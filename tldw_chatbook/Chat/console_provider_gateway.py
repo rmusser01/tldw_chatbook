@@ -240,7 +240,14 @@ class ConsoleProviderStreamSignals:
             self.completed_usage_payloads.append(dict(payload))
 
     run_tag: str = field(default_factory=lambda: uuid.uuid4().hex)
-    exchange_capture_enabled: bool = True
+    # Fail-safe default: OFF. A bare `ConsoleProviderStreamSignals()` (every
+    # construction site that does not explicitly opt in -- visual
+    # evaluation, the agent-bridge fallback) must never capture. Only
+    # `_new_run_stream_signals()` (console_chat_controller.py) opts in,
+    # reading the actual `[console] exchange_capture` config gate (review
+    # finding I1: the two bare-construction sites used to inherit `True`
+    # and capture unconditionally, for output nobody ever reads).
+    exchange_capture_enabled: bool = False
     completed_exchanges: list["ExchangeCapture"] = field(default_factory=list, repr=False)
     _active_exchanges: dict[object, dict[str, Any]] = field(
         default_factory=dict, init=False, repr=False)
@@ -299,6 +306,18 @@ class ConsoleProviderCallSignals:
     def synthetic_fallback_emitted(self) -> bool:
         """Return whether the aggregate emitted synthetic fallback usage."""
         return self._aggregate.synthetic_fallback_emitted
+
+    @property
+    def exchange_capture_enabled(self) -> bool:
+        """Return whether the aggregate has exchange capture enabled.
+
+        Callers check this BEFORE doing any capture-building work (allowlist
+        filtering, ``json.dumps``, ``stub_binary_strings``'s recursive
+        walk) -- ``begin_exchange`` below also checks it, but only after
+        that work is already done, so it cannot save the cost on its own
+        (review finding I1).
+        """
+        return self._aggregate.exchange_capture_enabled
 
     def mark_synthetic_fallback(self) -> None:
         """Mark synthetic fallback usage on the aggregate signal."""
@@ -2398,7 +2417,7 @@ class ConsoleProviderGateway:
                 # signature, so it structurally cannot leak into the
                 # captured request even though it rides `stream_llamacpp_
                 # chat`/`complete_llamacpp_chat`'s kwargs as auth headers.
-                if call_signals is not None:
+                if call_signals is not None and call_signals.exchange_capture_enabled:
                     try:
                         wire = build_llamacpp_chat_payload(
                             model=resolution.model,
@@ -2524,7 +2543,7 @@ class ConsoleProviderGateway:
         def worker() -> None:
             try:
                 kwargs = self._chat_api_kwargs_from_prepared(resolution, request)
-                if signals is not None:
+                if signals is not None and signals.exchange_capture_enabled:
                     try:
                         capture_request, omitted = build_request_capture(kwargs)
                         signals.begin_exchange(

@@ -171,6 +171,24 @@ async def test_three_tabs_render() -> None:
 
 
 @pytest.mark.asyncio
+async def test_exchange_tab_states_adapter_boundary_caveat() -> None:
+    """Review finding I2: the spec requires the adapter-boundary caveat
+    STATED IN THE UI (twice), not just the User Guide -- a user on the
+    Exchange tab has no other in-surface signal that capture happens at the
+    provider-adapter boundary (not the raw HTTP layer) and that llama.cpp
+    is the one exception."""
+    app = InspectorHarness(**_default_kwargs(initial_tab=TAB_EXCHANGE))
+
+    async with app.run_test(size=(120, 44)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        caveat = modal.query_one("#console-inspector-exchange-caveat", Static)
+        text = str(caveat.renderable)
+        assert "adapter" in text.lower()
+        assert "llama.cpp" in text
+
+
+@pytest.mark.asyncio
 async def test_costs_rows_render_and_totals() -> None:
     app = InspectorHarness(**_default_kwargs())
 
