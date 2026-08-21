@@ -18,10 +18,10 @@ width rules — one fixed (13 columns), one fractional (``3fr``). Folding
 both under one parent would require that parent to switch its own width
 between those two unit kinds depending on open/closed state, which is a
 real layout risk this extraction does not take (see the design spec's
-"Migration safety" section on this exact class of defect). "Same nesting"
-for the ids this widget DOES own is preserved with zero structural
-change: this class reuses ``id="console-left-rail"`` as its own root, so
-it sits in the DOM exactly where the old ``Vertical`` sat.
+"Migration safety" section on this exact class of defect). This class
+reuses ``id="console-left-rail"`` as its own root, so it sits in the DOM
+exactly where the old ``Vertical`` sat. Direct domain body IDs remain
+stable descendants inside their presentation-only bounded wrappers.
 
 Also NOT moved: the rail-state machinery whose body reaches into the
 right (Inspector) rail or into app-wide persisted config —
@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -56,7 +57,7 @@ from ...Chat.console_session_settings import (
     ConsoleSettingsSummaryState,
     _summary_row_value,
 )
-from ...Widgets.Console import ConsoleWorkspaceContextTray
+from ...Widgets.Console import ConsoleBoundedSection, ConsoleWorkspaceContextTray
 from ...Widgets.Console.console_agent_steering_bar import (
     STEERING_BAR_ID,
     ConsoleAgentSteeringBar,
@@ -75,6 +76,70 @@ from ...Widgets.destination_rail import (
 from ...Workspaces.display_state import ConsoleWorkspaceContextState
 from .agent import CONSOLE_AGENT_CANCEL_ALL_ID, CONSOLE_AGENT_FLEET_SECTION_ID
 from .frame import frame_console_region
+from .rail_section_layout import (
+    ContextAllocationResult,
+    ContextSectionDemand,
+    allocate_context_sections,
+    fallback_active_section,
+    outer_hint_required,
+)
+
+
+OUTER_SECTION_SCROLL_HINT = "▼ more sections — scroll"
+
+
+@dataclass(frozen=True, slots=True)
+class ContextSectionDescriptor:
+    """Stable direct Context-section identity in allocator/DOM order."""
+
+    section_id: str
+    title: str
+
+
+CONTEXT_SECTION_DESCRIPTORS = (
+    ContextSectionDescriptor("session", "Sessions"),
+    ContextSectionDescriptor("workspace", "Workspaces"),
+    ContextSectionDescriptor("conversations", "Conversations"),
+    ContextSectionDescriptor("model", "Model"),
+    ContextSectionDescriptor("agent", "Agent"),
+    ContextSectionDescriptor("details", "Details"),
+    ContextSectionDescriptor("character", "Character"),
+)
+
+
+class _ContextOuterBody(VerticalScroll):
+    """Context scroll owner with direct resize/scroll invalidation seams."""
+
+    def __init__(self, *, owner: "ConsoleLeftRail", **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._owner = owner
+
+    def on_resize(self) -> None:
+        self._owner.request_allocation_reconcile()
+
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        super().watch_scroll_y(old_value, new_value)
+        if old_value != new_value:
+            self._owner._update_outer_hint()
+
+
+class _ContextBoundedSection(ConsoleBoundedSection):
+    """Direct Context body that invalidates its allocator when demand changes."""
+
+    def __init__(
+        self,
+        *content: Widget,
+        section_id: str,
+        owner: "ConsoleLeftRail",
+    ) -> None:
+        self._allocation_owner = owner
+        super().__init__(*content, section_id=section_id)
+
+    def _run_scheduled_reconcile(self) -> None:
+        previous_demand = self.desired_content_lines
+        super()._run_scheduled_reconcile()
+        if self.desired_content_lines != previous_demand:
+            self._allocation_owner.request_allocation_reconcile()
 
 
 class ConsoleLeftRail(Vertical):
@@ -231,6 +296,322 @@ class ConsoleLeftRail(Vertical):
         self._character_avatar_widget_builder = character_avatar_widget_builder
         self._character_avatar_name = character_avatar_name
         self._manual_reaction_label = str(manual_reaction_label or "").strip()
+        self._active_section_id: str | None = None
+        self._allocation_reconcile_scheduled = False
+        self._last_allocation_state: (
+            tuple[
+                ContextAllocationResult,
+                bool,
+                tuple[ConsoleBoundedSection, ...],
+            ]
+            | None
+        ) = None
+        self._no_room_section_ids: frozenset[str] = frozenset()
+        self._outer_hint_exists = False
+        self._outer_hint_text = ""
+
+    @staticmethod
+    def _section_body(
+        section_id: str,
+        is_open: bool,
+        *children: Widget,
+        classes: str = "",
+    ) -> Vertical:
+        """Build the preserved domain body as bounded presentation content."""
+
+        body_classes = "console-rail-section-body"
+        if classes:
+            body_classes = f"{body_classes} {classes}"
+        body = Vertical(
+            *children,
+            id=f"console-rail-section-body-{section_id}",
+            classes=body_classes,
+        )
+        body.styles.height = "auto"
+        # Retire the legacy descendant body's independent 20% scroll owner
+        # inline; Task 8 owns the stylesheet cleanup itself.
+        # A viewport-relative ceiling defeats the legacy 20% selector without
+        # obscuring the only distinction the allocator needs above its 20-row
+        # cap: whether physical demand still exceeds 20 rows.
+        body.styles.max_height = "100vh"
+        body.styles.overflow_y = "hidden"
+        body.styles.margin_bottom = 0
+        if not is_open:
+            body.styles.display = "none"
+        return body
+
+    def on_mount(self) -> None:
+        """Allocate from the first complete mounted geometry snapshot."""
+
+        self.request_allocation_reconcile()
+
+    def on_resize(self) -> None:
+        """Reallocate when the outer Context region changes height."""
+
+        self.request_allocation_reconcile()
+
+    def _mounted_descriptors(self) -> tuple[ContextSectionDescriptor, ...]:
+        """Return only direct sections currently mounted, in stable DOM order."""
+
+        mounted: list[ContextSectionDescriptor] = []
+        for descriptor in CONTEXT_SECTION_DESCRIPTORS:
+            try:
+                self.query_one(
+                    f"#console-bounded-section-{descriptor.section_id}",
+                    ConsoleBoundedSection,
+                )
+            except (NoMatches, QueryError):
+                continue
+            mounted.append(descriptor)
+        return tuple(mounted)
+
+    def activate_section(self, section_id: str) -> None:
+        """Prioritize one mounted direct Context section without persistence."""
+
+        if section_id not in {
+            descriptor.section_id for descriptor in self._mounted_descriptors()
+        }:
+            return
+        self._active_section_id = section_id
+        self.request_allocation_reconcile()
+
+    def request_allocation_reconcile(self) -> None:
+        """Coalesce one post-refresh, all-sibling allocation reconciliation."""
+
+        if not self.is_mounted or self._allocation_reconcile_scheduled:
+            return
+        self._allocation_reconcile_scheduled = True
+        self.call_after_refresh(self._prepare_allocation_reconcile)
+
+    def _prepare_allocation_reconcile(self) -> None:
+        """Let every bounded body measure demand before the owner snapshots."""
+
+        if not self.is_mounted:
+            self._allocation_reconcile_scheduled = False
+            return
+        for descriptor in self._mounted_descriptors():
+            try:
+                section = self.query_one(
+                    f"#console-bounded-section-{descriptor.section_id}",
+                    ConsoleBoundedSection,
+                )
+            except (NoMatches, QueryError):
+                continue
+            section.request_reconcile()
+        self.call_after_refresh(self._run_allocation_reconcile)
+
+    def _run_allocation_reconcile(self) -> None:
+        """Snapshot once, call the pure policy once, and commit one full state."""
+
+        try:
+            descriptors = self._mounted_descriptors()
+            if not descriptors:
+                return
+            viewport_height = self._snapshot_outer_viewport_height()
+            if viewport_height <= 0:
+                return
+            header_chrome_height = self._measure_visible_header_chrome_height(
+                descriptors
+            )
+            sections: list[ConsoleBoundedSection] = []
+            demands: list[ContextSectionDemand] = []
+            for descriptor in descriptors:
+                bounded = self.query_one(
+                    f"#console-bounded-section-{descriptor.section_id}",
+                    ConsoleBoundedSection,
+                )
+                header = self.query_one(
+                    f"#console-rail-section-header-{descriptor.section_id}",
+                    DestinationRailSectionHeader,
+                )
+                body = bounded.query_one(
+                    f"#console-rail-section-body-{descriptor.section_id}"
+                )
+                sections.append(bounded)
+                demands.append(
+                    ContextSectionDemand(
+                        section_id=descriptor.section_id,
+                        desired_content_rows=bounded.desired_content_lines,
+                        is_open=bool(header.open and body.display),
+                    )
+                )
+
+            active_section_id = self._active_section_id
+            if active_section_id is not None:
+                active_section_id = fallback_active_section(
+                    demands,
+                    active_section_id,
+                )
+                self._active_section_id = active_section_id
+            result = allocate_context_sections(
+                viewport_height=viewport_height,
+                header_chrome_height=header_chrome_height,
+                sections=tuple(demands),
+                active_section_id=active_section_id,
+            )
+            desired_outer_rows = header_chrome_height + sum(
+                allocation.allocated_content_rows + int(allocation.hint_required)
+                for allocation in result.allocations
+            )
+            needs_outer_hint = outer_hint_required(
+                desired_outer_rows,
+                viewport_height,
+            )
+            self._apply_allocation_state(
+                descriptors,
+                sections,
+                result,
+                needs_outer_hint=needs_outer_hint,
+            )
+        except (NoMatches, QueryError):
+            # Recompose may briefly remove one member of the complete snapshot.
+            return
+        finally:
+            self._allocation_reconcile_scheduled = False
+
+    def _snapshot_outer_viewport_height(self) -> int:
+        """Return the no-hint Context viewport height for counterfactual policy."""
+
+        outer = self.query_one("#console-left-rail-body", VerticalScroll)
+        height = outer.content_region.height
+        try:
+            hint = self.query_one("#console-left-rail-outer-hint", Static)
+        except (NoMatches, QueryError):
+            return height
+        if hint.display:
+            height += max(1, hint.outer_size.height)
+        return height
+
+    def _measure_visible_header_chrome_height(
+        self,
+        descriptors: tuple[ContextSectionDescriptor, ...],
+    ) -> int:
+        """Measure all visible direct headers and fixed inter-section chrome."""
+
+        return sum(
+            self.query_one(
+                f"#console-rail-section-header-{descriptor.section_id}",
+                DestinationRailSectionHeader,
+            ).outer_size.height
+            for descriptor in descriptors
+        )
+
+    def _apply_allocation_state(
+        self,
+        descriptors: tuple[ContextSectionDescriptor, ...],
+        sections: list[ConsoleBoundedSection],
+        result: ContextAllocationResult,
+        *,
+        needs_outer_hint: bool,
+    ) -> None:
+        """Equality-guard and synchronously apply a complete owner snapshot."""
+
+        complete_state = (
+            result,
+            needs_outer_hint,
+            tuple(sections),
+        )
+        if complete_state == self._last_allocation_state:
+            self._update_outer_hint()
+            if result.uses_outer_scroll and self._active_section_id is not None:
+                self.call_after_refresh(self._reveal_active_section)
+            return
+
+        no_room_ids = frozenset(
+            allocation.section_id
+            for allocation in result.allocations
+            if allocation.no_room
+        )
+        for bounded, allocation in zip(sections, result.allocations):
+            bounded.set_allocation(allocation.allocated_content_rows)
+
+        for descriptor in descriptors:
+            header = self.query_one(
+                f"#console-rail-section-header-{descriptor.section_id}",
+                DestinationRailSectionHeader,
+            )
+            title = header.query_one(
+                f"#console-rail-section-title-{descriptor.section_id}", Static
+            )
+            toggle = header.query_one(
+                f"#{RAIL_SECTION_TOGGLE_PREFIX}{descriptor.section_id}", Button
+            )
+            constrained = descriptor.section_id in no_room_ids
+            target_title = (
+                f"{descriptor.title} · no room" if constrained else descriptor.title
+            )
+            if str(title.renderable) != target_title:
+                title.update(target_title)
+            if constrained:
+                if str(toggle.label) != "[>]":
+                    toggle.label = "[>]"
+                toggle.tooltip = f"Prioritize {descriptor.title}"
+            else:
+                header.sync_open(header.open)
+
+        outer = self.query_one("#console-left-rail-body", VerticalScroll)
+        target_overflow = "auto" if result.uses_outer_scroll else "hidden"
+        if str(outer.styles.overflow_y) != target_overflow:
+            outer.styles.overflow_y = target_overflow
+        outer.can_focus = result.uses_outer_scroll
+        if not result.uses_outer_scroll and outer.scroll_y != 0:
+            outer.scroll_y = 0
+
+        hint = self.query_one("#console-left-rail-outer-hint", Static)
+        if hint.display is not needs_outer_hint:
+            hint.display = needs_outer_hint
+        self._outer_hint_exists = needs_outer_hint
+        self._no_room_section_ids = no_room_ids
+        self._last_allocation_state = complete_state
+        self._update_outer_hint()
+
+        if result.uses_outer_scroll and self._active_section_id is not None:
+            self.call_after_refresh(self._schedule_active_reveal)
+
+    def _schedule_active_reveal(self) -> None:
+        """Wait through bounded-body layout before revealing outer content."""
+
+        self.call_after_refresh(self._reveal_active_section)
+
+    def _reveal_active_section(self) -> None:
+        """Reveal the active header and its first content row in fallback mode."""
+
+        section_id = self._active_section_id
+        if section_id is None:
+            return
+        try:
+            outer = self.query_one("#console-left-rail-body", VerticalScroll)
+            header = self.query_one(
+                f"#console-rail-section-header-{section_id}",
+                DestinationRailSectionHeader,
+            )
+        except (NoMatches, QueryError):
+            return
+        outer.scroll_to(
+            y=max(0, header.virtual_region.y),
+            animate=False,
+            immediate=True,
+        )
+        self._update_outer_hint()
+
+    def _update_outer_hint(self) -> None:
+        """Keep the pinned outer slot blank at end and exact before end."""
+
+        try:
+            outer = self.query_one("#console-left-rail-body", VerticalScroll)
+            hint = self.query_one("#console-left-rail-outer-hint", Static)
+        except (NoMatches, QueryError):
+            return
+        before_end = outer.max_scroll_y <= 0 or outer.scroll_y < outer.max_scroll_y
+        text = (
+            OUTER_SECTION_SCROLL_HINT
+            if self._outer_hint_exists and hint.display and before_end
+            else ""
+        )
+        if text == self._outer_hint_text and str(hint.renderable) == text:
+            return
+        self._outer_hint_text = text
+        hint.update(text)
 
     def sync_workspace_context(self, state: ConsoleWorkspaceContextState) -> None:
         """Push one context snapshot into every scoped rail projection.
@@ -258,8 +639,10 @@ class ConsoleLeftRail(Vertical):
                 "#console-workspace-details", ConsoleWorkspaceDetailsTray
             )
         except (NoMatches, QueryError):
-            return
-        details_tray.sync_state(state)
+            pass
+        else:
+            details_tray.sync_state(state)
+        self.request_allocation_reconcile()
 
     def compose(self) -> ComposeResult:
         """Compose the rail header, pinned fleet line, and context sections.
@@ -310,7 +693,8 @@ class ConsoleLeftRail(Vertical):
         fleet_summary.styles.display = "block" if self._fleet_line else "none"
         yield fleet_summary
 
-        with VerticalScroll(
+        with _ContextOuterBody(
+            owner=self,
             id="console-left-rail-body",
             classes="console-left-rail-body",
         ):
@@ -323,24 +707,25 @@ class ConsoleLeftRail(Vertical):
                 open=rail_state.session_open,
                 id="console-rail-section-header-session",
             )
-            session_body = Vertical(
-                id="console-rail-section-body-session",
-                classes="console-rail-section-body",
+            session_context_tray = ConsoleWorkspaceContextTray(
+                workspace_context_state,
+                show_heading=False,
+                content="session",
+                id="console-session-context",
+                classes="console-left-rail-section",
             )
-            session_body.styles.height = "auto"
-            if not rail_state.session_open:
-                session_body.styles.display = "none"
-            with session_body:
-                session_context_tray = ConsoleWorkspaceContextTray(
-                    workspace_context_state,
-                    show_heading=False,
-                    content="session",
-                    id="console-session-context",
-                    classes="console-left-rail-section",
-                )
-                session_context_tray.styles.width = "100%"
-                session_context_tray.styles.min_width = 0
-                yield frame_console_region(session_context_tray, variant="quiet")
+            session_context_tray.styles.width = "100%"
+            session_context_tray.styles.min_width = 0
+            session_body = self._section_body(
+                "session",
+                rail_state.session_open,
+                frame_console_region(session_context_tray, variant="quiet"),
+            )
+            yield _ContextBoundedSection(
+                session_body,
+                section_id="session",
+                owner=self,
+            )
 
             yield DestinationRailSectionHeader(
                 "Workspaces",
@@ -348,24 +733,25 @@ class ConsoleLeftRail(Vertical):
                 open=rail_state.workspace_open,
                 id="console-rail-section-header-workspace",
             )
-            workspace_body = Vertical(
-                id="console-rail-section-body-workspace",
-                classes="console-rail-section-body",
+            workspace_context_tray = ConsoleWorkspaceContextTray(
+                workspace_context_state,
+                show_heading=False,
+                content="workspace",
+                id="console-workspaces-context",
+                classes="console-left-rail-section",
             )
-            workspace_body.styles.height = "auto"
-            if not rail_state.workspace_open:
-                workspace_body.styles.display = "none"
-            with workspace_body:
-                workspace_context_tray = ConsoleWorkspaceContextTray(
-                    workspace_context_state,
-                    show_heading=False,
-                    content="workspace",
-                    id="console-workspaces-context",
-                    classes="console-left-rail-section",
-                )
-                workspace_context_tray.styles.width = "100%"
-                workspace_context_tray.styles.min_width = 0
-                yield frame_console_region(workspace_context_tray, variant="quiet")
+            workspace_context_tray.styles.width = "100%"
+            workspace_context_tray.styles.min_width = 0
+            workspace_body = self._section_body(
+                "workspace",
+                rail_state.workspace_open,
+                frame_console_region(workspace_context_tray, variant="quiet"),
+            )
+            yield _ContextBoundedSection(
+                workspace_body,
+                section_id="workspace",
+                owner=self,
+            )
 
             yield DestinationRailSectionHeader(
                 "Conversations",
@@ -373,30 +759,31 @@ class ConsoleLeftRail(Vertical):
                 open=rail_state.conversations_open,
                 id="console-rail-section-header-conversations",
             )
-            conversations_body = Vertical(
-                id="console-rail-section-body-conversations",
-                classes="console-rail-section-body",
+            conversation_context_tray = ConsoleWorkspaceContextTray(
+                workspace_context_state,
+                show_heading=False,
+                content="conversations",
+                # Keep the long-standing id on the conversation browser:
+                # search/resume tests and screen helpers use it as the
+                # grouped browser's stable synchronization seam.
+                id="console-workspace-context",
+                classes="console-left-rail-section",
             )
-            conversations_body.styles.height = "auto"
-            if not rail_state.conversations_open:
-                conversations_body.styles.display = "none"
-            with conversations_body:
-                conversation_context_tray = ConsoleWorkspaceContextTray(
-                    workspace_context_state,
-                    show_heading=False,
-                    content="conversations",
-                    # Keep the long-standing id on the conversation browser:
-                    # search/resume tests and screen helpers use it as the
-                    # grouped browser's stable synchronization seam.
-                    id="console-workspace-context",
-                    classes="console-left-rail-section",
-                )
-                conversation_context_tray.styles.width = "100%"
-                conversation_context_tray.styles.min_width = 0
-                yield frame_console_region(
+            conversation_context_tray.styles.width = "100%"
+            conversation_context_tray.styles.min_width = 0
+            conversations_body = self._section_body(
+                "conversations",
+                rail_state.conversations_open,
+                frame_console_region(
                     conversation_context_tray,
                     variant="quiet",
-                )
+                ),
+            )
+            yield _ContextBoundedSection(
+                conversations_body,
+                section_id="conversations",
+                owner=self,
+            )
 
             # Model (provider/model readout lines plus a
             # Configure shortcut into the Console session settings).
@@ -406,120 +793,117 @@ class ConsoleLeftRail(Vertical):
                 open=rail_state.model_open,
                 id="console-rail-section-header-model",
             )
-            model_body = Vertical(
-                id="console-rail-section-body-model",
-                classes="console-rail-section-body",
+            summary_state = self._settings_summary_state
+            provider_value = _summary_row_value(summary_state.provider_row) or "—"
+            model_value = _summary_row_value(summary_state.model_row) or "—"
+            temperature_match = re.search(
+                r"T ([\d.]+)", summary_state.sampling_row or ""
             )
-            model_body.styles.height = "auto"
-            if not rail_state.model_open:
-                model_body.styles.display = "none"
-            with model_body:
-                summary_state = self._settings_summary_state
-                provider_value = _summary_row_value(summary_state.provider_row) or "—"
-                model_value = _summary_row_value(summary_state.model_row) or "—"
-                temperature_match = re.search(
-                    r"T ([\d.]+)", summary_state.sampling_row or ""
-                )
-                temperature_value = (
-                    temperature_match.group(1) if temperature_match else "—"
-                )
-                max_tokens_match = re.search(
-                    r"max_tokens (\d+)", summary_state.sampling_row or ""
-                )
-                max_tokens_value = (
-                    max_tokens_match.group(1) if max_tokens_match else "—"
-                )
+            temperature_value = temperature_match.group(1) if temperature_match else "—"
+            max_tokens_match = re.search(
+                r"max_tokens (\d+)", summary_state.sampling_row or ""
+            )
+            max_tokens_value = max_tokens_match.group(1) if max_tokens_match else "—"
 
-                with Horizontal(
-                    id="console-model-section-provider",
-                    classes="console-model-section-line",
-                ):
-                    yield Static(
+            model_rows = (
+                Horizontal(
+                    Static(
                         "Provider",
                         classes="console-model-section-label",
                         markup=False,
-                    )
-                    yield Static(
+                    ),
+                    Static(
                         provider_value,
                         classes="console-model-section-value",
                         markup=False,
-                    )
-                with Horizontal(
-                    id="console-model-section-model",
+                    ),
+                    id="console-model-section-provider",
                     classes="console-model-section-line",
-                ):
-                    yield Static(
+                ),
+                Horizontal(
+                    Static(
                         "Model",
                         classes="console-model-section-label",
                         markup=False,
-                    )
-                    yield Static(
+                    ),
+                    Static(
                         model_value,
                         classes="console-model-section-value",
                         markup=False,
-                    )
-                with Horizontal(
-                    id="console-model-section-temperature",
+                    ),
+                    id="console-model-section-model",
                     classes="console-model-section-line",
-                ):
-                    yield Static(
+                ),
+                Horizontal(
+                    Static(
                         "Temperature",
                         classes="console-model-section-label",
                         markup=False,
-                    )
-                    yield Static(
+                    ),
+                    Static(
                         temperature_value,
                         classes="console-model-section-value",
                         markup=False,
-                    )
-                with Horizontal(
-                    id="console-model-section-max-tokens",
+                    ),
+                    id="console-model-section-temperature",
                     classes="console-model-section-line",
-                ):
-                    yield Static(
+                ),
+                Horizontal(
+                    Static(
                         "Max tokens",
                         classes="console-model-section-label",
                         markup=False,
-                    )
-                    yield Static(
+                    ),
+                    Static(
                         max_tokens_value,
                         classes="console-model-section-value",
                         markup=False,
-                    )
+                    ),
+                    id="console-model-section-max-tokens",
+                    classes="console-model-section-line",
+                ),
+            )
+            readiness = (summary_state.readiness_label or "").strip()
+            recovery = Static(
+                readiness or "",
+                id="console-model-section-recovery",
+                classes="console-model-section-recovery",
+                markup=False,
+            )
+            recovery.styles.display = "none"
 
-                readiness = (summary_state.readiness_label or "").strip()
-                recovery = Static(
-                    readiness or "",
-                    id="console-model-section-recovery",
-                    classes="console-model-section-recovery",
-                    markup=False,
-                )
-                recovery.styles.display = "none"
-                yield recovery
-
-                system_line = Static(
-                    self._system_line_text,
-                    id="console-rail-system-line",
-                    markup=False,
-                )
-                # Same one-row clipping hazard as the model line above
-                # (task-186): nowrap + ellipsis so a long system prompt
-                # truncates visibly instead of word-wrapping onto a hidden
-                # second row.
-                system_line.styles.text_wrap = "nowrap"
-                system_line.styles.text_overflow = "ellipsis"
-                system_line.set_class(
-                    self._system_line_dim, "console-rail-system-line-dim"
-                )
-                yield system_line
-                configure = Button(
-                    "Configure",
-                    id="console-model-section-configure",
-                    classes="console-workspace-action",
-                    compact=True,
-                )
-                configure.tooltip = "Configure Console session settings"
-                yield configure
+            system_line = Static(
+                self._system_line_text,
+                id="console-rail-system-line",
+                markup=False,
+            )
+            # Same one-row clipping hazard as the model line above
+            # (task-186): nowrap + ellipsis so a long system prompt
+            # truncates visibly instead of word-wrapping onto a hidden
+            # second row.
+            system_line.styles.text_wrap = "nowrap"
+            system_line.styles.text_overflow = "ellipsis"
+            system_line.set_class(self._system_line_dim, "console-rail-system-line-dim")
+            configure = Button(
+                "Configure",
+                id="console-model-section-configure",
+                classes="console-workspace-action",
+                compact=True,
+            )
+            configure.tooltip = "Configure Console session settings"
+            model_body = self._section_body(
+                "model",
+                rail_state.model_open,
+                *model_rows,
+                recovery,
+                system_line,
+                configure,
+            )
+            yield _ContextBoundedSection(
+                model_body,
+                section_id="model",
+                owner=self,
+            )
 
             # Agent (run inspector -- the watch-and-drill surface
             # for the live/most-recent agent run and its historical
@@ -530,106 +914,88 @@ class ConsoleLeftRail(Vertical):
                 open=rail_state.agent_open,
                 id="console-rail-section-header-agent",
             )
-            agent_body = Vertical(
-                id="console-rail-section-body-agent",
-                classes="console-rail-section-body console-agent-section",
+            agent_status = Static(
+                self._agent_status_line,
+                id="console-agent-section-status",
+                classes="console-agent-section-line",
+                markup=False,
             )
-            agent_body.styles.height = "auto"
-            if not rail_state.agent_open:
-                agent_body.styles.display = "none"
-            with agent_body:
-                yield Static(
-                    self._agent_status_line,
-                    id="console-agent-section-status",
-                    classes="console-agent-section-line",
-                    markup=False,
-                )
-                yield Static(
-                    self._agent_steps_text,
-                    id="console-agent-section-steps",
-                    classes="console-agent-section-steps",
-                    markup=False,
-                )
-                # PR2b Task 4: replaces the single joined-string Static
-                # that used to live here (spec §7's "combine the sub-agents
-                # into one line" version). The Task 3 component owns its
-                # own layout/CSS -- no `classes=` needed beyond what
-                # `ConsoleInspectorSection.__init__` already stamps
-                # (`console-inspector-section`).
-                fleet_section = ConsoleInspectorSection(
-                    title="Sub-agents",
-                    section_id=CONSOLE_AGENT_FLEET_SECTION_ID,
-                    rows=self._agent_fleet_section_state.rows,
-                    summary=self._agent_fleet_section_state.summary,
-                    collapsible=True,
-                    open=False,
-                    id="console-agent-section-subagents",
-                )
-                fleet_section.styles.display = (
-                    "block" if self._agent_fleet_section_state.rows else "none"
-                )
-                yield fleet_section
-                # PR3b Task 5: the whole-fleet kill switch. With Stop
-                # decoupled from the children (a stopped turn's survivors
-                # keep working), this is how the user stops ALL of them
-                # at once -- each through the existing per-handle
-                # cancel/revoke path (`ConsoleAgentBridge.
-                # cancel_all_subagents`). Offered only while a LIVE child
-                # exists; a fleet of finished rows hides it (a kill
-                # switch for ended work would be a lie).
-                cancel_all_button = Button(
-                    "Cancel all agents",
-                    id=CONSOLE_AGENT_CANCEL_ALL_ID,
-                    classes="console-workspace-action",
-                    compact=True,
-                )
-                cancel_all_button.tooltip = (
-                    "Stop every running sub-agent of this conversation. "
-                    "Each is cancelled cooperatively and any pending "
-                    "approval cards are withdrawn."
-                )
-                if not self._agent_cancel_all_visible:
-                    cancel_all_button.styles.display = "none"
-                yield cancel_all_button
-                # PR3b Task 3: the drill-in steering input + queued line.
-                # Part of the drill-in chrome beside the Back button --
-                # visible only while drilled into a LIVE child (the state
-                # itself decides; the widget applies it, at construction
-                # and on every `_sync_console_agent_section` apply). The
-                # widget owns its own explicit sizing (width 100%, height
-                # auto) -- see its module docstring for the 1fr-default
-                # trap that rule exists for.
-                yield ConsoleAgentSteeringBar(
-                    self._agent_steering_state,
-                    id=STEERING_BAR_ID,
-                )
-                back_button = Button(
-                    "Back",
-                    id="console-agent-drilldown-back",
-                    classes="console-workspace-action console-agent-drilldown-back",
-                    compact=True,
-                )
-                back_button.tooltip = "Return to the live agent run view"
-                if not self._agent_drilldown_active:
-                    back_button.styles.display = "none"
-                yield back_button
-                # TASK-870 (AC#6/#7): the full-run-log affordance -- present
-                # only while a run log actually exists for whatever run this
-                # section is currently showing.
-                full_log_button = Button(
-                    "View full log",
-                    id="console-agent-view-full-log",
-                    classes=("console-workspace-action console-agent-view-full-log"),
-                    compact=True,
-                )
-                full_log_button.tooltip = (
-                    "Open the full, untruncated run log for this run -- "
-                    "what the model actually saw, before the Console's "
-                    "display cap trimmed it."
-                )
-                if not self._agent_full_log_available:
-                    full_log_button.styles.display = "none"
-                yield full_log_button
+            agent_steps = Static(
+                self._agent_steps_text,
+                id="console-agent-section-steps",
+                classes="console-agent-section-steps",
+                markup=False,
+            )
+            # This nested fleet subsection remains ordinary Agent content; only
+            # the direct Agent wrapper below owns a bounded viewport.
+            fleet_section = ConsoleInspectorSection(
+                title="Sub-agents",
+                section_id=CONSOLE_AGENT_FLEET_SECTION_ID,
+                rows=self._agent_fleet_section_state.rows,
+                summary=self._agent_fleet_section_state.summary,
+                collapsible=True,
+                open=False,
+                id="console-agent-section-subagents",
+            )
+            fleet_section.styles.display = (
+                "block" if self._agent_fleet_section_state.rows else "none"
+            )
+            cancel_all_button = Button(
+                "Cancel all agents",
+                id=CONSOLE_AGENT_CANCEL_ALL_ID,
+                classes="console-workspace-action",
+                compact=True,
+            )
+            cancel_all_button.tooltip = (
+                "Stop every running sub-agent of this conversation. "
+                "Each is cancelled cooperatively and any pending "
+                "approval cards are withdrawn."
+            )
+            if not self._agent_cancel_all_visible:
+                cancel_all_button.styles.display = "none"
+            steering_bar = ConsoleAgentSteeringBar(
+                self._agent_steering_state,
+                id=STEERING_BAR_ID,
+            )
+            back_button = Button(
+                "Back",
+                id="console-agent-drilldown-back",
+                classes="console-workspace-action console-agent-drilldown-back",
+                compact=True,
+            )
+            back_button.tooltip = "Return to the live agent run view"
+            if not self._agent_drilldown_active:
+                back_button.styles.display = "none"
+            full_log_button = Button(
+                "View full log",
+                id="console-agent-view-full-log",
+                classes=("console-workspace-action console-agent-view-full-log"),
+                compact=True,
+            )
+            full_log_button.tooltip = (
+                "Open the full, untruncated run log for this run -- "
+                "what the model actually saw, before the Console's "
+                "display cap trimmed it."
+            )
+            if not self._agent_full_log_available:
+                full_log_button.styles.display = "none"
+            agent_body = self._section_body(
+                "agent",
+                rail_state.agent_open,
+                agent_status,
+                agent_steps,
+                fleet_section,
+                cancel_all_button,
+                steering_bar,
+                back_button,
+                full_log_button,
+                classes="console-agent-section",
+            )
+            yield _ContextBoundedSection(
+                agent_body,
+                section_id="agent",
+                owner=self,
+            )
 
             # Details (storage, sync, handoff plumbing).
             yield DestinationRailSectionHeader(
@@ -638,22 +1004,23 @@ class ConsoleLeftRail(Vertical):
                 open=rail_state.details_open,
                 id="console-rail-section-header-details",
             )
-            details_body = Vertical(
-                id="console-rail-section-body-details",
-                classes="console-rail-section-body",
+            details_tray = ConsoleWorkspaceDetailsTray(
+                workspace_context_state,
+                id="console-workspace-details",
+                classes="console-left-rail-section",
             )
-            details_body.styles.height = "auto"
-            if not rail_state.details_open:
-                details_body.styles.display = "none"
-            with details_body:
-                details_tray = ConsoleWorkspaceDetailsTray(
-                    workspace_context_state,
-                    id="console-workspace-details",
-                    classes="console-left-rail-section",
-                )
-                details_tray.styles.width = "100%"
-                details_tray.styles.min_width = 0
-                yield details_tray
+            details_tray.styles.width = "100%"
+            details_tray.styles.min_width = 0
+            details_body = self._section_body(
+                "details",
+                rail_state.details_open,
+                details_tray,
+            )
+            yield _ContextBoundedSection(
+                details_body,
+                section_id="details",
+                owner=self,
+            )
 
             # Character (avatar of the active character).
             if self._show_character_section:
@@ -663,49 +1030,65 @@ class ConsoleLeftRail(Vertical):
                     open=rail_state.character_open,
                     id="console-rail-section-header-character",
                 )
-                character_body = Vertical(
-                    id="console-rail-section-body-character",
-                    classes="console-rail-section-body",
+                avatar_children = ()
+                if self._character_avatar_widget_builder is not None:
+                    avatar_children = (self._character_avatar_widget_builder(),)
+                avatar_holder = ClickableAvatarBox(
+                    *avatar_children,
+                    id="console-character-avatar",
                 )
-                character_body.styles.height = "auto"
-                if not rail_state.character_open:
-                    character_body.styles.display = "none"
-                with character_body:
-                    avatar_holder = ClickableAvatarBox(id="console-character-avatar")
-                    # task-1661: Container defaults to width/height 1fr, so
-                    # the holder claimed the entire rail section -- the
-                    # portrait sat in the corner of a tall empty box with
-                    # the name pushed to the bottom. Hug the image instead.
-                    avatar_holder.styles.width = "auto"
-                    avatar_holder.styles.height = "auto"
-                    with avatar_holder:
-                        if self._character_avatar_widget_builder is not None:
-                            yield self._character_avatar_widget_builder()
-                    yield Static(
-                        self._character_avatar_name,
-                        id="console-character-name",
-                        markup=False,
-                    )
-                    reaction_state = Static(
-                        (
-                            f"Reaction: {self._manual_reaction_label} (manual)"
-                            if self._manual_reaction_label
-                            else "Reaction: Automatic"
-                        ),
-                        id="console-character-reaction-state",
-                        markup=False,
-                    )
-                    reaction_state.styles.text_wrap = "nowrap"
-                    reaction_state.styles.text_overflow = "ellipsis"
-                    yield reaction_state
-                    reaction_button = Button(
-                        "Reaction…",
-                        id="console-character-reaction-open",
-                        classes="console-workspace-action",
-                        compact=True,
-                    )
-                    reaction_button.tooltip = "Choose or clear a reaction"
-                    yield reaction_button
+                # task-1661: hug the image instead of claiming the rail.
+                avatar_holder.styles.width = "auto"
+                avatar_holder.styles.height = "auto"
+                character_name = Static(
+                    self._character_avatar_name,
+                    id="console-character-name",
+                    markup=False,
+                )
+                reaction_state = Static(
+                    (
+                        f"Reaction: {self._manual_reaction_label} (manual)"
+                        if self._manual_reaction_label
+                        else "Reaction: Automatic"
+                    ),
+                    id="console-character-reaction-state",
+                    markup=False,
+                )
+                reaction_state.styles.text_wrap = "nowrap"
+                reaction_state.styles.text_overflow = "ellipsis"
+                reaction_button = Button(
+                    "Reaction…",
+                    id="console-character-reaction-open",
+                    classes="console-workspace-action",
+                    compact=True,
+                )
+                reaction_button.tooltip = "Choose or clear a reaction"
+                character_body = self._section_body(
+                    "character",
+                    rail_state.character_open,
+                    avatar_holder,
+                    character_name,
+                    reaction_state,
+                    reaction_button,
+                )
+                yield _ContextBoundedSection(
+                    character_body,
+                    section_id="character",
+                    owner=self,
+                )
+
+        outer_hint = Static(
+            "",
+            id="console-left-rail-outer-hint",
+            classes="console-left-rail-outer-hint",
+            markup=False,
+        )
+        outer_hint.can_focus = False
+        outer_hint.styles.height = 1
+        outer_hint.styles.min_height = 1
+        outer_hint.styles.max_height = 1
+        outer_hint.styles.display = "none"
+        yield outer_hint
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Catch this rail's own section-toggle buttons; let everything else bubble.
@@ -734,6 +1117,9 @@ class ConsoleLeftRail(Vertical):
             return
         event.stop()
         section_id = button_id.removeprefix(RAIL_SECTION_TOGGLE_PREFIX)
+        if section_id in self._no_room_section_ids:
+            self.activate_section(section_id)
+            return
         try:
             header = self.query_one(
                 f"#console-rail-section-header-{section_id}",
@@ -762,6 +1148,8 @@ class ConsoleLeftRail(Vertical):
         for section_id in CONSOLE_RAIL_SECTION_IDS:
             section_open = bool(getattr(rail_state, f"{section_id}_open", True))
             self.apply_section_open(section_id, section_open)
+        self._rail_state = rail_state
+        self.request_allocation_reconcile()
 
     def apply_section_open(self, section_id: str, section_open: bool) -> None:
         """Sync one section's body display and header glyph to an open state.
@@ -785,3 +1173,4 @@ class ConsoleLeftRail(Vertical):
             return
         body.styles.display = "block" if section_open else "none"
         header.sync_open(section_open)
+        self.request_allocation_reconcile()
