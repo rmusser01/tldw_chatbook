@@ -510,6 +510,7 @@ class ConsoleLeftRail(Vertical):
             ordered_candidates = previous_controls
         for candidate in ordered_candidates:
             if self._is_enabled_focus_target(candidate):
+                self._record_section_focus(section_id, candidate)
                 candidate.focus()
                 return
 
@@ -522,6 +523,7 @@ class ConsoleLeftRail(Vertical):
             except (NoMatches, QueryError):
                 continue
             if self._is_enabled_focus_target(candidate):
+                self._record_section_focus(section_id, candidate)
                 candidate.focus()
                 return
 
@@ -555,7 +557,24 @@ class ConsoleLeftRail(Vertical):
         target = event.widget
         section_id = self._section_for_owned_target(target)
         if section_id is not None:
-            self._record_section_focus(section_id, target)
+            previous_target, previous_controls = self._section_focus_history.get(
+                section_id,
+                (None, ()),
+            )
+            removed_target_snapshot = bool(
+                previous_target is not None
+                and previous_target is not target
+                and previous_target in previous_controls
+                and not previous_target.is_attached
+            )
+            if removed_target_snapshot:
+                self.call_after_refresh(
+                    self._recover_removed_focus_snapshot,
+                    section_id,
+                    previous_target,
+                )
+            else:
+                self._record_section_focus(section_id, target)
             self.activate_section(section_id, request_reconcile=False)
             self.call_after_refresh(
                 self._finish_focus_activation,
@@ -567,6 +586,20 @@ class ConsoleLeftRail(Vertical):
             section_id=section_id,
             outer_active=outer_active,
         )
+
+    def _recover_removed_focus_snapshot(
+        self,
+        section_id: str,
+        removed_target: Widget,
+    ) -> None:
+        """Recover from Textual's incidental focus without replacing its snapshot."""
+
+        current_target, _controls = self._section_focus_history.get(
+            section_id,
+            (None, ()),
+        )
+        if current_target is removed_target and not removed_target.is_attached:
+            self.recover_section_focus(section_id)
 
     def _finish_focus_activation(self, section_id: str, target: Widget) -> None:
         """Reconcile keyboard focus unless a pointer press still owns the target."""
@@ -591,6 +624,7 @@ class ConsoleLeftRail(Vertical):
             isinstance(focused, Widget) and self in focused.ancestors
         ):
             return
+        self._section_focus_history.clear()
         self._paint_scroll_focus_owner(section_id=None, outer_active=False)
 
     def on_mouse_down(self, event: MouseDown) -> None:

@@ -1002,7 +1002,37 @@ async def test_overflow_focus_order_and_recovery_stay_within_context_section(
 
 
 @pytest.mark.asyncio
-async def test_focus_recovery_uses_previous_then_header_then_context_control(
+async def test_focus_recovery_prefers_next_from_removed_target_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    demands = dict.fromkeys(SECTION_IDS, 0)
+    demands["model"] = 8
+    _install_demands(monkeypatch, demands)
+    app = _RailHarness()
+
+    async with app.run_test(size=(60, 30)) as pilot:
+        await _settle(pilot)
+        rail = app.query_one(ConsoleLeftRail)
+        body = rail.query_one("#console-rail-section-body-model")
+        configure = rail.query_one("#console-model-section-configure", Button)
+        first = Button("First", id="context-next-first", compact=True)
+        second = Button("Second", id="context-next-second", compact=True)
+        third = Button("Third", id="context-next-third", compact=True)
+        await body.mount(first, second, third, before=configure)
+        await _settle(pilot)
+
+        second.focus()
+        await pilot.pause()
+        await third.remove()
+        await second.remove()
+        rail.request_allocation_reconcile()
+        await _settle(pilot)
+
+        assert app.focused is configure
+
+
+@pytest.mark.asyncio
+async def test_focus_recovery_uses_previous_only_then_header_then_context_control(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     demands = dict.fromkeys(SECTION_IDS, 0)
@@ -1025,6 +1055,7 @@ async def test_focus_recovery_uses_previous_then_header_then_context_control(
         await body.mount(first, second, third, before=configure)
         await _settle(pilot)
 
+        configure.disabled = True
         second.focus()
         await pilot.pause()
         await third.remove()
@@ -1033,7 +1064,6 @@ async def test_focus_recovery_uses_previous_then_header_then_context_control(
         await _settle(pilot)
         assert app.focused is first
 
-        configure.disabled = True
         first.focus()
         await pilot.pause()
         await first.remove()
@@ -1064,9 +1094,13 @@ async def test_focus_recovery_does_not_steal_valid_outside_focus(
         await _settle(pilot)
         rail = app.query_one(ConsoleLeftRail)
         body = rail.query_one("#console-rail-section-body-model")
+        configure = rail.query_one("#console-model-section-configure", Button)
+        intentional = Button(
+            "Intentional", id="context-intentional-reentry", compact=True
+        )
         target = Button("Target", id="context-owned-before-outside", compact=True)
         outside = Button("Outside", id="outside-context-focus", compact=True)
-        await body.mount(target)
+        await body.mount(intentional, target, before=configure)
         await app.screen.mount(outside)
         await _settle(pilot)
         target.focus()
@@ -1077,6 +1111,10 @@ async def test_focus_recovery_does_not_steal_valid_outside_focus(
         await _settle(pilot)
 
         assert app.focused is outside
+
+        intentional.focus()
+        await _settle(pilot)
+        assert app.focused is intentional
 
 
 @pytest.mark.asyncio
