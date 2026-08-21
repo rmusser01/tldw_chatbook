@@ -119,3 +119,23 @@ Line numbers are as-read at the pin; re-verify before filing upstream.
   user guide (spec §5.5) rather than papered over; chatbook's
   synthesized chunk contract (spec §6.4) does not depend on it.
 - **Filed upstream:** no — <link>
+
+## 15. Validate endpoint converts any warning into a hard failure (warnings typed as `list[str]` but objects appended)
+
+- **Upstream:** `tldw_Server_API/app/api/v1/endpoints/chunking_templates.py`
+  (~:893-897 append, ~:981 `warnings if warnings else None`) and
+  `tldw_Server_API/app/api/v1/schemas/chunking_templates_schemas.py:172`
+  (`warnings: Optional[list[str]]`). The endpoint appends
+  `TemplateValidationError` **objects** into `warnings`; response-model
+  construction then raises `pydantic.ValidationError` (a `ValueError`),
+  which the endpoint's outer `except` catches — so on the as-executed
+  server, ANY template that produces a warning (e.g. an unanchored `.*`
+  boundary) returns `valid=False` with "Validation error: …" and leaks
+  pydantic internals.
+- **chatbook impact:** chatbook's local validation deliberately diverges
+  (spec §7 ruling: a warning never flips validity); the fixture row
+  `unanchored-wildcard-warns-not-errors` pins that divergence. At the next
+  pin bump, re-check whether upstream fixed the typing; if they did,
+  chatbook's behavior already matches and only the fixture note changes.
+- **Discovered:** sub-project #2, PR A task 6 (implementation review).
+- **Filed upstream:** no — <link>
