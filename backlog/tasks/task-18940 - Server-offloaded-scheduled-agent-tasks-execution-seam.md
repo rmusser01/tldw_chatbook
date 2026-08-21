@@ -36,7 +36,7 @@ This is architecture-first work: an ADR defining the client↔server execution c
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 An ADR (amending/superseding the relevant ADR-018 clause) defines the server-execution contract: definition upload, execution ownership, result-delivery channel(s), approval policy for server-side tool use, failure/timeout semantics, and reconnect reconciliation — drafted and accepted before implementation begins
+- [x] #1 An ADR (amending/superseding the relevant ADR-018 clause) defines the server-execution contract: definition upload, execution ownership, result-delivery channel(s), approval policy for server-side tool use, failure/timeout semantics, and reconnect reconciliation — drafted and accepted before implementation begins — DONE: ADR-077 drafted 2026-08-19 (grounded in the tldw_server dev survey recorded in this task), ACCEPTED 2026-08-21 by owner ruling on both judgment decisions (single-owner execution incl. the server-scoped-reminder behavior change; phase-1 side-effect-free scope)
 - [ ] #2 A server-scoped `agent_task` definition can be created/previewed locally, submitted for server execution, and its `health`/lifecycle transitions honestly (no more permanent `execution_unavailable` for server owners)
 - [ ] #3 Completed server executions deliver results back to the client through at least one concrete channel (workbench result row, notification, or Console handoff — per the ADR), with the delivery visible in the UI and durable
 - [ ] #4 Execution-audit history is durable end-to-end (client-visible audit trail of server executions, reusing `AutomationAuditEvent`)
