@@ -1,15 +1,15 @@
 ---
 id: TASK-18310
-title: >-
-  Centralized workspace activation seam for cross-screen Console runtime sync
-status: To Do
+title: Centralized workspace activation seam for cross-screen Console runtime sync
+status: Done
 assignee: []
 created_date: '2026-08-18 15:30'
+updated_date: '2026-08-21 05:22'
 labels:
   - workspaces
   - console
-priority: medium
 dependencies: []
+priority: medium
 ---
 
 ## Description (the why)
@@ -77,6 +77,7 @@ fragile sequence per caller.
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 Implemented the resume-time reconcile per the controller ruling, not a
 push-based cross-screen seam. The invariant that makes this safe: every
 IN-Console workspace-activation path (`_open_console_workspace_switcher`'s
@@ -191,3 +192,4 @@ Files touched: `tldw_chatbook/UI/Console_Modules/workspace.py`,
 `Tests/Workspaces/test_console_workspace_reconcile.py` (new),
 `Docs/User_Guide/console/sessions-tabs-workspaces.md`,
 `Docs/User_Guide/settings.md`.
+<!-- SECTION:NOTES:END -->
