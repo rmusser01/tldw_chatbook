@@ -72,6 +72,13 @@ Owner decision required -- three options, deliberately NOT chosen here:
 3. **Renumber both sides** of each unresolvable pair to fresh ids so
    neither inherits the ambiguous one. Cleanest end state, largest churn.
 
+Self-demonstrating evidence for option 2: Qodo's review of the very PR
+that FILED this task flagged that the PR trips the guard, because adding
+any file under `backlog/tasks/**` runs a guard that hard-fails on
+pre-existing duplicates. A guard that fails the ticket reporting the guard
+is failing is a guard that only ever measures history, never the change in
+front of it.
+
 The deeper cause is unchanged and worth fixing regardless: ids are minted
 by reading the highest id on a branch, so two agents branching from the
 same base mint the same id. A mint-time reservation (or minting from a
