@@ -40,7 +40,9 @@ grammar, local persistence migration, Console state/UI, sentinel boundaries, the
 performance test, and three legacy Console helper files affected by the new-session
 default:
 
-- 1,229 passed, 2 deselected, 3 warnings in 106.16 seconds in the final run.
+- The original delivery closeout recorded 1,229 passed, 2 deselected, and 3
+  warnings. After replaying onto current `dev`, the same changed-code manifest
+  recorded 1,471 passed, 2 deselected, and 3 warnings in 162.17 seconds.
 - The two deselected nodes are localhost-only client-loop tests in
   `test_console_provider_gateway.py`. In the sandbox they error at fixture setup with
   `PermissionError: [Errno 1] Operation not permitted` while binding `127.0.0.1`;
@@ -87,7 +89,7 @@ worktree environment lacks the test dependencies):
   -q
 ```
 
-Final output: `1229 passed, 2 deselected, 3 warnings in 106.16s`.
+PR-replay output: `1471 passed, 2 deselected, 3 warnings in 162.17s`.
 
 The new default project-instruction state exposed three pre-feature test helper
 families which created real Console sessions without declaring their intended legacy

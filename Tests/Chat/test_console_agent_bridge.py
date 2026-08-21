@@ -312,7 +312,7 @@ def test_all_agent_dispatch_shapes_receive_one_startup_rider(
         store,
         session,
         assistant_id,
-        resolution=_NativeResolution(),
+        resolution=_native_resolution(),
         agent_messages=agent_messages,
         supersede_previous=supersede,
         startup_instruction_candidate=candidate,
@@ -490,12 +490,13 @@ def test_nested_project_instructions_defer_whole_batch_before_review_and_executi
         store,
         session,
         assistant_id,
-        resolution=_NativeResolution(),
+        resolution=_native_resolution(),
         local_provider=local,
         startup_instruction_candidate=candidate,
         confirm_project_instruction_dispatch=lambda _snapshot: "proceed",
-        review_tool_calls=lambda calls: reviews.append(tuple(c.name for c in calls))
-        or {},
+        review_tool_calls=lambda calls, _run_id: (
+            reviews.append(tuple(c.name for c in calls)) or {}
+        ),
     )
 
     assert outcome.status == "done", outcome.steps
@@ -512,9 +513,7 @@ def test_nested_project_instructions_defer_whole_batch_before_review_and_executi
     assert second.index(context_rows[0]) > max(
         index for index, row in enumerate(second) if row["role"] == "tool"
     )
-    assert all(
-        "NESTED_GUIDANCE" not in str(step.result) for step in outcome.steps
-    )
+    assert all("NESTED_GUIDANCE" not in str(step.result) for step in outcome.steps)
 
 
 @pytest.mark.parametrize(
@@ -624,7 +623,7 @@ def test_opaque_tool_arguments_do_not_activate_nested_project_instructions(tmp_p
         store,
         session,
         assistant_id,
-        resolution=_NativeResolution(),
+        resolution=_native_resolution(),
         startup_instruction_candidate=candidate,
         confirm_project_instruction_dispatch=lambda _snapshot: "proceed",
     )
@@ -675,7 +674,7 @@ def test_nested_resolution_rejects_backdated_root_replacement_after_consent(tmp_
         store,
         session,
         assistant_id,
-        resolution=_NativeResolution(),
+        resolution=_native_resolution(),
         local_provider=local,
         startup_instruction_candidate=candidate,
         confirm_project_instruction_dispatch=replace_after_consent_check,
@@ -689,7 +688,19 @@ def test_nested_resolution_rejects_backdated_root_replacement_after_consent(tmp_
     assert any("resolution_failed" in repr(rows) for rows in gateway.messages_seen)
 
 
-def test_parent_and_child_share_activation_but_each_receive_nested_revision(tmp_path):
+def test_parent_and_child_share_activation_but_each_receive_nested_revision(
+    tmp_path, monkeypatch
+):
+    original_setting = agent_service_module._setting
+    monkeypatch.setattr(
+        agent_service_module,
+        "_setting",
+        lambda key, default: (
+            1
+            if key == agent_service_module.MAX_LIVE_SUBAGENTS_KEY
+            else original_setting(key, default)
+        ),
+    )
     root = tmp_path / "workspace"
     nested = root / "pkg"
     nested.mkdir(parents=True)
@@ -733,12 +744,13 @@ def test_parent_and_child_share_activation_but_each_receive_nested_revision(tmp_
         store,
         session,
         assistant_id,
-        resolution=_NativeResolution(),
+        resolution=_native_resolution(),
         local_provider=local,
         startup_instruction_candidate=candidate,
         confirm_project_instruction_dispatch=lambda _snapshot: "proceed",
-        review_tool_calls=lambda calls: reviews.append(tuple(c.name for c in calls))
-        or {},
+        review_tool_calls=lambda calls, _run_id: (
+            reviews.append(tuple(c.name for c in calls)) or {}
+        ),
         on_project_instruction_activation=events.append,
     )
 
@@ -1159,7 +1171,6 @@ def test_run_reply_appends_workspace_note_for_a_non_default_workspace(
 def test_run_reply_adds_no_workspace_note_for_the_default_workspace(
     tmp_path, monkeypatch
 ):
-    from tldw_chatbook.Tools import workspace_file_roots as wfr
     from tldw_chatbook.Workspaces import DEFAULT_WORKSPACE_ID
 
     gateway = _RecordingGateway()
@@ -4203,9 +4214,10 @@ def test_run_reply_appends_bundle_block_copy_safely(tmp_path):
 
     assert outcome2.status == "done"
     assert captured2["messages"][-1]["content"] == "hi"
-    # No block to append: the original list is used unchanged (not merely
-    # equal -- the very same object), matching the documented no-op path.
-    assert captured2["messages"] is agent_messages2
+    # No block to append: the frozen first-request plan remains value-identical
+    # while keeping the caller-owned list untouched.
+    assert captured2["messages"] == agent_messages2
+    assert agent_messages2 == [{"role": "user", "content": "hi"}]
 
 
 def test_no_skills_service_leaves_shared_registry_path_untouched(tmp_path):

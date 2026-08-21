@@ -348,7 +348,19 @@ def test_missing_or_raising_consent_callback_fails_closed_without_provider(tmp_p
         assert SENTINEL not in json.dumps(service.db.get_run(run_id), default=str)
 
 
-def test_primary_and_child_each_receive_same_snapshot_once_per_request(tmp_path):
+def test_primary_and_child_each_receive_same_snapshot_once_per_request(
+    monkeypatch, tmp_path
+):
+    original_setting = agent_service._setting
+    monkeypatch.setattr(
+        agent_service,
+        "_setting",
+        lambda key, default: (
+            1
+            if key == agent_service.MAX_LIVE_SUBAGENTS_KEY
+            else original_setting(key, default)
+        ),
+    )
     spawn = {
         "content": None,
         "tool_calls": [
@@ -384,6 +396,16 @@ def test_primary_and_child_each_receive_same_snapshot_once_per_request(tmp_path)
 
 
 def test_child_chain_uses_its_own_exact_first_request_budget(monkeypatch, tmp_path):
+    original_setting = agent_service._setting
+    monkeypatch.setattr(
+        agent_service,
+        "_setting",
+        lambda key, default: (
+            1
+            if key == agent_service.MAX_LIVE_SUBAGENTS_KEY
+            else original_setting(key, default)
+        ),
+    )
     spawn = {
         "content": None,
         "tool_calls": [
@@ -434,6 +456,16 @@ def test_child_chain_uses_its_own_exact_first_request_budget(monkeypatch, tmp_pa
 def test_primary_token_omission_is_delivery_local_when_child_admits(
     monkeypatch, tmp_path
 ):
+    original_setting = agent_service._setting
+    monkeypatch.setattr(
+        agent_service,
+        "_setting",
+        lambda key, default: (
+            1
+            if key == agent_service.MAX_LIVE_SUBAGENTS_KEY
+            else original_setting(key, default)
+        ),
+    )
     spawn = {
         "content": None,
         "tool_calls": [

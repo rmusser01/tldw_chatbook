@@ -89,9 +89,6 @@ from tldw_chatbook.Chat.console_history_budget import (
     count_console_messages_tokens,
     provider_continuation_owner_groups,
 )
-from tldw_chatbook.Chat.console_provider_endpoints import (
-    normalize_generic_endpoint_for_compare,
-)
 from tldw_chatbook.Chat.console_context_compaction import (
     CompactionAdmission,
     CompactionDecision,
@@ -406,6 +403,14 @@ class ProjectInstructionBindingSelection:
     locator_fingerprint: str
     allow_write: bool
     root_identity: tuple[tuple[str, int, int, int], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _ProjectInstructionAuthoritySnapshot:
+    """Minimal immutable session state used for off-loop authority checks."""
+
+    workspace_id: str
+    project_instruction_state: ProjectInstructionControlState
 
 
 @dataclass(frozen=True, slots=True)
@@ -7743,7 +7748,8 @@ class ConsoleChatController:
         session = next(
             (item for item in self.store.sessions() if item.id == session_id), None
         )
-        provider_selection = self._provider_selection_for_session(session_id)
+        turn_context = self.resolve_turn_execution_context(session_id)
+        provider_selection = turn_context.provider_selection
         current_messages = list(self.store.messages_for_session(session_id))
         staged_sources_list = [
             {"source_id": s.source_id, "label": s.label, "type": s.source_type}
@@ -7760,7 +7766,7 @@ class ConsoleChatController:
             provider_messages = self._provider_messages_for_session(
                 session_id,
                 annotate_ids=True,
-                provider_selection=provider_selection,
+                turn_context=turn_context,
             )
 
             # Append a synthetic user turn for the draft so the preview matches what would be sent.
@@ -7777,6 +7783,7 @@ class ConsoleChatController:
                     ],
                     skip_failed=True,
                     session_id=session_id,
+                    turn_context=turn_context,
                 )
                 provider_messages.extend(synthetic_user)
 
@@ -7865,7 +7872,9 @@ class ConsoleChatController:
                 [provider_messages[0]]
                 if provider_messages
                 and provider_messages[0].get("role") == ConsoleMessageRole.SYSTEM.value
-                else self._leading_system_message(session_id=session_id)
+                else self._leading_system_message(
+                    session_id=session_id, turn_context=turn_context
+                )
             )
             redacted_system = self._redact_secrets(leading_system)
 
@@ -7939,7 +7948,9 @@ class ConsoleChatController:
                 )
             )
             degraded_system = self._redact_secrets(
-                self._leading_system_message(session_id=session_id)
+                self._leading_system_message(
+                    session_id=session_id, turn_context=turn_context
+                )
             )
             return ConsoleContextSnapshot(
                 current_messages=self._presented_message_snapshots(
@@ -7984,7 +7995,10 @@ class ConsoleChatController:
         ):
             return None
         expected_control = session.project_instruction_state
-        expected_session_snapshot = copy.deepcopy(session)
+        expected_session_snapshot = _ProjectInstructionAuthoritySnapshot(
+            workspace_id=session.workspace_id,
+            project_instruction_state=session.project_instruction_state,
+        )
         owning_provider_selection = (
             provider_selection or self._provider_selection_for_session(session_id)
         )
@@ -8480,45 +8494,24 @@ class ConsoleChatController:
         if settings is None:
             return replace(
                 self._provider_selection(),
+                system_prompt=self._resolved_system_prompt(session_id),
                 workspace_context=workspace_context,
             )
 
-        provider = str(settings.provider or self.provider)
-        same_provider = provider_config_key(provider) == provider_config_key(
-            self.provider
-        )
-        return ConsoleProviderSelection(
-            provider=provider,
-            base_url=(
-                settings.base_url
-                if settings.base_url is not None
-                else self.base_url
-                if same_provider
-                else None
-            ),
-            explicit_model=settings.model,
-            configured_model=(
-                self.configured_model
-                if settings.model is None and same_provider
-                else None
-            ),
-            temperature=settings.temperature,
-            top_p=settings.top_p,
-            min_p=settings.min_p,
-            top_k=settings.top_k,
-            max_tokens=settings.max_tokens,
-            seed=settings.seed,
-            presence_penalty=settings.presence_penalty,
-            frequency_penalty=settings.frequency_penalty,
-            reasoning_effort=settings.reasoning_effort,
-            reasoning_summary=settings.reasoning_summary,
-            verbosity=settings.verbosity,
-            thinking_effort=settings.thinking_effort,
-            thinking_budget_tokens=settings.thinking_budget_tokens,
-            streaming=settings.streaming,
-            system_prompt=settings.system_prompt,
+        app_config = self._provider_config() if self._provider_config else {}
+        selection = build_console_provider_selection_from_settings(
+            settings,
+            app_config=app_config,
             workspace_context=workspace_context,
         )
+        session = next(
+            (item for item in self.store.sessions() if item.id == session_id), None
+        )
+        if session is not None and session.assistant_kind == "character":
+            selection = replace(
+                selection, system_prompt=self._resolved_system_prompt(session_id)
+            )
+        return selection
 
     def resolve_turn_execution_context(
         self, session_id: str
@@ -10315,6 +10308,7 @@ class ConsoleChatController:
         # present. Keyed on the message's OWNING session (looked up here,
         # not the controller's active session) so a session switch racing
         # this send can't flip which branch a still-in-flight message uses.
+        force_plain = owner is not None and owner.assistant_kind == "character"
         # Cost-ticker PR3: record this send's payload-fingerprint baseline at
         # the single dispatch choke point covering BOTH the direct-provider
         # and agent paths (they branch further down). Two boundaries are

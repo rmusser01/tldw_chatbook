@@ -351,9 +351,9 @@ class LoopDeps:
     # reviewing or dispatching any call in the deferred batch.
     prepare_tool_calls: Callable[[list[ToolCall]], ToolBatchPreparation] | None = None
     project_instruction_payload_state: InstructionChainPayloadState | None = None
-    on_ephemeral_runtime_warning: (
-        Callable[[str, tuple[str, ...], int], None] | None
-    ) = None
+    on_ephemeral_runtime_warning: Callable[[str, tuple[str, ...], int], None] | None = (
+        None
+    )
     # skill_file: the fourth runtime tool (task-3, skills-foundation). Unlike
     # a ToolProvider entry, its schema is pinned into runtime_schemas by the
     # service (never disclosure-gated) and its authorization lives on a
@@ -860,7 +860,11 @@ def run_agent_loop(
         # through a streamed final turn (`final_text` set on
         # RUN_CANCELLED) never delivered that text as a completed turn,
         # and pretending otherwise would fabricate the child's memory.
-        final_messages = messages[:coherent_len]
+        final_messages = [
+            row
+            for row in messages[:coherent_len]
+            if row.get(EPHEMERAL_ORIGIN_KEY) != "project_instructions"
+        ]
         if status == RUN_DONE:
             final_messages = final_messages + [
                 {"role": "assistant", "content": kw.get("final_text", "")}

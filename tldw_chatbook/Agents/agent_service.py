@@ -1461,16 +1461,14 @@ class AgentService:
         # enabled` flag, off by default so existing runs stay byte-identical
         # until a user turns it on (requirement #5). Resolved once here,
         # not per turn: neither operand can change during a run.
-        evict_requested = bool(_setting(RUN_LOG_EVICT_ENABLED_KEY, False))
+        evict_requested = self._run_log_evict_enabled
         # TASK-1272 follow-up (live-verified 2026-07-28): the minimum-
         # recent-rounds floor, resolved once alongside evict_enabled for
         # the same reason -- it cannot change during a run. Unused when
         # evict_enabled is False, but resolving it unconditionally keeps
         # this closure's config reads in one place rather than split
         # across a conditional.
-        min_recent_rounds = coerce_min_recent_rounds(
-            _setting(RUN_LOG_EVICT_MIN_RECENT_ROUNDS_KEY, DEFAULT_MIN_RECENT_ROUNDS)
-        )
+        min_recent_rounds = self._run_log_min_recent_rounds
         # task-245: one render per active-set change, not per turn. Keyed by
         # schema NAMES (the set only ever grows via load_tools — AC #2), and
         # scoped to this closure = this run, so sub-agents (their own
@@ -1614,6 +1612,10 @@ class AgentService:
                 call_kwargs["continuation_groups"] = effective_groups
             receipt = staged.get("receipt")
             if receipt is not None:
+                request = ModelRequest(
+                    messages=tuple(dict(message) for message in payload),
+                    tools=tuple(call_kwargs.get("tools", ())),
+                )
                 request_fits = self._project_instruction_request_fits(
                     config, api_endpoint, request
                 )

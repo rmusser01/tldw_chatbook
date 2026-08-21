@@ -43,6 +43,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import tldw_chatbook.Agents.agent_service as agent_service
 from tldw_chatbook.Agents.agent_models import (
     RUN_DONE,
     SPAWN_TOOL_NAME,
@@ -424,7 +425,20 @@ def test_review_state_scope_defaults_to_none_and_spawn_still_works(db, inline_sp
     assert outcome.subagents_spawned == 1
 
 
-def test_parent_and_inline_child_share_context_but_keep_distinct_chain_state(db):
+def test_parent_and_inline_child_share_context_but_keep_distinct_chain_state(
+    db, monkeypatch
+):
+    original_setting = agent_service._setting
+    monkeypatch.setattr(
+        agent_service,
+        "_setting",
+        lambda key, default: (
+            1
+            if key == agent_service.MAX_LIVE_SUBAGENTS_KEY
+            else original_setting(key, default)
+        ),
+    )
+
     class ContextSpy:
         def __init__(self):
             self.initial: list[tuple[str, int]] = []

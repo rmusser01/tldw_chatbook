@@ -3145,13 +3145,9 @@ class ConsoleAgentBridge:
             except KeyError:
                 pass
         native_tools = (
-            bool(native_tools_enabled)
-            if native_tools_enabled is not None
-            else (
-                True
-                if self._native_tools_enabled is None
-                else bool(self._native_tools_enabled())
-            )
+            True
+            if self._native_tools_enabled is None
+            else bool(self._native_tools_enabled())
         )
         script_tool_enabled = False
         if self._skills_service is not None and request_skill_script_enabled:
@@ -3376,9 +3372,13 @@ class ConsoleAgentBridge:
             and sandbox_supported()
         )
         native_tools = (
-            True
-            if self._native_tools_enabled is None
-            else bool(self._native_tools_enabled())
+            bool(native_tools_enabled)
+            if native_tools_enabled is not None
+            else (
+                True
+                if self._native_tools_enabled is None
+                else bool(self._native_tools_enabled())
+            )
         )
         first_request_plan = build_console_first_request_plan(
             shared_registry=self._registry,

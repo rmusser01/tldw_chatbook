@@ -440,7 +440,11 @@ def test_real_ledger_one_over_final_limit_stops_without_mark_or_send(
 
     def count_one_over(messages, *_args, **_kwargs):
         if any(row.get("role") == "system" for row in messages):
-            return 86 if any(PROJECT_INSTRUCTION_ROW_KEY in row for row in messages) else 85
+            return (
+                86
+                if any(PROJECT_INSTRUCTION_ROW_KEY in row for row in messages)
+                else 85
+            )
         return 1
 
     monkeypatch.setattr(agent_service, "count_tokens_messages", count_one_over)
@@ -481,7 +485,11 @@ def test_real_ledger_exact_final_limit_marks_and_sends(db, monkeypatch, tmp_path
 
     def count_exact_fit(messages, *_args, **_kwargs):
         if any(row.get("role") == "system" for row in messages):
-            return 85 if any(PROJECT_INSTRUCTION_ROW_KEY in row for row in messages) else 84
+            return (
+                85
+                if any(PROJECT_INSTRUCTION_ROW_KEY in row for row in messages)
+                else 84
+            )
         return 1
 
     monkeypatch.setattr(agent_service, "count_tokens_messages", count_exact_fit)
@@ -564,10 +572,13 @@ def test_real_ledger_multimodal_fallback_exact_fit_marks_and_sends(
     assert outcome.status == RUN_DONE
     assert len(chat.calls) == 1
     assert primary_calls and fallback_calls
-    assert sum(
-        PROJECT_INSTRUCTION_ROW_KEY in row
-        for row in chat.calls[0]["messages_payload"]
-    ) == 1
+    assert (
+        sum(
+            PROJECT_INSTRUCTION_ROW_KEY in row
+            for row in chat.calls[0]["messages_payload"]
+        )
+        == 1
+    )
 
 
 @pytest.mark.parametrize(
@@ -662,9 +673,7 @@ def test_project_instruction_delivery_callback_failures_are_content_free(
     assert sentinel not in captured.err
 
 
-def test_provider_failure_after_instruction_mark_does_not_undo_advance(
-    db, monkeypatch
-):
+def test_provider_failure_after_instruction_mark_does_not_undo_advance(db, monkeypatch):
     monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_args: 100_000)
     context = _ProjectInstructionContextSpy()
 
@@ -695,6 +704,7 @@ def test_later_batch_context_retries_before_review_and_is_marked_on_exact_reques
     db, monkeypatch
 ):
     monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_args: 100_000)
+
     class LaterContext(_ProjectInstructionContextSpy):
         def __init__(self):
             super().__init__(initial_rows=False)
@@ -757,6 +767,16 @@ def test_later_batch_context_retries_before_review_and_is_marked_on_exact_reques
 def test_child_uses_exactly_one_root_delivery_path(
     db, monkeypatch, tmp_path, use_context
 ):
+    original_setting = agent_service._setting
+    monkeypatch.setattr(
+        agent_service,
+        "_setting",
+        lambda key, default: (
+            1
+            if key == agent_service.MAX_LIVE_SUBAGENTS_KEY
+            else original_setting(key, default)
+        ),
+    )
     monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_args: 100_000)
     sentinel = "ROOT-INSTRUCTION-SENTINEL"
     raw = sentinel.encode()

@@ -115,7 +115,7 @@ def test_automatic_nested_body_is_absent_from_every_durable_and_diagnostic_surfa
             agent_messages=[{"role": "user", "content": "read it"}],
             should_cancel=lambda: False,
             local_provider=local,
-            review_tool_calls=lambda calls: reviews.append(tuple(calls)) or {},
+            review_tool_calls=lambda calls, _run_id: reviews.append(tuple(calls)) or {},
             startup_instruction_candidate=candidate,
             confirm_project_instruction_dispatch=lambda _snapshot: "proceed",
             on_project_instruction_activation=events.append,

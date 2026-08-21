@@ -185,6 +185,94 @@ class ConflictError(CharactersRAGDBError):
 _EXPRESSION_IMAGE_STATE_IDS = frozenset({"thinking", "speaking", "error"})
 
 
+def _table_check_references_console_project_context(create_sql: str) -> bool:
+    """Return whether a CHECK expression references the local-only column."""
+    tokens: list[tuple[str, str]] = []
+    index = 0
+    while index < len(create_sql):
+        char = create_sql[index]
+        if char == "'":
+            index += 1
+            while index < len(create_sql):
+                if create_sql[index] != "'":
+                    index += 1
+                elif index + 1 < len(create_sql) and create_sql[index + 1] == "'":
+                    index += 2
+                else:
+                    index += 1
+                    break
+        elif char in {'"', "`"}:
+            quote = char
+            identifier: list[str] = []
+            index += 1
+            while index < len(create_sql):
+                if create_sql[index] != quote:
+                    identifier.append(create_sql[index])
+                    index += 1
+                elif index + 1 < len(create_sql) and create_sql[index + 1] == quote:
+                    identifier.append(quote)
+                    index += 2
+                else:
+                    index += 1
+                    break
+            tokens.append(("identifier", "".join(identifier)))
+        elif char == "[":
+            closing_bracket = create_sql.find("]", index + 1)
+            if closing_bracket == -1:
+                break
+            tokens.append(("identifier", create_sql[index + 1 : closing_bracket]))
+            index = closing_bracket + 1
+        elif create_sql.startswith("--", index):
+            line_end = create_sql.find("\n", index + 2)
+            index = len(create_sql) if line_end == -1 else line_end + 1
+        elif create_sql.startswith("/*", index):
+            comment_end = create_sql.find("*/", index + 2)
+            index = len(create_sql) if comment_end == -1 else comment_end + 2
+        elif char.isalpha() or char == "_" or ord(char) >= 128:
+            token_end = index + 1
+            while token_end < len(create_sql):
+                token_char = create_sql[token_end]
+                if not (
+                    token_char.isalnum()
+                    or token_char in {"_", "$"}
+                    or ord(token_char) >= 128
+                ):
+                    break
+                token_end += 1
+            tokens.append(("bare", create_sql[index:token_end]))
+            index = token_end
+        elif char == "(":
+            tokens.append(("lparen", char))
+            index += 1
+        elif char == ")":
+            tokens.append(("rparen", char))
+            index += 1
+        else:
+            index += 1
+
+    target = "console_project_context_json"
+    for check_index, token in enumerate(tokens[:-1]):
+        if (
+            token[0] != "bare"
+            or re.fullmatch("check", token[1], re.IGNORECASE | re.ASCII) is None
+            or tokens[check_index + 1][0] != "lparen"
+        ):
+            continue
+        depth = 1
+        for kind, value in tokens[check_index + 2 :]:
+            if kind == "lparen":
+                depth += 1
+            elif kind == "rparen":
+                depth -= 1
+                if depth == 0:
+                    break
+            elif kind in {"bare", "identifier"} and re.fullmatch(
+                target, value, re.IGNORECASE | re.ASCII
+            ):
+                return True
+    return False
+
+
 # --- Trajectory metadata sidecar (schema v38) ---
 # ``message_trajectory_metadata`` is LOCAL-ONLY: no sync triggers, no sync
 # serialization. It records this device's own per-turn step observations for
@@ -254,7 +342,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 41  # Separate local Persona Visual runtime.
+    _CURRENT_SCHEMA_VERSION = 42  # Local-only Console project context.
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -2663,11 +2751,11 @@ ALTER TABLE messages ADD COLUMN metadata_json TEXT DEFAULT NULL;
 """
 
     # Keep this runner SQL aligned with
-    # tldw_chatbook/DB/migrations/chachanotes_v32_to_v33_console_project_context.sql.
+    # tldw_chatbook/DB/migrations/chachanotes_v41_to_v42_console_project_context.sql.
     # NOTE: no trigger DDL. ``console_project_context_json`` is LOCAL-ONLY and
     # must never reach sync_log. The guarded version bump is owned by the
-    # migration runner so a column-present/version-32 database can recover.
-    _MIGRATE_V32_TO_V33_SQL = """
+    # migration runner so a column-present/version-41 database can recover.
+    _MIGRATE_V41_TO_V42_SQL = """
 ALTER TABLE conversations ADD COLUMN console_project_context_json TEXT;
 """
 
@@ -5257,6 +5345,116 @@ UPDATE db_schema_version
                 f"Migration from V40 to V41 failed for '{self._SCHEMA_NAME}': {exc}"
             ) from exc
 
+    def _migrate_from_v41_to_v42(self, conn: sqlite3.Connection) -> None:
+        """Add local-only Console project-context state."""
+        if self._get_db_version(conn) != 41:
+            raise SchemaError(
+                f"[{self._SCHEMA_NAME} V41→V42] Migration requires schema version 41"
+            )
+        logger.info(
+            f"Migrating schema from V41 to V42 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
+        )
+        try:
+            columns = {
+                row[1]: row
+                for row in conn.execute("PRAGMA table_info(conversations)").fetchall()
+            }
+            existing = columns.get("console_project_context_json")
+            if existing is None:
+                conn.execute(self._MIGRATE_V41_TO_V42_SQL)
+            else:
+                table_sql_row = conn.execute(
+                    "SELECT sql FROM sqlite_master "
+                    "WHERE type = 'table' AND name = 'conversations'"
+                ).fetchone()
+                table_sql = str(table_sql_row[0]) if table_sql_row else ""
+                has_exact_column_clause = (
+                    re.search(
+                        r"(?:\(|,)\s*console_project_context_json\s+TEXT\s*(?=,|\))",
+                        table_sql,
+                        re.IGNORECASE | re.ASCII,
+                    )
+                    is not None
+                )
+                unique_index_rows = conn.execute(
+                    """
+                    SELECT index_info.name, index_schema.sql
+                      FROM pragma_index_list('conversations') AS index_list
+                      JOIN pragma_index_info(index_list.name) AS index_info
+                 LEFT JOIN sqlite_master AS index_schema
+                        ON index_schema.type = 'index'
+                       AND index_schema.name = index_list.name
+                     WHERE index_list."unique" = 1
+                    """
+                ).fetchall()
+                has_unique_index = any(
+                    row[0] == "console_project_context_json"
+                    or "console_project_context_json" in str(row[1] or "").lower()
+                    for row in unique_index_rows
+                )
+                has_foreign_key = (
+                    conn.execute(
+                        "SELECT 1 FROM pragma_foreign_key_list('conversations') "
+                        'WHERE "from" = ? LIMIT 1',
+                        ("console_project_context_json",),
+                    ).fetchone()
+                    is not None
+                )
+                if (
+                    str(existing[2]).upper() != "TEXT"
+                    or existing[3] != 0
+                    or existing[4] is not None
+                    or existing[5] != 0
+                    or not has_exact_column_clause
+                    or has_unique_index
+                    or has_foreign_key
+                    or _table_check_references_console_project_context(table_sql)
+                ):
+                    raise SchemaError(
+                        f"[{self._SCHEMA_NAME} V41→V42] Existing "
+                        "conversations.console_project_context_json has an "
+                        "incompatible shape"
+                    )
+                logger.info(
+                    f"[{self._SCHEMA_NAME} V41→V42] "
+                    "conversations.console_project_context_json already present; "
+                    "applying the version bump only."
+                )
+
+            version_cursor = conn.execute(
+                """
+                UPDATE db_schema_version
+                   SET version = 42
+                 WHERE schema_name = ?
+                   AND version = 41
+                """,
+                (self._SCHEMA_NAME,),
+            )
+            if version_cursor.rowcount != 1:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V41→V42] Migration version update was not applied"
+                )
+            if self._get_db_version(conn) != 42:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V41→V42] Migration version check failed"
+                )
+        except sqlite3.Error as exc:
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V41→V42] Migration failed: {exc}"
+            )
+            raise SchemaError(
+                f"Migration from V41 to V42 failed for '{self._SCHEMA_NAME}': {exc}"
+            ) from exc
+        except SchemaError:
+            raise
+        except Exception as exc:
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V41→V42] Unexpected error during migration: {exc}"
+            )
+            raise SchemaError(
+                f"Unexpected error migrating from V41 to V42 for '{self._SCHEMA_NAME}': {exc}"
+            ) from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -5429,6 +5627,7 @@ UPDATE db_schema_version
                     38: self._migrate_from_v38_to_v39,
                     39: self._migrate_from_v39_to_v40,
                     40: self._migrate_from_v40_to_v41,
+                    41: self._migrate_from_v41_to_v42,
                 }
 
                 if current_db_version == 0:
