@@ -93,7 +93,7 @@ async def _wait_for_compact_class(screen, pilot, *, compact: bool):
 
 
 @pytest.mark.asyncio
-async def test_compact_media_paints_five_one_line_rows_and_hides_preview():
+async def test_compact_media_paints_five_one_line_rows_and_hides_preview() -> None:
     app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_many_media_items())
     host = LibraryProductionCSSHarness(app)
@@ -121,7 +121,7 @@ async def test_compact_media_paints_five_one_line_rows_and_hides_preview():
 
 
 @pytest.mark.asyncio
-async def test_wide_media_keeps_two_line_rows_and_preview():
+async def test_wide_media_keeps_two_line_rows_and_preview() -> None:
     app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_many_media_items())
     host = LibraryProductionCSSHarness(app)
@@ -140,7 +140,7 @@ async def test_wide_media_keeps_two_line_rows_and_preview():
 
 
 @pytest.mark.asyncio
-async def test_media_resize_preserves_scope_focus_scroll_without_reads():
+async def test_media_resize_preserves_scope_focus_scroll_without_reads() -> None:
     app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_many_media_items())
     service = app.media_reading_scope_service
@@ -179,7 +179,7 @@ async def test_media_resize_preserves_scope_focus_scroll_without_reads():
 
 
 @pytest.mark.asyncio
-async def test_media_preview_focus_moves_to_selected_row_on_compact_resize():
+async def test_media_preview_focus_moves_to_selected_row_on_compact_resize() -> None:
     app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_many_media_items())
     host = LibraryProductionCSSHarness(app)
@@ -204,7 +204,9 @@ async def test_media_preview_focus_moves_to_selected_row_on_compact_resize():
 
 
 @pytest.mark.asyncio
-async def test_media_resize_focus_restore_yields_to_newer_user_focus(monkeypatch):
+async def test_media_resize_focus_restore_yields_to_newer_user_focus(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_many_media_items())
     host = LibraryProductionCSSHarness(app)
@@ -271,7 +273,7 @@ async def _open_scrolled_compact_media_viewer(host, pilot, *, row_index=15):
 
 
 @pytest.mark.asyncio
-async def test_compact_media_viewer_back_restores_semantic_row_and_scroll():
+async def test_compact_media_viewer_back_restores_semantic_row_and_scroll() -> None:
     app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_many_media_items())
     service = app.media_reading_scope_service
@@ -297,7 +299,7 @@ async def test_compact_media_viewer_back_restores_semantic_row_and_scroll():
 
 
 @pytest.mark.asyncio
-async def test_compact_media_viewer_back_survives_authoritative_recompose():
+async def test_compact_media_viewer_back_survives_authoritative_recompose() -> None:
     app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_many_media_items())
     host = LibraryProductionCSSHarness(app)
@@ -325,7 +327,36 @@ async def test_compact_media_viewer_back_survives_authoritative_recompose():
 
 
 @pytest.mark.asyncio
-async def test_compact_media_viewer_back_survives_targeted_reorder():
+async def test_compact_media_viewer_back_wheel_scroll_cancels_stored_restore() -> None:
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=COMPACT_SCROLL_SIZE) as pilot:
+        screen, media_id, _scroll_offset = await _open_scrolled_compact_media_viewer(
+            host, pilot
+        )
+        screen.query_one("#library-media-back", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: getattr(screen.focused, "media_id", None) == media_id,
+            message="Initial viewer return did not restore its Media row.",
+        )
+        scroll = screen.query_one("#library-media-row-scroll", VerticalScroll)
+        scroll.scroll_to(y=0, animate=False, force=True, immediate=True)
+        screen.on_mouse_scroll_up(object())
+        await pilot.pause()
+
+        assert screen._library_pending_list_entry_focus is False
+        screen.refresh(recompose=True)
+        await _wait_for_selector(screen, pilot, "#library-media-row-scroll")
+        await pilot.pause()
+        scroll = screen.query_one("#library-media-row-scroll", VerticalScroll)
+        assert int(scroll.scroll_y) == 0
+
+
+@pytest.mark.asyncio
+async def test_compact_media_viewer_back_survives_targeted_reorder() -> None:
     app = _build_media_test_app()
     media = _many_media_items()
     _seed_conversations(app, _two_conversations(), media=media)
@@ -371,7 +402,7 @@ async def test_compact_media_viewer_back_survives_targeted_reorder():
 
 
 @pytest.mark.asyncio
-async def test_compact_media_viewer_back_falls_back_after_row_removed():
+async def test_compact_media_viewer_back_falls_back_after_row_removed() -> None:
     app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_many_media_items())
     host = LibraryProductionCSSHarness(app)
@@ -410,7 +441,7 @@ async def test_compact_media_viewer_back_falls_back_after_row_removed():
 
 
 @pytest.mark.asyncio
-async def test_compact_media_viewer_back_follows_single_page_clamp():
+async def test_compact_media_viewer_back_follows_single_page_clamp() -> None:
     app = _build_media_test_app()
     media = _many_media_items(21)
     _seed_conversations(app, _two_conversations(), media=media)
@@ -469,7 +500,7 @@ async def test_compact_media_viewer_back_follows_single_page_clamp():
 
 
 @pytest.mark.asyncio
-async def test_compact_media_viewer_back_empty_page_focuses_recovery_control():
+async def test_compact_media_viewer_back_empty_page_focuses_recovery_control() -> None:
     app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_many_media_items())
     service = app.media_reading_scope_service
@@ -506,8 +537,8 @@ async def test_compact_media_viewer_back_empty_page_focuses_recovery_control():
 
 @pytest.mark.asyncio
 async def test_compact_media_viewer_back_restore_yields_to_newer_user_focus(
-    monkeypatch,
-):
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_many_media_items())
     host = LibraryProductionCSSHarness(app)
@@ -549,7 +580,7 @@ async def test_compact_media_viewer_back_restore_yields_to_newer_user_focus(
 
 
 @pytest.mark.asyncio
-async def test_media_list_and_preview_side_by_side_at_wide_width():
+async def test_media_list_and_preview_side_by_side_at_wide_width() -> None:
     """At 170 cols the preview renders BESIDE the list (same row band,
     strictly to its right), not below it -- the task-14900 defect was a
     blank right half-canvas while list and preview stacked vertically."""
@@ -578,7 +609,7 @@ async def test_media_list_and_preview_side_by_side_at_wide_width():
 
 
 @pytest.mark.asyncio
-async def test_media_list_hides_preview_below_breakpoint():
+async def test_media_list_hides_preview_below_breakpoint() -> None:
     """At 100 cols the list owns the canvas and the preview is unpainted."""
     app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
@@ -602,7 +633,7 @@ async def test_media_list_hides_preview_below_breakpoint():
 
 
 @pytest.mark.asyncio
-async def test_trash_view_stays_single_column_at_wide_width():
+async def test_trash_view_stays_single_column_at_wide_width() -> None:
     """The split applies to the LIST view only: Trash is a list-only surface
     (no detail half exists in its state), so at wide widths its rows keep the
     full canvas width and no media workbench container is present."""
@@ -682,12 +713,12 @@ async def _assert_keyboard_traversal_and_viewer_entry(size):
 
 
 @pytest.mark.asyncio
-async def test_keyboard_traversal_and_viewer_entry_wide():
+async def test_keyboard_traversal_and_viewer_entry_wide() -> None:
     await _assert_keyboard_traversal_and_viewer_entry(WIDE_SIZE)
 
 
 @pytest.mark.asyncio
-async def test_keyboard_traversal_and_viewer_entry_narrow():
+async def test_keyboard_traversal_and_viewer_entry_narrow() -> None:
     await _assert_keyboard_traversal_and_viewer_entry(NARROW_SIZE)
 
 
@@ -759,12 +790,12 @@ async def _assert_select_mode_bulk_toolbar_usable(size):
 
 
 @pytest.mark.asyncio
-async def test_select_mode_bulk_toolbar_usable_wide():
+async def test_select_mode_bulk_toolbar_usable_wide() -> None:
     await _assert_select_mode_bulk_toolbar_usable(WIDE_SIZE)
 
 
 @pytest.mark.asyncio
-async def test_select_mode_bulk_toolbar_usable_narrow():
+async def test_select_mode_bulk_toolbar_usable_narrow() -> None:
     await _assert_select_mode_bulk_toolbar_usable(NARROW_SIZE)
 
 
@@ -834,17 +865,17 @@ async def _assert_select_mode_keyboard_toggle_and_footer(size):
 
 
 @pytest.mark.asyncio
-async def test_select_mode_keyboard_toggle_and_footer_wide():
+async def test_select_mode_keyboard_toggle_and_footer_wide() -> None:
     await _assert_select_mode_keyboard_toggle_and_footer(WIDE_SIZE)
 
 
 @pytest.mark.asyncio
-async def test_select_mode_keyboard_toggle_and_footer_narrow():
+async def test_select_mode_keyboard_toggle_and_footer_narrow() -> None:
     await _assert_select_mode_keyboard_toggle_and_footer(NARROW_SIZE)
 
 
 @pytest.mark.asyncio
-async def test_compact_media_stale_and_retry_actions_remain_truthful():
+async def test_compact_media_stale_and_retry_actions_remain_truthful() -> None:
     media = _many_media_items()
     app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=media)
@@ -931,7 +962,7 @@ async def test_compact_media_stale_and_retry_actions_remain_truthful():
 
 
 @pytest.mark.asyncio
-async def test_compact_media_pager_receipt_and_empty_states_remain_contained():
+async def test_compact_media_pager_receipt_and_empty_states_remain_contained() -> None:
     app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_many_media_items())
     host = LibraryProductionCSSHarness(app)
@@ -976,7 +1007,7 @@ async def test_compact_media_pager_receipt_and_empty_states_remain_contained():
 
 
 @pytest.mark.asyncio
-async def test_wide_select_mode_shows_detail_placeholder():
+async def test_wide_select_mode_shows_detail_placeholder() -> None:
     """In the wide split, Select mode hides the preview (task-2853 AC4), so
     the detail half explains itself instead of sitting blank."""
     app = _build_media_test_app()
@@ -1003,7 +1034,7 @@ async def test_wide_select_mode_shows_detail_placeholder():
 
 
 @pytest.mark.asyncio
-async def test_narrow_select_mode_keeps_placeholder_hidden():
+async def test_narrow_select_mode_keeps_placeholder_hidden() -> None:
     """The placeholder is a wide-layout affordance only -- the preserved
     stacked layout renders nothing below the list in Select mode, exactly
     as before this task."""

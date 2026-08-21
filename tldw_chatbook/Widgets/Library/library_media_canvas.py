@@ -30,6 +30,10 @@ from tldw_chatbook.Widgets.Library.library_canvas_sync import (
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 
+_MEDIA_ROW_COMPACT_HEIGHT = 1
+_MEDIA_ROW_WIDE_HEIGHT = 2
+
+
 def _media_row_label_rest(title: str, secondary: str, *, compact: bool) -> str:
     """Return the marker-free Media row label for one responsive density."""
     visible_title = _visible_row_title(title)
@@ -110,6 +114,9 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         """Patch mounted Media density and preview participation in place."""
         self.compact = compact
         select_mode = getattr(self.canvas, "select_mode", False)
+        row_height = (
+            _MEDIA_ROW_COMPACT_HEIGHT if compact else _MEDIA_ROW_WIDE_HEIGHT
+        )
         for button in self.query(".library-media-row"):
             title = button._library_media_title
             secondary = button._library_media_secondary
@@ -128,8 +135,8 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 button._library_media_selected and not compact and not select_mode,
                 "library-media-row-selected",
             )
-            button.styles.height = 1 if compact else 2
-            button.styles.min_height = 1 if compact else 2
+            button.styles.height = row_height
+            button.styles.min_height = row_height
             self._gate_stale_action(button, label_rest.lstrip())
         try:
             preview = self.query_one("#library-media-preview")
@@ -530,6 +537,11 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             media_list = Vertical(id="library-media-list")
             with media_list:
                 with VerticalScroll(id="library-media-row-scroll"):
+                    row_height = (
+                        _MEDIA_ROW_COMPACT_HEIGHT
+                        if self.compact
+                        else _MEDIA_ROW_WIDE_HEIGHT
+                    )
                     for index, row in enumerate(self.canvas.rows):
                         if select_mode:
                             marker = "☑" if row.checked else "☐"
@@ -561,8 +573,8 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                             row.selected and not self.compact and not select_mode,
                             "library-media-row-selected",
                         )
-                        button.styles.height = 1 if self.compact else 2
-                        button.styles.min_height = 1 if self.compact else 2
+                        button.styles.height = row_height
+                        button.styles.min_height = row_height
                         yield self._gate_stale_action(button, label_rest.lstrip())
                 if self.pager is not None:
                     yield from self._compose_pager(self.pager)

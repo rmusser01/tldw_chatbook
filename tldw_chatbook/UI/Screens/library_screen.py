@@ -5372,14 +5372,18 @@ class LibraryScreen(BaseAppScreen):
             self._disarm_library_list_entry_focus()
 
     def on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
-        """Let wheel scrolling supersede resize memory."""
+        """Let wheel scrolling supersede resize and list-return memory."""
         del event
         self._mark_library_notes_user_interaction()
+        if self._library_pending_list_entry_focus:
+            self._disarm_library_list_entry_focus()
 
     def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
-        """Let wheel scrolling supersede resize memory."""
+        """Let wheel scrolling supersede resize and list-return memory."""
         del event
         self._mark_library_notes_user_interaction()
+        if self._library_pending_list_entry_focus:
+            self._disarm_library_list_entry_focus()
 
     def _notes_footer_tier(
         self,
