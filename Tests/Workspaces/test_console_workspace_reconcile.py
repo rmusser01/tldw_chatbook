@@ -14,9 +14,11 @@ session_with_registry`` repairs exactly that gap on every Console resume.
 
 from types import SimpleNamespace
 
+from tldw_chatbook.Chat.console_chat_models import CONSOLE_GLOBAL_WORKSPACE_ID
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceController
+from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
 from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
 
 
@@ -137,6 +139,33 @@ def test_registry_raising_get_active_workspace_is_a_noop(tmp_path):
         sessions=[ConsoleChatSession(id="session-a", workspace_id="workspace-a")],
     )
     stub = _Stub(_RaisingRegistry(), store)
+    ConsoleWorkspaceController._reconcile_console_session_with_registry(stub)
+    assert stub.calls == []
+
+
+def test_global_session_aligned_with_registry_default_is_a_noop(tmp_path):
+    """Regression (found live by Tests/UI/test_console_session_settings.py):
+    a session's default/unset `workspace_id` (`CONSOLE_GLOBAL_WORKSPACE_ID`,
+    or "") and the registry's built-in Default workspace row
+    (`DEFAULT_WORKSPACE_ID`) are THE SAME state on two layers (task-15120),
+    not a divergence -- comparing them raw tore down every ordinary mounted
+    session (whose workspace_id defaults to "global") the instant the
+    registry's active workspace was the ordinary resting Default row.
+    """
+    db = WorkspaceDB(tmp_path / "ws.sqlite", client_id="console-reconcile-tests")
+    registry = LocalWorkspaceRegistryService(db)
+    registry.ensure_default_workspace()
+    assert registry.get_active_workspace().workspace_id == DEFAULT_WORKSPACE_ID
+
+    store = _FakeStore(
+        active_session_id="session-global",
+        sessions=[
+            ConsoleChatSession(
+                id="session-global", workspace_id=CONSOLE_GLOBAL_WORKSPACE_ID
+            )
+        ],
+    )
+    stub = _Stub(registry, store)
     ConsoleWorkspaceController._reconcile_console_session_with_registry(stub)
     assert stub.calls == []
 

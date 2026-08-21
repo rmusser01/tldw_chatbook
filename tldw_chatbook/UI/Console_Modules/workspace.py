@@ -86,6 +86,26 @@ logger = logger.bind(module="ChatScreen")
 CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS = 2.0
 
 
+def _normalized_console_workspace_id(workspace_id: str | None) -> str:
+    """Fold the "no explicit workspace" sentinels onto one identity.
+
+    A Console session's default ``workspace_id`` (unset, or the explicit
+    ``CONSOLE_GLOBAL_WORKSPACE_ID`` sentinel) and the registry's built-in
+    Default workspace row (``DEFAULT_WORKSPACE_ID`` --
+    ``ensure_default_workspace`` floors every context read to it) are THE
+    SAME state on two layers (task-15120 owner ruling, see
+    ``_set_active_workspace_for_console_session``), not two different
+    workspaces that happen to share a session. Any comparison between a
+    session's ``workspace_id`` and a registry workspace id must normalize
+    through this before comparing, or an aligned "global"/Default session
+    reads as diverged purely because of which layer's spelling it carries.
+    """
+    normalized = str(workspace_id or "").strip()
+    if not normalized or normalized == CONSOLE_GLOBAL_WORKSPACE_ID:
+        return DEFAULT_WORKSPACE_ID
+    return normalized
+
+
 class ConsoleWorkspaceController:
     """Own Workspace lifecycle, resume, scope, and conversation browsing.
 
@@ -1891,6 +1911,23 @@ class ConsoleWorkspaceController:
         Deliberately conservative: any read of the registry is guarded, and
         a ``None`` registry, ``None`` active workspace, or ``None`` active
         session all return quietly -- this must never break screen resume.
+
+        Comparison is normalized, not a bare ``==``: a session's default
+        ``workspace_id`` is the "no explicit workspace" sentinel
+        (``CONSOLE_GLOBAL_WORKSPACE_ID``, `""` is treated the same), while
+        the registry represents that identical state as its built-in
+        Default workspace row (``DEFAULT_WORKSPACE_ID`` --
+        ``ensure_default_workspace`` floors every context read to it). Per
+        the task-15120 owner ruling (see
+        ``_set_active_workspace_for_console_session``), those two spellings
+        are THE SAME state on two layers, not a divergence -- comparing
+        them raw here misfired on every plain/global mounted session
+        whenever the registry's active workspace was Default (its ordinary
+        resting state), tearing down a perfectly aligned session and
+        replacing it with a fresh one on every resume. Caught by two
+        existing tests going from GREEN to RED with the naive comparison
+        (`test_mounted_first_chat_ack_exception_during_resume_restores_ui`,
+        `test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_resume`).
         """
         registry_service = getattr(
             self.app_instance, "workspace_registry_service", None
@@ -1919,10 +1956,9 @@ class ConsoleWorkspaceController:
             ),
             None,
         )
-        if (
-            active_session is not None
-            and active_session.workspace_id == active.workspace_id
-        ):
+        if active_session is not None and _normalized_console_workspace_id(
+            active_session.workspace_id
+        ) == _normalized_console_workspace_id(active.workspace_id):
             return
         self._sync_console_chat_core_state()
         self._activate_console_session_for_workspace(active.workspace_id)
