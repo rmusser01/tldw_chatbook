@@ -5508,6 +5508,40 @@ because nothing new was added; (2) a reviewer claim that a guarded artifact is
 "unconsumed" is an untested claim until checked against the gate that
 consumes it — grep for the artifact's path in `Tests/` before agreeing.
 
+## A repair task filed against a VENDORED file turns the vendoring gate red — route the edit through the sync script's patch mechanism (task-19321, 2026-08-20)
+
+**Incident.** task-19321 (filed from 19191's review) instructed a call-site
+repair of three diagnostic leaks in `tldw_chatbook/Chunking/engine/chunker.py`.
+The repair itself was routine — but the whole `Chunking/engine/` tree is
+VENDORED from tldw_server at a pinned SHA, and
+`Tests/Chunking/test_sync_script.py` diffs every vendored file against the pin
+on every run: the moment the (correct, reviewed) edit landed, the suite failed
+with `FATAL: local modification to vendored file chunker.py`. Neither the task
+filer nor the implementer's first pass knew the contract existed; it only
+surfaced because the WHOLE `Tests/Chunking/` directory was run, not just the
+files near the change. dev's copy was verified byte-identical to the pin, so
+this was a genuine new red, not pre-existing drift.
+
+**Resolution that held.** Not a subclass (duplicates a 200-line generator and
+leaves the leaky original importable) and not reverting: the sync script
+already carried chatbook-side patches for ported TESTS (`TEST_PATCHES`), so
+the same mechanism was extended to engine files (`ENGINE_PATCHES` in
+`Helper_Scripts/sync_chunking_engine.py`, recorded in `VENDOR_MANIFEST.toml`
+`[patches]` and a spec §5.2 amendment). Canonical vendored state =
+upstream-at-pin + rewrite + patches; the modification check compares against
+the PATCHED state; upstream drift under a patch anchor fails loudly. The
+patch output must be verified byte-identical to the working-tree file against
+a pinned clone, or the gate stays red for an invisible whitespace reason.
+
+**Rules.** (1) Before editing anything under a directory with a
+`VENDOR_MANIFEST.toml` (or any manifest/sync pairing), read the sync
+contract first — the file being editable in the working tree says nothing
+about whether a gate re-derives it. (2) A task description that names exact
+lines to change is not evidence the file is directly editable. (3) When a
+gate red appears after your edit, byte-compare the base file against the
+gate's own source of truth before assuming pre-existing drift — here dev
+matched the pin exactly, so the red was honestly mine.
+
 ## A raw equality check on two IDs that alias the same state misfires the instant that state is the common case (TASK-18310, 2026-08-20)
 
 **What happened.** Implementing a Console resume-time reconcile that compares
