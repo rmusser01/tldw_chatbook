@@ -553,6 +553,29 @@ then verify with `backlog task <id> --plain`.
 
 ---
 
+## In zsh, brace `"${b}:path"` — unbraced `"$b:path"` applies the `:t` modifier and the sweep lies
+
+**What happened.** 2026-08-21, the chunking-template-parity spec's §5 version
+sweep (`_CURRENT_SCHEMA_VERSION` across all refs). The loop ran
+`git show "$b:tldw_chatbook/DB/Client_Media_DB_v2.py"` per remote ref and
+returned the **same old version for every branch** — "clean, no collisions
+anywhere." That was the bug: in zsh, `:t` after a parameter inside quotes is
+a **history modifier** (`:t` = tail-of-path), so `"$b:path"` silently
+rewrote the ref. `git show` then resolved something other than the intended
+`<ref>:<path>` (or errored into the fallback), and the sweep reported a
+uniform answer that proved nothing about any ref. The spec's sweep results
+were only trusted after re-running with the braced form — which is also the
+form the sweep snippets in this file already use (`"${b}:backlog/..."` in
+the collision-sweep habit above, where the braces make it work).
+
+**What to do.** Any zsh loop that builds a `<ref>:<path>` or `<var><suffix>`
+string must brace the variable: `git show "${b}:path"`, `git log
+"${b}..HEAD"`. If a per-ref sweep returns an identical value for every ref,
+treat that as the sweep being broken, not as the board being clean — 200
+refs agreeing exactly is the signature of a loop that never varied its
+input. Sanity-check with one ref you know differs
+(`git show "${b}:path" | grep VERSION` against two refs you expect to
+disagree).
 ## ADR numbers collide across concurrent branches — re-verify at merge time
 
 **What happened.** 2026-08-20, two independent sessions in the same window: the
