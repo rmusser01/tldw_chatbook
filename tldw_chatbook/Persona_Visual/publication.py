@@ -126,7 +126,11 @@ def publish_persona_visual(
     authority_guard: Callable[[], bool],
     atomic_replace: Callable[..., None] = os.replace,
 ) -> PersonaVisualPublicationResult:
-    """Publish one complete immutable directory and activate it atomically in SQLite."""
+    """Publish one complete immutable directory and activate it atomically in SQLite.
+
+    ``authority_guard`` is checked both before and inside the repository transaction;
+    callers must provide a side-effect-free, read-only callback.
+    """
 
     if type(repository) is not PersonaVisualRepository:
         raise PersonaVisualPublicationError("persona_visual_candidate_invalid")
@@ -304,10 +308,18 @@ def publish_persona_visual(
                 and _entry_matches_fd(staging_fd, "assets", materialized_assets_fd)
                 and _publication_files_current(materialized_files)
             )
-            guard_failure = (
-                None if filesystem_current else "persona_visual_publication_denied"
-            )
-            return guard_failure is None
+            try:
+                caller_current = authority_guard() is True
+            except Exception:
+                caller_current = False
+            if not filesystem_current:
+                guard_failure = "persona_visual_publication_denied"
+                return False
+            if not caller_current:
+                guard_failure = "persona_visual_authority_changed"
+                return False
+            guard_failure = None
+            return True
 
         manifest_storage = f"{final_token}/manifest.json"
         try:
@@ -356,16 +368,17 @@ def publish_persona_visual(
         )
     except KeyboardInterrupt as interruption:
         if renamed and _entry_matches_fd(versions_fd, final_name, staging_fd):
+            cleanup_candidate = _cleanup_capability(final_token, cleanup_secret)
             try:
-                deleted = _delete_pinned_directory(versions_fd, final_name, staging_fd)
-                if deleted:
-                    _sync_directory(versions_fd)
+                deleted = cleanup_persona_visual_publication_candidate(
+                    repository,
+                    cleanup_candidate,
+                    profile_root=profile_path,
+                )
             except BaseException:
                 deleted = False
             if not deleted:
-                interruption.cleanup_candidate = _cleanup_capability(
-                    final_token, cleanup_secret
-                )
+                interruption.cleanup_candidate = cleanup_candidate
         raise
     except PersonaVisualPublicationError:
         raise

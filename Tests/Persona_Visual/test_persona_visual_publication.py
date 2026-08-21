@@ -314,48 +314,28 @@ def test_caller_authority_guard_runs_after_filesystem_publish_before_db_transact
     assert caught.value.cleanup_candidate is not None
 
 
-def test_caller_guard_runs_before_repository_transaction_and_cannot_bypass_cas(
+def test_caller_authority_is_rechecked_inside_repository_transaction(
     environment,
 ) -> None:
     repository, source_root, _profile_root = environment
-    first = _publish(environment, _snapshot(source_root))
-    snapshot = _snapshot(
-        source_root,
-        expected_identity=first.new_identity,
-        frame_rate=2,
-    )
-    connection = repository.db.get_connection()
-    observed: list[tuple[bool, int]] = []
+    observations: list[tuple[bool, int]] = []
 
-    def mutate_and_commit() -> bool:
-        observed.append(
+    def expiring_guard() -> bool:
+        observations.append(
             (
-                connection.in_transaction,
+                repository.db.get_connection().in_transaction,
                 getattr(repository.db._local, "transaction_depth", 0),
             )
         )
-        connection.set_authorizer(None)
-        connection.execute(
-            "UPDATE persona_visual_bindings SET version = version + 1 WHERE id = ?",
-            (first.new_identity.binding_id,),
-        )
-        connection.commit()
-        return True
+        return len(observations) == 1
 
     with pytest.raises(PersonaVisualPublicationError) as caught:
-        _publish(environment, snapshot, guard=mutate_and_commit)
+        _publish(environment, _snapshot(source_root), guard=expiring_guard)
 
-    assert observed == [(False, 0)]
-    assert caught.value.category == "persona_visual_identity_changed"
-    assert (
-        connection.execute(
-            "SELECT COUNT(*) FROM persona_visual_pack_versions"
-        ).fetchone()[0]
-        == 1
-    )
-    current = repository.get_active_persona_pack(snapshot.persona_id)
-    assert current is not None
-    assert current.identity.binding_version == first.new_identity.binding_version + 1
+    assert observations == [(False, 0), (True, 1)]
+    assert caught.value.category == "persona_visual_authority_changed"
+    assert caught.value.cleanup_candidate is not None
+    assert repository.get_active_persona_pack("persona-local-1") is None
 
 
 def test_source_name_or_inode_swap_during_replace_is_rejected(environment) -> None:
@@ -679,6 +659,45 @@ def test_synchronous_cancellation_cannot_leave_a_half_updated_database_graph(
 
     assert repository.get_active_persona_pack("persona-local-1") is None
     assert not tuple(profile_root.glob("persona_visual/packs/*/versions/*"))
+
+
+def test_interrupt_after_repository_commit_preserves_referenced_files(
+    environment, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository, source_root, profile_root = environment
+    real_activate = PersonaVisualRepository.activate_new_pack
+    committed = []
+
+    def commit_then_interrupt(self, **kwargs):
+        committed.append(real_activate(self, **kwargs))
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(
+        PersonaVisualRepository,
+        "activate_new_pack",
+        commit_then_interrupt,
+    )
+
+    with pytest.raises(KeyboardInterrupt) as caught:
+        _publish(environment, _snapshot(source_root))
+
+    active = repository.get_active_persona_pack("persona-local-1")
+    assert active is not None
+    assert active.identity == committed[0].identity
+    stored_paths = repository.db.get_connection().execute(
+        """
+        SELECT storage_relpath FROM persona_visual_pack_versions
+        UNION ALL
+        SELECT storage_relpath FROM persona_visual_assets
+        """
+    )
+    assert all((profile_root / row[0]).is_file() for row in stored_paths)
+    cleanup_candidate = getattr(caught.value, "cleanup_candidate", None)
+    assert cleanup_candidate is not None
+    with pytest.raises(PersonaVisualPublicationError, match="cleanup_referenced"):
+        cleanup_persona_visual_publication_candidate(
+            repository, cleanup_candidate, profile_root=profile_root
+        )
 
 
 def test_interrupted_publication_preserves_cleanup_when_pinned_delete_fails(
