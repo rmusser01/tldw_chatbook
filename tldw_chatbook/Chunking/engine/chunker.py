@@ -2360,7 +2360,16 @@ class Chunker:
             logger.warning(f"File size ({file_size} bytes) exceeds max size "
                          f"({self.config.max_text_size} bytes), will process in streaming mode")
 
-        logger.info(f"Stream processing file: {file_path} ({file_size} bytes)")
+        # ADR-029 / TASK-19321: a user file path is private data, so streaming
+        # diagnostics identify the file by a stable content-free handle instead
+        # of the path. An operator can recompute
+        # sha256(str(Path(candidate).resolve()))[:12] to confirm which file a
+        # record refers to.
+        path_ref = hashlib.sha256(
+            str(file_path.resolve()).encode("utf-8", "surrogatepass")
+        ).hexdigest()[:12]
+
+        logger.info(f"Stream processing file: path_sha256={path_ref} ({file_size} bytes)")
 
         # Read file in chunks and accumulate until we have enough for chunking
         buffer = ""
@@ -2482,12 +2491,26 @@ class Chunker:
                         buffer = buffer[split_point:]
 
         except UnicodeDecodeError as e:
-            logger.error(f"File stream decoding failed for {file_path}: {e}")
+            # ADR-029 / TASK-19321: no path, and no raw exception text — a
+            # UnicodeDecodeError's message carries byte context from the file.
+            # The codec name and byte offset are content-free and keep the
+            # failure debuggable.
+            logger.error(
+                f"File stream decoding failed for path_sha256={path_ref}: "
+                f"{type(e).__name__} (encoding '{encoding_name}', byte offset {e.start})"
+            )
             raise InvalidInputError(
                 f"Failed to decode file {file_path} using encoding '{encoding_name}'"
             ) from e
         except _CHUNKER_NONCRITICAL_EXCEPTIONS as e:
-            logger.error(f"File stream processing failed: {e}")
+            # ADR-029 / TASK-19321: an OSError here stringifies with the
+            # filename embedded, so the record keeps the exception TYPE and
+            # drops the message; the raised ChunkingError still carries the
+            # full detail to the caller.
+            logger.error(
+                f"File stream processing failed for path_sha256={path_ref}: "
+                f"{type(e).__name__}"
+            )
             raise ChunkingError(f"Failed to process file stream: {str(e)}") from e
 
         # Flush any withheld tail chunk at end-of-stream.

@@ -1,7 +1,7 @@
 ---
 id: TASK-19321
 title: Chunker streaming diagnostics log full user file paths
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-20'
 labels:
@@ -61,3 +61,41 @@ before deciding they are out of scope, and record the verdict either way.
 - [ ] #4 Regression coverage pins the repaired shapes so a full path re-entering these streaming diagnostics turns a test red
 - [ ] #5 Production behavior other than log-record content is unchanged (no sink filters, no behavioral workarounds)
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Repair the three call sites in `chunk_file_stream` in the TASK-15103 idiom
+   (call-site repair, no sink filter): compute one stable content-free file
+   handle (`path_sha256=<sha256(resolved path)[:12]>`) next to the existing
+   `stat()` and use it in all three records; keep byte size at `:2363`; at
+   `:2485` replace `{file_path}: {e}` with the handle + `type(e).__name__` +
+   encoding + byte offset (ints/codec name only — the raw
+   `UnicodeDecodeError` text carries byte context from the file); at `:2490`
+   replace `{e}` with the handle + `type(e).__name__` (an `OSError` in
+   `_CHUNKER_NONCRITICAL_EXCEPTIONS` stringifies with the filename embedded).
+2. Rule on the adjacent raise text (`InvalidInputError` `:2486-2488`,
+   `ChunkingError` `:2491`): trace `chunk_file_stream` callers; record the
+   verdict in Implementation Notes with the 15103 precedent (the programme
+   repaired logger call sites and left raise messages caller-facing).
+3. Born-red regression test `Tests/Chunking/test_chunker_stream_diagnostic_privacy.py`
+   using the programme's loguru-capture idiom (`logger.add(lambda m: ...)`,
+   assert the fixed event IS logged and the path/exception text is NOT):
+   one test per site — happy-path INFO, `UnicodeDecodeError` via cp1252
+   bytes, `OSError`-embeds-path via streaming a directory
+   (IsADirectoryError/PermissionError). Verify each fails at base.
+4. Re-derive the `chunker.py` owner row in
+   `Docs/security/production-diagnostic-inventory.json` via the checker's own
+   `_scan_file` + `diagnostic_digest` (call_count stays 49 — reworded, not
+   added/removed — so summary buckets are untouched; only
+   `diagnostic_digest` changes); hand-edit that one string; checker exit 0.
+5. Restamp `Tests/fixtures/summarization_diagnostic_review.json`: import the
+   privacy test module via importlib with `sys.modules["privmod"]` registered
+   BEFORE `exec_module`, compute
+   `_canonical_sha256(_normalized_inventory_projection(inv, set(MODULE_COUNTS)))`,
+   raw-string-replace the old hash (assert exactly 2 occurrences: checked +
+   origin_dev_generated fields). Isolated HOME throughout.
+6. Gates: checker exit 0; `Tests/Architecture/test_persistent_diagnostic_inventory.py`
+   65/65; `Tests/LLM_Calls/test_summarization_diagnostic_privacy.py` all
+   green; new test green; `Tests/Chunking/` chunker-path suites green;
+   repo-wide `--collect-only -q` clean. All with worktree-pinned
+   PYTHONPATH+cwd and the `tldw_chatbook.__file__` assert.
