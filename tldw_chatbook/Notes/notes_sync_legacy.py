@@ -35,7 +35,9 @@ from tldw_chatbook.Notes.notes_sync_reconciler import (
     ReconciliationInput,
     ReconciliationPlan,
     assert_review_current,
+    plan_reconciliation,
 )
+from tldw_chatbook.Utils.sensitive_paths import find_root_binding_conflict
 
 
 LEGACY_MIGRATION_REPORT_LIMIT = 200
@@ -63,6 +65,8 @@ class _LegacyRootEvidence:
     source_id: str
     raw_path: str | None
     canonical_path: str | None
+    root_identity_digest: str | None
+    ancestor_identity_digests: tuple[str, ...]
     reason_code: str | None
 
     def __repr__(self) -> str:
@@ -81,6 +85,7 @@ class _LegacyNoteEvidence:
     content_digest: object
     file_identity_digest: str | None
     file_mode: int | None
+    file_freshness_digest: str | None
     file_reason_code: str | None
 
     def __repr__(self) -> str:
@@ -187,13 +192,14 @@ class LegacyNotesSyncMigrationPlan:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, repr=False)
 class LegacyNotesSyncMigrationResult:
     """Path-free result of one private migration transaction."""
 
     already_migrated: bool
     root_count: int
     binding_count: int
+    report: tuple[LegacyMigrationReportEntry, ...]
 
     def __post_init__(self) -> None:
         if type(self.already_migrated) is not bool:
@@ -203,6 +209,20 @@ class LegacyNotesSyncMigrationResult:
             for value in (self.root_count, self.binding_count)
         ):
             raise ValueError("migration counts must be non-negative integers.")
+        if type(self.report) is not tuple or any(
+            type(item) is not LegacyMigrationReportEntry for item in self.report
+        ):
+            raise TypeError(
+                "report must be a tuple of LegacyMigrationReportEntry values."
+            )
+
+    def __repr__(self) -> str:
+        return (
+            "LegacyNotesSyncMigrationResult("
+            f"already_migrated={self.already_migrated}, "
+            f"roots={self.root_count}, bindings={self.binding_count}, "
+            f"report={len(self.report)})"
+        )
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -261,6 +281,14 @@ def _string_path(value: object) -> str | None:
     return value
 
 
+def _filesystem_paths_overlap(left: Path, right: Path) -> bool:
+    if left.samefile(right):
+        return True
+    return any(parent.samefile(right) for parent in left.parents) or any(
+        parent.samefile(left) for parent in right.parents
+    )
+
+
 def _root_evidence(
     raw_path: object,
     *,
@@ -273,20 +301,24 @@ def _root_evidence(
     selected = _string_path(raw_path)
     if selected is None:
         return _LegacyRootEvidence(
-            source_kind,
-            source_id,
-            None,
-            None,
-            "root_invalid",
+            source_kind=source_kind,
+            source_id=source_id,
+            raw_path=None,
+            canonical_path=None,
+            root_identity_digest=None,
+            ancestor_identity_digests=(),
+            reason_code="root_invalid",
         )
     path = Path(selected).expanduser()
     if not path.is_absolute():
         return _LegacyRootEvidence(
-            source_kind,
-            source_id,
-            selected,
-            None,
-            "root_invalid",
+            source_kind=source_kind,
+            source_id=source_id,
+            raw_path=selected,
+            canonical_path=None,
+            root_identity_digest=None,
+            ancestor_identity_digests=(),
+            reason_code="root_invalid",
         )
     try:
         canonical = validate_sync_root_admission(
@@ -302,18 +334,86 @@ def _root_evidence(
             else error.reason_code
         )
         return _LegacyRootEvidence(
-            source_kind,
-            source_id,
-            selected,
-            None,
-            reason,
+            source_kind=source_kind,
+            source_id=source_id,
+            raw_path=selected,
+            canonical_path=None,
+            root_identity_digest=None,
+            ancestor_identity_digests=(),
+            reason_code=reason,
+        )
+    try:
+        for roots, reason in (
+            (sync_roots, "root_overlap"),
+            (file_notes_roots, "file_notes_overlap"),
+            (private_paths, "private_path_overlap"),
+        ):
+            for other in roots:
+                if _filesystem_paths_overlap(
+                    canonical,
+                    Path(other).expanduser().resolve(strict=True),
+                ):
+                    return _LegacyRootEvidence(
+                        source_kind=source_kind,
+                        source_id=source_id,
+                        raw_path=selected,
+                        canonical_path=None,
+                        root_identity_digest=None,
+                        ancestor_identity_digests=(),
+                        reason_code=reason,
+                    )
+        if find_root_binding_conflict(canonical) is not None:
+            return _LegacyRootEvidence(
+                source_kind=source_kind,
+                source_id=source_id,
+                raw_path=selected,
+                canonical_path=None,
+                root_identity_digest=None,
+                ancestor_identity_digests=(),
+                reason_code="private_path_overlap",
+            )
+        root_metadata = canonical.stat()
+        root_identity_digest = _digest_payload(
+            "root-identity",
+            root_metadata.st_dev,
+            root_metadata.st_ino,
+        )
+        ancestor_identity_digests = tuple(
+            _digest_payload(
+                "root-identity",
+                metadata.st_dev,
+                metadata.st_ino,
+            )
+            for metadata in (parent.stat() for parent in canonical.parents)
+        )
+    except OSError:
+        return _LegacyRootEvidence(
+            source_kind=source_kind,
+            source_id=source_id,
+            raw_path=selected,
+            canonical_path=None,
+            root_identity_digest=None,
+            ancestor_identity_digests=(),
+            reason_code="comparison_root_unavailable",
+        )
+    except Exception:
+        return _LegacyRootEvidence(
+            source_kind=source_kind,
+            source_id=source_id,
+            raw_path=selected,
+            canonical_path=None,
+            root_identity_digest=None,
+            ancestor_identity_digests=(),
+            reason_code="private_path_check_failed",
         )
     return _LegacyRootEvidence(
-        source_kind,
-        source_id,
-        selected,
-        str(canonical),
-        None,
+        source_kind=source_kind,
+        source_id=source_id,
+        raw_path=selected,
+        canonical_path=str(canonical),
+        root_identity_digest=root_identity_digest,
+        ancestor_identity_digests=ancestor_identity_digests,
+        reason_code=None,
     )
 
 
@@ -321,39 +421,77 @@ def _probe_note_file(
     canonical_root: str | None,
     raw_relative_path: object,
     raw_file_path: object,
-) -> tuple[str | None, int | None, str | None]:
+) -> tuple[str | None, int | None, str | None, str | None]:
     if canonical_root is None:
-        return None, None, None
+        return None, None, None, None
     try:
         relative_path = normalize_notes_sync_relative_path(raw_relative_path)
     except (TypeError, ValueError):
-        return None, None, "invalid_note_evidence"
+        return None, None, None, "invalid_note_evidence"
     root = Path(canonical_root)
     expected = root.joinpath(*relative_path.split("/"))
     selected_text = _string_path(raw_file_path)
     selected = expected if selected_text is None else Path(selected_text).expanduser()
-    if not selected.is_absolute() or os.path.normcase(
-        os.path.abspath(selected)
-    ) != os.path.normcase(os.path.abspath(expected)):
-        return None, None, "file_out_of_root"
+    if not selected.is_absolute():
+        return None, None, None, "file_out_of_root"
+    try:
+        selected_canonical = selected.resolve(strict=False)
+        expected_canonical = expected.resolve(strict=False)
+    except OSError:
+        return None, None, None, "file_unavailable"
+    try:
+        paths_match = selected.samefile(expected)
+    except OSError:
+        paths_match = os.path.normcase(
+            os.fspath(selected_canonical)
+        ) == os.path.normcase(os.fspath(expected_canonical))
+    if not paths_match:
+        return None, None, None, "file_out_of_root"
+
+    current = root
+    for component in relative_path.split("/")[:-1]:
+        current /= component
+        try:
+            ancestor = current.lstat()
+        except FileNotFoundError:
+            return None, None, None, "file_missing"
+        except OSError:
+            return None, None, None, "file_unavailable"
+        if (
+            stat.S_ISLNK(ancestor.st_mode)
+            or getattr(ancestor, "st_reparse_tag", 0)
+            or not stat.S_ISDIR(ancestor.st_mode)
+        ):
+            return None, None, None, "unsafe_file_identity"
     try:
         metadata = selected.lstat()
     except FileNotFoundError:
-        return (
-            _digest_payload("missing-file", canonical_root, relative_path),
-            0o600,
-            "file_missing",
-        )
+        return None, None, None, "file_missing"
     except OSError:
-        return None, None, "file_unavailable"
+        return None, None, None, "file_unavailable"
     identity = _digest_payload("file-identity", metadata.st_dev, metadata.st_ino)
     if (
         stat.S_ISLNK(metadata.st_mode)
+        or getattr(metadata, "st_reparse_tag", 0)
         or not stat.S_ISREG(metadata.st_mode)
         or metadata.st_nlink != 1
     ):
-        return identity, stat.S_IMODE(metadata.st_mode), "unsafe_file_identity"
-    return identity, stat.S_IMODE(metadata.st_mode), None
+        return (
+            identity,
+            stat.S_IMODE(metadata.st_mode),
+            None,
+            "unsafe_file_identity",
+        )
+    mode = stat.S_IMODE(metadata.st_mode)
+    freshness = _digest_payload(
+        "file-freshness",
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        mode,
+    )
+    return identity, mode, freshness, None
 
 
 def _derive_row_root(raw_file_path: object, raw_relative_path: object) -> str | None:
@@ -491,7 +629,7 @@ def snapshot_legacy_notes_sync(
             private_paths=private_paths,
         )
         roots.append(root)
-        identity, mode, file_reason = _probe_note_file(
+        identity, mode, freshness, file_reason = _probe_note_file(
             root.canonical_path,
             row[3],
             row[2],
@@ -508,6 +646,7 @@ def snapshot_legacy_notes_sync(
                 content_digest=row[5],
                 file_identity_digest=identity,
                 file_mode=mode,
+                file_freshness_digest=freshness,
                 file_reason_code=file_reason,
             )
         )
@@ -536,8 +675,24 @@ def snapshot_legacy_notes_sync(
         "notes": [[_json_value(value) for value in row] for row in note_rows],
         "sessions": [[_json_value(value) for value in row] for row in session_rows],
         "root_admission": [
-            [item.source_kind, item.source_id, item.canonical_path, item.reason_code]
+            [
+                item.source_kind,
+                item.source_id,
+                item.canonical_path,
+                item.root_identity_digest,
+                item.ancestor_identity_digests,
+                item.reason_code,
+            ]
             for item in roots
+        ],
+        "file_probe": [
+            [
+                item.file_identity_digest,
+                item.file_mode,
+                item.file_freshness_digest,
+                item.file_reason_code,
+            ]
+            for item in notes
         ],
     }
     source_fingerprint = hashlib.sha256(
@@ -556,10 +711,6 @@ def snapshot_legacy_notes_sync(
         policy_values=policy_values,
         policy_issues=tuple(dict.fromkeys(policy_issues)),
     )
-
-
-def _overlap(left: Path, right: Path) -> bool:
-    return left == right or left in right.parents or right in left.parents
 
 
 def _bounded_report(
@@ -594,33 +745,52 @@ def plan_legacy_notes_sync_migration(
         if evidence.reason_code is not None:
             report.append(LegacyMigrationReportEntry(evidence.reason_code))
             continue
-        if evidence.canonical_path is not None:
-            grouped.setdefault(evidence.canonical_path, []).append(evidence)
+        if (
+            evidence.canonical_path is not None
+            and evidence.root_identity_digest is not None
+        ):
+            grouped.setdefault(evidence.root_identity_digest, []).append(evidence)
 
     overlapping: set[str] = set()
-    canonical_paths = sorted(grouped)
-    for index, left_value in enumerate(canonical_paths):
-        left = Path(left_value)
-        for right_value in canonical_paths[index + 1 :]:
-            right = Path(right_value)
-            if _overlap(left, right):
-                overlapping.update({left_value, right_value})
+    identities = sorted(grouped)
+    canonical_by_identity = {
+        identity: min(
+            item.canonical_path for item in evidence if item.canonical_path is not None
+        )
+        for identity, evidence in grouped.items()
+    }
+    ancestors_by_identity = {
+        identity: {
+            ancestor for item in evidence for ancestor in item.ancestor_identity_digests
+        }
+        for identity, evidence in grouped.items()
+    }
+    for index, left_identity in enumerate(identities):
+        for right_identity in identities[index + 1 :]:
+            if (
+                left_identity in ancestors_by_identity[right_identity]
+                or right_identity in ancestors_by_identity[left_identity]
+            ):
+                overlapping.update({left_identity, right_identity})
 
     roots: list[NotesSyncRootRecord] = []
     root_ids: dict[str, str] = {}
-    for canonical_path in canonical_paths:
-        root_id = _opaque_id("root", snapshot.note_scope_id, canonical_path)
-        if canonical_path in overlapping:
+    for root_identity in identities:
+        canonical_path = canonical_by_identity[root_identity]
+        root_id = _opaque_id("root", snapshot.note_scope_id, root_identity)
+        if root_identity in overlapping:
             report.append(LegacyMigrationReportEntry("root_overlap", root_id=root_id))
             continue
-        sources = {item.source_kind for item in grouped[canonical_path]}
+        sources = {item.source_kind for item in grouped[root_identity]}
         reason = (
             f"{next(iter(sources))}_only_root"
             if len(sources) == 1
             else "multiple_legacy_sources"
         )
         report.append(LegacyMigrationReportEntry(reason, root_id=root_id))
-        root_ids[canonical_path] = root_id
+        for evidence in grouped[root_identity]:
+            assert evidence.canonical_path is not None
+            root_ids[evidence.canonical_path] = root_id
         roots.append(
             NotesSyncRootRecord(
                 root_id=root_id,
@@ -683,6 +853,7 @@ def plan_legacy_notes_sync_migration(
                     binding_id=binding_id,
                 )
             )
+            continue
         prepared.append(
             (
                 note,
@@ -795,7 +966,7 @@ def persist_legacy_notes_sync_migration(
                 (plan.source_fingerprint,),
             ).fetchone()
             if exists is not None:
-                return LegacyNotesSyncMigrationResult(True, 0, 0)
+                return LegacyNotesSyncMigrationResult(True, 0, 0, plan.report)
             eligible_root_ids: set[str] = set()
             for root in plan.roots:
                 existing_root = connection.execute(
@@ -909,6 +1080,7 @@ def persist_legacy_notes_sync_migration(
         already_migrated=False,
         root_count=root_count,
         binding_count=binding_count,
+        report=plan.report,
     )
 
 
@@ -933,12 +1105,13 @@ def authorize_legacy_candidate_activation(
     if dry_run.root_id != root_id or fresh_observations.root_id != root_id:
         raise ValueError("candidate_root_mismatch")
     assert_review_current(dry_run, fresh_observations)
+    if dry_run != plan_reconciliation(fresh_observations):
+        raise ValueError("dry_run_plan_mismatch")
     if (
         fresh_observations.observation_generation
         != fresh_observations.expected_generation
         or not fresh_observations.root_available
         or fresh_observations.root_overlap
-        or not fresh_observations.write_capable
         or dry_run.skips
         or dry_run.attention
         or dry_run.deletion_groups

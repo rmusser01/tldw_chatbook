@@ -23,9 +23,12 @@ from tldw_chatbook.Notes.notes_sync_models import (
     NotesSyncRootState,
 )
 from tldw_chatbook.Notes.notes_sync_reconciler import (
+    BindingObservation,
     ReconciliationInput,
+    ReconciliationPlan,
     plan_reconciliation,
 )
+from tldw_chatbook.Utils.sensitive_paths import resolve_sensitive_context
 
 
 _LEGACY_SCHEMA = """
@@ -555,7 +558,7 @@ def test_report_is_bounded_and_marks_truncation(tmp_path: Path) -> None:
 
     assert len(plan.report) == LEGACY_MIGRATION_REPORT_LIMIT
     assert plan.report[-1].reason_code == "migration_report_truncated"
-    assert len(plan.bindings) == LEGACY_MIGRATION_REPORT_LIMIT + 5
+    assert plan.bindings == ()
     connection.close()
 
 
@@ -599,6 +602,10 @@ def test_persist_is_one_private_transaction_idempotent_and_inert(
     assert second.already_migrated is True
     assert second.root_count == 0
     assert second.binding_count == 0
+    assert first.report == plan.report
+    assert second.report == plan.report
+    assert len(repr(first)) < 160
+    assert not any(item.reason_code in repr(first) for item in first.report)
     counts = _private_counts(store)
     assert counts == {
         "notes_sync_roots": 1,
@@ -771,3 +778,254 @@ def test_fresh_task_19005_dry_run_and_explicit_activation_are_both_required(
     assert "path" not in repr(authorization).lower()
     assert authorization.observation_token not in repr(authorization)
     legacy.close()
+
+
+def test_activation_recomputes_the_exact_fresh_plan_body() -> None:
+    fresh = ReconciliationInput(
+        root_id="root-1",
+        direction=NotesSyncDirection.BIDIRECTIONAL,
+        bindings=(
+            BindingObservation(
+                binding_id="binding-1",
+                note_scope_id="local",
+                note_id="note-1",
+                baseline_file_digest="a" * 64,
+                baseline_note_digest="b" * 64,
+                baseline_identity_digest="c" * 64,
+                baseline_relative_path="note.md",
+                file_digest="d" * 64,
+                note_digest="e" * 64,
+                file_identity_digest="c" * 64,
+                relative_path="note.md",
+                note_version=1,
+            ),
+        ),
+        observation_generation=1,
+        expected_generation=1,
+    )
+    actual = plan_reconciliation(fresh)
+    forged = ReconciliationPlan(
+        root_id=fresh.root_id,
+        observation_token=actual.observation_token,
+        safe_actions=(),
+        attention=(),
+        skips=(),
+        managed_placement_effects=(),
+        deletion_groups=(),
+    )
+
+    with pytest.raises(ValueError, match="dry_run_plan_mismatch"):
+        authorize_legacy_candidate_activation(
+            fresh.root_id,
+            dry_run=forged,
+            fresh_observations=fresh,
+            explicitly_approved=True,
+        )
+
+
+def test_folder_to_notes_activation_accepts_read_only_filesystem() -> None:
+    fresh = ReconciliationInput(
+        root_id="root-read-only",
+        direction=NotesSyncDirection.FOLDER_TO_NOTES,
+        bindings=(),
+        observation_generation=1,
+        expected_generation=1,
+        write_capable=False,
+    )
+    reviewed = plan_reconciliation(fresh)
+
+    authorization = authorize_legacy_candidate_activation(
+        fresh.root_id,
+        dry_run=reviewed,
+        fresh_observations=fresh,
+        explicitly_approved=True,
+    )
+
+    assert authorization.direction is NotesSyncDirection.FOLDER_TO_NOTES
+
+
+def test_file_path_canonical_alias_is_recognized_as_root_descendant(
+    tmp_path: Path,
+) -> None:
+    connection = _legacy_connection(tmp_path)
+    root = tmp_path / "root"
+    root.mkdir()
+    note_file = root / "note.md"
+    note_file.write_bytes(b"note")
+    canonical = note_file.resolve()
+    canonical_text = str(canonical)
+    if not canonical_text.startswith("/private/var/"):
+        pytest.skip("host has no /var to /private/var canonical alias")
+    lexical_alias = Path(canonical_text.removeprefix("/private"))
+    assert lexical_alias.samefile(canonical)
+    _add_note(
+        connection,
+        note_id="note-1",
+        root=root,
+        relative_path="note.md",
+        file_path=lexical_alias,
+    )
+
+    _snapshot, plan = _snapshot_and_plan(connection, {"notes": {}})
+
+    assert len(plan.bindings) == 1
+    assert "file_out_of_root" not in {item.reason_code for item in plan.report}
+    connection.close()
+
+
+def test_case_aliases_of_one_physical_root_collapse_to_one_candidate(
+    tmp_path: Path,
+) -> None:
+    connection = _legacy_connection(tmp_path)
+    root = tmp_path / "MixedCase"
+    root.mkdir()
+    alias = tmp_path / "mixedcase"
+    if not alias.exists():
+        pytest.skip("filesystem is case-sensitive")
+    _add_session(connection, session_id="first", root=root)
+    _add_session(connection, session_id="second", root=alias)
+
+    _snapshot, plan = _snapshot_and_plan(connection, {"notes": {}})
+
+    assert len(plan.roots) == 1
+    assert "root_overlap" not in {item.reason_code for item in plan.report}
+    connection.close()
+
+
+def test_case_alias_ancestor_descendant_roots_are_rejected_as_overlap(
+    tmp_path: Path,
+) -> None:
+    connection = _legacy_connection(tmp_path)
+    parent = tmp_path / "MixedCase"
+    child = parent / "child"
+    child.mkdir(parents=True)
+    alias = tmp_path / "mixedcase"
+    if not alias.exists():
+        pytest.skip("filesystem is case-sensitive")
+    _add_session(connection, session_id="parent", root=alias)
+    _add_session(connection, session_id="child", root=child)
+
+    _snapshot, plan = _snapshot_and_plan(connection, {"notes": {}})
+
+    assert plan.roots == ()
+    assert [item.reason_code for item in plan.report].count("root_overlap") == 2
+    connection.close()
+
+
+def test_existing_file_case_alias_is_recognized_by_filesystem_identity(
+    tmp_path: Path,
+) -> None:
+    connection = _legacy_connection(tmp_path)
+    root = tmp_path / "root"
+    root.mkdir()
+    note_file = root / "MixedCase.md"
+    note_file.write_bytes(b"note")
+    alias = root / "mixedcase.md"
+    if not alias.exists():
+        pytest.skip("filesystem is case-sensitive")
+    _add_note(
+        connection,
+        note_id="note-1",
+        root=root,
+        relative_path=note_file.name,
+        file_path=alias,
+    )
+
+    _snapshot, plan = _snapshot_and_plan(connection, {"notes": {}})
+
+    assert len(plan.bindings) == 1
+    assert "file_out_of_root" not in {item.reason_code for item in plan.report}
+    connection.close()
+
+
+def test_descendant_directory_symlink_is_unsafe_legacy_evidence(
+    tmp_path: Path,
+) -> None:
+    connection = _legacy_connection(tmp_path)
+    root = tmp_path / "root"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    outside_file = outside / "note.md"
+    outside_file.write_bytes(b"outside")
+    (root / "linked").symlink_to(outside, target_is_directory=True)
+    _add_note(
+        connection,
+        note_id="note-1",
+        root=root,
+        relative_path="linked/note.md",
+        file_path=root / "linked" / "note.md",
+    )
+
+    _snapshot, plan = _snapshot_and_plan(connection, {"notes": {}})
+
+    assert plan.bindings == ()
+    assert "unsafe_file_identity" in {item.reason_code for item in plan.report}
+    connection.close()
+
+
+def test_actual_application_private_root_is_rejected_by_default(
+    tmp_path: Path,
+) -> None:
+    connection = _legacy_connection(tmp_path)
+    private_root = resolve_sensitive_context().user_data_dir
+    assert private_root.is_dir()
+
+    _snapshot, plan = _snapshot_and_plan(connection, _settings(private_root))
+
+    assert plan.roots == ()
+    assert "private_path_overlap" in {item.reason_code for item in plan.report}
+    connection.close()
+
+
+def test_source_fingerprint_covers_file_presence_and_identity(
+    tmp_path: Path,
+) -> None:
+    connection = _legacy_connection(tmp_path)
+    root = tmp_path / "root"
+    root.mkdir()
+    note_file = root / "note.md"
+    _add_note(
+        connection,
+        note_id="note-1",
+        root=root,
+        relative_path="note.md",
+        file_path=note_file,
+    )
+
+    missing = snapshot_legacy_notes_sync(
+        connection,
+        {"notes": {}},
+        note_scope_id="local",
+    )
+    note_file.write_bytes(b"now present")
+    present = snapshot_legacy_notes_sync(
+        connection,
+        {"notes": {}},
+        note_scope_id="local",
+    )
+
+    assert missing.source_fingerprint != present.source_fingerprint
+    connection.close()
+
+
+def test_missing_file_is_report_only_without_fabricated_binding(
+    tmp_path: Path,
+) -> None:
+    connection = _legacy_connection(tmp_path)
+    root = tmp_path / "root"
+    root.mkdir()
+    missing = root / "missing.md"
+    _add_note(
+        connection,
+        note_id="note-1",
+        root=root,
+        relative_path="missing.md",
+        file_path=missing,
+    )
+
+    _snapshot, plan = _snapshot_and_plan(connection, {"notes": {}})
+
+    assert plan.bindings == ()
+    assert "file_missing" in {item.reason_code for item in plan.report}
+    connection.close()
