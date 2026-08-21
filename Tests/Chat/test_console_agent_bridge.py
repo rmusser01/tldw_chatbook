@@ -1295,19 +1295,17 @@ def test_qwencloud_terminal_usage_reaches_agent_native_budget_without_fallback(
 # 11,065) are still what `_usage_total_tokens` reports and still what the
 # provider billed in RAW tokens; they were just never what the run cost.
 #
-# Note what the gateway's normalization does to the third bucket: it folds
-# `cache_creation_input_tokens` into `prompt_tokens` and reports only
-# `cached_tokens` separately, so a cache WRITE arrives indistinguishable
-# from uncached input and is weighted at 1.0x instead of its real 1.25x
-# rate. For a budget that is UNDER-counting (the permissive direction): a
-# write-heavy run consumes less budget than it truly costs and can overshoot
-# the user's spend ceiling by ~25% of its write portion. Accepted here as a
-# known gap in the gateway's normalization, filed as TASK-18607; this test
-# asserts the accounting the normalization currently makes possible, which
-# is why the 111-token case simply adds 111.
+# The third bucket (TASK-18607): the gateway's normalization still folds
+# `cache_creation_input_tokens` into `prompt_tokens` -- readers of the flat
+# sum are unchanged -- but now ALSO preserves it as
+# `prompt_tokens_details.cache_creation_tokens`, so the budget prices a
+# cache WRITE at its real published rate (3.75 vs 3.0 per mtok on
+# claude-sonnet-4-6 -- 1.25x) instead of 1.0x, matching the
+# Anthropic-native path. The 111-token case therefore adds
+# ceil(111 * 1.25) worth of budget, not 111.
 @pytest.mark.parametrize(
     ("cache_creation_input_tokens", "expected_total"),
-    [(0, 4_964), (111, 5_075)],
+    [(0, 4_964), (111, 5_103)],
     ids=("cache-read", "cache-read-and-creation"),
 )
 def test_anthropic_split_usage_reaches_agent_budget_with_cache_buckets(
@@ -1379,14 +1377,18 @@ def test_anthropic_split_usage_reaches_agent_budget_with_cache_buckets(
     assert outcome.final_text == "answer"
     assert outcome.total_tokens == expected_total
     assert estimator_calls == []
+    expected_details: dict = {"cached_tokens": 6_656}
+    if cache_creation_input_tokens:
+        expected_details["cache_creation_tokens"] = cache_creation_input_tokens
     assert captured_usage == [
         {
             "prompt_tokens": 3_571 + 6_656 + cache_creation_input_tokens,
-            "prompt_tokens_details": {"cached_tokens": 6_656},
+            "prompt_tokens_details": expected_details,
             "completion_tokens": 727,
             # Still the RAW total the provider billed in tokens -- this
-            # asserts the gateway's normalization, which TASK-18603 did not
-            # change. Only what the BUDGET counts it as changed.
+            # asserts the gateway's normalization: TASK-18607 adds the
+            # write bucket to the DETAILS only; the flat sums are
+            # unchanged. Only what the BUDGET counts it as changed.
             "total_tokens": 3_571 + 6_656 + cache_creation_input_tokens + 727,
         }
     ]
@@ -1503,6 +1505,36 @@ def test_openai_usage_handoff_preserves_chat_completion_cache_details():
         "completion_tokens": 20,
         "total_tokens": 120,
     }
+
+
+def test_normalized_usage_round_trips_cache_write_bucket():
+    # TASK-18607 AC#3/#4: normalization must preserve Anthropic's write
+    # bucket so the native and normalized shapes account identically, while
+    # the flat `prompt_tokens` sum -- what the cost ticker and persistence
+    # read -- keeps the full billed total.
+    from tldw_chatbook.Chat.provider_usage import ProviderUsage
+
+    native = {
+        "input_tokens": 3_571,
+        "cache_read_input_tokens": 6_656,
+        "cache_creation_input_tokens": 111,
+        "output_tokens": 727,
+    }
+    normalized = _openai_usage_from_provider_call(
+        native, provider="anthropic", model="claude-sonnet-4-6"
+    )
+    assert normalized["prompt_tokens"] == 3_571 + 6_656 + 111
+    assert normalized["prompt_tokens_details"] == {
+        "cached_tokens": 6_656,
+        "cache_creation_tokens": 111,
+    }
+    direct = ProviderUsage.from_provider_payload(
+        native, provider="anthropic", model="claude-sonnet-4-6"
+    )
+    round_tripped = ProviderUsage.from_provider_payload(
+        normalized, provider="anthropic", model="claude-sonnet-4-6"
+    )
+    assert round_tripped == direct
 
 
 @pytest.mark.parametrize(

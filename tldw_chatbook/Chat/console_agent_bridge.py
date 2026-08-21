@@ -1472,6 +1472,10 @@ _BUDGET_USAGE_DETAILS_KEYS = (
 )
 _BUDGET_USAGE_DETAIL_COUNT_KEYS = (
     "cached_tokens",
+    # TASK-18607: our own normalized-output extension carrying Anthropic's
+    # cache-write bucket; validated here so a persisted normalized usage
+    # block re-entering this path gets the same strictness as the rest.
+    "cache_creation_tokens",
     "reasoning_tokens",
     "audio_tokens",
     "text_tokens",
@@ -1542,6 +1546,11 @@ def _openai_usage_from_provider_call(
     )
     if "cached_tokens" in normalized_prompt_details or normalized.cache_read:
         normalized_prompt_details["cached_tokens"] = normalized.cache_read
+    # TASK-18607: preserve the cache WRITE bucket (folded into prompt_tokens
+    # like everything else) so `ProviderUsage` can re-split it and the run
+    # budget prices writes at their real rate on the normalized path.
+    if "cache_creation_tokens" in normalized_prompt_details or normalized.cache_write:
+        normalized_prompt_details["cache_creation_tokens"] = normalized.cache_write
     if normalized_prompt_details:
         usage["prompt_tokens_details"] = normalized_prompt_details
     completion_details = payload.get(
