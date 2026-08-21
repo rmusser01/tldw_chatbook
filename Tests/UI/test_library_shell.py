@@ -102,6 +102,7 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_DISABLED_ACTION_MARKER,
     LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP,
+    LIBRARY_ROW_BROWSE_COLLECTIONS,
     LIBRARY_ROW_BROWSE_CONVERSATIONS,
     LIBRARY_ROW_BROWSE_MEDIA,
     LIBRARY_ROW_BROWSE_NOTES,
@@ -1494,6 +1495,210 @@ async def test_library_onboarding_new_generation_revokes_back_to_starter() -> No
             assert screen._library_onboarding_all_empty is False
             assert screen._library_onboarding_status is LibraryEvidenceStatus.LOADING
             gates.release_round(1)
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+async def test_library_starter_deep_link_opens_hidden_collection_or_note_route() -> None:
+    """Production deep links bypass compact-rail presentation filtering."""
+    gates = _LibraryEvidenceGates()
+    app = _new_library_onboarding_app(gates)
+    app.app_config["_first_run"] = False
+    app.app_config["library"]["rail_state"]["lifecycle"] = "starter"
+    screen = LibraryScreen(app)
+    screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_MODE: "collections"})
+    host = LibraryHarness(app, screen=screen)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            await _wait_for_evidence_round(pilot, gates)
+            assert screen._library_lifecycle is LibraryLifecycle.STARTER
+            assert (
+                screen._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
+            )
+            assert screen.query_one("#library-collections-panel")
+            assert not screen.query(
+                f"#library-row-{LIBRARY_ROW_BROWSE_COLLECTIONS}"
+            )
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+async def test_library_starter_pending_nav_context_opens_ingest_without_explore() -> (
+    None
+):
+    """Pending ingest context lands on its hidden route before first mount."""
+    gates = _LibraryEvidenceGates()
+    app = _new_library_onboarding_app(gates)
+    app.app_config["_first_run"] = False
+    app.app_config["library"]["rail_state"]["lifecycle"] = "starter"
+    screen = LibraryScreen(app)
+    screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_INGEST: True})
+    host = LibraryHarness(app, screen=screen)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            await _wait_for_evidence_round(pilot, gates)
+            assert screen._library_lifecycle is LibraryLifecycle.STARTER
+            assert screen._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA
+            assert screen.query_one("#library-ingest-canvas", LibraryIngestCanvas)
+            assert not screen.query(f"#library-row-{LIBRARY_ROW_BROWSE_SKILLS}")
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+async def test_library_lifecycle_explore_persists_without_changing_sections(
+    monkeypatch,
+) -> None:
+    """Explore expands once, keeps section preferences, and focuses search."""
+    writes = []
+    monkeypatch.setattr(
+        library_screen_module,
+        "save_setting_to_cli_config",
+        lambda *args: (writes.append(args), True)[1],
+    )
+    gates = _LibraryEvidenceGates()
+    app = _new_library_onboarding_app(gates)
+    app.app_config["_first_run"] = False
+    sections = {
+        "browse_open": False,
+        "create_open": True,
+        "study_open": False,
+        "ingest_open": True,
+        "details_open": True,
+    }
+    app.app_config["library"]["rail_state"] = {
+        "lifecycle": "starter",
+        "sections": dict(sections),
+    }
+    screen = LibraryScreen(app)
+    host = LibraryHarness(app, screen=screen)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            await _wait_for_evidence_round(pilot, gates)
+            await _wait_for_worker_group_to_drain(
+                host, pilot, screen, "library_source_snapshot"
+            )
+            recompose = screen.recompose
+            recompose_calls = 0
+
+            async def counted_recompose():
+                nonlocal recompose_calls
+                recompose_calls += 1
+                return await recompose()
+
+            monkeypatch.setattr(screen, "recompose", counted_recompose)
+            await pilot.click("#library-rail-explore-all")
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen._library_lifecycle is LibraryLifecycle.EXPANDED
+                    and bool(screen.query("#library-search-input"))
+                ),
+                message="Explore did not reveal the full Library rail",
+            )
+            await _wait_for_worker_group_to_drain(
+                host, pilot, screen, "library_lifecycle_persistence"
+            )
+
+            assert recompose_calls == 1
+            assert app.app_config["library"]["rail_state"]["sections"] == sections
+            assert writes[-1] == (
+                "library.rail_state",
+                "lifecycle",
+                "expanded",
+            )
+            assert screen.query_one("#library-search-input", Input).has_focus
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+async def test_library_onboarding_back_requires_fresh_empty_evidence_and_focuses_import(
+    monkeypatch,
+) -> None:
+    """Back is one guarded transition from empty Expanded to Starter."""
+    writes = []
+    monkeypatch.setattr(
+        library_screen_module,
+        "save_setting_to_cli_config",
+        lambda *args: (writes.append(args), True)[1],
+    )
+    gates = _LibraryEvidenceGates()
+    app = _new_library_onboarding_app(gates)
+    app.app_config["_first_run"] = False
+    app.app_config["library"]["rail_state"]["lifecycle"] = "expanded"
+    screen = LibraryScreen(app)
+    host = LibraryHarness(app, screen=screen)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            await _wait_for_evidence_round(pilot, gates)
+            assert not screen.query("#library-rail-back-to-starter")
+            gates.release_round(0)
+            await _wait_for_condition(
+                pilot,
+                lambda: bool(screen.query("#library-rail-back-to-starter")),
+                message="fresh empty evidence did not expose Back",
+            )
+            recompose = screen.recompose
+            recompose_calls = 0
+
+            async def counted_recompose():
+                nonlocal recompose_calls
+                recompose_calls += 1
+                return await recompose()
+
+            monkeypatch.setattr(screen, "recompose", counted_recompose)
+            screen.query_one("#library-rail-back-to-starter", Button).press()
+            await pilot.pause()
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_lifecycle is LibraryLifecycle.STARTER,
+                message="Back did not restore Starter",
+            )
+            await _wait_for_worker_group_to_drain(
+                host, pilot, screen, "library_lifecycle_persistence"
+            )
+
+            assert recompose_calls == 1
+            assert writes[-1] == (
+                "library.rail_state",
+                "lifecycle",
+                "starter",
+            )
+            assert screen.query_one(
+                f"#library-row-{LIBRARY_ROW_INGEST_MEDIA}", Button
+            ).has_focus
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+async def test_library_onboarding_graduated_never_offers_back_to_starter() -> None:
+    """Sticky graduation denies Back even when a later read is all empty."""
+    gates = _LibraryEvidenceGates()
+    app = _new_library_onboarding_app(gates)
+    app.app_config["_first_run"] = False
+    app.app_config["library"]["rail_state"]["lifecycle"] = "graduated"
+    screen = LibraryScreen(app)
+    host = LibraryHarness(app, screen=screen)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            await _wait_for_evidence_round(pilot, gates)
+            gates.release_round(0)
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_onboarding_all_empty,
+                message="empty evidence did not settle",
+            )
+            assert screen._library_lifecycle is LibraryLifecycle.GRADUATED
+            assert not screen.query("#library-rail-back-to-starter")
     finally:
         gates.release_all()
 

@@ -298,6 +298,8 @@ from ...Library.library_rail_state import (
     aggregate_library_lifecycle,
     coerce_library_lifecycle,
     coerce_library_rail_preferences,
+    explore_library_lifecycle,
+    return_library_lifecycle_to_starter,
     serialize_library_rail_preferences,
 )
 from ...Library.library_shell_state import (
@@ -7506,6 +7508,8 @@ class LibraryScreen(BaseAppScreen):
                 shell,
                 self._library_rail_preferences(),
                 query=self._library_rag_query,
+                lifecycle=self._library_lifecycle,
+                onboarding_all_empty=self._library_onboarding_all_empty,
             )
             header_renderable = header.renderable
             header_text = getattr(header_renderable, "plain", str(header_renderable))
@@ -7639,6 +7643,8 @@ class LibraryScreen(BaseAppScreen):
                 shell,
                 self._library_rail_preferences(),
                 query=self._library_rag_query,
+                lifecycle=self._library_lifecycle,
+                onboarding_all_empty=self._library_onboarding_all_empty,
             )
             header_renderable = header.renderable
             header_text = getattr(header_renderable, "plain", str(header_renderable))
@@ -9446,6 +9452,8 @@ class LibraryScreen(BaseAppScreen):
                 search_placeholder=self._library_rail_search_placeholder(),
                 workspaces_body_factory=self._compose_workspaces_rail_body,
                 top_action_factory=self._compose_library_rail_top_action,
+                lifecycle=self._library_lifecycle,
+                onboarding_all_empty=self._library_onboarding_all_empty,
                 id="library-rail",
                 classes="destination-workbench-pane",
             )
@@ -15226,6 +15234,11 @@ class LibraryScreen(BaseAppScreen):
             or admission_key != self._library_onboarding_admission_key()
         ):
             return
+        previous_lifecycle = self._library_lifecycle
+        previous_back_admitted = (
+            previous_lifecycle is LibraryLifecycle.EXPANDED
+            and self._library_onboarding_all_empty
+        )
         if LibraryContentEvidence.HAS_USER_CONTENT in evidence:
             self._library_onboarding_all_empty = False
             self._library_onboarding_status = LibraryEvidenceStatus.SETTLED
@@ -15242,6 +15255,15 @@ class LibraryScreen(BaseAppScreen):
             self._library_onboarding_all_empty = False
             self._library_onboarding_status = LibraryEvidenceStatus.PARTIAL_FAILURE
         self._sync_library_onboarding_status_copy()
+        current_back_admitted = (
+            self._library_lifecycle is LibraryLifecycle.EXPANDED
+            and self._library_onboarding_all_empty
+        )
+        if self.is_mounted and (
+            self._library_lifecycle is not previous_lifecycle
+            or current_back_admitted != previous_back_admitted
+        ):
+            self.refresh(recompose=True)
 
     def _mirror_library_lifecycle(self, lifecycle: LibraryLifecycle) -> None:
         app_config = self.app_instance.app_config
@@ -15524,6 +15546,48 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         self._set_library_rail_collapsed(False)
 
+    def _focus_library_rail_action(self, selector: str) -> None:
+        """Focus a preferred rail action, falling back to its first row."""
+        try:
+            target = self.query_one(selector)
+        except (NoMatches, QueryError):
+            target = next(iter(self.query(".library-rail-row")), None)
+        if target is not None:
+            self.set_focus(target, scroll_visible=False)
+            self.call_after_refresh(target.focus)
+
+    @on(Button.Pressed, "#library-rail-explore-all")
+    async def _explore_library_rail(self, event: Button.Pressed) -> None:
+        """Persist full disclosure, recompose once, and focus the full rail."""
+        event.stop()
+        lifecycle = explore_library_lifecycle(self._library_lifecycle)
+        if lifecycle is self._library_lifecycle:
+            return
+        self._set_library_lifecycle(lifecycle)
+        await self.recompose()
+        self._focus_library_rail_action("#library-search-input")
+
+    @on(Button.Pressed, "#library-rail-back-to-starter")
+    async def _return_library_rail_to_starter(self, event: Button.Pressed) -> None:
+        """Return an authoritatively empty expanded Library to Starter."""
+        event.stop()
+        if (
+            self._library_lifecycle is not LibraryLifecycle.EXPANDED
+            or self._library_onboarding_all_empty is not True
+        ):
+            return
+        lifecycle = return_library_lifecycle_to_starter(
+            self._library_lifecycle,
+            (LibraryContentEvidence.EMPTY,) * 6,
+        )
+        if lifecycle is not LibraryLifecycle.STARTER:
+            return
+        self._set_library_lifecycle(lifecycle)
+        await self.recompose()
+        self._focus_library_rail_action(
+            f"#library-row-{LIBRARY_ROW_INGEST_MEDIA}"
+        )
+
     @on(Button.Pressed, "#library-ingest-top-button")
     async def _on_library_ingest_top_button(self, event: Button.Pressed) -> None:
         """Jump from the rail-top Ingest button to the Ingest media canvas."""
@@ -15741,7 +15805,11 @@ class LibraryScreen(BaseAppScreen):
                         exc_info=True,
                     )
             header.update(shell.header_line)
-            rail.apply_selection(shell)
+            rail.apply_selection(
+                shell,
+                lifecycle=self._library_lifecycle,
+                onboarding_all_empty=self._library_onboarding_all_empty,
+            )
             # Hide the outgoing subtree before detaching it. Textual's
             # compositor may still hold the previous geometry for one frame;
             # without this guard a removed TextArea can be asked to render

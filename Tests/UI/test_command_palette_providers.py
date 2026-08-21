@@ -339,6 +339,45 @@ class TestTabNavigationProvider:
         assert any("Library — Skills" in text for text in tab_texts)
 
     @pytest.mark.asyncio
+    async def test_palette_library_skills_command_opens_hidden_starter_route(
+        self,
+        tab_provider,
+    ):
+        """The Skills palette command bypasses Starter rail filtering."""
+        from Tests.UI.app_factory import _build_test_app
+        from tldw_chatbook.Library.library_rail_state import LibraryLifecycle
+        from tldw_chatbook.Library.library_shell_state import (
+            LIBRARY_ROW_BROWSE_SKILLS,
+        )
+        from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+        hits = []
+        async for hit in tab_provider.search("Library — Skills"):
+            hits.append(hit)
+        command = next(
+            hit
+            for hit in hits
+            if hit.text == "Tab Navigation: Library — Skills"
+        )
+
+        command.command()
+        message = tab_provider.app.post_message.call_args.args[0]
+        assert message.screen_name == "skills"
+
+        app = _build_test_app()
+        app.app_config["_first_run"] = False
+        app.app_config.setdefault("library", {}).setdefault("rail_state", {})[
+            "lifecycle"
+        ] = "starter"
+        screen = LibraryScreen(app)
+        screen.apply_navigation_context(
+            TldwCli._LEGACY_ROUTE_LIBRARY_NAV_CONTEXT[message.screen_name]
+        )
+
+        assert screen._library_lifecycle is LibraryLifecycle.STARTER
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
+
+    @pytest.mark.asyncio
     async def test_search_uses_destination_labels_without_duplicates(
         self, tab_provider
     ):
