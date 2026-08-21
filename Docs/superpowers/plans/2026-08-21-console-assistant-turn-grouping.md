@@ -127,8 +127,12 @@ def classify_activity_status(
         return "failed"
     if kind != STEP_TOOL_RESULT:
         return "done"
-    if tool_outcome in {"success", "failed", "blocked"}:
-        return tool_outcome
+    if tool_outcome == "success":
+        return "success"
+    if tool_outcome == "failed":
+        return "failed"
+    if tool_outcome == "blocked":
+        return "blocked"
     # Compatibility floor for old/malformed persisted step dictionaries.
     text = str(result if result is not None else "")
     if _is_direct_controller_block(text):
