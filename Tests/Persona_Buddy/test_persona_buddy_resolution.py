@@ -28,6 +28,7 @@ from tldw_chatbook.Persona_Buddy.controller import (
     load_local_persona_portrait,
 )
 from tldw_chatbook.Persona_Buddy.preferences import (
+    PersonaBuddyGeometry,
     PersonaBuddyPreferences,
     PersonaBuddySelection,
 )
@@ -1008,6 +1009,141 @@ async def test_superseded_preference_commit_reconciles_persisted_and_live_state(
     assert result.selection == reconciled.selection
     assert result.enabled == reconciled.enabled
     assert controller.snapshot().selection == reconciled.selection
+    await controller.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_preference_patch_is_immediate_before_slow_persistence() -> None:
+    entered = threading.Event()
+    release = threading.Event()
+
+    def writer(_preferences: PersonaBuddyPreferences) -> bool:
+        entered.set()
+        release.wait(2)
+        return True
+
+    controller = PersonaBuddyController(
+        preferences=PersonaBuddyPreferences(open=True),
+        preference_writer=writer,
+    )
+    revision = controller.apply_preferences_patch(open=False)
+    operation = asyncio.create_task(
+        controller.persist_preferences_revision(revision)
+    )
+
+    assert controller.current_preferences().open is False
+    assert await asyncio.to_thread(entered.wait, 2)
+    assert controller.current_preferences().open is False
+    release.set()
+    await operation
+    await controller.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_stale_geometry_persistence_cannot_resurrect_blocked_close() -> None:
+    entered = threading.Event()
+    release = threading.Event()
+    persisted: list[PersonaBuddyPreferences] = []
+
+    def writer(preferences: PersonaBuddyPreferences) -> bool:
+        if not persisted:
+            entered.set()
+            release.wait(2)
+        persisted.append(preferences)
+        return True
+
+    initial = PersonaBuddyPreferences(
+        enabled=True,
+        selection=PersonaBuddySelection("local", "persona-local-1"),
+    )
+    controller = PersonaBuddyController(
+        preferences=initial,
+        preference_writer=writer,
+    )
+    close_revision = controller.apply_preferences_patch(open=False)
+    close = asyncio.create_task(
+        controller.persist_preferences_revision(close_revision)
+    )
+    assert await asyncio.to_thread(entered.wait, 2)
+
+    moved = PersonaBuddyGeometry(x=3, y=4, width=24, height=10)
+    geometry_revision = controller.apply_preferences_patch(geometry=moved)
+    geometry = asyncio.create_task(
+        controller.persist_preferences_revision(geometry_revision)
+    )
+    assert controller.current_preferences().open is False
+    assert controller.current_preferences().geometry == moved
+
+    release.set()
+    await asyncio.gather(close, geometry)
+
+    assert len(persisted) == 2
+    assert persisted[-1].open is False
+    assert persisted[-1].geometry == moved
+    assert controller.current_preferences() == persisted[-1]
+    await controller.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_failed_patch_write_reports_failure_without_rolling_back_intent() -> None:
+    persisted: list[PersonaBuddyPreferences] = []
+
+    def writer(preferences: PersonaBuddyPreferences) -> bool:
+        persisted.append(preferences)
+        return False
+
+    controller = PersonaBuddyController(
+        preferences=PersonaBuddyPreferences(open=True),
+        preference_writer=writer,
+    )
+    revision = controller.apply_preferences_patch(open=False)
+
+    result = await controller.persist_preferences_revision(revision)
+
+    assert result is False
+    assert persisted == [controller.current_preferences()]
+    assert controller.current_preferences().open is False
+    await controller.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_patch_write_drains_without_resurrecting_newer_fields() -> None:
+    entered = threading.Event()
+    release = threading.Event()
+    persisted: list[PersonaBuddyPreferences] = []
+
+    def writer(preferences: PersonaBuddyPreferences) -> bool:
+        if not persisted:
+            entered.set()
+            release.wait(2)
+        persisted.append(preferences)
+        return True
+
+    controller = PersonaBuddyController(
+        preferences=PersonaBuddyPreferences(open=True),
+        preference_writer=writer,
+    )
+    close_revision = controller.apply_preferences_patch(open=False)
+    close = asyncio.create_task(controller.persist_preferences_revision(close_revision))
+    assert await asyncio.to_thread(entered.wait, 2)
+    close.cancel()
+
+    moved = PersonaBuddyGeometry(x=6, y=2, width=25, height=9)
+    geometry_revision = controller.apply_preferences_patch(geometry=moved)
+    geometry = asyncio.create_task(
+        controller.persist_preferences_revision(geometry_revision)
+    )
+    assert not geometry.done()
+    assert controller.current_preferences().open is False
+    assert controller.current_preferences().geometry == moved
+
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await close
+    assert await geometry is True
+    assert persisted[-1] == controller.current_preferences()
+    assert persisted[-1].open is False
+    assert persisted[-1].geometry == moved
     await controller.shutdown()
 
 

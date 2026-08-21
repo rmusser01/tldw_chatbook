@@ -7,6 +7,9 @@ from dataclasses import replace
 import threading
 
 import pytest
+from textual.app import ComposeResult
+from textual.screen import ModalScreen
+from textual.widgets import Static
 
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from tldw_chatbook.Persona_Buddy import (
@@ -35,6 +38,11 @@ async def _wait_until(predicate, *, timeout: float = 2.0) -> None:
 class _BuddyScreen(BaseAppScreen):
     def __init__(self, app_instance, name: str = "buddy-test") -> None:
         super().__init__(app_instance, name)
+
+
+class _BuddyModal(ModalScreen[None]):
+    def compose(self) -> ComposeResult:
+        yield Static("Buddy modal", id="buddy-modal")
 
 
 class _BuddyApp(ConsolidatedCSSApp):
@@ -403,6 +411,8 @@ async def test_app_owned_preference_write_drains_once_before_new_owner_starts():
 
         replacement = _BuddyScreen(app, "replacement")
         await app.switch_screen(replacement)
+        app.persona_buddy_controller.apply_preferences_patch(open=True)
+        await replacement.reconcile_persona_buddy_view()
         await _wait_until(lambda: len(list(replacement.query(PersonaBuddyWidget))) == 1)
         replacement.query_one(PersonaBuddyWidget).action_move_left()
         await asyncio.sleep(0.1)
@@ -411,3 +421,113 @@ async def test_app_owned_preference_write_drains_once_before_new_owner_starts():
 
         release.set()
         await _wait_until(lambda: calls == 2)
+
+
+@pytest.mark.asyncio
+async def test_modal_dismiss_reconciles_same_screen_and_restarts_resolution():
+    app = _BuddyApp(_enabled_preferences())
+    controller = app.persona_buddy_controller
+    calls = 0
+
+    async def counted_resolution(*, cols: int, lines: int):
+        nonlocal calls
+        calls += 1
+        return None
+
+    controller.resolve_current_visual = counted_resolution
+    async with app.run_test(size=(100, 30)):
+        await _wait_until(lambda: calls == 1)
+        screen = app.screen
+        view = screen.query_one(PersonaBuddyWidget)
+
+        await app.push_screen(_BuddyModal())
+        await _wait_until(lambda: view._resolution_worker.is_finished)
+        controller.invalidate_profile()
+        app.pop_screen()
+
+        await _wait_until(lambda: calls == 2)
+        assert app.screen is screen
+        assert screen.query_one(PersonaBuddyWidget) is view
+
+
+@pytest.mark.asyncio
+async def test_modal_dismiss_replays_close_and_removes_same_screen_view():
+    app = _BuddyApp(_enabled_preferences())
+    async with app.run_test(size=(100, 30)):
+        screen = app.screen
+        await _wait_until(lambda: len(list(screen.query(PersonaBuddyWidget))) == 1)
+        await app.push_screen(_BuddyModal())
+        current = app.persona_buddy_controller.current_preferences()
+        await app.persona_buddy_controller.update_preferences(
+            replace(current, open=False)
+        )
+
+        app.pop_screen()
+
+        await _wait_until(lambda: not list(screen.query(PersonaBuddyWidget)))
+        assert app.screen is screen
+
+
+@pytest.mark.asyncio
+async def test_modal_dismiss_replays_collapsed_then_disabled_preferences():
+    app = _BuddyApp(_enabled_preferences())
+    async with app.run_test(size=(100, 30)):
+        screen = app.screen
+        view = screen.query_one(PersonaBuddyWidget)
+        await app.push_screen(_BuddyModal())
+        current = app.persona_buddy_controller.current_preferences()
+        await app.persona_buddy_controller.update_preferences(
+            replace(current, collapsed=True)
+        )
+
+        app.pop_screen()
+        await _wait_until(lambda: view.has_class("persona-buddy-collapsed"))
+        assert screen.query_one(PersonaBuddyWidget) is view
+
+        await app.push_screen(_BuddyModal())
+        current = app.persona_buddy_controller.current_preferences()
+        await app.persona_buddy_controller.update_preferences(
+            replace(current, enabled=False)
+        )
+
+        app.pop_screen()
+        await _wait_until(lambda: not list(screen.query(PersonaBuddyWidget)))
+        assert app.screen is screen
+
+
+@pytest.mark.asyncio
+async def test_blocked_close_and_stale_geometry_merge_immediately_and_durably():
+    app = _BuddyApp(_enabled_preferences())
+    entered = threading.Event()
+    release = threading.Event()
+    persisted: list[PersonaBuddyPreferences] = []
+
+    def blocked_writer(preferences: PersonaBuddyPreferences) -> bool:
+        if not persisted:
+            entered.set()
+            release.wait(timeout=2)
+        persisted.append(preferences)
+        return True
+
+    app.persona_buddy_controller._preference_writer = blocked_writer
+    async with app.run_test(size=(100, 30)):
+        view = app.screen.query_one(PersonaBuddyWidget)
+        before = view._clamped_geometry(
+            app.persona_buddy_controller.current_preferences().geometry
+        )
+
+        view.action_close()
+        assert app.persona_buddy_controller.current_preferences().open is False
+        await _wait_until(entered.is_set)
+        view.action_move_left()
+
+        current = app.persona_buddy_controller.current_preferences()
+        assert current.open is False
+        assert current.geometry.x == max(0, before.x - 1)
+        release.set()
+        await _wait_until(lambda: len(persisted) == 2)
+
+        final = app.persona_buddy_controller.current_preferences()
+        assert persisted[-1] == final
+        assert final.open is False
+        assert final.geometry == current.geometry

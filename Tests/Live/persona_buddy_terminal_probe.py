@@ -31,11 +31,15 @@ _CHECK_NAMES = (
     "close",
     "focus",
     "modal_hit_testing",
+    "modal_resume",
+    "modal_close_replay",
     "navigation",
     "viewport_clamp",
+    "compact_controls",
     "capture_release",
     "paint",
     "geometry_restore",
+    "graceful_exit",
 )
 
 
@@ -138,6 +142,8 @@ def _child(preferences_path: Path, report_path: Path) -> int:
         BINDINGS = [
             Binding("escape", "close_probe_modal", "Close", priority=True),
             Binding("d", "close_probe_modal", "Close", priority=True),
+            Binding("r", "resume_probe_buddy", "Resume Buddy", priority=True),
+            Binding("x", "close_probe_buddy", "Close Buddy", priority=True),
         ]
 
         def compose(self) -> ComposeResult:
@@ -162,6 +168,22 @@ def _child(preferences_path: Path, report_path: Path) -> int:
         def action_close_probe_modal(self) -> None:
             self.dismiss()
 
+        def action_resume_probe_buddy(self) -> None:
+            self.app.persona_buddy_controller.invalidate_profile()
+            self.dismiss()
+
+        def action_close_probe_buddy(self) -> None:
+            controller = self.app.persona_buddy_controller
+            revision = controller.apply_preferences_patch(open=False)
+            self.app.run_worker(
+                controller.persist_preferences_revision(revision),
+                group="persona-buddy-preferences",
+            )
+            self.dismiss()
+
+        def on_unmount(self) -> None:
+            self.app.modal_ready = False
+
     css_dir = Path(build_css.__file__).parent
     screen_scoped, screen_self = build_css.screen_css_paths(css_dir)
 
@@ -185,7 +207,10 @@ def _child(preferences_path: Path, report_path: Path) -> int:
                 preference_writer=write_preferences,
             )
 
+            self.resolution_calls = 0
+
             async def keep_probe_visual_unknown(*, cols: int, lines: int):
+                self.resolution_calls += 1
                 return None
 
             self.persona_buddy_controller.resolve_current_visual = (
@@ -197,6 +222,7 @@ def _child(preferences_path: Path, report_path: Path) -> int:
             self.focus_guard_observed = False
             self.modal_timer_fired = False
             self.modal_ready = False
+            self.graceful_exit_requested = False
 
         def _get_default_css(self):  # noqa: D102 - mirrors production CSS loading
             return (
@@ -213,6 +239,10 @@ def _child(preferences_path: Path, report_path: Path) -> int:
             asyncio.get_running_loop().add_signal_handler(
                 signal.SIGUSR1,
                 self._write_probe_report,
+            )
+            asyncio.get_running_loop().add_signal_handler(
+                signal.SIGUSR2,
+                self.action_probe_finish,
             )
             self.call_after_refresh(self._capture_focus_guard)
             self.set_interval(0.10, self._write_probe_report)
@@ -245,7 +275,9 @@ def _child(preferences_path: Path, report_path: Path) -> int:
             await self.reconcile_persona_buddy_view()
 
         def action_probe_finish(self) -> None:
+            self.graceful_exit_requested = True
             self._write_probe_report()
+            self.exit()
 
         def _write_probe_report(self) -> None:
             screen = next(
@@ -266,10 +298,12 @@ def _child(preferences_path: Path, report_path: Path) -> int:
                 ):
                     control = buddy.query_one(f"#{control_id}")
                     controls[control_id] = {
+                        "display": control.display,
                         "x": control.region.x,
                         "y": control.region.y,
                         "width": control.region.width,
                         "height": control.region.height,
+                        "label": str(getattr(control, "label", "")),
                     }
             modal_surfaces = list(self.screen.query(ModalHitSurface))
             modal_region = modal_surfaces[0].region if modal_surfaces else None
@@ -309,6 +343,12 @@ def _child(preferences_path: Path, report_path: Path) -> int:
                 "modal_ready": self.modal_ready,
                 "navigation_count": self.navigation_count,
                 "open": preferences_now.open,
+                "resolution_calls": self.resolution_calls,
+                "compact": bool(
+                    buddy is not None
+                    and buddy.has_class("persona-buddy-compact")
+                ),
+                "graceful_exit_requested": self.graceful_exit_requested,
                 "painted": "Buddy"
                 in "\n".join(
                     strip.text for strip in screen._compositor.render_strips()
@@ -460,9 +500,13 @@ def _run_child(
             "fold": False,
             "reopen": False,
             "close": False,
+            "modal_resume": False,
+            "modal_close_replay": False,
             "navigation_view": False,
             "paint": initial["painted"],
             "viewport_clamp": False,
+            "compact_controls": False,
+            "graceful_exit": False,
         }
         if drive:
             drag_x, drag_y = _center(initial["controls"]["persona-buddy-drag-handle"])
@@ -537,7 +581,47 @@ def _run_child(
             if process.poll() is not None:
                 raise RuntimeError(close_output.decode("utf-8", errors="replace"))
             os.write(master, b"o")
-            _drain_for(master, 0.60)
+            reopened_view = wait_for_report(
+                lambda payload: payload["open"] and payload["view_present"]
+            )
+
+            resume_calls = reopened_view["resolution_calls"]
+            os.write(master, b"m")
+            wait_for_report(
+                lambda payload: (
+                    payload["modal_ready"] and payload["modal_region"] is not None
+                )
+            )
+            os.write(master, b"r")
+            resumed = wait_for_report(
+                lambda payload: (
+                    not payload["modal_ready"]
+                    and payload["view_present"]
+                    and payload["resolution_calls"] > resume_calls
+                )
+            )
+            observed["modal_resume"] = resumed["open"]
+
+            os.write(master, b"m")
+            wait_for_report(
+                lambda payload: (
+                    payload["modal_ready"] and payload["modal_region"] is not None
+                )
+            )
+            os.write(master, b"x")
+            modal_closed = wait_for_report(
+                lambda payload: (
+                    not payload["modal_ready"]
+                    and not payload["open"]
+                    and not payload["view_present"]
+                )
+            )
+            observed["modal_close_replay"] = not modal_closed["view_present"]
+
+            os.write(master, b"o")
+            wait_for_report(
+                lambda payload: payload["open"] and payload["view_present"]
+            )
 
             os.write(master, b"m")
             modal_report = wait_for_report(
@@ -548,17 +632,55 @@ def _run_child(
             modal_region = modal_report["modal_region"]
             modal_col = modal_region["x"] + max(1, modal_region["width"] // 2)
             modal_row = modal_region["y"] + max(1, modal_region["height"] // 2)
-            _send_mouse(master, 0, modal_col, modal_row)
-            _drain_for(master, 0.10)
-            _send_mouse(master, 0, modal_col, modal_row, release=True)
-            _drain_for(master, 0.55)
-            navigated = json.loads(report.read_text(encoding="utf-8"))
+            navigated = modal_report
+            for attempt in range(2):
+                _send_mouse(master, 0, modal_col, modal_row)
+                _drain_for(master, 0.10)
+                _send_mouse(master, 0, modal_col, modal_row, release=True)
+                try:
+                    navigated = wait_for_report(
+                        lambda payload: (
+                            payload["modal_hits"] >= 1
+                            and payload["navigation_count"] == 1
+                            and payload["view_present"]
+                        ),
+                        timeout=0.8,
+                    )
+                    break
+                except RuntimeError:
+                    if attempt == 1:
+                        raise
             observed["navigation_view"] = navigated["view_present"]
-            _set_size(master, 60, 18)
+            _set_size(master, 18, 6)
             process.send_signal(signal.SIGWINCH)
-            _drain_for(master, 0.55)
-            resized = json.loads(report.read_text(encoding="utf-8"))
-            observed["viewport_clamp"] = resized["viewport_clamped"]
+            compact_dual = wait_for_report(
+                lambda payload: (
+                    payload["compact"]
+                    and payload["viewport_clamped"]
+                    and payload["controls"]["persona-buddy-collapse"]["display"]
+                    and payload["controls"]["persona-buddy-close"]["display"]
+                    and payload["controls"]["persona-buddy-collapse"]["label"]
+                    == "Buddy"
+                    and payload["controls"]["persona-buddy-close"]["label"]
+                    == "Close"
+                )
+            )
+            _set_size(master, 10, 2)
+            process.send_signal(signal.SIGWINCH)
+            compact_minimal = wait_for_report(
+                lambda payload: (
+                    payload["compact"]
+                    and payload["viewport_clamped"]
+                    and payload["controls"]["persona-buddy-collapse"]["display"]
+                    and payload["controls"]["persona-buddy-collapse"]["label"]
+                    == "Buddy"
+                    and not payload["controls"]["persona-buddy-close"]["display"]
+                )
+            )
+            observed["viewport_clamp"] = compact_minimal["viewport_clamped"]
+            observed["compact_controls"] = bool(
+                compact_dual["compact"] and compact_minimal["compact"]
+            )
         else:
             _drain_for(master, 0.30)
         deadline = time.monotonic() + _TIMEOUT_SECONDS
@@ -574,12 +696,16 @@ def _run_child(
                 captured.extend(os.read(master, 65536))
             tail = bytes(captured[-6000:]).decode("utf-8", errors="replace")
             raise RuntimeError(f"persona_buddy_terminal_child_failed\n{tail}")
+        process.send_signal(signal.SIGUSR2)
+        _drain_for(master, 0.20)
+        process.wait(timeout=2)
         payload = json.loads(report.read_text(encoding="utf-8"))
+        observed["graceful_exit"] = bool(
+            process.returncode == 0
+            and payload["graceful_exit_requested"]
+        )
         payload["initial_region"] = initial["region"]
         payload["observed"] = observed
-        if process.poll() is None:
-            process.terminate()
-            process.wait(timeout=2)
         return payload
     except Exception as error:
         captured = bytearray()
@@ -660,15 +786,22 @@ def _parent(
                 "close": first["observed"]["close"],
                 "focus": first["focus_guard"],
                 "modal_hit_testing": first["modal_hits"] >= 1,
+                "modal_resume": first["observed"]["modal_resume"],
+                "modal_close_replay": first["observed"]["modal_close_replay"],
                 "navigation": (
                     first["navigation_count"] == 1
                     and first["screen_generation"] >= 1
                     and first["observed"]["navigation_view"]
                 ),
                 "viewport_clamp": first["observed"]["viewport_clamp"],
+                "compact_controls": first["observed"]["compact_controls"],
                 "capture_release": first["capture_released"],
                 "paint": first["observed"]["paint"],
                 "geometry_restore": second["loaded_geometry"] == first["geometry"],
+                "graceful_exit": (
+                    first["observed"]["graceful_exit"]
+                    and second["observed"]["graceful_exit"]
+                ),
             }
             result = {"checks": checks, "first": first, "second": second}
             if report_output is not None:

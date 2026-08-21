@@ -369,6 +369,11 @@ class BaseAppScreen(Screen):
         logger.info(f"Screen {self.screen_name} mounted")
         self.call_after_refresh(self._schedule_persona_buddy_reconcile)
 
+    def on_screen_resume(self) -> None:
+        """Replay app-owned Buddy state after this screen is uncovered."""
+
+        self.call_after_refresh(self._schedule_persona_buddy_reconcile)
+
     def on_unmount(self) -> None:
         """Called when the screen is unmounted."""
         self._persona_buddy_view_generation += 1
@@ -423,7 +428,7 @@ class BaseAppScreen(Screen):
         if not self.is_attached:
             return
         self.run_worker(
-            self.reconcile_persona_buddy_view(),
+            self.reconcile_persona_buddy_view,
             group="persona-buddy-view-reconcile",
             exclusive=True,
         )
@@ -468,6 +473,7 @@ class BaseAppScreen(Screen):
 
             if current is not None:
                 current.refresh_from_controller()
+                current.resume_resolution()
                 return False
 
             self._persona_buddy_view_generation += 1

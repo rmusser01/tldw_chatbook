@@ -7,6 +7,7 @@ import inspect
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
+from functools import partial
 from typing import Any
 
 from textual import events
@@ -29,9 +30,12 @@ _DEFAULT_WIDTH = 28
 _DEFAULT_HEIGHT = 12
 _MIN_WIDTH = 18
 _MIN_HEIGHT = 6
-_COMPACT_HEIGHT = 3
+_FULL_CONTENT_HEIGHT = 8
+_OPERABLE_WIDTH = 10
+_DUAL_CONTROL_WIDTH = 14
+_COLLAPSED_HEIGHT = 3
+_COMPACT_HEIGHT = 1
 _POLL_SECONDS = 0.10
-_FRAME_SECONDS = 0.01
 
 
 class PersonaBuddyWidget(Widget, can_focus=True):
@@ -117,34 +121,57 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         text-align: center;
     }
 
-    PersonaBuddyWidget.persona-buddy-collapsed,
-    PersonaBuddyWidget.persona-buddy-compact {
+    PersonaBuddyWidget.persona-buddy-collapsed {
         height: 3;
         padding: 0;
+    }
+
+    PersonaBuddyWidget.persona-buddy-compact {
+        height: 1;
+        padding: 0;
+        border: none;
     }
 
     PersonaBuddyWidget.persona-buddy-collapsed #persona-buddy-frame,
     PersonaBuddyWidget.persona-buddy-collapsed #persona-buddy-status,
     PersonaBuddyWidget.persona-buddy-collapsed #persona-buddy-hints,
-    PersonaBuddyWidget.persona-buddy-compact #persona-buddy-frame,
-    PersonaBuddyWidget.persona-buddy-compact #persona-buddy-status,
-    PersonaBuddyWidget.persona-buddy-compact #persona-buddy-hints,
     PersonaBuddyWidget.persona-buddy-collapsed #persona-buddy-close,
-    PersonaBuddyWidget.persona-buddy-compact #persona-buddy-close,
-    PersonaBuddyWidget.persona-buddy-collapsed #persona-buddy-drag-handle,
-    PersonaBuddyWidget.persona-buddy-compact #persona-buddy-drag-handle {
+    PersonaBuddyWidget.persona-buddy-collapsed #persona-buddy-drag-handle {
         display: none;
     }
 
     PersonaBuddyWidget.persona-buddy-collapsed #persona-buddy-header,
-    PersonaBuddyWidget.persona-buddy-compact #persona-buddy-header,
-    PersonaBuddyWidget.persona-buddy-collapsed #persona-buddy-collapse,
-    PersonaBuddyWidget.persona-buddy-compact #persona-buddy-collapse {
+    PersonaBuddyWidget.persona-buddy-collapsed #persona-buddy-collapse {
         height: 1;
         width: 100%;
         padding: 0;
         content-align: center middle;
         text-align: center;
+    }
+
+    PersonaBuddyWidget.persona-buddy-compact #persona-buddy-frame,
+    PersonaBuddyWidget.persona-buddy-compact #persona-buddy-status,
+    PersonaBuddyWidget.persona-buddy-compact #persona-buddy-hints,
+    PersonaBuddyWidget.persona-buddy-compact #persona-buddy-drag-handle {
+        display: none;
+    }
+
+    PersonaBuddyWidget.persona-buddy-compact #persona-buddy-header,
+    PersonaBuddyWidget.persona-buddy-compact .persona-buddy-control {
+        height: 1;
+        width: 1fr;
+        min-width: 5;
+        padding: 0;
+        content-align: center middle;
+        text-align: center;
+    }
+
+    PersonaBuddyWidget.persona-buddy-minimal #persona-buddy-close {
+        display: none;
+    }
+
+    PersonaBuddyWidget.persona-buddy-minimal #persona-buddy-collapse {
+        width: 100%;
     }
     """
 
@@ -171,12 +198,15 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         self._poll_timer: Timer | None = None
         self._frame_timer: Timer | None = None
         self._resolution_worker: Worker[None] | None = None
+        self._resolved_authority: tuple[object, ...] | None = None
+        self._requested_authority: tuple[object, ...] | None = None
         self._interaction: tuple[str, int, int, PersonaBuddyGeometry] | None = None
         self._next_frame_at = 0.0
+        self._frame_was_frozen = True
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="persona-buddy-header"):
-            yield Static("Buddy · drag", id="persona-buddy-drag-handle")
+            yield Static("Drag", id="persona-buddy-drag-handle")
             yield Button(
                 "Fold", id="persona-buddy-collapse", classes="persona-buddy-control"
             )
@@ -185,7 +215,7 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             )
         yield Static("Visual pending", id="persona-buddy-frame")
         yield Static("State: idle", id="persona-buddy-status")
-        yield Static("h/j/k/l move · Shift resize · 0 reset", id="persona-buddy-hints")
+        yield Static("hjkl move · HJKL size", id="persona-buddy-hints")
 
     def on_mount(self) -> None:
         """Start bounded snapshot and frame polling without changing focus."""
@@ -197,12 +227,6 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         self._poll_timer = self.set_interval(
             _POLL_SECONDS, self.refresh_from_controller
         )
-        self._frame_timer = self.set_interval(_FRAME_SECONDS, self.advance_frame)
-        self._resolution_worker = self.run_worker(
-            self._resolution_loop(),
-            group="persona-buddy-visual-resolution",
-            exclusive=True,
-        )
 
     def on_unmount(self) -> None:
         """Release capture and stop view-owned timers during any teardown path."""
@@ -211,10 +235,19 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         self.release_interaction_capture()
         if self._poll_timer is not None:
             self._poll_timer.stop()
-        if self._frame_timer is not None:
-            self._frame_timer.stop()
+        self._stop_frame_timer()
         if self._resolution_worker is not None:
             self._resolution_worker.cancel()
+
+    def resume_resolution(self) -> None:
+        """Restart resolution when a covering modal returns to this view."""
+
+        if not self._is_current_view():
+            return
+        worker = self._resolution_worker
+        if worker is not None and not worker.is_finished:
+            return
+        self.refresh_from_controller()
 
     def _is_current_view(self) -> bool:
         if not self.is_attached:
@@ -222,59 +255,111 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         return self._current_view(self) if self._current_view is not None else True
 
     async def _resolution_loop(self) -> None:
-        """Resolve one production visual at a time while this exact view is current."""
+        """Resolve only changed semantic authority while this view is current."""
 
         while self._is_current_view():
             snapshot = self._controller.snapshot()
-            if snapshot.enabled and snapshot.open and snapshot.selection is not None:
-                region = self.content_region
-                visual = await self._controller.resolve_current_visual(
-                    cols=max(1, region.width),
-                    lines=max(1, region.height),
+            authority = self._resolution_authority(snapshot)
+            if authority is None or authority == self._resolved_authority:
+                return
+            region = self.content_region
+            visual = await self._controller.resolve_current_visual(
+                cols=max(1, region.width),
+                lines=max(1, region.height),
+            )
+            if not self._is_current_view():
+                return
+            current_snapshot = self._controller.snapshot()
+            if self._resolution_authority(current_snapshot) != authority:
+                continue
+            self.refresh_from_controller(schedule_resolution=False)
+            self._resolved_authority = authority
+            current_visual = current_snapshot.visual
+            if (
+                visual is not None
+                and not visual.available
+                and current_visual is visual
+            ):
+                confirm = getattr(
+                    self.screen, "confirm_persona_buddy_unavailable", None
                 )
-                if not self._is_current_view():
-                    return
-                self.refresh_from_controller()
-                current_visual = self._controller.snapshot().visual
-                if (
-                    visual is not None
-                    and not visual.available
-                    and current_visual is visual
+                if not callable(confirm) or not confirm(
+                    view=self,
+                    controller=self._controller,
+                    snapshot=current_snapshot,
+                    visual=visual,
                 ):
-                    confirm = getattr(
-                        self.screen, "confirm_persona_buddy_unavailable", None
-                    )
-                    if not callable(confirm) or not confirm(
-                        view=self,
-                        controller=self._controller,
-                        snapshot=self._controller.snapshot(),
-                        visual=visual,
-                    ):
-                        await asyncio.sleep(_POLL_SECONDS)
-                        continue
-                    pending = self._reconcile()
-                    removed = False
-                    if inspect.isawaitable(pending):
-                        reconcile_worker = self.app.run_worker(
-                            pending,
-                            group="persona-buddy-unavailable-reconcile",
-                            exclusive=True,
-                        )
-                        removed = bool(await asyncio.shield(reconcile_worker.wait()))
-                    else:
-                        removed = bool(pending)
-                    if removed or not self._is_current_view():
-                        return
-                    current_snapshot = self._controller.snapshot()
-                    confirmed = getattr(
-                        self.screen, "is_persona_buddy_confirmed_unavailable", None
-                    )
-                    if callable(confirmed) and confirmed(
-                        self._controller, current_snapshot
-                    ):
-                        return
+                    self._resolved_authority = None
+                    await asyncio.sleep(_POLL_SECONDS)
                     continue
-            await asyncio.sleep(_POLL_SECONDS)
+                pending = self._reconcile()
+                removed = False
+                if inspect.isawaitable(pending):
+                    reconcile_worker = self.app.run_worker(
+                        pending,
+                        group="persona-buddy-unavailable-reconcile",
+                        exclusive=True,
+                    )
+                    removed = bool(await asyncio.shield(reconcile_worker.wait()))
+                else:
+                    removed = bool(pending)
+                if removed or not self._is_current_view():
+                    return
+                current_snapshot = self._controller.snapshot()
+                confirmed = getattr(
+                    self.screen, "is_persona_buddy_confirmed_unavailable", None
+                )
+                if callable(confirmed) and confirmed(
+                    self._controller, current_snapshot
+                ):
+                    return
+                self._resolved_authority = None
+                continue
+            return
+
+    def _resolution_authority(self, snapshot: Any) -> tuple[object, ...] | None:
+        """Return the full semantic/cache/viewport key for one costly resolve."""
+
+        region = self.content_region
+        if (
+            not snapshot.enabled
+            or not snapshot.open
+            or snapshot.selection is None
+            or region.width < 1
+            or region.height < 1
+        ):
+            return None
+        return (
+            id(self._controller),
+            snapshot.generation,
+            snapshot.selection,
+            snapshot.state,
+            snapshot.state_source,
+            snapshot.state_owner,
+            snapshot.preferences_generation,
+            snapshot.profile_generation,
+            snapshot.viewport_generation,
+            region.width,
+            region.height,
+        )
+
+    def _ensure_resolution(self, snapshot: Any) -> None:
+        authority = self._resolution_authority(snapshot)
+        if authority is None or authority == self._resolved_authority:
+            return
+        worker = self._resolution_worker
+        if (
+            worker is not None
+            and not worker.is_finished
+            and authority == self._requested_authority
+        ):
+            return
+        self._requested_authority = authority
+        self._resolution_worker = self.run_worker(
+            partial(self._resolution_loop),
+            group="persona-buddy-visual-resolution",
+            exclusive=True,
+        )
 
     def on_resize(self, _event: events.Resize) -> None:
         """Re-clamp geometry whenever the terminal viewport changes."""
@@ -287,7 +372,7 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             setter(snapshot.viewport_generation + 1)
         self._apply_geometry(self._working_preferences.geometry)
 
-    def refresh_from_controller(self) -> None:
+    def refresh_from_controller(self, *, schedule_resolution: bool = True) -> None:
         """Refresh paint/state from an immutable snapshot without touching focus."""
 
         if not self._is_current_view():
@@ -331,18 +416,25 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             ),
         )
         if visual_identity != self._visual_identity:
+            self._stop_frame_timer()
             self._visual_identity = visual_identity
             self.frame_index = 0
             self._next_frame_at = time.monotonic() + self._frame_duration_seconds()
+            self._frame_was_frozen = False
 
-        self.query_one("#persona-buddy-drag-handle", Static).update("Buddy · drag")
+        self.query_one("#persona-buddy-drag-handle", Static).update("Drag")
         self.query_one("#persona-buddy-status", Static).update(
             f"State: {snapshot.state.replace('_', ' ')}"
         )
         self._paint_frame()
+        self._sync_frame_timer()
+        if schedule_resolution:
+            self._ensure_resolution(snapshot)
 
     def advance_frame(self) -> None:
         """Advance animation only while a full visible animated view is painted."""
+
+        self._stop_frame_timer()
 
         snapshot = self._snapshot
         if (
@@ -351,6 +443,7 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             or snapshot.collapsed
             or self.has_class("persona-buddy-compact")
         ):
+            self._frame_was_frozen = True
             return
         visual = snapshot.visual
         frames = getattr(visual, "frames", ()) if visual is not None else ()
@@ -358,12 +451,49 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             return
         now = time.monotonic()
         if now < self._next_frame_at:
+            self._sync_frame_timer()
             return
         if self.frame_index == len(frames) - 1 and not getattr(visual, "loop", False):
             return
         self.frame_index = (self.frame_index + 1) % len(frames)
         self._next_frame_at = now + self._frame_duration_seconds()
         self._paint_frame()
+        self._sync_frame_timer()
+
+    def _stop_frame_timer(self) -> None:
+        timer = self._frame_timer
+        self._frame_timer = None
+        if timer is not None:
+            timer.stop()
+
+    def _sync_frame_timer(self) -> None:
+        snapshot = self._snapshot
+        visual = getattr(snapshot, "visual", None) if snapshot is not None else None
+        frames = getattr(visual, "frames", ()) if visual is not None else ()
+        active = bool(
+            self._is_current_view()
+            and self.display
+            and not snapshot.collapsed
+            and not self.has_class("persona-buddy-compact")
+            and getattr(visual, "animate", False)
+            and len(frames) > 1
+            and (
+                self.frame_index < len(frames) - 1
+                or getattr(visual, "loop", False)
+            )
+        )
+        if not active:
+            self._stop_frame_timer()
+            self._frame_was_frozen = True
+            return
+        if self._frame_timer is not None:
+            return
+        now = time.monotonic()
+        if self._frame_was_frozen:
+            self._next_frame_at = now + self._frame_duration_seconds()
+            self._frame_was_frozen = False
+        delay = max(0.001, self._next_frame_at - now)
+        self._frame_timer = self.set_timer(delay, self.advance_frame)
 
     def _frame_duration_seconds(self) -> float:
         visual = getattr(self._snapshot, "visual", None)
@@ -391,24 +521,46 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         target.update("Visual unavailable" if reason else "Visual pending")
 
     def _sync_compact_state(self, collapsed: bool) -> None:
-        size = self.screen.size
-        tiny = size.width < _MIN_WIDTH or size.height < _MIN_HEIGHT
-        self.set_class(tiny, "persona-buddy-compact")
-        self.set_class(collapsed and not tiny, "persona-buddy-collapsed")
+        compact = self._compact_for_geometry(self._working_preferences.geometry)
+        available_width = min(
+            self._working_preferences.geometry.width,
+            max(1, self.screen.size.width),
+        )
+        self.set_class(compact, "persona-buddy-compact")
+        self.set_class(
+            compact and available_width < _DUAL_CONTROL_WIDTH,
+            "persona-buddy-minimal",
+        )
+        self.set_class(collapsed and not compact, "persona-buddy-collapsed")
         collapse = self.query_one("#persona-buddy-collapse", Button)
-        collapse.label = "Buddy" if tiny else ("Open Buddy" if collapsed else "Fold")
+        collapse.label = (
+            "Buddy" if compact else ("Open Buddy" if collapsed else "Fold")
+        )
         self._apply_geometry(self._working_preferences.geometry)
+
+    def _compact_for_geometry(self, geometry: PersonaBuddyGeometry) -> bool:
+        viewport = self.screen.size
+        available_width = min(geometry.width, max(1, viewport.width))
+        available_height = min(geometry.height, max(1, viewport.height))
+        return (
+            available_width < _DEFAULT_WIDTH
+            or available_height < _FULL_CONTENT_HEIGHT
+        )
 
     def _clamped_geometry(self, geometry: PersonaBuddyGeometry) -> PersonaBuddyGeometry:
         viewport = self.screen.size
-        tiny = viewport.width < _MIN_WIDTH or viewport.height < _MIN_HEIGHT
-        if tiny:
-            width = max(1, viewport.width)
+        compact = self._compact_for_geometry(geometry)
+        if compact:
+            available_width = min(geometry.width, max(1, viewport.width))
+            width = min(
+                max(1, viewport.width),
+                max(min(_OPERABLE_WIDTH, max(1, viewport.width)), available_width),
+            )
             height = min(_COMPACT_HEIGHT, max(1, viewport.height))
         else:
             width = min(max(_MIN_WIDTH, geometry.width), viewport.width)
             if self._snapshot and self._snapshot.collapsed:
-                height = min(_COMPACT_HEIGHT, viewport.height)
+                height = min(_COLLAPSED_HEIGHT, viewport.height)
             else:
                 height = min(max(_MIN_HEIGHT, geometry.height), viewport.height)
         max_x = max(0, viewport.width - width)
@@ -508,7 +660,10 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             return
         self._interaction = None
         self.release_interaction_capture()
-        self._schedule_preferences(self._working_preferences, reconcile=False)
+        self._apply_and_schedule_preferences(
+            geometry=self._working_preferences.geometry,
+            reconcile=False,
+        )
         event.stop()
 
     def release_interaction_capture(self) -> None:
@@ -537,7 +692,7 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         clamped = self._clamped_geometry(candidate)
         self._working_preferences = replace(self._working_preferences, geometry=clamped)
         self._apply_geometry(clamped)
-        self._schedule_preferences(self._working_preferences, reconcile=False)
+        self._apply_and_schedule_preferences(geometry=clamped, reconcile=False)
 
     def action_move_left(self) -> None:
         self._geometry_action(dx=-1)
@@ -570,7 +725,7 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         clamped = self._clamped_geometry(geometry)
         self._working_preferences = replace(self._working_preferences, geometry=clamped)
         self._apply_geometry(clamped)
-        self._schedule_preferences(self._working_preferences, reconcile=False)
+        self._apply_and_schedule_preferences(geometry=clamped, reconcile=False)
 
     def action_toggle_collapse(self) -> None:
         if not self._is_current_view():
@@ -580,12 +735,17 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             collapsed=not self._working_preferences.collapsed,
         )
         self._working_preferences = preferences
-        self._schedule_preferences(preferences, reconcile=False)
+        self._apply_and_schedule_preferences(
+            collapsed=preferences.collapsed,
+            reconcile=False,
+        )
 
     def action_close(self) -> None:
         if not self._is_current_view():
             return
-        self._schedule_awaitable(self.close_and_persist())
+        preferences = replace(self._working_preferences, open=False)
+        self._working_preferences = preferences
+        self._apply_and_schedule_preferences(open=False, reconcile=True)
 
     async def close_and_persist(self) -> None:
         """Persist the explicit close and reconcile only this app's active screen."""
@@ -594,7 +754,8 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             return
         preferences = replace(self._working_preferences, open=False)
         self._working_preferences = preferences
-        await self._controller.update_preferences(preferences)
+        revision = self._controller.apply_preferences_patch(open=False)
+        await self._controller.persist_preferences_revision(revision)
         if not self._is_current_view():
             return
         pending = self._reconcile()
@@ -610,16 +771,15 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             self.action_close()
         event.stop()
 
-    def _schedule_preferences(
-        self,
-        preferences: PersonaBuddyPreferences,
-        *,
-        reconcile: bool,
+    def _apply_and_schedule_preferences(
+        self, *, reconcile: bool, **changes: object
     ) -> None:
+        """Publish an exact field patch now and persist its revision on the app."""
+
+        revision = self._controller.apply_preferences_patch(**changes)
+
         async def update() -> None:
-            if not self._is_current_view():
-                return
-            await self._controller.update_preferences(preferences)
+            await self._controller.persist_preferences_revision(revision)
             if not self._is_current_view():
                 return
             self.refresh_from_controller()

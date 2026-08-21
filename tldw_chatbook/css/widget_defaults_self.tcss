@@ -1324,34 +1324,57 @@
         text-align: center;
     }
 
-    PersonaBuddyWidget.persona-buddy-collapsed,
-    PersonaBuddyWidget.persona-buddy-compact {
+    PersonaBuddyWidget.persona-buddy-collapsed {
         height: 3;
         padding: 0;
+    }
+
+    PersonaBuddyWidget.persona-buddy-compact {
+        height: 1;
+        padding: 0;
+        border: none;
     }
 
     PersonaBuddyWidget.persona-buddy-collapsed #persona-buddy-frame,
     PersonaBuddyWidget.persona-buddy-collapsed #persona-buddy-status,
     PersonaBuddyWidget.persona-buddy-collapsed #persona-buddy-hints,
-    PersonaBuddyWidget.persona-buddy-compact #persona-buddy-frame,
-    PersonaBuddyWidget.persona-buddy-compact #persona-buddy-status,
-    PersonaBuddyWidget.persona-buddy-compact #persona-buddy-hints,
     PersonaBuddyWidget.persona-buddy-collapsed #persona-buddy-close,
-    PersonaBuddyWidget.persona-buddy-compact #persona-buddy-close,
-    PersonaBuddyWidget.persona-buddy-collapsed #persona-buddy-drag-handle,
-    PersonaBuddyWidget.persona-buddy-compact #persona-buddy-drag-handle {
+    PersonaBuddyWidget.persona-buddy-collapsed #persona-buddy-drag-handle {
         display: none;
     }
 
     PersonaBuddyWidget.persona-buddy-collapsed #persona-buddy-header,
-    PersonaBuddyWidget.persona-buddy-compact #persona-buddy-header,
-    PersonaBuddyWidget.persona-buddy-collapsed #persona-buddy-collapse,
-    PersonaBuddyWidget.persona-buddy-compact #persona-buddy-collapse {
+    PersonaBuddyWidget.persona-buddy-collapsed #persona-buddy-collapse {
         height: 1;
         width: 100%;
         padding: 0;
         content-align: center middle;
         text-align: center;
+    }
+
+    PersonaBuddyWidget.persona-buddy-compact #persona-buddy-frame,
+    PersonaBuddyWidget.persona-buddy-compact #persona-buddy-status,
+    PersonaBuddyWidget.persona-buddy-compact #persona-buddy-hints,
+    PersonaBuddyWidget.persona-buddy-compact #persona-buddy-drag-handle {
+        display: none;
+    }
+
+    PersonaBuddyWidget.persona-buddy-compact #persona-buddy-header,
+    PersonaBuddyWidget.persona-buddy-compact .persona-buddy-control {
+        height: 1;
+        width: 1fr;
+        min-width: 5;
+        padding: 0;
+        content-align: center middle;
+        text-align: center;
+    }
+
+    PersonaBuddyWidget.persona-buddy-minimal #persona-buddy-close {
+        display: none;
+    }
+
+    PersonaBuddyWidget.persona-buddy-minimal #persona-buddy-collapse {
+        width: 100%;
     }
 
 

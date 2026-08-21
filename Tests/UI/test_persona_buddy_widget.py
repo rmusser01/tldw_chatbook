@@ -89,7 +89,6 @@ class _FakeController:
         return self.preferences
 
     def snapshot(self) -> PersonaBuddySnapshot:
-        self.generation += 1
         return PersonaBuddySnapshot(
             generation=self.generation,
             selection=self.preferences.selection,
@@ -105,7 +104,18 @@ class _FakeController:
         self, preferences: PersonaBuddyPreferences
     ) -> PersonaBuddySnapshot:
         self.preferences = preferences
+        self.generation += 1
         self.persisted.append(preferences)
+        return self.snapshot()
+
+    def apply_preferences_patch(self, **changes: object) -> int:
+        self.preferences = replace(self.preferences, **changes)
+        self.generation += 1
+        return self.generation
+
+    async def persist_preferences_revision(self, revision: int):
+        assert revision <= self.generation
+        self.persisted.append(self.preferences)
         return self.snapshot()
 
     async def resolve_current_visual(self, *, cols: int, lines: int):
@@ -152,6 +162,16 @@ class _BlockingResolutionController(_FakeController):
 class _FreshEquivalentVisualController(_FakeController):
     async def resolve_current_visual(self, *, cols: int, lines: int):
         self.visual = replace(self.visual)
+        return self.visual
+
+
+class _CountingResolutionController(_FakeController):
+    def __init__(self) -> None:
+        super().__init__()
+        self.resolve_calls = 0
+
+    async def resolve_current_visual(self, *, cols: int, lines: int):
+        self.resolve_calls += 1
         return self.visual
 
 
@@ -289,6 +309,48 @@ async def test_tiny_viewport_uses_labelled_compact_control():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("viewport", "compact"),
+    [((28, 12), False), ((18, 6), True), ((12, 4), True), ((10, 2), True)],
+)
+async def test_exact_cell_layouts_keep_complete_labelled_controls(
+    viewport: tuple[int, int], compact: bool
+):
+    controller = _FakeController()
+    app = _BuddyApp(controller)
+    async with app.run_test(size=viewport):
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: buddy.region.width > 0 and buddy.region.height > 0)
+        assert buddy.has_class("persona-buddy-compact") is compact
+        assert buddy.region.right <= viewport[0]
+        assert buddy.region.bottom <= viewport[1]
+
+        text = _compositor_text(app.screen)
+        collapse = buddy.query_one("#persona-buddy-collapse", Button)
+        close = buddy.query_one("#persona-buddy-close", Button)
+        controls = (collapse, close) if viewport[0] >= 18 else (collapse,)
+        for control in controls:
+            assert control.display
+            assert control.region.width >= len(str(control.label))
+            assert buddy.region.contains_region(control.region)
+            target, _ = app.screen.get_widget_at(
+                control.region.x + control.region.width // 2,
+                control.region.y + control.region.height // 2,
+            )
+            assert target is control
+
+        if compact:
+            assert "Buddy" in text
+            assert close.display is (viewport[0] >= 18)
+            if close.display:
+                assert "Close" in text
+        else:
+            assert "Fold" in text
+            assert "Close" in text
+            assert "hjkl move · HJKL size" in text
+
+
+@pytest.mark.asyncio
 async def test_labelled_buttons_click_without_starting_drag_and_reopen_collapsed():
     controller = _FakeController()
     app = _BuddyApp(controller)
@@ -404,6 +466,44 @@ async def test_fresh_equivalent_snapshots_preserve_animation_deadline_and_progre
         await asyncio.sleep(0.25)
         assert buddy.frame_index == 1
         assert "POLL-B" in _compositor_text(app.screen)
+
+
+@pytest.mark.asyncio
+async def test_resolution_runs_once_until_semantic_authority_changes():
+    controller = _CountingResolutionController()
+    app = _BuddyApp(controller)
+    async with app.run_test(size=(80, 24)):
+        await _wait_until(lambda: controller.resolve_calls == 1)
+        await asyncio.sleep(0.62)
+        assert controller.resolve_calls == 1
+
+        controller.generation += 1
+        await _wait_until(lambda: controller.resolve_calls == 2, timeout=0.3)
+
+
+@pytest.mark.asyncio
+async def test_animation_uses_frame_deadline_one_shots_and_static_has_no_timer():
+    animated = _FakeController(
+        animate=True,
+        frames=("TIMER-A", "TIMER-B"),
+        durations=(180, 260),
+        loop=False,
+    )
+    app = _BuddyApp(animated)
+    async with app.run_test(size=(80, 24)):
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: buddy._frame_timer is not None)
+        assert buddy._frame_timer._repeat == 0
+        assert buddy._frame_timer._interval >= 0.17
+        await _wait_until(lambda: buddy.frame_index == 1, timeout=0.4)
+        assert buddy._frame_timer is None
+
+    static = _FakeController(animate=False, frames=("STATIC-A", "STATIC-B"))
+    static_app = _BuddyApp(static)
+    async with static_app.run_test(size=(80, 24)):
+        buddy = static_app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: "STATIC-A" in _compositor_text(static_app.screen))
+        assert buddy._frame_timer is None
 
 
 @pytest.mark.asyncio

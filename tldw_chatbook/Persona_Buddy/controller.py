@@ -412,6 +412,54 @@ class PersonaBuddyController:
         with self._lock:
             return self._preferences
 
+    def apply_preferences_patch(self, **changes: object) -> int:
+        """Apply selected immutable fields immediately and return their revision.
+
+        Persistence is deliberately separate: interactive views can publish the
+        user's latest intent synchronously, then let an app-owned worker drain the
+        blocking writer without carrying a stale whole-preference snapshot.
+        """
+
+        allowed = {"enabled", "selection", "open", "collapsed", "geometry"}
+        if not changes or not set(changes) <= allowed:
+            raise PersonaBuddyStateError()
+        with self._lock:
+            candidate = replace(self._preferences, **changes)
+            self._apply_preferences_locked(candidate)
+            return self._preferences_generation
+
+    async def persist_preferences_revision(self, revision: int) -> bool:
+        """Persist current merged preferences once for one applied revision.
+
+        A failed write leaves the immediate in-memory intent authoritative; it is
+        not rolled back over newer interaction fields. A later revision writes the
+        then-current merged snapshot and converges durable state.
+        """
+
+        if type(revision) is not int or revision < 0:
+            raise PersonaBuddyStateError()
+        if self._shutdown_requested:
+            raise RuntimeError("persona_buddy_shutdown")
+
+        async def serialized() -> bool:
+            async with self._operation_lock:
+                with self._lock:
+                    if revision > self._preferences_generation:
+                        raise PersonaBuddyStateError()
+                    candidate = self._preferences
+                write = await self._drain_owned(
+                    asyncio.to_thread(self._preference_writer, candidate),
+                    name="preferences:patch-write",
+                )
+                return write.completed and write.value is True
+
+        outcome = await self._drain_owned(
+            serialized(), name=f"preferences:revision:{revision}"
+        )
+        if outcome.cancellation is not None:
+            raise outcome.cancellation
+        return outcome.completed and outcome.value is True
+
     def select_local_persona(self, persona_id: str) -> int:
         """Explicitly replace the selected local Persona and return generation."""
 
