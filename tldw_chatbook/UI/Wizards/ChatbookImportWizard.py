@@ -498,6 +498,19 @@ class ImportOptionsStep(WizardStep):
 
     def compose(self) -> ComposeResult:
         """Compose import options UI."""
+        # The next step starts writing as soon as it is shown, so this is the
+        # last screen the user can still back out from -- state the real risk
+        # here (task-19550). This wizard used to offer a default-ON "Create
+        # backup" checkbox that took no backup at all; the honest replacement
+        # for a control we cannot honour is the plain fact.
+        yield Static(
+            "⚠ This import writes directly into your databases and cannot be "
+            "undone. The app takes no backup for you — copy your databases "
+            "first if you need to be able to go back.",
+            id="import-irreversible-warning",
+            classes="warning-text",
+        )
+
         with Container(classes="options-section"):
             yield Static("Execution Mode:", classes="section-title")
             yield RadioSet(
@@ -547,16 +560,6 @@ class ImportOptionsStep(WizardStep):
             yield Static(
                 "Keep original creation and modification dates",
                 classes="option-description",
-            )
-
-            yield Checkbox(
-                "Create backup",
-                value=True,
-                id="create-backup",
-                classes="checkbox-option",
-            )
-            yield Static(
-                "Backup current database before importing", classes="option-description"
             )
 
         # Tag handling
@@ -627,7 +630,6 @@ class ImportOptionsStep(WizardStep):
             "preserve_timestamps": self.query_one(
                 "#preserve-timestamps", Checkbox
             ).value,
-            "create_backup": self.query_one("#create-backup", Checkbox).value,
             "import_tags": self.query_one("#import-tags", Checkbox).value,
             "merge_tags": self.query_one("#merge-tags", Checkbox).value,
         }
@@ -661,9 +663,6 @@ class ImportProgressStep(WizardStep):
                     "⟳ Preparing import",
                     id="status-prepare",
                     classes="status-item active",
-                )
-                yield Static(
-                    "○ Creating backup", id="status-backup", classes="status-item"
                 )
                 yield Static(
                     "○ Importing conversations",
@@ -748,14 +747,9 @@ class ImportProgressStep(WizardStep):
             self._update_status("status-prepare", "active", "⟳ Preparing import...")
             self._update_progress(5)
 
-            # Create backup if requested
-            if options.get("create_backup", True):
-                self._update_status("status-backup", "active", "⟳ Creating backup...")
-                self._update_progress(10)
-                # TODO: Implement actual backup functionality
-                # For now, just mark as completed
-                self._update_status("status-backup", "completed", "✓ Created backup")
-                self._update_progress(15)
+            # No backup is taken here, and none is claimed: the import writes
+            # straight into the live databases with no rollback (task-19550).
+            # The options step states that plainly before the user confirms.
 
             if execution_mode == "server":
                 self._update_status(
