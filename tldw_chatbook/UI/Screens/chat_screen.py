@@ -17276,6 +17276,34 @@ class ChatScreen(BaseAppScreen):
             )
         return provider
 
+    def _console_change_review_workspace_roots(self) -> "tuple[str, ...] | None":
+        """The live workspace roots to hand the Review screen (TASK-16801 arc B).
+
+        Without these, `current` mode never appears for a fresh conversation
+        that has no recorded turns yet -- the screen's own candidate set is
+        otherwise just the distinct roots across snapshot rows, which is
+        empty until an agent run has actually written something. This reads
+        the SAME field `console_chat_controller.py` turns into `change_roots`
+        for the tracker (`resolve_turn_execution_context(...).workspace_roots`),
+        so `current` mode detects against exactly the root the next turn
+        would track.
+
+        Same degrade posture as `_console_change_review_provider` just
+        above: any missing collaborator or raised exception yields ``None``
+        rather than breaking the opener -- `ChangeReviewScreen` already
+        treats ``None`` as "no live roots" (its pre-existing default).
+        """
+        controller = self._console_chat_controller
+        if controller is None:
+            return None
+        try:
+            active = controller.store.active_session_id
+            if not active:
+                return None
+            return controller.resolve_turn_execution_context(active).workspace_roots
+        except Exception:  # noqa: BLE001 -- opener must degrade, not raise
+            return None
+
     def _open_change_review(
         self,
         run_id: str | None = None,
@@ -17312,6 +17340,12 @@ class ChatScreen(BaseAppScreen):
             ChangeReviewScreen,
         )
 
+        # TASK-16801 arc B (Task 9): the conversation's LIVE workspace
+        # roots -- see `_console_change_review_workspace_roots`'s docstring
+        # for why this matters (it is what makes `current` mode reachable
+        # from a fresh conversation with no recorded turns).
+        workspace_roots = self._console_change_review_workspace_roots()
+
         # initial_run_id/initial_path/initial_snapshot_id all ride the
         # constructor: a post-push select_turn/select_file call raced the
         # screen's own compose (NoMatches) -- caught by the opener wiring
@@ -17322,6 +17356,7 @@ class ChatScreen(BaseAppScreen):
                 initial_run_id=run_id,
                 initial_path=initial_path,
                 initial_snapshot_id=initial_snapshot_id,
+                workspace_roots=workspace_roots,
             ),
             callback=self._on_console_change_review_dismissed,
         )
