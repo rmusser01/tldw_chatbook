@@ -223,7 +223,7 @@ class MediaDatabase:
     Requires client_id on initialization. Includes schema versioning.
     """
 
-    _CURRENT_SCHEMA_VERSION = 6  # Define the version this code supports
+    _CURRENT_SCHEMA_VERSION = 7  # Define the version this code supports
     # task-261: idle window within which the per-call `SELECT 1` liveness
     # ping is skipped for a recently-used thread-local connection (see
     # `_get_thread_connection`).
@@ -261,6 +261,14 @@ class MediaDatabase:
             "function": "_apply_migration_v5_to_v6",
             "description": "Add chunk engine version stamp to UnvectorizedMediaChunks",
         },
+        6: {
+            "to_version": 7,
+            "function": "_apply_migration_v6_to_v7",
+            "description": (
+                "Rebuild ChunkingTemplates with uuid/tags/is_builtin/version/"
+                "deleted, convert rows, seed six server built-ins"
+            ),
+        },
     }
 
     _TRANSCRIPTION_PROVENANCE_MIGRATION_SQL = """
@@ -283,6 +291,173 @@ class MediaDatabase:
         ADD COLUMN chunk_engine_version TEXT DEFAULT NULL;
         UPDATE schema_version SET version = 6;
     """
+
+    # task-7 (chunking template parity, spec §5.2): v7 rebuilds
+    # ChunkingTemplates as a table REBUILD — the first in this file. SQLite
+    # cannot drop/rename columns portably at the versions in play, so the
+    # migration creates ChunkingTemplates_v7, converts rows into it from
+    # Python (see _apply_migration_v6_to_v7), then drops the old table,
+    # renames, and recreates the indices AND the update-timestamp trigger
+    # (a rebuild that forgets the trigger silently freezes updated_at).
+    # DDL is §5.2 verbatim: column names follow the SERVER (is_builtin, not
+    # is_system) and the partial unique index replaces the bare UNIQUE(name)
+    # so a soft-deleted row never blocks a re-add.
+    _CHUNKING_TEMPLATES_V7_CREATE_SQL = """
+        CREATE TABLE ChunkingTemplates_v7 (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            uuid TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL,
+            description TEXT,
+            template_json TEXT NOT NULL,
+            tags TEXT,
+            is_builtin BOOLEAN NOT NULL DEFAULT 0,
+            version INTEGER NOT NULL DEFAULT 1,
+            deleted BOOLEAN NOT NULL DEFAULT 0,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+    """
+
+    _CHUNKING_TEMPLATES_V7_CUTOVER_SQL = """
+        DROP TABLE ChunkingTemplates;
+        ALTER TABLE ChunkingTemplates_v7 RENAME TO ChunkingTemplates;
+
+        CREATE UNIQUE INDEX idx_chunking_templates_name_live
+            ON ChunkingTemplates(name) WHERE deleted = 0;
+        CREATE INDEX idx_chunking_templates_is_builtin
+            ON ChunkingTemplates(is_builtin);
+        CREATE INDEX idx_chunking_templates_deleted
+            ON ChunkingTemplates(deleted);
+
+        CREATE TRIGGER update_chunking_templates_timestamp
+        AFTER UPDATE ON ChunkingTemplates
+        BEGIN
+            UPDATE ChunkingTemplates SET updated_at = CURRENT_TIMESTAMP
+            WHERE id = NEW.id;
+        END;
+
+        UPDATE schema_version SET version = 7;
+    """
+
+    # The six server built-ins, lifted AS DATA from
+    # tldw_Server_API/app/core/Chunking/template_initialization.py:132-208
+    # (the "Strategy 3" hardcoded fallback that actually runs at this pin)
+    # at pin 385afa951922c8a9dc2002c675bb6cad65e4ac23 — provenance kept
+    # here so a future sync can diff them. These are data, not vendored
+    # code: they are NOT in the engine manifest and the sync script does
+    # not manage them. All six were executed against chatbook's engine
+    # before this seeding shipped (spec §5.5); seed validation runs at
+    # BUILD/TEST time (Tests/DB/test_media_db_schema_v7.py), never inside
+    # a user's migration — a validation failure at runtime would roll back
+    # the whole ADR-030 transaction.
+    _SERVER_BUILTIN_CHUNKING_TEMPLATES = [
+        # upstream template_initialization.py:133-149
+        {
+            "name": "academic_paper",
+            "description": "Template for processing academic papers",
+            "tags": ["academic", "research", "papers"],
+            "template": {
+                "name": "academic_paper",
+                "preprocessing": [
+                    {"operation": "normalize_whitespace", "config": {"max_line_breaks": 2}},
+                    {"operation": "extract_sections", "config": {"pattern": r"^#+\s+(.+)$"}},
+                ],
+                "chunking": {"method": "sentences", "config": {"max_size": 5, "overlap": 1}},
+                "postprocessing": [
+                    {"operation": "filter_empty", "config": {"min_length": 20}},
+                    {"operation": "merge_small", "config": {"min_size": 200}},
+                ],
+            },
+        },
+        # upstream template_initialization.py:150-163
+        {
+            "name": "code_documentation",
+            "description": "Template for processing code documentation",
+            "tags": ["code", "docs"],
+            "template": {
+                "name": "code_documentation",
+                "preprocessing": [
+                    {"operation": "clean_markdown", "config": {"remove_images": True}}
+                ],
+                "chunking": {
+                    "method": "structure_aware",
+                    "config": {
+                        "max_size": 500,
+                        "overlap": 50,
+                        "preserve_code_blocks": True,
+                        "preserve_headers": True,
+                    },
+                },
+                "postprocessing": [
+                    {"operation": "filter_empty", "config": {"min_length": 50}}
+                ],
+            },
+        },
+        # upstream template_initialization.py:164-177
+        {
+            "name": "chat_conversation",
+            "description": "Template for processing chat conversations",
+            "tags": ["chat", "conversation"],
+            "template": {
+                "name": "chat_conversation",
+                "preprocessing": [
+                    {"operation": "normalize_whitespace", "config": {"max_line_breaks": 1}}
+                ],
+                "chunking": {"method": "sentences", "config": {"max_size": 10, "overlap": 2}},
+                "postprocessing": [
+                    {"operation": "add_overlap", "config": {"size": 100, "marker": "---"}}
+                ],
+            },
+        },
+        # upstream template_initialization.py:178-190
+        {
+            "name": "book_chapters",
+            "description": "Template for processing book chapters",
+            "tags": ["books", "chapters"],
+            "template": {
+                "name": "book_chapters",
+                "preprocessing": [
+                    {"operation": "normalize_whitespace", "config": {"max_line_breaks": 2}}
+                ],
+                "chunking": {"method": "ebook_chapters", "config": {"max_size": 1200, "overlap": 100}},
+                "postprocessing": [
+                    {"operation": "filter_empty", "config": {"min_length": 50}}
+                ],
+            },
+        },
+        # upstream template_initialization.py:191-201
+        {
+            "name": "transcript_dialogue",
+            "description": "Template for processing transcripts and dialogue",
+            "tags": ["transcript", "dialogue", "audio"],
+            "template": {
+                "name": "transcript_dialogue",
+                "preprocessing": [
+                    {"operation": "normalize_whitespace", "config": {"max_line_breaks": 1}}
+                ],
+                "chunking": {"method": "sentences", "config": {"max_size": 8, "overlap": 2}},
+                "postprocessing": [
+                    {"operation": "merge_small", "config": {"min_size": 80}}
+                ],
+            },
+        },
+        # upstream template_initialization.py:202-208
+        {
+            "name": "legal_document",
+            "description": "Template for processing legal documents",
+            "tags": ["legal", "contracts"],
+            "template": {
+                "name": "legal_document",
+                "preprocessing": [
+                    {"operation": "normalize_whitespace", "config": {"max_line_breaks": 2}}
+                ],
+                "chunking": {"method": "paragraphs", "config": {"max_size": 1, "overlap": 0}},
+                "postprocessing": [
+                    {"operation": "filter_empty", "config": {"min_length": 50}}
+                ],
+            },
+        },
+    ]
 
     # <<< Schema Definition (Version 1) >>>
 
@@ -1448,6 +1623,202 @@ class MediaDatabase:
             raise DatabaseError(
                 f"Unexpected error during migration v5->v6: {error}"
             ) from error
+
+    def _apply_migration_v6_to_v7(self, conn: sqlite3.Connection):
+        """Rebuild ChunkingTemplates for the v7 column set (task-7, §5).
+
+        The first table rebuild in this file: create ``ChunkingTemplates_v7``
+        (§5.2 DDL), convert every surviving row into it from Python, drop the
+        old table, rename, recreate the indices and the update-timestamp
+        trigger, then seed the six server built-ins.
+
+        ADR-030: the DDL, per-row conversion, seeding, and the version bump
+        all run inside ONE real transaction, statement-by-statement via
+        ``_execute_transactional_script`` — a stray ``executescript`` would
+        implicitly commit and defeat rollback. The transaction is opened
+        with ``BEGIN IMMEDIATE`` (not the house deferred ``BEGIN``): this
+        machine routinely runs concurrent sessions, and a DROP+RENAME
+        widens the two-instance race from "one failed ALTER" to
+        "unopenable DB". A seeded mid-rebuild failure must leave the DB at
+        v6 with the original table and rows intact.
+
+        Conversion precedence (§5.3): rows with ``is_system = 1`` whose
+        names the six built-ins re-cover are dropped and re-seeded;
+        ``general``/``conversational``/``contextual`` (and every custom row)
+        are converted and kept as non-builtin rows — nothing a user could
+        have selected disappears. A built-in name that already exists as a
+        live custom row is left alone and logged (the server's idempotent
+        seeding semantics).
+
+        Lazy import: ``Chunking._template_conversion`` stays out of this
+        module's import graph (import-weight), and the per-call ``from``
+        import is the seam the mid-rebuild-failure test monkeypatches.
+
+        Raises:
+            DatabaseError: On any failure, after rolling the transaction
+                back (the DB remains at v6).
+        """
+        # Lazy on purpose — see docstring.
+        from tldw_chatbook.Chunking._template_conversion import (
+            convert_template_row,
+        )
+
+        try:
+            # Foreign keys are ON, but no table references ChunkingTemplates
+            # — asserted, not trusted: the DROP below fails mid-flight if
+            # that ever changes (spec §5.3).
+            self._assert_no_foreign_keys_reference(conn, "ChunkingTemplates")
+
+            if conn.in_transaction:
+                raise SchemaError(
+                    "Migration v6->v7 requires an idle connection to open "
+                    "its own BEGIN IMMEDIATE transaction"
+                )
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                self._execute_transactional_script(
+                    conn, self._CHUNKING_TEMPLATES_V7_CREATE_SQL
+                )
+
+                builtin_names = {
+                    seed["name"]
+                    for seed in self._SERVER_BUILTIN_CHUNKING_TEMPLATES
+                }
+                insert_sql = (
+                    "INSERT INTO ChunkingTemplates_v7 "
+                    "(uuid, name, description, template_json, tags, "
+                    "is_builtin, version, deleted, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)"
+                )
+                rows = conn.execute(
+                    "SELECT name, description, template_json, is_system, "
+                    "created_at, updated_at FROM ChunkingTemplates"
+                ).fetchall()
+                for row in rows:
+                    if bool(row["is_system"]) and row["name"] in builtin_names:
+                        logging.info(
+                            "[Migration v6->v7] Dropping old seed %r; the "
+                            "six built-ins re-seed it",
+                            row["name"],
+                        )
+                        continue
+                    converted = convert_template_row(dict(row))
+                    # §5.3 precedence: the six seeds are the ONLY built-ins
+                    # after v7. Rows reaching this conversion — including the
+                    # old general/conversational/contextual seeds — are kept
+                    # as non-builtin rows; the converter's mechanical
+                    # ``is_builtin ← is_system`` mapping is overridden here.
+                    converted["is_builtin"] = False
+                    conn.execute(
+                        insert_sql,
+                        (
+                            converted["uuid"],
+                            converted["name"],
+                            converted["description"],
+                            converted["template_json"],
+                            converted["tags"],
+                            int(converted["is_builtin"]),
+                            int(converted["deleted"]),
+                            converted["created_at"],
+                            converted["updated_at"],
+                        ),
+                    )
+
+                self._execute_transactional_script(
+                    conn, self._CHUNKING_TEMPLATES_V7_CUTOVER_SQL
+                )
+
+                self._seed_server_builtin_chunking_templates(conn, builtin_names)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+
+            logging.info(
+                "[Migration v6->v7] ChunkingTemplates rebuild applied "
+                "successfully."
+            )
+        except sqlite3.Error as e:
+            logging.error(
+                f"[Migration v6->v7] Failed during migration: {e}", exc_info=True
+            )
+            raise DatabaseError(f"Migration v6->v7 failed: {e}") from e
+        except Exception as e:
+            logging.error(
+                f"[Migration v6->v7] Unexpected error during migration: {e}",
+                exc_info=True,
+            )
+            raise DatabaseError(f"Unexpected error during migration v6->v7: {e}") from e
+
+    @staticmethod
+    def _assert_no_foreign_keys_reference(
+        conn: sqlite3.Connection, table: str
+    ) -> None:
+        """Guard rebuild DROPs: fail before touching anything if any table
+        holds a foreign key targeting ``table``.
+
+        Raises:
+            SchemaError: Naming the referencing table(s).
+        """
+        offenders = []
+        tables = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+        for row in tables:
+            other = row["name"]
+            if '"' in other:
+                continue
+            for fk in conn.execute(f'PRAGMA foreign_key_list("{other}")'):
+                if fk["table"] == table:
+                    offenders.append(other)
+        if offenders:
+            raise SchemaError(
+                f"Cannot rebuild {table}: foreign keys from {offenders} "
+                f"reference it"
+            )
+
+    def _seed_server_builtin_chunking_templates(
+        self, conn: sqlite3.Connection, builtin_names: set
+    ) -> None:
+        """Seed the six server built-ins inside the caller's transaction.
+
+        Idempotent semantics (§5.3, after ``media_db/api.py``): a built-in
+        name that already exists as a LIVE (``deleted = 0``) row is left
+        alone and logged, never overwritten. The six are pre-proven at
+        build/test time (spec §5.5) — no per-seed validation runs here,
+        because a failure inside this transaction would roll back the whole
+        migration.
+        """
+        insert_sql = (
+            "INSERT INTO ChunkingTemplates "
+            "(uuid, name, description, template_json, tags, is_builtin, "
+            "version, deleted) VALUES (?, ?, ?, ?, ?, 1, 1, 0)"
+        )
+        for seed in self._SERVER_BUILTIN_CHUNKING_TEMPLATES:
+            name = seed["name"]
+            if name not in builtin_names:
+                continue
+            existing = conn.execute(
+                "SELECT 1 FROM ChunkingTemplates WHERE name = ? AND deleted = 0",
+                (name,),
+            ).fetchone()
+            if existing is not None:
+                logging.info(
+                    "[Migration v6->v7] Built-in %r already exists as a "
+                    "custom row; left alone per idempotent seeding",
+                    name,
+                )
+                continue
+            conn.execute(
+                insert_sql,
+                (
+                    str(uuid.uuid4()),
+                    name,
+                    seed["description"],
+                    json.dumps(seed["template"]),
+                    json.dumps(seed["tags"]),
+                ),
+            )
 
     def _initialize_schema(self):
         """Checks schema version and applies initial schema or migrations."""

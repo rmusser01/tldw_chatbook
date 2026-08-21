@@ -329,9 +329,14 @@ VENDORED_SHIM_PARTS = ("Chunking", "_shims")
 MAPPER_GUARD_ALLOWED = {"Chunking/template_runtime.py"}
 # Legacy resolution slated for the PR B CRUD rewrite (spec AC 26 rewrites
 # ChunkingInteropService; until then its get_template_by_name stays).
+# DB/Client_Media_DB_v2.py (task-7): the v7 migration's idempotent-seed
+# existence check ("a built-in name that already exists as a custom row is
+# left alone") matches the regex but resolves no template — it never reads
+# a template body, only name liveness.
 RESOLVER_GUARD_ALLOWED = {
     "Chunking/template_runtime.py",
     "Chunking/chunking_interop_library.py",
+    "DB/Client_Media_DB_v2.py",
 }
 
 _RE_VENDORED_TEMPLATES_IMPORT = re.compile(r"engine\.templates")

@@ -735,7 +735,13 @@ class TestDatabaseCRUDAndSync:
             assert (
                 conn.execute(
                     "SELECT COUNT(*) FROM ChunkingTemplates "
-                    "WHERE name = 'duplicate-seed'"
+                    # task-7 (v7 rebuild): the retry replays through the
+                    # ChunkingTemplates migration, and this seed's body
+                    # (name only — no chunk stage, no base_method) is
+                    # unconvertible, so it survives under its quarantined
+                    # name instead of the original.
+                    "WHERE name IN ('duplicate-seed', "
+                    "'duplicate-seed (needs review)')"
                 ).fetchone()[0]
                 == 1
             )
