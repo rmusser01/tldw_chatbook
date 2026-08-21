@@ -64,7 +64,7 @@ Rules:
 - Any eligible positive fact makes `graduated` sticky. Deleting everything never moves it backward.
 - `Explore all tools` persists `expanded` independently of section collapse. An empty expanded profile may explicitly return to Get started; a graduated profile cannot.
 - Existing deep links, pending navigation context, keyboard routes, and command-palette admissions operate on the full shell state and bypass rail filtering.
-- The application-wide first-run wizard remains the sole startup owner. Library only reads `app_config["_first_run"]`, captured by config creation, and never writes wizard state.
+- The application-wide first-run wizard remains the sole startup owner. The config loader records one process-session admission fact when it creates the active profile config; the app captures that durable in-session fact before later config reloads can lose the transient `_first_run` key. Library only reads `app_instance.library_new_profile_admission` and never writes the admission fact or wizard state.
 - Import and New note reuse `LIBRARY_ROW_INGEST_MEDIA` and `LIBRARY_ROW_CREATE_NOTE` through the existing `.library-rail-row` / `.library-hub-action` dispatch.
 
 ## Eligibility and evidence matrix
@@ -220,7 +220,13 @@ Collections     active local user-collection count     soft-deleted
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q \
     Tests/Notes/test_notes_scope_service_library_canvas.py -k 'user_content_evidence or count_notes'
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q \
+    Tests/Notes/test_server_notes_workspace_service.py
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q \
     Tests/Media/test_media_reading_scope_service.py -k 'user_content_evidence or library_summary'
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q \
+    Tests/Media/test_local_media_reading_service.py -k 'library_media_summary'
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q \
+    Tests/DB/test_client_media_debug_logging.py
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q \
     Tests/Chat/test_chat_conversation_scope_service.py -k 'user_content_evidence or list_conversations'
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q \
@@ -240,6 +246,7 @@ Collections     active local user-collection count     soft-deleted
     tldw_chatbook/Media/media_reading_scope_service.py \
     tldw_chatbook/Chat/chat_conversation_scope_service.py \
     tldw_chatbook/Prompt_Management/prompt_scope_service.py \
+    tldw_chatbook/Skills_Interop/local_skills_service.py \
     tldw_chatbook/Skills_Interop/skills_scope_service.py \
     tldw_chatbook/Library/library_collections_service.py \
     Tests/Notes/test_notes_scope_service_library_canvas.py \
@@ -288,7 +295,7 @@ Collections     active local user-collection count     soft-deleted
 
   In `LibraryScreen.__init__`:
 
-  - capture `bool(app_instance.app_config.get("_first_run"))` once as new-profile admission;
+  - capture `bool(app_instance.library_new_profile_admission)` once from the app-owned process-session new-profile admission fact;
   - load `library.rail_state.lifecycle` from in-memory config first, then the existing CLI fallback;
   - coerce into `_library_lifecycle` without disturbing section preferences;
   - initialize exactly one monotonic `_library_onboarding_generation` as evidence apply authority;
@@ -561,13 +568,20 @@ Collections     active local user-collection count     soft-deleted
 
   ```bash
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff check \
+    tldw_chatbook/app.py \
+    tldw_chatbook/config.py \
     tldw_chatbook/Library/library_content_evidence.py \
     tldw_chatbook/Library/library_rail_state.py \
     tldw_chatbook/Library/library_collections_service.py \
     tldw_chatbook/Notes/notes_scope_service.py \
+    tldw_chatbook/Notes/Notes_Library.py \
+    tldw_chatbook/Notes/server_notes_workspace_service.py \
+    tldw_chatbook/DB/Client_Media_DB_v2.py \
+    tldw_chatbook/Media/local_media_reading_service.py \
     tldw_chatbook/Media/media_reading_scope_service.py \
     tldw_chatbook/Chat/chat_conversation_scope_service.py \
     tldw_chatbook/Prompt_Management/prompt_scope_service.py \
+    tldw_chatbook/Skills_Interop/local_skills_service.py \
     tldw_chatbook/Skills_Interop/skills_scope_service.py \
     tldw_chatbook/UI/Screens/library_screen.py \
     tldw_chatbook/Widgets/Library/library_rail.py \
@@ -576,6 +590,7 @@ Collections     active local user-collection count     soft-deleted
     Tests/Library/test_library_rail_state.py \
     Tests/Library/test_library_collections_service.py \
     Tests/Notes/test_notes_scope_service_library_canvas.py \
+    Tests/Notes/test_server_notes_workspace_service.py \
     Tests/Media/test_media_reading_scope_service.py \
     Tests/Chat/test_chat_conversation_scope_service.py \
     Tests/Library/test_library_prompts_seam.py \
@@ -584,7 +599,7 @@ Collections     active local user-collection count     soft-deleted
     Tests/UI/test_library_entry_compose_once.py \
     Tests/Widgets/Library/test_library_rail.py \
     Tests/UI/test_command_palette_providers.py
-  git diff --check 6a2e7fa50...HEAD
+  git diff --check 6a2e7fa50
   git diff --check
   ```
 
@@ -607,7 +622,7 @@ Collections     active local user-collection count     soft-deleted
 
   Explicit baseline exclusions from whole-file format claims: before this task, Ruff format already reports drift in `library_collections_service.py`, `notes_scope_service.py`, `chat_conversation_scope_service.py`, `skills_scope_service.py`, `library_screen.py`, `library_entry_canvases.py`, `test_library_collections_service.py`, `test_notes_scope_service_library_canvas.py`, `test_library_shell.py`, `test_library_entry_compose_once.py`, `test_library_rail.py`, and `test_command_palette_providers.py`. Do not bulk-format them. Ruff **check** and range/worktree `diff --check` still cover every changed file; self-review must confirm modified hunks introduce no formatting-only churn.
 
-- [ ] **Step 4: Repeat the four decisive mutation/inverse checks one at a time.**
+- [ ] **Step 4: Repeat the seven decisive mutation/inverse checks one at a time.**
 
   Record command, exact failing node, and restored GREEN for:
 
@@ -651,12 +666,15 @@ Collections     active local user-collection count     soft-deleted
 
   Review the full implementation range against the design, ADRs, task AC, focused tests, and mounted UAT evidence. Resolve every Critical/Important finding before closeout.
 
-- [ ] **Step 8: Mark the task Done through Backlog CLI and commit docs.**
+- [ ] **Step 8: Mark the task Done by direct task-file edit and commit docs.**
 
   Only after all ACs, Implementation Notes, tests, static checks, docs, ADR hygiene, reviews, and task-scoped mounted UAT evidence are complete:
 
+  TASK-19022 is a five-digit task ID, which the installed Backlog CLI may parse
+  incorrectly. Edit this task file's frontmatter `status` directly from
+  `In Progress` to `Done`, then commit the docs:
+
   ```bash
-  backlog task edit 19022 -s Done
   git add Docs/User_Guide/library.md 'backlog/tasks/task-19022 - Add-Library-starter-rail-and-lifecycle-aware-landing.md'
   git commit -m "docs(library): close starter lifecycle task"
   ```
@@ -671,10 +689,17 @@ Docs/User_Guide/library.md
 tldw_chatbook/Library/library_content_evidence.py
 tldw_chatbook/Library/library_rail_state.py
 tldw_chatbook/Library/library_collections_service.py
+tldw_chatbook/app.py
+tldw_chatbook/config.py
+tldw_chatbook/DB/Client_Media_DB_v2.py
+tldw_chatbook/Media/local_media_reading_service.py
 tldw_chatbook/Notes/notes_scope_service.py
+tldw_chatbook/Notes/Notes_Library.py
+tldw_chatbook/Notes/server_notes_workspace_service.py
 tldw_chatbook/Media/media_reading_scope_service.py
 tldw_chatbook/Chat/chat_conversation_scope_service.py
 tldw_chatbook/Prompt_Management/prompt_scope_service.py
+tldw_chatbook/Skills_Interop/local_skills_service.py
 tldw_chatbook/Skills_Interop/skills_scope_service.py
 tldw_chatbook/UI/Screens/library_screen.py
 tldw_chatbook/Widgets/Library/library_rail.py
@@ -683,6 +708,7 @@ Tests/Library/test_library_content_evidence.py
 Tests/Library/test_library_rail_state.py
 Tests/Library/test_library_collections_service.py
 Tests/Notes/test_notes_scope_service_library_canvas.py
+Tests/Notes/test_server_notes_workspace_service.py
 Tests/Media/test_media_reading_scope_service.py
 Tests/Chat/test_chat_conversation_scope_service.py
 Tests/Library/test_library_prompts_seam.py
