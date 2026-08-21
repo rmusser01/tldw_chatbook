@@ -359,14 +359,24 @@ class InstructionActivationLedger:
             tool_id, provider = resolved
             if not isinstance(provider, PathAwareToolProvider):
                 continue
-            for target in provider.path_targets(tool_id, call.args):
-                if target.kind == "outside":
-                    outside = True
-                    continue
-                if target.path is None:
-                    continue
-                path = target.path.absolute()
-                targets.add(path.parent if target.kind == "exact" else path)
+            call_targets: set[Path] = set()
+            call_outside = False
+            try:
+                for target in provider.path_targets(tool_id, call.args):
+                    if target.kind == "outside":
+                        call_outside = True
+                        continue
+                    if target.path is None:
+                        continue
+                    path = target.path.absolute()
+                    call_targets.add(
+                        path.parent if target.kind == "exact" else path
+                    )
+            except Exception:  # noqa: BLE001 - untrusted provider mapping boundary
+                outside = True
+                continue
+            targets.update(call_targets)
+            outside = outside or call_outside
 
         with self._lock:
             state = self._chain(chain_id)

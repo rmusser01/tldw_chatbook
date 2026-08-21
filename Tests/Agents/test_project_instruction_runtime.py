@@ -598,6 +598,28 @@ def test_outside_binding_warning_defers_once_without_exposing_path(tmp_path: Pat
     assert ledger.prepare(calls, "primary", registry, payload).rows == ()
 
 
+def test_path_target_exception_warns_once_without_crashing_or_leaking(
+    tmp_path: Path,
+):
+    class RaisingProvider(_PathProvider):
+        def path_targets(self, tool_id, args):
+            raise ValueError("PRIVATE_PATH_TARGET_SENTINEL")
+
+    registry = ToolCatalogRegistry()
+    registry.register_provider(RaisingProvider(tmp_path))
+    ledger = InstructionActivationLedger(_snapshot(tmp_path), nested_max_bytes=100)
+    payload, _ = _payload()
+    calls = [ToolCall("read", {}, "call-1")]
+
+    first = ledger.prepare(calls, "primary", registry, payload)
+
+    assert first.status == "retry_with_context"
+    assert "outside_instruction_scope" in repr(first.rows)
+    assert "PRIVATE_PATH_TARGET_SENTINEL" not in repr(first.rows)
+    ledger.mark_payload_sent(first.receipt, first.rows)
+    assert ledger.prepare(calls, "primary", registry, payload).status == "proceed"
+
+
 def test_resolver_walks_only_target_chain_and_renders_broad_to_specific(tmp_path):
     sibling = tmp_path / "sibling"
     target = tmp_path / "src" / "pkg"

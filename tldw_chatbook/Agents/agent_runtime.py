@@ -13,7 +13,19 @@ from dataclasses import dataclass
 from typing import Any, Callable, Literal
 
 from loguru import logger
+
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
+from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationRestoreTarget,
+    ContinuationResult,
+    ProviderContinuationCheckpoint,
+    dump_provider_continuation_json,
+    transition_provider_call,
+    validate_continuation_restore,
+)
+from tldw_chatbook.model_capabilities import (
+    moonshot_model_returns_reasoning_content,
+)
 
 from .agent_models import (
     CHECK_AGENTS_TOOL_NAME,
@@ -40,6 +52,7 @@ from .agent_models import (
     STEP_STEERING,
     STEP_TOOL_CALL,
     STEP_TOOL_RESULT,
+    WAIT_AGENTS_TOOL_NAME,
     AgentConfig,
     AgentStep,
     ContinuationEventContext,
@@ -53,19 +66,7 @@ from .agent_models import (
     ToolCallFinished,
     ToolResult,
     ToolSchema,
-    WAIT_AGENTS_TOOL_NAME,
     format_steering_message,
-)
-from tldw_chatbook.Chat.provider_continuation import (
-    ContinuationResult,
-    ContinuationRestoreTarget,
-    ProviderContinuationCheckpoint,
-    dump_provider_continuation_json,
-    transition_provider_call,
-    validate_continuation_restore,
-)
-from tldw_chatbook.model_capabilities import (
-    moonshot_model_returns_reasoning_content,
 )
 from .project_instruction_runtime import (
     PROJECT_INSTRUCTION_ROW_KEY,

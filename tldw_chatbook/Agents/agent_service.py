@@ -55,6 +55,7 @@ from .agent_models import (
     ContinuationEventContext,
     ModelTurn,
     ProviderContinuationEvent,
+    RunBudget,
     RunOutcome,
     SkillFileBindings,
     ToolCall,
@@ -541,7 +542,7 @@ class RunLogRequestPlan:
 def build_first_request_schema_plan(
     registry: ToolCatalogRegistry,
     allowed_tools: tuple[str, ...],
-    budget,
+    budget: RunBudget,
     *,
     skill_file_enabled: bool,
     install_skill_enabled: bool,
