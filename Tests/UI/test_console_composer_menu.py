@@ -765,11 +765,11 @@ async def test_character_picker_new_chat_clears_a_stale_temporary_chip():
 
         # Bypass the real character-card DB lookup (irrelevant to this
         # regression) while exercising the real create/switch/notify body.
-        console._fetch_character_card_for_avatar = lambda character_id: {
+        console._character._fetch_character_card_for_avatar = lambda character_id: {
             "name": "Nova",
             "first_message": "",
         }
-        await console._apply_console_character_choice_async(
+        await console._character._apply_console_character_choice_async(
             ConsoleCharacterChoice(character_id=1, name="Nova", placement="new")
         )
         await pilot.pause()

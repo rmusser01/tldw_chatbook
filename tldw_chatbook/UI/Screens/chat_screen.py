@@ -106,9 +106,6 @@ from ..Console_Modules.retrieval import (
 from ..Console_Modules.transcript import _ConsoleTranscriptReadingState
 from ..Console_Modules.wiring import build_console_controllers
 from ..Console_Modules.session import (
-    _canonical_card_character_id,
-    _console_global_user_display_name,
-    _character_session_prompt_seed,
     _has_selected_text,
     _is_empty_select_value,
 )
@@ -498,7 +495,6 @@ from ...Widgets.Console.console_retrieval_scope_row import (
 )
 from ...Widgets.Console.console_character_picker_modal import (
     ConsoleCharacterChoice,
-    ConsoleCharacterOption,
     ConsoleCharacterPickerModal,
 )
 from ...Widgets.Console.console_composer_menu_modal import (
@@ -1174,7 +1170,9 @@ CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED = tuple(
 )
 
 
-def _build_trajectory_snapshot(store: Any, conversation_id: str) -> "TrajectorySnapshot":
+def _build_trajectory_snapshot(
+    store: Any, conversation_id: str
+) -> "TrajectorySnapshot":
     """Assemble the ``derive_trajectory`` inputs for one persisted conversation.
 
     task-5 (console trajectory view). Best-effort at every seam: any source
@@ -1227,9 +1225,7 @@ def _build_trajectory_snapshot(store: Any, conversation_id: str) -> "TrajectoryS
         try:
             # The projection itself filters purpose == "conversation_compaction".
             compaction_records = list(
-                context_repository.list_auxiliary_attempts(
-                    conversation_id, limit=500
-                )
+                context_repository.list_auxiliary_attempts(conversation_id, limit=500)
             )
         except Exception:  # noqa: BLE001
             compaction_records = []
@@ -1241,6 +1237,7 @@ def _build_trajectory_snapshot(store: Any, conversation_id: str) -> "TrajectoryS
         compaction_records,
         active_leaf_message_id=active_leaf,
     )
+
 
 #: TASK-362: the full Console keyboard vocabulary for the F1 help panel, grouped
 #: by surface. The flat CONSOLE_WORKBENCH_SHORTCUTS above stays the compact
@@ -1595,9 +1592,7 @@ def _console_screen_is_torn_down(screen: Any) -> bool:
       they are absent from ``dir(ChatScreen)``, and a spec'd mock -- like
       a never-mounted screen -- correctly reads as LIVE.
     """
-    return bool(
-        getattr(screen, "_closing", False) or getattr(screen, "_closed", False)
-    )
+    return bool(getattr(screen, "_closing", False) or getattr(screen, "_closed", False))
 
 
 def _console_inspector_turn_preview(content: Any) -> str:
@@ -1691,9 +1686,7 @@ def _build_console_inspector_exchanges_loader(
                 (capture, capture.run_tag in abandoned_tags)
                 for capture in message.exchanges
             ]
-        persisted_id = (
-            message.persisted_message_id if message is not None else None
-        )
+        persisted_id = message.persisted_message_id if message is not None else None
         if not persisted_id:
             return []
 
@@ -3866,9 +3859,7 @@ class ChatScreen(BaseAppScreen):
         # is a git subprocess PER snapshot row (spec §2's cost model), so it
         # runs on a `thread=True` worker rather than an in-tick awaited
         # `asyncio.to_thread`.
-        self._console_changed_files_summary: (
-            "tuple[ConversationFileEntry, ...] | None"
-        ) = None
+        self._console_changed_files_summary: "tuple[ConversationFileEntry, ...] | None" = None
         self._console_changed_files_pruned_rows: int = 0
         # Per-row git-diff memo (fix round, spec §2's stated per-row memo),
         # keyed by the owning `change_snapshots` row's own DB id -- handed
@@ -3895,9 +3886,7 @@ class ChatScreen(BaseAppScreen):
         # note-mutation path (the card's save/delete, the Review screen's
         # dismissal callback) so the rail's `✎ N` badges never go stale --
         # the guard tuple alone only moves on a NEW run.
-        self._last_console_changed_files_scope: (
-            "tuple[str | None, str | None] | None"
-        ) = None
+        self._last_console_changed_files_scope: "tuple[str | None, str | None] | None" = None
         # Tracks ONLY the conversation-id half, across resets that use the
         # sentinel above -- distinguishes a genuine conversation switch
         # (clears the summary) from a note-mutation-forced re-check on the
@@ -5156,9 +5145,7 @@ class ChatScreen(BaseAppScreen):
             cancel_all_button = self.query_one(
                 f"#{CONSOLE_AGENT_CANCEL_ALL_ID}", Button
             )
-            cancel_all_button.styles.display = (
-                "block" if cancel_all_visible else "none"
-            )
+            cancel_all_button.styles.display = "block" if cancel_all_visible else "none"
             agent_body = self.query_one("#console-rail-section-body-agent")
             agent_body.styles.display = "block" if section_open else "none"
             agent_header = self.query_one(
@@ -9047,7 +9034,7 @@ class ChatScreen(BaseAppScreen):
             # rail name covers resumed conversations.
             character=(
                 getattr(settings, "character_label", None)
-                or self._current_console_rail_character_name()
+                or self._character._current_console_rail_character_name()
             ),
             assistant_kind=getattr(active_session, "assistant_kind", None),
             assistant_name=getattr(active_session, "assistant_name", None),
@@ -9652,7 +9639,9 @@ class ChatScreen(BaseAppScreen):
         supplies them, via ``project_instruction_ui.
         project_instruction_context_kwargs``.
         """
-        rows, totals, turns, exchanges_loader = self._build_console_inspector_cost_data()
+        rows, totals, turns, exchanges_loader = (
+            self._build_console_inspector_cost_data()
+        )
         self.app.push_screen(
             ConsoleConversationInspector(
                 rows=rows,
@@ -9831,7 +9820,9 @@ class ChatScreen(BaseAppScreen):
 
     async def _open_console_character_picker(self) -> None:
         """Load characters off-thread and open the picker modal (task-1672)."""
-        options = await asyncio.to_thread(self._console_character_picker_options)
+        options = await asyncio.to_thread(
+            self._character._console_character_picker_options
+        )
         if not options:
             self.app.notify(
                 "No characters saved yet — import a card in Roleplay first.",
@@ -9841,37 +9832,12 @@ class ChatScreen(BaseAppScreen):
         self.app.push_screen(
             ConsoleCharacterPickerModal(
                 options=options,
-                current_character_id=self._current_console_rail_character_id(),
+                current_character_id=(
+                    self._character._current_console_rail_character_id()
+                ),
             ),
             callback=self._apply_console_character_choice,
         )
-
-    def _console_character_picker_options(
-        self,
-    ) -> tuple[ConsoleCharacterOption, ...]:
-        """Read selectable character cards (worker thread; never raises)."""
-        db = getattr(self.app_instance, "chachanotes_db", None)
-        if db is None:
-            return ()
-        try:
-            cards = db.list_character_cards(limit=500)
-        except Exception:
-            logger.opt(exception=True).warning("Character picker: list failed.")
-            return ()
-        options: list[ConsoleCharacterOption] = []
-        for card in cards or ():
-            card_id = _canonical_card_character_id(card.get("id"))
-            name = str(card.get("name") or "").strip()
-            if card_id is None or not name:
-                continue
-            options.append(
-                ConsoleCharacterOption(
-                    character_id=card_id,
-                    name=name,
-                    description=str(card.get("description") or "")[:200],
-                )
-            )
-        return tuple(options)
 
     def _apply_console_character_choice(
         self, choice: "ConsoleCharacterChoice | None"
@@ -9880,108 +9846,10 @@ class ChatScreen(BaseAppScreen):
         if choice is None:
             return
         self.run_worker(
-            self._apply_console_character_choice_async(choice),
+            self._character._apply_console_character_choice_async(choice),
             exclusive=True,
             group="console-character-pick",
         )
-
-    async def _apply_console_character_choice_async(
-        self, choice: "ConsoleCharacterChoice"
-    ) -> None:
-        """Apply the picked character to this session or a fresh one."""
-        card = await asyncio.to_thread(
-            self._fetch_character_card_for_avatar, choice.character_id
-        )
-        if card is None:
-            display_name = (
-                sanitize_character_display_label(
-                    choice.name,
-                    max_characters=180,
-                )
-                or "that character"
-            )
-            self.app.notify(
-                f"Could not load {escape_markup(display_name)}.",
-                severity="error",
-            )
-            return
-        # cubic PR #1153 P1: the store lives on the SCREEN behind a lazy
-        # accessor -- `app_instance.console_chat_store` is always None, so
-        # the whole feature silently did nothing.
-        store = self._ensure_console_chat_store()
-        global_name = _console_global_user_display_name(
-            self._provider_readiness_app_config()
-        )
-        if choice.placement == "new" or store.active_session_id is None:
-            effective_name = global_name
-        else:
-            effective_name = store.presentation_context(
-                store.active_session_id,
-                global_name,
-            ).user_name
-        seed = _character_session_prompt_seed(
-            card,
-            choice.name,
-            user_name=effective_name,
-        )
-        display_name = (
-            sanitize_character_display_label(
-                seed.name,
-                max_characters=180,
-            )
-            or "that character"
-        )
-        notification_name = escape_markup(display_name)
-        if choice.placement == "new":
-            # cubic PR #1153 P1: the card's system prompt was computed and
-            # discarded, leaving the new chat on the default prompt. Mirror
-            # the Start-Chat path, which seeds it into the session settings.
-            settings = replace(
-                self._session._default_console_session_settings(),
-                system_prompt=seed.system_prompt,
-            )
-            session = store.create_session(
-                title=f"Chat with {seed.name}",
-                workspace_id=CONSOLE_GLOBAL_WORKSPACE_ID,
-                settings=settings,
-                runtime_backend="local",
-                assistant_kind="character",
-                assistant_id=str(choice.character_id),
-                assistant_authority_id=None,
-                character_id=choice.character_id,
-                character_name=seed.name,
-            )
-            try:
-                store.seed_character_roleplay(
-                    session.id,
-                    system_template=seed.system_template,
-                    greeting_template=seed.greeting_template,
-                    global_default=global_name,
-                )
-            except Exception:
-                logger.opt(exception=True).warning(
-                    "Character picker: roleplay template seed failed; continuing."
-                )
-            store.switch_session(session.id)
-            # task-7 review: a new (never-ephemeral) session may be
-            # replacing a temporary one as the active tab; the awaited
-            # `_sync_native_console_chat_ui()` below never touches the
-            # temporary chip (see `_sync_console_temporary_chip`).
-            self._sync_console_temporary_chip()
-            self.app.notify(f"Started a new chat with {notification_name}.")
-        else:
-            if not self._session._swap_console_session_character(
-                store,
-                choice.character_id,
-                seed,
-                global_default=global_name,
-            ):
-                return
-            self.app.notify(f"This chat now uses {notification_name}.")
-        # cubic PR #1153 P2: this refresher is async -- calling it without
-        # awaiting produced a never-run coroutine (and a RuntimeWarning).
-        await self._sync_native_console_chat_ui()
-        await self._character._refresh_active_character_avatar_if_scope_changed()
 
     @on(ConsoleScopeChip.OpenRequested)
     async def _console_scope_chip_activated(
@@ -10007,54 +9875,6 @@ class ChatScreen(BaseAppScreen):
         until this seam existed.
         """
         return self._session._current_console_conversation_id()
-
-    def _current_console_rail_conversation_id(self) -> Optional[str]:
-        """Return the conversation scope used only for Console rail persistence."""
-        native_session = self._session._active_native_console_session()
-        if native_session is not None:
-            conversation_id = getattr(
-                native_session,
-                "persisted_conversation_id",
-                None,
-            )
-            return str(conversation_id) if conversation_id else None
-        return self._session._current_console_conversation_id()
-
-    def _current_console_rail_character_id(self) -> Optional[int]:
-        """Active native Console session's character id (int), or None.
-
-        Resolved ONLY off the live session (#754 sets it at Start-Chat, on
-        DB-resume, and on screen-state restore); never from legacy
-        ``app.current_chat_*`` reactives. None for a generic session.
-        """
-        native_session = self._session._active_native_console_session()
-        if native_session is None:
-            return None
-        return native_session.local_character_id()
-
-    def _current_console_rail_character_name(self) -> Optional[str]:
-        """Active native Console session's character name, or None."""
-        native_session = self._session._active_native_console_session()
-        if native_session is None:
-            return None
-        name = getattr(native_session, "character_name", None)
-        return str(name) if name else None
-
-    def _fetch_character_card_for_avatar(self, character_id: int) -> dict | None:
-        """Synchronous character-card fetch for the avatar refresh (off-thread).
-
-        Canonical DB accessor used throughout `chat_screen.py` (e.g. the
-        resume path `_resolve_resumed_character_name`); there is no
-        `self.chachanotes_db`.
-        """
-        db = getattr(self.app_instance, "chachanotes_db", None)
-        if db is None:
-            return None
-        try:
-            return db.get_character_card_by_id(int(character_id))
-        except Exception:
-            logger.opt(exception=True).debug("avatar: character fetch failed")
-            return None
 
     async def _render_character_avatar_into_section(
         self,
@@ -10896,7 +10716,7 @@ class ChatScreen(BaseAppScreen):
                     break
         preference_key = build_console_rail_preference_key(
             workspace_id=workspace_context.active_workspace_id,
-            conversation_id=self._current_console_rail_conversation_id(),
+            conversation_id=(self._character._current_console_rail_conversation_id()),
             session_id=self._session._current_console_session_id(),
         )
         self._migrate_console_rail_fallback_preferences(
@@ -11139,7 +10959,7 @@ class ChatScreen(BaseAppScreen):
         workspace_context = self._workspace._current_console_workspace_context()
         preference_key = build_console_rail_preference_key(
             workspace_id=workspace_context.active_workspace_id,
-            conversation_id=self._current_console_rail_conversation_id(),
+            conversation_id=(self._character._current_console_rail_conversation_id()),
             session_id=self._session._current_console_session_id(),
         )
         self._migrate_console_rail_fallback_preferences(
@@ -11620,7 +11440,7 @@ class ChatScreen(BaseAppScreen):
         (worst case is still O(messages), when no message in the session
         carries a marker at all).
         """
-        conversation_id = self._current_console_rail_conversation_id()
+        conversation_id = self._character._current_console_rail_conversation_id()
         store = self._console_chat_store
         session_id = store.active_session_id if store is not None else None
         newest_run_id: str | None = None
@@ -11686,7 +11506,7 @@ class ChatScreen(BaseAppScreen):
             entries: The recompute's cross-turn summary.
             pruned_rows: How many rows retention pruned out of it.
         """
-        if self._current_console_rail_conversation_id() != conversation_id:
+        if self._character._current_console_rail_conversation_id() != conversation_id:
             logger.debug(
                 "Console changed-files: dropping a stale worker result for "
                 f"conversation {conversation_id!r} -- no longer current"
@@ -11696,9 +11516,7 @@ class ChatScreen(BaseAppScreen):
         self._console_changed_files_pruned_rows = pruned_rows
         self._sync_console_changed_files_section()
 
-    def _land_console_changed_files_empty(
-        self, conversation_id: "str | None"
-    ) -> None:
+    def _land_console_changed_files_empty(self, conversation_id: "str | None") -> None:
         """The no-provider variant of `_land_console_changed_files`.
 
         Same stale-conversation guard (Fix 4c) -- see that method's
@@ -11707,7 +11525,7 @@ class ChatScreen(BaseAppScreen):
         Args:
             conversation_id: The conversation live at DISPATCH time.
         """
-        if self._current_console_rail_conversation_id() != conversation_id:
+        if self._character._current_console_rail_conversation_id() != conversation_id:
             logger.debug(
                 "Console changed-files: dropping a stale empty-land for "
                 f"conversation {conversation_id!r} -- no longer current"
@@ -11840,6 +11658,7 @@ class ChatScreen(BaseAppScreen):
             self._console_changed_files_row_cache = {}
             self._sync_console_changed_files_section()
         self._dispatch_console_changed_files_worker(scope[0])
+
     async def _console_dictionary_attach_worker(self) -> None:
         """Pick and attach a chat dictionary to the active Console conversation.
 
@@ -11850,7 +11669,7 @@ class ChatScreen(BaseAppScreen):
         ``run_worker(exit_on_error=True)``.
         """
         try:
-            conversation_id = self._current_console_rail_conversation_id()
+            conversation_id = self._character._current_console_rail_conversation_id()
             if not conversation_id:
                 self.app_instance.notify(
                     "Start or load a conversation first.", severity="warning"
@@ -11902,7 +11721,7 @@ class ChatScreen(BaseAppScreen):
         ``run_worker(exit_on_error=True)``.
         """
         try:
-            conversation_id = self._current_console_rail_conversation_id()
+            conversation_id = self._character._current_console_rail_conversation_id()
             if not conversation_id:
                 self.app_instance.notify(
                     "Start or load a conversation first.", severity="warning"
@@ -11969,7 +11788,7 @@ class ChatScreen(BaseAppScreen):
         Analogous to :meth:`_console_worldbook_attach_worker`.
         """
         try:
-            conversation_id = self._current_console_rail_conversation_id()
+            conversation_id = self._character._current_console_rail_conversation_id()
             if not conversation_id:
                 self.app_instance.notify(
                     "Start or load a conversation first.", severity="warning"
@@ -12037,7 +11856,7 @@ class ChatScreen(BaseAppScreen):
         ``console_attached_dictionaries``/``handle_console_dictionary_detach``.
         """
         try:
-            conversation_id = self._current_console_rail_conversation_id()
+            conversation_id = self._character._current_console_rail_conversation_id()
             if not conversation_id:
                 self.app_instance.notify(
                     "Start or load a conversation first.", severity="warning"
@@ -13461,9 +13280,7 @@ class ChatScreen(BaseAppScreen):
                     agent_full_log_available=(
                         self._agent._console_agent_full_log_available()
                     ),
-                    agent_steering_state=(
-                        self._agent._console_agent_steering_state()
-                    ),
+                    agent_steering_state=(self._agent._console_agent_steering_state()),
                     agent_cancel_all_visible=(
                         self._agent._console_agent_cancel_all_visible()
                     ),
@@ -15583,10 +15400,12 @@ class ChatScreen(BaseAppScreen):
             # depending on how far the tick had got.
             if not _console_screen_is_torn_down(self):
                 raise
+            # fmt: off
             logger.debug(
                 "Console sync tick raced this screen's teardown; nothing to "
                 "render.",
             )
+            # fmt: on
         finally:
             self._record_ui_worker_finished("console-sync")
             self._console_sync_in_progress = False
@@ -16679,8 +16498,7 @@ class ChatScreen(BaseAppScreen):
         conversation_id = self._current_console_conversation_id()
         if not conversation_id:
             await self._append_native_console_system_message(
-                "Deep research needs an active conversation to deliver its "
-                "report into."
+                "Deep research needs an active conversation to deliver its report into."
             )
             return
         app = self.app
@@ -16718,7 +16536,10 @@ class ChatScreen(BaseAppScreen):
         async def _run_research() -> None:
             launch_kwargs: dict = {
                 "query": question,
-                "chat_handoff": {"conversation_id": conversation_id, "origin": "console"},
+                "chat_handoff": {
+                    "conversation_id": conversation_id,
+                    "origin": "console",
+                },
                 "source_policy": source_policy,
             }
             if provider_overrides:
@@ -18910,7 +18731,9 @@ class ChatScreen(BaseAppScreen):
         try:
             controller = self._ensure_console_chat_controller()
             store = controller.store
-            database = getattr(store.persistence, "db", None) if store.persistence else None
+            database = (
+                getattr(store.persistence, "db", None) if store.persistence else None
+            )
             if database is None:
                 self.notify(
                     "Notes are unavailable (no notes database).",
@@ -19040,8 +18863,8 @@ class ChatScreen(BaseAppScreen):
                     existing = self._console_annotation_previews.get(
                         anchor_message_id, ()
                     )
-                    self._console_annotation_previews[anchor_message_id] = (
-                        existing + (comment,)
+                    self._console_annotation_previews[anchor_message_id] = existing + (
+                        comment,
                     )
         except Exception:
             logger.warning(
@@ -19263,9 +19086,7 @@ class ChatScreen(BaseAppScreen):
                 if not validate_text_input(
                     new_comment, max_length=SELECTION_QUOTE_CAP, allow_html=True
                 ):
-                    self.notify(
-                        "That note is too long to save.", severity="warning"
-                    )
+                    self.notify("That note is too long to save.", severity="warning")
                     return False
                 if not _conversation_still_current():
                     self.notify(
@@ -19440,7 +19261,9 @@ class ChatScreen(BaseAppScreen):
         event.stop()
         event.prevent_default()
 
-    def _dismiss_console_selection_menus_outside_transcript(self, target: object) -> None:
+    def _dismiss_console_selection_menus_outside_transcript(
+        self, target: object
+    ) -> None:
         """Fold selection menus when a click lands outside every transcript.
 
         Console selection phase 1 (click-outside dismissal, screen half).

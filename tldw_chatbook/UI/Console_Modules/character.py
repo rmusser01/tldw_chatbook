@@ -1,22 +1,36 @@
-"""Controller-owned Console character avatar refresh orchestration.
+"""Controller-owned Console character policy and avatar orchestration.
 
-The controller owns request snapshots, resolution/cache policy, invalidation,
-and stale-result arbitration.  It intentionally has no screen or DOM handle;
-the final Textual mutation is supplied as one named, fenced callback.
+The controller owns picker projection, session handoff, active identity, card
+retrieval, request snapshots, resolution/cache policy, invalidation, and
+stale-result arbitration.  It intentionally has no screen or DOM handle; the
+framework worker/modal edges and final Textual mutation remain named callbacks.
 """
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import replace
 from typing import Any
 
 from loguru import logger
+from rich.markup import escape as escape_markup
 
+from ...Chat.console_chat_models import CONSOLE_GLOBAL_WORKSPACE_ID
 from ...Chat.console_expression_state import resolve_console_expression_state
 from ...Chat.console_image_view import (
     resolve_react_character_expressions,
     resolve_show_character_avatar,
+)
+from ...Widgets.Console.console_character_picker_modal import (
+    ConsoleCharacterChoice,
+    ConsoleCharacterOption,
+)
+from ..character_display_text import sanitize_character_display_label
+from .session import (
+    _canonical_card_character_id,
+    _character_session_prompt_seed,
+    _console_global_user_display_name,
 )
 
 _EXPRESSION_SPEC_CACHE_MAX = 16
@@ -35,15 +49,24 @@ AvatarRequest = tuple[
 
 
 class ConsoleCharacterController:
-    """Own non-DOM character-avatar state and refresh decisions."""
+    """Own non-DOM character policy, identity, and avatar decisions."""
 
     def __init__(
         self,
         *,
         app_config_accessor: Callable[[], Mapping[str, Any]],
         chat_store_accessor: Callable[[], Any | None],
+        active_native_session_accessor: Callable[[], Any | None],
+        current_conversation_id_accessor: Callable[[], str | None],
+        character_db_accessor: Callable[[], Any | None],
+        ensure_chat_store: Callable[[], Any],
+        provider_readiness_config_accessor: Callable[[], Mapping[str, Any]],
+        default_session_settings: Callable[[], Any],
+        swap_session_character: Callable[..., bool],
+        sync_temporary_chip: Callable[[], None],
+        sync_native_chat_ui: Callable[[], Awaitable[None]],
+        notify: Callable[..., None],
         actor_scope_accessor: Callable[[], ActorScope | None],
-        character_name_accessor: Callable[[], str | None],
         manual_reaction_key: Callable[[ActorScope], str | None],
         resolve_visual_identity: Callable[[ActorScope, str, str | None], Any | None],
         ensure_console_image_view: Callable[[], tuple[Any, Any]],
@@ -53,8 +76,17 @@ class ConsoleCharacterController:
     ) -> None:
         self._app_config_accessor = app_config_accessor
         self._chat_store_accessor = chat_store_accessor
+        self._active_native_session_accessor = active_native_session_accessor
+        self._current_conversation_id_accessor = current_conversation_id_accessor
+        self._character_db_accessor = character_db_accessor
+        self._ensure_chat_store = ensure_chat_store
+        self._provider_readiness_config_accessor = provider_readiness_config_accessor
+        self._default_session_settings = default_session_settings
+        self._swap_session_character = swap_session_character
+        self._sync_temporary_chip = sync_temporary_chip
+        self._sync_native_chat_ui = sync_native_chat_ui
+        self._notify = notify
         self._actor_scope_accessor = actor_scope_accessor
-        self._character_name_accessor = character_name_accessor
         self._manual_reaction_key = manual_reaction_key
         self._resolve_visual_identity = resolve_visual_identity
         self._ensure_console_image_view = ensure_console_image_view
@@ -69,6 +101,157 @@ class ConsoleCharacterController:
 
     def _live_config(self) -> Mapping[str, Any]:
         return self._app_config_accessor() or {}
+
+    def _console_character_picker_options(
+        self,
+    ) -> tuple[ConsoleCharacterOption, ...]:
+        """Read selectable character cards (worker thread; never raises)."""
+        db = self._character_db_accessor()
+        if db is None:
+            return ()
+        try:
+            cards = db.list_character_cards(limit=500)
+        except Exception:
+            logger.opt(exception=True).warning("Character picker: list failed.")
+            return ()
+        options: list[ConsoleCharacterOption] = []
+        for card in cards or ():
+            card_id = _canonical_card_character_id(card.get("id"))
+            name = str(card.get("name") or "").strip()
+            if card_id is None or not name:
+                continue
+            options.append(
+                ConsoleCharacterOption(
+                    character_id=card_id,
+                    name=name,
+                    description=str(card.get("description") or "")[:200],
+                )
+            )
+        return tuple(options)
+
+    def _current_console_rail_conversation_id(self) -> str | None:
+        """Return the conversation scope used only for rail persistence."""
+        native_session = self._active_native_session_accessor()
+        if native_session is not None:
+            conversation_id = getattr(
+                native_session,
+                "persisted_conversation_id",
+                None,
+            )
+            return str(conversation_id) if conversation_id else None
+        return self._current_conversation_id_accessor()
+
+    def _current_console_rail_character_id(self) -> int | None:
+        """Return the active native session's local character id, if any."""
+        native_session = self._active_native_session_accessor()
+        if native_session is None:
+            return None
+        return native_session.local_character_id()
+
+    def _current_console_rail_character_name(self) -> str | None:
+        """Return the active native session's character name, if any."""
+        native_session = self._active_native_session_accessor()
+        if native_session is None:
+            return None
+        name = getattr(native_session, "character_name", None)
+        return str(name) if name else None
+
+    def _fetch_character_card_for_avatar(self, character_id: int) -> dict | None:
+        """Fetch one character card off-thread, failing soft on DB errors."""
+        db = self._character_db_accessor()
+        if db is None:
+            return None
+        try:
+            return db.get_character_card_by_id(int(character_id))
+        except Exception:
+            logger.opt(exception=True).debug("avatar: character fetch failed")
+            return None
+
+    async def _apply_console_character_choice_async(
+        self,
+        choice: ConsoleCharacterChoice,
+    ) -> None:
+        """Apply a picked character to this session or a fresh one."""
+        card = await asyncio.to_thread(
+            self._fetch_character_card_for_avatar,
+            choice.character_id,
+        )
+        if card is None:
+            display_name = (
+                sanitize_character_display_label(
+                    choice.name,
+                    max_characters=180,
+                )
+                or "that character"
+            )
+            self._notify(
+                f"Could not load {escape_markup(display_name)}.",
+                severity="error",
+            )
+            return
+
+        store = self._ensure_chat_store()
+        global_name = _console_global_user_display_name(
+            self._provider_readiness_config_accessor()
+        )
+        if choice.placement == "new" or store.active_session_id is None:
+            effective_name = global_name
+        else:
+            effective_name = store.presentation_context(
+                store.active_session_id,
+                global_name,
+            ).user_name
+        seed = _character_session_prompt_seed(
+            card,
+            choice.name,
+            user_name=effective_name,
+        )
+        display_name = (
+            sanitize_character_display_label(seed.name, max_characters=180)
+            or "that character"
+        )
+        notification_name = escape_markup(display_name)
+        if choice.placement == "new":
+            settings = replace(
+                self._default_session_settings(),
+                system_prompt=seed.system_prompt,
+            )
+            session = store.create_session(
+                title=f"Chat with {seed.name}",
+                workspace_id=CONSOLE_GLOBAL_WORKSPACE_ID,
+                settings=settings,
+                runtime_backend="local",
+                assistant_kind="character",
+                assistant_id=str(choice.character_id),
+                assistant_authority_id=None,
+                character_id=choice.character_id,
+                character_name=seed.name,
+            )
+            try:
+                store.seed_character_roleplay(
+                    session.id,
+                    system_template=seed.system_template,
+                    greeting_template=seed.greeting_template,
+                    global_default=global_name,
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Character picker: roleplay template seed failed; continuing."
+                )
+            store.switch_session(session.id)
+            self._sync_temporary_chip()
+            self._notify(f"Started a new chat with {notification_name}.")
+        else:
+            if not self._swap_session_character(
+                store,
+                choice.character_id,
+                seed,
+                global_default=global_name,
+            ):
+                return
+            self._notify(f"This chat now uses {notification_name}.")
+        await self._sync_native_chat_ui()
+        await self._refresh_active_character_avatar_if_scope_changed()
 
     def _current_request(self) -> AvatarRequest:
         config = self._live_config()
@@ -86,7 +269,7 @@ class ConsoleCharacterController:
             session_id,
             react,
             resolve_show_character_avatar(config),
-            self._character_name_accessor(),
+            self._current_console_rail_character_name(),
         )
 
     def _request_is_current(self, request: AvatarRequest) -> bool:

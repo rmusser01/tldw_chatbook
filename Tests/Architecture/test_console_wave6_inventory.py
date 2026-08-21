@@ -1567,6 +1567,95 @@ def test_wave6_compatibility_inventory_is_complete_and_phase_safe() -> None:
             _assert_descriptor_contract(ChatScreen, owner_name, state_name)
 
 
+def _assert_character_ownership_contract(
+    screen_methods: dict[str, ast.AST],
+    target_methods: dict[str, ast.AST],
+) -> None:
+    """Require character policy and presentation to have one approved owner."""
+    group = WAVE6_GROUPS["character"]
+    assert not (group.moved & screen_methods.keys()), (
+        "character methods still owned by ChatScreen: "
+        f"{sorted(group.moved & screen_methods.keys())}"
+    )
+    assert group.moved <= target_methods.keys(), (
+        "character methods missing from ConsoleCharacterController: "
+        f"{sorted(group.moved - target_methods.keys())}"
+    )
+    assert not (group.deleted & screen_methods.keys())
+    assert not (group.deleted & target_methods.keys())
+    dom_offenders = {
+        name for name in group.moved if _calls_dom_query(target_methods[name])
+    }
+    assert not dom_offenders, (
+        f"character controller methods query DOM: {sorted(dom_offenders)}"
+    )
+
+    presentation = {
+        "_open_console_character_picker",
+        "_apply_console_character_choice",
+        "_render_character_avatar_into_section",
+    }
+    assert presentation <= screen_methods.keys()
+    assert not (presentation & target_methods.keys()), (
+        "character presentation duplicated on controller: "
+        f"{sorted(presentation & target_methods.keys())}"
+    )
+
+
+@pytest.mark.unit
+def test_character_family_has_completed_controller_ownership() -> None:
+    """Require the current seven-M/deleted-one character inventory."""
+    group = WAVE6_GROUPS["character"]
+    target_path = _REPO_ROOT / group.target_path
+    screen_methods = _methods(_SCREEN_PATH, "ChatScreen")
+    character_state = {
+        "_active_character_avatar",
+        "_active_character_avatar_name",
+        "_last_console_avatar_scope",
+        "_console_expression_spec_cache",
+    }
+
+    assert target_path.exists(), "ConsoleCharacterController module is missing"
+    assert COMPATIBILITY_TARGETS[group.owner_name] == character_state
+    assert set(BASELINE_DEFAULTS) & character_state == character_state
+    target_methods = _methods(target_path, group.target_class)
+    _assert_character_ownership_contract(screen_methods, target_methods)
+    assert "_screen" not in _self_assignments(target_methods["__init__"])
+
+
+@pytest.mark.unit
+def test_character_move_ownership_oracle_is_non_vacuous() -> None:
+    """Prove the shared oracle rejects screen ownership and DOM queries."""
+    group = WAVE6_GROUPS["character"]
+    moved_method = "_console_character_picker_options"
+    assert moved_method in group.moved
+    screen_methods = _methods(_SCREEN_PATH, "ChatScreen")
+    extracted_screen = {
+        name: method
+        for name, method in screen_methods.items()
+        if name not in group.moved
+    }
+    target_methods = {
+        name: ast.parse(f"def {name}(self): pass").body[0] for name in group.moved
+    }
+    synthetic_screen = {
+        **extracted_screen,
+        moved_method: target_methods[moved_method],
+    }
+    with pytest.raises(AssertionError, match="still owned by ChatScreen"):
+        _assert_character_ownership_contract(synthetic_screen, target_methods)
+
+    synthetic_target = dict(target_methods)
+    synthetic_target[moved_method] = ast.parse(
+        "def _console_character_picker_options(self): self.query('.row')"
+    ).body[0]
+    with pytest.raises(AssertionError, match="query DOM"):
+        _assert_character_ownership_contract(
+            extracted_screen,
+            synthetic_target,
+        )
+
+
 @pytest.mark.unit
 def test_character_controller_has_only_named_non_dom_dependencies() -> None:
     """Lock Task10 orchestration behind the approved controller boundary."""
@@ -1576,12 +1665,22 @@ def test_character_controller_has_only_named_non_dom_dependencies() -> None:
     methods = _methods_from_class(controller)
     init = methods["__init__"]
     assert isinstance(init, ast.FunctionDef)
+    assert not init.args.posonlyargs
     assert [argument.arg for argument in init.args.args] == ["self"]
     assert {argument.arg for argument in init.args.kwonlyargs} == {
         "app_config_accessor",
         "chat_store_accessor",
+        "active_native_session_accessor",
+        "current_conversation_id_accessor",
+        "character_db_accessor",
+        "ensure_chat_store",
+        "provider_readiness_config_accessor",
+        "default_session_settings",
+        "swap_session_character",
+        "sync_temporary_chip",
+        "sync_native_chat_ui",
+        "notify",
         "actor_scope_accessor",
-        "character_name_accessor",
         "manual_reaction_key",
         "resolve_visual_identity",
         "ensure_console_image_view",
@@ -1589,8 +1688,11 @@ def test_character_controller_has_only_named_non_dom_dependencies() -> None:
         "is_mounted",
         "render_character_avatar",
     }
+    assert init.args.kw_defaults == [None] * len(init.args.kwonlyargs)
+    assert init.args.vararg is None
+    assert init.args.kwarg is None
     assert "_screen" not in _self_assignments(controller)
-    _assert_no_dom_access(methods.values())
+    assert not any(_calls_dom_query(method) for method in methods.values())
 
 
 @pytest.mark.unit

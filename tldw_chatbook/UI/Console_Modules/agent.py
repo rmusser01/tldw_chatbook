@@ -394,7 +394,9 @@ def _fleet_row_from_handle(handle: "FleetHandle", *, now: float) -> InspectorSec
     )
 
 
-def _fleet_row_from_summary(summary: "SubAgentSummary", index: int) -> InspectorSectionRow:
+def _fleet_row_from_summary(
+    summary: "SubAgentSummary", index: int
+) -> InspectorSectionRow:
     """Build one fleet row from a HISTORICAL/resumed ``SubAgentSummary``.
 
     No elapsed segment: unlike a live ``FleetHandle``,
@@ -476,11 +478,10 @@ class ConsoleAgentController:
            `_ensure_console_agent_bridge` only ever `getattr`s off it.
         3. Every **app-level dependency** is a named keyword-only callable,
            wired at the call site as a late-binding lambda -- never a bound
-           method, which would freeze the screen's CURRENT method and stop
-           observing a later `monkeypatch.setattr` on the instance. Two of
-           these are patched by name in the pre-existing suite
-           (`_current_console_rail_conversation_id` and
-           `_current_console_rail_state`, both in
+           method, which would freeze the current target and stop observing
+           a later `monkeypatch.setattr`. The pre-existing suite patches
+           `_current_console_rail_conversation_id` on `screen._character`
+           and `_current_console_rail_state` on the screen (both in
            `Tests/UI/test_console_agent_rail.py`), so this is load-bearing,
            not ceremony.
 
@@ -592,7 +593,7 @@ class ConsoleAgentController:
 
     @property
     def _current_console_rail_conversation_id(self) -> Any:
-        """`ChatScreen._current_console_rail_conversation_id`, by name."""
+        """The character controller's rail-conversation accessor, by name."""
         return self._current_rail_conversation_id
 
     @property
@@ -804,9 +805,7 @@ class ConsoleAgentController:
                         else None
                     )
                     if live_run is not None:
-                        steps = "\n".join(
-                            f"{s.kind}: {s.text}" for s in live_run.steps
-                        )
+                        steps = "\n".join(f"{s.kind}: {s.text}" for s in live_run.steps)
                 # PR3b Task 4: a resumed sub-agent (send_to_agent to a
                 # finished child starts a NEW run seeded with its retained
                 # transcript) carries its lineage in the header. The run
@@ -1234,7 +1233,9 @@ class ConsoleAgentController:
         subagent_runs = getattr(bridge, "subagent_runs", None)
         if subagent_runs is None:
             return ()
-        return tuple(_fleet_row_from_record(record) for record in subagent_runs(conversation_id))
+        return tuple(
+            _fleet_row_from_record(record) for record in subagent_runs(conversation_id)
+        )
 
     def _console_agent_fleet_token_total(self) -> int:
         """Sum the active conversation's LIVE fleet's measured token spend.

@@ -36,6 +36,7 @@ from types import SimpleNamespace
 import pytest
 
 from Tests.UI.test_destination_shells import _build_test_app
+from tldw_chatbook.UI.Console_Modules.character import ConsoleCharacterController
 from tldw_chatbook.UI.Console_Modules.dictation import ConsoleDictationController
 from tldw_chatbook.UI.Console_Modules.hands_free import ConsoleHandsFreeController
 from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
@@ -90,8 +91,30 @@ def test_retrieval_controller_is_constructed_with_late_bound_screen_edges():
 
     assert isinstance(screen._retrieval, ConsoleRetrievalController)
     sentinel = object()
-    screen._current_console_rail_conversation_id = lambda: sentinel
+    screen._character._current_console_rail_conversation_id = lambda: sentinel
     assert screen._retrieval._current_conversation_id() is sentinel
+
+
+def test_character_controller_is_constructed_with_late_bound_screen_edges():
+    """Wave 6 wires `_character` without changing the six-slot contract."""
+    screen = _unmounted_console()
+
+    assert isinstance(screen._character, ConsoleCharacterController)
+    native_session = object()
+    conversation_id = object()
+    default_settings = object()
+    character_db = object()
+    screen._session = SimpleNamespace(
+        _active_native_console_session=lambda: native_session,
+        _current_console_conversation_id=lambda: conversation_id,
+        _default_console_session_settings=lambda: default_settings,
+    )
+    screen.app_instance.chachanotes_db = character_db
+
+    assert screen._character._active_native_session_accessor() is native_session
+    assert screen._character._current_conversation_id_accessor() is conversation_id
+    assert screen._character._default_session_settings() is default_settings
+    assert screen._character._character_db_accessor() is character_db
 
 
 def test_skill_controller_is_constructed_with_late_bound_screen_edges():
@@ -207,9 +230,7 @@ def test_workspace_resolves_the_session_sibling_at_call_time():
     """
     screen = _unmounted_console()
     sentinel = object()
-    screen._session = SimpleNamespace(
-        _current_console_conversation_id=lambda: sentinel
-    )
+    screen._session = SimpleNamespace(_current_console_conversation_id=lambda: sentinel)
 
     assert screen._workspace._current_conversation_id_accessor() is sentinel
 
@@ -277,6 +298,4 @@ def test_prompts_resolves_the_session_sibling_at_call_time():
         _ensure_active_console_session_settings=lambda: sentinel
     )
 
-    assert (
-        screen._prompts._ensure_active_console_session_settings_fn() is sentinel
-    )
+    assert screen._prompts._ensure_active_console_session_settings_fn() is sentinel

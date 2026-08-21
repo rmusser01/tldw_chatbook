@@ -119,7 +119,7 @@ async def _setup_console(pilot, host, bridge, *, conversation_id: str = "conv-A"
     await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
     console._console_agent_bridge = bridge
     console._console_agent_drilldown_run_id = None
-    console._current_console_rail_conversation_id = lambda: conversation_id
+    console._character._current_console_rail_conversation_id = lambda: conversation_id
     console._agent._console_agent_drilldown_conversation_id = conversation_id
     console._set_console_rail_preference(
         section_updates={"agent": True}, notify_on_failure=False
@@ -205,9 +205,7 @@ async def test_state_1_summary_line_shows_glyph_cluster_and_working_done_counts(
         # (Task 3's own mutation-testing lesson: a structural assertion
         # alone can pass vacuously against a broken `.update()` call).
         assert (
-            _static_text(
-                console, f"#console-inspector-section-{_SECTION_ID}-summary"
-            )
+            _static_text(console, f"#console-inspector-section-{_SECTION_ID}-summary")
             == "●●✓ 2 working, 1 done"
         )
         summary_static = console.query_one(
@@ -219,31 +217,56 @@ async def test_state_1_summary_line_shows_glyph_cluster_and_working_done_counts(
 
 @pytest.mark.asyncio
 async def test_state_1_summary_counts_every_terminal_status_as_done_not_just_literal_done():
-    """"Working" is `status == "running"`; every other status this
+    """ "Working" is `status == "running"`; every other status this
     codebase's fleet vocabulary uses (`done`/`error`/`stuck`/`cancelled` --
     see `SubAgentSummary.status`'s own docstring, and `TERMINAL_RUN_
     STATUSES`) is terminal, i.e. counted as "done" in the summary's second
     bucket -- not just a literal `status == "done"` check."""
     handles = (
         FleetHandle(
-            handle_id="h1", run_id="run-1", agent="a", task="t1", status="running",
+            handle_id="h1",
+            run_id="run-1",
+            agent="a",
+            task="t1",
+            status="running",
             started_at=1000.0,
         ),
         FleetHandle(
-            handle_id="h2", run_id="run-2", agent="a", task="t2", status="done",
-            started_at=1000.0, finished_at=1001.0,
+            handle_id="h2",
+            run_id="run-2",
+            agent="a",
+            task="t2",
+            status="done",
+            started_at=1000.0,
+            finished_at=1001.0,
         ),
         FleetHandle(
-            handle_id="h3", run_id="run-3", agent="a", task="t3", status="error",
-            error="boom", started_at=1000.0, finished_at=1001.0,
+            handle_id="h3",
+            run_id="run-3",
+            agent="a",
+            task="t3",
+            status="error",
+            error="boom",
+            started_at=1000.0,
+            finished_at=1001.0,
         ),
         FleetHandle(
-            handle_id="h4", run_id="run-4", agent="a", task="t4", status="cancelled",
-            started_at=1000.0, finished_at=1001.0,
+            handle_id="h4",
+            run_id="run-4",
+            agent="a",
+            task="t4",
+            status="cancelled",
+            started_at=1000.0,
+            finished_at=1001.0,
         ),
         FleetHandle(
-            handle_id="h5", run_id="run-5", agent="a", task="t5", status="stuck",
-            started_at=1000.0, finished_at=1001.0,
+            handle_id="h5",
+            run_id="run-5",
+            agent="a",
+            task="t5",
+            status="stuck",
+            started_at=1000.0,
+            finished_at=1001.0,
         ),
     )
     bridge = _FleetBridge(handles)
@@ -394,16 +417,28 @@ async def test_clicking_the_last_row_drills_into_that_child_directly_not_via_a_c
     happened to be "next" from wherever the cursor was) to reach it."""
     handles = (
         FleetHandle(
-            handle_id="h1", run_id="run-1", agent="researcher", task="t1",
-            status="running", started_at=1000.0,
+            handle_id="h1",
+            run_id="run-1",
+            agent="researcher",
+            task="t1",
+            status="running",
+            started_at=1000.0,
         ),
         FleetHandle(
-            handle_id="h2", run_id="run-2", agent="writer", task="t2",
-            status="running", started_at=1000.0,
+            handle_id="h2",
+            run_id="run-2",
+            agent="writer",
+            task="t2",
+            status="running",
+            started_at=1000.0,
         ),
         FleetHandle(
-            handle_id="h3", run_id="run-3", agent="reviewer", task="t3",
-            status="running", started_at=1000.0,
+            handle_id="h3",
+            run_id="run-3",
+            agent="reviewer",
+            task="t3",
+            status="running",
+            started_at=1000.0,
         ),
     )
     bridge = _FleetBridge(handles)
@@ -434,12 +469,20 @@ async def test_clicking_the_first_row_drills_into_that_child_directly():
     only the position a cycling cursor would land on next."""
     handles = (
         FleetHandle(
-            handle_id="h1", run_id="run-1", agent="researcher", task="t1",
-            status="running", started_at=1000.0,
+            handle_id="h1",
+            run_id="run-1",
+            agent="researcher",
+            task="t1",
+            status="running",
+            started_at=1000.0,
         ),
         FleetHandle(
-            handle_id="h2", run_id="run-2", agent="writer", task="t2",
-            status="running", started_at=1000.0,
+            handle_id="h2",
+            run_id="run-2",
+            agent="writer",
+            task="t2",
+            status="running",
+            started_at=1000.0,
         ),
     )
     bridge = _FleetBridge(handles)

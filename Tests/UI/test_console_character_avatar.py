@@ -102,28 +102,42 @@ def _resolution(
 
 
 def _bare_console_screen(store: ConsoleChatStore) -> ChatScreen:
-    """Build a native-console screen shell for direct accessor calls.
-
-    See ``Tests/UI/test_console_native_chat_flow.py::_bare_console_screen``
-    for the rationale (bypasses ``ChatScreen.__init__``).
-    """
+    """Build a screen shell around the real character-controller seam."""
     screen = ChatScreen.__new__(ChatScreen)
     screen._retrieval = object.__new__(ConsoleRetrievalController)
     screen._retrieval._capture_console_staged_rag = AsyncMock()
-    screen._retrieval._current_conversation_id = (
-        lambda: screen._current_console_rail_conversation_id()
+    screen._retrieval._current_conversation_id = lambda: (
+        screen._character._current_console_rail_conversation_id()
     )
-    screen._character = ConsoleCharacterController.__new__(ConsoleCharacterController)
-    screen._character._active_character_avatar = None
-    screen._character._active_character_avatar_name = None
-    screen._character._last_console_avatar_scope = None
-    screen._character._console_expression_spec_cache = {}
-    screen._console_chat_store = store
-    screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
-    screen._session._chat_store_accessor = lambda: screen._console_chat_store
-    screen._session._current_chat_store_accessor = lambda: screen._console_chat_store
-    screen._console_visible_draft_session_id = None
-    screen._console_composer_or_none = lambda: None
+
+    def active_session():
+        active_id = store.active_session_id
+        return next(
+            (session for session in store.sessions() if session.id == active_id),
+            None,
+        )
+
+    screen._character = ConsoleCharacterController(
+        app_config_accessor=lambda: {},
+        chat_store_accessor=lambda: store,
+        active_native_session_accessor=active_session,
+        current_conversation_id_accessor=lambda: None,
+        character_db_accessor=lambda: None,
+        ensure_chat_store=lambda: store,
+        provider_readiness_config_accessor=lambda: {},
+        default_session_settings=lambda: SimpleNamespace(),
+        swap_session_character=lambda *_args, **_kwargs: False,
+        sync_temporary_chip=lambda: None,
+        sync_native_chat_ui=AsyncMock(),
+        notify=lambda *_args, **_kwargs: None,
+        actor_scope_accessor=lambda: None,
+        manual_reaction_key=lambda _scope: None,
+        resolve_visual_identity=lambda *_args: None,
+        ensure_console_image_view=lambda: (None, None),
+        console_image_default_mode=lambda: None,
+        is_mounted=lambda: False,
+        render_character_avatar=AsyncMock(),
+    )
     return screen
 
 
@@ -148,16 +162,16 @@ def test_current_console_rail_character_id_reads_active_session():
     )
     screen = _bare_console_screen(_store_with_session(session))
 
-    assert screen._current_console_rail_character_id() == 7
-    assert screen._current_console_rail_character_name() == "Ada"
+    assert screen._character._current_console_rail_character_id() == 7
+    assert screen._character._current_console_rail_character_name() == "Ada"
 
 
 def test_current_console_rail_character_id_none_for_generic_session():
     session = ConsoleChatSession(id="session-a")
     screen = _bare_console_screen(_store_with_session(session))
 
-    assert screen._current_console_rail_character_id() is None
-    assert screen._current_console_rail_character_name() is None
+    assert screen._character._current_console_rail_character_id() is None
+    assert screen._character._current_console_rail_character_name() is None
 
 
 def test_p3c_leaves_dictionary_scope_ids_unchanged():
@@ -177,7 +191,9 @@ def test_p3c_leaves_dictionary_scope_ids_unchanged():
     )
     screen = _bare_console_screen(_store_with_session(session))
 
-    conversation_id, character_id = screen._retrieval._active_console_dictionary_scope_ids()
+    conversation_id, character_id = (
+        screen._retrieval._active_console_dictionary_scope_ids()
+    )
     assert conversation_id == "conv-1"
     assert character_id is None
 
@@ -430,8 +446,8 @@ async def test_refresh_populates_avatar_cache_and_mounts(console_screen_with_db)
 
     # unchanged scope -> no re-fetch (spy the DB fetch)
     calls = []
-    orig = screen._fetch_character_card_for_avatar  # the off-thread fetch wrapper
-    screen._fetch_character_card_for_avatar = lambda cid: (
+    orig = screen._character._fetch_character_card_for_avatar
+    screen._character._fetch_character_card_for_avatar = lambda cid: (
         calls.append(cid),
         orig(cid),
     )[1]
@@ -562,8 +578,8 @@ async def test_refresh_skips_db_fetch_when_config_off(
     _set_active_console_character(screen, char_id, "Ada")
 
     calls = []
-    orig = screen._fetch_character_card_for_avatar
-    screen._fetch_character_card_for_avatar = lambda cid: (
+    orig = screen._character._fetch_character_card_for_avatar
+    screen._character._fetch_character_card_for_avatar = lambda cid: (
         calls.append(cid),
         orig(cid),
     )[1]
@@ -864,7 +880,9 @@ async def test_personas_publication_targets_mounted_console_cache_before_return(
 ):
     _app, console, _db = console_screen_with_db
     invalidate = AsyncMock()
-    monkeypatch.setattr(console._session, "invalidate_visual_identity_actor", invalidate)
+    monkeypatch.setattr(
+        console._session, "invalidate_visual_identity_actor", invalidate
+    )
     owner = SimpleNamespace(app=SimpleNamespace(screen_stack=(console,)))
     result = VisualIdentityPublicationResult(
         actor_kind="character",

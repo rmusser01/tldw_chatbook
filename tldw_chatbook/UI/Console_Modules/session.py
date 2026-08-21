@@ -58,13 +58,12 @@ this cluster's own remaining screen-side callers) use:
 `_default_console_session_settings` needs; `ChatScreen` imports both back --
 `_is_empty_select_value` has its own independent `@on(Select.Changed)`
 consumer, `_has_selected_text` a dozen more, none of them session-shaped),
-and the character-handoff quartet `_canonical_card_character_id`/
+and the character-handoff quintet `_canonical_card_character_id`/
 `_canonical_character_id_text`/`_character_session_identity_from_handoff`/
 `_character_session_prompt_seed`/`_SERVER_CHARACTER_AUTHORITY_PATTERN`
-(`_start_character_console_session`'s own dependencies; `ChatScreen` imports
-back the two of those its own character-PICKER cluster --
-`_console_character_picker_options`/`_apply_console_character_choice_async`,
-which stay screen-side, see below -- still needs).
+(`_start_character_console_session`'s own dependencies; the character
+controller imports the card-id and prompt-seed helpers for its picker and
+session-choice policy).
 
 `_console_active_session_is_ephemeral` is the one exception to "moved for
 real": its IMPLEMENTATION lives here, but `ChatScreen` keeps a one-line
@@ -168,7 +167,6 @@ from ...Chat.console_project_instructions import (
     decode_project_context_json,
     encode_project_context_json,
 )
-from ...Chat.console_prefill import pinned_prefill_from_conversation_metadata
 from ...Chat.console_session_settings import (
     ConsoleSessionSettings,
     build_console_settings_readiness,
@@ -2662,9 +2660,7 @@ class ConsoleSessionController:
         native_rows.sort(key=lambda row: 0 if row.selected else 1)
         return replace(
             state,
-            conversation_rows=tuple(
-                self._merge_workspace_rows(native_rows, rows)
-            ),
+            conversation_rows=tuple(self._merge_workspace_rows(native_rows, rows)),
         )
 
     # -- Screen-state (de)serialization for one session ----------------------
@@ -2946,9 +2942,7 @@ class ConsoleSessionController:
                         byte_count=metadata.byte_count,
                         outcome=metadata.outcome,
                         warning_code=(
-                            metadata.warning_codes[0]
-                            if metadata.warning_codes
-                            else ""
+                            metadata.warning_codes[0] if metadata.warning_codes else ""
                         ),
                     ),
                 )
