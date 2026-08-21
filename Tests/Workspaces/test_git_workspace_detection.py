@@ -106,3 +106,25 @@ def test_env_posture_preserves_home_scrubs_git_dir(repo: Path, monkeypatch):
     # A stray GIT_DIR would break every call; the scrub makes this pass.
     result = _run_user_git(repo, "rev-parse", "--show-toplevel")
     assert Path(result.stdout.strip()).resolve() == repo.resolve()
+
+
+@pytest.mark.parametrize(
+    "var", ["GIT_GLOB_PATHSPECS", "GIT_NOGLOB_PATHSPECS", "GIT_ICASE_PATHSPECS"]
+)
+def test_ambient_pathspec_vars_do_not_break_every_invocation(
+    repo: Path, monkeypatch, var
+):
+    """The C2 fix pins `GIT_LITERAL_PATHSPECS=1`, and git REFUSES the mix.
+
+    `fatal: global 'literal' pathspec setting is incompatible with all
+    other global pathspec settings` -- so a user who exports any of these
+    in their shell would see every git call in this module die. This
+    module deliberately preserves the ambient environment, which makes
+    scrubbing these three part of the fix rather than optional tidying.
+    """
+    monkeypatch.setenv(var, "1")
+    # A command that actually PARSES a pathspec -- `rev-parse` never does,
+    # so it would pass even with the scrub removed.
+    (repo / "a.txt").write_text("edited\n")
+    result = _run_user_git(repo, "diff", "HEAD", "--", "a.txt")
+    assert "a.txt" in result.stdout, result.stderr

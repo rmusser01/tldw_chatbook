@@ -139,6 +139,24 @@ _SCRUBBED_VARS = frozenset(
 )
 
 
+#: The sibling global pathspec-interpretation vars. They must be scrubbed
+#: rather than merely overridden: git REFUSES outright ("fatal: global
+#: 'literal' pathspec setting is incompatible with all other global
+#: pathspec settings") when ``GIT_LITERAL_PATHSPECS`` is set alongside
+#: ``GIT_GLOB_PATHSPECS`` or ``GIT_ICASE_PATHSPECS``, so a user who
+#: exports one of those in their shell would otherwise see EVERY git
+#: invocation in this module fail. Scrubbing them is also correct on its
+#: own terms -- an ambient `GIT_ICASE_PATHSPECS` would silently widen a
+#: file selection.
+_SCRUBBED_PATHSPEC_VARS = frozenset(
+    {
+        "GIT_GLOB_PATHSPECS",
+        "GIT_NOGLOB_PATHSPECS",
+        "GIT_ICASE_PATHSPECS",
+    }
+)
+
+
 def _user_git_env() -> dict[str, str]:
     """Ambient environment, minus repo-targeting vars, plus safety pins.
 
@@ -146,11 +164,28 @@ def _user_git_env() -> dict[str, str]:
     (preserve identity/credentials, scrub only targeting vars) is correct
     HERE and would be wrong for the other two git runners in this repo.
     """
-    env = {k: v for k, v in os.environ.items() if k.upper() not in _SCRUBBED_VARS}
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k.upper() not in _SCRUBBED_VARS and k.upper() not in _SCRUBBED_PATHSPEC_VARS
+    }
     # Fail honestly rather than hang a TUI on a hidden credential prompt.
     env["GIT_TERMINAL_PROMPT"] = "0"
     env["GIT_OPTIONAL_LOCKS"] = "0"
     env["GIT_PAGER"] = "cat"
+    # `--` stops OPTION parsing; it does NOT stop PATHSPEC MAGIC. Every
+    # path this module passes to git comes from `git status` -- i.e. from
+    # the REPOSITORY -- and a file may legally be NAMED `:!nothing`,
+    # `:(glob)*`, or `:/`. Reproduced against real git: a one-file
+    # selection of a file named `:!nothing` was read as the exclude
+    # pathspec "everything except paths matching nothing", and
+    # `add -A -- ':!nothing'` + `commit -- ':!nothing'` committed FOUR
+    # files (the canonical index-hijack bug, reached through a filename);
+    # `diff HEAD -- ':!nothing'` likewise rendered other files' diffs into
+    # the pane. `GIT_LITERAL_PATHSPECS=1` makes every pathspec literal at
+    # ONE choke point, covering every call site in this module; verified
+    # to leave normal, spaced, UTF-8 and directory pathspecs working.
+    env["GIT_LITERAL_PATHSPECS"] = "1"
     return env
 
 
@@ -658,15 +693,22 @@ class CommitResult:
     """The full outcome of one :func:`commit_selected` call.
 
     Attributes:
-        outcomes: One :class:`GitStepOutcome` per step that ran and was
-            worth reporting, in execution order. A guard step
+        outcomes: The steps worth REPORTING, in execution order -- read it
+            as failure detail, not as a log of everything that ran. It is
+            deliberately lossy in both directions: a guard step
             (``"in-progress-check"``, ``"validate-branch"``) that PASSED
-            is silent -- nothing to report -- and is only appended when it
-            BLOCKS the commit; the mutating steps that follow
+            appends nothing and is only present when it BLOCKED the
+            commit, and ``"stage"`` is absent entirely when the add was
+            skipped (every selected path already absent from the
+            worktree -- a staged deletion or a completed ``git mv``).
+            What IS guaranteed, and what
+            :meth:`~tldw_chatbook.UI.Screens.change_review_screen.ChangeReviewScreen._land_commit_result`
+            relies on: the mutating steps that actually run
             (``"create-branch"``, ``"stage"``, ``"commit"``,
-            ``"resolve-sha"``) are always appended, success or failure,
-            since they form the audit trail of what actually happened to
-            the repository.
+            ``"resolve-sha"``) each append win or lose, so the LAST row is
+            always the step that stopped the run, and a run that reached
+            the end carries an all-``ok`` tail. Do not infer from a
+            MISSING row that its step did not happen.
         short_sha: ``rev-parse --short HEAD`` after a landed commit, or
             ``None`` on any failure (including a failure to resolve the
             sha of an otherwise-landed commit).
@@ -716,9 +758,11 @@ def commit_selected(
     3. When ``new_branch``: ``validate-branch`` (``check-ref-format``,
        also an option-injection guard against a leading ``-``), then
        ``create-branch`` (``checkout -b``).
-    4. ``stage`` -- ``git add -A -- <files>``.
-    5. ``commit`` -- ``git commit -m <message> -- <files>`` (user hooks
-       and gpg signing run; this is the user's repo, their rules).
+    4. ``stage`` -- ``git add -A -- <files present in the worktree>``,
+       SKIPPED entirely when that filtered list is empty.
+    5. ``commit`` -- ``git commit -m <message> -- <files>`` (the FULL
+       pathspec; user hooks and gpg signing run -- this is the user's
+       repo, their rules).
     6. ``resolve-sha`` -- ``git rev-parse --short HEAD``.
 
     Args:
@@ -726,7 +770,10 @@ def commit_selected(
         files: Root-relative paths to stage and commit. Always placed
             after ``--`` in both the ``add`` and ``commit`` argv, so a
             path that happens to start with ``-`` is never parsed as an
-            option.
+            option -- and, since ``--`` does NOT stop pathspec MAGIC,
+            :func:`_user_git_env` additionally pins
+            ``GIT_LITERAL_PATHSPECS=1`` so a path NAMED ``:!nothing``
+            cannot hijack the selection.
         message: The commit message, passed as ``-m``'s argv element
             (never shell-interpolated) -- a leading ``-`` is safe (spec
             §2 probe 5: ``-m``'s sticky-arg consumption makes a
@@ -795,15 +842,34 @@ def commit_selected(
         if not create_ok:
             return CommitResult(tuple(outcomes), None)
 
-    stage_result = _run_user_git(root, "add", "-A", "--", *files, check=False)
-    stage_ok = stage_result.returncode == 0
-    outcomes.append(
-        GitStepOutcome(
-            "stage", stage_ok, "" if stage_ok else (stage_result.stderr or "").strip()[:400]
+    # `git add` refuses a pathspec matching nothing in the WORKTREE, so a
+    # path whose change is already recorded in the index and absent from
+    # disk -- a queued `git mv` rename's old name, a `git rm` staged
+    # deletion, a plain unstaged deletion -- used to dead-end the whole
+    # commit at this step (`fatal: pathspec 'a.txt' did not match any
+    # files`). `git commit -- <path>` records those on its own, so only
+    # the ADD list is filtered; the COMMIT keeps the full pathspec.
+    #
+    # `os.path.lexists`, never `Path.exists()`: a BROKEN SYMLINK is a real
+    # worktree entry git can stage, and `Path.exists()` follows the link
+    # and calls it absent.
+    add_files = [path for path in files if os.path.lexists(os.path.join(root, path))]
+    if add_files:
+        stage_result = _run_user_git(root, "add", "-A", "--", *add_files, check=False)
+        stage_ok = stage_result.returncode == 0
+        outcomes.append(
+            GitStepOutcome(
+                "stage",
+                stage_ok,
+                "" if stage_ok else (stage_result.stderr or "").strip()[:400],
+            )
         )
-    )
-    if not stage_ok:
-        return CommitResult(tuple(outcomes), None)
+        if not stage_ok:
+            return CommitResult(tuple(outcomes), None)
+    # ...and when NOTHING in the selection is on disk, the add is skipped
+    # outright rather than run with an empty pathspec: `git add -A --`
+    # with no paths stages the WHOLE TREE (verified), which would commit
+    # files the user never checked.
 
     commit_result = _run_user_git(
         root,
@@ -934,12 +1000,58 @@ def _resolve_push_remote(info: GitWorkspaceInfo, remote: str | None) -> str | No
     return None
 
 
+def _upstream_remote_ref(root: Path, branch: str) -> str | None:
+    """The ref ``branch``'s upstream names ON THE REMOTE, fully qualified.
+
+    Read from ``%(upstream:remoteref)`` -- the remote-side counterpart of
+    the ``%(upstream:remotename)`` field detection already uses, and the
+    only source that is guaranteed to agree with ``info.upstream``.
+    ``git config --get branch.<b>.merge`` is NOT equivalent: a
+    multi-valued ``merge`` (legal, and writable by anything that can write
+    ``.git/config``) makes ``--get`` return the LAST value while
+    ``@{upstream}`` resolves the FIRST -- i.e. the push would target a
+    different ref than the UI names.
+
+    A branch name can never glob-poison the ``refs/heads/<branch>``
+    pattern: git refuses ``*``, ``?`` and ``[`` in ref names outright.
+
+    Args:
+        root: Workspace root.
+        branch: The current branch's short name.
+
+    Returns:
+        The remote-side ref (e.g. ``"refs/heads/main"``), or ``None`` when
+        it cannot be read or is not fully qualified -- callers must REFUSE
+        on ``None`` rather than fall back to a refspec-less push.
+    """
+    result = _run_user_git(
+        root,
+        "for-each-ref",
+        "--format=%(upstream:remoteref)",
+        f"refs/heads/{branch}",
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    value = result.stdout.splitlines()[0].strip() if result.stdout.strip() else ""
+    # Must be fully qualified: a bare or empty value would build a refspec
+    # whose destination git resolves by its own rules (or, when empty,
+    # `refs/heads/x:` -- an invalid refspec at best).
+    if not value.startswith("refs/"):
+        return None
+    return value
+
+
 def push_current(root: Path, info: GitWorkspaceInfo, remote: str | None) -> PushResult:
     """Push the current branch, honestly reporting a non-fast-forward rejection.
 
     Never passes ``--force``/``--force-with-lease`` (spec §6,
     no-silent-destructive precedent) -- a rejected push surfaces git's own
-    stderr excerpt rather than retrying with force.
+    stderr excerpt rather than retrying with force. Equally important, and
+    NOT visible in an argv audit: the push always carries an EXPLICIT,
+    fully-qualified refspec, so no repository-supplied configuration can
+    turn our own argv into a destructive push (see the comment at the
+    refspec construction).
 
     Args:
         root: Workspace root (must be the repo toplevel).
@@ -953,12 +1065,14 @@ def push_current(root: Path, info: GitWorkspaceInfo, remote: str | None) -> Push
     Raises:
         GitWorkspaceError: HEAD is detached (``"no branch checked out"``),
             no remote could be resolved
-            (``"no git remote configured"``), or the BRANCH
+            (``"no git remote configured"``), the BRANCH
             (``"unsupported branch name"``) or resolved REMOTE
             (``"unsupported remote name"``) has a name beginning with
             ``"-"`` -- git would read either as an option rather than as a
             ref/remote, which is a ref-destruction vector; see the comments
-            at the two checks.
+            at the two checks -- or the upstream's remote-side ref could
+            not be resolved (``"could not resolve where the upstream
+            points"``).
     """
     if info.detached or info.branch is None:
         raise GitWorkspaceError("no branch checked out")
@@ -1008,15 +1122,60 @@ def push_current(root: Path, info: GitWorkspaceInfo, remote: str | None) -> Push
     if target_remote.startswith("-"):
         raise GitWorkspaceError("unsupported remote name")
 
+    # THE THIRD ARGUMENT-INJECTION SHAPE (whole-branch review), and the one
+    # neither guard above can see: the destructive option never appears in
+    # OUR argv at all. A push that carries NO refspec lets `.git/config`
+    # decide what the push does -- and an agent CAN write `.git/config`,
+    # because no `.git` exclusion exists in `workspace_file_roots.py` /
+    # `file_operation_tools.py`, and this feature operates on exactly that
+    # root. Reproduced against real git, with a non-dash remote and a
+    # non-dash branch (both existing guards passing cleanly):
+    #
+    #   remote.origin.push = +refs/heads/*:refs/heads/*
+    #       -> `+ aa1df20...80ecf04 main -> main (forced update)`; another
+    #          clone's commit destroyed. Leaks into the `-u` form too, which
+    #          looks its bare branch name up in the configured push refspecs
+    #          and inherits that refspec's `+`.
+    #   remote.origin.push = :refs/heads/release
+    #       -> `- [deleted] release`, a branch this push never named.
+    #   remote.origin.mirror = true
+    #       -> forced update PLUS `- [deleted] release` / `- [deleted] v1`.
+    #   push.default = matching
+    #       -> published an unrelated local branch's private commit while
+    #          the modal named a different branch.
+    #
+    # An EXPLICIT, fully-qualified refspec takes every one of those
+    # decisions back: a command-line refspec supersedes `remote.<n>.push`
+    # (so the `+` is gone and the force config is rejected non-fast-forward
+    # instead), makes `mirror` fail honestly ("--mirror can't be combined
+    # with refspecs"), and makes `push.default` irrelevant. Verified: the
+    # precious commit and the `release`/`v1` refs survive all four.
     if info.upstream is not None:
         # The remote name comes from detection's `%(upstream:remotename)`
         # field (never derived by splitting `info.upstream` on "/" --
-        # remote names can themselves contain "/", spec §2 probe 6); no
-        # refspec games -- git pushes the current branch to its tracked
-        # upstream by default.
-        args: tuple[str, ...] = ("push", target_remote)
+        # remote names can themselves contain "/", spec §2 probe 6), and
+        # the DESTINATION from the matching `%(upstream:remoteref)` -- the
+        # local branch's name would be wrong whenever it differs from the
+        # upstream's.
+        remote_ref = _upstream_remote_ref(root, info.branch)
+        if remote_ref is None:
+            # Never degrade to a refspec-less push: that IS the vector.
+            raise GitWorkspaceError("could not resolve where the upstream points")
+        args: tuple[str, ...] = (
+            "push",
+            target_remote,
+            f"refs/heads/{info.branch}:{remote_ref}",
+        )
     else:
-        args = ("push", "-u", target_remote, info.branch)
+        # No upstream yet, so no configured merge ref to honour: the
+        # destination is the branch's own fully-qualified name, which is
+        # also what `-u` then records as `branch.<b>.merge`.
+        args = (
+            "push",
+            "-u",
+            target_remote,
+            f"refs/heads/{info.branch}:refs/heads/{info.branch}",
+        )
 
     result = _run_user_git(root, *args, timeout=PUSH_TIMEOUT_SECONDS, check=False)
     if result.returncode == 0:
@@ -1113,9 +1272,10 @@ def _codeberg_default_branch(root: Path, remote_name: str) -> str | None:
 def pr_compare_url(root: Path, info: GitWorkspaceInfo) -> str | GitWorkspaceRefusal:
     """Build a browser compare/merge-request URL for the current branch.
 
-    The URL is built entirely from parsed remote-URL components and the
-    percent-encoded branch name -- no user text is interpolated unencoded
-    (spec §6).
+    Every interpolated component -- the owner path, the repository name,
+    the branch, and codeberg's base branch -- is percent-encoded by the
+    same rule before it reaches the URL; nothing repository-supplied is
+    spliced in raw (spec §6).
 
     Args:
         root: Workspace root -- used only for the Gitea-family (codeberg)
@@ -1148,19 +1308,28 @@ def pr_compare_url(root: Path, info: GitWorkspaceInfo) -> str | GitWorkspaceRefu
     if branch is None:
         return GitWorkspaceRefusal("no branch checked out")
 
+    # Every interpolated component is encoded by the SAME rule, not just
+    # the branch: `owner_path`, `repo` and codeberg's `base` all come from
+    # the repository (a remote URL, a local symref) and were previously
+    # spliced in raw while `branch` beside them was encoded. `safe="/"` for
+    # path segments -- `owner_path` legitimately contains "/" (a GitLab
+    # subgroup) -- and `safe=""` for anything landing in a query string.
+    owner_seg = quote(owner_path, safe="/")
+    repo_seg = quote(repo, safe="/")
+
     if host == "github.com":
         encoded = quote(branch, safe="/")
-        return f"https://github.com/{owner_path}/{repo}/compare/{encoded}?expand=1"
+        return f"https://github.com/{owner_seg}/{repo_seg}/compare/{encoded}?expand=1"
     if host == "gitlab.com":
         encoded = quote(branch, safe="")
         return (
-            f"https://gitlab.com/{owner_path}/{repo}/-/merge_requests/new"
+            f"https://gitlab.com/{owner_seg}/{repo_seg}/-/merge_requests/new"
             f"?merge_request%5Bsource_branch%5D={encoded}"
         )
     if host == "bitbucket.org":
         encoded = quote(branch, safe="")
         return (
-            f"https://bitbucket.org/{owner_path}/{repo}/pull-requests/new"
+            f"https://bitbucket.org/{owner_seg}/{repo_seg}/pull-requests/new"
             f"?source={encoded}"
         )
     if host == "codeberg.org":
@@ -1170,6 +1339,10 @@ def pr_compare_url(root: Path, info: GitWorkspaceInfo) -> str | GitWorkspaceRefu
                 "can't determine the default branch — open the PR on codeberg.org"
             )
         encoded = quote(branch, safe="/")
-        return f"https://codeberg.org/{owner_path}/{repo}/compare/{base}...{encoded}"
+        base_seg = quote(base, safe="/")
+        return (
+            f"https://codeberg.org/{owner_seg}/{repo_seg}/compare/"
+            f"{base_seg}...{encoded}"
+        )
 
     return GitWorkspaceRefusal(_UNSUPPORTED_HOST_REASON)

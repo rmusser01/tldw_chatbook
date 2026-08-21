@@ -142,6 +142,34 @@ def test_working_tree_diff_returns_unified(repo):
     assert "-base" in working_tree_diff(repo, "a.txt")
 
 
+def test_working_tree_diff_is_not_polluted_by_a_pathspec_magic_filename(repo):
+    """`git diff HEAD -- ':!nothing'` renders OTHER files' diffs pre-fix.
+
+    Same root cause as the commit-side index hijack: `--` stops option
+    parsing, not pathspec MAGIC, and `:!<x>` is an exclude pathspec. The
+    diff pane would show a file the user did not click. Fixed by
+    `GIT_LITERAL_PATHSPECS=1` in `_user_git_env`.
+    """
+    (repo / "b.txt").write_text("b\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "second")
+    (repo / ":!nothing").write_text("hostile\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "third")
+    (repo / "a.txt").write_text("secret edit\n")
+    (repo / "b.txt").write_text("another secret edit\n")
+    (repo / ":!nothing").write_text("hostile2\n")
+
+    diff = working_tree_diff(repo, ":!nothing")
+
+    headers = [line for line in diff.splitlines() if line.startswith("diff --git")]
+    assert len(headers) == 1, (
+        f"the diff for ONE file rendered {len(headers)} files: {headers!r}"
+    )
+    assert "secret edit" not in diff, "another file's content leaked into the pane"
+    assert "hostile2" in diff, diff
+
+
 def test_clean_tree_yields_no_files_no_untracked(repo):
     status = working_tree_status(repo, detect_git_workspace(repo))
     assert status.files == ()

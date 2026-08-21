@@ -422,8 +422,10 @@ merge, rebase, or cherry-pick — finish or abort that operation first.
 
 **Push (`p` / the Push… button).** Always confirms in a dialog first,
 naming the repository, the branch, and where it's going. A branch with no
-upstream yet gets one set on this push (`push -u <remote> <branch>`); with
-an upstream already configured, push targets that upstream's remote.
+upstream yet gets one set on this push; with an upstream already
+configured, push targets exactly that upstream's remote and ref — never
+"whatever the repository's push configuration would have done" (see the
+no-force guarantee below).
 Unlike commit, **push is not refused while an agent run is active** — it
 only ships state you (or the agent) already committed and never touches
 the working tree, so there is nothing for a concurrent run to collide
@@ -440,19 +442,14 @@ honestly that PR links only support those four.
 
 **The no-force guarantee.** None of these three actions ever force-pushes
 or rewrites history — not `--force`, not `--force-with-lease`, not an
-amend. A push that the remote rejects (e.g. it's behind) reports git's own
-rejection message rather than retrying with force; you resolve it from a
-terminal exactly as you would any other rejected push.
-
-**Known limitation.** A file whose change is an index-recorded **rename**
-(the working tree already reflects a `git mv`) or a **staged deletion**
-(`git rm`, or a plain delete followed by `git add`) cannot currently be
-committed from this screen — committing refuses loudly with git's own
-error rather than landing a partial change, and nothing is staged. Work
-around it by committing that file from a terminal, or by unchecking it in
-the commit dialog and committing the rest. An **unstaged** rename or
-deletion (the ordinary case — nothing added to the index yet) is
-unaffected and commits normally.
+amend. Nor can your repository's own configuration turn one of these
+pushes into a force: each push names one exact source and destination ref
+on the command line, which overrides any `remote.<name>.push`,
+`remote.<name>.mirror` or `push.default` setting in `.git/config`, so
+exactly one branch is ever updated and only ever as a fast-forward. A push
+that the remote rejects (e.g. it's behind) reports git's own rejection
+message rather than retrying with force; you resolve it from a terminal
+exactly as you would any other rejected push.
 
 ### Parallel sub-agents (the fleet)
 
@@ -1582,26 +1579,24 @@ cached-summary/guard machinery and `_open_change_review` opener, the
 pass against shipped code and the whole-suite test run, not an
 interactive live-tmux walkthrough.)*
 
-*"Git actions in change review" added @ `3e3497555` on
+*"Git actions in change review" added @ `3e3497555`, re-verified @
+`d0f385b80` after the arc's final fix wave, on
 `feat/console-review-git-modes` (based on dev @ `2a74a7b31`) — 2026-08-21
 (TASK-16801 arc B, Task 9: the `Working tree (current)` entry, its
-appearance conditions, commit/push/PR, the no-force guarantee, and the
-rename/staged-deletion commit limitation. Every claim checked against the
-shipped code — `Workspaces/git_workspace.py`'s `detect_git_workspace`
-(the inside-a-repository refusal literal), `commit_selected`
-(run-active refusal, in-progress-merge/rebase/cherry-pick refusal,
-pathspec add+commit, `_commit_warnings`' detached-HEAD/main-master
-copy), `push_current` (never passes `--force`/`--force-with-lease`,
-sets upstream via `push -u` only when `info.upstream is None`,
-`_push_failure_detail`'s credential-hint classifier), `pr_compare_url`
-(the four supported hosts and the `push the branch first` refusal), and
+appearance conditions, commit/push/PR, and the no-force guarantee. Every
+claim checked against the shipped code — `Workspaces/git_workspace.py`'s
+`detect_git_workspace` (the inside-a-repository refusal literal),
+`commit_selected` (run-active refusal,
+in-progress-merge/rebase/cherry-pick refusal, pathspec add+commit,
+`_commit_warnings`' detached-HEAD/main-master copy), `push_current`
+(never passes `--force`/`--force-with-lease`, sets upstream via
+`push -u` only when `info.upstream is None`, `_push_failure_detail`'s
+credential-hint classifier), `pr_compare_url` (the four supported hosts
+and the `push the branch first` refusal), and
 `UI/Screens/change_review_screen.py`'s `BINDINGS` (`g`/`p`/`P`),
 `git_actions_enabled` (the `[change_review] git_actions` kill switch,
 default on), `action_git_commit`/`action_git_push`/`action_git_pr` (push
-is deliberately NOT gated on `run_active()`, unlike commit), and
-`_commit_entries`'s own docstring for the rename/staged-deletion
-limitation (confirmed still current via `git log` on
-`Workspaces/git_workspace.py` — no split-pathspec fix has landed).
+is deliberately NOT gated on `run_active()`, unlike commit).
 Docs-only pass, not an interactive live-tmux walkthrough, confirmed by
 the arc's regression sweep —
 `Tests/UI/test_change_review_push_ui.py`,
@@ -1611,9 +1606,16 @@ the arc's regression sweep —
 `Tests/UI/test_change_review_git_provider.py`,
 `Tests/UI/test_console_modal_dismissal.py`,
 `Tests/UI/test_change_review_opener_roots.py` (new, T9's own opener-wiring
-pin), and `Tests/Workspaces/`, 599 passed in 255.28s — plus a
+pin), and `Tests/Workspaces/`, 624 passed in 260.12s — plus a
 `--collect-only` sweep of the whole `Tests/` tree, 52,273 collected with
-zero collection errors. One correction against this task's own brief: the
+zero collection errors. Two paragraphs were rewritten in the final fix
+wave: the no-force guarantee now also states that repository CONFIG
+(`remote.<name>.push`, `remote.<name>.mirror`, `push.default`) cannot turn
+one of these pushes into a force — true only because `push_current` now
+carries an explicit fully-qualified refspec — and the
+rename/staged-deletion "Known limitation" paragraph was DELETED, because
+`commit_selected` now filters the add pathspec to worktree-present paths
+and both gestures commit. One correction against this task's own brief: the
 brief described the live workspace root as driven by `[console]
 workspace_root`; on a real mounted Console session that config key is
 NOT what feeds `current` mode's live candidate root — the wired

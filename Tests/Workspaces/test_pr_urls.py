@@ -180,6 +180,54 @@ def test_pr_url_unicode_branch_percent_encoded(tmp_path):
     )
 
 
+@pytest.mark.parametrize(
+    "remote_url, expected",
+    [
+        (
+            "https://github.com/o wner/r epo.git",
+            "https://github.com/o%20wner/r%20epo/compare/feat/x?expand=1",
+        ),
+        (
+            "https://gitlab.com/o wner/r epo.git",
+            "https://gitlab.com/o%20wner/r%20epo/-/merge_requests/new"
+            "?merge_request%5Bsource_branch%5D=feat%2Fx",
+        ),
+        (
+            "https://bitbucket.org/o wner/r epo.git",
+            "https://bitbucket.org/o%20wner/r%20epo/pull-requests/new?source=feat%2Fx",
+        ),
+    ],
+    ids=["github", "gitlab", "bitbucket"],
+)
+def test_pr_url_owner_and_repo_are_encoded_like_the_branch(
+    tmp_path, remote_url, expected
+):
+    """The owner path and repo name come from the REPOSITORY too.
+
+    They were interpolated raw while the branch beside them was
+    percent-encoded -- an inconsistency in the one place the arc claims
+    "no user text is interpolated unencoded".
+    """
+    info = _info(remotes=(("origin", remote_url),))
+    assert pr_compare_url(tmp_path, info) == expected
+
+
+def test_pr_url_codeberg_base_branch_is_encoded(tmp_path):
+    """codeberg's `base` is read from a local symref -- encode it too."""
+    root = tmp_path / "repo"
+    # `#` is legal in a ref name (git forbids space, `~`, `^`, `:`, `?`,
+    # `*`, `[`, `\`) and would otherwise start a URL fragment.
+    _make_repo_with_default_branch_symref(root, "origin", default_branch="ma#in")
+    info = _info(
+        root=root,
+        repo_root=root,
+        remotes=(("origin", "https://codeberg.org/o wner/r epo.git"),),
+    )
+    assert pr_compare_url(root, info) == (
+        "https://codeberg.org/o%20wner/r%20epo/compare/ma%23in...feat/x"
+    )
+
+
 def test_pr_url_unsupported_host_names_four_hosts(tmp_path):
     info = _info(remotes=(("origin", "https://example.com/o/r.git"),))
     result = pr_compare_url(tmp_path, info)
@@ -196,7 +244,9 @@ def test_pr_url_unparseable_remote_names_four_hosts(tmp_path):
         assert host in result.reason
 
 
-def _make_repo_with_default_branch_symref(root: Path, remote_name: str) -> None:
+def _make_repo_with_default_branch_symref(
+    root: Path, remote_name: str, default_branch: str = "main"
+) -> None:
     root.mkdir()
     _git(root, "init", "-q", "-b", "main")
     _git(root, "config", "user.email", "t@t")
@@ -205,12 +255,12 @@ def _make_repo_with_default_branch_symref(root: Path, remote_name: str) -> None:
     _git(root, "add", "-A")
     _git(root, "commit", "-qm", "base")
     sha = _git(root, "rev-parse", "HEAD")
-    _git(root, "update-ref", f"refs/remotes/{remote_name}/main", sha)
+    _git(root, "update-ref", f"refs/remotes/{remote_name}/{default_branch}", sha)
     _git(
         root,
         "symbolic-ref",
         f"refs/remotes/{remote_name}/HEAD",
-        f"refs/remotes/{remote_name}/main",
+        f"refs/remotes/{remote_name}/{default_branch}",
     )
 
 

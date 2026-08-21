@@ -198,6 +198,183 @@ def test_blank_message_refused(repo):
     assert _git(repo, "rev-list", "--count", "HEAD") == "1"
 
 
+def test_pathspec_magic_in_a_filename_cannot_hijack_the_index(repo):
+    """`--` blocks OPTIONS; it does not block PATHSPEC MAGIC.
+
+    A file literally named `:!nothing` is a legal filename, `git status`
+    lists it verbatim, and the UI checkbox carries it verbatim. Pre-fix,
+    passing it after `--` made git read it as the exclude pathspec
+    "everything except paths matching `nothing`" -- so a ONE-file
+    selection swept a.txt, b.txt and c.txt into the commit. That is the
+    canonical index-hijack bug reached through a FILENAME, and the fix is
+    `GIT_LITERAL_PATHSPECS=1` in `_user_git_env`.
+    """
+    (repo / "b.txt").write_text("b\n")
+    (repo / "c.txt").write_text("c\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "more files")
+    (repo / ":!nothing").write_text("hostile\n")
+    (repo / "a.txt").write_text("a2\n")
+    (repo / "b.txt").write_text("b2\n")
+    (repo / "c.txt").write_text("c2\n")
+
+    result = commit_selected(
+        repo, [":!nothing"], "just the one file", None, run_active=lambda: False
+    )
+
+    assert result.short_sha
+    committed = _git(repo, "show", "--name-only", "--format=", "HEAD").splitlines()
+    assert committed == [":!nothing"], (
+        f"a 1-file selection committed {len(committed)} files: {committed!r}"
+    )
+    # The three unselected files are still dirty and uncommitted.
+    dirty = sorted(
+        line.split()[-1] for line in _git(repo, "status", "--porcelain").splitlines()
+    )
+    assert dirty == ["a.txt", "b.txt", "c.txt"], dirty
+
+
+def test_a_normal_path_is_unaffected_by_a_pathspec_magic_filename(repo):
+    """The other half: selecting a normal file must not sweep the magic one."""
+    (repo / ":!nothing").write_text("hostile\n")
+    (repo / "a.txt").write_text("a2\n")
+
+    result = commit_selected(
+        repo, ["a.txt"], "only a", None, run_active=lambda: False
+    )
+
+    assert result.short_sha
+    assert _git(repo, "show", "--name-only", "--format=", "HEAD").splitlines() == [
+        "a.txt"
+    ]
+    assert _git(repo, "status", "--porcelain") == "?? :!nothing"
+
+
+def test_literal_pathspecs_do_not_regress_spaced_and_utf8_paths(repo):
+    """`GIT_LITERAL_PATHSPECS=1` must not break ordinary selections."""
+    (repo / "sub dir").mkdir()
+    (repo / "sub dir" / "spaced file.txt").write_text("x\n")
+    (repo / "ünïcode–π.txt").write_text("y\n")
+    (repo / "plain.txt").write_text("z\n")
+    selection = ["sub dir/spaced file.txt", "ünïcode–π.txt", "plain.txt"]
+
+    result = commit_selected(
+        repo, selection, "mixed names", None, run_active=lambda: False
+    )
+
+    assert result.short_sha
+    committed = _git(
+        repo, "-c", "core.quotePath=false", "show", "--name-only", "--format=", "HEAD"
+    ).splitlines()
+    assert sorted(committed) == sorted(selection), committed
+
+
+# ---------------------------------------------------------------------------
+# Paths absent from the WORKTREE: a queued `git mv` rename, a `git rm`
+# staged deletion, and a plain unstaged deletion (P2(b)).
+#
+# The engine shares ONE pathspec between `git add -A --` and
+# `git commit --`; `git add` refuses a path present in neither the
+# worktree nor the index, so a staged rename or deletion used to dead-end
+# at the stage step. The recipe -- verified across all five cases below --
+# filters the ADD pathspec to worktree-present paths (`os.path.lexists`,
+# never `Path.exists`, or a BROKEN SYMLINK is silently dropped from the
+# add) while keeping the FULL pathspec on the commit, and skips the add
+# entirely when the filtered list is empty (`git add -A --` with an empty
+# pathspec stages the WHOLE TREE).
+# ---------------------------------------------------------------------------
+
+
+def test_queued_rename_commits_as_a_rename(repo):
+    (repo / "b.txt").write_text("b\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "second")
+    _git(repo, "mv", "a.txt", "renamed.txt")
+    (repo / "b.txt").write_text("unrelated edit\n")
+
+    result = commit_selected(
+        repo, ["a.txt", "renamed.txt"], "moved it", None, run_active=lambda: False
+    )
+
+    assert result.short_sha, [(o.step, o.detail) for o in result.outcomes]
+    assert _git(repo, "show", "--name-status", "--format=", "HEAD") == (
+        "R100\ta.txt\trenamed.txt"
+    )
+    # The unselected, unrelated edit stays out of the commit AND unstaged.
+    # (`_git` strips, so the porcelain XY column's leading space is gone.)
+    assert _git(repo, "status", "--porcelain") == "M b.txt"
+
+
+def test_staged_deletion_commits(repo):
+    (repo / "b.txt").write_text("b\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "second")
+    _git(repo, "rm", "-q", "a.txt")
+
+    result = commit_selected(
+        repo, ["a.txt"], "removed it", None, run_active=lambda: False
+    )
+
+    assert result.short_sha, [(o.step, o.detail) for o in result.outcomes]
+    assert _git(repo, "show", "--name-status", "--format=", "HEAD") == "D\ta.txt"
+    assert _git(repo, "status", "--porcelain") == ""
+
+
+def test_staged_deletion_alongside_a_modified_file_commits_both(repo):
+    (repo / "b.txt").write_text("b\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "second")
+    _git(repo, "rm", "-q", "a.txt")
+    (repo / "b.txt").write_text("edited\n")
+
+    result = commit_selected(
+        repo, ["a.txt", "b.txt"], "both", None, run_active=lambda: False
+    )
+
+    assert result.short_sha, [(o.step, o.detail) for o in result.outcomes]
+    assert _git(repo, "show", "--name-status", "--format=", "HEAD").splitlines() == [
+        "D\ta.txt",
+        "M\tb.txt",
+    ]
+    assert _git(repo, "status", "--porcelain") == ""
+
+
+def test_a_selection_entirely_absent_from_the_worktree_skips_the_add_step(repo):
+    """The trap: `git add -A --` with an EMPTY pathspec stages the WHOLE tree."""
+    (repo / "b.txt").write_text("b\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "second")
+    _git(repo, "rm", "-q", "a.txt")
+    (repo / "unrelated.txt").write_text("must not be swept in\n")
+
+    result = commit_selected(
+        repo, ["a.txt"], "only the deletion", None, run_active=lambda: False
+    )
+
+    assert result.short_sha
+    assert _git(repo, "show", "--name-only", "--format=", "HEAD").splitlines() == [
+        "a.txt"
+    ]
+    assert "stage" not in [o.step for o in result.outcomes], (
+        "the add step must be SKIPPED, not run with an empty pathspec; got "
+        f"{[o.step for o in result.outcomes]!r}"
+    )
+    assert _git(repo, "status", "--porcelain") == "?? unrelated.txt"
+
+
+def test_a_broken_symlink_is_still_staged(repo):
+    """`os.path.lexists`, not `Path.exists` -- a broken symlink IS present."""
+    (repo / "brokenlink").symlink_to("/definitely/not/here")
+
+    result = commit_selected(
+        repo, ["brokenlink"], "add the link", None, run_active=lambda: False
+    )
+
+    assert result.short_sha, [(o.step, o.detail) for o in result.outcomes]
+    assert _git(repo, "show", "--name-status", "--format=", "HEAD") == "A\tbrokenlink"
+    assert _git(repo, "status", "--porcelain") == ""
+
+
 def test_commit_result_and_step_outcome_are_frozen_dataclasses():
     outcome = GitStepOutcome(step="stage", ok=True)
     with pytest.raises(Exception):

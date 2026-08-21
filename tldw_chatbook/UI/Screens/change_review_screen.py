@@ -1150,28 +1150,17 @@ def _commit_entries(
       that does not match what the checkbox promised, and one the user may
       well push before noticing.
 
-    **Known limitation, deliberately loud (see the T7 report).** It is not
-    a rename-only problem -- the trigger is ANY selected path that exists
-    in neither the worktree NOR the index, because the engine's
-    ``git add -A -- <paths>`` step shares this one pathspec with the
-    commit and exits fatal ("pathspec … did not match any files"). Two
-    shapes reach it, and BOTH are ordinary terminal gestures rather than
-    anything an agent had to do:
-
-    1. a rename already RECORDED IN THE INDEX (``git mv``, porcelain
-       ``R``) -- the old path is gone from both;
-    2. a STAGED DELETION (``git rm <path>``, or ``rm`` followed by
-       ``git add``, porcelain ``D`` in the index column) -- the deleted
-       path is likewise in neither.
-
-    In both cases the commit is refused with git's own message and
-    NOTHING is staged or committed; the user's staged work is untouched,
-    unchecking that one row lets the rest commit, and the change is
-    committable from a terminal. Splitting the engine's add/commit
-    pathspecs is the fix, and it belongs in ``git_workspace.py``, not
-    here. UNSTAGED versions of both are unaffected: git reports them as
-    worktree-column changes whose paths are still in the index, which
-    stage and commit exactly as expected.
+    A pathspec whose paths are absent from the WORKTREE used to dead-end
+    the whole commit here (the T7 "known limitation"): the engine shared
+    this one pathspec with its ``git add -A -- <paths>`` step, and
+    ``git add`` exits fatal on a path present in neither the worktree nor
+    the index. Two ordinary terminal gestures produced exactly that -- a
+    rename already RECORDED IN THE INDEX (``git mv``, porcelain ``R``) and
+    a STAGED DELETION (``git rm <path>``, porcelain ``D`` in the index
+    column). :func:`~tldw_chatbook.Workspaces.git_workspace.commit_selected`
+    now filters the ADD list to worktree-present paths and keeps the FULL
+    pathspec on the commit, so both land (the rename as a real ``R``), and
+    this row's shape is what makes that possible.
 
     Args:
         files: The fresh status read's changed files, in porcelain order.
@@ -2757,7 +2746,14 @@ class ChangeReviewScreen(Screen):
                 logger.opt(exception=True).warning(
                     f"change_review: commit failed for {root!r}"
                 )
-                _land_on_ui(app, self._land_commit_refused, token, str(exc))
+                # A DIFFERENT landing from the typed refusals above (the
+                # whole-branch review, finding D -- Task 8 fixed exactly
+                # this for push and commit never got the same treatment):
+                # anything reaching here is a BUG, not one of the engine's
+                # honest preconditions, and a bare `str(exc)` at warning
+                # level is indistinguishable from "no files selected to
+                # commit".
+                _land_on_ui(app, self._land_commit_error, token, str(exc))
                 return
             _land_on_ui(app, self._land_commit_result, token, result, file_count)
 
@@ -2769,7 +2765,14 @@ class ChangeReviewScreen(Screen):
         )
 
     def _land_commit_refused(self, token: object, message: str) -> None:
-        """A commit that never ran: report the reason, change nothing.
+        """A commit the engine DECLINED to run: report its reason verbatim.
+
+        Only ``CommitRefusedError``/``GitWorkspaceError`` reaches here --
+        the engine's own honest preconditions ("a run is active on this
+        workspace…", "no files selected to commit", "commit message must
+        not be blank"). An unexpected exception goes to
+        :meth:`_land_commit_error` instead, so the two can never read
+        alike (the push side has said this since T8).
 
         Args:
             token: The dispatch identity of the refused commit.
@@ -2779,6 +2782,19 @@ class ChangeReviewScreen(Screen):
             return
         self._set_git_busy(False)
         self.notify(message, severity="warning")
+
+    def _land_commit_error(self, token: object, message: str) -> None:
+        """A commit that hit an UNEXPECTED error: say so, and say it loudly.
+
+        Args:
+            token: The dispatch identity of the failed commit.
+            message: The exception's text, prefixed so it can never be
+                mistaken for one of the engine's refusals.
+        """
+        if not self._git_action_is_live(token):
+            return
+        self._set_git_busy(False)
+        self.notify(f"Commit could not run: {message}", severity="error")
 
     def _land_commit_result(
         self, token: object, result: "CommitResult", file_count: int

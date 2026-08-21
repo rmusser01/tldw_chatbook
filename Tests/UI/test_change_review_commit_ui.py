@@ -713,48 +713,50 @@ async def test_an_unstaged_rename_commits_as_its_two_real_rows(
 
 
 @pytest.mark.parametrize(
-    "prepare, row_paths, row_label",
+    "prepare, row_paths, row_label, expected_name_status",
     [
         (
             lambda repo: _git(repo, "mv", "a.txt", "renamed.txt"),
             ["a.txt", "renamed.txt"],
             "a.txt → renamed.txt",
+            ["R100\ta.txt\trenamed.txt", "M\tb.txt"],
         ),
         (
             lambda repo: _git(repo, "rm", "-q", "a.txt"),
             ["a.txt"],
             "a.txt",
+            ["D\ta.txt", "M\tb.txt"],
         ),
     ],
     ids=["index-recorded-rename-git-mv", "staged-deletion-git-rm"],
 )
 @pytest.mark.asyncio
-async def test_a_path_absent_from_worktree_and_index_refuses_loudly(
-    monkeypatch, tmp_path, prepare, row_paths, row_label
+async def test_a_path_absent_from_the_worktree_still_commits(
+    monkeypatch, tmp_path, prepare, row_paths, row_label, expected_name_status
 ):
-    """A staged rename AND a staged deletion both refuse — same root cause.
+    """A queued `git mv` rename AND a `git rm` staged deletion both commit.
 
-    Known limitation, pinned deliberately rather than papered over (see
-    `_commit_entries`' docstring and the T7 report). The trigger is not
-    "renames": it is ANY selected path that exists in neither the worktree
-    nor the index, because the engine shares one pathspec between
-    `git add -A --` and `git commit --`. `git mv` and `git rm` are both
-    ordinary terminal gestures that produce exactly that, and both exit
-    `fatal: pathspec … did not match any files` at the stage step.
+    This test previously PINNED a refusal (`fatal: pathspec … did not
+    match any files` at the stage step): the engine shared ONE pathspec
+    between `git add -A --` and `git commit --`, and `git add` rejects a
+    path present in neither the worktree nor the index. `git mv` and
+    `git rm` are ordinary terminal gestures, so an ordinary user could
+    reach a dead end where a checked row simply could not be committed.
 
-    What matters — and what this asserts — is that the refusal is LOUD,
-    that nothing is committed, that the user's staged work survives
-    intact, and that unchecking the offending row lets everything else
-    commit. The alternative (silently dropping the missing path) would
-    commit something that contradicts the row the user checked.
+    The engine now filters the ADD pathspec to worktree-present paths and
+    keeps the FULL pathspec on the commit, so both gestures land — and, for
+    the rename, land as a real `R100` rename rather than a delete/add
+    pair. Whatever the user did NOT check is still untouched.
     """
     _patch_git_actions(monkeypatch, True)
     repo = _init_repo(tmp_path / "staged_repo")
     (repo / "b.txt").write_text("second\n")
+    (repo / "c.txt").write_text("third\n")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-qm", "second")
     prepare(repo)
     (repo / "b.txt").write_text("edited alongside\n")
+    (repo / "c.txt").write_text("must stay out of the commit\n")
     before = _commit_count(repo)
     provider, _db, _service = _make_provider(tmp_path, "conv-staged")
     app = _Harness(provider, workspace_roots=[str(repo)])
@@ -762,45 +764,97 @@ async def test_a_path_absent_from_worktree_and_index_refuses_loudly(
         screen = await _enter_current_mode(pilot, app)
         modal = await _open_commit_modal(pilot, app, screen)
 
-        offending = [
+        staged_row = [
             box
             for box in modal.query(Checkbox)
             if "a.txt" in box.file_paths
         ]
-        assert len(offending) == 1, "the staged change is ONE row"
-        assert sorted(offending[0].file_paths) == row_paths, (
-            f"the row must carry its real pathspec; got {offending[0].file_paths!r}"
+        assert len(staged_row) == 1, "the staged change is ONE row"
+        assert sorted(staged_row[0].file_paths) == row_paths, (
+            f"the row must carry its real pathspec; got {staged_row[0].file_paths!r}"
         )
-        assert row_label in str(offending[0].label)
+        assert row_label in str(staged_row[0].label)
 
         notes: list[tuple] = []
         app.notify = lambda *a, **kw: notes.append((a, kw))
-        await _submit_modal(pilot, modal, "should be refused")
+        await _submit_modal(pilot, modal, "land it", uncheck=("c.txt",))
         await _wait_idle(pilot, app, GIT_ACTION_WORKER_GROUP)
         await pilot.pause()
 
         messages = [str(call[0][0]) for call in notes]
-        assert any("Commit failed at stage" in m for m in messages), (
-            f"the blocking step must be named with git's own error; got {messages!r}"
-        )
-        assert any("did not match any files" in m for m in messages), (
-            f"...carrying git's own excerpt; got {messages!r}"
-        )
-        assert _commit_count(repo) == before, "nothing may be committed"
-        staged = _git(repo, "diff", "--cached", "--name-status")
-        assert "a.txt" in staged, (
-            f"the user's staged work must survive untouched; got {staged!r}"
-        )
+        assert not any("Commit failed" in m for m in messages), messages
+        assert any(m.startswith("Committed ") for m in messages), messages
+        assert _commit_count(repo) == before + 1, messages
+        landed = _git(
+            repo, "show", "--name-status", "--pretty=format:", "HEAD"
+        ).splitlines()
+        assert sorted(landed) == sorted(expected_name_status), landed
+        # The unchecked row never entered the commit and is still dirty.
+        assert "c.txt" in _git(repo, "diff", "--name-only")
+        assert "c.txt" not in _git(repo, "diff", "--cached", "--name-only")
 
-        # The escape hatch: uncheck that row and the rest commits.
+
+@pytest.mark.asyncio
+async def test_an_unexpected_commit_error_is_not_dressed_as_a_refusal(
+    monkeypatch, commit_fixture
+):
+    """Whole-branch review, finding D — the push side's fix, for commit.
+
+    `_dispatch_commit`'s generic `except Exception` routed a BUG to
+    `_land_commit_refused` at `warning` severity with a bare message, so a
+    `TypeError` in our own code was indistinguishable from the engine's
+    honest "no files selected to commit". Both shapes are asserted here in
+    ONE test so they can never converge again.
+    """
+    _patch_git_actions(monkeypatch, True)
+    provider, repo = commit_fixture
+    before = _commit_count(repo)
+    app = _Harness(provider, workspace_roots=[str(repo)])
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _enter_current_mode(pilot, app)
+
+        def exploding_commit(root, files, message, new_branch):
+            raise TypeError("a real bug inside the commit path")
+
+        provider.commit_selected = exploding_commit
+        seen: list[tuple] = []
+        app.notify = lambda *a, **kw: seen.append((str(a[0]) if a else "", kw))
+
         modal = await _open_commit_modal(pilot, app, screen)
-        await _submit_modal(
-            pilot, modal, "the rest of it", uncheck=("a.txt", "renamed.txt")
-        )
+        await _submit_modal(pilot, modal, "will explode")
+        await _wait_for(pilot, lambda: seen or None, "the failure report")
         await _wait_idle(pilot, app, GIT_ACTION_WORKER_GROUP)
-        await pilot.pause()
-        assert _commit_count(repo) == before + 1
-        assert _committed_paths(repo) == ["b.txt"], _committed_paths(repo)
+
+        message, kwargs = seen[0]
+        assert "Commit could not run" in message, (
+            f"an unexpected error must be marked as one; got {message!r}"
+        )
+        assert "a real bug inside the commit path" in message, (
+            "and must still carry the original text"
+        )
+        assert kwargs.get("severity") == "error", (
+            f"a bug is not a warning-level refusal; got {kwargs!r}"
+        )
+        assert screen._git_busy is False, "the buttons must still come back"
+        assert _commit_count(repo) == before
+
+        # CONTRAST: the engine's own typed refusal still reads as a
+        # warning, with no "could not run" prefix.
+        def refusing_commit(root, files, message, new_branch):
+            from tldw_chatbook.Workspaces.git_workspace import CommitRefusedError
+
+            raise CommitRefusedError("a run is active on this workspace")
+
+        provider.commit_selected = refusing_commit
+        seen.clear()
+        modal = await _open_commit_modal(pilot, app, screen)
+        await _submit_modal(pilot, modal, "will be refused")
+        await _wait_for(pilot, lambda: seen or None, "the refusal report")
+        await _wait_idle(pilot, app, GIT_ACTION_WORKER_GROUP)
+
+        message, kwargs = seen[0]
+        assert message == "a run is active on this workspace", message
+        assert kwargs.get("severity") == "warning", kwargs
 
 
 @pytest.mark.asyncio
