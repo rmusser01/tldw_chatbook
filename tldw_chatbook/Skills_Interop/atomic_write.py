@@ -74,6 +74,18 @@ def replace_atomically(
     naming means no other writer could be relying on it) and the original
     exception is re-raised unchanged. This never swallows a genuine failure;
     it only ever prevents a stray temp file from being left behind by one.
+
+    Args:
+        temp_path: Writer-unique temp file to write through, normally from
+            ``unique_temp_path``. Must be on the same filesystem as
+            ``target_path`` for the replace to be atomic.
+        target_path: Final destination, replaced in one step once the write
+            has completed.
+        write_fn: Callable given ``temp_path``; performs the actual write.
+
+    Raises:
+        BaseException: Whatever ``write_fn`` or ``Path.replace`` raised,
+            re-raised unchanged after the temp file is cleaned up.
     """
     try:
         write_fn(temp_path)
@@ -89,7 +101,19 @@ def replace_atomically(
 def write_text_atomic(
     path: Path, content: str, *, encoding: str = "utf-8", hidden: bool = False
 ) -> None:
-    """Atomically write text to ``path`` via a writer-unique temp file."""
+    """Atomically write text to ``path`` via a writer-unique temp file.
+
+    Args:
+        path: Destination file, replaced atomically once written.
+        content: Text to write.
+        encoding: Text encoding for the write.
+        hidden: Dot-prefix the temp file, for stores whose directory
+            convention hides transient artifacts.
+
+    Raises:
+        OSError: Propagated unchanged from the write or the replace; the
+            temp file is cleaned up first.
+    """
     temp_path = unique_temp_path(path, hidden=hidden)
     replace_atomically(
         temp_path, path, lambda t: t.write_text(content, encoding=encoding)
@@ -97,6 +121,17 @@ def write_text_atomic(
 
 
 def write_bytes_atomic(path: Path, data: bytes, *, hidden: bool = False) -> None:
-    """Atomically write bytes to ``path`` via a writer-unique temp file."""
+    """Atomically write bytes to ``path`` via a writer-unique temp file.
+
+    Args:
+        path: Destination file, replaced atomically once written.
+        data: Bytes to write.
+        hidden: Dot-prefix the temp file, for stores whose directory
+            convention hides transient artifacts.
+
+    Raises:
+        OSError: Propagated unchanged from the write or the replace; the
+            temp file is cleaned up first.
+    """
     temp_path = unique_temp_path(path, hidden=hidden)
     replace_atomically(temp_path, path, lambda t: t.write_bytes(data))
