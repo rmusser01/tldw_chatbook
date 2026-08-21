@@ -47,6 +47,7 @@ from dataclasses import dataclass
 from fractions import Fraction
 from math import ceil
 
+from rich.cells import cell_len
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
@@ -518,7 +519,13 @@ class ConsoleLeftRail(Vertical):
         self,
         descriptors: tuple[ContextSectionDescriptor, ...],
     ) -> int:
-        """Measure unconstrained direct-header demand from Textual box models."""
+        """Measure fixed header demand from the constrained Textual box model.
+
+        ``Widget._get_box_model`` is intentionally isolated here. Textual 8.2.8
+        is exactly pinned by this project, and its ``constrain_width`` path is
+        the only source that includes the rail's actual available width while
+        avoiding the already-compressed arranged height.
+        """
 
         outer = self.query_one("#console-left-rail-body", VerticalScroll)
         container_size = outer.content_region.size
@@ -536,6 +543,7 @@ class ConsoleLeftRail(Vertical):
                 viewport_size,
                 width_fraction,
                 height_fraction,
+                constrain_width=True,
                 greedy=False,
             )
             total += ceil(box_model.height) + header.styles.margin.height
@@ -550,6 +558,43 @@ class ConsoleLeftRail(Vertical):
         needs_outer_hint: bool,
     ) -> None:
         """Equality-guard and synchronously apply a complete owner snapshot."""
+
+        no_room_ids = frozenset(
+            allocation.section_id
+            for allocation in result.allocations
+            if allocation.no_room
+        )
+        presentation_changed = False
+        for descriptor in descriptors:
+            header = self.query_one(
+                f"#console-rail-section-header-{descriptor.section_id}",
+                DestinationRailSectionHeader,
+            )
+            title = header.query_one(
+                f"#console-rail-section-title-{descriptor.section_id}", Static
+            )
+            toggle = header.query_one(
+                f"#{RAIL_SECTION_TOGGLE_PREFIX}{descriptor.section_id}", Button
+            )
+            constrained = descriptor.section_id in no_room_ids
+            base_title = header.title
+            presentation_changed |= self._present_header_title(
+                title,
+                base_title=base_title,
+                constrained=constrained,
+            )
+            if constrained:
+                if str(toggle.label) != "[>]":
+                    toggle.label = "[>]"
+                toggle.tooltip = f"Prioritize {base_title}"
+            else:
+                header.sync_open(header.open)
+
+        if presentation_changed:
+            # The first paint installs dimension-stable one-line title chrome.
+            # Measure once more after Textual has laid it out; equality guards
+            # make the resulting fixed point a no-op rather than a refresh loop.
+            self.call_after_refresh(self.request_allocation_reconcile)
 
         complete_state = (
             result,
@@ -574,36 +619,11 @@ class ConsoleLeftRail(Vertical):
         ):
             self._active_reveal_token += 1
 
-        no_room_ids = frozenset(
-            allocation.section_id
-            for allocation in result.allocations
-            if allocation.no_room
-        )
         for bounded, allocation in zip(sections, result.allocations):
             bounded.set_allocation(allocation.allocated_content_rows)
-
-        for descriptor in descriptors:
-            header = self.query_one(
-                f"#console-rail-section-header-{descriptor.section_id}",
-                DestinationRailSectionHeader,
+            bounded.styles.height = allocation.allocated_content_rows + int(
+                allocation.hint_required
             )
-            title = header.query_one(
-                f"#console-rail-section-title-{descriptor.section_id}", Static
-            )
-            toggle = header.query_one(
-                f"#{RAIL_SECTION_TOGGLE_PREFIX}{descriptor.section_id}", Button
-            )
-            constrained = descriptor.section_id in no_room_ids
-            base_title = header.title
-            target_title = f"{base_title} · no room" if constrained else base_title
-            if str(title.renderable) != target_title:
-                title.update(target_title)
-            if constrained:
-                if str(toggle.label) != "[>]":
-                    toggle.label = "[>]"
-                toggle.tooltip = f"Prioritize {base_title}"
-            else:
-                header.sync_open(header.open)
 
         outer = self.query_one("#console-left-rail-body", VerticalScroll)
         target_overflow = "auto" if result.uses_outer_scroll else "hidden"
@@ -632,6 +652,64 @@ class ConsoleLeftRail(Vertical):
         elif not result.uses_outer_scroll:
             self._pending_active_reveal_generation = None
 
+    @staticmethod
+    def _present_header_title(
+        title: Static,
+        *,
+        base_title: str,
+        constrained: bool,
+    ) -> bool:
+        """Paint one-line chrome while retaining the complete canonical title."""
+
+        changed = False
+        if not getattr(title, "_console_context_one_line", False):
+            title.styles.height = 1
+            title.styles.min_height = 1
+            title.styles.max_height = 1
+            title.styles.text_wrap = "nowrap"
+            title.styles.text_overflow = "clip"
+            title._console_context_one_line = True
+            changed = True
+
+        title.tooltip = base_title
+        target_title = base_title
+        if constrained:
+            target_title = ConsoleLeftRail._title_with_no_room_suffix(
+                base_title,
+                title.content_region.width,
+            )
+        if str(title.renderable) != target_title:
+            title.update(target_title)
+        return changed
+
+    @staticmethod
+    def _title_with_no_room_suffix(base_title: str, width: int) -> str:
+        """Fit the base into ``width`` while preserving the exact status suffix."""
+
+        suffix = " · no room"
+        full_title = f"{base_title}{suffix}"
+        if width <= 0 or cell_len(full_title) <= width:
+            return full_title
+
+        base_budget = width - cell_len(suffix)
+        if base_budget <= 0:
+            # At widths smaller than the suffix itself, keeping the complete
+            # status string is the only honest representation; one-line clipping
+            # remains dimensionally stable until space becomes available.
+            return suffix
+        if cell_len(base_title) <= base_budget:
+            return full_title
+
+        ellipsis = "…"
+        prefix_budget = max(0, base_budget - cell_len(ellipsis))
+        prefix = ""
+        for character in base_title:
+            candidate = f"{prefix}{character}"
+            if cell_len(candidate) > prefix_budget:
+                break
+            prefix = candidate
+        return f"{prefix}{ellipsis}{suffix}"
+
     def _queue_active_reveal(self, section_id: str) -> None:
         """Queue one reveal guarded by the current mode/activation token."""
 
@@ -657,7 +735,8 @@ class ConsoleLeftRail(Vertical):
         """Return whether a delayed reveal still matches active fallback state."""
 
         return bool(
-            token == self._active_reveal_token
+            self.is_attached
+            and token == self._active_reveal_token
             and section_id == self._active_section_id
             and self._last_allocation_state is not None
             and self._last_allocation_state[0].uses_outer_scroll

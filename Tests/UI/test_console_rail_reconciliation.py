@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from types import MethodType
 
 import pytest
+from rich.cells import cell_len
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Static
 
@@ -239,12 +240,21 @@ async def _open_all_production_context_sections(host, pilot) -> ConsoleLeftRail:
 async def test_production_css_uses_uncompressed_header_demand_and_reaches_every_section(
     terminal_size: tuple[int, int],
     uses_outer_scroll: bool,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Real CSS keeps two-row headers and selects fallback from fixed demand."""
 
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = _ProductionConsoleHarness(app)
+    allocation_calls = []
+    real_allocate = left_rail_module.allocate_context_sections
+
+    def spy_allocate(**kwargs):
+        allocation_calls.append(kwargs)
+        return real_allocate(**kwargs)
+
+    monkeypatch.setattr(left_rail_module, "allocate_context_sections", spy_allocate)
 
     async with host.run_test(size=(120, 30)) as pilot:
         rail = await _open_all_production_context_sections(host, pilot)
@@ -257,6 +267,35 @@ async def test_production_css_uses_uncompressed_header_demand_and_reaches_every_
             rail.query_one(f"#console-rail-section-header-{section_id}")
             for section_id in SECTION_IDS
         ]
+
+        def assert_stable_sibling_geometry() -> None:
+            direct_children = list(outer.children)
+            for current, following in zip(direct_children, direct_children[1:]):
+                assert not current.virtual_region.overlaps(following.virtual_region), (
+                    current.id,
+                    current.virtual_region,
+                    following.id,
+                    following.virtual_region,
+                )
+            for section_id in SECTION_IDS:
+                bounded = rail.query_one(
+                    f"#console-bounded-section-{section_id}", ConsoleBoundedSection
+                )
+                viewport = bounded.viewport
+                hint = bounded.hint
+                assert bounded.region.contains_region(viewport.region), (
+                    section_id,
+                    bounded.region,
+                    viewport.region,
+                )
+                if hint.display:
+                    assert bounded.region.contains_region(hint.region)
+                next_header_index = SECTION_IDS.index(section_id) + 1
+                if next_header_index < len(SECTION_IDS):
+                    next_header = headers[next_header_index]
+                    assert not viewport.region.overlaps(next_header.region)
+                    if hint.display:
+                        assert not hint.region.overlaps(next_header.region)
 
         header_heights = [header.virtual_region.height for header in headers]
         assert all(height >= 2 for height in header_heights), (
@@ -271,10 +310,53 @@ async def test_production_css_uses_uncompressed_header_demand_and_reaches_every_
         assert cue.display is uses_outer_scroll
 
         if not uses_outer_scroll:
+            assert_stable_sibling_geometry()
             assert outer.scroll_y == 0
             assert all(
-                header.region.overlaps(outer.content_region) for header in headers
+                outer.content_region.contains_region(header.region)
+                for header in headers
             )
+            constrained = next(
+                rail.query_one(f"#console-rail-section-toggle-{section_id}", Button)
+                for section_id in SECTION_IDS
+                if str(
+                    rail.query_one(
+                        f"#console-rail-section-toggle-{section_id}", Button
+                    ).label
+                )
+                == "[>]"
+            )
+            constrained_section_id = constrained.id.removeprefix(
+                "console-rail-section-toggle-"
+            )
+            constrained_header = rail.query_one(
+                f"#console-rail-section-header-{constrained_section_id}"
+            )
+            constrained_title = rail.query_one(
+                f"#console-rail-section-title-{constrained_section_id}", Static
+            )
+            assert str(constrained_title.renderable).endswith(" · no room")
+            assert (
+                cell_len(str(constrained_title.renderable))
+                <= constrained_title.content_region.width
+            )
+            assert str(constrained_title.tooltip) == constrained_header.title
+            assert constrained_header.virtual_region.height == 2
+            constrained_body = rail.query_one(
+                f"#console-bounded-section-{constrained_section_id}",
+                ConsoleBoundedSection,
+            )
+            assert constrained_body.allocation == 0
+            allocation_calls.clear()
+            constrained.press()
+            await _settle(pilot, passes=8)
+            assert constrained_body.allocation is not None
+            assert constrained_body.allocation > 0
+            assert_stable_sibling_geometry()
+            stable_call_count = len(allocation_calls)
+            await _settle(pilot, passes=8)
+            assert len(allocation_calls) == stable_call_count
+            assert rail._allocation_reconcile_scheduled is False
             return
 
         outer.scroll_home(animate=False)
@@ -288,6 +370,47 @@ async def test_production_css_uses_uncompressed_header_demand_and_reaches_every_
             await pilot.pause()
             assert header.region.overlaps(outer.content_region)
             assert bounded.viewport.region.overlaps(outer.content_region)
+
+
+@pytest.mark.asyncio
+async def test_detached_rail_rejects_a_queued_active_reveal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    demands = dict.fromkeys(SECTION_IDS, 8)
+    _install_demands(monkeypatch, demands)
+    app = _RailHarness()
+
+    async with app.run_test(size=(60, 12)) as pilot:
+        await _settle(pilot)
+        rail = app.query_one(ConsoleLeftRail)
+        _force_geometry(rail, viewport_height=10, header_chrome_height=14)
+        rail.activate_section("agent")
+        await _settle(pilot)
+        outer = rail.query_one("#console-left-rail-body")
+        calls = []
+        original_scroll_to = outer.scroll_to
+
+        def spy_scroll_to(*args, **kwargs):
+            calls.append((args, kwargs))
+            return original_scroll_to(*args, **kwargs)
+
+        monkeypatch.setattr(outer, "scroll_to", spy_scroll_to)
+        queued_callbacks = []
+
+        def capture_after_refresh(callback, *args):
+            queued_callbacks.append((callback, args))
+
+        monkeypatch.setattr(rail, "call_after_refresh", capture_after_refresh)
+        rail._queue_active_reveal("agent")
+        token = rail._active_reveal_token
+        await rail.remove()
+
+        assert rail._active_reveal_is_current(token, "agent") is False
+        assert len(queued_callbacks) == 1
+        callback, args = queued_callbacks.pop()
+        callback(*args)
+        assert queued_callbacks == []
+        assert calls == []
 
 
 @pytest.mark.asyncio
