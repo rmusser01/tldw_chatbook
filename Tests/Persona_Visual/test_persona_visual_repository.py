@@ -251,6 +251,85 @@ def test_activate_new_pack_returns_immutable_path_safe_graph(
     assert shared_counts_after == shared_counts_before
 
 
+def test_private_storage_lookup_requires_exact_active_graph_and_asset(
+    repository: PersonaVisualRepository,
+) -> None:
+    graph = _activate(repository)
+
+    storage_key = repository._get_active_asset_storage_key(
+        graph.identity, graph.assets[0]
+    )
+
+    assert storage_key == "persona_visual/pack/v1/idle.png"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("persona_revision", 8),
+        ("binding_version", 2),
+        ("pack_revision", 2),
+        ("pack_version_id", 999),
+        ("version_number", 2),
+        ("manifest_sha256", "c" * 64),
+    ],
+)
+def test_private_storage_lookup_refuses_stale_full_identity(
+    repository: PersonaVisualRepository,
+    field: str,
+    value: object,
+) -> None:
+    graph = _activate(repository)
+
+    with pytest.raises(ValueError, match="^persona_visual_asset_storage_unavailable$"):
+        repository._get_active_asset_storage_key(
+            replace(graph.identity, **{field: value}), graph.assets[0]
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("id", 999),
+        ("asset_key", "changed"),
+        ("role", "preview"),
+        ("mime_type", "image/gif"),
+        ("byte_count", 13),
+        ("sha256", "c" * 64),
+        ("width", 6),
+        ("height", 7),
+        ("frame_count", 2),
+        ("duration_ms", 100),
+        ("created_at", "2026-08-20 20:00:00"),
+    ],
+)
+def test_private_storage_lookup_refuses_changed_asset_metadata(
+    repository: PersonaVisualRepository,
+    field: str,
+    value: object,
+) -> None:
+    graph = _activate(repository)
+
+    with pytest.raises(ValueError, match="^persona_visual_asset_storage_unavailable$"):
+        repository._get_active_asset_storage_key(
+            graph.identity, replace(graph.assets[0], **{field: value})
+        )
+
+
+def test_private_storage_lookup_uses_stable_repository_read_failure(
+    repository: PersonaVisualRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    graph = _activate(repository)
+
+    def fail(*_args: object, **_kwargs: object) -> None:
+        raise sqlite3.OperationalError("private database detail")
+
+    monkeypatch.setattr(repository.db, "execute_query", fail)
+    with pytest.raises(ValueError, match="^persona_visual_repository_read_failed$"):
+        repository._get_active_asset_storage_key(graph.identity, graph.assets[0])
+
+
 def test_publish_version_preserves_old_rows_and_advances_full_identity(
     repository: PersonaVisualRepository,
     db: CharactersRAGDB,

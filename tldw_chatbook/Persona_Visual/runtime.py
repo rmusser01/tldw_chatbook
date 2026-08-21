@@ -4,13 +4,25 @@ from __future__ import annotations
 
 import hashlib
 import re
+from io import BytesIO
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from os import PathLike
 from typing import Protocol
 
-from .assets import PersonaVisualAsset, PersonaVisualAssetMetadata
+from PIL import Image
+
+from .assets import (
+    PersonaVisualAsset,
+    PersonaVisualAssetError,
+    PersonaVisualAssetMetadata,
+    load_persona_visual_asset,
+)
 from .contracts import (
     ALLOWED_ASSET_MIME_TYPES,
+    MAX_ASSET_COUNT,
+    MAX_ASSET_DIMENSION,
+    MAX_ASSET_TOTAL_BYTES,
     MAX_FALLBACK_DEPTH,
     PersonaVisualAlignment,
     PersonaVisualAnimation,
@@ -22,6 +34,7 @@ from .repository import (
     PersonaVisualAssetRecord,
     PersonaVisualGraph,
     PersonaVisualIdentity,
+    PersonaVisualRepository,
 )
 
 
@@ -29,12 +42,20 @@ STATE_FALLBACK_REASON = "persona_visual_state_fallback"
 IDLE_UNAVAILABLE_REASON = "persona_visual_idle_unavailable"
 UNAVAILABLE_REASON = "persona_visual_unavailable"
 GRAPH_INVALID_REASON = "persona_visual_graph_invalid"
+RUNTIME_FAILED_REASON = "persona_visual_runtime_failed"
 
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _STATE = re.compile(r"[a-z][a-z0-9_.:-]{0,95}\Z")
 _OPAQUE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
 _MAX_RUNTIME_CANDIDATES = 2 * (256 + 9)
 _MAX_PORTRAIT_BYTES = 25 * 1024 * 1024
+_RASTER_FORMATS = {
+    "image/png": "PNG",
+    "image/jpeg": "JPEG",
+    "image/webp": "WEBP",
+    "image/gif": "GIF",
+}
+_ASSET_MISS = object()
 
 
 class PersonaVisualAssetLoader(Protocol):
@@ -57,6 +78,7 @@ class PersonaVisualPortrait:
     mime_type: str
     sha256: str
     data: bytes = field(repr=False)
+    selected_frame: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +118,17 @@ class PersonaVisualResolvedFrame:
     duration_ms: int | None
     region: PersonaVisualRegion | None
     manifest_frame_index: int
+    selected_frame: int
+
+
+@dataclass(frozen=True, slots=True)
+class _LoadedAnimation:
+    frames: tuple[PersonaVisualResolvedFrame, ...]
+    static_reason: str | None
+    frame_rate: float
+    loop: bool
+    alignment: PersonaVisualAlignment | None
+    animate: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,6 +148,57 @@ class PersonaVisualResolution:
     static_reason: str | None
     portrait: PersonaVisualPortrait | None
     cache_identity: PersonaVisualCacheIdentity
+
+
+def resolve_active_persona_visual(
+    repository: PersonaVisualRepository,
+    persona_id: str,
+    profile_root: PathLike[str] | str,
+    requested_state: str,
+    *,
+    portrait: PersonaVisualPortrait | None = None,
+    reduced_motion: bool = False,
+) -> PersonaVisualResolution:
+    """Resolve one persisted active graph through its private storage bridge."""
+
+    try:
+        graph = repository.get_active_persona_pack(persona_id)
+    except Exception:
+        public_state = (
+            requested_state
+            if type(requested_state) is str
+            and _STATE.fullmatch(requested_state) is not None
+            else "invalid"
+        )
+        return _fallback_result(
+            None,
+            public_state,
+            portrait,
+            reduced_motion if type(reduced_motion) is bool else False,
+            RUNTIME_FAILED_REASON,
+            (),
+        )
+
+    def load(
+        identity: PersonaVisualIdentity,
+        asset: PersonaVisualAssetRecord,
+        selected_frame: int,
+    ) -> PersonaVisualAsset:
+        storage_key = repository._get_active_asset_storage_key(identity, asset)
+        return load_persona_visual_asset(
+            profile_root,
+            storage_key=storage_key,
+            metadata=_asset_metadata(asset),
+            selected_frame=selected_frame,
+        )
+
+    return resolve_persona_visual(
+        graph,
+        requested_state,
+        asset_loader=load,
+        portrait=portrait,
+        reduced_motion=reduced_motion,
+    )
 
 
 def resolve_persona_visual(
@@ -142,7 +226,7 @@ def resolve_persona_visual(
         )
     if not valid_requested_state or type(reduced_motion) is not bool:
         return _fallback_result(
-            graph,
+            None,
             public_requested_state,
             portrait,
             reduced_motion if type(reduced_motion) is bool else False,
@@ -154,7 +238,7 @@ def resolve_persona_visual(
         candidates = _candidate_states(manifest, requested_state)
     except Exception:
         return _fallback_result(
-            graph,
+            None,
             requested_state,
             portrait,
             reduced_motion,
@@ -163,6 +247,7 @@ def resolve_persona_visual(
         )
 
     attempted: list[PersonaVisualCacheAsset] = []
+    memo: dict[tuple[PersonaVisualIdentity, PersonaVisualAssetRecord, int], object] = {}
     for state in candidates:
         animation_id = manifest.states.get(state)
         if animation_id is None:
@@ -170,7 +255,7 @@ def resolve_persona_visual(
         animation = manifest.animations.get(animation_id)
         if animation is None:
             return _fallback_result(
-                graph,
+                None,
                 requested_state,
                 portrait,
                 reduced_motion,
@@ -185,19 +270,19 @@ def resolve_persona_visual(
                 asset_loader,
                 reduced_motion,
                 attempted,
+                memo,
             )
         except Exception:
             return _fallback_result(
-                graph,
+                identity,
                 requested_state,
                 portrait,
                 reduced_motion,
-                GRAPH_INVALID_REASON,
+                RUNTIME_FAILED_REASON,
                 tuple(attempted),
             )
         if loaded is None:
             continue
-        frames, static_reason = loaded
         reason = None if state == requested_state else STATE_FALLBACK_REASON
         return PersonaVisualResolution(
             source="persona_visual",
@@ -205,19 +290,12 @@ def resolve_persona_visual(
             requested_state=requested_state,
             resolved_state=state,
             animation_id=animation_id,
-            frames=frames,
-            frame_rate=animation.frame_rate,
-            loop=animation.loop,
-            alignment=animation.alignment,
-            animate=not reduced_motion
-            and (
-                len(animation.frames) > 1
-                or any(
-                    (assets[frame.asset_id].frame_count or 1) > 1
-                    for frame in animation.frames
-                )
-            ),
-            static_reason=static_reason,
+            frames=loaded.frames,
+            frame_rate=loaded.frame_rate,
+            loop=loaded.loop,
+            alignment=loaded.alignment,
+            animate=loaded.animate,
+            static_reason=loaded.static_reason,
             portrait=None,
             cache_identity=_cache_identity(
                 identity,
@@ -231,7 +309,7 @@ def resolve_persona_visual(
         )
 
     return _fallback_result(
-        graph,
+        identity,
         requested_state,
         portrait,
         reduced_motion,
@@ -272,8 +350,12 @@ def _validated_graph(
         or type(graph.version.manifest) is not PersonaVisualManifest
     ):
         raise ValueError
+    identity = replace(identity)
     records: dict[str, PersonaVisualAssetRecord] = {}
     record_ids: set[int] = set()
+    total_bytes = 0
+    if type(graph.assets) is not tuple or len(graph.assets) > MAX_ASSET_COUNT:
+        raise ValueError
     for record in graph.assets:
         if (
             type(record) is not PersonaVisualAssetRecord
@@ -284,7 +366,13 @@ def _validated_graph(
             or record.pack_id != identity.pack_id
             or record.pack_version_id != identity.pack_version_id
             or _SHA256.fullmatch(record.sha256) is None
+            or type(record.byte_count) is not int
+            or record.byte_count <= 0
         ):
+            raise ValueError
+        record = replace(record)
+        total_bytes += record.byte_count
+        if total_bytes > MAX_ASSET_TOTAL_BYTES:
             raise ValueError
         record_ids.add(record.id)
         records[record.asset_key] = record
@@ -343,16 +431,32 @@ def _load_animation(
     asset_loader: PersonaVisualAssetLoader,
     reduced_motion: bool,
     attempted: list[PersonaVisualCacheAsset],
-) -> tuple[tuple[PersonaVisualResolvedFrame, ...], str | None] | None:
+    memo: dict[tuple[PersonaVisualIdentity, PersonaVisualAssetRecord, int], object],
+) -> _LoadedAnimation | None:
+    alignment = _snapshot_alignment(animation.alignment)
+    frame_rate = animation.frame_rate
+    loop = animation.loop
+    frame_snapshots = tuple(
+        (index, frame.asset_id, frame.duration_ms, _snapshot_region(frame.region))
+        for index, frame in enumerate(animation.frames)
+    )
     if reduced_motion:
         index, static_reason = _static_index(animation)
-        selected = ((index, animation.frames[index]),)
+        selected = (frame_snapshots[index],)
     else:
         static_reason = None
-        selected = tuple(enumerate(animation.frames))
+        selected = frame_snapshots
+    animate = not reduced_motion and (
+        len(frame_snapshots) > 1
+        or any(
+            (record.frame_count or 1) > 1
+            for _, asset_id, _, _ in frame_snapshots
+            if (record := assets.get(asset_id)) is not None
+        )
+    )
     loaded_frames: list[PersonaVisualResolvedFrame] = []
-    for manifest_index, frame in selected:
-        record = assets.get(frame.asset_id)
+    for manifest_index, asset_id, duration_ms, region in selected:
+        record = assets.get(asset_id)
         if record is None:
             return None
         cache_asset = PersonaVisualCacheAsset(
@@ -363,23 +467,53 @@ def _load_animation(
             selected_frame=0,
         )
         attempted.append(cache_asset)
-        try:
-            loaded = asset_loader(identity, record, 0)
-            _attest_loaded_asset(loaded, record)
-        except Exception:
+        memo_key = (identity, record, 0)
+        loaded = memo.get(memo_key)
+        if loaded is _ASSET_MISS:
             return None
+        if loaded is None:
+            try:
+                loaded = asset_loader(replace(identity), replace(record), 0)
+            except PersonaVisualAssetError:
+                memo[memo_key] = _ASSET_MISS
+                return None
+            _attest_loaded_asset(loaded, record)
+            memo[memo_key] = loaded
+        if type(loaded) is not PersonaVisualAsset:
+            raise ValueError
         loaded_frames.append(
             PersonaVisualResolvedFrame(
                 asset_id=record.id,
                 asset_key=record.asset_key,
                 sha256=record.sha256,
                 data=loaded.data,
-                duration_ms=frame.duration_ms,
-                region=frame.region,
+                duration_ms=duration_ms,
+                region=region,
                 manifest_frame_index=manifest_index,
+                selected_frame=loaded.selected_frame,
             )
         )
-    return tuple(loaded_frames), static_reason
+    return _LoadedAnimation(
+        tuple(loaded_frames), static_reason, frame_rate, loop, alignment, animate
+    )
+
+
+def _snapshot_alignment(
+    alignment: PersonaVisualAlignment | None,
+) -> PersonaVisualAlignment | None:
+    if alignment is None:
+        return None
+    if type(alignment) is not PersonaVisualAlignment:
+        raise ValueError
+    return replace(alignment)
+
+
+def _snapshot_region(region: PersonaVisualRegion | None) -> PersonaVisualRegion | None:
+    if region is None:
+        return None
+    if type(region) is not PersonaVisualRegion:
+        raise ValueError
+    return replace(region)
 
 
 def _static_index(animation: PersonaVisualAnimation) -> tuple[int, str]:
@@ -397,9 +531,24 @@ def _attest_loaded_asset(
     loaded: object,
     record: PersonaVisualAssetRecord,
 ) -> None:
-    if type(loaded) is not PersonaVisualAsset or loaded.selected_frame != 0:
+    if (
+        type(loaded) is not PersonaVisualAsset
+        or type(loaded.selected_frame) is not int
+        or loaded.selected_frame != 0
+    ):
         raise ValueError
-    expected = PersonaVisualAssetMetadata(
+    expected = _asset_metadata(record)
+    if (
+        loaded.metadata != expected
+        or type(loaded.data) is not bytes
+        or len(loaded.data) != record.byte_count
+        or hashlib.sha256(loaded.data).hexdigest() != record.sha256
+    ):
+        raise ValueError
+
+
+def _asset_metadata(record: PersonaVisualAssetRecord) -> PersonaVisualAssetMetadata:
+    return PersonaVisualAssetMetadata(
         asset_key=record.asset_key,
         role=record.role,
         mime_type=record.mime_type,
@@ -410,24 +559,16 @@ def _attest_loaded_asset(
         frame_count=record.frame_count,
         duration_ms=record.duration_ms,
     )
-    if (
-        loaded.metadata != expected
-        or type(loaded.data) is not bytes
-        or len(loaded.data) != record.byte_count
-        or hashlib.sha256(loaded.data).hexdigest() != record.sha256
-    ):
-        raise ValueError
 
 
 def _fallback_result(
-    graph: PersonaVisualGraph | None,
+    identity: PersonaVisualIdentity | None,
     requested_state: str,
     portrait: PersonaVisualPortrait | None,
     reduced_motion: bool,
     reason: str,
     assets: tuple[PersonaVisualCacheAsset, ...],
 ) -> PersonaVisualResolution:
-    identity = _safe_identity(graph)
     valid_portrait = _validated_portrait(portrait)
     source = "persona_portrait" if valid_portrait is not None else "unavailable"
     if source == "unavailable" and reason == IDLE_UNAVAILABLE_REASON:
@@ -463,36 +604,41 @@ def _validated_portrait(
     if portrait is None:
         return None
     try:
+        if type(portrait) is not PersonaVisualPortrait:
+            return None
+        snapshot = replace(portrait)
         if (
-            type(portrait) is not PersonaVisualPortrait
-            or type(portrait.portrait_id) is not str
-            or _OPAQUE_ID.fullmatch(portrait.portrait_id) is None
-            or type(portrait.revision) is not int
-            or portrait.revision < 0
-            or type(portrait.mime_type) is not str
-            or portrait.mime_type not in ALLOWED_ASSET_MIME_TYPES
-            or type(portrait.sha256) is not str
-            or _SHA256.fullmatch(portrait.sha256) is None
-            or type(portrait.data) is not bytes
-            or not portrait.data
-            or len(portrait.data) > _MAX_PORTRAIT_BYTES
-            or hashlib.sha256(portrait.data).hexdigest() != portrait.sha256
+            type(snapshot.portrait_id) is not str
+            or _OPAQUE_ID.fullmatch(snapshot.portrait_id) is None
+            or type(snapshot.revision) is not int
+            or snapshot.revision < 0
+            or type(snapshot.mime_type) is not str
+            or snapshot.mime_type not in ALLOWED_ASSET_MIME_TYPES
+            or type(snapshot.sha256) is not str
+            or _SHA256.fullmatch(snapshot.sha256) is None
+            or type(snapshot.data) is not bytes
+            or not snapshot.data
+            or len(snapshot.data) > _MAX_PORTRAIT_BYTES
+            or hashlib.sha256(snapshot.data).hexdigest() != snapshot.sha256
+            or type(snapshot.selected_frame) is not int
+            or snapshot.selected_frame != 0
         ):
             return None
-        portrait.portrait_id.encode("utf-8")
-        portrait.mime_type.encode("utf-8")
-        return portrait
-    except (UnicodeError, ValueError):
+        snapshot.portrait_id.encode("utf-8")
+        with Image.open(BytesIO(snapshot.data)) as image:
+            if (
+                image.format != _RASTER_FORMATS[snapshot.mime_type]
+                or image.width < 1
+                or image.height < 1
+                or image.width > MAX_ASSET_DIMENSION
+                or image.height > MAX_ASSET_DIMENSION
+            ):
+                return None
+            image.seek(0)
+            image.load()
+        return snapshot
+    except Exception:
         return None
-
-
-def _safe_identity(graph: PersonaVisualGraph | None) -> PersonaVisualIdentity | None:
-    if (
-        type(graph) is PersonaVisualGraph
-        and type(graph.identity) is PersonaVisualIdentity
-    ):
-        return graph.identity
-    return None
 
 
 def _cache_identity(
@@ -520,6 +666,7 @@ def _cache_identity(
 __all__ = [
     "GRAPH_INVALID_REASON",
     "IDLE_UNAVAILABLE_REASON",
+    "RUNTIME_FAILED_REASON",
     "STATE_FALLBACK_REASON",
     "UNAVAILABLE_REASON",
     "PersonaVisualAssetLoader",
@@ -528,5 +675,6 @@ __all__ = [
     "PersonaVisualPortrait",
     "PersonaVisualResolution",
     "PersonaVisualResolvedFrame",
+    "resolve_active_persona_visual",
     "resolve_persona_visual",
 ]

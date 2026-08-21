@@ -161,6 +161,90 @@ class PersonaVisualRepository:
         except (sqlite3.Error, CharactersRAGDBError):
             raise ValueError("persona_visual_repository_read_failed") from None
 
+    def _get_active_asset_storage_key(
+        self,
+        identity: PersonaVisualIdentity,
+        asset: PersonaVisualAssetRecord,
+    ) -> str:
+        """Resolve private storage only under an exact active immutable snapshot."""
+
+        if (
+            type(identity) is not PersonaVisualIdentity
+            or type(asset) is not PersonaVisualAssetRecord
+        ):
+            raise ValueError("persona_visual_asset_storage_unavailable")
+        try:
+            with self.db.transaction():
+                row = _fetchone(
+                    self.db.execute_query(
+                        """
+                        SELECT asset.storage_relpath
+                          FROM persona_visual_bindings AS binding
+                          JOIN persona_visual_packs AS pack
+                            ON pack.id = binding.pack_id
+                          JOIN persona_visual_pack_versions AS version_row
+                            ON version_row.id = binding.active_version_id
+                           AND version_row.pack_id = binding.pack_id
+                          JOIN persona_visual_assets AS asset
+                            ON asset.pack_version_id = version_row.id
+                           AND asset.pack_id = pack.id
+                         WHERE binding.id = ? AND binding.persona_id = ?
+                           AND binding.persona_revision = ?
+                           AND binding.version = ? AND binding.status = 'active'
+                           AND binding.pack_id = ?
+                           AND binding.active_version_id = ?
+                           AND pack.id = ? AND pack.version = ?
+                           AND pack.status = 'active'
+                           AND pack.active_version_id = ?
+                           AND version_row.id = ?
+                           AND version_row.version_number = ?
+                           AND version_row.manifest_sha256 = ?
+                           AND asset.id = ? AND asset.pack_id = ?
+                           AND asset.pack_version_id = ?
+                           AND asset.asset_key = ? AND asset.role = ?
+                           AND asset.mime_type = ? AND asset.bytes = ?
+                           AND asset.sha256 = ? AND asset.width = ?
+                           AND asset.height = ? AND asset.frame_count IS ?
+                           AND asset.duration_ms IS ? AND asset.created_at = ?
+                        """,
+                        (
+                            identity.binding_id,
+                            identity.persona_id,
+                            identity.persona_revision,
+                            identity.binding_version,
+                            identity.pack_id,
+                            identity.pack_version_id,
+                            identity.pack_id,
+                            identity.pack_revision,
+                            identity.pack_version_id,
+                            identity.pack_version_id,
+                            identity.version_number,
+                            identity.manifest_sha256,
+                            asset.id,
+                            asset.pack_id,
+                            asset.pack_version_id,
+                            asset.asset_key,
+                            asset.role,
+                            asset.mime_type,
+                            asset.byte_count,
+                            asset.sha256,
+                            asset.width,
+                            asset.height,
+                            asset.frame_count,
+                            asset.duration_ms,
+                            asset.created_at,
+                        ),
+                        redact_params=True,
+                    )
+                )
+                if row is None:
+                    raise ValueError("persona_visual_asset_storage_unavailable")
+                return _decode_storage_relpath(row["storage_relpath"])
+        except ValueError:
+            raise ValueError("persona_visual_asset_storage_unavailable") from None
+        except (sqlite3.Error, CharactersRAGDBError):
+            raise ValueError("persona_visual_repository_read_failed") from None
+
     def activate_new_pack(
         self,
         *,
