@@ -11916,6 +11916,7 @@ class ConsoleChatController:
                     )
                 ),
                 change_roots=change_roots,
+                change_root_aliases=turn_context.change_review_root_aliases,
                 change_review_skipped_roots=(
                     turn_context.change_review_skipped_roots
                 ),

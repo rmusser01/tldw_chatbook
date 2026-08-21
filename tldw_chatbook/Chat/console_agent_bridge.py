@@ -45,6 +45,12 @@ from tldw_chatbook.Agents.agent_models import (
     STEERING_SOURCE_USER,
     TERMINAL_RUN_STATUSES,
     SPAWN_TOOL_NAME,
+    SKILL_FILE_TOOL_NAME,
+    SEARCH_RUN_LOG_TOOL_NAME,
+    RUN_LOG_STATS_TOOL_NAME,
+    RUN_LOG_SLICE_TOOL_NAME,
+    WAIT_AGENTS_TOOL_NAME,
+    CHECK_AGENTS_TOOL_NAME,
     STEP_ERROR,
     STEP_MODEL,
     STEP_SPAWN,
@@ -191,6 +197,56 @@ _LOOP_THREAD_JOIN_SECONDS = 5.0
 #: so 3600s remains a pure "wedged loop" tripwire that can never pre-empt a
 #: legitimately slow turn.
 _CHAT_CALL_TIMEOUT_SECONDS = 3600.0
+
+CHANGE_REVIEW_BASELINE_WAIT_SECONDS = 3.0
+CHANGE_REVIEW_BASELINE_BYPASS_TOOLS = frozenset(
+    {
+        FIND_TOOLS_NAME,
+        LOAD_TOOLS_NAME,
+        SKILL_FILE_TOOL_NAME,
+        SEARCH_RUN_LOG_TOOL_NAME,
+        RUN_LOG_STATS_TOOL_NAME,
+        RUN_LOG_SLICE_TOOL_NAME,
+        WAIT_AGENTS_TOOL_NAME,
+        CHECK_AGENTS_TOOL_NAME,
+    }
+)
+
+
+def build_change_review_dispatch_gate(
+    await_baseline: Callable[[float], bool],
+    *,
+    on_timeout: Callable[[], None] | None = None,
+) -> Callable[[list[ToolCall], frozenset[str]], None]:
+    """Build the fixed pure-bypass, bounded Change Review dispatch gate."""
+    gate_lock = threading.Lock()
+    gate_complete = False
+
+    def gate(
+        calls: list[ToolCall], resolved_pure_runtime_tools: frozenset[str]
+    ) -> None:
+        nonlocal gate_complete
+        if not calls or all(
+            call.name in CHANGE_REVIEW_BASELINE_BYPASS_TOOLS
+            and call.name in resolved_pure_runtime_tools
+            for call in calls
+        ):
+            return
+        with gate_lock:
+            if gate_complete:
+                return
+            try:
+                ready = await_baseline(CHANGE_REVIEW_BASELINE_WAIT_SECONDS)
+            finally:
+                # B is immutable for this turn. Whether it became ready,
+                # timed out, or the observational seam failed, no later
+                # batch should pay another wait. Production awaiters make
+                # timeout invalidation irrevocable before returning false.
+                gate_complete = True
+        if not ready and on_timeout is not None:
+            on_timeout()
+
+    return gate
 
 # Skills Phase-2 gate finding 1 (Task-14 report, scenario 5: "Find a skill
 # that can shout, load it, and use it on: hello"): a discovery-heavy run --
@@ -3588,6 +3644,7 @@ class ConsoleAgentBridge:
         review_tool_calls: Callable[[list[ToolCall], str], dict[str, str]]
         | None = None,
         change_roots: Sequence[Path] | None = None,
+        change_root_aliases: Sequence[str] = (),
         change_review_skipped_roots: Sequence[SkippedReviewRoot] = (),
         turn_skill_bindings: tuple[str, ...] = (),
         turn_bundle_block: str = "",
@@ -4330,19 +4387,59 @@ class ConsoleAgentBridge:
                     "change_review: begin_turn failed; turn untracked"
                 )
         baseline_gate = change_reservation or change_handle
+        before_tool_dispatch = None
+        alias_by_root: dict[str, str] = {}
         if baseline_gate is not None:
-            _inner_review = review_tool_calls
-            _handle = baseline_gate
+            timeout_warned = False
+            alias_by_root = {
+                str(root): str(alias)
+                for root, alias in zip(
+                    baseline_gate.roots,
+                    change_root_aliases,
+                    strict=False,
+                )
+            }
 
-            def review_tool_calls(calls, run_id):  # type: ignore[no-redef]
-                # PR2a Task 5: pass the run id straight through -- this
-                # wrapper only gates on the baseline snapshot; the inner
-                # hook is what needs the run identity to scope its gate
-                # writes.
-                _handle.await_baseline()
-                if _inner_review is None:
-                    return {}
-                return _inner_review(calls, run_id)
+            def on_baseline_timeout() -> None:
+                nonlocal timeout_warned
+                if timeout_warned:
+                    return
+                timeout_warned = True
+                handle = getattr(baseline_gate, "_handle", baseline_gate)
+                timed_out_roots = [
+                    root
+                    for root, error in handle.errors.items()
+                    if "baseline snapshot still running" in error
+                ]
+                for index, root in enumerate(timed_out_roots, start=1):
+                    self._append_marker(
+                        session_id,
+                        format_change_review_skipped_marker(
+                            alias_by_root.get(root, f"workspace {index}"),
+                            "baseline timed out; this turn's changes are not tracked",
+                        ),
+                    )
+
+            if (
+                change_reservation is not None
+                and self._change_finalization_coordinator is not None
+            ):
+                coordinator_wait = getattr(
+                    self._change_finalization_coordinator,
+                    "await_baseline",
+                    None,
+                )
+                await_baseline = (
+                    functools.partial(coordinator_wait, change_reservation)
+                    if callable(coordinator_wait)
+                    else change_reservation.await_baseline
+                )
+            else:
+                await_baseline = baseline_gate.await_baseline
+            before_tool_dispatch = build_change_review_dispatch_gate(
+                await_baseline,
+                on_timeout=on_baseline_timeout,
+            )
 
         service = AgentService(
             self._db,
@@ -4353,6 +4450,7 @@ class ConsoleAgentBridge:
             skill_runner=skill_runner,
             skill_file_bindings=skill_file_bindings,
             review_tool_calls=review_tool_calls,
+            before_tool_dispatch=before_tool_dispatch,
             review_state_scope=review_state_scope,
             install_skill_tool=install_skill_tool,
             run_skill_script_tool=run_skill_script_tool,
@@ -4608,11 +4706,17 @@ class ConsoleAgentBridge:
                                 change_reservation.admission_error
                                 or "change-review finalization queue unavailable"
                             )
-                            for root in change_reservation.roots:
+                            for index, root in enumerate(
+                                change_reservation.roots,
+                                start=1,
+                            ):
                                 self._append_marker(
                                     session_id,
                                     format_change_tracking_failure_marker(
-                                        str(root), error
+                                        alias_by_root.get(
+                                            str(root), f"workspace {index}"
+                                        ),
+                                        error,
                                     ),
                                 )
                     else:

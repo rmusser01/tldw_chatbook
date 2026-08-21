@@ -17,8 +17,14 @@ from pathlib import Path
 import pytest
 
 from Tests.Agents.test_agent_service import SUBAGENT_PROMPT_PREFIX
+from tldw_chatbook.Agents.agent_models import ToolCall
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
-from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+from tldw_chatbook.Chat.console_agent_bridge import (
+    CHANGE_REVIEW_BASELINE_BYPASS_TOOLS,
+    CHANGE_REVIEW_BASELINE_WAIT_SECONDS,
+    ConsoleAgentBridge,
+    build_change_review_dispatch_gate,
+)
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
@@ -28,7 +34,7 @@ from tldw_chatbook.Workspaces.change_review_finalization import (
     ChangeReviewFinalizationCoordinator,
     ChangeReviewFinalizeResult,
 )
-from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker
+from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker, TurnHandle
 from tldw_chatbook.Workspaces.change_review_consent import SkippedReviewRoot
 
 # Harness apps load the consolidated widget CSS the real app loads
@@ -107,6 +113,96 @@ def test_begin_is_nonblocking_and_await_gates(tmp_path, root):
 
     assert begin_elapsed < 0.3, "begin_turn blocked on the snapshot"
     assert events == ["begin-returned", "baseline-finished", "await-returned"]
+
+
+def test_change_review_dispatch_gate_bypasses_only_fixed_pure_runtime_tools():
+    waits: list[float] = []
+    gate = build_change_review_dispatch_gate(
+        lambda timeout: waits.append(timeout) or True
+    )
+
+    gate(
+        [ToolCall(name=name, args={}) for name in CHANGE_REVIEW_BASELINE_BYPASS_TOOLS],
+        CHANGE_REVIEW_BASELINE_BYPASS_TOOLS,
+    )
+    assert waits == []
+
+    for name in (
+        "spawn_subagent",
+        "install_skill",
+        "run_skill_script",
+        "send_to_agent",
+        "provider_tool",
+        "unknown_tool",
+    ):
+        gate = build_change_review_dispatch_gate(
+            lambda timeout: waits.append(timeout) or True
+        )
+        gate([ToolCall(name=name, args={})], frozenset())
+
+    assert waits == [CHANGE_REVIEW_BASELINE_WAIT_SECONDS] * 6
+
+    collision_gate = build_change_review_dispatch_gate(
+        lambda timeout: waits.append(timeout) or True
+    )
+    collision_gate(
+        [ToolCall(name="skill_file", args={})],
+        frozenset({"find_tools", "load_tools"}),
+    )
+    assert waits == [CHANGE_REVIEW_BASELINE_WAIT_SECONDS] * 7
+
+
+def test_change_review_dispatch_gate_waits_for_mixed_batch_and_warns():
+    waits: list[float] = []
+    warnings: list[bool] = []
+    gate = build_change_review_dispatch_gate(
+        lambda timeout: waits.append(timeout) or False,
+        on_timeout=lambda: warnings.append(True),
+    )
+
+    gate(
+        [
+            ToolCall(name="find_tools", args={}),
+            ToolCall(name="provider_tool", args={}),
+        ],
+        CHANGE_REVIEW_BASELINE_BYPASS_TOOLS,
+    )
+
+    assert waits == [CHANGE_REVIEW_BASELINE_WAIT_SECONDS]
+    assert warnings == [True]
+
+    gate(
+        [ToolCall(name="provider_tool", args={})],
+        CHANGE_REVIEW_BASELINE_BYPASS_TOOLS,
+    )
+    assert waits == [CHANGE_REVIEW_BASELINE_WAIT_SECONDS]
+    assert warnings == [True]
+
+
+def test_change_review_dispatch_gate_coalesces_concurrent_waiters():
+    entered = threading.Event()
+    release = threading.Event()
+    waits: list[float] = []
+
+    def await_baseline(timeout: float) -> bool:
+        waits.append(timeout)
+        entered.set()
+        assert release.wait(timeout=1)
+        return False
+
+    gate = build_change_review_dispatch_gate(await_baseline)
+    calls = [ToolCall(name="provider_tool", args={})]
+    first = threading.Thread(target=gate, args=(calls, frozenset()))
+    second = threading.Thread(target=gate, args=(calls, frozenset()))
+    first.start()
+    assert entered.wait(timeout=1)
+    second.start()
+    release.set()
+    first.join(timeout=1)
+    second.join(timeout=1)
+
+    assert not first.is_alive() and not second.is_alive()
+    assert waits == [CHANGE_REVIEW_BASELINE_WAIT_SECONDS]
 
 
 def test_tracker_supports_a_caller_owned_synchronous_lifecycle(tracker, root):
@@ -491,7 +587,13 @@ def test_bridge_surfaces_capacity_error_when_error_channel_is_saturated(
         coordinator,
     )
 
-    _run(bridge, session, aid, root)
+    _run(
+        bridge,
+        session,
+        aid,
+        root,
+        change_root_aliases=["folder-safe"],
+    )
 
     failures = [
         message.content
@@ -500,6 +602,8 @@ def test_bridge_surfaces_capacity_error_when_error_channel_is_saturated(
     ]
     assert len(failures) == 1
     assert "error publication channel is at capacity" in failures[0]
+    assert "folder-safe" in failures[0]
+    assert str(root.resolve()) not in failures[0]
 
 
 def test_bridge_does_not_append_capacity_marker_after_coordinator_shutdown(
@@ -706,11 +810,8 @@ def test_tracking_never_blocks_the_reply(tmp_path, root):
     assert len(rows) == 1 and rows[0]["tracking_error"] != ""
 
 
-def test_baseline_completes_before_the_first_tool_executes(tmp_path, root):
-    """The spec's ordering contract: B rides first-token latency but MUST be
-    done before any tool touches disk — otherwise the tool's own write races
-    into the baseline and vanishes from the diff.
-    """
+def test_review_runs_before_baseline_gate_and_tool_dispatch_waits(tmp_path, root):
+    """Permission review precedes the bounded B gate; invocation follows B."""
     events: list[str] = []
 
     class _SlowService(ShadowRepoService):
@@ -733,7 +834,11 @@ def test_baseline_completes_before_the_first_tool_executes(tmp_path, root):
         + json.dumps({"name": "calculator", "arguments": {"expression": "6*7"}})
         + "\n```"
     )
-    gateway = _SideEffectGateway([[fence], ["42."]])
+    gateway = _SideEffectGateway(
+        [[fence], ["42."]],
+        side_effect=lambda: events.append("tool-finished"),
+        side_effect_on_call=2,
+    )
     bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
 
     # PR2a Task 5: an AgentService-wired hook takes `(calls, run_id)` --
@@ -747,9 +852,68 @@ def test_baseline_completes_before_the_first_tool_executes(tmp_path, root):
     )
 
     assert "baseline-finished" in events and "review-called" in events
-    assert events.index("baseline-finished") < events.index("review-called"), (
-        f"a tool could execute before B settled: {events}"
+    assert events.index("review-called") < events.index("baseline-finished"), (
+        f"permission review did not precede the baseline gate: {events}"
     )
+    assert events.index("baseline-finished") < events.index("tool-finished"), (
+        f"tool dispatch raced ahead of the baseline: {events}"
+    )
+
+
+def test_bridge_timeout_continues_dispatch_and_warns_with_root_alias(
+    tmp_path, root, tracker
+):
+    waits: list[float] = []
+
+    class _Reservation:
+        def __init__(self) -> None:
+            self.roots = (str(root.resolve()),)
+            self.admission_error = ""
+            self._handle = TurnHandle([root.resolve()])
+
+    class _TimeoutCoordinator:
+        @staticmethod
+        def register(_roots, *, survivor_key=""):
+            return _Reservation()
+
+        @staticmethod
+        def await_baseline(reservation, timeout):
+            waits.append(timeout)
+            reservation._handle.errors[str(root.resolve())] = (
+                "baseline snapshot still running after 3s"
+            )
+            return False
+
+        @staticmethod
+        def finalize(_reservation, **_kwargs):
+            return ChangeReviewFinalizeResult.SCHEDULED
+
+    bridge, _db, store, session, aid = _bridge_with(
+        tmp_path,
+        _SideEffectGateway([[_calc_fence()], ["done."]]),
+        tracker,
+        _TimeoutCoordinator(),
+    )
+
+    _run(
+        bridge,
+        session,
+        aid,
+        root,
+        change_root_aliases=["folder-safe"],
+    )
+
+    warnings = [
+        row.content
+        for row in _tool_rows(store, session)
+        if row.content.startswith("⚠ change review skipped")
+    ]
+    assert waits == [CHANGE_REVIEW_BASELINE_WAIT_SECONDS]
+    assert warnings == [
+        "⚠ change review skipped folder-safe: baseline timed out; "
+        "this turn's changes are not tracked"
+    ]
+    assert str(root.resolve()) not in warnings[0]
 
 
 # -- wiring: roots resolution + registration hook ---------------------------
@@ -1627,12 +1791,12 @@ def test_a_survivors_tool_dispatch_is_gated_on_nothing_across_turns(
     """CHARACTERISATION (green before and after this task's fix): the
     mechanism behind the test above.
 
-    A survivor's tool batch still calls TURN 1's `review_tool_calls`
-    wrapper, whose `await_baseline()` was satisfied before turn 1 even
-    answered. So the survivor dispatches a tool while turn 2's baseline is
-    still being taken -- the exact "a tool writing before B settles races
-    its own change into the baseline" hazard the gate exists to prevent,
-    now reachable across turns and gated by nothing.
+    A survivor's tool batch still calls TURN 1's `before_tool_dispatch`
+    gate, whose baseline was satisfied before turn 1 even answered. So the
+    survivor dispatches a tool while turn 2's baseline is still being taken
+    -- the exact "a tool writing before B settles races its own change into
+    the baseline" hazard the gate exists to prevent, now reachable across
+    turns and gated by nothing.
 
     This is NOT fixed by re-gating (a survivor must not block on an
     unrelated turn's snapshot); it is made harmless by the windows sharing

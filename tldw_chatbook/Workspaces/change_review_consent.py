@@ -65,6 +65,7 @@ class ChangeReviewAdmission:
 
     ready_roots: tuple[str, ...] = ()
     skipped_roots: tuple[SkippedReviewRoot, ...] = ()
+    ready_aliases: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -304,6 +305,7 @@ class ChangeReviewConsentService:
         consent: ChangeReviewConsent,
     ) -> ChangeReviewAdmission:
         ready: list[str] = []
+        ready_aliases: list[str] = []
         skipped: list[SkippedReviewRoot] = []
         for binding in self._current_bindings(workspace_id):
             root = str(Path(binding.locator).resolve())
@@ -319,11 +321,16 @@ class ChangeReviewConsentService:
                 entry = self._readiness[key]
             if entry.state is RootReadinessState.READY:
                 ready.append(root)
+                ready_aliases.append(binding.binding_id)
             else:
                 skipped.append(
                     SkippedReviewRoot(alias=binding.binding_id, reason=entry.reason)
                 )
-        return ChangeReviewAdmission(tuple(ready), tuple(skipped))
+        return ChangeReviewAdmission(
+            ready_roots=tuple(ready),
+            skipped_roots=tuple(skipped),
+            ready_aliases=tuple(ready_aliases),
+        )
 
     def _current_bindings(self, workspace_id: str) -> tuple[_FolderBinding, ...]:
         return tuple(

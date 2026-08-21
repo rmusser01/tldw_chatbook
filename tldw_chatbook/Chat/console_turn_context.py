@@ -90,6 +90,7 @@ class ConsoleTurnExecutionContext:
     provider_selection: ConsoleProviderSelection
     session_settings: ConsoleSessionSettings | None = None
     workspace_roots: tuple[str, ...] = ()
+    change_review_root_aliases: tuple[str, ...] = ()
     change_review_skipped_roots: tuple[SkippedReviewRoot, ...] = ()
     capabilities: Mapping[str, Any] = field(
         default_factory=lambda: MappingProxyType({})
@@ -124,6 +125,11 @@ class ConsoleTurnExecutionContext:
         )
         object.__setattr__(
             self,
+            "change_review_root_aliases",
+            tuple(str(alias) for alias in deepcopy(self.change_review_root_aliases)),
+        )
+        object.__setattr__(
+            self,
             "change_review_skipped_roots",
             tuple(deepcopy(self.change_review_skipped_roots)),
         )
@@ -143,6 +149,7 @@ class ConsoleTurnExecutionContext:
         provider_selection: ConsoleProviderSelection,
         session_settings: ConsoleSessionSettings | None = None,
         workspace_roots: Sequence[object] = (),
+        change_review_root_aliases: Sequence[str] = (),
         change_review_skipped_roots: Sequence[SkippedReviewRoot] = (),
         capabilities: Mapping[str, Any] | None = None,
         rag_defaults: Mapping[str, Any] | None = None,
@@ -155,6 +162,7 @@ class ConsoleTurnExecutionContext:
             provider_selection=provider_selection,
             session_settings=session_settings,
             workspace_roots=tuple(workspace_roots),
+            change_review_root_aliases=tuple(change_review_root_aliases),
             change_review_skipped_roots=tuple(change_review_skipped_roots),
             capabilities=capabilities or {},
             rag_defaults=rag_defaults or {},

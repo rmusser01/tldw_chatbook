@@ -86,6 +86,7 @@ def test_capture_detaches_nested_mutable_configuration_sources():
         workspace_context=workspace,
     )
     roots = ["C:/workspace/a"]
+    review_aliases = ["folder-a"]
     capabilities = {"vision": True, "formats": ["image/png"]}
     rag_defaults = {"enabled": True, "scope": {"types": ["notes"]}}
     tool_configuration = {"local": {"enabled": True, "names": ["fs_read"]}}
@@ -96,6 +97,7 @@ def test_capture_detaches_nested_mutable_configuration_sources():
         provider_selection=selection,
         session_settings=_settings("openai", "gpt-context", "system-a"),
         workspace_roots=roots,
+        change_review_root_aliases=review_aliases,
         capabilities=capabilities,
         rag_defaults=rag_defaults,
         tool_configuration=tool_configuration,
@@ -103,6 +105,7 @@ def test_capture_detaches_nested_mutable_configuration_sources():
     )
 
     roots.append("C:/workspace/leak")
+    review_aliases.append("folder-leak")
     capabilities["formats"].append("image/jpeg")
     rag_defaults["scope"]["types"].append("media")
     tool_configuration["local"]["names"].append("fs_write")
@@ -110,6 +113,7 @@ def test_capture_detaches_nested_mutable_configuration_sources():
     staged_sources.clear()
 
     assert context.workspace_roots == ("C:/workspace/a",)
+    assert context.change_review_root_aliases == ("folder-a",)
     assert context.capabilities["formats"] == ("image/png",)
     assert context.rag_defaults["scope"]["types"] == ("notes",)
     assert context.tool_configuration["local"]["names"] == ("fs_read",)
@@ -269,7 +273,11 @@ def test_session_builder_captures_roots_rag_tools_and_generation(monkeypatch):
             nonlocal admissions
             admissions += 1
             assert workspace_id == "workspace-a"
-            return SimpleNamespace(ready_roots=roots, skipped_roots=skipped)
+            return SimpleNamespace(
+                ready_roots=roots,
+                ready_aliases=["folder-ready"],
+                skipped_roots=skipped,
+            )
 
     controller = ConsoleSessionController.__new__(ConsoleSessionController)
     controller.app_instance = SimpleNamespace(
@@ -289,6 +297,7 @@ def test_session_builder_captures_roots_rag_tools_and_generation(monkeypatch):
     app_config["chat_defaults"]["rag_auto_retrieve_on_send"] = "false"
 
     assert context.workspace_roots == (str(Path("C:/workspace/a")),)
+    assert context.change_review_root_aliases == ("folder-ready",)
     assert context.change_review_skipped_roots == (
         SkippedReviewRoot(
             alias="folder-preparing",

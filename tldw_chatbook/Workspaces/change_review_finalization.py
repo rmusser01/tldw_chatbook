@@ -139,6 +139,24 @@ class _ReservationState:
     preparations: tuple[BaselineRootPreparation, ...] = ()
     lane_ordered: bool = True
     admission_error: str = ""
+    attribution_invalid_roots: set[str] = field(default_factory=set)
+    survivor_window_opened: bool = False
+    survivor_window_closed: bool = False
+    baseline_timed_out: bool = False
+    baseline_timeout_error: str = ""
+
+
+@dataclass
+class _DegradedRootState:
+    reservation_ids: set[str] = field(default_factory=set)
+    survivor_keys: set[str] = field(default_factory=set)
+
+
+@dataclass
+class _DegradedReservationState:
+    roots: tuple[str, ...]
+    survivor_key: str
+    survivors_settled: bool = False
 
 
 @dataclass(frozen=True)
@@ -195,6 +213,8 @@ class ChangeReviewFinalizationCoordinator:
         self._lock = threading.Lock()
         self._lanes: dict[str, deque[str]] = {}
         self._states: dict[str, _ReservationState] = {}
+        self._degraded_roots: dict[str, _DegradedRootState] = {}
+        self._degraded_reservations: dict[str, _DegradedReservationState] = {}
         self._accepting = True
         self._next_sequence = 0
         self._idle = threading.Event()
@@ -244,6 +264,30 @@ class ChangeReviewFinalizationCoordinator:
             self._start_threads_locked()
             reservation_id = uuid.uuid4().hex
             handle = self._tracker.new_turn_handle(canonical)
+            degraded = tuple(
+                root for root in canonical if root in self._degraded_roots
+            )
+            if degraded:
+                admission_error = (
+                    "change-review root is resynchronizing after a baseline "
+                    "timeout; filesystem tracking skipped for this turn"
+                )
+                for root in canonical:
+                    handle.errors[root] = admission_error
+                    self._degraded_roots.setdefault(
+                        root, _DegradedRootState()
+                    ).reservation_ids.add(reservation_id)
+                self._degraded_reservations[reservation_id] = (
+                    _DegradedReservationState(canonical, survivor_key)
+                )
+                handle._baseline_ready.set()
+                return ChangeReviewReservation(
+                    reservation_id,
+                    canonical,
+                    handle,
+                    admission_error,
+                    self._direct_slots.acquire(blocking=False),
+                )
             if len(self._states) >= self._capacity:
                 admission_error = (
                     "change-review coordinator is at capacity; "
@@ -308,6 +352,10 @@ class ChangeReviewFinalizationCoordinator:
                 roots=reservation.roots,
             )
             with self._lock:
+                self._finish_degraded_reservation_locked(
+                    reservation.id,
+                    has_live_survivors=has_live_survivors,
+                )
                 if not self._accepting:
                     if reservation._publication_reserved:
                         self._direct_slots.release()
@@ -339,6 +387,15 @@ class ChangeReviewFinalizationCoordinator:
             state.touched_paths = tuple(touched_paths)
             state.end_shas = dict(end_shas) if end_shas is not None else None
             state.has_live_survivors = has_live_survivors
+            if has_live_survivors and not state.survivors_settled:
+                survivor_token = (
+                    state.survivor_key
+                    or f"unsettleable:{state.public.id}"
+                )
+                for root in state.attribution_invalid_roots:
+                    self._degraded_roots.setdefault(
+                        root, _DegradedRootState()
+                    ).survivor_keys.add(survivor_token)
             self._schedule_ready_locked()
             return ChangeReviewFinalizeResult.SCHEDULED
 
@@ -350,14 +407,102 @@ class ChangeReviewFinalizationCoordinator:
             for state in self._states.values():
                 if state.survivor_key == survivor_key:
                     state.survivors_settled = True
+            for state in self._degraded_reservations.values():
+                if state.survivor_key == survivor_key:
+                    state.survivors_settled = True
+            for root, degraded in tuple(self._degraded_roots.items()):
+                degraded.survivor_keys.discard(survivor_key)
+                self._maybe_clear_degraded_locked(root)
             self._schedule_ready_locked()
+
+    def await_baseline(
+        self,
+        reservation: ChangeReviewReservation,
+        timeout: float = 3.0,
+    ) -> bool:
+        """Bound one dispatch wait and invalidate overlapping attribution."""
+        if reservation.await_baseline(timeout):
+            return True
+        with self._lock:
+            state = self._states.get(reservation.id)
+            if state is None or state.cancelled:
+                return False
+            timed_out = {
+                root: error
+                for root, error in reservation._handle.errors.items()
+                if "baseline snapshot still running" in error
+            }
+            state.baseline_timed_out = bool(timed_out)
+            if timed_out:
+                state.baseline_timeout_error = next(iter(timed_out.values()))
+            for root, error in timed_out.items():
+                self._invalidate_timed_out_root_locked(state, root, error)
+            self._schedule_ready_locked()
+        return False
+
+    def _invalidate_timed_out_root_locked(
+        self,
+        state: _ReservationState,
+        root: str,
+        error: str,
+    ) -> None:
+        state.attribution_invalid_roots.add(root)
+        state.public._handle.errors.setdefault(root, error)
+        degraded = self._degraded_roots.setdefault(root, _DegradedRootState())
+        degraded.reservation_ids.add(state.public.id)
+        lane = self._lanes.get(root, ())
+        for predecessor_id in lane:
+            if predecessor_id == state.public.id:
+                break
+            predecessor = self._states.get(predecessor_id)
+            if predecessor is None or not self._window_can_claim_changes(
+                predecessor
+            ):
+                continue
+            predecessor.attribution_invalid_roots.add(root)
+            active = predecessor.active_handle or predecessor.public._handle
+            active.errors[root] = (
+                "change attribution invalidated by a successor baseline "
+                "timeout while earlier review work was active"
+            )
+            degraded.reservation_ids.add(predecessor.public.id)
+            if (
+                predecessor.has_live_survivors
+                and predecessor.survivor_key
+                and not predecessor.survivors_settled
+            ):
+                degraded.survivor_keys.add(predecessor.survivor_key)
+
+    @staticmethod
+    def _window_can_claim_changes(state: _ReservationState) -> bool:
+        if state.cancelled:
+            return False
+        if state.phase in {"waiting", "discovering", "discovered"}:
+            # No B snapshot has started. Keep these reservations globally
+            # sequence-ordered when a predecessor discovers another root;
+            # treating queued discovery as an active barrier can invert two
+            # root lanes and deadlock both reservations.
+            return False
+        if state.phase == "publishing":
+            return (
+                state.final_requested
+                and state.has_live_survivors
+                and not state.survivor_window_closed
+            )
+        return True
 
     def cancel(self, reservation: ChangeReviewReservation) -> bool:
         """Tombstone a reservation and wake successors when safe."""
         if reservation.admission_error:
             claimed = reservation._claim_terminal()
-            if claimed and reservation._publication_reserved:
-                self._direct_slots.release()
+            if claimed:
+                with self._lock:
+                    self._finish_degraded_reservation_locked(
+                        reservation.id,
+                        has_live_survivors=False,
+                    )
+                if reservation._publication_reserved:
+                    self._direct_slots.release()
             return claimed
         with self._lock:
             state = self._states.get(reservation.id)
@@ -491,8 +636,48 @@ class ChangeReviewFinalizationCoordinator:
             if not lane:
                 self._lanes.pop(root, None)
         self.publication_signal.completed(published=published)
+        for root in state.attribution_invalid_roots:
+            degraded = self._degraded_roots.get(root)
+            if degraded is not None:
+                degraded.reservation_ids.discard(reservation_id)
+                self._maybe_clear_degraded_locked(root)
         if not self._states and not self._direct_pending:
             self._idle.set()
+
+    def _maybe_clear_degraded_locked(self, root: str) -> None:
+        degraded = self._degraded_roots.get(root)
+        if degraded is None:
+            return
+        if degraded.reservation_ids or degraded.survivor_keys:
+            return
+        self._degraded_roots.pop(root, None)
+
+    def _finish_degraded_reservation_locked(
+        self,
+        reservation_id: str,
+        *,
+        has_live_survivors: bool,
+    ) -> None:
+        state = self._degraded_reservations.pop(reservation_id, None)
+        if state is None:
+            return
+        for root in state.roots:
+            degraded = self._degraded_roots.get(root)
+            if degraded is None:
+                continue
+            if has_live_survivors and not state.survivor_key:
+                # No settlement identity means there is no safe point at
+                # which to resynchronize. Retain the mutation token rather
+                # than risk a false attribution window.
+                continue
+            degraded.reservation_ids.discard(reservation_id)
+            if (
+                has_live_survivors
+                and state.survivor_key
+                and not state.survivors_settled
+            ):
+                degraded.survivor_keys.add(state.survivor_key)
+            self._maybe_clear_degraded_locked(root)
 
     @staticmethod
     def _worker_loop(
@@ -565,18 +750,30 @@ class ChangeReviewFinalizationCoordinator:
                 ):
                     return
                 result: _OperationResult | _DirectPublication | object | None = None
-                queues = (
-                    (self._direct_results, self._results)
-                    if prefer_direct
-                    else (self._results, self._direct_results)
-                )
-                for result_queue in queues:
+                waited_for_regular = False
+                if prefer_direct:
+                    queues = (self._direct_results, self._results)
+                    for result_queue in queues:
+                        try:
+                            result = result_queue.get_nowait()
+                            break
+                        except queue.Empty:
+                            pass
+                else:
+                    # A bare get_nowait() made the advertised alternation
+                    # illusory: a second direct overload record could jump
+                    # ahead while a filesystem worker was just about to
+                    # report. Give the preferred regular lane one bounded
+                    # scheduling quantum before falling back to direct work.
+                    waited_for_regular = True
                     try:
-                        result = result_queue.get_nowait()
-                        break
+                        result = self._results.get(timeout=0.025)
                     except queue.Empty:
-                        pass
-                if result is None:
+                        try:
+                            result = self._direct_results.get_nowait()
+                        except queue.Empty:
+                            pass
+                if result is None and not waited_for_regular:
                     try:
                         result = self._results.get(timeout=0.025)
                     except queue.Empty:
@@ -584,6 +781,8 @@ class ChangeReviewFinalizationCoordinator:
                             result = self._direct_results.get_nowait()
                         except queue.Empty:
                             continue
+                elif result is None:
+                    continue
                 prefer_direct = not prefer_direct
                 if result is _STOP:
                     return
@@ -633,12 +832,35 @@ class ChangeReviewFinalizationCoordinator:
                     state.public._handle._baseline_ready.set()
                 self._schedule_ready_locked()
                 return
+            if result.kind == "survivor_finalize":
+                # The survivor mutation window closes when its E operation
+                # returns, not when the resulting durable row finishes
+                # publishing. A successor timeout after this point cannot
+                # invalidate an already-complete B/E window.
+                state.survivor_window_opened = False
+                state.survivor_window_closed = True
             state.phase = "publishing"
             records = result.records
             if result.error:
                 records = tuple(
                     TurnChangeRecord(root=root, tracking_error=result.error)
                     for root in state.roots
+                )
+            if state.attribution_invalid_roots:
+                records = tuple(
+                    record
+                    for record in records
+                    if record.root not in state.attribution_invalid_roots
+                ) + tuple(
+                    TurnChangeRecord(
+                        root=root,
+                        tracking_error=(
+                            state.public._handle.errors.get(root)
+                            or (state.active_handle.errors.get(root) if state.active_handle else "")
+                            or "change attribution invalidated after baseline timeout"
+                        ),
+                    )
+                    for root in sorted(state.attribution_invalid_roots)
                 )
             publication = ChangeReviewPublication(
                 reservation_id=state.public.id,
@@ -664,7 +886,13 @@ class ChangeReviewFinalizationCoordinator:
                 ):
                     follow_on = self._tracker.continuation(state.public._handle)
                     if follow_on is not None:
+                        for root in state.attribution_invalid_roots:
+                            follow_on.errors[root] = (
+                                state.public._handle.errors.get(root)
+                                or "change attribution invalidated after baseline timeout"
+                            )
                         self.publication_signal.window_published()
+                        state.survivor_window_opened = True
                         state.phase = "survivor"
                         state.active_handle = follow_on
                         self._schedule_ready_locked()
@@ -718,7 +946,7 @@ class ChangeReviewFinalizationCoordinator:
                 pass
 
     def _enroll_discovered_roots_locked(self, state: _ReservationState) -> None:
-        """Insert discovered roots without overtaking an in-flight operation."""
+        """Insert discovered roots without overtaking an open change window."""
         reservation_id = state.public.id
         discovered = tuple(
             dict.fromkeys(str(item.root.resolve()) for item in state.preparations)
@@ -726,15 +954,35 @@ class ChangeReviewFinalizationCoordinator:
         new_roots = tuple(root for root in discovered if root not in state.roots)
         for root in new_roots:
             lane = self._lanes.setdefault(root, deque())
-            insert_at = len(lane)
+            barrier_after = 0
             for index, other_id in enumerate(lane):
                 other = self._states.get(other_id)
+                if other is not None and self._window_can_claim_changes(other):
+                    barrier_after = index + 1
+            insert_at = len(lane)
+            for index in range(barrier_after, len(lane)):
+                other_id = lane[index]
+                other = self._states.get(other_id)
                 if other is None:
-                    continue
-                if other.operation_inflight:
                     continue
                 if other.sequence > state.sequence:
                     insert_at = index
                     break
             lane.insert(insert_at, reservation_id)
         state.roots = tuple(dict.fromkeys((*state.roots, *new_roots)))
+        for root in new_roots:
+            if state.baseline_timed_out:
+                self._invalidate_timed_out_root_locked(
+                    state,
+                    root,
+                    state.baseline_timeout_error
+                    or "baseline snapshot still running after bounded wait",
+                )
+            elif root in self._degraded_roots:
+                error = (
+                    "change-review root is resynchronizing after a baseline "
+                    "timeout; filesystem tracking skipped for this turn"
+                )
+                state.attribution_invalid_roots.add(root)
+                state.public._handle.errors[root] = error
+                self._degraded_roots[root].reservation_ids.add(reservation_id)

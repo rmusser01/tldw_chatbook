@@ -957,6 +957,9 @@ class AgentService:
         skill_file_bindings: SkillFileBindings | None = None,
         review_tool_calls: Callable[[list[ToolCall], str], dict[str, str]]
         | None = None,
+        before_tool_dispatch: (
+            Callable[[list[ToolCall], frozenset[str]], None] | None
+        ) = None,
         review_state_scope: Callable[[str], "contextlib.AbstractContextManager"]
         | None = None,
         install_skill_tool: Callable[[str], ToolResult] | None = None,
@@ -1016,6 +1019,7 @@ class AgentService:
         # and this is where a run's identity reaches the review hook that
         # writes them.
         self.review_tool_calls = review_tool_calls
+        self.before_tool_dispatch = before_tool_dispatch
         # C1 (probe-verified security regression, pre-merge review of the
         # Phase 5 chat bridge): an optional, generically-shaped seam a
         # caller can wire to snapshot/restore whatever per-turn state
@@ -4250,6 +4254,7 @@ class AgentService:
                 if self.review_tool_calls is not None
                 else None
             ),
+            before_tool_dispatch=self.before_tool_dispatch,
             prepare_tool_calls=(
                 prepare_project_instructions if project_context is not None else None
             ),

@@ -145,6 +145,8 @@ def test_enabled_admission_prepares_once_then_returns_ready_root(tmp_path) -> No
             lambda: service.admit_turn("ws-review").ready_roots
             == (str(root.resolve()),)
         )
+        ready = service.admit_turn("ws-review")
+        assert ready.ready_aliases == (binding.binding_id,)
         assert initialize_calls == [str(root.resolve())]
     finally:
         release.set()

@@ -348,6 +348,13 @@ class LoopDeps:
     # behavior. ``None`` (the default) is a no-op: every call proceeds,
     # byte-identical to pre-Task-4 behavior.
     review_tool_calls: Callable[[list[ToolCall]], dict[str, str]] | None = None
+    # Optional post-review/pre-dispatch observation seam. The runtime calls
+    # it once with only calls whose effective review verdict is `proceed`.
+    # It runs after project-instruction preparation and review, but before
+    # any invocation branch. Exceptions are observational and fail open.
+    before_tool_dispatch: (
+        Callable[[list[ToolCall], frozenset[str]], None] | None
+    ) = None
     # Optional Task 10 whole-batch preparation. It runs once after the
     # assistant turn has entered run-local history and immediately before
     # the unchanged review hook. A retry result appends canonical deferral
@@ -772,6 +779,15 @@ def _detect_cycle(recent) -> tuple[int, int] | None:
         if all(tail[i] == block[i % period] for i in range(need)):
             return (period, repeats)
     return None
+
+
+def _effective_review_verdict(
+    call: ToolCall, verdicts: Mapping[str, str]
+) -> str:
+    """Resolve one call-id verdict before the provider-name fallback."""
+    if call.call_id and call.call_id in verdicts:
+        return verdicts[call.call_id]
+    return verdicts.get(call.name, "proceed")
 
 
 def run_agent_loop(
@@ -1241,21 +1257,51 @@ def run_agent_loop(
         # "proceed" -- the exact same dispatch path as before this hook
         # existed, so absent-hook behavior stays byte-identical.
         verdicts: dict[str, str] = {}
+        review_hook_failed = False
         if deps.review_tool_calls is not None and calls:
             try:
                 verdicts = deps.review_tool_calls(list(calls)) or {}
             except Exception:  # noqa: BLE001 — policy differs by lifecycle
-                if continuation_checkpoint is not None:
-                    return continuation_error()
+                review_hook_failed = True
                 # MCP-specific fail-closed policy lives in the Task 6
                 # closure that builds this callable, not in this generic
                 # runtime.
-                logger.opt(exception=True).warning(
-                    f"review_tool_calls hook raised for batch "
-                    f"{[c.name for c in calls]}; treating all {len(calls)} "
-                    f"calls as proceed"
-                )
+                if continuation_checkpoint is None:
+                    logger.opt(exception=True).warning(
+                        f"review_tool_calls hook raised for batch "
+                        f"{[c.name for c in calls]}; treating all {len(calls)} "
+                        f"calls as proceed"
+                    )
                 verdicts = {}
+
+        dispatchable_calls = [
+            call
+            for call in calls
+            if _effective_review_verdict(call, verdicts) == "proceed"
+        ]
+        if deps.before_tool_dispatch is not None and dispatchable_calls:
+            try:
+                pure_runtime_tools = {FIND_TOOLS_NAME, LOAD_TOOLS_NAME}
+                for name, handler in (
+                    (SKILL_FILE_TOOL_NAME, deps.read_skill_file),
+                    (SEARCH_RUN_LOG_TOOL_NAME, deps.search_run_log),
+                    (RUN_LOG_STATS_TOOL_NAME, deps.run_log_stats),
+                    (RUN_LOG_SLICE_TOOL_NAME, deps.run_log_slice),
+                    (WAIT_AGENTS_TOOL_NAME, deps.wait_agents),
+                    (CHECK_AGENTS_TOOL_NAME, deps.check_agents),
+                ):
+                    if handler is not None:
+                        pure_runtime_tools.add(name)
+                deps.before_tool_dispatch(
+                    dispatchable_calls,
+                    frozenset(pure_runtime_tools),
+                )
+            except Exception:  # noqa: BLE001 -- observation cannot authorize
+                logger.opt(exception=True).warning(
+                    "before_tool_dispatch hook raised; dispatch continuing"
+                )
+        if review_hook_failed and continuation_checkpoint is not None:
+            return continuation_error()
 
         for call in calls:
             # F5 (Qodo #5, PR #1066 review): emit the tool_call record BEFORE
@@ -1336,11 +1382,7 @@ def run_agent_loop(
             # verdicts, and the fence path builds ToolCalls with NO call_id
             # at all (`parse_tool_call`), so a name-keyed verdict must still stop
             # every matching call or the MCP gate silently opens.
-            verdict = "proceed"
-            if call.call_id and call.call_id in verdicts:
-                verdict = verdicts[call.call_id]
-            else:
-                verdict = verdicts.get(call.name, "proceed")
+            verdict = _effective_review_verdict(call, verdicts)
             if continuation_checkpoint is not None and verdict != "proceed":
                 continuation_cap = (
                     min(budget.max_tool_result_chars, 16_000)

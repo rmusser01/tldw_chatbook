@@ -439,6 +439,7 @@ def _registry():
 
 def test_agent_service_threads_review_tool_calls_into_loop_deps(db):
     seen_batches = []
+    gated_batches = []
 
     # PR2a Task 5: an `AgentService`-wired hook takes `(batch, run_id)` --
     # the service binds ITS run id in, which is how the review hook knows
@@ -463,7 +464,13 @@ def test_agent_service_threads_review_tool_calls_into_loop_deps(db):
         ]
     )
     service = AgentService(
-        db=db, registry=_registry(), chat_call=chat, review_tool_calls=review
+        db=db,
+        registry=_registry(),
+        chat_call=chat,
+        review_tool_calls=review,
+        before_tool_dispatch=lambda batch, _pure: gated_batches.append(
+            [call.name for call in batch]
+        ),
     )
     _run_id, outcome = service.run_turn(
         conversation_id="c",
@@ -475,6 +482,7 @@ def test_agent_service_threads_review_tool_calls_into_loop_deps(db):
 
     assert outcome.status == RUN_DONE
     assert seen_batches == [["calculator", "get_current_datetime"]]
+    assert gated_batches == [["get_current_datetime"]]
     result_steps = {
         s.tool_name: s.result for s in outcome.steps if s.kind == "tool_result"
     }

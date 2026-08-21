@@ -1681,6 +1681,7 @@ class ConsoleSessionController:
             session_id
         )
         workspace_roots = ()
+        ready_review_aliases = ()
         skipped_review_roots = ()
         consent_service = getattr(
             self.app_instance,
@@ -1691,9 +1692,13 @@ class ConsoleSessionController:
             try:
                 admission = consent_service.admit_turn(workspace_id)
                 workspace_roots = tuple(admission.ready_roots)
+                ready_review_aliases = tuple(
+                    getattr(admission, "ready_aliases", ())
+                )
                 skipped_review_roots = tuple(admission.skipped_roots)
             except Exception:  # noqa: BLE001 -- review never blocks a send
                 workspace_roots = ()
+                ready_review_aliases = ()
                 skipped_review_roots = ()
 
         return ConsoleTurnExecutionContext.capture(
@@ -1701,6 +1706,7 @@ class ConsoleSessionController:
             provider_selection=selection,
             session_settings=settings,
             workspace_roots=workspace_roots,
+            change_review_root_aliases=ready_review_aliases,
             change_review_skipped_roots=skipped_review_roots,
             capabilities={
                 "vision": bool(model)
