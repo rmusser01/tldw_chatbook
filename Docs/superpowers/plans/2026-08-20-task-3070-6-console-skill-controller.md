@@ -116,4 +116,4 @@
 - [x] Review the cumulative diff for one-controller/YAGNI scope: no new dependency, picker replacement, storage/config change, trust-policy change, DOM ID addition, or user-visible copy change.
 - [x] Obtain independent spec/correctness and minimality review if collaboration policy permits; address validated findings one at a time with focused tests.
 - [x] Update plan checkboxes and TASK-3070.6 ACs/Implementation Notes with exact RED/GREEN/mutation/static evidence, ADR decision, modified/deleted files, inherited exceptions, and no-full-suite constraint.
-- [ ] Commit the final candidate, rebase onto latest `origin/dev`, rerun the same touched-functionality gates, push, open one atomic PR against `dev`, address review findings, and merge only after final verification.
+- [x] Commit the final candidate, confirm it is based on latest `origin/dev`, rerun the same touched-functionality gates, push, open one atomic PR against `dev`, address review findings, and reach merge-ready state; the external merge remains gated on required CI.
