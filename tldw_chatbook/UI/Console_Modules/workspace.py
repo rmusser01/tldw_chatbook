@@ -1860,6 +1860,77 @@ class ConsoleWorkspaceController:
         # previous session was temporary.
         self._sync_console_temporary_chip()
 
+    def _reconcile_console_session_with_registry(self) -> None:
+        """Align the Console session with the registry's active workspace.
+
+        TASK-18310: every IN-Console workspace-activation path -- the Alt+W
+        switcher (``_open_console_workspace_switcher``'s ``_switch_to``), the
+        shared create modal's Console handler
+        (``_handle_workspace_create_result``), and conversation-browser
+        row-open (``_activate_console_workspace_for_browser_row`` plus the
+        session lookup around it) -- calls ``set_active_workspace`` on the
+        registry AND ``_activate_console_session_for_workspace`` on this
+        controller together, so the registry and the Console chat store's
+        active session can never drift apart from any of those paths.
+        Cross-screen activation -- Settings' create-modal ``_done``,
+        Library's ``create_local_workspace`` ``_done``, and Settings' "Set
+        active" button (Qodo finding 5 on PR #1809) -- only calls
+        ``set_active_workspace`` on the registry, so registry/session
+        misalignment can arise EXCLUSIVELY from a cross-screen change.
+
+        Called from ``ChatScreen.on_screen_resume`` on every Console resume
+        (including the mount's own -- the store is app-level and can carry
+        a session that predates the first mount). When already aligned --
+        the overwhelmingly common case, since every in-Console path keeps
+        them in lockstep -- this is an O(1) early exit. Only on an actual
+        cross-screen divergence does it re-run the same Console-side
+        activation sequence the create handler uses, minus the registry
+        write (already done by the other surface) and the toast (the
+        originating surface already announced the switch).
+
+        Deliberately conservative: any read of the registry is guarded, and
+        a ``None`` registry, ``None`` active workspace, or ``None`` active
+        session all return quietly -- this must never break screen resume.
+        """
+        registry_service = getattr(
+            self.app_instance, "workspace_registry_service", None
+        )
+        if registry_service is None:
+            return
+        try:
+            active = registry_service.get_active_workspace()
+        except Exception:
+            logger.opt(exception=True).debug(
+                "Unable to read active workspace during Console resume reconcile"
+            )
+            return
+        if active is None:
+            return
+        store = self._ensure_console_chat_store()
+        if store.active_session_id is None:
+            # Fresh-start/mount flows own creating the first session
+            # themselves -- be conservative and let them.
+            return
+        active_session = next(
+            (
+                session
+                for session in store.sessions()
+                if session.id == store.active_session_id
+            ),
+            None,
+        )
+        if (
+            active_session is not None
+            and active_session.workspace_id == active.workspace_id
+        ):
+            return
+        self._sync_console_chat_core_state()
+        self._activate_console_session_for_workspace(active.workspace_id)
+        self._sync_console_workspace_context()
+        self.run_worker(
+            self._sync_native_console_chat_ui(), exclusive=True, group="console-sync"
+        )
+
     def _console_workspace_session_title(self, workspace_id: str) -> str:
         """Return a readable title for an auto-created workspace Console tab."""
         registry_service = getattr(

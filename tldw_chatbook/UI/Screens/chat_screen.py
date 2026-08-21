@@ -20851,6 +20851,27 @@ class ChatScreen(BaseAppScreen):
         # so every subsequent resume refreshes normally.
         mount_already_refreshed = self._console_mount_visit_refreshed
         self._console_mount_visit_refreshed = False
+        # task-18310: reconcile the Console session against the registry's
+        # active workspace on EVERY resume, including the mount's own --
+        # deliberately NOT gated by `mount_already_refreshed` like the
+        # worker refreshes below. Every in-Console activation path (Alt+W
+        # switcher, the shared create modal, conversation-browser row-open)
+        # already keeps the registry and the store's active session in
+        # lockstep, so the common case is an O(1) early exit; the mount
+        # path itself never reconciles against the registry, and the store
+        # is app-level (it can carry a session that predates this screen's
+        # first mount), so skipping it here on the mount's own resume would
+        # leave that gap uncaught. Cross-screen activation (Settings'
+        # create-modal/"Set active" button, Library's create-workspace
+        # flow) only updates the registry -- this is the seam that repairs
+        # the resulting drift. See
+        # `ConsoleWorkspaceController._reconcile_console_session_with_registry`.
+        try:
+            self._workspace._reconcile_console_session_with_registry()
+        except Exception:
+            logger.opt(exception=True).debug(
+                "Unable to reconcile Console session with registry-active workspace"
+            )
         self.consume_pending_console_first_chat_intent()
         # Re-evaluate setup-card/model readiness before touching focus. Some
         # recovery flows (e.g. certain providers' API-key recovery) navigate to
