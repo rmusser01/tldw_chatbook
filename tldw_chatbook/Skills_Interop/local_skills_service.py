@@ -22,6 +22,7 @@ from loguru import logger
 from ..runtime_policy.types import PolicyDeniedError
 from ..Utils.input_validation import sanitize_string, validate_text_input
 from ..Utils.path_validation import get_safe_relative_path, validate_path_simple
+from .atomic_write import write_bytes_atomic, write_text_atomic
 from .skill_trust_models import SkillTrustBlockedError
 
 if TYPE_CHECKING:
@@ -300,11 +301,15 @@ class LocalSkillsService:
     def _save_index(self, records: dict[str, dict[str, Any]]) -> None:
         self.store_dir.mkdir(parents=True, exist_ok=True)
         payload = {"version": 1, "skills": records}
-        temp_path = self.index_path.with_suffix(".json.tmp")
-        with temp_path.open("w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2, sort_keys=True)
-            handle.write("\n")
-        temp_path.replace(self.index_path)
+        # Writer-unique temp file (pid + thread id, via the shared
+        # Skills_Interop.atomic_write helper) -- a fixed `<index>.json.tmp`
+        # let two concurrent writers (two app instances, or two callers in
+        # one) race on the same temp path, so one's `replace()` could
+        # consume the other's still-being-written temp file and raise
+        # FileNotFoundError (TASK-17963). A genuine write failure still
+        # raises here -- only that temp-name collision class is gone.
+        text = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+        write_text_atomic(self.index_path, text)
 
     def _skill_dir(self, skill_name: str) -> Path:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
@@ -315,18 +320,16 @@ class LocalSkillsService:
     @staticmethod
     def _write_text_atomic(path: Path, content: str) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = path.with_name(f"{path.name}.tmp")
-        with temp_path.open("w", encoding="utf-8") as handle:
-            handle.write(content)
-        temp_path.replace(path)
+        # See _save_index above: writer-unique temp naming (TASK-17963) --
+        # a fixed `<name>.tmp` raced across concurrent writers to the same
+        # skill file. Write failures still propagate; only the collision
+        # is fixed.
+        write_text_atomic(path, content)
 
     @staticmethod
     def _write_bytes_atomic(path: Path, data: bytes) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = path.with_name(f"{path.name}.tmp")
-        with temp_path.open("wb") as handle:
-            handle.write(data)
-        temp_path.replace(path)
+        write_bytes_atomic(path, data)
 
     @staticmethod
     def _parse_front_matter(content: str) -> tuple[dict[str, Any], str]:

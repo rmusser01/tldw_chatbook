@@ -15,6 +15,7 @@ from loguru import logger
 
 from ..Utils.path_validation import get_safe_relative_path, validate_path_simple
 from ..runtime_policy.server_credentials import is_secure_keyring_backend
+from .atomic_write import replace_atomically, unique_temp_path
 from .skill_trust_crypto import (
     SkillTrustKeys,
     canonical_json,
@@ -596,11 +597,19 @@ def _atomic_write_json(
 ) -> None:
     base_dir = _ensure_trust_directory(base_dir or path.parent)
     path = _validated_trust_file_path(path, base_dir=base_dir)
-    temp_path = path.with_name(f".{path.name}.tmp")
+    # Writer-unique temp file (pid + thread id, shared Skills_Interop
+    # helper) -- a fixed `.{name}.tmp` let two concurrent writers race on
+    # the same temp path, so one's `replace()` could consume the other's
+    # still-being-written temp file and raise FileNotFoundError
+    # (TASK-17963). `hidden=True` keeps this store's existing dot-prefixed
+    # temp-file convention; the containment check below still re-runs
+    # against the (now writer-unique) temp path exactly as it did against
+    # the old fixed one. A genuine write/replace failure still raises --
+    # only the temp-name collision class is gone.
+    temp_path = unique_temp_path(path, hidden=True)
     temp_path = _validated_trust_file_path(temp_path, base_dir=base_dir)
     text = json.dumps(payload, indent=indent, sort_keys=True) + "\n"
-    temp_path.write_text(text, encoding="utf-8")
-    temp_path.replace(path)
+    replace_atomically(temp_path, path, lambda t: t.write_text(text, encoding="utf-8"))
 
 
 def _atomic_write_bytes(
@@ -608,10 +617,9 @@ def _atomic_write_bytes(
 ) -> None:
     base_dir = _ensure_trust_directory(base_dir or path.parent)
     path = _validated_trust_file_path(path, base_dir=base_dir)
-    temp_path = path.with_name(f".{path.name}.tmp")
+    temp_path = unique_temp_path(path, hidden=True)
     temp_path = _validated_trust_file_path(temp_path, base_dir=base_dir)
-    temp_path.write_bytes(payload)
-    temp_path.replace(path)
+    replace_atomically(temp_path, path, lambda t: t.write_bytes(payload))
 
 
 def _ensure_trust_directory(path: Path) -> Path:
