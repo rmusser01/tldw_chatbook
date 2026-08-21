@@ -88,3 +88,31 @@ signature beyond the two predicted:
 Scope note: this is bigger than the prompts canvas — treat as the
 #1893 Library regression umbrella; the local repro (20 failed) plus
 these CI signatures are the evidence base.
+
+## Fix progress (2026-08-21 evening, PR #1909 merged)
+
+Two of the three signatures fixed and verified:
+
+1. `_build_test_app` shadowing (e351a9c99) — the local wrapper in
+   test_library_shell.py now forwards configured_default. CI TypeError
+   signature eliminated.
+2. Hidden Back control (1bda754fa, bisected) — wide-mode editor swaps
+   #library-note-back for #library-notes-task-return (same guarded-exit
+   seam; product contract intact). 14 old tests pressed the hidden
+   button (silent no-op). Width-aware `_press_note_back` helper added;
+   Back/flush/GC cluster 9/9 green. library_shell: 20 -> 7 failures.
+
+Remaining open scope (all reproduce on pure dev; 30 total):
+- test_library_shell.py x7: rail_preferences_prefers_app_config,
+  conversation_canvas_sync_gates[size0/1], prompts_rail_row_exact_count,
+  restore_state per-pane-filter attrs x2, note_recompose_fifty_cycles.
+- test_library_prompts_canvas.py x20 (shared-editor/read-only-preview
+  family, kwargs separation, settle/pagination waits).
+- test_library_file_notes_workspace.py x3 (source choices keyboard
+  switch, database-files switch retains canvas).
+
+AC#2 and AC#3 are satisfied (the AttributeError and the workspace-registry
+gate were the same two root causes). AC#1/AC#4 remain open on the 30
+above. CI note: org-wide runner congestion prevented guard/test checks
+from starting on PRs #1900/#1906/#1909; all merged on exact-expression
+local verification.
