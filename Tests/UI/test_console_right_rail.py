@@ -115,6 +115,54 @@ _LIVE_WORK_IDS = {
 }
 
 
+def _expected_run_inspector_child_ids(state) -> tuple[str, ...]:
+    """Project every direct child ID from canonical STRICT ownership data."""
+    ownership = importlib.import_module(
+        "tldw_chatbook.Widgets.Console.console_inspector_ownership"
+    )
+    projected = ownership.classify_inspector_content(
+        state, ownership.InspectorOwnershipPolicy.STRICT
+    )
+    child_ids = ["console-inspector-run-status-summary"]
+
+    def add_action(action) -> None:
+        child_ids.append(action.widget_id)
+        if not action.enabled and action.disabled_reason:
+            child_ids.append(f"{action.widget_id}-reason")
+
+    for owner, heading_id, _labels in ownership.ROW_GROUPS:
+        rows = projected.rows_for(owner)
+        actions = projected.actions_for(owner)
+        if not rows and not actions:
+            continue
+        if rows or any(action.enabled for action in actions):
+            child_ids.append(heading_id)
+        child_ids.extend(row.widget_id for row in rows)
+        for action in actions:
+            add_action(action)
+
+    for heading_id, rows, actions in (
+        (
+            "console-inspector-dictionaries-heading",
+            projected.dictionary_rows,
+            projected.dictionary_actions,
+        ),
+        (
+            "console-inspector-worldbooks-heading",
+            projected.world_book_rows,
+            projected.world_book_actions,
+        ),
+    ):
+        if not rows and not actions:
+            continue
+        child_ids.append(heading_id)
+        child_ids.extend(row.widget_id for row in rows)
+        for action in actions:
+            add_action(action.action)
+
+    return tuple(child_ids)
+
+
 def _mounted_boundary_ids(rail) -> tuple[str, ...]:
     """Read semantic boundaries from the mounted production hierarchy."""
     body = rail.query_one("#console-inspector-rail-body")
@@ -138,11 +186,20 @@ def _mounted_boundary_ids(rail) -> tuple[str, ...]:
     inspector = run_wrapper.query_one(
         "#console-run-inspector-state", ConsoleRunInspector
     )
+    expected_inspector_children = _expected_run_inspector_child_ids(inspector.state)
+    actual_inspector_children = tuple(child.id for child in inspector.children)
+    assert actual_inspector_children == expected_inspector_children
+    ownership = importlib.import_module(
+        "tldw_chatbook.Widgets.Console.console_inspector_ownership"
+    )
+    boundary_ids = {
+        "console-inspector-run-status-summary",
+        "console-inspector-dictionaries-heading",
+        "console-inspector-worldbooks-heading",
+        *(heading_id for _owner, heading_id, _labels in ownership.ROW_GROUPS),
+    }
     inspector_boundaries = tuple(
-        child.id
-        for child in inspector.children
-        if child.id == "console-inspector-run-status-summary"
-        or child.has_class("console-inspector-group-heading")
+        child_id for child_id in expected_inspector_children if child_id in boundary_ids
     )
     return (
         *direct_children[:4],
@@ -279,6 +336,10 @@ async def test_new_specialized_sibling_fails_mounted_production_census():
         for parent_selector, sibling_id in (
             ("#console-inspector-rail-body", "console-new-specialized-sibling"),
             ("#console-run-inspector", "console-new-run-wrapper-sibling"),
+            (
+                "#console-run-inspector-state",
+                "console-new-inspector-content-sibling",
+            ),
         ):
             sibling = Static("new", id=sibling_id)
             await rail.query_one(parent_selector).mount(sibling)
