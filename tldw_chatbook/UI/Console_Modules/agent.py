@@ -394,7 +394,9 @@ def _fleet_row_from_handle(handle: "FleetHandle", *, now: float) -> InspectorSec
     )
 
 
-def _fleet_row_from_summary(summary: "SubAgentSummary", index: int) -> InspectorSectionRow:
+def _fleet_row_from_summary(
+    summary: "SubAgentSummary", index: int
+) -> InspectorSectionRow:
     """Build one fleet row from a HISTORICAL/resumed ``SubAgentSummary``.
 
     No elapsed segment: unlike a live ``FleetHandle``,
@@ -803,9 +805,7 @@ class ConsoleAgentController:
                         else None
                     )
                     if live_run is not None:
-                        steps = "\n".join(
-                            f"{s.kind}: {s.text}" for s in live_run.steps
-                        )
+                        steps = "\n".join(f"{s.kind}: {s.text}" for s in live_run.steps)
                 # PR3b Task 4: a resumed sub-agent (send_to_agent to a
                 # finished child starts a NEW run seeded with its retained
                 # transcript) carries its lineage in the header. The run
@@ -1233,7 +1233,9 @@ class ConsoleAgentController:
         subagent_runs = getattr(bridge, "subagent_runs", None)
         if subagent_runs is None:
             return ()
-        return tuple(_fleet_row_from_record(record) for record in subagent_runs(conversation_id))
+        return tuple(
+            _fleet_row_from_record(record) for record in subagent_runs(conversation_id)
+        )
 
     def _console_agent_fleet_token_total(self) -> int:
         """Sum the active conversation's LIVE fleet's measured token spend.

@@ -1170,7 +1170,9 @@ CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED = tuple(
 )
 
 
-def _build_trajectory_snapshot(store: Any, conversation_id: str) -> "TrajectorySnapshot":
+def _build_trajectory_snapshot(
+    store: Any, conversation_id: str
+) -> "TrajectorySnapshot":
     """Assemble the ``derive_trajectory`` inputs for one persisted conversation.
 
     task-5 (console trajectory view). Best-effort at every seam: any source
@@ -1223,9 +1225,7 @@ def _build_trajectory_snapshot(store: Any, conversation_id: str) -> "TrajectoryS
         try:
             # The projection itself filters purpose == "conversation_compaction".
             compaction_records = list(
-                context_repository.list_auxiliary_attempts(
-                    conversation_id, limit=500
-                )
+                context_repository.list_auxiliary_attempts(conversation_id, limit=500)
             )
         except Exception:  # noqa: BLE001
             compaction_records = []
@@ -1237,6 +1237,7 @@ def _build_trajectory_snapshot(store: Any, conversation_id: str) -> "TrajectoryS
         compaction_records,
         active_leaf_message_id=active_leaf,
     )
+
 
 #: TASK-362: the full Console keyboard vocabulary for the F1 help panel, grouped
 #: by surface. The flat CONSOLE_WORKBENCH_SHORTCUTS above stays the compact
@@ -1591,9 +1592,7 @@ def _console_screen_is_torn_down(screen: Any) -> bool:
       they are absent from ``dir(ChatScreen)``, and a spec'd mock -- like
       a never-mounted screen -- correctly reads as LIVE.
     """
-    return bool(
-        getattr(screen, "_closing", False) or getattr(screen, "_closed", False)
-    )
+    return bool(getattr(screen, "_closing", False) or getattr(screen, "_closed", False))
 
 
 def _console_inspector_turn_preview(content: Any) -> str:
@@ -3862,9 +3861,7 @@ class ChatScreen(BaseAppScreen):
         # is a git subprocess PER snapshot row (spec §2's cost model), so it
         # runs on a `thread=True` worker rather than an in-tick awaited
         # `asyncio.to_thread`.
-        self._console_changed_files_summary: (
-            "tuple[ConversationFileEntry, ...] | None"
-        ) = None
+        self._console_changed_files_summary: "tuple[ConversationFileEntry, ...] | None" = None
         self._console_changed_files_pruned_rows: int = 0
         # Per-row git-diff memo (fix round, spec §2's stated per-row memo),
         # keyed by the owning `change_snapshots` row's own DB id -- handed
@@ -3891,9 +3888,7 @@ class ChatScreen(BaseAppScreen):
         # note-mutation path (the card's save/delete, the Review screen's
         # dismissal callback) so the rail's `✎ N` badges never go stale --
         # the guard tuple alone only moves on a NEW run.
-        self._last_console_changed_files_scope: (
-            "tuple[str | None, str | None] | None"
-        ) = None
+        self._last_console_changed_files_scope: "tuple[str | None, str | None] | None" = None
         # Tracks ONLY the conversation-id half, across resets that use the
         # sentinel above -- distinguishes a genuine conversation switch
         # (clears the summary) from a note-mutation-forced re-check on the
@@ -5152,9 +5147,7 @@ class ChatScreen(BaseAppScreen):
             cancel_all_button = self.query_one(
                 f"#{CONSOLE_AGENT_CANCEL_ALL_ID}", Button
             )
-            cancel_all_button.styles.display = (
-                "block" if cancel_all_visible else "none"
-            )
+            cancel_all_button.styles.display = "block" if cancel_all_visible else "none"
             agent_body = self.query_one("#console-rail-section-body-agent")
             agent_body.styles.display = "block" if section_open else "none"
             agent_header = self.query_one(
@@ -11523,9 +11516,7 @@ class ChatScreen(BaseAppScreen):
         self._console_changed_files_pruned_rows = pruned_rows
         self._sync_console_changed_files_section()
 
-    def _land_console_changed_files_empty(
-        self, conversation_id: "str | None"
-    ) -> None:
+    def _land_console_changed_files_empty(self, conversation_id: "str | None") -> None:
         """The no-provider variant of `_land_console_changed_files`.
 
         Same stale-conversation guard (Fix 4c) -- see that method's
@@ -11667,6 +11658,7 @@ class ChatScreen(BaseAppScreen):
             self._console_changed_files_row_cache = {}
             self._sync_console_changed_files_section()
         self._dispatch_console_changed_files_worker(scope[0])
+
     async def _console_dictionary_attach_worker(self) -> None:
         """Pick and attach a chat dictionary to the active Console conversation.
 
@@ -13288,9 +13280,7 @@ class ChatScreen(BaseAppScreen):
                     agent_full_log_available=(
                         self._agent._console_agent_full_log_available()
                     ),
-                    agent_steering_state=(
-                        self._agent._console_agent_steering_state()
-                    ),
+                    agent_steering_state=(self._agent._console_agent_steering_state()),
                     agent_cancel_all_visible=(
                         self._agent._console_agent_cancel_all_visible()
                     ),
@@ -15410,10 +15400,12 @@ class ChatScreen(BaseAppScreen):
             # depending on how far the tick had got.
             if not _console_screen_is_torn_down(self):
                 raise
+            # fmt: off
             logger.debug(
                 "Console sync tick raced this screen's teardown; nothing to "
                 "render.",
             )
+            # fmt: on
         finally:
             self._record_ui_worker_finished("console-sync")
             self._console_sync_in_progress = False
@@ -16506,8 +16498,7 @@ class ChatScreen(BaseAppScreen):
         conversation_id = self._current_console_conversation_id()
         if not conversation_id:
             await self._append_native_console_system_message(
-                "Deep research needs an active conversation to deliver its "
-                "report into."
+                "Deep research needs an active conversation to deliver its report into."
             )
             return
         app = self.app
@@ -16545,7 +16536,10 @@ class ChatScreen(BaseAppScreen):
         async def _run_research() -> None:
             launch_kwargs: dict = {
                 "query": question,
-                "chat_handoff": {"conversation_id": conversation_id, "origin": "console"},
+                "chat_handoff": {
+                    "conversation_id": conversation_id,
+                    "origin": "console",
+                },
                 "source_policy": source_policy,
             }
             if provider_overrides:
@@ -18737,7 +18731,9 @@ class ChatScreen(BaseAppScreen):
         try:
             controller = self._ensure_console_chat_controller()
             store = controller.store
-            database = getattr(store.persistence, "db", None) if store.persistence else None
+            database = (
+                getattr(store.persistence, "db", None) if store.persistence else None
+            )
             if database is None:
                 self.notify(
                     "Notes are unavailable (no notes database).",
@@ -18867,8 +18863,8 @@ class ChatScreen(BaseAppScreen):
                     existing = self._console_annotation_previews.get(
                         anchor_message_id, ()
                     )
-                    self._console_annotation_previews[anchor_message_id] = (
-                        existing + (comment,)
+                    self._console_annotation_previews[anchor_message_id] = existing + (
+                        comment,
                     )
         except Exception:
             logger.warning(
@@ -19090,9 +19086,7 @@ class ChatScreen(BaseAppScreen):
                 if not validate_text_input(
                     new_comment, max_length=SELECTION_QUOTE_CAP, allow_html=True
                 ):
-                    self.notify(
-                        "That note is too long to save.", severity="warning"
-                    )
+                    self.notify("That note is too long to save.", severity="warning")
                     return False
                 if not _conversation_still_current():
                     self.notify(
@@ -19267,7 +19261,9 @@ class ChatScreen(BaseAppScreen):
         event.stop()
         event.prevent_default()
 
-    def _dismiss_console_selection_menus_outside_transcript(self, target: object) -> None:
+    def _dismiss_console_selection_menus_outside_transcript(
+        self, target: object
+    ) -> None:
         """Fold selection menus when a click lands outside every transcript.
 
         Console selection phase 1 (click-outside dismissal, screen half).

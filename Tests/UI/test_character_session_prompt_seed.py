@@ -84,9 +84,7 @@ def test_character_alias_macros_resolve_to_character_name():
 
 def test_empty_card_falls_back_to_defaults():
     """An empty card yields the name hint, default prompt, and no greeting."""
-    seed = _character_session_prompt_seed(
-        {}, name_hint="Hinted"
-    )
+    seed = _character_session_prompt_seed({}, name_hint="Hinted")
 
     assert seed.name == "Hinted"
     assert seed.system_template == "Stay in character."
@@ -294,7 +292,9 @@ async def test_character_picker_new_chat_seeds_template_provenance(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_character_picker_keeps_raw_identity_but_sanitizes_notification(monkeypatch):
+async def test_character_picker_keeps_raw_identity_but_sanitizes_notification(
+    monkeypatch,
+):
     raw_name = "Nyx\n\tAdmin\x00[/bold]"
     card = _roleplay_card(name=raw_name)
     screen = _character_screen(monkeypatch, card)

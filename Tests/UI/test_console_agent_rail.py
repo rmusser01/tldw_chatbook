@@ -442,7 +442,9 @@ async def test_agent_section_lines_render_brackets_literally_not_escaped():
 
         console._console_agent_bridge = _FakeBridge()
         console._console_agent_drilldown_run_id = None
-        status_line, steps_text, subagents_text = console._agent._console_agent_section_lines()
+        status_line, steps_text, subagents_text = (
+            console._agent._console_agent_section_lines()
+        )
 
         assert "fetch [docs] ok" in steps_text
         assert "\\[" not in steps_text
@@ -489,7 +491,9 @@ async def test_agent_section_falls_back_to_historical_snapshot_when_live_is_idle
 
         console._console_agent_bridge = _FakeBridge()
         console._console_agent_drilldown_run_id = None
-        status_line, steps_text, subagents_text = console._agent._console_agent_section_lines()
+        status_line, steps_text, subagents_text = (
+            console._agent._console_agent_section_lines()
+        )
 
         assert status_line == "Agent: done"
         assert "Paris" in steps_text
@@ -729,15 +733,13 @@ async def test_drilldown_step_text_grows_with_a_configured_cap_above_eighty(
         console._console_agent_drilldown_run_id = "run-x"
         console._agent._console_agent_drilldown_conversation_id = "conv-A"
 
-        monkeypatch.setattr(
-            "tldw_chatbook.config.get_cli_setting", lambda *a, **k: 40
-        )
+        monkeypatch.setattr("tldw_chatbook.config.get_cli_setting", lambda *a, **k: 40)
         _status, steps_at_40, _subagents = console._agent._console_agent_section_lines()
 
-        monkeypatch.setattr(
-            "tldw_chatbook.config.get_cli_setting", lambda *a, **k: 300
+        monkeypatch.setattr("tldw_chatbook.config.get_cli_setting", lambda *a, **k: 300)
+        _status, steps_at_300, _subagents = (
+            console._agent._console_agent_section_lines()
         )
-        _status, steps_at_300, _subagents = console._agent._console_agent_section_lines()
 
         # A bare `[:80]` slice (the pre-fix behavior) would make BOTH of
         # these identical (both capped at 80) regardless of the configured
@@ -1066,16 +1068,28 @@ async def test_console_agent_fleet_token_total_sums_live_handles():
 
         handles = (
             FleetHandle(
-                handle_id="h1", run_id="run-1", agent="a", task="t1",
-                status="done", total_tokens=100,
+                handle_id="h1",
+                run_id="run-1",
+                agent="a",
+                task="t1",
+                status="done",
+                total_tokens=100,
             ),
             FleetHandle(
-                handle_id="h2", run_id="run-2", agent="a", task="t2",
-                status="running", total_tokens=0,
+                handle_id="h2",
+                run_id="run-2",
+                agent="a",
+                task="t2",
+                status="running",
+                total_tokens=0,
             ),
             FleetHandle(
-                handle_id="h3", run_id="run-3", agent="a", task="t3",
-                status="done", total_tokens=250,
+                handle_id="h3",
+                run_id="run-3",
+                agent="a",
+                task="t3",
+                status="done",
+                total_tokens=250,
             ),
         )
 
@@ -1202,9 +1216,7 @@ async def test_drilldown_shows_a_live_childs_steps_before_they_reach_the_db():
                 return AgentLiveSnapshot(
                     status="running",
                     step=2,
-                    steps=(
-                        AgentLiveStep("tool_result", "read notes.md", "subagent"),
-                    ),
+                    steps=(AgentLiveStep("tool_result", "read notes.md", "subagent"),),
                 )
 
         console._console_agent_bridge = _FakeBridge()

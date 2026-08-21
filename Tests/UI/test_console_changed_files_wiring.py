@@ -63,9 +63,7 @@ def _disable_turn_file_cards(monkeypatch) -> None:
         console_transcript_module,
         "get_cli_setting",
         lambda section, key, default=None: (
-            False
-            if (section, key) == ("console", "turn_file_cards")
-            else default
+            False if (section, key) == ("console", "turn_file_cards") else default
         ),
     )
 
@@ -124,7 +122,9 @@ def workspace_fixture(tmp_path) -> _Workspace:
     return _Workspace(root, service, tracker, db)
 
 
-async def _mount_console_session(pilot, console, store, ws: _Workspace, *, conv_id=CONV_ID):
+async def _mount_console_session(
+    pilot, console, store, ws: _Workspace, *, conv_id=CONV_ID
+):
     """Wait for the composer, create + activate a persisted-looking session,
     wire a REAL provider bridge, return the session.
     """
@@ -154,7 +154,10 @@ async def test_section_renders_aggregated_entries_after_worker_lands(workspace_f
     ws = workspace_fixture
     run_id = ws.db.create_run(conversation_id=CONV_ID, agent_kind="primary")
     _record_turn(
-        ws.db, ws.tracker, ws.root, run_id,
+        ws.db,
+        ws.tracker,
+        ws.root,
+        run_id,
         lambda: (ws.root / "a.py").write_text("line1\nCHANGED\n"),
     )
 
@@ -188,7 +191,10 @@ async def test_guard_skips_idle_ticks_and_recomputes_once_on_new_marker(
     ws = workspace_fixture
     run1 = ws.db.create_run(conversation_id=CONV_ID, agent_kind="primary")
     _record_turn(
-        ws.db, ws.tracker, ws.root, run1,
+        ws.db,
+        ws.tracker,
+        ws.root,
+        run1,
         lambda: (ws.root / "a.py").write_text("line1\nCHANGED\n"),
     )
 
@@ -235,7 +241,10 @@ async def test_guard_skips_idle_ticks_and_recomputes_once_on_new_marker(
 
         run2 = ws.db.create_run(conversation_id=CONV_ID, agent_kind="primary")
         _record_turn(
-            ws.db, ws.tracker, ws.root, run2,
+            ws.db,
+            ws.tracker,
+            ws.root,
+            run2,
             lambda: (ws.root / "a.py").write_text("line1\nCHANGED AGAIN\n"),
         )
         store.append_message(
@@ -265,7 +274,10 @@ async def test_notes_changed_message_resets_guard_without_clearing_summary(
     ws = workspace_fixture
     run_id = ws.db.create_run(conversation_id=CONV_ID, agent_kind="primary")
     _record_turn(
-        ws.db, ws.tracker, ws.root, run_id,
+        ws.db,
+        ws.tracker,
+        ws.root,
+        run_id,
         lambda: (ws.root / "a.py").write_text("line1\nCHANGED\n"),
     )
 
@@ -334,7 +346,10 @@ async def test_conversation_switch_clears_memo_and_summary_synchronously(
     ws = workspace_fixture
     run_id = ws.db.create_run(conversation_id=CONV_ID, agent_kind="primary")
     _record_turn(
-        ws.db, ws.tracker, ws.root, run_id,
+        ws.db,
+        ws.tracker,
+        ws.root,
+        run_id,
         lambda: (ws.root / "a.py").write_text("line1\nCHANGED\n"),
     )
 
@@ -386,7 +401,10 @@ async def test_stale_worker_land_after_conversation_switch_does_not_clobber_summ
     ws = workspace_fixture
     run_id = ws.db.create_run(conversation_id=CONV_ID, agent_kind="primary")
     _record_turn(
-        ws.db, ws.tracker, ws.root, run_id,
+        ws.db,
+        ws.tracker,
+        ws.root,
+        run_id,
         lambda: (ws.root / "a.py").write_text("line1\nCHANGED\n"),
     )
 
@@ -444,7 +462,10 @@ async def test_file_selected_opens_review_screen_with_matching_initials(
     ws = workspace_fixture
     run_id = ws.db.create_run(conversation_id=CONV_ID, agent_kind="primary")
     _record_turn(
-        ws.db, ws.tracker, ws.root, run_id,
+        ws.db,
+        ws.tracker,
+        ws.root,
+        run_id,
         lambda: (ws.root / "a.py").write_text("line1\nCHANGED\n"),
     )
     provider = AgentRunsChangeReviewProvider(
@@ -484,7 +505,10 @@ async def test_config_off_renders_nothing_and_never_dispatches_worker(
     ws = workspace_fixture
     run_id = ws.db.create_run(conversation_id=CONV_ID, agent_kind="primary")
     _record_turn(
-        ws.db, ws.tracker, ws.root, run_id,
+        ws.db,
+        ws.tracker,
+        ws.root,
+        run_id,
         lambda: (ws.root / "a.py").write_text("line1\nCHANGED\n"),
     )
 
@@ -501,7 +525,9 @@ async def test_config_off_renders_nothing_and_never_dispatches_worker(
     # Surgical: only the section's own gate, never the whole module's
     # `get_cli_setting` (dozens of unrelated lookups run in the same tick).
     monkeypatch.setattr(
-        ChatScreen, "_console_changed_files_section_enabled", staticmethod(lambda: False)
+        ChatScreen,
+        "_console_changed_files_section_enabled",
+        staticmethod(lambda: False),
     )
 
     app = _build_test_app()
@@ -543,7 +569,10 @@ async def test_row_cache_skips_git_for_already_seen_rows_on_note_mutation_refres
     ws = workspace_fixture
     run1 = ws.db.create_run(conversation_id=CONV_ID, agent_kind="primary")
     _record_turn(
-        ws.db, ws.tracker, ws.root, run1,
+        ws.db,
+        ws.tracker,
+        ws.root,
+        run1,
         lambda: (ws.root / "a.py").write_text("line1\nCHANGED\n"),
     )
 
@@ -583,9 +612,7 @@ async def test_row_cache_skips_git_for_already_seen_rows_on_note_mutation_refres
             # append-before-call signal fired too early once and produced
             # a real, reproduced flake (the row-cache assertions below ran
             # against a still-in-flight recompute).
-            result = original_conversation_changed_files(
-                self, row_cache=row_cache
-            )
+            result = original_conversation_changed_files(self, row_cache=row_cache)
             recompute_calls.append(1)
             return result
 
@@ -621,7 +648,10 @@ async def test_row_cache_skips_git_for_already_seen_rows_on_note_mutation_refres
         # A NEW turn's refresh must compute ONLY the new row.
         run2 = ws.db.create_run(conversation_id=CONV_ID, agent_kind="primary")
         _record_turn(
-            ws.db, ws.tracker, ws.root, run2,
+            ws.db,
+            ws.tracker,
+            ws.root,
+            run2,
             lambda: (ws.root / "a.py").write_text("line1\nCHANGED AGAIN\n"),
         )
         store.append_message(
@@ -659,7 +689,10 @@ async def test_worker_failure_leaves_stale_state_and_sync_loop_recovers(
     ws = workspace_fixture
     run1 = ws.db.create_run(conversation_id=CONV_ID, agent_kind="primary")
     _record_turn(
-        ws.db, ws.tracker, ws.root, run1,
+        ws.db,
+        ws.tracker,
+        ws.root,
+        run1,
         lambda: (ws.root / "a.py").write_text("line1\nCHANGED\n"),
     )
 
@@ -692,7 +725,10 @@ async def test_worker_failure_leaves_stale_state_and_sync_loop_recovers(
 
         run2 = ws.db.create_run(conversation_id=CONV_ID, agent_kind="primary")
         _record_turn(
-            ws.db, ws.tracker, ws.root, run2,
+            ws.db,
+            ws.tracker,
+            ws.root,
+            run2,
             lambda: (ws.root / "a.py").write_text("line1\nCHANGED AGAIN\n"),
         )
         store.append_message(
@@ -734,7 +770,10 @@ async def test_worker_failure_leaves_stale_state_and_sync_loop_recovers(
         monkeypatch.undo()
         run3 = ws.db.create_run(conversation_id=CONV_ID, agent_kind="primary")
         _record_turn(
-            ws.db, ws.tracker, ws.root, run3,
+            ws.db,
+            ws.tracker,
+            ws.root,
+            run3,
             lambda: (ws.root / "a.py").write_text("line1\nTHIRD CHANGE\n"),
         )
         store.append_message(

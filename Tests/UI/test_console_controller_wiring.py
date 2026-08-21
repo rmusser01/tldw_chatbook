@@ -230,9 +230,7 @@ def test_workspace_resolves_the_session_sibling_at_call_time():
     """
     screen = _unmounted_console()
     sentinel = object()
-    screen._session = SimpleNamespace(
-        _current_console_conversation_id=lambda: sentinel
-    )
+    screen._session = SimpleNamespace(_current_console_conversation_id=lambda: sentinel)
 
     assert screen._workspace._current_conversation_id_accessor() is sentinel
 
@@ -300,6 +298,4 @@ def test_prompts_resolves_the_session_sibling_at_call_time():
         _ensure_active_console_session_settings=lambda: sentinel
     )
 
-    assert (
-        screen._prompts._ensure_active_console_session_settings_fn() is sentinel
-    )
+    assert screen._prompts._ensure_active_console_session_settings_fn() is sentinel

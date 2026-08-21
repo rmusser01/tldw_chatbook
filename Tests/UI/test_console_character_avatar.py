@@ -191,7 +191,9 @@ def test_p3c_leaves_dictionary_scope_ids_unchanged():
     )
     screen = _bare_console_screen(_store_with_session(session))
 
-    conversation_id, character_id = screen._retrieval._active_console_dictionary_scope_ids()
+    conversation_id, character_id = (
+        screen._retrieval._active_console_dictionary_scope_ids()
+    )
     assert conversation_id == "conv-1"
     assert character_id is None
 
@@ -878,7 +880,9 @@ async def test_personas_publication_targets_mounted_console_cache_before_return(
 ):
     _app, console, _db = console_screen_with_db
     invalidate = AsyncMock()
-    monkeypatch.setattr(console._session, "invalidate_visual_identity_actor", invalidate)
+    monkeypatch.setattr(
+        console._session, "invalidate_visual_identity_actor", invalidate
+    )
     owner = SimpleNamespace(app=SimpleNamespace(screen_stack=(console,)))
     result = VisualIdentityPublicationResult(
         actor_kind="character",
