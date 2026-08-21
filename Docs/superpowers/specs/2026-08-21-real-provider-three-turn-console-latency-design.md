@@ -55,12 +55,16 @@ the complete run; moving refs cannot change either target.
 
 Each measured sample is one fresh mounted Console conversation with three sends made
 through the real composer/send action. Turn three is not submitted after awaiting turn
-two. A content-free wrapper around the durable turn-two assistant transition schedules
-the third composer action immediately, while turn two still owns the accepted live-turn
-slot. The sample records `third_send_requested` and is valid only when
-`third_send_requested < turn_2_release`; tracked-arm samples additionally require the
-third send to overlap the real end-snapshot/finalization interval. No harness barrier
-delays release to manufacture this ordering.
+two. In tracked arms, a content-free, non-delaying observation wrapper at the real
+end-snapshot operation's entry schedules the third composer action on the Textual loop
+and immediately delegates to the real operation. In the disabled arm, which has no E
+operation, the terminal turn-two provider-round completion schedules the same action.
+The sample records `third_send_requested` and is valid only when
+`third_send_requested < turn_2_release`; tracked samples additionally require
+`review_e_started < third_send_requested < review_e_completed`. No harness barrier,
+sleep, or held event delays E or turn release to manufacture this ordering. A tracked
+sample in which the real E interval is too short to admit the composer action is
+invalid rather than silently converted to a sequential send.
 
 1. **Control / legacy tracked mutation** — pinned dev, its legacy Change Review path,
    and the same turn-two workspace mutation used by the candidate.
@@ -86,15 +90,17 @@ The run begins with five fail-closed checks:
 
 1. `GET /v1/models` must identify the expected local model.
 2. A fixed temperature-zero short completion must succeed without credentials.
-3. A fixed tool request must produce exactly one valid call for the selected confined
-   `fs_write` tool, and exactly one follow-up model request must consume the successful
-   real tool result.
+3. The mounted product path must perform its real lazy-disclosure sequence: provider
+   round one calls only `load_tools(local:fs_write)`, round two calls only `fs_write`,
+   and round three is the terminal assistant follow-up consuming the successful tool
+   result. `find_tools` and every other call are prohibited.
 4. The mutation must change only `measured/turn-two.txt` below the sample's scratch
    workspace to fixed synthetic bytes. Turns one and three must produce no mutating
    calls, and no other tool call or write is permitted.
-5. The isolated permission store must contain an `allow` decision for the exact live
-   `fs_write` definition/schema hash before timing; every arm must prove the same
-   effective permission and must not open an approval flow.
+5. The isolated workspace has one explicit selected `rw` binding. Its permission store
+   contains an `allow` decision for the exact live `fs_write` definition/schema hash
+   before timing; every arm must prove the same effective permission and must not open
+   an approval flow.
 
 The tool-call turn may use a larger fixed output cap than the plain turns. Exact
 per-turn prompts, tool schemas, sampling values, output caps, response token counts,
@@ -144,9 +150,10 @@ schedule/start/completion boundaries.
 ## Timestamp model
 
 All timestamps use `time.perf_counter_ns()` in one child process and are emitted as
-monotonic deltas. Each provider boundary is keyed by `(turn, request_round)` because
-turn two must contain one tool-call round and one post-tool-result assistant round.
-Each raw sample contains:
+monotonic deltas. Each provider boundary is keyed by `(turn, request_round)`. Turns one
+and three have one terminal text round. Turn two has exactly three rounds:
+`load_tools(local:fs_write)`, `fs_write`, and the terminal assistant follow-up that
+consumes the tool result. Each raw sample contains:
 
 - composer commit / send requested;
 - prompt admitted or queued;
@@ -154,7 +161,7 @@ Each raw sample contains:
 - every provider request-round start;
 - every request-round first provider chunk;
 - every request-round stream completion;
-- the terminal assistant round that triggers the turn-three composer action;
+- the terminal assistant round (the disabled-arm third-send trigger);
 - assistant message made durable;
 - third composer send requested;
 - terminal result returned to the prompt coordinator;
@@ -222,18 +229,28 @@ as descriptive context.
 The result is valid only when:
 
 - all ninety samples reach the third provider and terminal third assistant;
-- every third send is requested before turn-two release, and tracked-arm samples
-  overlap the real end-snapshot/finalization interval;
-- every turn two has exactly two provider rounds, exactly one allowed `fs_write`, one
-  successful confined mutation, and one model follow-up consuming its result;
+- every third send is requested before turn-two release, and in tracked arms its
+  timestamp falls strictly inside the real end-snapshot/finalization interval;
+- every turn two has exactly three provider rounds, one allowed `load_tools` call, one
+  allowed `fs_write`, one successful confined mutation, and one terminal model
+  follow-up consuming its result;
 - the disabled arm performs no Change Review snapshot work;
 - both tracked arms complete equivalent initial snapshots before measured sends;
 - every boundary required by that arm's schema exists and every prohibited boundary is
   absent;
 - revision/import-path/isolation/privacy validations pass.
 
-Both candidate arms pass a send-to-worker or event-loop-lag non-regression gate only
-when the paired confidence interval's upper bound for the p95 ratio is at most 1.10.
+Every gate has one equally weighted observation per sample. The send gate uses only
+turn three's `third_send_requested`-to-worker-start interval. Turns one and two are
+reported separately as descriptive metrics. Heartbeat ticks are first reduced to one
+within-sample p95 lag; the arm p95 is then computed over those thirty sample-level
+values, so long provider responses cannot receive extra weight. Critical-path metrics
+likewise contribute one value per sample. The block bootstrap resamples complete
+iteration triples and never pools individual turns or ticks across samples.
+
+Both candidate arms pass the third-send-to-worker or event-loop-lag non-regression
+gate only when the paired confidence interval's upper bound for the p95 ratio is at
+most 1.10.
 An arm is a measured regression only when the lower bound is above 1.10; otherwise the
 metric is `inconclusive`. The report may claim critical-path improvement only from
 application-owned intervals—assistant-durable to turn release and terminal to third
@@ -255,8 +272,11 @@ Test-driven implementation begins with unit tests for:
 - nearest-rank p95 and median summaries;
 - deterministic paired block-bootstrap confidence bounds;
 - exact target-root import validation;
-- arm-specific required/prohibited boundaries, per-round provider accounting,
-  third-send overlap, exact tool contract, and ninety-sample completeness validation;
+- arm-specific required/prohibited boundaries, one/three/one provider-round
+  accounting, third-send overlap, selected-rw-binding/permission/tool contracts, and
+  ninety-sample completeness validation;
+- per-sample gate reduction that prevents pooled turns or heartbeat ticks from
+  reweighting long samples;
 - failure-preserving JSONL writes;
 - absolute-path and credential-field rejection;
 - fixed watchdog/termination behavior;

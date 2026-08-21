@@ -24,9 +24,9 @@ Measure the reported three-turn Console failure path against a real local LLM so
 <!-- AC:BEGIN -->
 - [ ] #1 Thirty balanced three-turn samples per arm exercise the mounted Console through the real local OpenAI-compatible provider at `127.0.0.1:9099`
 - [ ] #2 The pinned `origin/dev` control, branch-disabled arm, and branch-enabled mutating arm run in isolated profiles, databases, workspaces, and shadow repositories without touching user conversations or retained Change Review history
-- [ ] #3 Raw samples and median/p95 summaries report per-round provider boundaries, send-to-worker, terminal turn release, third-send-before-release overlap, third-turn worker admission, arm-specific Change Review events, event-loop lag, failures, and prompt loss
+- [ ] #3 Raw samples and median/p95 summaries report the one/three/one provider-round sequence, third-send-to-worker, terminal turn release, third-send-inside-E overlap, arm-specific Change Review events, per-sample event-loop lag, failures, and prompt loss
 - [ ] #4 Every arm records the exact revision, model identity, fixed request parameters, rotated execution order, warmup policy, and host/runtime metadata needed to reproduce the comparison
-- [ ] #5 All ninety conversations complete three turns with exactly one confined turn-two mutation and no lost third prompt; paired one-sided confidence bounds show branch send-to-worker and event-loop p95 do not regress more than ten percent against the control
+- [ ] #5 All ninety conversations complete three turns with exactly one `load_tools`, one confined `fs_write`, one terminal tool-result follow-up, and no lost third prompt; paired one-sided confidence bounds show branch third-send-to-worker and per-sample event-loop-lag p95 do not regress more than ten percent against the control
 - [ ] #6 The report distinguishes provider latency from application-owned latency and makes no performance claim when noise, failures, or sample completeness invalidate the comparison
 - [ ] #7 Focused tests, static checks, privacy scans, and an independent evidence review pass before the task is closed
 <!-- AC:END -->
