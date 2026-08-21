@@ -175,8 +175,7 @@ class ChangeReviewConsentService:
             )
             for index in range(worker_count)
         )
-        for worker in self._workers:
-            worker.start()
+        self._workers_started = False
 
     def admit_turn(self, workspace_id: str) -> ChangeReviewAdmission:
         """Capture ready roots without waiting for filesystem initialization."""
@@ -292,7 +291,8 @@ class ChangeReviewConsentService:
                     break
                 else:
                     self._queue.task_done()
-        for worker in self._workers:
+        workers = self._workers if self._workers_started else ()
+        for worker in workers:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break
@@ -339,6 +339,10 @@ class ChangeReviewConsentService:
         alias: str,
         revision: str,
     ) -> bool:
+        if not self._workers_started:
+            for worker in self._workers:
+                worker.start()
+            self._workers_started = True
         work = _InitializationWork(
             workspace_id=workspace_id,
             root=root,

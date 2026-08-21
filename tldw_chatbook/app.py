@@ -602,7 +602,10 @@ from tldw_chatbook.Web_Scraping_Interop import (  # noqa: E402
     ServerWebScrapingService,
     WebScrapingScopeService,
 )
-from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService  # noqa: E402
+from tldw_chatbook.Workspaces import (  # noqa: E402
+    ChangeReviewConsentService,
+    LocalWorkspaceRegistryService,
+)
 from tldw_chatbook.Subscriptions import (  # noqa: E402
     LocalWatchlistsService,
     ServerWatchlistsService,
@@ -6530,6 +6533,7 @@ class TldwCli(
             self.library_collections_service = None
 
     def _wire_workspace_registry_services(self) -> None:
+        self.change_review_consent_service = None
         try:
             self.local_workspace_db = WorkspaceDB(
                 get_workspaces_db_path(),
@@ -6539,6 +6543,12 @@ class TldwCli(
                 self.local_workspace_db,
             )
             self.workspace_registry_service.ensure_default_workspace()
+            self.change_review_consent_service = ChangeReviewConsentService(
+                self.workspace_registry_service
+            )
+            self.workspace_registry_service.attach_change_review_consent_service(
+                self.change_review_consent_service
+            )
         except Exception:
             logger.opt(exception=True).warning(
                 "Local workspace registry service unavailable during app wiring",
@@ -11775,6 +11785,9 @@ class TldwCli(
         # Console shutdown terminally fences every trusted Buddy producer
         # before Buddy itself closes admission and drains owned work.
         await self._shutdown_console_runtime()
+        change_review = getattr(self, "change_review_consent_service", None)
+        if change_review is not None:
+            await asyncio.to_thread(change_review.shutdown, timeout=1.0)
         await self._shutdown_persona_buddy()
         coordinator = getattr(self, "_audio_cpp_artifact_lease_coordinator", None)
         if coordinator is not None:

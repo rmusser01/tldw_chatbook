@@ -147,6 +147,7 @@ from tldw_chatbook.config import (
 )
 from tldw_chatbook.Chat.console_skill_resolver import SKILL_UNTRUSTED_REFUSE
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.Workspaces.change_review_consent import SkippedReviewRoot
 from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
 from tldw_chatbook.Internal_Prompts.catalog import CATALOG
@@ -866,6 +867,11 @@ def format_change_tracking_failure_marker(root: str, error: str) -> str:
         The row text ("⚠ change tracking failed ...").
     """
     return f"⚠ change tracking failed for {root}: {error}"
+
+
+def format_change_review_skipped_marker(alias: str, reason: str) -> str:
+    """Return an alias-only warning for a root omitted at turn admission."""
+    return f"⚠ change review skipped {alias}: {reason}"
 
 
 def format_agent_step_marker(
@@ -3576,6 +3582,7 @@ class ConsoleAgentBridge:
         review_tool_calls: Callable[[list[ToolCall], str], dict[str, str]]
         | None = None,
         change_roots: Sequence[Path] | None = None,
+        change_review_skipped_roots: Sequence[SkippedReviewRoot] = (),
         turn_skill_bindings: tuple[str, ...] = (),
         turn_bundle_block: str = "",
         request_skill_install_confirm: Callable[[str], bool] | None = None,
@@ -4611,6 +4618,11 @@ class ConsoleAgentBridge:
                     logger.opt(exception=True).warning(
                         "change_review: end_turn failed; turn changes untracked"
                     )
+            if "run_id" in locals() and change_review_skipped_roots:
+                self._append_skipped_change_review_markers(
+                    session_id,
+                    change_review_skipped_roots,
+                )
             # task-5 (turn-file-annotate, spec §4): stamp exactly the
             # notes this run's attach seam included (captured above,
             # before `run_turn` was even called) and disclose what was
@@ -6232,6 +6244,21 @@ class ConsoleAgentBridge:
         except Exception:  # noqa: BLE001 -- a marker must never fail the run
             logger.opt(exception=True).warning(
                 "change_review: could not append transcript rows"
+            )
+
+    def _append_skipped_change_review_markers(
+        self,
+        session_id: str,
+        skipped_roots: Sequence[SkippedReviewRoot],
+    ) -> None:
+        """Append alias-only readiness warnings without snapshot state."""
+        for skipped in skipped_roots:
+            self._append_marker(
+                session_id,
+                format_change_review_skipped_marker(
+                    skipped.alias,
+                    skipped.reason,
+                ),
             )
 
     @property

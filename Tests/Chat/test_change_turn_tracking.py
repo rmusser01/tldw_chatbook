@@ -25,6 +25,7 @@ from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolutio
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService
 from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker
+from tldw_chatbook.Workspaces.change_review_consent import SkippedReviewRoot
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -428,21 +429,22 @@ def test_folder_binding_roots_includes_ro_and_never_sandbox(tmp_path, monkeypatc
     registry.add_folder_binding("ws-a", ro)
     monkeypatch.setattr(wfr, "_registry_factory", lambda: registry)
 
+    registry.set_change_review_enabled("ws-a", True)
     roots = wfr.folder_binding_roots("ws-a")
 
     assert set(roots) == {rw.resolve(), ro.resolve()}
     assert wfr.folder_binding_roots(None) == ()
 
 
-def test_adding_a_folder_binding_snapshots_it_in_the_background(tmp_path):
-    """Spec §2: the FIRST snapshot happens at registration, so the first
-    send never absorbs the cost of hashing a whole tree. The hook is
-    best-effort and must not slow or fail registration itself.
-    """
+def test_app_owner_snapshots_an_enabled_folder_binding_in_background(tmp_path):
+    """The attached bounded owner, not registry persistence, prepares roots."""
     import time as _time
 
     from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
-    from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
+    from tldw_chatbook.Workspaces import (
+        ChangeReviewConsentService,
+        LocalWorkspaceRegistryService,
+    )
 
     registry = LocalWorkspaceRegistryService(
         WorkspaceDB(tmp_path / "ws.sqlite", client_id="t")
@@ -453,19 +455,23 @@ def test_adding_a_folder_binding_snapshots_it_in_the_background(tmp_path):
     folder.mkdir()
     (folder / "code.py").write_text("x = 1\n")
 
-    registry.add_folder_binding("ws-a", folder)
+    review = ChangeReviewConsentService(registry)
+    registry.attach_change_review_consent_service(review)
+    registry.set_change_review_enabled("ws-a", True)
+    try:
+        registry.add_folder_binding("ws-a", folder)
 
-    # The hook's default-constructed service resolves the same isolated app
-    # data dir this test process sees, so a fresh service finds its tip.
-    service = ShadowRepoService()
-    deadline = _time.monotonic() + 15.0
-    tip = None
-    while _time.monotonic() < deadline:
-        tip = service.repo_for_root(folder).tip()
-        if tip:
-            break
-        _time.sleep(0.05)
-    assert tip, "the registered root never received its initial snapshot"
+        service = ShadowRepoService()
+        deadline = _time.monotonic() + 15.0
+        tip = None
+        while _time.monotonic() < deadline:
+            tip = service.repo_for_root(folder).tip()
+            if tip:
+                break
+            _time.sleep(0.05)
+        assert tip, "the registered root never received its initial snapshot"
+    finally:
+        review.shutdown(timeout=1.0)
 
 
 def test_carveout_survives_a_symlink_spelled_root(tmp_path):
@@ -561,6 +567,44 @@ def test_tracking_failure_emits_the_warning_row(tmp_path, root):
         if "change tracking failed" in m.content
     ]
     assert len(warns) == 1, "a tracking failure must be DISCLOSED in the transcript"
+
+
+@pytest.mark.parametrize(
+    ("alias", "reason"),
+    [
+        ("folder-preparing", "Preparing change history"),
+        ("folder-failed", "Change history preparation failed"),
+    ],
+)
+def test_skipped_review_root_emits_alias_only_warning_without_snapshot_state(
+    tmp_path, tracker, alias, reason
+):
+    """Readiness warnings never masquerade as canonical-root snapshots."""
+    gateway = _SideEffectGateway([["done."]])
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+
+    run_id, outcome = _run(
+        bridge,
+        session,
+        aid,
+        tmp_path / "unused-root",
+        change_roots=[],
+        change_review_skipped_roots=(
+            SkippedReviewRoot(alias=alias, reason=reason),
+        ),
+    )
+
+    assert outcome.status == "done"
+    warnings = [
+        row
+        for row in _tool_rows(store, session)
+        if "change review skipped" in row.content.lower()
+    ]
+    assert [row.content for row in warnings] == [
+        f"⚠ change review skipped {alias}: {reason}"
+    ]
+    assert db.change_snapshots_for_run(run_id) == []
+    assert db.roots_with_change_snapshots() == set()
 
 
 def test_summary_row_survives_the_next_message(tmp_path, root, tracker):

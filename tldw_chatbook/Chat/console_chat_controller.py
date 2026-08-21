@@ -8548,7 +8548,7 @@ class ConsoleChatController:
             session_id=session_id,
             provider_selection=selection,
             session_settings=self.store.session_settings(session_id),
-            workspace_roots=(workspace_root,) if workspace_root else (),
+            workspace_roots=(),
             capabilities={
                 "vision": bool(model)
                 and is_vision_capable(selection.provider, model or ""),
@@ -11916,6 +11916,9 @@ class ConsoleChatController:
                     )
                 ),
                 change_roots=change_roots,
+                change_review_skipped_roots=(
+                    turn_context.change_review_skipped_roots
+                ),
                 turn_skill_bindings=skill_bindings,
                 turn_bundle_block=skill_bundle_block,
                 request_skill_install_confirm=functools.partial(

@@ -19,6 +19,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleWorkspaceContext,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Workspaces.change_review_consent import SkippedReviewRoot
 
 
 def _freeze(value: Any) -> Any:
@@ -89,6 +90,7 @@ class ConsoleTurnExecutionContext:
     provider_selection: ConsoleProviderSelection
     session_settings: ConsoleSessionSettings | None = None
     workspace_roots: tuple[str, ...] = ()
+    change_review_skipped_roots: tuple[SkippedReviewRoot, ...] = ()
     capabilities: Mapping[str, Any] = field(
         default_factory=lambda: MappingProxyType({})
     )
@@ -120,6 +122,11 @@ class ConsoleTurnExecutionContext:
             "workspace_roots",
             tuple(str(root) for root in deepcopy(self.workspace_roots)),
         )
+        object.__setattr__(
+            self,
+            "change_review_skipped_roots",
+            tuple(deepcopy(self.change_review_skipped_roots)),
+        )
         for field_name in (
             "capabilities",
             "rag_defaults",
@@ -136,6 +143,7 @@ class ConsoleTurnExecutionContext:
         provider_selection: ConsoleProviderSelection,
         session_settings: ConsoleSessionSettings | None = None,
         workspace_roots: Sequence[object] = (),
+        change_review_skipped_roots: Sequence[SkippedReviewRoot] = (),
         capabilities: Mapping[str, Any] | None = None,
         rag_defaults: Mapping[str, Any] | None = None,
         tool_configuration: Mapping[str, Any] | None = None,
@@ -147,6 +155,7 @@ class ConsoleTurnExecutionContext:
             provider_selection=provider_selection,
             session_settings=session_settings,
             workspace_roots=tuple(workspace_roots),
+            change_review_skipped_roots=tuple(change_review_skipped_roots),
             capabilities=capabilities or {},
             rag_defaults=rag_defaults or {},
             tool_configuration=tool_configuration or {},
