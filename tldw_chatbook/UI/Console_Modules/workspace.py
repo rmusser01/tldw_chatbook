@@ -1948,14 +1948,15 @@ class ConsoleWorkspaceController:
             # Fresh-start/mount flows own creating the first session
             # themselves -- be conservative and let them.
             return
-        active_session = next(
-            (
-                session
-                for session in store.sessions()
-                if session.id == store.active_session_id
-            ),
-            None,
-        )
+        # O(1) active-session lookup (Qodo, PR #1880): with the None guard
+        # above satisfied, ensure_session() is a pure dict hit -- it only
+        # creates when active_session_id is None, which cannot be the case
+        # here. A stale id raising KeyError degrades to None, preserving the
+        # prior linear-scan semantics (treated as divergent -> reconcile).
+        try:
+            active_session = store.ensure_session()
+        except KeyError:
+            active_session = None
         if active_session is not None and _normalized_console_workspace_id(
             active_session.workspace_id
         ) == _normalized_console_workspace_id(active.workspace_id):

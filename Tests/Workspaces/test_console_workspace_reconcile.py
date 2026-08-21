@@ -23,7 +23,13 @@ from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryServ
 
 
 class _FakeStore:
-    """Exposes only the seams the reconcile reads: `active_session_id`/`sessions()`."""
+    """Exposes only the seams the reconcile reads.
+
+    Mirrors `ConsoleChatStore`'s contract for the active-session lookup:
+    `ensure_session()` is a pure dict hit when `active_session_id` is set
+    (never creates in that case) and raises `KeyError` on a stale id --
+    the reconcile treats that as divergent, same as the old linear scan.
+    """
 
     def __init__(self, active_session_id, sessions):
         self.active_session_id = active_session_id
@@ -31,6 +37,12 @@ class _FakeStore:
 
     def sessions(self):
         return self._sessions
+
+    def ensure_session(self):
+        for session in self._sessions:
+            if session.id == self.active_session_id:
+                return session
+        raise KeyError(self.active_session_id)
 
 
 class _Stub:
