@@ -1868,7 +1868,9 @@ def _console_conversation_browser_rows(console):
     always the dataclass default (``""``). Rebuilding the full context state
     is the seam that actually feeds the rendered row label.
     """
-    browser = console._workspace._build_console_workspace_context_state().conversation_browser
+    browser = (
+        console._workspace._build_console_workspace_context_state().conversation_browser
+    )
     rows = []
     for section in browser.sections:
         rows.extend(section.rows)
@@ -7465,9 +7467,9 @@ async def test_console_conversation_browser_search_ignores_stale_results():
         # found. Rows: [stale-alpha]" while the state already held only
         # fresh-beta. Now a real regression fails here and names itself, and a
         # render that is merely late fails below saying so.
-        assert [row.conversation_id for row in console._console_conversation_browser_rows] == [
-            "fresh-beta"
-        ], "the stale search result overwrote the fresh one"
+        assert [
+            row.conversation_id for row in console._console_conversation_browser_rows
+        ] == ["fresh-beta"], "the stale search result overwrote the fresh one"
 
         await _wait_for_browser_conversation_row(console, pilot, "fresh-beta")
         row_texts = _console_workspace_conversation_texts(console)
@@ -8978,7 +8980,9 @@ async def test_console_resume_restores_server_character_identity_without_local_l
         console._resolve_resumed_character_name = local_lookup
 
         assert (
-            await console._workspace._resume_console_workspace_conversation("server-scoped")
+            await console._workspace._resume_console_workspace_conversation(
+                "server-scoped"
+            )
             is True
         )
         scoped = store.switch_session(store.active_session_id)
@@ -8992,7 +8996,9 @@ async def test_console_resume_restores_server_character_identity_without_local_l
         assert scoped.settings.character_label == ""
 
         assert (
-            await console._workspace._resume_console_workspace_conversation("server-unscoped")
+            await console._workspace._resume_console_workspace_conversation(
+                "server-unscoped"
+            )
             is True
         )
         unscoped = store.switch_session(store.active_session_id)
@@ -9078,7 +9084,9 @@ async def test_console_resume_rejects_character_identity_without_valid_source(
         console._resolve_resumed_character_name = local_lookup
 
         assert (
-            await console._workspace._resume_console_workspace_conversation("invalid-source")
+            await console._workspace._resume_console_workspace_conversation(
+                "invalid-source"
+            )
             is True
         )
 
@@ -9123,7 +9131,9 @@ async def test_console_resume_rehydrates_local_character_name_from_local_project
         console._resolve_resumed_character_name = name_lookup
 
         assert (
-            await console._workspace._resume_console_workspace_conversation("local-character")
+            await console._workspace._resume_console_workspace_conversation(
+                "local-character"
+            )
             is True
         )
 
@@ -12332,9 +12342,9 @@ async def test_console_save_as_savers_confirm_at_success_severity():
     success_toasts = [m for m, severity in notifications if severity == "success"]
     assert "Saved message as Note." in success_toasts
     assert "Saved message as Media. It appears under Library ▸ Media." in success_toasts
-    assert any(
-        m.startswith("Saved message as Prompt '") for m in success_toasts
-    ), success_toasts
+    assert any(m.startswith("Saved message as Prompt '") for m in success_toasts), (
+        success_toasts
+    )
     assert (
         "Saved message as a Chatbook artifact. It appears under Artifacts."
         in success_toasts
@@ -12374,9 +12384,7 @@ async def test_console_retry_accepted_fires_success_toast():
         await _wait_for_selector(
             console, pilot, f"#console-message-action-retry-{failed.id}"
         )
-        success_before = [
-            m for m, severity in notifications if severity == "success"
-        ]
+        success_before = [m for m, severity in notifications if severity == "success"]
         await pilot.click(f"#console-message-action-retry-{failed.id}")
         await _wait_for_text(console, pilot, "recovered")
 
@@ -12452,7 +12460,9 @@ async def test_console_routine_send_fires_no_success_toast():
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
-    app.console_provider_gateway_factory = lambda: CapturingGateway(chunks=("hel", "lo"))
+    app.console_provider_gateway_factory = lambda: CapturingGateway(
+        chunks=("hel", "lo")
+    )
     notifications = _capture_notify_severities(app)
     host = ConsoleHarness(app)
 

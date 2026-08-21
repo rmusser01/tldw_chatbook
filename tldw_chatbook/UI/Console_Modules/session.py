@@ -167,7 +167,6 @@ from ...Chat.console_project_instructions import (
     decode_project_context_json,
     encode_project_context_json,
 )
-from ...Chat.console_prefill import pinned_prefill_from_conversation_metadata
 from ...Chat.console_session_settings import (
     ConsoleSessionSettings,
     build_console_settings_readiness,
@@ -2661,9 +2660,7 @@ class ConsoleSessionController:
         native_rows.sort(key=lambda row: 0 if row.selected else 1)
         return replace(
             state,
-            conversation_rows=tuple(
-                self._merge_workspace_rows(native_rows, rows)
-            ),
+            conversation_rows=tuple(self._merge_workspace_rows(native_rows, rows)),
         )
 
     # -- Screen-state (de)serialization for one session ----------------------
@@ -2945,9 +2942,7 @@ class ConsoleSessionController:
                         byte_count=metadata.byte_count,
                         outcome=metadata.outcome,
                         warning_code=(
-                            metadata.warning_codes[0]
-                            if metadata.warning_codes
-                            else ""
+                            metadata.warning_codes[0] if metadata.warning_codes else ""
                         ),
                     ),
                 )
