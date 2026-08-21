@@ -119,6 +119,12 @@ GIT_BUSY_REASON = COMMIT_BUSY_REASON
 #: never two that can drift apart.
 PUSH_NO_REMOTE_REASON = "no git remote configured"
 PUSH_DETACHED_REASON = "no branch checked out"
+#: A branch whose NAME begins with ``"-"`` cannot be pushed from here: git
+#: would read it as an option in ``push -u <remote> <branch>`` (T8
+#: re-review -- ``--mirror`` deletes remote refs, ``--all`` publishes every
+#: local branch). Same literal as the engine's refusal, for the same reason
+#: the two above are.
+PUSH_OPTION_BRANCH_REASON = "unsupported branch name"
 #: Likewise ``pr_compare_url``'s own no-upstream refusal.
 PR_NO_UPSTREAM_REASON = "push the branch first"
 #: Neither action has a repository to act on at all (detection found none,
@@ -1068,6 +1074,15 @@ def _push_refusal_for_info(info: "GitWorkspaceInfo | None") -> "str | None":
         return GIT_NO_REPO_REASON
     if info.detached or not info.branch:
         return PUSH_DETACHED_REASON
+    # T8 re-review: the engine refuses an option-shaped branch outright (it
+    # is a ref-destruction vector -- `--mirror` deletes remote refs). That
+    # refusal is the SECURITY guard and must never be removed on the
+    # strength of this one; this is the spec §8 half, so the control
+    # presents as unavailable-with-a-reason instead of looking live and
+    # erroring on press. Both read the same literal, from the same `info`,
+    # so they cannot drift or open a TOCTOU window.
+    if info.branch.startswith("-"):
+        return PUSH_OPTION_BRANCH_REASON
     if not info.remotes:
         return PUSH_NO_REMOTE_REASON
     return None

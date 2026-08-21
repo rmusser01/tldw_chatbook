@@ -53,6 +53,7 @@ from tldw_chatbook.UI.Screens.change_review_screen import (
     PR_TURN_MODE_REFUSAL,
     PUSH_DETACHED_REASON,
     PUSH_NO_REMOTE_REASON,
+    PUSH_OPTION_BRANCH_REASON,
     PUSH_TURN_MODE_REFUSAL,
     AgentRunsChangeReviewProvider,
     ChangeGitPushModal,
@@ -1329,3 +1330,229 @@ async def test_an_unexpected_push_error_is_not_dressed_as_a_refusal(
             f"a bug is not a warning-level refusal; got {kwargs!r}"
         )
         assert screen._git_busy is False, "the buttons must still come back"
+
+
+# ---------------------------------------------------------------------------
+# Argument injection through the BRANCH name (T8 re-review, FIX round 2)
+# ---------------------------------------------------------------------------
+
+
+def _bare_refs(bare: Path) -> list[str]:
+    """Every ref in the bare remote — the whole surface a mirror push eats."""
+    raw = subprocess.run(
+        ["git", "--git-dir", str(bare), "for-each-ref", "--format=%(refname)"],
+        capture_output=True,
+        text=True,
+    ).stdout
+    return sorted(line for line in raw.splitlines() if line)
+
+
+def _point_head_at(repo: Path, branch: str) -> None:
+    """Check out a branch whose name git's porcelain refuses to create.
+
+    `git checkout -b -- --mirror` is refused ("not a valid branch name"),
+    but `update-ref` + a one-line `.git/HEAD` is ordinary plumbing and the
+    result is ordinary git state — which is the point: a repository can
+    simply SHIP this, and `symbolic-ref --short -q HEAD` (what detection
+    reads) then reports the option-shaped name. Verified inline.
+    """
+    _git(repo, "update-ref", f"refs/heads/{branch}", "HEAD")
+    (repo / ".git" / "HEAD").write_text(f"ref: refs/heads/{branch}\n")
+    assert _git(repo, "symbolic-ref", "--short", "-q", "HEAD") == branch
+
+
+def _shared_remote_with_a_colleagues_work(tmp_path) -> tuple[Path, Path, str]:
+    """A bare remote carrying someone else's branch, tag and latest commit.
+
+    Returns:
+        ``(our repo, the bare remote, the colleague's HEAD sha)``. Our repo
+        DIVERGES from the remote's `main`, so a mirror push can only
+        succeed by force-rewinding it.
+    """
+    bare = _init_bare(tmp_path / "shared.git")
+    theirs = tmp_path / "theirs"
+    subprocess.run(
+        ["git", "clone", "-q", str(bare), str(theirs)],
+        capture_output=True, text=True, check=True,
+    )
+    _git(theirs, "config", "user.email", "o@o")
+    _git(theirs, "config", "user.name", "o")
+    (theirs / "f.txt").write_text("base\n")
+    _git(theirs, "add", "-A")
+    _git(theirs, "commit", "-qm", "base")
+    _git(theirs, "push", "-q", "origin", "main")
+    _git(theirs, "branch", "release")
+    _git(theirs, "push", "-q", "origin", "release")
+    _git(theirs, "tag", "v1")
+    _git(theirs, "push", "-q", "origin", "v1")
+
+    ours = tmp_path / "ours"
+    subprocess.run(
+        ["git", "clone", "-q", str(bare), str(ours)],
+        capture_output=True, text=True, check=True,
+    )
+    _git(ours, "config", "user.email", "t@t")
+    _git(ours, "config", "user.name", "t")
+
+    # The colleague moves on AFTER we cloned, so our main truly diverges.
+    (theirs / "f.txt").write_text("theirs\n")
+    _git(theirs, "commit", "-qam", "theirs must survive")
+    _git(theirs, "push", "-q", "origin", "main")
+    theirs_sha = _git(theirs, "rev-parse", "HEAD")
+
+    (ours / "f.txt").write_text("ours\n")
+    _git(ours, "commit", "-qam", "ours diverges")
+    return ours, bare, theirs_sha
+
+
+@pytest.mark.parametrize("hostile_branch", ["--mirror", "--all"])
+def test_the_engine_refuses_an_option_shaped_branch_directly(
+    tmp_path, hostile_branch
+) -> None:
+    """A branch NAMED `--mirror` must never reach `git push`'s argv.
+
+    The second half of the same injection class as the remote name, and it
+    was left open by fix round 1: `push_current`'s no-upstream branch builds
+    `("push", "-u", <remote>, info.branch)`, and `info.branch` comes
+    straight from `symbolic-ref` with no validator. My round-1 audit cleared
+    this slot on the grounds that `check-ref-format` covers branch names —
+    that was WRONG twice over: that validator only guards
+    `commit_selected`'s NEW-branch path, and
+    `git check-ref-format refs/heads/--mirror` exits **0** anyway.
+
+    Verified against real git before the fix existed, with this exact
+    fixture: `refs/heads/release` was DELETED from the bare remote,
+    `refs/heads/main` was force-rewound off the colleague's commit, and
+    junk `refs/remotes/origin/*` refs were pushed in. `--all` instead
+    published every local branch, leaking private WIP.
+
+    The assertion below is on the DESTRUCTION, not on the exception: the
+    remote's entire ref list and its `main` must be byte-identical after.
+    """
+    from tldw_chatbook.Workspaces.git_workspace import (
+        GitWorkspaceError,
+        detect_git_workspace,
+        push_current,
+    )
+
+    repo, bare, theirs_sha = _shared_remote_with_a_colleagues_work(tmp_path)
+    _git(repo, "branch", "secret-wip")  # `--all` would publish this
+    _point_head_at(repo, hostile_branch)
+    refs_before = _bare_refs(bare)
+    assert "refs/heads/release" in refs_before and "refs/tags/v1" in refs_before
+
+    info = detect_git_workspace(repo)
+    # The fixture must really be the dangerous shape, or this proves nothing.
+    assert info.branch == hostile_branch, info
+    assert info.upstream is None, "the `-u` argv branch is the one under test"
+
+    # NOT `pytest.raises`: that would fail on the missing exception and
+    # never reach the assertions that matter. The subject of this test is
+    # the REMOTE's contents, so the call is made defensively and the
+    # destruction is checked FIRST — pre-fix, the failure below is the
+    # rewritten ref list, exactly as the reviewer reproduced it.
+    raised: Exception | None = None
+    try:
+        push_current(repo, info, None)
+    except GitWorkspaceError as exc:
+        raised = exc
+
+    refs_after = _bare_refs(bare)
+    assert refs_after == refs_before, (
+        "the remote's refs were rewritten — "
+        f"before={refs_before!r} after={refs_after!r}"
+    )
+    assert _bare_sha(bare) == theirs_sha, (
+        "the colleague's commit was destroyed by a forced update"
+    )
+    assert "refs/heads/secret-wip" not in refs_after, (
+        "a private local branch was published to the shared remote"
+    )
+    assert raised is not None, "the push must be refused, not merely harmless"
+    assert "unsupported branch name" in str(raised), raised
+
+
+@pytest.mark.asyncio
+async def test_a_legitimately_dashed_branch_name_still_pushes(
+    monkeypatch, tmp_path
+):
+    """The guard is a filter, not a wall: only a LEADING dash is refused."""
+    _patch_git_actions(monkeypatch, True)
+    repo, bare = _repo_with_remote(tmp_path)
+    _git(repo, "checkout", "-q", "-b", "feat/my-branch")
+    provider, _db, _service = _make_provider(tmp_path, "conv-dashed")
+    app = _Harness(provider, workspace_roots=[str(repo)])
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _enter_current_mode(pilot, app)
+        push_btn = screen.query_one("#change-review-git-push-btn", Button)
+        assert push_btn.disabled is False, (
+            f"an ordinary dashed branch must be pushable; {push_btn.tooltip!r}"
+        )
+        notes = _capture_notifies(app)
+        push_btn.press()
+        modal = await _wait_for_push_modal(pilot, app)
+        modal.query_one("#change-git-push-yes", Button).press()
+        await _wait_for_note(pilot, notes, "Pushed")
+        await _wait_idle(pilot, app, GIT_ACTION_WORKER_GROUP)
+
+        assert _bare_sha(bare, "feat/my-branch") == _git(
+            repo, "rev-parse", "HEAD"
+        )
+        assert (
+            _git(repo, "rev-parse", "--abbrev-ref", "@{upstream}")
+            == "origin/feat/my-branch"
+        )
+
+
+@pytest.mark.asyncio
+async def test_push_is_disabled_with_a_reason_for_an_option_shaped_branch(
+    monkeypatch, tmp_path
+):
+    """Spec §8 half of the same fix: unavailable AND it says why.
+
+    The engine refusal is the security guard; this keeps the button from
+    looking live and failing on press (the reviewer's repro announced
+    "Pushed --mirror to origin" from an ENABLED button with no tooltip).
+    """
+    _patch_git_actions(monkeypatch, True)
+    repo, bare, theirs_sha = _shared_remote_with_a_colleagues_work(tmp_path)
+    _point_head_at(repo, "--mirror")
+    refs_before = _bare_refs(bare)
+    provider, _db, _service = _make_provider(tmp_path, "conv-branch-ui")
+    app = _Harness(provider, workspace_roots=[str(repo)])
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _enter_current_mode(pilot, app)
+        push_btn = screen.query_one("#change-review-git-push-btn", Button)
+        notes = _capture_notifies(app)
+
+        # The FULL gesture, driven to completion. Asserting only that the
+        # button is greyed out would leave the destructive path untested:
+        # pre-fix this opens a modal, and confirming it really does rewrite
+        # the remote. Driving it means this test fails on the DESTRUCTION.
+        screen.action_git_push()
+        await pilot.pause()
+        await pilot.pause()
+        if isinstance(app.screen, ChangeGitPushModal):
+            app.screen.query_one("#change-git-push-yes", Button).press()
+            await pilot.pause()
+        await _wait_idle(pilot, app, GIT_ACTION_WORKER_GROUP)
+        await pilot.pause()
+
+        refs_after = _bare_refs(bare)
+        assert refs_after == refs_before, (
+            "the remote's refs were rewritten through the UI — "
+            f"before={refs_before!r} after={refs_after!r}"
+        )
+        assert _bare_sha(bare) == theirs_sha, (
+            "the colleague's commit was destroyed through the UI"
+        )
+        assert not any("Pushed" in note for note in notes), notes
+
+        # ...and it presents as unavailable rather than failing on press.
+        assert push_btn.disabled is True, (
+            "an option-shaped branch must not offer a live push button"
+        )
+        assert PUSH_OPTION_BRANCH_REASON in str(push_btn.tooltip), (
+            f"got {push_btn.tooltip!r}"
+        )
+        assert notes and PUSH_OPTION_BRANCH_REASON in notes[0], notes

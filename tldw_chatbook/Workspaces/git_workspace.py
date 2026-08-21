@@ -953,13 +953,37 @@ def push_current(root: Path, info: GitWorkspaceInfo, remote: str | None) -> Push
     Raises:
         GitWorkspaceError: HEAD is detached (``"no branch checked out"``),
             no remote could be resolved
-            (``"no git remote configured"``), or the resolved remote's NAME
-            begins with ``"-"`` (``"unsupported remote name"``) -- git would
-            read it as an option rather than a remote, which is a
-            force-push vector; see the comment at the check.
+            (``"no git remote configured"``), or the BRANCH
+            (``"unsupported branch name"``) or resolved REMOTE
+            (``"unsupported remote name"``) has a name beginning with
+            ``"-"`` -- git would read either as an option rather than as a
+            ref/remote, which is a ref-destruction vector; see the comments
+            at the two checks.
     """
     if info.detached or info.branch is None:
         raise GitWorkspaceError("no branch checked out")
+
+    # THE SAME ARGUMENT INJECTION AS THE REMOTE NAME BELOW, through the
+    # BRANCH (T8 re-review). `info.branch` lands in argv position 4 of
+    # `push -u <remote> <branch>`, and git reads a leading-dash argument
+    # there as an OPTION. It arrives straight from `symbolic-ref` with no
+    # validator, and `check-ref-format` does NOT cover it in either sense:
+    # that call guards only `commit_selected`'s NEW-branch path, and
+    # `git check-ref-format refs/heads/--mirror` exits **0** regardless.
+    #
+    # A repository can simply ship `.git/HEAD` = `ref: refs/heads/--mirror`.
+    # Reproduced against real git: `push -u origin --mirror` DELETED
+    # `refs/heads/release` from the shared remote, force-rewound
+    # `refs/heads/main` off another clone's commit, and pushed junk
+    # `refs/remotes/origin/*` refs into it; `--all` published every local
+    # branch, leaking private WIP.
+    #
+    # Refused, never sanitized -- same reasoning as the remote name: there
+    # is no `--` escape for this positional (`push -u <remote> -- <branch>`
+    # is not a refspec), and rewriting the name would push a DIFFERENT
+    # branch than the one checked out. `git branch -m` renames it.
+    if info.branch.startswith("-"):
+        raise GitWorkspaceError("unsupported branch name")
 
     target_remote = _resolve_push_remote(info, remote)
     if target_remote is None:
