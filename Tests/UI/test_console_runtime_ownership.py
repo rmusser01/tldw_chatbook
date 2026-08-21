@@ -418,6 +418,8 @@ def test_persona_buddy_is_app_owned_and_shutdown_before_other_lifecycles():
     construction = initializer.index("PersonaBuddyController(")
     assert "PersonaBuddyController" in initializer, initializer
     assert "self.persona_buddy_controller" in initializer, initializer
+    assert "portrait_loader=partial(" in initializer, initializer
+    assert "load_local_persona_portrait" in initializer, initializer
     assert wiring < construction, initializer
 
     source = inspect.getsource(TldwCli._shutdown_app_owned_lifecycles)

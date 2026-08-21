@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import math
 import re
@@ -256,6 +257,56 @@ def _validate_state_authority(
         raise PersonaBuddyStateError()
     if state not in _BUILTIN_STATES and source not in _CUSTOM_STATE_SOURCES:
         raise PersonaBuddyStateError()
+
+
+def load_local_persona_portrait(
+    local_persona_service: object,
+    persona_record: Mapping[str, object],
+) -> PersonaVisualPortrait | None:
+    """Load the linked local Character-card BLOB as a path-free portrait."""
+
+    try:
+        character_id = persona_record.get("character_card_id")
+        getter = getattr(local_persona_service, "get_character", None)
+        if type(character_id) is not int or character_id < 1 or not callable(getter):
+            return None
+        character = getter(character_id)
+        if not isinstance(character, Mapping):
+            return None
+        image = character.get("image")
+        revision = character.get("version")
+        if (
+            character.get("id") != character_id
+            or type(revision) is not int
+            or revision < 0
+            or type(image) is not bytes
+            or not image
+        ):
+            return None
+        mime_type = _portrait_mime_type(image)
+        if mime_type is None:
+            return None
+        return PersonaVisualPortrait(
+            portrait_id=f"local-character:{character_id}",
+            revision=revision,
+            mime_type=mime_type,
+            sha256=hashlib.sha256(image).hexdigest(),
+            data=image,
+        )
+    except Exception:
+        return None
+
+
+def _portrait_mime_type(data: bytes) -> str | None:
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
 
 
 class PersonaBuddyController:

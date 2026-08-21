@@ -374,6 +374,7 @@ from .Character_Chat.server_character_persona_service import (
 )
 from .Persona_Buddy import (
     PersonaBuddyController,
+    load_local_persona_portrait,
     parse_persona_buddy_preferences,
 )
 from .RAG_Admin.local_rag_admin_service import LocalRAGAdminService
@@ -5781,6 +5782,10 @@ class TldwCli(
                 self.app_config.get("persona_buddy", {})
             ),
             local_persona_service=self.local_character_persona_service,
+            portrait_loader=partial(
+                load_local_persona_portrait,
+                self.local_character_persona_service,
+            ),
             profile_db=self.chachanotes_db,
             profile_root=get_user_data_dir(),
             reduced_motion=bool(get_cli_setting("appearance", "reduce_motion", False)),

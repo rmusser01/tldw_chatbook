@@ -7,6 +7,7 @@ import hashlib
 import inspect
 import json
 import threading
+from functools import partial
 from io import BytesIO
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Persona_Buddy.controller import (
     BuddyDrainResult,
     PersonaBuddyController,
+    load_local_persona_portrait,
 )
 from tldw_chatbook.Persona_Buddy.preferences import (
     PersonaBuddyPreferences,
@@ -93,7 +95,13 @@ def _manifest() -> dict[str, object]:
     }
 
 
-def _write_personas(path: Path, *, active: bool = True, deleted: bool = False) -> None:
+def _write_personas(
+    path: Path,
+    *,
+    active: bool = True,
+    deleted: bool = False,
+    character_card_id: int | None = None,
+) -> None:
     path.write_text(
         json.dumps(
             {
@@ -104,6 +112,7 @@ def _write_personas(path: Path, *, active: bool = True, deleted: bool = False) -
                         "is_active": active,
                         "deleted": deleted,
                         "version": 7,
+                        "character_card_id": character_card_id,
                     }
                 ]
             }
@@ -281,6 +290,137 @@ async def test_state_idle_portrait_fallback_never_blanks(tmp_path: Path) -> None
     assert fallback.frames[0].cells
     assert fallback.cache_identity is not None
     assert fallback.cache_identity.portrait_id == "local-portrait"
+
+
+@pytest.mark.asyncio
+async def test_production_local_persona_portrait_loader_uses_linked_character_blob(
+    tmp_path: Path,
+) -> None:
+    seeded, db, _graph = _runtime(tmp_path)
+    await seeded.shutdown()
+    portrait = _png((45, 90, 180, 255))
+    character_id = db.add_character_card(
+        {"name": "Linked portrait", "description": "", "image": portrait}
+    )
+    assert type(character_id) is int
+    persona_path = tmp_path / "profile/personas.json"
+    _write_personas(persona_path, character_card_id=character_id)
+    service = LocalCharacterPersonaService(db, persona_store_path=persona_path)
+    event_loop_thread = threading.get_ident()
+    portrait_threads: list[int] = []
+    get_character = service.get_character
+
+    def tracked_get_character(linked_character_id: int) -> object:
+        portrait_threads.append(threading.get_ident())
+        return get_character(linked_character_id)
+
+    linked = get_character(character_id)
+    service.get_character = tracked_get_character  # type: ignore[method-assign]
+    controller = PersonaBuddyController(
+        preferences=PersonaBuddyPreferences(
+            enabled=True,
+            selection=PersonaBuddySelection("local", "persona-local-1"),
+        ),
+        local_persona_service=service,
+        profile_db=db,
+        profile_root=tmp_path / "profile",
+        portrait_loader=partial(load_local_persona_portrait, service),
+    )
+    (tmp_path / "profile/persona_visual/buddy/v1/idle.png").write_bytes(b"broken")
+    try:
+        fallback = await controller.resolve_current_visual(cols=20, lines=8)
+    finally:
+        await controller.shutdown()
+        db.close_connection()
+
+    assert fallback.available is True
+    assert fallback.source == "persona_portrait"
+    assert fallback.cache_identity is not None
+    assert fallback.cache_identity.portrait_id == f"local-character:{character_id}"
+    assert fallback.cache_identity.portrait_revision == linked["version"]
+    assert (
+        fallback.cache_identity.portrait_sha256 == hashlib.sha256(portrait).hexdigest()
+    )
+    assert portrait_threads
+    assert all(thread_id != event_loop_thread for thread_id in portrait_threads)
+
+
+def test_production_portrait_loader_rejects_path_text_without_exposing_it() -> None:
+    marker = "/private/persona-portrait-marker.png"
+
+    class HostileService:
+        def get_character(self, _character_id: int) -> dict[str, object]:
+            return {"id": 7, "version": 1, "image": marker}
+
+    portrait = load_local_persona_portrait(HostileService(), {"character_card_id": 7})
+
+    assert portrait is None
+    assert marker not in repr(portrait)
+
+
+@pytest.mark.asyncio
+async def test_invalid_production_portrait_has_fixed_path_free_failure(
+    tmp_path: Path,
+) -> None:
+    marker = "/private/persona-portrait-marker.png"
+    controller, db, _graph = _runtime(tmp_path)
+
+    class HostileService:
+        def get_persona_profile(self, persona_id: str) -> dict[str, object]:
+            return {
+                "id": persona_id,
+                "version": 7,
+                "is_active": True,
+                "deleted": False,
+                "character_card_id": 7,
+            }
+
+        def get_character(self, _character_id: int) -> dict[str, object]:
+            return {"id": 7, "version": 1, "image": marker}
+
+    service = HostileService()
+    controller._local_persona_service = service
+    controller._portrait_loader = partial(load_local_persona_portrait, service)
+    (tmp_path / "profile/persona_visual/buddy/v1/idle.png").write_bytes(b"broken")
+    try:
+        fallback = await controller.resolve_current_visual(cols=20, lines=8)
+    finally:
+        await controller.shutdown()
+        db.close_connection()
+
+    assert fallback.available is False
+    assert fallback.reason == "persona_buddy_frame_unavailable"
+    assert marker not in repr(fallback)
+
+
+@pytest.mark.parametrize(
+    "stage",
+    ("_read_local_persona", "_read_graph", "_resolve_runtime", "_prepare_resolution"),
+)
+@pytest.mark.asyncio
+async def test_each_resolution_stage_runs_off_event_loop_thread(
+    tmp_path: Path,
+    stage: str,
+) -> None:
+    controller, db, _graph = _runtime(tmp_path)
+    event_loop_thread = threading.get_ident()
+    observed_threads: list[int] = []
+    original = getattr(controller, stage)
+
+    def tracked(*args: object) -> object:
+        observed_threads.append(threading.get_ident())
+        return original(*args)
+
+    setattr(controller, stage, tracked)
+    try:
+        visual = await controller.resolve_current_visual(cols=20, lines=8)
+    finally:
+        await controller.shutdown()
+        db.close_connection()
+
+    assert visual.available is True
+    assert observed_threads
+    assert all(thread_id != event_loop_thread for thread_id in observed_threads)
 
 
 def _resolved_frame(
@@ -545,7 +685,21 @@ async def test_repeated_cancel_drains_before_next_owner() -> None:
     first = asyncio.create_task(controller.run_serialized(blocking, name="first"))
     assert await asyncio.to_thread(entered.wait, 2)
     first.cancel()
+    await asyncio.sleep(0)
+    assert first.cancelling() == 1
+    assert not first.done()
+    assert any(
+        task.get_name() == "persona-buddy:first:thread" and not task.done()
+        for task in controller._owned_tasks
+    )
     first.cancel()
+    await asyncio.sleep(0)
+    assert first.cancelling() == 2
+    assert not first.done()
+    first.cancel()
+    await asyncio.sleep(0)
+    assert first.cancelling() == 3
+    assert not first.done()
     second = asyncio.create_task(
         controller.run_serialized(lambda: order.append("second"), name="second")
     )
