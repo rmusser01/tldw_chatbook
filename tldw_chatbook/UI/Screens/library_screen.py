@@ -2072,7 +2072,15 @@ class LibraryScreen(BaseAppScreen):
             # landing, so the canvas pane target was landing-only and F6
             # skipped the Ingest canvas entirely; the path field is the
             # canvas target there (candidates are tried in order).
-            ("library-hub-action-import", "library-ingest-path"),
+            (
+                "library-hub-continue",
+                "library-hub-attention-action",
+                "library-hub-recent-notes",
+                "library-hub-recent-media",
+                "library-hub-recent-conversations",
+                "library-hub-action-import",
+                "library-ingest-path",
+            ),
         ),
     )
     #: task-4023 AC#5: the Notes workflow's footer sets used to be a second
@@ -3463,6 +3471,7 @@ class LibraryScreen(BaseAppScreen):
             None
         )
         self._library_notes_pre_resize_focus: LibraryNotesFocusIdentity | None = None
+        self._library_landing_responsive_focus_id: str = ""
         self._library_notes_interaction_focus: LibraryNotesFocusIdentity | None = None
         self._library_notes_resize_epoch = 0
         self._library_notes_resize_settling = False
@@ -4269,6 +4278,9 @@ class LibraryScreen(BaseAppScreen):
         """Map one mounted control to its stable Notes semantic identity."""
         if focused is None:
             return ""
+        landing_control_id = self._library_landing_focus_control_id(focused)
+        if landing_control_id:
+            return f"landing-control:{landing_control_id}"
         row_id = str(getattr(focused, "row_id", "") or "")
         if row_id and focused.has_class("library-rail-row"):
             return f"library-row:{row_id}"
@@ -4344,6 +4356,52 @@ class LibraryScreen(BaseAppScreen):
         if widget_id.startswith(conflict):
             return f"sync-conflict-policy:{widget_id.removeprefix(conflict)}"
         return ""
+
+    def _library_landing_focus_control_id(self, focused: Widget | None) -> str:
+        """Return the stable id of a focused returning-landing action."""
+        if focused is None or not focused.id:
+            return ""
+        try:
+            landing = self.query_one("#library-landing-canvas", Widget)
+        except (NoMatches, QueryError):
+            return ""
+        if not self._library_notes_widget_is_within(focused, landing):
+            return ""
+        if focused.id == "library-hub-continue" or focused.has_class(
+            "library-hub-attention-action"
+        ):
+            return focused.id
+        if focused.has_class("library-hub-recent") or focused.has_class(
+            "library-hub-action"
+        ):
+            return focused.id
+        return ""
+
+    def _library_landing_control_row_id(self, control_id: str) -> str:
+        """Map one landing action to its compact-rail destination."""
+        if not control_id:
+            return ""
+        try:
+            control = self.query_one(f"#{control_id}", Widget)
+        except (NoMatches, QueryError):
+            return ""
+        row_id = str(getattr(control, "row_id", "") or "")
+        if row_id:
+            return row_id
+        action_kind = str(getattr(control, "action_kind", "") or "")
+        if action_kind:
+            return {
+                "ingest-review": LIBRARY_ROW_INGEST_MEDIA,
+                "media-retry": LIBRARY_ROW_BROWSE_MEDIA,
+                "prompts-retry": LIBRARY_ROW_BROWSE_PROMPTS,
+                "conversations-retry": LIBRARY_ROW_BROWSE_CONVERSATIONS,
+            }.get(action_kind, "")
+        source_type = str(getattr(control, "source_type", "") or "")
+        return {
+            "notes": LIBRARY_ROW_BROWSE_NOTES,
+            "media": LIBRARY_ROW_BROWSE_MEDIA,
+            "conversations": LIBRARY_ROW_BROWSE_CONVERSATIONS,
+        }.get(source_type, "")
 
     def _library_notes_scroll_owner(self, region: str) -> Widget | None:
         """Resolve the one named scroll/content owner for a Notes region."""
@@ -4567,6 +4625,10 @@ class LibraryScreen(BaseAppScreen):
                 "create": "#library-notes-create-back",
                 "sync": "#library-notes-sync-back",
             }.get(role.removeprefix("region-back:"), "#library-note-back")
+        elif role.startswith("landing-control:"):
+            control_id = role.removeprefix("landing-control:")
+            if control_id:
+                selector = f"#{control_id}"
         elif role.startswith("file-notes:"):
             widget_id = role.removeprefix("file-notes:")
             workspace = self._library_file_notes_workspace
@@ -5026,6 +5088,28 @@ class LibraryScreen(BaseAppScreen):
         identity: LibraryNotesFocusIdentity,
     ) -> None:
         """Cross the one measured compact/wide boundary losslessly."""
+        landing_prefix = "landing-control:"
+        if compact and identity.semantic_role.startswith(landing_prefix):
+            control_id = identity.semantic_role.removeprefix(landing_prefix)
+            row_id = self._library_landing_control_row_id(control_id)
+            if row_id:
+                self._library_landing_responsive_focus_id = control_id
+                identity = dataclasses.replace(
+                    identity,
+                    stage="rail",
+                    semantic_role=f"library-row:{row_id}",
+                )
+        elif not compact and self._library_landing_responsive_focus_id:
+            control_id = self._library_landing_responsive_focus_id
+            row_id = self._library_landing_control_row_id(control_id)
+            if identity.semantic_role == f"library-row:{row_id}":
+                identity = dataclasses.replace(
+                    identity,
+                    stage="notes",
+                    semantic_role=f"{landing_prefix}{control_id}",
+                )
+            else:
+                self._library_landing_responsive_focus_id = ""
         self._library_notes_compact = compact
         if compact:
             self._library_notes_stage = self._compact_library_notes_stage(identity)
@@ -5335,7 +5419,12 @@ class LibraryScreen(BaseAppScreen):
                 and cached.note_id == current.note_id
                 and (
                     not current.semantic_role.startswith(
-                        ("media-row:", "media-preview-open:")
+                        (
+                            "media-row:",
+                            "media-preview-open:",
+                            "landing-control:",
+                            "library-row:",
+                        )
                     )
                     or cached.semantic_role == current.semantic_role
                 )
@@ -5354,7 +5443,12 @@ class LibraryScreen(BaseAppScreen):
             and user_scroll.note_id == current.note_id
             and (
                 not current.semantic_role.startswith(
-                    ("media-row:", "media-preview-open:")
+                    (
+                        "media-row:",
+                        "media-preview-open:",
+                        "landing-control:",
+                        "library-row:",
+                    )
                 )
                 or user_scroll.semantic_role == current.semantic_role
             )

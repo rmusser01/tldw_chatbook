@@ -24199,6 +24199,135 @@ def test_library_landing_projection_and_retained_sync_add_no_source_io() -> None
 
 
 @pytest.mark.asyncio
+async def test_library_returning_landing_geometry_keyboard_and_compact_focus_transfer() -> None:
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        notes=[
+            {
+                "note_id": "note-1",
+                "title": "<読書> 🗂️ e\u0301 \u2067مرحبا\u2069 field notes",
+            }
+        ],
+        media=[
+            {
+                "media_id": "media-1",
+                "title": "Recording 🧪",
+                "type": "audio",
+            }
+        ],
+    )
+    failed = app.library_ingest_jobs.submit(source_path="/tmp/recover.pdf")
+    app.library_ingest_jobs.mark_failed(
+        failed.job_id,
+        error="private failure",
+        permanent=False,
+    )
+    screen = LibraryScreen(app)
+    screen._library_lifecycle = LibraryLifecycle.GRADUATED
+    screen._library_continue_receipt = {
+        "version": 1,
+        "row_id": LIBRARY_ROW_BROWSE_MEDIA,
+        "scope": {
+            "query": "",
+            "media_type": "audio",
+            "sort_by": "last_modified_desc",
+            "page": 1,
+        },
+        "source_list_adjusted": False,
+    }
+    host = LibraryProductionCSSHarness(app, screen=screen)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-hub-recent-notes")
+        expected_canvas_order = [
+            "library-hub-continue",
+            "library-hub-attention-action",
+            "library-hub-recent-notes",
+            "library-hub-recent-media",
+            "library-hub-recent-conversations",
+            "library-hub-action-import",
+            "library-hub-action-new-note",
+            "library-hub-action-search",
+        ]
+        canvas = screen.query_one("#library-landing-canvas")
+        visible = screen._compositor.visible_widgets
+        for widget_id in expected_canvas_order:
+            widget = screen.query_one(f"#{widget_id}", Button)
+            assert widget in visible, (widget_id, widget.region, canvas.region)
+            assert canvas.region.contains_region(widget.region)
+        assert screen.query_one("#library-hub-continue", Button).has_class(
+            "console-action-primary"
+        )
+        filtered_focus = [
+            widget.id
+            for widget in screen.focus_chain
+            if widget.id in expected_canvas_order
+        ]
+        assert filtered_focus == expected_canvas_order
+
+        continue_button = screen.query_one("#library-hub-continue", Button)
+        continue_button.focus()
+        await pilot.pause()
+        for expected_id in expected_canvas_order[1:]:
+            await pilot.press("tab")
+            await pilot.pause()
+            assert screen.focused is not None
+            assert screen.focused.id == expected_id
+
+        screen.query_one("#library-search-input", Input).focus()
+        await pilot.pause()
+        screen.action_focus_next_workbench_pane()
+        await pilot.pause()
+        assert continue_button.has_focus, getattr(screen.focused, "id", None)
+
+        receipt = dict(screen._library_continue_receipt or {})
+        await pilot.resize_terminal(100, 30)
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_notes_compact
+                and screen.focused is not None
+                and screen.focused.id
+                == f"library-row-{LIBRARY_ROW_BROWSE_MEDIA}"
+            ),
+            message="Compact transition did not transfer Continue to Media rail.",
+        )
+        assert screen.query_one("#library-rail").display is True
+        assert screen.query_one("#library-canvas").display is False
+        assert screen._library_continue_receipt == receipt
+        assert screen._library_landing_attention_action() is not None
+
+        await pilot.resize_terminal(170, 48)
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen._library_notes_compact and continue_button.has_focus,
+            message="Wide transition did not restore the prior landing identity.",
+        )
+
+        await pilot.resize_terminal(100, 30)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_notes_compact,
+            message="Second compact transition did not settle.",
+        )
+        newer = screen.query_one(
+            f"#library-row-{LIBRARY_ROW_BROWSE_PROMPTS}", Button
+        )
+        newer.focus()
+        await pilot.pause()
+        await pilot.resize_terminal(170, 48)
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen._library_notes_compact,
+            message="Second wide transition did not settle.",
+        )
+        assert newer.has_focus
+
+
+@pytest.mark.asyncio
 async def test_library_landing_continue_dispatches_full_media_page_scope() -> None:
     app = _build_test_app()
     media = [

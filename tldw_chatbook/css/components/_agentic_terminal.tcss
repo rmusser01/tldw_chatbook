@@ -1102,6 +1102,25 @@ ConsoleRunLogModal {
     background: $ds-surface-panel;
 }
 
+#library-hub-attention {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 1;
+}
+
+#library-hub-attention-copy {
+    width: 1fr;
+    min-width: 0;
+    height: auto;
+    min-height: 1;
+}
+
+#library-hub-attention-action {
+    width: auto;
+    min-width: 8;
+}
+
 #library-conversations-canvas {
     height: 100%;
     min-height: 0;
