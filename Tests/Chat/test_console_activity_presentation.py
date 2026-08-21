@@ -304,13 +304,33 @@ def test_safe_intermediate_thinking_summary_rejects_private_or_payload_shapes(
     assert bridge_module.safe_intermediate_thinking_summary(summary) is None
 
 
-def test_safe_intermediate_thinking_summary_flattens_controls_and_lines() -> None:
+def test_safe_intermediate_thinking_summary_rejects_non_line_controls() -> None:
     summary = "Inspect\nthese\tfiles\x00before\x1b continuing."
 
-    safe = bridge_module.safe_intermediate_thinking_summary(summary)
+    assert bridge_module.safe_intermediate_thinking_summary(summary) is None
 
-    assert safe == "Inspect these files before  continuing."
-    assert all(ord(char) >= 0x20 and not 0x7F <= ord(char) <= 0x9F for char in safe)
+
+@pytest.mark.parametrize(
+    "control",
+    ["\x00", "\x01", "\x1b", "\x1f", "\x7f", "\x80", "\x9f"],
+    ids=["nul", "soh", "esc", "unit-separator", "del", "c1-start", "c1-end"],
+)
+@pytest.mark.parametrize(
+    "template",
+    [
+        "{control}Thinking: PRIVATE",
+        "Safe preamble\n{control}Analysis: PRIVATE",
+        "Reason{control}ing: PRIVATE",
+    ],
+    ids=["prefix", "after-boundary", "inside-header"],
+)
+def test_safe_intermediate_thinking_summary_rejects_c0_c1_header_evasion(
+    control: str,
+    template: str,
+) -> None:
+    summary = template.format(control=control)
+
+    assert bridge_module.safe_intermediate_thinking_summary(summary) is None
 
 
 @pytest.mark.parametrize(
@@ -336,6 +356,10 @@ def test_safe_intermediate_thinking_summary_rejects_private_headers_after_any_sp
         '[tool_call] {"name":"fs_read","parameters":{}} [/tool_call]',
         'Calling function fs_read({"path":"PRIVATE"})',
         'invoking tool fs_write with {"path":"PRIVATE"}',
+        'Calling tool fs_read with arguments {"path":"PRIVATE"}',
+        'Invoking function fs_read with args {"path":"PRIVATE"}',
+        '<tool_use>{"input":{"path":"PRIVATE"}}</tool_use>',
+        '[tool_use] {"input":{"path":"PRIVATE"}} [/tool_use]',
     ],
 )
 def test_safe_intermediate_thinking_summary_rejects_explicit_call_shapes(

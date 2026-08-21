@@ -991,12 +991,12 @@ _TOOL_PAYLOAD_KEY_RE = re.compile(
 _TOOL_CALL_SHAPE_RE = re.compile(
     r"""
     (?:
-        <\s*/?\s*(?:tool_calls?|function_call)\b[^>]*>
+        <\s*/?\s*(?:tool_(?:calls?|use)|function_call)\b[^>]*>
         |
-        \[\s*/?\s*(?:tool_calls?|function_call)\s*\]
+        \[\s*/?\s*(?:tool_(?:calls?|use)|function_call)\s*\]
         |
         \b(?:calling|invoking)\s+(?:the\s+)?(?:tool|function)\s+
-        [A-Za-z_][\w.-]*\s*(?:\(\s*\{|with\s*\{)
+        [A-Za-z_][\w.-]*[^{}\n]{0,80}\{
     )
     """,
     re.IGNORECASE | re.VERBOSE,
@@ -1023,6 +1023,15 @@ def safe_intermediate_thinking_summary(summary: str | None) -> str | None:
     # Unicode line/paragraph separators cannot become visible only after the
     # privacy check has already missed them.
     normalized = "\n".join(raw.splitlines())
+    if any(
+        ord(char) < 0x20 or 0x7F <= ord(char) <= 0x9F
+        for char in normalized
+        if char != "\n"
+    ):
+        # Non-line controls can split or prefix every private/payload token
+        # this function recognizes. Reject instead of attempting to guess
+        # whether removing/replacing one would reveal a hidden wrapper.
+        return None
     if _PRIVATE_REASONING_TAG_RE.search(normalized):
         return None
     visible = normalized.split("```", 1)[0]
