@@ -40,6 +40,7 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Chat.console_turn_grouping import (
     ConsoleAssistantTurn,
     group_console_transcript_messages,
+    visual_messages,
 )
 from tldw_chatbook.Chat.console_image_view import (
     PIXELS_MAX_COLS,
@@ -2960,12 +2961,59 @@ class ConsoleTranscript(VerticalScroll):
     def _turn_aligned_start(self, messages: list[ConsoleChatMessage], start: int) -> int:
         """Move a window boundary back to the nearest user turn."""
         start = max(0, min(start, len(messages)))
+        if start < len(messages):
+            start, _end, _owner_id, _owned_ids = self._unit_span_at(
+                messages, start
+            )
         while start > 0 and (
             start >= len(messages)
             or messages[start].role != ConsoleMessageRole.USER
         ):
             start -= 1
         return start
+
+    @staticmethod
+    def _unit_span_at(
+        messages: list[ConsoleChatMessage], index: int
+    ) -> tuple[int, int, str, tuple[str, ...]]:
+        """Return the causal span and owner for the unit containing ``index``."""
+        index = max(0, min(index, len(messages) - 1))
+        index_by_id = {message.id: offset for offset, message in enumerate(messages)}
+        for unit in group_console_transcript_messages(messages):
+            if unit.standalone is not None:
+                standalone = unit.standalone
+                start = index_by_id[standalone.id]
+                if start == index:
+                    return start, start + 1, standalone.id, (standalone.id,)
+                continue
+            turn = unit.assistant_turn
+            assert turn is not None
+            start = index_by_id[turn.assistant.id]
+            end = start + len(turn.owned_message_ids)
+            if start <= index < end:
+                return start, end, turn.assistant.id, turn.owned_message_ids
+        message = messages[index]
+        return index, index + 1, message.id, (message.id,)
+
+    def _ownership_by_message_id(
+        self, messages: list[ConsoleChatMessage] | None = None
+    ) -> dict[str, tuple[str, tuple[str, ...]]]:
+        """Map every causal message id to its top-level owner and unit ids."""
+        source = self._messages if messages is None else messages
+        ownership: dict[str, tuple[str, tuple[str, ...]]] = {}
+        for unit in group_console_transcript_messages(source):
+            if unit.standalone is not None:
+                message = unit.standalone
+                ownership[message.id] = (message.id, (message.id,))
+                continue
+            turn = unit.assistant_turn
+            assert turn is not None
+            for message_id in turn.owned_message_ids:
+                ownership[message_id] = (
+                    turn.assistant.id,
+                    turn.owned_message_ids,
+                )
+        return ownership
 
     def _tail_window_start(
         self,
@@ -2995,6 +3043,10 @@ class ConsoleTranscript(VerticalScroll):
     def _set_hidden_prefix(self, start: int) -> None:
         """Replace the view-only hidden set with one contiguous prefix."""
         start = max(0, min(start, len(self._messages)))
+        if start < len(self._messages):
+            start, _end, _owner_id, _owned_ids = self._unit_span_at(
+                self._messages, start
+            )
         self._pruned_message_ids = {
             message.id for message in self._messages[:start]
         }
@@ -3011,6 +3063,9 @@ class ConsoleTranscript(VerticalScroll):
             self._hidden_tail_ids = set()
             return
         start = max(0, start)
+        start, _end, _owner_id, _owned_ids = self._unit_span_at(
+            self._messages, start
+        )
         self._hidden_tail_start = start
         self._hidden_tail_ids = {
             message.id for message in self._messages[start:]
@@ -3286,11 +3341,19 @@ class ConsoleTranscript(VerticalScroll):
         if len(groups) <= 1:
             return None
         protected_ids: set[str] = set()
+        ownership = self._ownership_by_message_id()
         if self.selected_message_id is not None:
-            protected_ids.add(self.selected_message_id)
+            protected_ids.add(
+                ownership.get(
+                    self.selected_message_id,
+                    (self.selected_message_id, (self.selected_message_id,)),
+                )[0]
+            )
         focused_id = self._focused_row_message_id()
         if focused_id is not None:
-            protected_ids.add(focused_id)
+            protected_ids.add(
+                ownership.get(focused_id, (focused_id, (focused_id,)))[0]
+            )
         index_by_id = {
             message.id: index for index, message in enumerate(self._messages)
         }
@@ -3345,6 +3408,7 @@ class ConsoleTranscript(VerticalScroll):
             id(widget): key for key, widget in self._row_widgets.items()
         }
         message_ids = {message.id for message in self._messages}
+        ownership = self._ownership_by_message_id()
         groups: list[tuple[str, int]] = []
         group_id: str | None = None
         group_height = 0
@@ -3355,7 +3419,9 @@ class ConsoleTranscript(VerticalScroll):
             if key is not None and ":" in key:
                 candidate = key.split(":", 1)[1]
                 if candidate in message_ids:
-                    row_message_id = candidate
+                    row_message_id = ownership.get(
+                        candidate, (candidate, (candidate,))
+                    )[0]
             if row_message_id is None:
                 break
             if row_message_id != group_id:
@@ -3933,7 +3999,9 @@ class ConsoleTranscript(VerticalScroll):
         target_id = self._reveal_scroll_target
         if target_id is not None:
             self._reveal_scroll_target = None
-            target_widget = self._row_widgets.get(f"message:{target_id}")
+            target_widget = self._row_widgets.get(
+                f"assistant-turn:{target_id}"
+            ) or self._row_widgets.get(f"message:{target_id}")
             if target_widget is not None:
                 self.call_after_refresh(
                     self._scroll_reveal_target_into_view, target_widget
@@ -4116,11 +4184,19 @@ class ConsoleTranscript(VerticalScroll):
             id(widget): key for key, widget in self._row_widgets.items()
         }
         message_ids = {message.id for message in self._messages}
+        ownership = self._ownership_by_message_id()
         protected_ids = {
-            message.id for message in self._messages if message.status == "streaming"
+            ownership.get(message.id, (message.id, (message.id,)))[0]
+            for message in self._messages
+            if message.status == "streaming"
         }
         if self.selected_message_id is not None:
-            protected_ids.add(self.selected_message_id)
+            protected_ids.add(
+                ownership.get(
+                    self.selected_message_id,
+                    (self.selected_message_id, (self.selected_message_id,)),
+                )[0]
+            )
 
         prune_ids: list[str] = []
         prune_height = 0
@@ -4138,7 +4214,9 @@ class ConsoleTranscript(VerticalScroll):
                 return False
             prune_height = group_height
             bottom_margin = group_margin
-            prune_ids.append(group_id)
+            prune_ids.extend(
+                ownership.get(group_id, (group_id, (group_id,)))[1]
+            )
             return True
 
         for child in self.children:
@@ -4147,7 +4225,9 @@ class ConsoleTranscript(VerticalScroll):
             if key is not None and ":" in key:
                 candidate = key.split(":", 1)[1]
                 if candidate in message_ids:
-                    row_message_id = candidate
+                    row_message_id = ownership.get(
+                        candidate, (candidate, (candidate,))
+                    )[0]
             if row_message_id is None:
                 # The trailing end-rule, the empty panel, or the docked jump
                 # pill: nothing prunable lives past a non-message row.
@@ -4241,23 +4321,26 @@ class ConsoleTranscript(VerticalScroll):
         extension, so small-session behavior is unchanged. Only meaningful
         under ``_two_sided_active``.
         """
-        for index, message in enumerate(self._messages):
+        for requested_index, message in enumerate(self._messages):
             if message.id != message_id:
                 continue
+            index, unit_end, owner_id, _owned_ids = self._unit_span_at(
+                self._messages, requested_index
+            )
             first_visible = self._first_visible_message_index()
             tail_start = self._hidden_tail_start_index()
-            if first_visible <= index < tail_start:
+            if first_visible <= index and unit_end <= tail_start:
                 return False
             if index < first_visible:
                 revealed_start = self._turn_aligned_start(self._messages, index)
                 revealed_end = first_visible
             else:
                 revealed_start = tail_start
-                revealed_end = index + 1
+                revealed_end = unit_end
             if self._two_sided_active() and self._estimated_window_lines(
                 revealed_start, revealed_end
             ) > self._prune_watermarks()[0]:
-                self._recenter_window_on(index, message_id)
+                self._recenter_window_on(index, owner_id)
                 return True
             if index < first_visible:
                 self._set_hidden_prefix(revealed_start)
@@ -4284,17 +4367,35 @@ class ConsoleTranscript(VerticalScroll):
         scrolled to the top of the viewport once mounted, because the old
         scroll offset is meaningless in the new window.
         """
-        start = self._turn_aligned_start(self._messages, index)
+        requested_index = next(
+            (
+                candidate_index
+                for candidate_index, message in enumerate(self._messages)
+                if message.id == message_id
+            ),
+            index,
+        )
+        unit_start, unit_end, owner_id, _owned_ids = self._unit_span_at(
+            self._messages, requested_index
+        )
+        start = self._turn_aligned_start(self._messages, unit_start)
         budget = self._initial_window_line_budget()
         used = 0
-        end = index
+        end = unit_start
         while end < len(self._messages) and used < budget:
             used += self._estimated_message_lines(self._messages[end])
             end += 1
+        if end < unit_end:
+            end = unit_end
+        elif end > 0 and end < len(self._messages):
+            _included_start, included_end, _included_owner, _included_ids = (
+                self._unit_span_at(self._messages, end - 1)
+            )
+            end = included_end
         self._set_hidden_prefix(start)
         self._set_hidden_tail(end if end < len(self._messages) else None)
         self.release_anchor()
-        self._reveal_scroll_target = message_id
+        self._reveal_scroll_target = owner_id
         # Review E: the reconcile that realizes this window transits an
         # emptied arrangement, and the placement parks the target near y=0 —
         # both read as top-boundary hits and hydrated one spurious chunk
@@ -4365,25 +4466,46 @@ class ConsoleTranscript(VerticalScroll):
         """Return a terminal-readable transcript rendering for tests and exports."""
         rule = "─" * max(1, width)
         lines: list[str] = []
-        for message in self._messages:
+
+        def _append_status_and_actions(message: ConsoleChatMessage, body: str) -> None:
+            status_line = _message_status_line(message)
+            if status_line and not _is_generating_placeholder_body(message, body):
+                lines.append(status_line)
+            if message.id == self.selected_message_id:
+                lines.append(self._plain_action_row(message))
+                lines.append(
+                    ConsoleMessageActionService().plain_action_guide(message)
+                )
+
+        for unit in group_console_transcript_messages(self._messages):
+            message = unit.standalone
+            turn = unit.assistant_turn
+            if message is None:
+                assert turn is not None
+                message = turn.assistant
             presentation = self._message_presentation(message)
             lines.append(rule)
             if message.id == self.summary_boundary_message_id:
                 lines.append(CONSOLE_SUMMARY_BANNER_COPY)
-            lines.extend(
-                [
-                    _speaker_label(message, presentation),
-                    _message_body(message, presentation),
-                ]
-            )
-            status_line = _message_status_line(message)
-            if status_line and not _is_generating_placeholder_body(
-                message, _message_body(message, presentation)
-            ):
-                lines.append(status_line)
-            if message.id == self.selected_message_id:
-                lines.append(self._plain_action_row(message))
-                lines.append(ConsoleMessageActionService().plain_action_guide(message))
+            lines.append(_speaker_label(message, presentation))
+            if turn is not None:
+                for activity in turn.activities:
+                    activity_presentation = activity.activity_presentation
+                    if activity_presentation is None:
+                        activity_header = "Activity · done"
+                    else:
+                        activity_header = (
+                            f"{activity_presentation.label} · "
+                            f"{activity_presentation.status}"
+                        )
+                    lines.append(activity_header)
+                    activity_body = _message_body(activity)
+                    if activity_body:
+                        lines.append(activity_body)
+                    _append_status_and_actions(activity, activity_body)
+            body = _message_body(message, presentation)
+            lines.append(body)
+            _append_status_and_actions(message, body)
         if self._messages:
             lines.append(rule)
         return "\n".join(lines)
@@ -5457,14 +5579,15 @@ class ConsoleTranscript(VerticalScroll):
         Keyboard selection walks this list so j/k never lands on a pruned
         (row-less) message; the store-facing ``_messages`` keeps full history.
         """
-        if not self._pruned_message_ids and not self._hidden_tail_ids:
-            return self._messages
-        return [
+        causal_messages = [
             message
             for message in self._messages
             if message.id not in self._pruned_message_ids
             and message.id not in self._hidden_tail_ids
         ]
+        return list(
+            visual_messages(group_console_transcript_messages(causal_messages))
+        )
 
     def _notify_selection_changed(self) -> None:
         """Let the owning screen refresh inspector/control surfaces after selection changes."""

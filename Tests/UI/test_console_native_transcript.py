@@ -253,6 +253,63 @@ def _assistant_turn_messages() -> list[ConsoleChatMessage]:
     ]
 
 
+def test_assistant_turn_visual_order_navigation_keeps_nested_message_ids() -> None:
+    """j/k walks the painted turn order while Inspector ids stay causal."""
+    transcript = ConsoleTranscript()
+    messages = [
+        *_assistant_turn_messages(),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.USER, content="continue", id="u-next"
+        ),
+    ]
+    transcript.set_messages(messages)
+
+    visited: list[str | None] = []
+    for _ in messages:
+        transcript.action_select_next()
+        visited.append(transcript.selected_message_id)
+
+    assert visited == [
+        "u-turn",
+        "thinking-turn",
+        "tool-turn",
+        "a-turn",
+        "u-next",
+    ]
+    assert transcript.display_message("thinking-turn") is messages[2]
+    assert transcript.display_message("tool-turn") is messages[3]
+
+
+def test_assistant_turn_plain_export_is_ordered_bounded_and_expansion_independent() -> (
+    None
+):
+    """Plain export uses structured activity previews, never disclosure detail."""
+    transcript = ConsoleTranscript()
+    user, assistant, thinking, tool = _assistant_turn_messages()
+    tool.tool_diff = ("secret.txt", "DIFF-BEFORE-SECRET", "DIFF-AFTER-SECRET")
+    transcript.set_messages([user, assistant, thinking, tool])
+    transcript.select_message(assistant.id)
+
+    collapsed = transcript.to_plain_text(width=48)
+    transcript.toggle_tool_output(tool.id)
+    expanded = transcript.to_plain_text(width=48)
+
+    assert expanded == collapsed
+    assert collapsed.count("Assistant") == 1
+    thinking_header = "Thinking · done"
+    tool_header = "fs_list · success"
+    assert collapsed.index("User") < collapsed.index("Assistant")
+    assert collapsed.index("Assistant") < collapsed.index(thinking_header)
+    assert collapsed.index(thinking_header) < collapsed.index("safe planning preamble")
+    assert collapsed.index("safe planning preamble") < collapsed.index(tool_header)
+    assert collapsed.index(tool_header) < collapsed.index("a.txt, b.txt")
+    assert collapsed.index("a.txt, b.txt") < collapsed.index(assistant.content)
+    assert "full tail" not in collapsed
+    assert "DIFF-BEFORE-SECRET" not in collapsed
+    assert "DIFF-AFTER-SECRET" not in collapsed
+    assert "Copy" in collapsed
+
+
 @pytest.mark.asyncio
 async def test_assistant_turn_nests_owned_activities_before_headerless_answer() -> None:
     """The mounted DOM, not a planner helper, proves the causal hierarchy."""

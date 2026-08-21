@@ -29,6 +29,7 @@ import pytest
 from textual.app import App, ComposeResult
 
 from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleActivityPresentation,
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
@@ -96,6 +97,73 @@ async def _far_jump_to_m10(pilot, transcript: ConsoleTranscript) -> None:
     assert _mounted_message_ids(transcript)[0] == "m10", (
         "precondition: the jump target must be head-pinned (first mounted row)"
     )
+
+
+def test_activity_far_jump_maps_to_owner_and_keeps_turn_window_atomic() -> None:
+    """Re-centering a nested id targets the owner and never splits its unit."""
+    transcript = ConsoleTranscript()
+    messages = [
+        ConsoleChatMessage(
+            id="before", role=ConsoleMessageRole.USER, content="before"
+        ),
+        ConsoleChatMessage(
+            id="owner", role=ConsoleMessageRole.ASSISTANT, content="answer"
+        ),
+        ConsoleChatMessage(
+            id="thinking",
+            role=ConsoleMessageRole.TOOL,
+            content="safe preamble",
+            activity_presentation=ConsoleActivityPresentation(
+                "thinking", "Thinking", "done"
+            ),
+        ),
+        ConsoleChatMessage(
+            id="tool",
+            role=ConsoleMessageRole.TOOL,
+            content="preview",
+            activity_presentation=ConsoleActivityPresentation(
+                "tool", "fs_list", "success"
+            ),
+        ),
+        ConsoleChatMessage(
+            id="after", role=ConsoleMessageRole.USER, content="after"
+        ),
+    ]
+    transcript.set_messages(messages)
+    transcript._set_hidden_prefix(4)
+    transcript._recenter_window_on(3, "tool")
+
+    assert transcript._reveal_scroll_target == "owner"
+    assert {"owner", "thinking", "tool"}.isdisjoint(
+        transcript._pruned_message_ids
+    )
+    assert {"owner", "thinking", "tool"}.isdisjoint(transcript._hidden_tail_ids)
+
+
+def test_initial_activity_window_boundaries_never_split_an_assistant_turn() -> None:
+    """A prefix boundary landing inside activities expands to the unit."""
+    transcript = ConsoleTranscript()
+    messages = [
+        ConsoleChatMessage(
+            id="old", role=ConsoleMessageRole.USER, content="old\n" * 20
+        ),
+        ConsoleChatMessage(
+            id="owner", role=ConsoleMessageRole.ASSISTANT, content="answer"
+        ),
+        ConsoleChatMessage(
+            id="activity",
+            role=ConsoleMessageRole.TOOL,
+            content="preview",
+            activity_presentation=ConsoleActivityPresentation(
+                "tool", "fs_list", "success"
+            ),
+        ),
+    ]
+
+    transcript.set_messages(messages)
+    transcript._set_hidden_prefix(2)
+
+    assert {"owner", "activity"}.isdisjoint(transcript._pruned_message_ids)
 
 
 # ---------------------------------------------------------------------------
