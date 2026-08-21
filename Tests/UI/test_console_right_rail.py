@@ -27,6 +27,7 @@ from contextlib import asynccontextmanager
 from dataclasses import replace
 import importlib
 import threading
+from types import SimpleNamespace
 
 import pytest
 from textual.containers import Horizontal
@@ -397,54 +398,64 @@ async def test_new_specialized_sibling_fails_mounted_production_census():
 
 
 @pytest.mark.asyncio
-async def test_sources_and_live_work_use_exact_twenty_line_content_ceiling():
+async def test_sources_use_exact_twenty_line_content_ceiling():
     async with make_console_pilot(size=(235, 52)) as pilot:
         await pilot.click("#console-inspector-rail-open")
         await pilot.pause()
         rail = pilot.app.screen.query_one("#console-right-rail")
-        content_by_section = {}
-        for section_id in ("sources", "live-work"):
-            section = rail.query_one(
-                f"#console-bounded-section-{section_id}", ConsoleBoundedSection
-            )
-            await section.viewport.remove_children()
-            content = Static("\n".join(f"row {index}" for index in range(20)))
-            await section.viewport.mount(content)
-            content_by_section[section_id] = content
-            section.request_reconcile()
+        section = rail.query_one(
+            "#console-bounded-section-sources", ConsoleBoundedSection
+        )
+        await section.viewport.remove_children()
+        content = Static("\n".join(f"row {index}" for index in range(20)))
+        await section.viewport.mount(content)
+        section.request_reconcile()
         for _ in range(5):
             await pilot.pause()
 
-        for section_id in content_by_section:
-            section = rail.query_one(
-                f"#console-bounded-section-{section_id}", ConsoleBoundedSection
-            )
-            assert section.viewport.content_region.height == 20
-            assert section.hint.display is False
+        assert section.viewport.content_region.height == 20
+        assert section.hint.display is False
 
-        for section_id, content in content_by_section.items():
-            content.update("\n".join(f"row {index}" for index in range(21)))
-            content.refresh(layout=True)
-            rail.query_one(
-                f"#console-bounded-section-{section_id}", ConsoleBoundedSection
-            ).request_reconcile()
+        content.update("\n".join(f"row {index}" for index in range(21)))
+        content.refresh(layout=True)
+        section.request_reconcile()
         for _ in range(5):
             await pilot.pause()
 
-        for section_id in content_by_section:
-            section = rail.query_one(
-                f"#console-bounded-section-{section_id}", ConsoleBoundedSection
-            )
-            assert section.viewport.content_region.height == 20
-            assert section.hint.display is True
-            assert section.hint.region.height == 1
+        assert section.viewport.content_region.height == 20
+        assert section.hint.display is True
+        assert section.hint.region.height == 1
 
 
+@pytest.mark.parametrize(
+    (
+        "direction",
+        "terminal_width",
+        "payload_rows",
+        "acp_status",
+        "before_demand",
+        "after_demand",
+    ),
+    (
+        ("pending-to-readiness", 200, 14, "not_configured", 20, 21),
+        ("readiness-to-pending", 210, 15, "running", 20, 21),
+    ),
+)
 @pytest.mark.asyncio
-async def test_live_work_swap_retains_header_and_bounded_scaffold_identity(monkeypatch):
-    async with make_console_pilot(size=(235, 52)) as pilot:
+async def test_live_work_production_swaps_cover_real_twenty_twenty_one_geometry(
+    monkeypatch,
+    direction,
+    terminal_width,
+    payload_rows,
+    acp_status,
+    before_demand,
+    after_demand,
+):
+    async with make_console_pilot(size=(terminal_width, 52)) as pilot:
         await pilot.click("#console-inspector-rail-open")
-        await pilot.pause()
+        for _ in range(6):
+            await pilot.pause()
+
         screen = pilot.app.screen
         rail = screen.query_one("#console-right-rail")
         live_root = rail.query_one("#console-live-work-section")
@@ -456,16 +467,50 @@ async def test_live_work_swap_retains_header_and_bounded_scaffold_identity(monke
         )
         viewport = bounded.viewport
         hint = bounded.hint
-        order = []
-        monkeypatch.setattr(bounded, "request_reconcile", lambda: order.append("local"))
-        monkeypatch.setattr(
-            rail, "request_outer_reconcile", lambda: order.append("outer")
+        pending = ConsoleLiveWorkLaunch.from_values(
+            source="test",
+            title="physical row boundary",
+            payload={f"row-{index:02}": "value" for index in range(payload_rows)},
+        )
+        screen.app_instance.acp_runtime_process_manager = SimpleNamespace(
+            snapshot=lambda: {"status": acp_status}
         )
 
-        screen._pending_console_launch_context = ConsoleLiveWorkLaunch.from_values(
-            source="test", title="bounded swap"
+        if direction == "pending-to-readiness":
+            screen._pending_console_launch_context = pending
+            await screen._apply_console_live_work_card_swap()
+        else:
+            screen._pending_console_launch_context = None
+            await screen._apply_console_live_work_card_swap()
+        for _ in range(6):
+            await pilot.pause()
+
+        assert bounded.desired_content_lines == before_demand
+        assert bounded.viewport.content_region.height == 20
+        assert bounded.hint.display is False
+
+        order = []
+        original_local = bounded.request_reconcile
+        original_outer = rail.request_outer_reconcile
+
+        def observe_local() -> None:
+            order.append("local")
+            original_local()
+
+        def observe_outer() -> None:
+            order.append("outer")
+            original_outer()
+
+        monkeypatch.setattr(bounded, "request_reconcile", observe_local)
+        monkeypatch.setattr(rail, "request_outer_reconcile", observe_outer)
+        baseline = rail._outer_reconcile_count
+
+        screen._pending_console_launch_context = (
+            None if direction == "pending-to-readiness" else pending
         )
         await screen._apply_console_live_work_card_swap()
+        for _ in range(8):
+            await pilot.pause()
 
         assert order == ["local", "outer"]
         assert rail.query_one("#console-live-work-section") is live_root
@@ -478,19 +523,24 @@ async def test_live_work_swap_retains_header_and_bounded_scaffold_identity(monke
         assert rail.query_one("#console-bounded-section-live-work") is bounded
         assert bounded.viewport is viewport
         assert bounded.hint is hint
-        assert rail.query_one("#console-pending-launch-card").parent is viewport
-        assert pending_header.display is True
-        assert readiness_header.display is False
+        assert bounded.desired_content_lines == after_demand
+        assert bounded.viewport.content_region.height == 20
+        assert bounded.hint.display is True
+        assert bounded.hint.region.height == 1
+        assert bounded._reconcile_scheduled is False
+        assert rail._outer_reconcile_count == baseline + 1
+        assert rail._outer_reconcile_scheduled is False
 
-        order.clear()
-        screen._pending_console_launch_context = None
-        await screen._apply_console_live_work_card_swap()
-        assert order == ["local", "outer"]
-        assert rail.query_one("#console-live-work-section") is live_root
-        assert rail.query_one("#console-bounded-section-live-work") is bounded
-        assert rail.query_one("#console-live-work-source-readiness").parent is viewport
-        assert pending_header.display is False
-        assert readiness_header.display is True
+        if direction == "pending-to-readiness":
+            assert (
+                rail.query_one("#console-live-work-source-readiness").parent is viewport
+            )
+            assert pending_header.display is False
+            assert readiness_header.display is True
+        else:
+            assert rail.query_one("#console-pending-launch-card").parent is viewport
+            assert pending_header.display is True
+            assert readiness_header.display is False
 
 
 @pytest.mark.asyncio

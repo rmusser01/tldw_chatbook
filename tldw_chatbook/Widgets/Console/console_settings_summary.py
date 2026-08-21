@@ -81,7 +81,7 @@ class ConsoleSettingsSummary(RecomposeCaptureGuard, Vertical):
         button.label = state.action_label
         button.tooltip = state.action_tooltip
         self._apply_button_sizing(button)
-        self._request_section_reconcile()
+        self.call_after_refresh(self._request_section_reconcile)
 
     def _apply_button_sizing(self, button: Button) -> None:
         button_width = min(

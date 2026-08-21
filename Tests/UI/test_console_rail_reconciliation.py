@@ -18,6 +18,11 @@ from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
+from tldw_chatbook.Chat.console_display_state import (
+    ConversationFileEntry,
+    ConsoleDisplayRow,
+)
+from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Chat.console_rail_state import ConsoleRailState
 from tldw_chatbook.Chat.console_session_settings import ConsoleSettingsSummaryState
 from tldw_chatbook.UI.Console_Modules import left_rail as left_rail_module
@@ -26,8 +31,16 @@ from tldw_chatbook.UI.Console_Modules.right_rail import ConsoleInspectorRail
 from tldw_chatbook.Widgets.Console.console_bounded_section import (
     ConsoleBoundedSection,
 )
+from tldw_chatbook.Widgets.Console.console_changed_files_section import (
+    ConsoleChangedFilesSection,
+    ConsoleChangedFilesState,
+)
+from tldw_chatbook.Widgets.Console.console_run_inspector import ConsoleRunInspector
 from tldw_chatbook.Widgets.Console.console_settings_summary import (
     ConsoleSettingsSummary,
+)
+from tldw_chatbook.Widgets.Console.console_staged_context import (
+    ConsoleStagedContextTray,
 )
 from tldw_chatbook.Widgets.Console.console_inspector_section import (
     ConsoleInspectorSectionState,
@@ -976,10 +989,26 @@ async def test_focus_and_pointer_activation_are_transient_and_open_close_falls_b
         assert rail._active_section_id == "conversations"
 
 
+def _reconcile_probe_file() -> ConversationFileEntry:
+    return ConversationFileEntry(
+        root="/tmp/project",
+        path="owner-probe.py",
+        label="owner-probe.py",
+        status="M",
+        adds=2,
+        dels=1,
+        run_id="run-owner-probe",
+        snapshot_id=71,
+        note_count=0,
+    )
+
+
+@pytest.mark.parametrize("owner_name", ("sources", "changed-files", "settings", "run"))
 @pytest.mark.asyncio
-async def test_inspector_descendant_mutation_settles_local_before_coalesced_outer() -> (
-    None
-):
+async def test_inspector_descendant_owners_reconcile_local_then_outer(
+    monkeypatch: pytest.MonkeyPatch,
+    owner_name: str,
+) -> None:
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = _ProductionConsoleHarness(app)
@@ -989,44 +1018,227 @@ async def test_inspector_descendant_mutation_settles_local_before_coalesced_oute
         await _wait_for_selector(screen, pilot, "#console-settings-summary")
         screen.query_one("#console-inspector-rail-open", Button).press()
         await _settle(pilot)
+        screen._stop_console_transcript_sync_timer()
 
         rail = screen.query_one("#console-right-rail", ConsoleInspectorRail)
-        summary = screen.query_one("#console-settings-summary", ConsoleSettingsSummary)
-        section = summary.query_one(
-            "#console-bounded-section-session-settings", ConsoleBoundedSection
-        )
         events: list[str] = []
-        original_local = section._run_scheduled_reconcile
-        original_outer = rail._run_scheduled_outer_reconcile
+        target_section = {
+            "sources": "sources",
+            "changed-files": "changed-files",
+            "settings": "session-settings",
+            "run": "chat-dictionaries",
+        }[owner_name]
+        original_local = ConsoleBoundedSection.request_reconcile
+        original_outer = rail.request_outer_reconcile
 
-        def run_local() -> None:
-            events.append("local")
-            original_local()
+        def observe_local(section: ConsoleBoundedSection) -> None:
+            if section.section_id == target_section:
+                events.append("local")
+            original_local(section)
 
-        def run_outer() -> None:
-            if not any(
-                candidate._reconcile_scheduled
-                for candidate in rail.query(ConsoleBoundedSection)
-            ):
-                events.append("outer")
+        def observe_outer() -> None:
+            events.append("outer")
             original_outer()
 
-        section._run_scheduled_reconcile = run_local  # type: ignore[method-assign]
-        rail._run_scheduled_outer_reconcile = run_outer  # type: ignore[method-assign]
+        monkeypatch.setattr(ConsoleBoundedSection, "request_reconcile", observe_local)
+        monkeypatch.setattr(rail, "request_outer_reconcile", observe_outer)
         baseline = rail._outer_reconcile_count
 
-        summary.sync_state(
-            replace(summary.state, model_row="Model: changed after mount")
-        )
-        rail.request_outer_reconcile()
-        rail.request_outer_reconcile()
-        for _ in range(8):
-            await pilot.pause()
+        if owner_name == "sources":
+            owner = screen.query_one(
+                "#console-staged-context-tray", ConsoleStagedContextTray
+            )
+            owner._on_reconcile = observe_outer
+            owner.sync_state(
+                replace(
+                    owner.state,
+                    summary="Sources owner probe",
+                    rows=(ConsoleDisplayRow("Source", "ready"),),
+                )
+            )
+        elif owner_name == "changed-files":
+            owner = screen.query_one(
+                "#console-changed-files-section", ConsoleChangedFilesSection
+            )
+            owner._on_reconcile = observe_outer
+            owner.update_state(
+                ConsoleChangedFilesState(entries=(_reconcile_probe_file(),))
+            )
+        elif owner_name == "settings":
+            owner = screen.query_one(
+                "#console-settings-summary", ConsoleSettingsSummary
+            )
+            owner._on_reconcile = observe_outer
+            owner.sync_state(replace(owner.state, model_row="Model: owner-path-probe"))
+        else:
+            owner = screen.query_one(
+                "#console-run-inspector-state", ConsoleRunInspector
+            )
+            owner._on_reconcile = observe_outer
+            owner.sync_state(
+                replace(
+                    owner.state,
+                    dictionary_rows=(
+                        ConsoleDisplayRow("Dictionary A", "attached"),
+                        ConsoleDisplayRow("Dictionary B", "attached"),
+                    ),
+                    world_book_rows=(
+                        ConsoleDisplayRow("World Book A", "attached"),
+                        ConsoleDisplayRow("World Book B", "attached"),
+                    ),
+                )
+            )
+        await _settle(pilot, passes=10)
 
         assert "local" in events
         assert "outer" in events
         assert events.index("local") < events.index("outer")
+        assert events.count("outer") == 1
         assert rail._outer_reconcile_count == baseline + 1
+        assert rail._outer_reconcile_scheduled is False
+        assert not any(
+            section._reconcile_scheduled
+            for section in rail.query(ConsoleBoundedSection)
+        )
+
+        section = rail.query_one(
+            f"#console-bounded-section-{target_section}", ConsoleBoundedSection
+        )
+        assert section.desired_content_lines > 0
+        assert section.viewport.content_region.height == min(
+            section.desired_content_lines, 20
+        )
+        if owner_name == "sources":
+            assert (
+                str(
+                    rail.query_one("#console-staged-context-summary", Static).renderable
+                )
+                == "Sources owner probe"
+            )
+        elif owner_name == "changed-files":
+            assert rail.query_one("#console-changed-files-row-0", Button)
+        elif owner_name == "settings":
+            assert (
+                str(rail.query_one("#console-settings-model-row", Static).renderable)
+                == "Model: owner-path-probe"
+            )
+        else:
+            assert rail.query_one("#console-inspector-dictionaries-heading", Static)
+            assert rail.query_one("#console-inspector-worldbooks-heading", Static)
+            assert rail.query_one("#console-bounded-section-world-books")
+
+
+@pytest.mark.parametrize(
+    "mutation_path", ("sources", "changed-files", "settings", "run")
+)
+@pytest.mark.asyncio
+async def test_chat_screen_inspector_mutation_paths_coalesce_owner_and_screen_requests(
+    monkeypatch: pytest.MonkeyPatch,
+    mutation_path: str,
+) -> None:
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = _ProductionConsoleHarness(app)
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        screen = host.screen_stack[-1]
+        await _wait_for_selector(screen, pilot, "#console-settings-summary")
+        screen.query_one("#console-inspector-rail-open", Button).press()
+        await _settle(pilot)
+        screen._stop_console_transcript_sync_timer()
+
+        rail = screen.query_one("#console-right-rail", ConsoleInspectorRail)
+        target_section = {
+            "sources": "sources",
+            "changed-files": "changed-files",
+            "settings": "session-settings",
+            "run": "chat-dictionaries",
+        }[mutation_path]
+        events: list[str] = []
+        original_local = ConsoleBoundedSection.request_reconcile
+        original_outer = rail.request_outer_reconcile
+
+        def observe_local(section: ConsoleBoundedSection) -> None:
+            if section.section_id == target_section:
+                events.append("local")
+            original_local(section)
+
+        def observe_outer() -> None:
+            events.append("outer")
+            original_outer()
+
+        monkeypatch.setattr(ConsoleBoundedSection, "request_reconcile", observe_local)
+        monkeypatch.setattr(rail, "request_outer_reconcile", observe_outer)
+        baseline = rail._outer_reconcile_count
+
+        if mutation_path == "sources":
+            owner = screen.query_one(
+                "#console-staged-context-tray", ConsoleStagedContextTray
+            )
+            owner._on_reconcile = observe_outer
+            screen._pending_console_launch_context = ConsoleLiveWorkLaunch.from_values(
+                source="owner-path", title="Sources ChatScreen probe"
+            )
+            screen._sync_console_staged_context_tray()
+        elif mutation_path == "changed-files":
+            owner = screen.query_one(
+                "#console-changed-files-section", ConsoleChangedFilesSection
+            )
+            owner._on_reconcile = observe_outer
+            screen._console_changed_files_summary = (_reconcile_probe_file(),)
+            screen._console_changed_files_pruned_rows = 0
+            screen._sync_console_changed_files_section()
+        elif mutation_path == "settings":
+            owner = screen.query_one(
+                "#console-settings-summary", ConsoleSettingsSummary
+            )
+            owner._on_reconcile = observe_outer
+            state = replace(owner.state, model_row="Model: screen-path-probe")
+            monkeypatch.setattr(
+                screen, "_build_console_settings_summary_state", lambda: state
+            )
+            screen._sync_console_settings_summary()
+        else:
+            owner = screen.query_one(
+                "#console-run-inspector-state", ConsoleRunInspector
+            )
+            owner._on_reconcile = observe_outer
+            state = replace(
+                owner.state,
+                dictionary_rows=(
+                    ConsoleDisplayRow("Screen dictionary A", "attached"),
+                    ConsoleDisplayRow("Screen dictionary B", "attached"),
+                ),
+                world_book_rows=(
+                    ConsoleDisplayRow("Screen world book A", "attached"),
+                    ConsoleDisplayRow("Screen world book B", "attached"),
+                ),
+            )
+            monkeypatch.setattr(
+                screen,
+                "_build_console_inspector_state",
+                lambda _launch: state,
+            )
+            screen._sync_console_control_bar(screen._current_console_rail_state())
+        await _settle(pilot, passes=10)
+
+        assert "local" in events
+        assert events.index("local") < events.index("outer")
+        assert events.count("outer") == 2
+        assert rail._outer_reconcile_count == baseline + 1
+        assert rail._outer_reconcile_scheduled is False
+        assert not any(
+            section._reconcile_scheduled
+            for section in rail.query(ConsoleBoundedSection)
+        )
+
+        section = rail.query_one(
+            f"#console-bounded-section-{target_section}", ConsoleBoundedSection
+        )
+        assert section.desired_content_lines > 0
+        assert section.viewport.content_region.height == min(
+            section.desired_content_lines, 20
+        )
 
 
 @pytest.mark.asyncio

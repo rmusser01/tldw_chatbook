@@ -5019,6 +5019,19 @@ class ChatScreen(BaseAppScreen):
             return
         right_rail.request_outer_reconcile()
 
+    def _request_console_live_work_reconcile(self) -> None:
+        """Settle the swapped Live Work body before its Inspector owner."""
+
+        try:
+            section = self.query_one(
+                "#console-bounded-section-live-work", ConsoleBoundedSection
+            )
+            rail = self.query_one("#console-right-rail", ConsoleInspectorRail)
+        except (NoMatches, QueryError):
+            return
+        section.request_reconcile()
+        rail.request_outer_reconcile()
+
     def _sync_console_settings_summary(self) -> None:
         """Refresh the mounted Console settings summary surfaces if present."""
         summary_state = self._build_console_settings_summary_state()
@@ -13075,7 +13088,6 @@ class ChatScreen(BaseAppScreen):
                 local_section = self.query_one(
                     "#console-bounded-section-live-work", ConsoleBoundedSection
                 )
-                rail = self.query_one("#console-right-rail", ConsoleInspectorRail)
                 pending_header = self.query_one(
                     "#console-live-work-status-badge", Static
                 )
@@ -13102,8 +13114,7 @@ class ChatScreen(BaseAppScreen):
             await local_section.viewport.mount(card)
             pending_header.display = launch is not None
             readiness_header.display = launch is None
-            local_section.request_reconcile()
-            rail.request_outer_reconcile()
+            self.call_after_refresh(self._request_console_live_work_reconcile)
             swapped_context = launch
             swap_completed = True
         finally:
