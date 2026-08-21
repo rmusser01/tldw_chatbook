@@ -363,8 +363,19 @@ def _denylisted_candidates() -> list[tuple[str, Path]]:
     DOTTED. That matters only for the second family: its
     ``validate_path_multi`` refuses a dotted base directory outright
     (``allow_hidden`` defaults False there), so for those candidates its
-    refusal comes from confinement, not the denylist -- an honest
-    distinction the assertions below keep rather than paper over.
+    refusal comes from confinement, not the denylist -- a distinction the
+    assertions below keep rather than paper over.
+
+    Read that distinction accurately (review round): it is not purely a
+    design difference. Because the second family rejects dotted components
+    at confinement, it ALSO refuses dotted credential files the denylist
+    does not enumerate at all (``~/.netrc``, ``~/.git-credentials``,
+    ``~/.npmrc``, ...), which the ``fs_*`` family -- passing
+    ``allow_hidden=True`` -- returns in full. For dotted paths the ``fs_*``
+    family is therefore strictly the weaker of the two, and part of what
+    looks like an honest difference of mechanism is residue. Tracked as
+    TASK-19633; the candidates below are all genuinely denylisted, so this
+    test is unaffected either way.
     """
     from tldw_chatbook import config as app_config
 
@@ -439,22 +450,46 @@ def test_both_file_tool_families_refuse_the_same_denylisted_paths(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+#: Helpers in ``git_tool_impls`` that resolve their path argument through
+#: ``resolve_workspace_path`` themselves, so a git tool calling one of them
+#: IS on the choke point -- just one hop away. Enumerated (rather than
+#: chasing the call graph) so that adding a FOURTH indirect resolver is a
+#: deliberate edit here, with the same "does it call the choke point?"
+#: question asked of it directly below.
+_INDIRECT_CHOKE_POINT_RESOLVERS = frozenset(
+    {"prepare_repository", "_prepare_for_path", "_repo_relative_path"}
+)
+
+
 def test_every_workspace_rooted_function_uses_the_choke_point():
     """AST tripwire, TASK-19551 AC5.
 
-    Any module-level function in the ``fs_*`` core modules that accepts a
-    ``workspace_root`` is a filesystem entry point for the agent, and must
-    resolve its target through ``resolve_workspace_path`` -- the ONE place
-    the denylist is enforced for this family. A new tool that resolves its
-    own path (``Path(workspace_root) / arg``) would reintroduce exactly the
-    hole this task closed, so it fails here instead.
+    Any module-level function in the agent file/git tool core modules that
+    accepts a ``workspace_root`` is a filesystem entry point for the agent,
+    and must resolve its target through ``resolve_workspace_path`` -- the
+    ONE place the denylist is enforced for this family. A new tool that
+    resolves its own path (``Path(workspace_root) / arg``) would reintroduce
+    exactly the hole this task closed, so it fails here instead.
+
+    ``git_tool_impls`` is covered too (fix round): its four repo-scoped
+    tools reach the choke point INDIRECTLY, through the three helpers in
+    ``_INDIRECT_CHOKE_POINT_RESOLVERS`` -- each of which is itself required
+    below to call ``resolve_workspace_path`` directly, so the indirection is
+    verified rather than assumed. Covering only two of the family's three
+    modules is what let this test tick AC5 while a new git tool would have
+    got zero tripwire coverage.
+
+    NOTE what this tripwire does NOT claim: reaching the choke point proves
+    a tool's PATH ARGUMENT is denylist-checked, not that its OUTPUT is
+    filtered. ``git_diff`` called without a path never presents one, and
+    leaks committed file CONTENT for denylisted paths -- see TASK-19632.
     """
     import ast
 
-    from tldw_chatbook.Tools import local_tool_impls, patch_tool_impls
+    from tldw_chatbook.Tools import git_tool_impls, local_tool_impls, patch_tool_impls
 
     offenders: list[str] = []
-    for module in (local_tool_impls, patch_tool_impls):
+    for module in (local_tool_impls, patch_tool_impls, git_tool_impls):
         tree = ast.parse(Path(module.__file__).read_text())
         for node in tree.body:
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -470,12 +505,19 @@ def test_every_workspace_rooted_function_uses_the_choke_point():
                 for sub in ast.walk(node)
                 if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name)
             }
-            if "resolve_workspace_path" not in calls:
+            accepted = {"resolve_workspace_path"}
+            if node.name not in _INDIRECT_CHOKE_POINT_RESOLVERS:
+                # A resolver itself must reach the choke point DIRECTLY;
+                # only its callers may go through it.
+                accepted |= _INDIRECT_CHOKE_POINT_RESOLVERS
+            if not (calls & accepted):
                 offenders.append(f"{module.__name__}.{node.name}")
 
     assert not offenders, (
-        "these workspace-rooted functions never call resolve_workspace_path, "
-        f"so they bypass the sensitive-path denylist: {offenders}"
+        "these workspace-rooted functions never reach resolve_workspace_path "
+        "(directly or via one of "
+        f"{sorted(_INDIRECT_CHOKE_POINT_RESOLVERS)}), so they bypass the "
+        f"sensitive-path denylist: {offenders}"
     )
 
 

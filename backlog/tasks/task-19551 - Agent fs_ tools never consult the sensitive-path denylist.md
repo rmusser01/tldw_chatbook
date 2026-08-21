@@ -2,7 +2,7 @@
 id: TASK-19551
 title: >-
   Agent fs_* tools never consult the sensitive-path denylist
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-21 20:01'
 labels:
@@ -133,15 +133,27 @@ file it walks and prints matching lines, so its check runs *before* the read;
 at base, a home-rooted workspace and a pattern as bland as `KEY` dumped
 `~/.ssh/id_rsa` into the transcript.
 
-**`allow_hidden=True` is KEPT, deliberately.** ADR-032 adopted it for this
-family precisely because real workspaces need `.git`/`.github`/dotfile configs,
-and a coding agent that cannot read `.github/workflows/ci.yml` is useless.
-Dotted names are how `~/.ssh` and `~/.aws` are spelled, but "starts with a dot"
-is a name heuristic, not a security boundary — `is_sensitive_path` answers that
-question properly, by RESOLVED ancestry, so `~/.sshfoo` is not mistaken for
-`~/.ssh` and a symlink cannot smuggle a path past it. Reversing the flag would
-contradict a signed ADR, break the family's core use case, and still not cover
-non-dotted credentials. Both halves are pinned:
+**`allow_hidden=True` is KEPT, deliberately — with one correction to the
+argument.** ADR-032 adopted it for this family precisely because real
+workspaces need `.git`/`.github`/dotfile configs, and a coding agent that
+cannot read `.github/workflows/ci.yml` is useless. Dotted names are how
+`~/.ssh` and `~/.aws` are spelled, but "starts with a dot" is a name heuristic,
+not a security boundary — `is_sensitive_path` answers that question by RESOLVED
+ancestry, so `~/.sshfoo` is not mistaken for `~/.ssh` and a symlink cannot
+smuggle a path past it. Reversing the flag would contradict a signed ADR, break
+the family's core use case, and still not cover non-dotted credentials.
+
+The correction (review round, re-measured while filing): resolved-ancestry
+matching is only as strong as what the denylist ENUMERATES, and `~/.netrc`,
+`~/.git-credentials`, `~/.npmrc`, `~/.pypirc`, `~/.cargo/credentials.toml` and
+`~/.config/gh/hosts.yml` are in none of its entries — `fs_read` returns all six
+bodies, while the sibling family refuses them at confinement because its
+`allow_hidden` defaults False. So for DOTTED credential paths this family is
+strictly the weaker of the two, and the drift pin's comment calling that
+asymmetry "an honest distinction" is only partly right: it is partly residue.
+Filed as **TASK-19633** (denylist CONTENT gap, shared with the primitive); the
+decision to keep `allow_hidden=True` stands, since flipping it would fix none
+of the non-dotted cases. Both halves of the decision are pinned:
 `test_fs_read_refuses_dotfile_component_credential_path` (a dotted path IS
 refused, and only the denylist can be what refuses it) and
 `test_benign_workspace_dotfiles_stay_readable` (`.github/`, `.gitignore` stay
@@ -164,6 +176,42 @@ keeps an honest distinction: for a candidate whose parent directory is dotted
 (`~/.ssh/id_rsa`), the second family refuses at *confinement* — its
 `validate_path_multi` rejects a dotted base directory outright — so only the
 non-dotted candidates assert its refusal is denylist-sourced.
+
+**A confirmed live leak found during this work, in the neighbouring `git_*`
+family — filed as TASK-19632.** The choke point governs a path the model
+NAMES. `path` is optional on `git_status`/`git_log`/`git_diff`, and when it is
+omitted `Agents/local_tool_provider.py:444-445` returns the repo root and
+stops, so nothing reaches the denylist; git then enumerates the repository and
+the tool returns its output verbatim. Measured on a `$HOME`-rooted workspace
+containing a synthetic `~/.ssh/id_rsa`: `git_diff` returns the file's CONTENT,
+and — this is worse than my first report — it needs **no write primitive and no
+dirty worktree**, because `commit_range="HEAD~1..HEAD"` reads it out of
+history. `git_diff(stat=True)` and a dirty-tree `git_status` return the NAME;
+`git_log` leaks nothing (commit metadata only), so my original "three git
+tools" framing was wrong and is corrected in the filing. Not fixed here: it is
+a different tool family, and the fix (pathspec exclusion vs. parsing diff
+output) is a design decision that must not ship as a hurried diff filter.
+
+**The contract text was rewritten in the review round**, because the first
+version said the choke point covered "every `fs_*` and `git_*` core function
+... so the check lives in ONE place for all of them". A reader could have used
+that to conclude `git_*` was safe — which is precisely the failure this task
+exists to fix (an enforcer list that describes only the implementations
+existing when it was written). `Utils/sensitive_paths.py`,
+`Tools/local_tool_impls.py`'s module docstring and `resolve_workspace_path`'s
+now state the path-argument/output distinction explicitly and name TASK-19632
+and TASK-19633 as open exceptions.
+
+**AC5's tripwire covered 2 of the family's 3 modules** in the first round
+(`local_tool_impls`, `patch_tool_impls`), so a new `git_*` tool would have had
+zero coverage. Fixed: `git_tool_impls` is in the module tuple, with the three
+documented indirect resolvers (`prepare_repository`, `_prepare_for_path`,
+`_repo_relative_path`) accepted — each of which is itself required to call the
+choke point DIRECTLY, so the indirection is verified rather than assumed.
+Mutation-tested four ways: without the accept-set the four repo-scoped git
+tools are reported (reproducing the gap exactly); as shipped all three modules
+are clean; a synthetic `git_show` that resolves its own path IS reported; and
+an indirect resolver that stops calling the choke point IS reported.
 
 **`workspace_root` default (AC6), reviewed — kept, documented.** The default
 (app cwd at startup) is an explicit, signed ADR-032 trade-off, and changing it

@@ -23,14 +23,21 @@ Path safety has TWO layers, and both are mandatory (TASK-19551):
    ``mcp_permissions.json`` turns every ``ask`` into ``allow``, a one-step
    bypass of the permission gate that authorized the call.
 
-The three ENUMERATING tools (``list_directory``/``glob_files``/
-``grep_files``) resolve only the workspace root through the choke point, so
-the choke point cannot cover the entries they walk: each filters its own
-candidates against the same denylist, resolving the sensitive-path context
-ONCE per invocation (see ``Utils.sensitive_paths.resolve_sensitive_context``)
-rather than once per candidate. ``grep_files`` is the sharpest of the three
-— it READS every file it walks and prints matching lines — so its check
-must run before the read, not after.
+The choke point covers a path the model NAMES. It cannot cover entries a
+tool presents that the model never named, so the three ENUMERATING tools
+(``list_directory``/``glob_files``/``grep_files``) — which resolve only the
+workspace ROOT through it — each filter their own candidates against the
+same denylist, resolving the sensitive-path context ONCE per invocation
+(see ``Utils.sensitive_paths.resolve_sensitive_context``) rather than once
+per candidate. ``grep_files`` is the sharpest of the three — it READS every
+file it walks and prints matching lines — so its check runs before the
+read, not after.
+
+``Tools/git_tool_impls.py`` shares this choke point for its path arguments
+but has NO such output filter, and ``path`` is optional on ``git_status``/
+``git_log``/``git_diff``: with it omitted, ``git_diff`` returns the CONTENT
+of a denylisted file (TASK-19632, open). Do not extend that family assuming
+the choke point alone makes its output safe.
 """
 
 from __future__ import annotations
@@ -82,10 +89,13 @@ def resolve_workspace_path(
     """Resolve ``path`` against ``workspace_root``, confined and denylisted.
 
     The single choke point for this tool family: every ``fs_*`` and
-    ``git_*`` core function resolves its target here, so both path checks
-    are enforced in ONE place rather than re-implemented per tool (which is
-    exactly how the denylist came to be missing from all seven of them —
-    TASK-19551).
+    ``git_*`` core function resolves a model-supplied path here (the git
+    ones one hop away, via ``prepare_repository``/``_prepare_for_path``/
+    ``_repo_relative_path``), so both path checks are enforced in ONE place
+    rather than re-implemented per tool — which is exactly how the denylist
+    came to be missing from all seven ``fs_*`` tools (TASK-19551). It
+    governs the path a caller PASSES; it does not filter what a tool
+    returns (see the module docstring for where that distinction bites).
 
     Two checks, in order:
 

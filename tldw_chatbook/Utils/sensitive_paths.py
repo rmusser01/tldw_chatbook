@@ -8,27 +8,60 @@ TWO independent agent file-tool families enforce this, and both must:
    confined) -- each calls :func:`is_sensitive_path` (directly, or through
    that module's ``is_within`` helper) on every candidate path immediately
    after path validation and before touching the filesystem.
-2. The workspace-local ``fs_*`` family -- ``Tools/local_tool_impls.py``'s
-   ``resolve_workspace_path``, the single choke point every ``fs_*`` and
-   ``git_*`` core function (including ``Tools/patch_tool_impls.py``'s
-   ``patch_files`` and ``Tools/git_tool_impls.py``) resolves its target
-   through, so the check lives in ONE place for all of them. The three
-   ENUMERATING tools there (``list_directory``/``glob_files``/
-   ``grep_files``) additionally filter their own walked candidates, since
-   the choke point only ever sees their root.
+2. The workspace-local ``fs_*``/``git_*`` family --
+   ``Tools/local_tool_impls.py``'s ``resolve_workspace_path``, the single
+   choke point through which every one of them resolves a path ARGUMENT
+   (``Tools/patch_tool_impls.py``'s ``patch_files`` directly; the four
+   repo-scoped tools in ``Tools/git_tool_impls.py`` one hop away, via
+   ``prepare_repository``/``_prepare_for_path``/``_repo_relative_path``).
 
-   That family was added AFTER this contract was written and, until
+   Read what that sentence does and does not say. It covers a path the
+   model NAMES. It does not make a tool's OUTPUT safe:
+
+   * The three enumerating ``fs_*`` tools (``list_directory``/
+     ``glob_files``/``grep_files``) present entries the model never named,
+     so each additionally filters its own walked candidates against
+     :func:`is_sensitive_path` -- the choke point only ever sees their
+     root.
+   * **The ``git_*`` tools do NOT have that filtering, and one of them
+     leaks (TASK-19632, open).** ``path`` is OPTIONAL on ``git_status``/
+     ``git_log``/``git_diff``, and when it is omitted nothing reaches this
+     module at all (``Agents/local_tool_provider.py``'s ``path_targets``
+     returns the repo root and stops). Measured on a ``$HOME``-rooted
+     workspace containing ``~/.ssh/id_rsa``: ``git_diff`` returns the
+     file's CONTENT (a clean worktree is enough -- ``commit_range=
+     "HEAD~1..HEAD"`` reads it out of history, no write primitive needed);
+     ``git_diff(stat=True)`` and ``git_status`` on a dirty tree return the
+     NAME; ``git_log`` returns commit metadata only and leaks nothing. Do
+     not read item 2 as "the git tools are covered" -- their path
+     ARGUMENT is, their output is not.
+
+   This family was added AFTER this contract was written and, until
    TASK-19551, called none of this: it confined paths to ``[console]
    workspace_root`` and stopped there. With the shipped default root (the
    app's cwd at startup) an app launched from ``$HOME`` made ``$HOME`` the
    confinement root, so ``fs_read`` returned ``~/.ssh/id_rsa`` and
    ``fs_write``/``fs_patch`` could rewrite ``mcp_permissions.json`` -- the
    one-step gate bypass described below -- reachable by prompt injection
-   from fetched web content. **A new agent-facing file tool joins one of
-   these two families; it does not get a third path-resolution seam.**
-   ``Tests/Tools/test_local_tool_sensitive_paths.py`` pins both the choke
-   point and the two families' agreement, so they cannot drift apart
-   again.
+   from fetched web content. The failure was not a wrong check; it was an
+   enforcer list that could only ever name the implementations existing
+   when it was written, and a second family that never joined it. Hence
+   the exception above is stated rather than smoothed over: **a new
+   agent-facing file tool joins one of these two families; it does not get
+   a third path-resolution seam** --
+   ``Tests/Tools/test_local_tool_sensitive_paths.py`` pins that
+   structurally (an AST tripwire over all three ``fs_*``/``git_*`` core
+   modules) and pins the two families' agreement on the denylist, so they
+   cannot drift apart again.
+
+Also worth knowing before relying on this module: the denylist is an
+ENUMERATION (``_SENSITIVE_DIRS`` plus the accessor-resolved paths below),
+so its coverage is exactly what it lists. Credential files it does not
+enumerate -- ``~/.netrc``, ``~/.git-credentials``, ``~/.npmrc``,
+``~/.pypirc``, ``~/.cargo/credentials.toml``, ``~/.config/gh/hosts.yml`` --
+are NOT refused by it, and family 2 passes ``allow_hidden=True`` while
+family 1 does not, so for dotted paths family 2 is strictly the weaker of
+the two (TASK-19633, open).
 
 This is *not* wired into
 ``Utils/path_validation.validate_path``/``validate_path_multi`` themselves:
@@ -541,9 +574,12 @@ def is_sensitive_path(
       ``GrepFiles.execute`` in ``Tools/file_operation_tools.py`` (directly,
       or via that module's ``is_within``).
     * ``Tools/local_tool_impls.py``'s ``resolve_workspace_path`` -- the
-      choke point the whole workspace-local ``fs_*``/``git_*`` family
-      resolves through -- plus the per-candidate filters in
+      choke point the workspace-local ``fs_*``/``git_*`` family resolves
+      its path ARGUMENTS through -- plus the per-candidate filters in
       ``list_directory``/``glob_files``/``grep_files`` there (TASK-19551).
+      The ``git_*`` tools have no output filter and ``git_diff`` leaks
+      content for a denylisted path when ``path`` is omitted; see this
+      module's docstring and TASK-19632.
 
     Args:
         candidate: The path a tool intends to touch.
