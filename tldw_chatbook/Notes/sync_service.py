@@ -104,7 +104,22 @@ class NotesSyncService:
         return history
 
     def get_conflicts_for_session(self, session_id: str) -> List[Dict[str, Any]]:
-        """Get conflicts for a specific sync session."""
+        """Get conflicts for a specific sync session.
+
+        This is the read surface for the preservation columns added in
+        task-19554. When a resolution discarded a side, ``losing_side`` says
+        which, ``losing_content`` is that side's text verbatim (enough to
+        reconstruct it without the file), and ``preserved_file_path`` points at
+        the sidecar written next to the note -- which is the copy a user
+        actually recovers from, by renaming it. When nothing was discarded all
+        three are ``None``.
+
+        Args:
+            session_id: The sync session to read.
+
+        Returns:
+            One dict per conflict row, newest first.
+        """
         conflicts = []
 
         with self.db.transaction() as conn:
@@ -113,7 +128,8 @@ class NotesSyncService:
                 SELECT id, note_id, file_path, conflict_type,
                        db_content_hash, disk_content_hash,
                        db_modified_time, disk_modified_time,
-                       resolution, resolved_at, created_at
+                       resolution, resolved_at, created_at,
+                       losing_side, losing_content, preserved_file_path
                 FROM sync_conflicts
                 WHERE session_id = ?
                 ORDER BY created_at DESC
@@ -134,10 +150,58 @@ class NotesSyncService:
                     "resolution": row[8],
                     "resolved_at": row[9],
                     "created_at": row[10],
+                    "losing_side": row[11],
+                    "losing_content": row[12],
+                    "preserved_file_path": row[13],
                 }
                 conflicts.append(conflict_data)
 
         return conflicts
+
+    def get_preserved_conflict_copies(
+        self, limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """Get every conflict whose discarded side was kept, newest first.
+
+        The recovery entry point that is not scoped to one session: after an
+        unattended auto-sync pass the user does not know the session id, only
+        that a note changed under them. Each row carries the discarded text
+        itself plus the sidecar path, so recovery works whether or not the
+        folder still has the file.
+
+        Args:
+            limit: Maximum rows to return.
+
+        Returns:
+            One dict per preserved conflict, newest first.
+        """
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                """
+                SELECT id, session_id, note_id, file_path, conflict_type,
+                       losing_side, losing_content, preserved_file_path,
+                       resolution, resolved_at, created_at
+                FROM sync_conflicts
+                WHERE losing_content IS NOT NULL
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+            """,
+                (limit,),
+            )
+            keys = (
+                "id",
+                "session_id",
+                "note_id",
+                "file_path",
+                "conflict_type",
+                "losing_side",
+                "losing_content",
+                "preserved_file_path",
+                "resolution",
+                "resolved_at",
+                "created_at",
+            )
+            return [dict(zip(keys, row)) for row in cursor]
 
     def resolve_conflict(self, conflict_id: int, resolution: str, user_id: str) -> bool:
         """

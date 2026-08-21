@@ -21870,8 +21870,17 @@ async def test_library_shell_notes_sync_conflicts_get_honest_resolved_copy(
 ):
     """A2/B1: the activity line for recorded conflicts must state the
     resolved policy (truthful: this panel never offers a review surface)
-    and pluralize correctly."""
+    and pluralize correctly.
+
+    task-19554 tightened the fake: the conflict here is a real
+    ``SyncConflict`` that the engine marked ``applied``. It used to be the
+    bare string ``"c-1"``, which could not distinguish a conflict the run
+    resolved from one it merely wrote down -- and at that time every conflict
+    under "Disk wins"/"Library wins" was the latter while this line still
+    claimed "resolved".
+    """
     from tldw_chatbook.Notes import sync_service as sync_service_module
+    from tldw_chatbook.Notes.sync_engine import SyncConflict
 
     class _ConflictResults:
         def __init__(self):
@@ -21879,7 +21888,19 @@ async def test_library_shell_notes_sync_conflicts_get_honest_resolved_copy(
             self.updated_notes = []
             self.created_files = []
             self.updated_files = []
-            self.conflicts = ["c-1"]
+            self.conflicts = [
+                SyncConflict(
+                    note_id="note-1",
+                    file_path=Path("note.md"),
+                    conflict_type="both_changed",
+                    applied=True,
+                    resolution="use_db",
+                    preserved_path=Path("note.md.conflict-20260821T000000Z-disk.bak"),
+                )
+            ]
+            self.preserved_files = [
+                Path("note.md.conflict-20260821T000000Z-disk.bak")
+            ]
             self.errors = []
 
     class _ConflictSyncService:
@@ -21935,6 +21956,100 @@ async def test_library_shell_notes_sync_conflicts_get_honest_resolved_copy(
             "recorded for review" in line
             for line in screen._library_notes_sync_activity
         )
+        # ...and it names where the replaced copy went (task-19554).
+        assert any(
+            "Replaced copy saved as note.md.conflict-" in line
+            for line in screen._library_notes_sync_activity
+        ), screen._library_notes_sync_activity
+        assert not any(
+            "left unresolved" in line
+            for line in screen._library_notes_sync_activity
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_shell_notes_sync_unapplied_conflict_is_not_called_resolved(
+    monkeypatch, tmp_path
+):
+    """task-19554 AC #4: a run that applied nothing must not claim it did.
+
+    The panel used to print "N conflicts resolved (<policy>)" for every
+    RECORDED conflict, so selecting "Disk wins" -- which had no branch in the
+    engine at all -- read as a successful resolution while the note kept its
+    old body. This is the pin for the opposite line.
+    """
+    from tldw_chatbook.Notes import sync_service as sync_service_module
+    from tldw_chatbook.Notes.sync_engine import SyncConflict
+
+    class _UnresolvedResults:
+        def __init__(self):
+            self.created_notes = []
+            self.updated_notes = []
+            self.created_files = []
+            self.updated_files = []
+            self.conflicts = [
+                SyncConflict(
+                    note_id="note-1",
+                    file_path=Path("note.md"),
+                    conflict_type="both_changed",
+                )
+            ]
+            self.preserved_files = []
+            self.errors = []
+
+    class _UnresolvedSyncService:
+        def __init__(self, notes_service, db):
+            pass
+
+        async def sync_folder(
+            self,
+            *,
+            root_folder,
+            user_id,
+            direction,
+            conflict_resolution,
+            progress_callback=None,
+            extensions=None,
+        ):
+            return ("session-unresolved", _UnresolvedResults())
+
+    monkeypatch.setattr(
+        sync_service_module, "NotesSyncService", _UnresolvedSyncService
+    )
+
+    app = _build_test_app()
+    _prepare_library_notes_sync_app(app)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_notes_sync_panel(screen, pilot)
+
+        folder_input = screen.query_one("#library-notes-sync-folder", Input)
+        folder_input.value = str(tmp_path)
+        folder_input.focus()
+        await pilot.pause()
+
+        screen.query_one("#library-notes-sync-run").press()
+        for _ in range(150):
+            if (
+                not screen._library_notes_sync_running
+                and screen._library_notes_sync_status != "idle"
+            ):
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Sync run never completed.")
+
+        assert not any(
+            "resolved (" in line
+            for line in screen._library_notes_sync_activity
+        ), screen._library_notes_sync_activity
+        assert any(
+            "1 conflict left unresolved" in line
+            for line in screen._library_notes_sync_activity
+        ), screen._library_notes_sync_activity
 
 
 async def _run_library_search_and_wait_for_open_result(

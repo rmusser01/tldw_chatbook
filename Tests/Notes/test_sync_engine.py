@@ -237,25 +237,43 @@ class TestSyncEngine:
         # Create the file with initial content
         file_path.write_text("Original content")
 
-        # Update sync metadata to establish baseline
+        # Update sync metadata to establish baseline.
+        #
+        # task-19554: this block used to pass `expected_version=1` for a note
+        # the PREVIOUS call had already bumped to 2. `update_note_sync_metadata`
+        # reports a version miss by returning False and logging -- it does not
+        # raise -- so the baseline hash was silently never stored, both sides
+        # compared "changed" against NULL, and this test detected a "conflict"
+        # for a note that had simply never been synced. Assert every setup
+        # call's return, and read the version rather than hard-coding it.
         file_info = sync_engine._get_file_info(file_path, sync_dir)
-        notes_service.update_note_sync_metadata(
+        assert notes_service.update_note_sync_metadata(
             user_id="test_user",
             note_id=note_id,
             sync_metadata={
                 "last_synced_disk_file_hash": file_info.content_hash,
                 "last_synced_disk_file_mtime": file_info.mtime,
             },
-            expected_version=1,
+            expected_version=notes_service.get_note_by_id("test_user", note_id)[
+                "version"
+            ],
         )
+        assert (
+            notes_service.get_note_by_id("test_user", note_id)[
+                "last_synced_disk_file_hash"
+            ]
+            == file_info.content_hash
+        ), "without a stored baseline this test detects a conflict for any note"
 
         # Now modify both the file and the database note
         file_path.write_text("Modified on disk")
-        notes_service.update_note(
+        assert notes_service.update_note(
             user_id="test_user",
             note_id=note_id,
             update_data={"content": "Modified in database"},
-            expected_version=2,
+            expected_version=notes_service.get_note_by_id("test_user", note_id)[
+                "version"
+            ],
         )
 
         # Run bidirectional sync

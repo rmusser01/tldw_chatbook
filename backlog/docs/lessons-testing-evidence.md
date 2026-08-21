@@ -5795,3 +5795,37 @@ Threat model, recorded because it is what makes the above worth the effort: no
 `.git` exclusion exists in `Tools/workspace_file_roots.py` or
 `Tools/file_operation_tools.py`, so an agent can write `.git/config` in the very
 root these features operate on (TASK-19700).
+
+
+
+## A setup step whose failure is only a log line builds the wrong fixture (TASK-19554, 2026-08-21)
+
+**What happened.** `Tests/Notes/test_sync_engine.py::test_conflict_detection`
+has passed since it was written, and it asserts the right things: a
+`both_changed` conflict is detected with the right `db_content` and
+`disk_content`. Reading it while writing the born-red pins for task-19554, I
+found it never builds the scenario it claims to. It calls
+`NotesInteropService.update_note_sync_metadata` twice with
+`expected_version=1`. The FIRST call bumps the row to version 2, so the second
+one matches no rows — and that method does not raise on a version miss, it
+logs `"No rows updated ... version mismatch or deleted"` and returns `False`.
+The return value was not asserted, so `last_synced_disk_file_hash` was silently
+never stored.
+
+With that column NULL, the engine's `db_changed = hash != last_synced` and
+`disk_changed = hash != last_synced` are BOTH trivially true against `None`.
+The test detects a "conflict" for every synced note in existence, including
+ones where neither side moved. It could not tell a real conflict from a note
+that had never been synced at all — which is precisely the distinction the
+conflict path turns on.
+
+**What to do.** When a fixture is built through an API that reports failure by
+RETURN VALUE (`bool`) or by log line rather than by raising, assert the return
+of every setup call — `assert service.update_x(...)`, not `service.update_x(...)`.
+Optimistic-locking helpers in this repo are the recurring shape: they take an
+`expected_version`, they return `False` on a miss, and every successful call
+invalidates the version you were about to reuse. Re-read the version between
+calls instead of reusing a literal. The tell that something is wrong is a
+fixture that passes against a *stronger* claim than it set up: here, deleting
+the entire baseline step would not have changed the test's result, which is the
+definition of a setup step that is not doing anything.

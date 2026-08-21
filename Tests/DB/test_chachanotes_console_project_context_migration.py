@@ -440,8 +440,11 @@ def test_fresh_schema_contains_console_project_context_column(tmp_path) -> None:
     # migration (e.g. task-18300's own v42->v43 message_exchanges table)
     # legitimately bumps `_CURRENT_SCHEMA_VERSION` further without this
     # file needing to know or care. The exact current-version pin lives in
-    # exactly one place, `Tests/DB/test_chachanotes_message_exchanges.py`'s
-    # `test_schema_version_is_43` (currently 43) -- this assertion only
+    # exactly one place -- as of task-19554 that is
+    # `Tests/DB/test_chachanotes_sync_conflict_preservation_migration.py`'s
+    # `test_schema_version_is_44` (the pin moves to the newest migration's
+    # own file on every bump, rather than staying on an older one from
+    # which it can only drift) -- this assertion only
     # needs to confirm a fresh schema landed AT OR PAST this migration's
     # own version, not the overall latest.
     assert CharactersRAGDB._CURRENT_SCHEMA_VERSION >= 42

@@ -26585,11 +26585,38 @@ class LibraryScreen(BaseAppScreen):
                 # Honest-copy fix: this used to promise a "review" surface
                 # that doesn't exist in this panel. State the resolved
                 # policy instead -- what actually happened to the conflict.
-                self._library_notes_sync_activity = append_activity(
-                    self._library_notes_sync_activity,
-                    f"{count_noun(conflicts, 'conflict')} resolved "
-                    f"({sync_conflict_label(resolution.value)})",
-                )
+                #
+                # task-19554 second pass: it also used to call EVERY recorded
+                # conflict "resolved", including the ones the engine applied
+                # nothing for (which, before that task, was every conflict
+                # under "Disk wins" and "Library wins"). Count what the run
+                # actually applied, name what it kept, and say plainly when
+                # some are still open.
+                applied = [
+                    conflict
+                    for conflict in results.conflicts
+                    if getattr(conflict, "applied", False)
+                ]
+                if applied:
+                    self._library_notes_sync_activity = append_activity(
+                        self._library_notes_sync_activity,
+                        f"{count_noun(len(applied), 'conflict')} resolved "
+                        f"({sync_conflict_label(resolution.value)})",
+                    )
+                preserved = list(getattr(results, "preserved_files", ()))
+                if preserved:
+                    self._library_notes_sync_activity = append_activity(
+                        self._library_notes_sync_activity,
+                        "Replaced copy saved as "
+                        + ", ".join(Path(path).name for path in preserved[:3])
+                        + ("…" if len(preserved) > 3 else ""),
+                    )
+                if len(applied) < conflicts:
+                    self._library_notes_sync_activity = append_activity(
+                        self._library_notes_sync_activity,
+                        f"{count_noun(conflicts - len(applied), 'conflict')} "
+                        "left unresolved — both copies kept as they are",
+                    )
             if results.errors:
                 self._library_notes_sync_activity = append_activity(
                     self._library_notes_sync_activity,

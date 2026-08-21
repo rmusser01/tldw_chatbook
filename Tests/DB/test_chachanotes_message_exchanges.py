@@ -96,17 +96,24 @@ def test_hard_delete_cascades(db):
     assert count == 0
 
 
-def test_schema_version_is_43(db):
+def test_schema_version_is_at_least_43(db):
     # Mirrors the house sibling-version test pattern (a local `_version()`
     # helper against db_schema_version -- there is no public accessor).
-    assert _version(db.get_connection()) == 43
+    #
+    # task-19554: this used to be `== 43` and was designated the repo's one
+    # exact current-version pin. That made every LATER migration edit this
+    # file, which owns only v42->v43. It now asserts at-or-past its own
+    # version, and the exact pin lives with the newest migration --
+    # `Tests/DB/test_chachanotes_sync_conflict_preservation_migration.py`'s
+    # `test_schema_version_is_44`.
+    assert _version(db.get_connection()) >= 43
 
 
 def test_migrate_from_v42_to_v43_requires_version_42(tmp_path):
     # Mirrors the version pre-check idiom in
     # test_chachanotes_default_assistant_enrichment_migration.py::
     # test_migrate_from_v31_to_v32_requires_version_31: a fresh database
-    # lands on the current (43) schema, so calling the v42->v43 step
+    # lands on the CURRENT schema (>= 43), so calling the v42->v43 step
     # directly against it must reject rather than silently re-run.
     from tldw_chatbook.DB.ChaChaNotes_DB import SchemaError
 
@@ -121,11 +128,13 @@ def test_upgrade_path_from_v42_recreates_the_table(tmp_path):
     """A database stamped back to v42 (with message_exchanges dropped, so
     the migration's CREATE TABLE genuinely has work to do rather than
     no-op against an already-existing table) must, on reopen, re-run
-    _migrate_from_v42_to_v43 and land on v43 with the table back."""
+    _migrate_from_v42_to_v43 and land on the current version with the
+    table back. (task-19554: the landing version is the CURRENT one, not
+    43 -- a stamped-back DB replays every later step too.)"""
     db_path = tmp_path / "chachanotes.db"
     db = CharactersRAGDB(db_path, client_id="upgrade-test")
     connection = db.get_connection()
-    assert _version(connection) == 43
+    assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
 
     with db.transaction() as cursor:
         cursor.execute("DROP TABLE message_exchanges")
@@ -137,7 +146,7 @@ def test_upgrade_path_from_v42_recreates_the_table(tmp_path):
 
     reopened = CharactersRAGDB(db_path, client_id="upgrade-test-reopen")
     reopened_connection = reopened.get_connection()
-    assert _version(reopened_connection) == 43
+    assert _version(reopened_connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
     tables = {
         row[0]
         for row in reopened_connection.execute(
