@@ -11430,15 +11430,6 @@ class TldwCli(
             return self._stts_handler
         return await self._initialize_stts_service()
 
-    async def play_current_audio(self) -> None:
-        """Play the current S/TT/S audio after lazy service initialization."""
-
-        handler = await self._ensure_stts_handler()
-        if handler is None:
-            self.notify("S/TT/S service not available", severity="error")
-            return
-        await handler.play_current_audio()
-
     async def on_shutdown_request(self) -> None:  # Use the imported ShutdownRequest
         logging.info("--- App Shutdown Requested ---")
 

@@ -2764,33 +2764,6 @@ class STTSEventHandler:
             except Exception:
                 pass
 
-    async def play_current_audio(self) -> None:
-        """Play the current audio file"""
-        audio_path = self._current_playground_audio_path()
-        if audio_path is None or not audio_path.exists():
-            self.app.notify("No audio file to play", severity="warning")
-            return
-
-        try:
-            # Use the existing play_audio_file function
-            from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
-                play_audio_file,
-            )
-
-            play_audio_file(audio_path)
-            self.app.notify("Playing audio...", severity="information")
-        except Exception as e:
-            logger.error(f"Failed to play audio: {e}")
-            self.app.notify(f"Failed to play audio: {e}", severity="error")
-
-    def _current_playground_audio_path(self) -> Path | None:
-        """Return artifact provenance before the compatibility path field."""
-        if self._current_playground_artifact is not None:
-            return self._current_playground_artifact.path
-        if self._current_audio_file is None:
-            return None
-        return Path(self._current_audio_file)
-
     def _start_event_task(self, coroutine: Coroutine[Any, Any, None]) -> None:
         """Start and retain an event task until it finishes."""
         if self._cleanup_task is not None:
