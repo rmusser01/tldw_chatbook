@@ -367,6 +367,78 @@ async def test_library_graduation_header_survives_reconcile_and_same_route_repla
         assert screen.focused.id == focus.id
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ("reconcile", "replace"))
+async def test_library_notes_recompose_does_not_steal_newer_focus(
+    monkeypatch, operation
+):
+    app = _build_test_app()
+    _seed_conversations(app, [], notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        await _wait_for_selector(screen, pilot, "#library-notes-canvas")
+
+        screen._set_library_lifecycle(LibraryLifecycle.GRADUATED)
+        screen._sync_library_rail_lifecycle_presentation()
+        await pilot.pause()
+        row = await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        row.focus()
+        await pilot.pause()
+
+        generation = screen._library_snapshot_state_generation
+        route_key = screen._library_entry_route_key()
+        original_recompose = LibraryNotesCanvas.recompose
+        recompose_started = asyncio.Event()
+        release_recompose = asyncio.Event()
+
+        async def gated_recompose(canvas):
+            recompose_started.set()
+            await release_recompose.wait()
+            await original_recompose(canvas)
+
+        try:
+            monkeypatch.setattr(LibraryNotesCanvas, "recompose", gated_recompose)
+            if operation == "reconcile":
+                screen._library_entry_reconcile_dirty = True
+                screen._library_entry_reconcile_pending = (generation, route_key)
+                operation_task = asyncio.create_task(
+                    screen._reconcile_library_entry_state(generation, route_key)
+                )
+            else:
+                replacement = screen._build_library_entry_active_child()
+                assert isinstance(replacement, LibraryNotesCanvas)
+                operation_task = asyncio.create_task(
+                    screen._replace_library_canvas_child(
+                        replacement,
+                        generation=generation,
+                        route_key=route_key,
+                    )
+                )
+            await _wait_for_condition(
+                pilot,
+                recompose_started.is_set,
+                message="Notes canvas did not start its recompose",
+            )
+            newer_target = screen.query_one("#library-rail-collapse", Button)
+            newer_target.focus()
+            release_recompose.set()
+
+            assert await operation_task is LibraryEntryReconcileResult.APPLIED
+            await pilot.pause()
+            await pilot.pause()
+
+            assert newer_target.has_focus
+            assert "Library tools are now available." in str(
+                screen.query_one("#library-header-line", Static).renderable
+            )
+        finally:
+            release_recompose.set()
+
+
 def _wire_entry_prompt_service(app: Any, db_path: Path) -> int:
     """Wire one real Prompt record through the production scope service."""
     prompts_db = PromptsDatabase(db_path, client_id=f"entry-{db_path.stem}")

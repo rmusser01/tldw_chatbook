@@ -1491,7 +1491,7 @@ def _sync_library_canvas(
     screen: "LibraryScreen",
     kind: str,
     *,
-    then: Callable[[], None] | None = None,
+    then: Callable[[], bool | None] | None = None,
     allow_screen_fallback: bool = True,
     notes_focus_identity: LibraryNotesFocusIdentity | None = None,
     deferred_guard: Callable[[], bool] | None = None,
@@ -1533,7 +1533,8 @@ def _sync_library_canvas(
             children and stranded DOM focus outside the canvas. Supported
             only for canvases carrying ``PostRecomposeCallback``; passing it
             for another kind raises into the whole-screen fallback rather
-            than silently dropping the follow-up.
+            than silently dropping the follow-up. Returning ``False`` vetoes
+            an explicitly supplied pre-detach Notes restore.
 
         allow_screen_fallback: Whether a failed targeted update may request
             the legacy whole-screen recompose.
@@ -1641,10 +1642,11 @@ def _sync_library_canvas(
         # Captured here, at the same choke point the footer fix uses, and
         # gated on the notes workflow owning the route -- the identity is
         # Notes-specific, so a media/ingest/search sync must not build one.
-        # An explicit ``then`` COMPOSES with this rather than replacing it:
-        # the restore runs first (portable focus + scroll), then the site's
-        # own follow-up gets the last word on where focus lands.
-        follow_up: Callable[[], None] | None = then
+        # An explicit ``then`` COMPOSES with this rather than replacing it.
+        # Ordinary actions restore Notes first and let their follow-up choose
+        # final focus; automatic reconciliation runs its generic focus guard
+        # first so a newer user move can veto the stale Notes identity.
+        follow_up: Callable[[], bool | None] | None = then
         # Gated on the KIND, not on the screen-level workflow predicate
         # (review m5): the identity is the notes canvas's, and
         # ``_library_notes_workflow_active()`` is also true while a
@@ -1667,10 +1669,21 @@ def _sync_library_canvas(
 
             def _restore_then_explicit(
                 _identity: LibraryNotesFocusIdentity = identity,
-                _explicit: Callable[[], None] | None = then,
+                _explicit: Callable[[], bool | None] | None = then,
             ) -> None:
+                # Automatic reconciliation passes the pre-detach Notes
+                # identity explicitly. Let its generic restore enforce the
+                # current-user-focus veto before the richer Notes restore can
+                # apply stale focus. Ordinary Notes actions retain their
+                # established Notes-first, explicit-action-last ordering.
+                if (
+                    notes_focus_identity is not None
+                    and _explicit is not None
+                    and _explicit() is False
+                ):
+                    return
                 screen._restore_library_notes_after_targeted_sync(_identity)
-                if _explicit is not None:
+                if _explicit is not None and notes_focus_identity is None:
                     _explicit()
 
             follow_up = _restore_then_explicit
@@ -7176,12 +7189,12 @@ class LibraryScreen(BaseAppScreen):
         *,
         generation: int,
         route_key: tuple[object, ...],
-    ) -> None:
+    ) -> bool:
         """Restore one current semantic target without overriding user movement."""
         if generation != self._library_snapshot_state_generation:
-            return
+            return False
         if route_key != self._library_entry_route_key():
-            return
+            return False
         capture = self._library_entry_focus_capture
         outgoing_focus = (
             capture.outgoing_focus
@@ -7191,7 +7204,7 @@ class LibraryScreen(BaseAppScreen):
 
         owner = self._library_entry_canvas_owner()
         if owner is None:
-            return
+            return False
         target: Widget | None = None
         if identity.source_id:
             for candidate in owner.query(Widget):
@@ -7222,7 +7235,7 @@ class LibraryScreen(BaseAppScreen):
         ):
             if self._library_entry_focus_capture is capture:
                 self._library_entry_focus_capture = None
-            return
+            return False
         if target is not None and not getattr(target, "disabled", False):
             target.focus()
         if identity.scroll_offset is not None and hasattr(owner, "scroll_to"):
@@ -7234,6 +7247,7 @@ class LibraryScreen(BaseAppScreen):
             )
         if self._library_entry_focus_capture is capture:
             self._library_entry_focus_capture = None
+        return True
 
     def _finish_library_entry_canvas_sync(
         self,
@@ -7241,15 +7255,17 @@ class LibraryScreen(BaseAppScreen):
         *,
         generation: int,
         route_key: tuple[object, ...],
-    ) -> None:
+    ) -> bool:
         """Restore focus/scroll and complete one generation in one callback."""
+        focus_is_current = True
         if identity is not None:
-            self._restore_library_entry_focus(
+            focus_is_current = self._restore_library_entry_focus(
                 identity,
                 generation=generation,
                 route_key=route_key,
             )
         self._complete_library_entry_reconcile(generation, route_key)
+        return focus_is_current
 
     def _library_entry_reconcile_is_current(
         self, generation: int, route_key: tuple[object, ...]
