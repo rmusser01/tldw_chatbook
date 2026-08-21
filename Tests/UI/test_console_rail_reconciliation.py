@@ -8,6 +8,7 @@ from types import MethodType
 import pytest
 from rich.cells import cell_len
 from textual.app import App, ComposeResult
+from textual.events import MouseDown, MouseScrollDown, MouseUp
 from textual.widgets import Button, Static
 
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET
@@ -133,8 +134,8 @@ class _RailHarness(App[None]):
         self.show_character = show_character
         self.section_toggles: list[str] = []
 
-    def compose(self) -> ComposeResult:
-        yield ConsoleLeftRail(
+    def build_rail(self) -> ConsoleLeftRail:
+        return ConsoleLeftRail(
             rail_state=_all_open_rail_state(),
             workspace_context_state=_workspace_state(),
             settings_summary_state=ConsoleSettingsSummaryState(
@@ -155,6 +156,9 @@ class _RailHarness(App[None]):
             character_avatar_widget_builder=lambda: Static("avatar"),
             character_avatar_name="Samira",
         )
+
+    def compose(self) -> ComposeResult:
+        yield self.build_rail()
 
     def on_console_left_rail_section_toggled(
         self, event: ConsoleLeftRail.SectionToggled
@@ -834,6 +838,98 @@ async def test_pointer_activation_preserves_the_pressed_toggle_target(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("removed_section", "expected_fallback"),
+    (("character", "details"), ("agent", "model")),
+)
+async def test_absent_active_section_falls_back_in_stable_descriptor_order(
+    monkeypatch: pytest.MonkeyPatch,
+    removed_section: str,
+    expected_fallback: str,
+) -> None:
+    demands = dict.fromkeys(SECTION_IDS, 4)
+    _install_demands(monkeypatch, demands)
+    app = _RailHarness()
+
+    async with app.run_test(size=(60, 36)) as pilot:
+        await _settle(pilot)
+        rail = app.query_one(ConsoleLeftRail)
+        rail.activate_section(removed_section)
+        await _settle(pilot)
+        await rail.query_one(f"#console-rail-section-header-{removed_section}").remove()
+        await rail.query_one(f"#console-bounded-section-{removed_section}").remove()
+        rail.request_allocation_reconcile()
+        await _settle(pilot)
+
+        assert rail._active_section_id == expected_fallback
+
+
+@pytest.mark.asyncio
+async def test_pointer_boundary_owns_header_title_nested_body_and_viewport_but_not_wheel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    demands = dict.fromkeys(SECTION_IDS, 0)
+    demands["workspace"] = 4
+    demands["model"] = 10
+    demands["character"] = 4
+    _install_demands(monkeypatch, demands)
+    app = _RailHarness()
+
+    async with app.run_test(size=(60, 30)) as pilot:
+        await _settle(pilot)
+        rail = app.query_one(ConsoleLeftRail)
+        _force_geometry(rail, viewport_height=18, header_chrome_height=14)
+        rail.request_allocation_reconcile()
+        await _settle(pilot)
+
+        model = rail.query_one("#console-bounded-section-model", ConsoleBoundedSection)
+        model.query_one("#console-rail-section-body-model").styles.min_height = 10
+        rail.request_allocation_reconcile()
+        await _settle(pilot)
+        viewport = model.viewport
+        assert viewport.can_focus is True
+
+        wheel = MouseScrollDown(
+            viewport,
+            0,
+            0,
+            0,
+            1,
+            0,
+            False,
+            False,
+            False,
+        )
+        viewport.post_message(wheel)
+        await pilot.pause()
+        assert rail._active_section_id is None
+
+        viewport.post_message(MouseDown(viewport, 0, 0, 0, 0, 1, False, False, False))
+        viewport.post_message(MouseUp(viewport, 0, 0, 0, 0, 1, False, False, False))
+        await _settle(pilot)
+        assert rail._active_section_id == "model"
+
+        title = rail.query_one("#console-rail-section-title-workspace", Static)
+        title.scroll_visible(animate=False)
+        await pilot.pause()
+        title.post_message(MouseDown(title, 0, 0, 0, 0, 1, False, False, False))
+        title.post_message(MouseUp(title, 0, 0, 0, 0, 1, False, False, False))
+        await _settle(pilot)
+        assert rail._active_section_id == "workspace"
+
+        avatar_child = rail.query_one("#console-character-avatar Static", Static)
+        assert avatar_child.focusable is False
+        avatar_child.post_message(
+            MouseDown(avatar_child, 0, 0, 0, 0, 1, False, False, False)
+        )
+        avatar_child.post_message(
+            MouseUp(avatar_child, 0, 0, 0, 0, 1, False, False, False)
+        )
+        await _settle(pilot)
+        assert rail._active_section_id == "character"
+
+
+@pytest.mark.asyncio
 async def test_overflow_focus_order_and_recovery_stay_within_context_section(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -903,6 +999,119 @@ async def test_overflow_focus_order_and_recovery_stay_within_context_section(
         await _settle(pilot)
         assert viewport.can_focus is False
         assert app.focused is second
+
+
+@pytest.mark.asyncio
+async def test_focus_recovery_uses_previous_then_header_then_context_control(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    demands = dict.fromkeys(SECTION_IDS, 0)
+    demands["model"] = 8
+    _install_demands(monkeypatch, demands)
+    app = _RailHarness()
+
+    async with app.run_test(size=(60, 30)) as pilot:
+        await _settle(pilot)
+        rail = app.query_one(ConsoleLeftRail)
+        _force_geometry(rail, viewport_height=18, header_chrome_height=14)
+        rail.request_allocation_reconcile()
+        await _settle(pilot)
+        body = rail.query_one("#console-rail-section-body-model")
+        body.styles.min_height = 8
+        configure = rail.query_one("#console-model-section-configure", Button)
+        first = Button("First", id="context-tier-first", compact=True)
+        second = Button("Second", id="context-tier-second", compact=True)
+        third = Button("Third", id="context-tier-third", compact=True)
+        await body.mount(first, second, third, before=configure)
+        await _settle(pilot)
+
+        second.focus()
+        await pilot.pause()
+        await third.remove()
+        await second.remove()
+        rail.request_allocation_reconcile()
+        await _settle(pilot)
+        assert app.focused is first
+
+        configure.disabled = True
+        first.focus()
+        await pilot.pause()
+        await first.remove()
+        rail.request_allocation_reconcile()
+        await _settle(pilot)
+        header_toggle = rail.query_one("#console-rail-section-toggle-model", Button)
+        assert app.focused is header_toggle
+
+        model = rail.query_one("#console-bounded-section-model", ConsoleBoundedSection)
+        assert model.viewport.can_focus is True
+        model.viewport.focus()
+        await rail.query_one("#console-rail-section-header-model").remove()
+        demands["model"] = 1
+        model.request_reconcile()
+        await _settle(pilot)
+        assert app.focused is rail.query_one("#console-context-rail-collapse", Button)
+
+
+@pytest.mark.asyncio
+async def test_focus_recovery_does_not_steal_valid_outside_focus(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    demands = dict.fromkeys(SECTION_IDS, 3)
+    _install_demands(monkeypatch, demands)
+    app = _RailHarness()
+
+    async with app.run_test(size=(60, 30)) as pilot:
+        await _settle(pilot)
+        rail = app.query_one(ConsoleLeftRail)
+        body = rail.query_one("#console-rail-section-body-model")
+        target = Button("Target", id="context-owned-before-outside", compact=True)
+        outside = Button("Outside", id="outside-context-focus", compact=True)
+        await body.mount(target)
+        await app.screen.mount(outside)
+        await _settle(pilot)
+        target.focus()
+        await pilot.pause()
+        outside.focus()
+        await target.remove()
+        rail.request_allocation_reconcile()
+        await _settle(pilot)
+
+        assert app.focused is outside
+
+
+@pytest.mark.asyncio
+async def test_new_rail_remount_resets_active_and_demand_shrink_clamps_local_offset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    demands = dict.fromkeys(SECTION_IDS, 0)
+    demands["model"] = 12
+    _install_demands(monkeypatch, demands)
+    app = _RailHarness()
+
+    async with app.run_test(size=(60, 30)) as pilot:
+        await _settle(pilot)
+        rail = app.query_one(ConsoleLeftRail)
+        _force_geometry(rail, viewport_height=18, header_chrome_height=14)
+        body = rail.query_one("#console-rail-section-body-model")
+        body.styles.min_height = 12
+        rail.activate_section("model")
+        await _settle(pilot)
+        model = rail.query_one("#console-bounded-section-model", ConsoleBoundedSection)
+        model.viewport.scroll_end(animate=False)
+        await pilot.pause()
+        assert model.viewport.scroll_y > 0
+
+        demands["model"] = 2
+        body.styles.min_height = 2
+        rail.request_allocation_reconcile()
+        await _settle(pilot)
+        assert model.viewport.scroll_y <= model.viewport.max_scroll_y
+
+        await rail.remove()
+        replacement = app.build_rail()
+        await app.screen.mount(replacement)
+        await _settle(pilot)
+        assert replacement._active_section_id is None
 
 
 @pytest.mark.asyncio

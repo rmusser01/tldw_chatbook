@@ -17847,7 +17847,6 @@ class ChatScreen(BaseAppScreen):
         # TASK-2154.1 (LY-10): the header (and its status badge) is hidden in
         # compact-height mode, so keep the control-bar marker mirroring it.
         self._sync_console_compact_status_marker()
-        self._request_console_context_allocation_reconcile()
         try:
             self.query_one("#console-workbench-mode-strip", ModeStrip).sync_modes(
                 workbench_state.modes
@@ -18264,6 +18263,7 @@ class ChatScreen(BaseAppScreen):
         # badge, so the control-bar stand-in must follow immediately instead
         # of waiting for the next workbench sync.
         self._sync_console_compact_status_marker()
+        self._request_console_context_allocation_reconcile()
 
     def _sync_console_compact_status_marker(self) -> None:
         """Mirror the header status badge into the control bar when compact.

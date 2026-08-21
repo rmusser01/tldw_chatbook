@@ -9,7 +9,7 @@ also dismisses any visible tooltip so a mounted overlay can't survive the repain
 
 import pytest
 from textual.css.query import NoMatches
-from textual.widgets import Button, Tooltip
+from textual.widgets import Button, Static, Tooltip
 
 from tldw_chatbook.Chat.console_session_settings import ConsoleSettingsSummaryState
 from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
@@ -255,6 +255,93 @@ async def test_model_summary_sync_invalidates_mounted_context_allocation(
 
 
 @pytest.mark.asyncio
+async def test_height_resize_requests_one_coalesced_context_reconcile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The public height-adaptation lifecycle invalidates after compact mutation."""
+
+    host = _ready_console_host()
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        rail = console.query_one("#console-left-rail", ConsoleLeftRail)
+        for _ in range(5):
+            await pilot.pause()
+
+        helper_calls = 0
+        reconcile_runs = 0
+        original_helper = console._request_console_context_allocation_reconcile
+        original_reconcile = rail._run_allocation_reconcile
+
+        def helper_spy() -> None:
+            nonlocal helper_calls
+            helper_calls += 1
+            original_helper()
+
+        def reconcile_spy() -> None:
+            nonlocal reconcile_runs
+            reconcile_runs += 1
+            original_reconcile()
+
+        monkeypatch.setattr(
+            console,
+            "_request_console_context_allocation_reconcile",
+            helper_spy,
+        )
+        monkeypatch.setattr(rail, "_run_allocation_reconcile", reconcile_spy)
+
+        await pilot.resize_terminal(160, 30)
+        await pilot.pause()
+
+        assert console.query_one("#console-shell").has_class("-console-compact")
+        assert helper_calls >= 1
+        assert reconcile_runs == 1
+
+
+@pytest.mark.asyncio
+async def test_public_close_active_falls_back_and_rail_reopen_keeps_local_state() -> (
+    None
+):
+    host = _ready_console_host()
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        rail = console.query_one("#console-left-rail", ConsoleLeftRail)
+        for _ in range(5):
+            await pilot.pause()
+
+        session_toggle = rail.query_one("#console-rail-section-toggle-session", Button)
+        session_toggle.scroll_visible(animate=False)
+        await pilot.pause()
+        assert await pilot.click(session_toggle)
+        for _ in range(4):
+            await pilot.pause()
+        assert rail._active_section_id == "workspace"
+
+        model = rail.query_one("#console-bounded-section-model", ConsoleBoundedSection)
+        model_body = rail.query_one("#console-rail-section-body-model")
+        overflow = Static("\n".join(f"line {index}" for index in range(30)))
+        await model_body.mount(overflow)
+        rail.activate_section("model")
+        for _ in range(6):
+            await pilot.pause()
+        model.viewport.scroll_to(y=3, animate=False, immediate=True)
+        await pilot.pause()
+        retained_offset = model.viewport.scroll_y
+        assert retained_offset > 0
+
+        assert await pilot.click("#console-context-rail-collapse")
+        for _ in range(4):
+            await pilot.pause()
+        assert rail.display is False
+        assert await pilot.click("#console-context-rail-open")
+        for _ in range(6):
+            await pilot.pause()
+
+        assert rail.display is True
+        assert rail._active_section_id == "model"
+        assert model.viewport.scroll_y == retained_offset
+
+
+@pytest.mark.asyncio
 async def test_all_named_context_mutation_seams_request_the_mounted_allocator(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -263,7 +350,6 @@ async def test_all_named_context_mutation_seams_request_the_mounted_allocator(
     host = _ready_console_host()
     async with host.run_test(size=(160, 48)):
         console = host.screen_stack[-1]
-        rail = console.query_one("#console-left-rail", ConsoleLeftRail)
         requests: list[str] = []
         current_seam = ""
 
@@ -344,12 +430,3 @@ async def test_all_named_context_mutation_seams_request_the_mounted_allocator(
         before = len(requests)
         await console._sync_console_legacy_workspace_context_aliases()
         assert requests[before:] == [current_seam]
-
-        resize_requests: list[None] = []
-        monkeypatch.setattr(
-            rail,
-            "request_allocation_reconcile",
-            lambda: resize_requests.append(None),
-        )
-        rail.on_resize()
-        assert resize_requests == [None]

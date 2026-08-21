@@ -439,14 +439,14 @@ class ConsoleLeftRail(Vertical):
 
         if target is None:
             return None
-        button_id = target.id or ""
-        if button_id.startswith(RAIL_SECTION_TOGGLE_PREFIX):
-            section_id = button_id.removeprefix(RAIL_SECTION_TOGGLE_PREFIX)
-            return section_id if not getattr(target, "disabled", False) else None
 
         node: Widget | None = target
         bounded: ConsoleBoundedSection | None = None
         while node is not None and node is not self:
+            if getattr(node, "disabled", False):
+                return None
+            if isinstance(node, DestinationRailSectionHeader):
+                return node.section_id
             if isinstance(node, ConsoleBoundedSection):
                 bounded = node
                 break
@@ -454,9 +454,7 @@ class ConsoleLeftRail(Vertical):
             node = parent if isinstance(parent, Widget) else None
         if bounded is None:
             return None
-        if target is bounded.viewport:
-            return bounded.section_id if bounded.viewport.can_focus else None
-        return bounded.section_id if self._is_enabled_focus_target(target) else None
+        return bounded.section_id
 
     def _focusable_body_controls(self, section_id: str) -> tuple[Widget, ...]:
         """Return enabled body descendants in the same order as Textual Tab."""
@@ -684,8 +682,20 @@ class ConsoleLeftRail(Vertical):
 
             active_section_id = self._active_section_id
             if active_section_id is not None:
+                demands_by_id = {demand.section_id: demand for demand in demands}
+                fallback_demands = tuple(
+                    demands_by_id.get(
+                        descriptor.section_id,
+                        ContextSectionDemand(
+                            section_id=descriptor.section_id,
+                            desired_content_rows=0,
+                            is_open=False,
+                        ),
+                    )
+                    for descriptor in CONTEXT_SECTION_DESCRIPTORS
+                )
                 active_section_id = fallback_active_section(
-                    demands,
+                    fallback_demands,
                     active_section_id,
                 )
                 if active_section_id != self._active_section_id:
