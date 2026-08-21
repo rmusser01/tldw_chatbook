@@ -43,6 +43,7 @@ from tldw_chatbook.Character_Chat.visual_identity import (
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.UI.Console_Modules.character import ConsoleCharacterController
+from tldw_chatbook.UI.Console_Modules.retrieval import ConsoleRetrievalController
 from tldw_chatbook.UI.Console_Modules.session import (
     CharacterSessionPromptSeed,
     ConsoleSessionController,
@@ -107,6 +108,11 @@ def _bare_console_screen(store: ConsoleChatStore) -> ChatScreen:
     for the rationale (bypasses ``ChatScreen.__init__``).
     """
     screen = ChatScreen.__new__(ChatScreen)
+    screen._retrieval = object.__new__(ConsoleRetrievalController)
+    screen._retrieval._capture_console_staged_rag = AsyncMock()
+    screen._retrieval._current_conversation_id = (
+        lambda: screen._current_console_rail_conversation_id()
+    )
     screen._character = ConsoleCharacterController.__new__(ConsoleCharacterController)
     screen._character._active_character_avatar = None
     screen._character._active_character_avatar_name = None
@@ -171,7 +177,7 @@ def test_p3c_leaves_dictionary_scope_ids_unchanged():
     )
     screen = _bare_console_screen(_store_with_session(session))
 
-    conversation_id, character_id = screen._active_console_dictionary_scope_ids()
+    conversation_id, character_id = screen._retrieval._active_console_dictionary_scope_ids()
     assert conversation_id == "conv-1"
     assert character_id is None
 

@@ -40,6 +40,7 @@ from tldw_chatbook.UI.Console_Modules.dictation import ConsoleDictationControlle
 from tldw_chatbook.UI.Console_Modules.hands_free import ConsoleHandsFreeController
 from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
 from tldw_chatbook.UI.Console_Modules.prompts import ConsolePromptsController
+from tldw_chatbook.UI.Console_Modules.retrieval import ConsoleRetrievalController
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
@@ -80,6 +81,16 @@ def test_all_six_controllers_are_constructed_with_the_right_classes():
         assert isinstance(controller, cls), (
             f"{attr} is {type(controller).__name__}, expected {cls.__name__}"
         )
+
+
+def test_retrieval_controller_is_constructed_with_late_bound_screen_edges():
+    """Wave 6 wires one retrieval owner without freezing screen state."""
+    screen = _unmounted_console()
+
+    assert isinstance(screen._retrieval, ConsoleRetrievalController)
+    sentinel = object()
+    screen._current_console_rail_conversation_id = lambda: sentinel
+    assert screen._retrieval._current_conversation_id() is sentinel
 
 
 def test_controllers_are_built_in_the_documented_order():

@@ -32,6 +32,7 @@ import pytest
 from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
 from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
 from tldw_chatbook.UI.Console_Modules.prompts import ConsolePromptsController
+from tldw_chatbook.UI.Console_Modules.retrieval import ConsoleRetrievalController
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.UI.Console_Modules.transcript import ConsoleTranscriptRegion
 from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceController
@@ -45,6 +46,7 @@ CONSOLE_CONTROLLERS = (
     ConsoleWorkspaceController,
     ConsoleTranscriptRegion,
     ConsolePromptsController,
+    ConsoleRetrievalController,
     ConsoleLeftRail,
 )
 
@@ -61,6 +63,7 @@ CONTROLLER_VARIABLE_NAMES = frozenset(
         "workspace_controller",
         "transcript_controller",
         "prompts_controller",
+        "retrieval_controller",
         "left_rail",
         "rail",
         "region",

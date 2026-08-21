@@ -6,7 +6,7 @@ from unittest.mock import Mock
 import pytest
 from rich.console import Console
 from rich.text import Text
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -30,7 +30,6 @@ from Tests.Agents.test_mcp_tool_provider import (
     _tool_dict,
 )
 from tldw_chatbook.Chat.chat_models import ChatSessionData
-from tldw_chatbook.Chat.console_ephemeral import blocked_reason
 from tldw_chatbook.Widgets.Console.console_composer_menu_modal import (
     ACTION_SAVE_CHATBOOK,
 )
@@ -3552,12 +3551,12 @@ def test_console_rag_source_status_unchanged_with_a_pending_launch():
         status="ready",
     )
 
-    assert screen._console_rag_source_status(launch) == (
+    assert screen._retrieval._console_rag_source_status(launch) == (
         "staged from Library Search/RAG"
     )
     # A stale sent-notice sitting alongside a NEW pending launch changes
     # nothing -- pending-launch derivation takes over unconditionally.
-    assert screen._console_rag_source_status(launch, sent_source_count=5) == (
+    assert screen._retrieval._console_rag_source_status(launch, sent_source_count=5) == (
         "staged from Library Search/RAG"
     )
 
@@ -3567,10 +3566,10 @@ def test_console_rag_source_status_remembers_the_last_send_when_nothing_is_stage
     app = _build_test_app()
     screen = ChatScreen(app)
 
-    assert screen._console_rag_source_status(None, sent_source_count=5) == (
+    assert screen._retrieval._console_rag_source_status(None, sent_source_count=5) == (
         "sent with the last message · 5 sources"
     )
-    assert screen._console_rag_source_status(None, sent_source_count=1) == (
+    assert screen._retrieval._console_rag_source_status(None, sent_source_count=1) == (
         "sent with the last message · 1 source"
     )
 
@@ -3580,9 +3579,9 @@ def test_console_rag_source_status_genuinely_empty_reads_not_staged():
     app = _build_test_app()
     screen = ChatScreen(app)
 
-    assert screen._console_rag_source_status(None) == "not staged"
-    assert screen._console_rag_source_status(None, sent_source_count=0) == "not staged"
-    assert screen._console_rag_source_status(None, sent_source_count=None) == (
+    assert screen._retrieval._console_rag_source_status(None) == "not staged"
+    assert screen._retrieval._console_rag_source_status(None, sent_source_count=0) == "not staged"
+    assert screen._retrieval._console_rag_source_status(None, sent_source_count=None) == (
         "not staged"
     )
 
@@ -4066,8 +4065,8 @@ async def test_console_rag_action_falls_back_to_default_top_k_when_profile_unava
 ):
     """TASK-3170 task 9: the chip run's OTHER branch -- profile unresolvable.
 
-    ``_console_library_rag_profile_top_k`` degrades to
-    ``CONSOLE_LIBRARY_RAG_FALLBACK_TOP_K`` when the active RAG profile can't
+    ``_console_library_rag_profile_top_k`` degrades to the shared Library
+    fallback when the active RAG profile can't
     be read (broken/absent profile), so a manual chip run must never raise
     inside a send just because profile resolution failed. Patches
     ``resolve_active_rag_top_k`` itself (what the helper actually reads,
@@ -4075,6 +4074,7 @@ async def test_console_rag_action_falls_back_to_default_top_k_when_profile_unava
     TASK-15020/B3) rather than the helper, so this exercises the real
     try/except fallback path end to end -- not a mock standing in for it.
     """
+    from tldw_chatbook.Library.library_rag_state import LIBRARY_RAG_FALLBACK_TOP_K
     from tldw_chatbook.RAG_Search.simplified import active_config
 
     def _raise_profile_unavailable():
@@ -4124,7 +4124,7 @@ async def test_console_rag_action_falls_back_to_default_top_k_when_profile_unava
                 "query": query,
                 "scope": ("notes", "media", "conversations"),
                 "mode": "rag",
-                "top_k": chat_screen_module.CONSOLE_LIBRARY_RAG_FALLBACK_TOP_K,
+                "top_k": LIBRARY_RAG_FALLBACK_TOP_K,
                 "include_citations": True,
             }
         ]
@@ -4540,7 +4540,7 @@ async def test_console_rag_modal_source_toggle_narrows_the_retrieval_request(
         # request carried, so what ran is visible after the fact too.
         assert "source_scope: notes, conversations" in _visible_text(console)
         assert (
-            ChatScreen._console_library_rag_scope_label(console)
+            console._retrieval._console_library_rag_scope_label()
             == "Sources: Notes, Conversations (Media, Prompts off)"
         )
 

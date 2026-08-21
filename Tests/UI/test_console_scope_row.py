@@ -425,7 +425,7 @@ async def test_save_unpersisted_stores_in_holder_and_refreshes_row():
         assert session.persisted_conversation_id is None
         scope = RagScope(items=(ScopeItem("media", "m1"),), updated_at="2026-01-01T00:00:00Z")
 
-        await console._apply_console_retrieval_scope_save(session, scope)
+        await console._retrieval._apply_console_retrieval_scope_save(session, scope)
         await pilot.pause()
 
         assert session.rag_scope_holder.scope == scope
@@ -469,7 +469,7 @@ async def test_scope_saved_unpersisted_then_first_send_flush_refreshes_row():
             )
 
             # 1. Narrow the scope FIRST, while still unpersisted.
-            await console._apply_console_retrieval_scope_save(session, scope)
+            await console._retrieval._apply_console_retrieval_scope_save(session, scope)
             assert session.rag_scope_holder.scope == scope
             assert session.persisted_conversation_id is None
 
@@ -490,7 +490,7 @@ async def test_scope_saved_unpersisted_then_first_send_flush_refreshes_row():
             # The scope persisted correctly...
             assert read_conversation_scope(db, conversation_id) == scope
             # ...and the row must already reflect it (no modal-open/resume).
-            state = console._build_console_retrieval_scope_state()
+            state = console._retrieval._build_console_retrieval_scope_state()
             assert state.is_scoped
             assert state.item_count == 2
             row = console.query_one(f"#{ROW_ID}")
@@ -523,7 +523,7 @@ async def test_save_persisted_writes_through_refreshes_row_and_run_recipe():
                 updated_at="2026-01-01T00:00:00Z",
             )
 
-            await console._apply_console_retrieval_scope_save(session, scope)
+            await console._retrieval._apply_console_retrieval_scope_save(session, scope)
             await pilot.pause()
 
             assert read_conversation_scope(db, conversation_id) == scope
@@ -562,7 +562,7 @@ async def test_save_persisted_corrupt_metadata_surfaces_honest_notify():
                 items=(ScopeItem("media", "m1"),), updated_at="2026-01-01T00:00:00Z"
             )
 
-            await console._apply_console_retrieval_scope_save(session, scope)
+            await console._retrieval._apply_console_retrieval_scope_save(session, scope)
             await pilot.pause()
 
             assert notifications, "expected an honest notify on write refusal"
@@ -612,7 +612,7 @@ async def test_save_persisted_conflict_error_surfaces_specific_notify():
                 items=(ScopeItem("media", "m1"),), updated_at="2026-01-01T00:00:00Z"
             )
 
-            await console._apply_console_retrieval_scope_save(session, scope)
+            await console._retrieval._apply_console_retrieval_scope_save(session, scope)
             await pilot.pause()
 
             assert notifications, "expected an honest notify on write conflict"
@@ -647,7 +647,7 @@ async def test_save_persisted_conversation_not_found_surfaces_specific_notify():
                 items=(ScopeItem("media", "m1"),), updated_at="2026-01-01T00:00:00Z"
             )
 
-            await console._apply_console_retrieval_scope_save(session, scope)
+            await console._retrieval._apply_console_retrieval_scope_save(session, scope)
             await pilot.pause()
 
             assert notifications, "expected an honest notify when the conversation is gone"
@@ -700,7 +700,7 @@ async def test_clear_button_persisted_session():
             scope = RagScope(
                 items=(ScopeItem("media", "m1"),), updated_at="2026-01-01T00:00:00Z"
             )
-            await console._apply_console_retrieval_scope_save(session, scope)
+            await console._retrieval._apply_console_retrieval_scope_save(session, scope)
             await pilot.pause()
             row = console.query_one(f"#{ROW_ID}")
             assert list(row.query(f"#{CLEAR_BTN_ID}"))
@@ -958,7 +958,7 @@ async def test_scope_chip_refreshes_on_modal_save():
         assert session.persisted_conversation_id is None
         scope = RagScope(items=(ScopeItem("media", "m1"),), updated_at="2026-01-01T00:00:00Z")
 
-        await console._apply_console_retrieval_scope_save(session, scope)
+        await console._retrieval._apply_console_retrieval_scope_save(session, scope)
         await pilot.pause()
 
         chip = console.query_one(f"#{SCOPE_CHIP_ID}", ConsoleScopeChip)
@@ -989,7 +989,7 @@ async def test_scope_chip_refreshes_on_persist_transition_flush():
                 updated_at="2026-01-01T00:00:00Z",
             )
 
-            await console._apply_console_retrieval_scope_save(session, scope)
+            await console._retrieval._apply_console_retrieval_scope_save(session, scope)
             assert console.query_one(f"#{SCOPE_CHIP_ID}").display is True
 
             store.append_message(
@@ -1057,7 +1057,7 @@ async def test_scope_chip_empty_state_action_required_styling_and_cause_tooltip(
         console = host.screen_stack[-1]
         await _open_console_inspector(console, pilot)
 
-        console._build_console_retrieval_scope_state = lambda: ConsoleRetrievalScopeState.empty(
+        console._retrieval._build_console_retrieval_scope_state = lambda: ConsoleRetrievalScopeState.empty(
             cause="deleted-items"
         )
         console._sync_console_retrieval_scope_row()
@@ -1274,7 +1274,7 @@ async def test_chip_tooltip_shows_intersection_breakdown_when_both_levels_set():
                 updated_at="2026-01-01T00:00:00Z",
             )
 
-            await console._apply_console_retrieval_scope_save(session, conv_scope)
+            await console._retrieval._apply_console_retrieval_scope_save(session, conv_scope)
             await pilot.pause()
 
             chip = console.query_one(f"#{SCOPE_CHIP_ID}", ConsoleScopeChip)
@@ -1307,7 +1307,7 @@ async def test_chip_tooltip_shows_workspace_only_breakdown():
         )
         session = console._session._active_native_console_session()
 
-        await console._resolve_console_effective_scope_state(session)
+        await console._retrieval._resolve_console_effective_scope_state(session)
         console._sync_console_retrieval_scope_row()
         await pilot.pause()
 
@@ -1347,7 +1347,7 @@ async def test_no_workspace_overlap_renders_empty_state_on_row_and_chip():
                 items=(ScopeItem("media", "m-conv"),), updated_at="2026-01-01T00:00:00Z"
             )
 
-            await console._apply_console_retrieval_scope_save(session, conv_scope)
+            await console._retrieval._apply_console_retrieval_scope_save(session, conv_scope)
             await pilot.pause()
 
             row = console.query_one(f"#{ROW_ID}")
@@ -1410,7 +1410,7 @@ async def test_switch_between_resumed_sessions_refreshes_stale_workspace_scope()
                 updated_at="2026-01-01T00:00:00Z",
             ),
         )
-        await console._resolve_console_effective_scope_state(first_session)
+        await console._retrieval._resolve_console_effective_scope_state(first_session)
         stale = console._console_effective_scope_cache[first_session.id]
         assert stale.item_count == 1
 

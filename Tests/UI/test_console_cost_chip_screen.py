@@ -531,7 +531,7 @@ async def test_build_console_cost_state_counts_staged_evidence_before_send():
             payload={"query": "question", "evidence_bundle": bundle.to_payload()},
             status="staged",
         )
-        console._stage_console_library_rag_launch(launch)
+        console._retrieval._stage_console_library_rag_launch(launch)
         await pilot.pause()
 
         state = console._build_console_cost_state()

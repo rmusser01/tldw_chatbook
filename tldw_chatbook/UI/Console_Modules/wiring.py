@@ -64,6 +64,7 @@ from .prompt_queue import (
 )
 from .prompts import ConsolePromptsController
 from .reaction_preview import get_console_reaction_preview_coordinator
+from .retrieval import ConsoleRetrievalController
 from .session import ConsoleSessionController
 from .video import ConsoleVideoController
 from .workspace import ConsoleWorkspaceController
@@ -80,10 +81,10 @@ def build_console_controllers(
     rag_source_types_accessor: Callable[[], tuple[str, ...]],
     rag_top_k_accessor: Callable[[], int],
 ) -> None:
-    """Construct the Console screen's ten controllers and attach them.
+    """Construct the Console screen's eleven controllers and attach them.
 
-    Assigns, in this order, `screen._image`, `screen._workspace`,
-    `screen._character`,
+    Assigns, in this order, `screen._image`, `screen._retrieval`,
+    `screen._workspace`, `screen._character`,
     `screen._session`, `screen._dictation`, `screen._hands_free`,
     `screen._message`, `screen._prompts`, `screen._agent`, and
     `screen._prompt_queue`. The order is documentation, not a constraint:
@@ -94,7 +95,7 @@ def build_console_controllers(
     `ChatScreen.__init__` calls this at exactly the point the first
     construction used to occupy. That position matters: the ~250 attribute
     assignments around it in `__init__` include names these lambdas read, and
-    none of the nine constructors reads anything off `screen` eagerly (each
+    none of the eleven constructors reads anything off `screen` eagerly (each
     stores `screen` and its callables and nothing else), so the call needs to
     sit where it can see everything the pre-move constructions could.
 
@@ -165,6 +166,60 @@ def build_console_controllers(
         clear_console_composer_draft=lambda: screen._clear_console_composer_draft(),
     )
 
+    screen._retrieval = ConsoleRetrievalController(
+        app_instance=screen.app_instance,
+        active_native_session=(
+            lambda: screen._session._active_native_console_session()
+        ),
+        current_conversation_id=(
+            lambda: screen._current_console_rail_conversation_id()
+        ),
+        clear_evidence_sent_notice=(
+            lambda: screen._clear_console_evidence_sent_notice()
+        ),
+        consume_pending_launch=lambda: screen._consume_pending_console_launch(),
+        release_consumed_launch=(
+            lambda launch, result: screen._release_consumed_console_launch(
+                launch, result
+            )
+        ),
+        is_mounted=lambda: screen.is_mounted,
+        sync_retrieval_scope_row=(lambda: screen._sync_console_retrieval_scope_row()),
+        sync_control_bar=lambda: screen._sync_console_control_bar(),
+        request_control_bar_sync=(lambda: screen._request_console_control_bar_sync()),
+        dictionary_scope_service=lambda: screen._dictionary_scope_service(),
+        set_library_rag_source_scope=(
+            lambda source_types: screen._set_console_library_rag_source_scope(
+                source_types
+            )
+        ),
+        set_library_rag_query=(
+            lambda query: screen._set_console_library_rag_query(query)
+        ),
+        run_library_rag_action=(
+            lambda: screen._run_console_library_rag_from_visible_action()
+        ),
+        library_rag_source_scope=rag_source_types_accessor,
+        library_rag_top_k=rag_top_k_accessor,
+        pending_launch=lambda: screen._pending_console_launch_context,
+        set_pending_launch=(
+            lambda launch: setattr(screen, "_pending_console_launch_context", launch)
+        ),
+        set_pending_auto_open=(
+            lambda value: setattr(
+                screen, "_pending_console_launch_auto_open_inspector", value
+            )
+        ),
+        set_evidence_sent_notice=(
+            lambda value: setattr(screen, "_console_evidence_sent_notice", value)
+        ),
+        sync_pending_launch_surfaces=(
+            lambda: screen._sync_console_pending_launch_surfaces()
+        ),
+        refresh_screen=lambda: screen.refresh(recompose=True),
+        has_staged_evidence=lambda: screen._has_staged_console_evidence(),
+    )
+
     #: Workspace policy, lifecycle, resume, scope, and conversation-browser
     #: behavior have one owner. The controller keeps canonical rich browser
     #: state and projects legacy Workspace rows through compatibility aliases.
@@ -195,12 +250,16 @@ def build_console_controllers(
         default_session_settings_accessor=(
             lambda: screen._session._default_console_session_settings()
         ),
-        scope_picker_listers_accessor=(lambda: screen._console_scope_picker_listers()),
+        scope_picker_listers_accessor=(
+            lambda: screen._retrieval._console_scope_picker_listers()
+        ),
         active_native_session_accessor=(
             lambda: screen._session._active_native_console_session()
         ),
         refresh_effective_scope_and_sync=(
-            lambda session: screen._refresh_console_effective_scope_and_sync(session)
+            lambda session: screen._retrieval._refresh_console_effective_scope_and_sync(
+                session
+            )
         ),
         # Message <-> workspace seam (the reverse direction of the
         # session/message seams the message controller's own
@@ -233,7 +292,9 @@ def build_console_controllers(
             )
         ),
         resolve_effective_scope_state=(
-            lambda session: screen._resolve_console_effective_scope_state(session)
+            lambda session: screen._retrieval._resolve_console_effective_scope_state(
+                session
+            )
         ),
         sync_retrieval_scope_row=(lambda: screen._sync_console_retrieval_scope_row()),
         note_follow_intent=lambda: screen._note_console_follow_intent(),
@@ -360,7 +421,9 @@ def build_console_controllers(
             )
         ),
         refresh_effective_scope_and_sync=(
-            lambda session: screen._refresh_console_effective_scope_and_sync(session)
+            lambda session: screen._retrieval._refresh_console_effective_scope_and_sync(
+                session
+            )
         ),
         # Session<->workspace seam (design spec: "a named callable
         # between them; design it deliberately, never a back-door
