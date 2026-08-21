@@ -60,8 +60,10 @@ from tldw_chatbook.LLM_Calls.moonshot import (
 )
 from tldw_chatbook.LLM_Calls.zai import chat_with_zai as _strict_chat_with_zai
 from tldw_chatbook.model_capabilities import (
+    anthropic_model_rejects_disabled_thinking,
     anthropic_model_rejects_fixed_thinking_budget,
     anthropic_model_rejects_sampling_params,
+    anthropic_model_thinks_by_default,
     openai_model_rejects_sampling_params,
     openai_model_requires_max_completion_tokens,
 )
@@ -362,11 +364,13 @@ def _anthropic_uses_adaptive_thinking(model: object) -> bool:
 def _anthropic_is_sonnet_5(model: object) -> bool:
     """Return whether model is the documented unprefixed Claude Sonnet 5 family.
 
-    This selects Sonnet 5's *thinking shape* (an explicit ``disabled`` config to
-    turn thinking off; bare ``output_config.effort`` with no ``thinking`` key
-    otherwise). It is deliberately not the answer to "does this model reject
-    sampling parameters / a fixed thinking budget" -- those are capability
-    predicates in ``model_capabilities`` (TASK-18414).
+    This selects Sonnet 5's *effort shape* (bare ``output_config.effort`` with
+    no ``thinking`` key). It is deliberately not the answer to "does this model
+    reject sampling parameters / a fixed thinking budget" -- those are
+    capability predicates in ``model_capabilities`` (TASK-18414) -- nor to
+    "how must thinking OFF be expressed", which is the
+    ``anthropic_model_thinks_by_default`` / ``anthropic_model_rejects_disabled_
+    thinking`` predicate pair (TASK-18800).
     """
     model_name = str(model or "").lower()
     return model_name == "claude-sonnet-5" or model_name.startswith("claude-sonnet-5-")
@@ -381,17 +385,28 @@ def _anthropic_thinking_config(
 ) -> tuple[dict[str, object] | None, dict[str, object] | None, int]:
     """Map Anthropic thinking settings to thinking and output configuration."""
     effort = str(thinking_effort or "").strip().lower()
-    is_sonnet_5 = _anthropic_is_sonnet_5(model)
     if effort == "off":
-        if is_sonnet_5:
-            if thinking_budget_tokens is not None:
-                logger.warning(
-                    "Anthropic: ignoring fixed thinking budget for Claude Sonnet 5 model %s",
-                    model,
-                )
-            return {"type": "disabled"}, None, max_tokens
+        if thinking_budget_tokens is not None:
+            logger.warning(
+                "Anthropic: ignoring fixed thinking budget for model %s with thinking off",
+                model,
+            )
+        # How OFF must be expressed is a per-family capability (TASK-18800):
+        # families that think by default need an explicit disabled config,
+        # EXCEPT the always-on families, which 400-reject it -- there omission
+        # is the only valid payload and thinking still runs (surfaced to the
+        # user by the Console settings warning in console_session_settings).
+        if anthropic_model_thinks_by_default(model):
+            if not anthropic_model_rejects_disabled_thinking(model):
+                return {"type": "disabled"}, None, max_tokens
+            logger.warning(
+                "Anthropic: thinking cannot be turned off on always-on model %s; "
+                "omitting the thinking parameter (adaptive thinking still runs)",
+                model,
+            )
         return None, None, max_tokens
     budget = _safe_cast(thinking_budget_tokens, int)
+    is_sonnet_5 = _anthropic_is_sonnet_5(model)
     if is_sonnet_5:
         if thinking_budget_tokens is not None:
             logger.warning(

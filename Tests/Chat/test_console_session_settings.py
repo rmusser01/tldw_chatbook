@@ -2283,6 +2283,34 @@ class TestConsoleSettingsWarnings:
         settings = self._settings(provider="openai", reasoning_effort="none")
         assert console_settings_warnings(settings) == []
 
+    def test_thinking_off_on_always_on_anthropic_model_warns(self):
+        # TASK-18800: Fable 5 / Mythos 5 think unconditionally -- the API
+        # 400-rejects thinking={"type": "disabled"}, so `off` can only omit
+        # the parameter and adaptive thinking still runs and bills. Silent
+        # acceptance of the user's OFF is the original defect one level up;
+        # this warning is the honest surface.
+        for model in ("claude-fable-5", "claude-mythos-5"):
+            settings = self._settings(
+                provider="anthropic", model=model, thinking_effort="off"
+            )
+            warnings = console_settings_warnings(settings)
+            assert any("always thinks" in w for w in warnings), (model, warnings)
+
+    def test_thinking_off_on_disableable_anthropic_model_does_not_warn(self):
+        # Opus 5 / Sonnet 5 accept the explicit disabled config, so OFF is
+        # genuinely honored there -- no warning.
+        for model in ("claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"):
+            settings = self._settings(
+                provider="anthropic", model=model, thinking_effort="off"
+            )
+            assert console_settings_warnings(settings) == [], model
+
+    def test_non_off_thinking_effort_on_always_on_model_does_not_warn(self):
+        settings = self._settings(
+            provider="anthropic", model="claude-fable-5", thinking_effort="high"
+        )
+        assert console_settings_warnings(settings) == []
+
 
 class TestReadinessKeySetCaching:
     """TASK-18909: the readiness key-sets are pure functions of a constant.

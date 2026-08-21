@@ -30,6 +30,7 @@ from tldw_chatbook.Chat.provider_readiness import (
     provider_config_key,
 )
 from tldw_chatbook.config import ProviderSettingsError, provider_settings_for_key
+from tldw_chatbook.model_capabilities import anthropic_model_rejects_disabled_thinking
 from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.token_counter import count_tokens_messages
 from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
@@ -598,9 +599,13 @@ def console_settings_warnings(settings: ConsoleSessionSettings) -> list[str]:
 
     Returns:
         Zero or more user-facing warning strings: an effort value the
-        selected model family does not consume, and — for llama.cpp-family
+        selected model family does not consume; for llama.cpp-family
         providers with a thinking value set — the server requirements note
-        (``--jinja``; per-request budget needs llama.cpp b9982+).
+        (``--jinja``; per-request budget needs llama.cpp b9982+); and for
+        thinking effort ``off`` on an always-on-thinking Anthropic model
+        (Fable 5 / Mythos 5) — that thinking cannot actually be turned off
+        there (TASK-18800: the API rejects the explicit disabled config, so
+        the request omits the parameter and adaptive thinking still runs).
     """
     warnings: list[str] = []
     effort = str(settings.reasoning_effort or "").strip().lower()
@@ -614,6 +619,15 @@ def console_settings_warnings(settings: ConsoleSessionSettings) -> list[str]:
             )
     if has_thinking_value and settings.provider in _LLAMA_CPP_FAMILY_PROVIDERS:
         warnings.append(_LLAMACPP_THINKING_REQUIREMENTS_NOTE)
+    thinking_effort = str(settings.thinking_effort or "").strip().lower()
+    if thinking_effort == "off" and anthropic_model_rejects_disabled_thinking(
+        settings.model
+    ):
+        warnings.append(
+            f"{settings.model} always thinks: the API rejects an explicit "
+            "thinking-off setting, so 'off' sends no thinking parameter and "
+            "adaptive thinking still runs (and is billed)."
+        )
     return warnings
 
 
