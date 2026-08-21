@@ -23,4 +23,6 @@ Make Console transcripts clearly attribute reasoning and tool activity to the as
 - [ ] #4 The final assistant answer remains visible in the same Assistant turn after its activity rows.
 - [ ] #5 Existing tool-output expansion and message actions remain usable.
 - [ ] #6 Focused transcript tests and live visual verification cover completed, streaming, failed, and resumed turn shapes.
+- [ ] #7 Thinking rows never expose hidden chain-of-thought; absent or unsafe summaries render without a dead disclosure control.
+- [ ] #8 Keyboard selection and transcript pruning follow the rendered turn hierarchy without splitting or reversing a turn.
 <!-- AC:END -->
