@@ -83,7 +83,7 @@ class PersonaVisualCustomStateDialog(ModalScreen[tuple[str, str, str] | None]):
         width: 1fr;
         min-width: 0;
     }
-    """
+"""
 
     def compose(self) -> ComposeResult:
         with Vertical(id="persona-visual-custom-dialog"):

@@ -21,10 +21,10 @@ from tldw_chatbook.Library.library_conversations_state import (
 from tldw_chatbook.Widgets.Library.library_conversations_canvas import (
     LibraryConversationsCanvas,
 )
-from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
     LibraryHarness,
+    _build_test_app,
     _active_library_screen,
     _conversation_records,
     _seed_conversations,
@@ -42,6 +42,7 @@ def _fake(select_mode):
         _library_conversations_row_selection=RowSelection("conversations"),
         _selected_conversation_id="",
         _library_selected_row_id="",
+        _acknowledge_library_destination_change=lambda: None,
         _refreshed=0,
         _opened=[],
     )
