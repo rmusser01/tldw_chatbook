@@ -1,9 +1,10 @@
 ---
 id: TASK-19428
 title: Bound Console Context and Inspector sections with 20-line scroll limits
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-20 07:10'
+updated_date: '2026-08-21 15:35'
 labels:
   - console
   - ux
@@ -23,7 +24,6 @@ below a visible fold.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
 <!-- AC:BEGIN -->
 - [ ] #1 Every direct named Context and Inspector section body grows naturally up to a 20-rendered-content-line ceiling; additional content scrolls inside its allocated viewport with a separate local `▼ more — scroll` hint row.
 - [ ] #2 Section hints are absent when all 0-20 content lines fit the allocated viewport and at the scroll end, and reappear after scrolling upward while content remains below; exactly 21 rows at a full allocation yields 20 content rows plus the separate hint.
@@ -39,15 +39,20 @@ below a visible fold.
 - [ ] #12 Specialized child constraints no longer override the shared ceiling: Sources' legacy 6/10-row caps and Session Settings' CSS 9-row minimum plus inline 9-row maximum are retired, and a one-row settings body occupies one content row.
 <!-- AC:END -->
 
-## Design
+## Implementation Plan
 
-<!-- SECTION:DESIGN:BEGIN -->
-Approved design: `Docs/superpowers/specs/2026-08-21-console-bounded-rail-section-scroll-design.md`.
+<!-- SECTION:PLAN:BEGIN -->
+1. Add pure Context allocation and fold-hint policies with unit tests.
+2. Add the shared 20-content-line bounded-section widget with local hint, scroll, resize, and focus tests.
+3. Integrate atomic Context allocation, active-section behavior, focus recovery, and named invalidations.
+4. Enforce exhaustive Inspector ownership with STRICT development and RESILIENT production policies.
+5. Wrap every Inspector group, retire Sources/Session Settings legacy caps, and reconcile live mutations.
+6. Add counterfactual outer-fold hints plus Inspector-local n/p, footer, and live F1 behavior.
+7. Prove expanded and constrained production-CSS geometry at 235x52, 160x45, 120x30, and 80x24.
+8. Update the Console guide and TASK-19428 implementation notes.
+9. Run only the focused changed-functionality tests and scoped static checks.
 
 ADR required: yes
-
-ADR path: `backlog/decisions/077-console-bounded-rail-section-scrolling.md`
-
-Reason: this establishes a long-lived cross-rail layout, scroll-ownership, and
-keyboard/pointer interaction contract.
-<!-- SECTION:DESIGN:END -->
+ADR path: backlog/decisions/077-console-bounded-rail-section-scrolling.md
+Reason: ADR-077 defines the approved nested-scroll, ownership, focus, and constrained-height interaction model.
+<!-- SECTION:PLAN:END -->
