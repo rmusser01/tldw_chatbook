@@ -9660,8 +9660,10 @@ class ChatScreen(BaseAppScreen):
         Returns:
             ``(rows, totals, turns, exchanges_loader)`` -- ``rows``/
             ``totals`` are ``build_cost_rows``/``build_cost_rows_totals``'s
-            output; ``turns`` is one :class:`InspectorTurn` per contributing
-            message, index-aligned with ``rows``; ``exchanges_loader`` is
+            output; ``turns`` is one :class:`InspectorTurn` per transcript
+            message (NOT filtered to contributing ones -- the
+            contributing-only property is enforced downstream, in
+            ``ConsoleConversationInspector``); ``exchanges_loader`` is
             called by the modal with one turn's ``native_message_id`` and
             returns ``(capture, abandoned)`` pairs (see
             ``console_conversation_inspector``'s module docstring for the

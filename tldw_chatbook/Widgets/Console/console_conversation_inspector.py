@@ -335,19 +335,32 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         super().__init__()
         self._rows = list(rows)
         self._totals = totals
-        # Review finding M5: `turns` is index-aligned with `rows` via
+        # Review finding M5 (and its own regression, closed by the final
+        # re-review): `turns` is index-aligned with `rows` via
         # InspectorTurn.index == ConsoleCostRow.index, but the CALLER
         # (chat_screen.py's _build_console_inspector_cost_data) builds one
-        # turn per transcript MESSAGE, while `build_cost_rows` already
-        # skipped non-contributing ones (no usage, no non-blank content) --
-        # e.g. a bare tool-result message. Unfiltered, the Exchange tab
-        # showed a Collapsible for every message, roughly double the real
-        # count, half of them permanently reading "No capture recorded for
-        # this turn". Restrict to turns that actually have a cost row --
-        # the same set the Costs tab already renders.
+        # turn per transcript MESSAGE, while `build_cost_rows` skips
+        # non-contributing ones -- e.g. a bare tool-result message.
+        # Unfiltered, the Exchange tab showed a Collapsible for every
+        # message, half of them permanently reading "No capture recorded
+        # for this turn". A turn is kept when EITHER half holds:
+        #   - it has a matching cost row (`build_cost_rows`'s own
+        #     contributing set) -- de-clutters rows that never had
+        #     anything to show, same set the Costs tab already renders; OR
+        #   - it is an assistant turn, regardless of a cost row -- Stop
+        #     pressed before the first token still marks and persists the
+        #     message and still flushes a "stopped" capture
+        #     (console_chat_controller.py), but `build_cost_rows` emits no
+        #     row for it (blank content, no usage). M5's `and`-only
+        #     predicate dropped that turn from the Exchange tab entirely,
+        #     making "what did I send that hung?" unreachable -- exactly
+        #     the capture this tab exists to surface. Never hide an
+        #     assistant turn on cost-row absence alone.
         contributing_indices = {row.index for row in self._rows}
         self._turns_by_index = {
-            turn.index: turn for turn in turns if turn.index in contributing_indices
+            turn.index: turn
+            for turn in turns
+            if turn.index in contributing_indices or turn.role == "assistant"
         }
         self._exchanges_loader = exchanges_loader
         self._snapshot_factory = snapshot_factory

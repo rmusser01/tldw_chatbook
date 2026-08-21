@@ -74,13 +74,16 @@ def _totals() -> ConsoleCostRowTotals:
 
 
 def _turn(
-    index: int = 0, message_id: str = "p1", native_message_id: str = "n1"
+    index: int = 0,
+    message_id: str = "p1",
+    native_message_id: str = "n1",
+    role: str = "assistant",
 ) -> InspectorTurn:
     return InspectorTurn(
         message_id=message_id,
         native_message_id=native_message_id,
         index=index,
-        role="assistant",
+        role=role,
         preview="hi",
     )
 
@@ -213,22 +216,48 @@ async def test_costs_rows_render_and_totals() -> None:
 
 @pytest.mark.asyncio
 async def test_exchange_tab_only_shows_turns_with_a_cost_row() -> None:
-    """Review finding M5: ``chat_screen.py`` builds one ``InspectorTurn``
-    per transcript MESSAGE, but ``build_cost_rows`` already skips
-    non-contributing ones (no usage, no non-blank content) -- e.g. a bare
-    tool-result message at index 1 here. Unfiltered, the Exchange tab
-    showed a Collapsible for every message (roughly double the real turn
-    count on a typical conversation), half of them permanently reading "no
-    capture recorded for this turn". Only turns with a matching cost row
-    (the same set the Costs tab already renders) should appear."""
+    """Review finding M5, and its own regression closed by the final
+    re-review (task-18300). ``chat_screen.py`` builds one ``InspectorTurn``
+    per transcript MESSAGE, but ``build_cost_rows`` skips non-contributing
+    ones (no usage, no non-blank content) -- e.g. a bare tool/user message
+    at index 1 here, with no matching cost row. That turn is still
+    filtered out (de-clutter, M5's original goal).
+
+    But M5's original ``and``-only predicate over-corrected: it also
+    dropped an ASSISTANT turn with no cost row, which is exactly the
+    "Stop pressed before the first token" shape (blank content, no usage
+    -- ``build_cost_rows`` emits nothing for it, but the message is still
+    marked and persisted and its "stopped" capture is still flushed). That
+    turn (index 3) has no cost row either, but MUST still render an
+    Exchange-tab row -- and expanding it must reach its capture, not "No
+    capture recorded for this turn" -- because dropping it would make
+    "what did I send that hung?" unreachable, defeating a core promise of
+    this tab. This assertion is red-proof: reverting the fix to the
+    `and`-only predicate makes it fail (turn 3 goes missing)."""
+    stopped_capture = _capture(
+        "run-stop", 0, "2026-08-20T10:00:00Z", "m", status="stopped"
+    )
+
+    async def loader(native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
+        if native_message_id == "n4":
+            return [(stopped_capture, False)]
+        return []
+
     app = InspectorHarness(
         **_default_kwargs(
             rows=[_row(index=0), _row(index=2)],
             turns=[
                 _turn(index=0, message_id="p1", native_message_id="n1"),
-                _turn(index=1, message_id="p2", native_message_id="n2"),
+                _turn(index=1, message_id="p2", native_message_id="n2", role="user"),
                 _turn(index=2, message_id="p3", native_message_id="n3"),
+                _turn(
+                    index=3,
+                    message_id="p4",
+                    native_message_id="n4",
+                    role="assistant",
+                ),
             ],
+            exchanges_loader=loader,
             initial_tab=TAB_EXCHANGE,
         )
     )
@@ -243,7 +272,29 @@ async def test_exchange_tab_only_shows_turns_with_a_cost_row() -> None:
         assert set(collapsibles) == {
             "console-inspector-exchange-turn-0",
             "console-inspector-exchange-turn-2",
+            "console-inspector-exchange-turn-3",
         }
+
+        # Load-bearing half: turn 3 (no cost row, assistant role, the
+        # stop-before-first-token shape) must actually resolve to its
+        # capture on expand, not fall back to the "no captures" empty
+        # state -- rendering the row alone would not prove the loader
+        # path still works for a turn outside `contributing_indices`.
+        turn_3 = collapsibles["console-inspector-exchange-turn-3"]
+        turn_3.collapsed = False
+
+        def _turn_3_loaded() -> bool:
+            return bool(turn_3.query(Collapsible)) or any(
+                "No capture recorded for this turn" in str(static.renderable)
+                for static in turn_3.query(Static)
+            )
+
+        await _wait_until(pilot, _turn_3_loaded)
+
+        call_collapsibles = {c.id for c in turn_3.query(Collapsible)}
+        assert call_collapsibles == {"console-inspector-exchange-call-3-0"}
+        texts = [str(static.renderable) for static in turn_3.query(Static)]
+        assert not any("No capture recorded for this turn" in t for t in texts)
 
 
 @pytest.mark.asyncio
