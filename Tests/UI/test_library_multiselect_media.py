@@ -22,7 +22,11 @@ from tldw_chatbook.Library.library_media_state import (
     MediaBrowseScope,
     build_library_media_state,
 )
-from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_MEDIA
+from tldw_chatbook.Library.library_pager_state import build_library_pager_display
+from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_ROW_BROWSE_MEDIA,
+    LIBRARY_ROW_INGEST_MEDIA,
+)
 from tldw_chatbook.Widgets.Library.library_media_canvas import LibraryMediaCanvas
 
 
@@ -240,6 +244,148 @@ class _EmptySelectModeCanvasApp(ConsolidatedCSSApp):
         yield LibraryMediaCanvas(
             canvas=_empty_select_mode_state(), id="library-media-canvas"
         )
+
+
+class _FreshEmptyMediaCanvasApp(ConsolidatedCSSApp):
+    def __init__(
+        self,
+        *,
+        media_type: str | None,
+        delete_receipt_count: int = 0,
+        loading: bool = False,
+        error_copy: str = "",
+    ) -> None:
+        super().__init__()
+        self.media_type = media_type
+        self.delete_receipt_count = delete_receipt_count
+        self.loading = loading
+        self.error_copy = error_copy
+
+    def compose(self):
+        copy = (
+            f"No media of type '{self.media_type}'."
+            if self.media_type is not None
+            else "No media in your Library yet. Import something to see it here."
+        )
+        yield LibraryMediaCanvas(
+            canvas=LibraryMediaCanvasState(
+                rows=(),
+                type_options=(None, "video"),
+                active_type=self.media_type,
+                status_copy="",
+                empty_copy=copy,
+                selected_id="",
+                preview_lines=(),
+                count=0,
+                delete_receipt_count=self.delete_receipt_count,
+            ),
+            pager=build_library_pager_display(
+                applied_page=1,
+                requested_page=1,
+                page_size=20,
+                row_count=0,
+                total=0,
+                freshness="fresh",
+                loading=self.loading,
+                error_copy=self.error_copy,
+            ),
+            id="library-media-canvas",
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("media_type", "action_id", "label"),
+    [
+        (None, "library-media-empty-import", "Import media"),
+        ("video", "library-media-empty-clear-type", "Show all types"),
+    ],
+    ids=["source-empty", "filtered-zero"],
+)
+async def test_media_fresh_zero_distills_to_one_recovery_action(
+    media_type: str | None, action_id: str, label: str
+):
+    app = _FreshEmptyMediaCanvasApp(media_type=media_type)
+
+    async with app.run_test() as pilot:
+        action = pilot.app.query_one(f"#{action_id}", Button)
+        assert str(action.label) == label
+        assert action.disabled is False
+        assert action in pilot.app.screen.focus_chain
+        assert not pilot.app.query("#library-media-pager")
+        assert not pilot.app.query("#library-media-select-toggle")
+        assert not pilot.app.query("#library-media-export")
+        assert not pilot.app.query("#library-media-detail-empty")
+        assert len(pilot.app.query(".library-canvas-action")) == 1
+
+
+@pytest.mark.asyncio
+async def test_media_fresh_zero_keeps_committed_delete_recovery_authority():
+    app = _FreshEmptyMediaCanvasApp(media_type=None, delete_receipt_count=1)
+
+    async with app.run_test() as pilot:
+        assert pilot.app.query_one("#library-media-bulk-delete-undo", Button)
+        assert pilot.app.query_one("#library-media-trash-open", Button)
+        assert pilot.app.query_one("#library-media-pager")
+        assert not pilot.app.query("#library-media-empty-import")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("loading", "error_copy", "retry_visible"),
+    [
+        (True, "", False),
+        (False, "Filter wasn't applied; showing previous results.", True),
+    ],
+    ids=["loading", "error"],
+)
+async def test_media_retained_zero_keeps_request_recovery_authority(
+    loading: bool, error_copy: str, retry_visible: bool
+):
+    app = _FreshEmptyMediaCanvasApp(
+        media_type=None,
+        loading=loading,
+        error_copy=error_copy,
+    )
+
+    async with app.run_test() as pilot:
+        assert pilot.app.query_one("#library-media-pager")
+        assert bool(pilot.app.query("#library-media-retry")) is retry_visible
+        assert not pilot.app.query("#library-media-empty-import")
+
+
+@pytest.mark.asyncio
+async def test_media_empty_import_uses_existing_library_destination():
+    calls = []
+
+    async def select_row(row_id: str) -> None:
+        calls.append(row_id)
+
+    fake = SimpleNamespace(
+        _select_library_rail_row=select_row,
+    )
+
+    await LibraryScreen.handle_library_media_empty_import(
+        fake, SimpleNamespace(stop=lambda: None)
+    )
+
+    assert calls == [LIBRARY_ROW_INGEST_MEDIA]
+
+
+def test_media_empty_clear_type_requests_applied_scope_page_one():
+    calls = []
+    fake = SimpleNamespace(
+        _library_media_bulk_delete_in_flight=False,
+        _request_library_media_type=lambda media_type, **kwargs: calls.append(
+            (media_type, kwargs)
+        ),
+    )
+
+    LibraryScreen.handle_library_media_empty_clear_type(
+        fake, SimpleNamespace(stop=lambda: None)
+    )
+
+    assert calls == [(None, {"focus_identity": "#library-media-empty-clear-type"})]
 
 
 @pytest.mark.asyncio

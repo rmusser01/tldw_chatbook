@@ -313,6 +313,70 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
             classes="destination-section",
             markup=False,
         )
+        fresh_empty_status = (
+            browse_result.status
+            if browse_result is not None
+            and pager is not None
+            and pager.title_count == 0
+            and not state.rows
+            and not state.select_mode
+            and self.delete_receipt is None
+            and not self.mutation_in_flight
+            and not self.mutation_status
+            and not self.import_open
+            and not pager.status_copy
+            and not pager.retry_visible
+            else None
+        )
+        if fresh_empty_status in {"empty_library", "empty_collection", "no_matches"}:
+            if fresh_empty_status == "no_matches":
+                yield Input(
+                    placeholder="Filter prompts… (Enter)",
+                    id="library-prompts-filter",
+                    value=self.filter_value,
+                )
+                empty_copy = (
+                    f'No prompts match "{browse_result.scope.query}". '
+                    "Clear the search or try different words."
+                )
+                action_label = "Clear filter"
+                action_id = "library-prompts-empty-clear-filter"
+            elif fresh_empty_status == "empty_collection":
+                yield Static(
+                    library_choice_label("collection", self.collection_label),
+                    id="library-prompts-empty-collection-label",
+                    markup=False,
+                )
+                empty_copy = _EMPTY_PROMPT_COLLECTION_COPY
+                action_label = "All prompts"
+                action_id = "library-prompts-empty-all-prompts"
+            else:
+                empty_copy = _EMPTY_PROMPT_LIBRARY_COPY
+                action_label = "New prompt"
+                action_id = "library-prompts-empty-new"
+            yield Static(
+                empty_copy,
+                id="library-prompts-empty",
+                markup=False,
+            )
+            yield Button(
+                action_label,
+                id=action_id,
+                classes=(
+                    "library-canvas-action console-action-primary"
+                    if fresh_empty_status == "empty_library"
+                    else "library-canvas-action"
+                ),
+                compact=True,
+            )
+            if fresh_empty_status == "empty_library":
+                yield Button(
+                    "Import…",
+                    id="library-prompts-import",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+            return
         if self.delete_receipt is not None:
             receipt = self.delete_receipt
             if isinstance(receipt, PromptBatchDeleteResult):

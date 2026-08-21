@@ -118,6 +118,37 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         title = "Media" if title_count is None else f"Media ({title_count})"
         yield Static(title, id="library-media-title")
         select_mode = getattr(self.canvas, "select_mode", False)
+        if (
+            self.pager is not None
+            and title_count == 0
+            and not self.canvas.rows
+            and not select_mode
+            and not self.canvas.delete_receipt_count
+            and not self.stale_action_reason
+            and not self.mutation_action_reason
+            and not self.pager.status_copy
+            and not self.pager.retry_visible
+        ):
+            yield Static(
+                self.canvas.empty_copy,
+                id="library-media-status",
+                markup=False,
+            )
+            if self.canvas.active_type is None:
+                yield Button(
+                    "Import media",
+                    id="library-media-empty-import",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+            else:
+                yield Button(
+                    "Show all types",
+                    id="library-media-empty-clear-type",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+            return
         # Gate/label off the RENDERED rows, not ``canvas.count`` -- the latter
         # is the pre-filter total across ALL media types, so with a media-type
         # filter active it overstates what's shown (and stays > 0 when the

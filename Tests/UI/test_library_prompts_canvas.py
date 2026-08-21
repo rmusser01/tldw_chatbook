@@ -49,6 +49,7 @@ from tldw_chatbook.DB.Prompts_DB import (
 from tldw_chatbook.Chatbooks.chatbook_models import ContentType
 from tldw_chatbook.Chatbooks.local_chatbook_service import LocalChatbookService
 from tldw_chatbook.Library.library_export_scope import ExportScope
+from tldw_chatbook.Library.library_pager_state import build_library_pager_display
 from tldw_chatbook.Library.library_prompts_state import (
     LibraryPromptDeleteReceipt,
     PromptBrowseResult,
@@ -1460,6 +1461,178 @@ async def test_prompts_canvas_renders_truthful_literal_empty_states(
         assert str(empty.renderable) == expected
         assert str(empty.render()) == expected
         assert not pilot.app.query("#library-prompts-retry")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    (
+        "query",
+        "collection_id",
+        "action_id",
+        "label",
+        "kept_selector",
+        "expected_action_count",
+    ),
+    [
+        ("", None, "library-prompts-empty-new", "New prompt", None, 2),
+        (
+            "needle",
+            None,
+            "library-prompts-empty-clear-filter",
+            "Clear filter",
+            "#library-prompts-filter",
+            1,
+        ),
+        (
+            "",
+            9,
+            "library-prompts-empty-all-prompts",
+            "All prompts",
+            "#library-prompts-empty-collection-label",
+            1,
+        ),
+    ],
+    ids=["source-empty", "query-zero", "collection-zero"],
+)
+async def test_prompts_fresh_zero_distills_to_approved_recovery_actions(
+    query: str,
+    collection_id: int | None,
+    action_id: str,
+    label: str,
+    kept_selector: str | None,
+    expected_action_count: int,
+):
+    result = _browse_result(query=query, collection_id=collection_id)
+    app = _CanvasHost(
+        PromptsListState(rows=(), count=0, sort="newest"),
+        browse_result=result,
+        filter_value=query,
+        collection_label="Research" if collection_id is not None else "All prompts",
+        pager=build_library_pager_display(
+            applied_page=1,
+            requested_page=1,
+            page_size=20,
+            row_count=0,
+            total=0,
+            freshness="fresh",
+        ),
+    )
+
+    async with app.run_test() as pilot:
+        action = pilot.app.query_one(f"#{action_id}", Button)
+        assert str(action.label) == label
+        assert action.disabled is False
+        assert action in pilot.app.screen.focus_chain
+        assert action.has_class("console-action-primary") is (
+            expected_action_count == 2
+        )
+        assert not pilot.app.query("#library-prompts-pager")
+        assert not pilot.app.query("#library-prompts-selection-reason")
+        assert not pilot.app.query("#library-prompts-select")
+        assert not pilot.app.query("#library-prompts-export")
+        for selector in (
+            "#library-prompts-filter",
+            "#library-prompts-empty-collection-label",
+        ):
+            assert bool(pilot.app.query(selector)) is (selector == kept_selector)
+        assert len(pilot.app.query(".library-canvas-action")) == expected_action_count
+        assert bool(pilot.app.query("#library-prompts-import")) is (
+            expected_action_count == 2
+        )
+        if expected_action_count == 2:
+            assert not pilot.app.query_one("#library-prompts-import", Button).has_class(
+                "console-action-primary"
+            )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("loading", "error_copy", "retry_visible"),
+    [
+        (True, "", False),
+        (False, "Filter wasn't applied; showing previous results.", True),
+    ],
+    ids=["loading", "error"],
+)
+async def test_prompts_retained_zero_keeps_request_recovery_authority(
+    loading: bool, error_copy: str, retry_visible: bool
+):
+    result = _browse_result()
+    app = _CanvasHost(
+        PromptsListState(rows=(), count=0, sort="newest"),
+        browse_result=result,
+        pager=build_library_pager_display(
+            applied_page=1,
+            requested_page=1,
+            page_size=20,
+            row_count=0,
+            total=0,
+            freshness="fresh",
+            loading=loading,
+            error_copy=error_copy,
+        ),
+    )
+
+    async with app.run_test() as pilot:
+        assert pilot.app.query_one("#library-prompts-pager")
+        assert bool(pilot.app.query("#library-prompts-retry")) is retry_visible
+        assert not pilot.app.query("#library-prompts-empty-new")
+
+
+@pytest.mark.asyncio
+async def test_prompts_empty_new_uses_existing_create_destination():
+    calls = []
+
+    async def select_row(row_id: str) -> None:
+        calls.append(row_id)
+
+    fake = SimpleNamespace(
+        _library_prompts_mutation_in_flight=False,
+        _select_library_rail_row=select_row,
+    )
+    await LibraryScreen.handle_library_prompts_empty_new(
+        fake, SimpleNamespace(stop=lambda: None)
+    )
+
+    assert calls == [LIBRARY_ROW_CREATE_PROMPT]
+
+
+@pytest.mark.parametrize(
+    ("handler_name", "scope", "expected_scope", "focus_identity"),
+    [
+        (
+            "handle_library_prompts_empty_clear_filter",
+            PromptBrowseScope(query="needle", sort_by="name", sort_order="asc", page=3),
+            PromptBrowseScope(query="", sort_by="name", sort_order="asc", page=1),
+            "library-prompts-empty-clear-filter",
+        ),
+        (
+            "handle_library_prompts_empty_all_prompts",
+            PromptBrowseScope(collection_id=9, sort_by="name", sort_order="asc", page=2),
+            PromptBrowseScope(collection_id=None, sort_by="name", sort_order="asc", page=1),
+            "library-prompts-empty-all-prompts",
+        ),
+    ],
+    ids=["query", "collection"],
+)
+def test_prompts_empty_reset_preserves_other_scope_fields(
+    handler_name: str,
+    scope: PromptBrowseScope,
+    expected_scope: PromptBrowseScope,
+    focus_identity: str,
+):
+    calls = []
+    fake = SimpleNamespace(
+        _library_prompts_mutation_in_flight=False,
+        _library_prompt_browse_controller=SimpleNamespace(scope=scope),
+        _request_library_prompts_browse=lambda requested, **kwargs: calls.append(
+            (requested, kwargs)
+        ),
+    )
+
+    getattr(LibraryScreen, handler_name)(fake, SimpleNamespace(stop=lambda: None))
+
+    assert calls == [(expected_scope, {"focus_identity": focus_identity})]
 
 
 @pytest.mark.asyncio
@@ -4921,6 +5094,7 @@ def _real_prompt_scope_service_with_production_policy_enforcer(tmp_path):
 
 
 def _wire_empty_non_prompt_services(app) -> None:
+    app.library_new_profile_admission = False
     app.notes_scope_service = StaticLibraryNotesListScopeService([])
     app.media_reading_scope_service = StaticLibraryMediaScopeService([])
     app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])

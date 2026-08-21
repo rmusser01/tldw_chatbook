@@ -164,6 +164,35 @@ on-screen. Escape (or the **Database** link) returns to the notes list — see
 
 ### Browse rows
 
+Media, Conversations, and Prompts replace an empty page's disabled paging and
+selection controls with a useful next step. The exact total remains visible in
+the title, but there is no meaningless “page 1 of 1” or “nothing to select”
+mechanic.
+
+```text
+source really has no items          active filter has no matches
+--------------------------          ----------------------------
+Media (0)                           Media (0)
+No media in your Library yet.       No media of type 'video'.
+Import something to see it here.
+[ Import media ]                    [ Show all types ]
+
+Conversations (0)                   Conversations (0)
+No conversations yet. Chat in      No conversations match 'draft'.
+Console and it appears here.
+[ Start in Console ]                [ Clear filter ]
+
+Prompts (0)                         Prompts (0)
+No prompts yet. Create or import    No prompts match "draft".
+a prompt to begin.
+[ New prompt ] [ Import... ]        [ Clear filter ]
+```
+
+A filtered empty page keeps its submitted type, query, or collection visible
+until you choose the reset action. Loading and failed refreshes do not use this
+empty presentation: they keep their status, pager authority, and **Retry** so a
+previously empty page cannot hide an in-progress or recoverable request.
+
 | Row | Opens | Details on |
 |---|---|---|
 | **Media** | The media list and viewer. | [Media & conversations](library/media-and-conversations.md) |

@@ -16533,6 +16533,23 @@ class LibraryScreen(BaseAppScreen):
             then=lambda: self._focus_library_control("#library-media-type-filter"),
         )
 
+    @on(Button.Pressed, "#library-media-empty-import")
+    async def handle_library_media_empty_import(self, event: Button.Pressed) -> None:
+        """Open the existing Library Import destination from a true empty page."""
+        event.stop()
+        await self._select_library_rail_row(LIBRARY_ROW_INGEST_MEDIA)
+
+    @on(Button.Pressed, "#library-media-empty-clear-type")
+    def handle_library_media_empty_clear_type(self, event: Button.Pressed) -> None:
+        """Recover a filtered-empty Media page without changing its other scope."""
+        event.stop()
+        if self._library_media_bulk_delete_in_flight:
+            return
+        self._request_library_media_type(
+            None,
+            focus_identity="#library-media-empty-clear-type",
+        )
+
     @on(Button.Pressed, "#library-media-previous")
     def handle_library_media_previous(self, event: Button.Pressed) -> None:
         """Request the previous exact Media page."""
@@ -17685,6 +17702,42 @@ class LibraryScreen(BaseAppScreen):
             self.call_after_refresh(
                 self._focus_library_control, "#library-prompts-sort"
             )
+
+    @on(Button.Pressed, "#library-prompts-empty-new")
+    async def handle_library_prompts_empty_new(self, event: Button.Pressed) -> None:
+        """Open the existing blank Prompt editor from a true empty page."""
+        event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
+        await self._select_library_rail_row(LIBRARY_ROW_CREATE_PROMPT)
+
+    @on(Button.Pressed, "#library-prompts-empty-clear-filter")
+    def handle_library_prompts_empty_clear_filter(
+        self, event: Button.Pressed
+    ) -> None:
+        """Clear only the Prompt query and return to page one."""
+        event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
+        scope = self._library_prompt_browse_controller.scope
+        self._request_library_prompts_browse(
+            dataclasses.replace(scope, query="", page=1),
+            focus_identity="library-prompts-empty-clear-filter",
+        )
+
+    @on(Button.Pressed, "#library-prompts-empty-all-prompts")
+    def handle_library_prompts_empty_all_prompts(
+        self, event: Button.Pressed
+    ) -> None:
+        """Clear only the Prompt collection and return to page one."""
+        event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
+        scope = self._library_prompt_browse_controller.scope
+        self._request_library_prompts_browse(
+            dataclasses.replace(scope, collection_id=None, page=1),
+            focus_identity="library-prompts-empty-all-prompts",
+        )
 
     @on(Button.Pressed, "#library-prompts-select")
     def handle_library_prompts_select(self, event: Button.Pressed) -> None:
@@ -30611,6 +30664,34 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         query = self._safe_text(event.value, max_length=200)
         self._start_library_conversation_page_request(1, query, refocus_filter=True)
+
+    @on(Button.Pressed, "#library-conversations-empty-console")
+    def handle_library_conversations_empty_console(
+        self, event: Button.Pressed
+    ) -> None:
+        """Start a new Conversation through the existing Console route."""
+        event.stop()
+        opener = getattr(self.app_instance, "open_console_for_live_work", None)
+        if callable(opener):
+            opener(
+                source="library-conversations-empty",
+                title="Start a conversation",
+                action_label="Start in Console",
+            )
+
+    @on(Button.Pressed, "#library-conversations-empty-clear-filter")
+    def handle_library_conversations_empty_clear_filter(
+        self, event: Button.Pressed
+    ) -> None:
+        """Clear the submitted Conversation query and request page one."""
+        event.stop()
+        if self._library_conversation_loading:
+            return
+        self._start_library_conversation_page_request(
+            1,
+            "",
+            refocus_filter=True,
+        )
 
     @on(Button.Pressed, "#library-conversations-retry")
     def handle_library_conversations_retry(self, event: Button.Pressed) -> None:

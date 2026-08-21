@@ -74,6 +74,36 @@ class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, V
             classes="destination-section",
             markup=False,
         )
+        if (
+            pager is not None
+            and title_count == 0
+            and not self.canvas.rows
+            and not select_mode
+            and not pager.status_copy
+            and not pager.retry_visible
+        ):
+            if self.canvas.query:
+                yield Input(
+                    value=self.canvas.query,
+                    placeholder="Filter conversations… (Enter)",
+                    id="library-conversations-filter",
+                )
+            yield Static(
+                self.canvas.empty_copy,
+                id="library-conversations-status",
+                markup=False,
+            )
+            yield Button(
+                "Clear filter" if self.canvas.query else "Start in Console",
+                id=(
+                    "library-conversations-empty-clear-filter"
+                    if self.canvas.query
+                    else "library-conversations-empty-console"
+                ),
+                classes="library-canvas-action",
+                compact=True,
+            )
+            return
         actions_disabled = self.canvas.actions_disabled
         stale_action_reason = ""
         if actions_disabled:

@@ -5,7 +5,7 @@ import pytest
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from textual.widgets import Button
+from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.UI.Screens.library_screen import (
     LibraryScreen,
@@ -16,6 +16,7 @@ from tldw_chatbook.Library.library_export_scope import ExportScope
 from tldw_chatbook.Library.library_conversations_state import (
     LibraryConversationsCanvasState,
     LibraryConversationRow,
+    build_library_conversations_state,
 )
 from tldw_chatbook.Widgets.Library.library_conversations_canvas import (
     LibraryConversationsCanvas,
@@ -139,6 +140,122 @@ class _ConversationsCanvasSelectedApp(ConsolidatedCSSApp):
             canvas=dataclasses.replace(_select_mode_canvas_state(), selected_count=1),
             id="library-conversations-canvas",
         )
+
+
+class _FreshEmptyConversationsCanvasApp(ConsolidatedCSSApp):
+    def __init__(
+        self, *, query: str, loading: bool = False, error_copy: str = ""
+    ) -> None:
+        super().__init__()
+        self._query = query
+        self.loading = loading
+        self.error_copy = error_copy
+
+    def compose(self):
+        yield LibraryConversationsCanvas(
+            build_library_conversations_state(
+                (),
+                query=self._query,
+                total_count=0,
+                total_known=True,
+                freshness="fresh",
+                loading=self.loading,
+                error_copy=self.error_copy,
+            ),
+            id="library-conversations-canvas",
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("query", "action_id", "label", "filter_visible"),
+    [
+        ("", "library-conversations-empty-console", "Start in Console", False),
+        ("needle", "library-conversations-empty-clear-filter", "Clear filter", True),
+    ],
+    ids=["source-empty", "filtered-zero"],
+)
+async def test_conversations_fresh_zero_distills_to_one_recovery_action(
+    query: str, action_id: str, label: str, filter_visible: bool
+):
+    app = _FreshEmptyConversationsCanvasApp(query=query)
+
+    async with app.run_test() as pilot:
+        action = pilot.app.query_one(f"#{action_id}", Button)
+        assert str(action.label) == label
+        assert action.disabled is False
+        assert action in pilot.app.screen.focus_chain
+        assert bool(pilot.app.query("#library-conversations-filter")) is filter_visible
+        if filter_visible:
+            assert pilot.app.query_one("#library-conversations-filter", Input).value == query
+        assert "No conversations" in str(
+            pilot.app.query_one("#library-conversations-status", Static).renderable
+        )
+        assert not pilot.app.query("#library-conversations-pager")
+        assert not pilot.app.query("#library-conversations-select-toggle")
+        assert not pilot.app.query("#library-conversations-export")
+        assert len(pilot.app.query(".library-canvas-action")) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("loading", "error_copy", "retry_visible"),
+    [
+        (True, "", False),
+        (False, "Filter wasn't applied; showing previous results.", True),
+    ],
+    ids=["loading", "error"],
+)
+async def test_conversations_retained_zero_keeps_request_recovery_authority(
+    loading: bool, error_copy: str, retry_visible: bool
+):
+    app = _FreshEmptyConversationsCanvasApp(
+        query="",
+        loading=loading,
+        error_copy=error_copy,
+    )
+
+    async with app.run_test() as pilot:
+        assert pilot.app.query_one("#library-conversations-pager")
+        assert bool(pilot.app.query("#library-conversations-retry")) is retry_visible
+        assert not pilot.app.query("#library-conversations-empty-console")
+
+
+def test_conversations_empty_console_uses_existing_live_work_route():
+    calls = []
+    fake = SimpleNamespace(
+        app_instance=SimpleNamespace(
+            open_console_for_live_work=lambda **kwargs: calls.append(kwargs)
+        )
+    )
+
+    LibraryScreen.handle_library_conversations_empty_console(
+        fake, SimpleNamespace(stop=lambda: None)
+    )
+
+    assert calls == [
+        {
+            "source": "library-conversations-empty",
+            "title": "Start a conversation",
+            "action_label": "Start in Console",
+        }
+    ]
+
+
+def test_conversations_empty_clear_filter_requests_unfiltered_page_one():
+    calls = []
+    fake = SimpleNamespace(
+        _library_conversation_loading=False,
+        _start_library_conversation_page_request=lambda page, query, **kwargs: calls.append(
+            (page, query, kwargs)
+        ),
+    )
+
+    LibraryScreen.handle_library_conversations_empty_clear_filter(
+        fake, SimpleNamespace(stop=lambda: None)
+    )
+
+    assert calls == [(1, "", {"refocus_filter": True})]
 
 
 @pytest.mark.asyncio

@@ -8351,6 +8351,156 @@ def _painted_rows(screen) -> list[str]:
     ]
 
 
+@pytest.mark.parametrize("size", ((100, 30), (170, 48)))
+@pytest.mark.parametrize(
+    (
+        "row_id",
+        "recovery_selector",
+        "recovery_label",
+        "absent_selectors",
+        "destination_selector",
+    ),
+    [
+        (
+            LIBRARY_ROW_BROWSE_MEDIA,
+            "#library-media-empty-import",
+            "Import media",
+            ("#library-media-pager", "#library-media-select-toggle"),
+            "#library-ingest-path",
+        ),
+        (
+            LIBRARY_ROW_BROWSE_CONVERSATIONS,
+            "#library-conversations-empty-console",
+            "Start in Console",
+            (
+                "#library-conversations-pager",
+                "#library-conversations-select-toggle",
+            ),
+            None,
+        ),
+        (
+            LIBRARY_ROW_BROWSE_PROMPTS,
+            "#library-prompts-empty-new",
+            "New prompt",
+            ("#library-prompts-pager", "#library-prompts-selection-reason"),
+            "#library-prompt-name",
+        ),
+    ],
+    ids=["media", "conversations", "prompts"],
+)
+@pytest.mark.asyncio
+async def test_library_paged_empty_recovery_is_painted_and_keyboard_reachable(
+    tmp_path,
+    size,
+    row_id: str,
+    recovery_selector: str,
+    recovery_label: str,
+    absent_selectors: tuple[str, ...],
+    destination_selector: str | None,
+) -> None:
+    """Production hierarchy/CSS prove the distilled empty action at both sizes."""
+    app = _build_test_app()
+    _seed_conversations(app, [])
+    prompts_db = PromptsDatabase(
+        tmp_path / f"empty-prompts-{row_id}.db",
+        client_id=f"empty-prompts-{row_id}",
+    )
+    app.prompt_scope_service = PromptScopeService(
+        local_service=LocalPromptService(prompts_db),
+        server_service=None,
+    )
+    console_calls: list[dict[str, object]] = []
+    app.open_console_for_live_work = lambda **kwargs: console_calls.append(kwargs)
+    host = LibraryProductionCSSHarness(app)
+
+    try:
+        async with host.run_test(size=size) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            screen.query_one(f"#library-row-{row_id}", Button).press()
+            recovery = await _wait_for_selector(screen, pilot, recovery_selector)
+            await pilot.pause()
+
+            if row_id == LIBRARY_ROW_BROWSE_MEDIA:
+                screen._request_library_media_type("video", focus_identity=None)
+                filtered_selector = "#library-media-empty-clear-type"
+            elif row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
+                screen._start_library_conversation_page_request(1, "draft")
+                filtered_selector = "#library-conversations-empty-clear-filter"
+            else:
+                prompt_scope = screen._library_prompt_browse_controller.scope
+                screen._request_library_prompts_browse(
+                    dataclasses.replace(prompt_scope, query="draft", page=1)
+                )
+                filtered_selector = "#library-prompts-empty-clear-filter"
+
+            filtered_recovery = await _wait_for_selector(
+                screen, pilot, filtered_selector
+            )
+            await pilot.pause()
+            if row_id == LIBRARY_ROW_BROWSE_MEDIA:
+                assert (
+                    screen._library_media_browse_controller.applied_scope.media_type
+                    == "video"
+                )
+            elif row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
+                assert screen._library_conversation_requested_query == "draft"
+            else:
+                assert screen._library_prompt_browse_controller.scope.query == "draft"
+            assert filtered_recovery.region.width > 0
+            assert filtered_recovery.region.height > 0
+            filtered_text = "\n".join(_painted_rows(screen))
+            expected_filter = (
+                "video" if row_id == LIBRARY_ROW_BROWSE_MEDIA else "draft"
+            )
+            assert expected_filter in filtered_text
+            filtered_chain = list(screen.focus_chain)
+            filtered_prior = filtered_chain[filtered_chain.index(filtered_recovery) - 1]
+            filtered_prior.focus()
+            await pilot.press("tab")
+            assert filtered_recovery.has_focus
+            await pilot.press("enter")
+            recovery = await _wait_for_selector(screen, pilot, recovery_selector)
+            await pilot.pause()
+
+            pane = screen.query_one("#library-canvas")
+            assert recovery.region.width > 0
+            assert recovery.region.height > 0
+            assert recovery.region.x >= pane.region.x
+            assert recovery.region.right <= pane.region.right
+            assert recovery.region.y >= pane.region.y
+            assert recovery.region.bottom <= pane.region.bottom
+            painted_region = "\n".join(
+                _painted_rows(screen)[recovery.region.y : recovery.region.bottom]
+            )
+            assert recovery_label in painted_region
+            for selector in absent_selectors:
+                assert not screen.query(selector)
+            painted = "\n".join(_painted_rows(screen))
+            assert "0 of 0" not in painted
+            assert "Page 1 of 1" not in painted
+            assert "Nothing here to select yet." not in painted
+
+            chain = list(screen.focus_chain)
+            assert recovery in chain
+            prior = chain[chain.index(recovery) - 1]
+            prior.focus()
+            await pilot.press("tab")
+            assert recovery.has_focus
+            await pilot.press("enter")
+            if destination_selector is not None:
+                await _wait_for_selector(screen, pilot, destination_selector)
+            else:
+                await _wait_for_condition(
+                    pilot,
+                    lambda: len(console_calls) == 1,
+                    message="Empty Conversation recovery did not reach Console.",
+                )
+                assert console_calls[0]["source"] == "library-conversations-empty"
+    finally:
+        prompts_db.close_connection()
+
+
 @pytest.mark.asyncio
 async def test_library_shell_media_viewer_search_chrome_paints_at_compact_size():
     """Catch search status and Prev/Next sitting below the fold at 80x24.
