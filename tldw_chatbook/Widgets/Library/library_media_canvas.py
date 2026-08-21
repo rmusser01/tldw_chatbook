@@ -130,6 +130,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             )
             button.styles.height = 1 if compact else 2
             button.styles.min_height = 1 if compact else 2
+            self._gate_stale_action(button, label_rest.lstrip())
         try:
             preview = self.query_one("#library-media-preview")
             open_viewer = self.query_one("#library-media-open-viewer", Button)
@@ -516,8 +517,8 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # (Collections' `#library-collections-workbench` grammar). Above the
         # screen's one measured width regime it lays them out side by side
         # (this Horizontal's default); below it, the host's existing
-        # `library-notes-compact` class flips it back to the stacked flow
-        # via CSS -- the conditional lives in the stylesheet keyed off a
+        # `library-notes-compact` class gives the list the full canvas and
+        # suppresses the preview via CSS -- the conditional is keyed off a
         # class the screen already maintains at compose time AND on every
         # resize crossing, so no compose branch here can drift from an
         # in-place updater. Geometry (heights/overflow) moved from inline

@@ -5368,6 +5368,8 @@ class LibraryScreen(BaseAppScreen):
         """Let click-driven focus changes supersede resize memory."""
         del event
         self._mark_library_notes_user_interaction()
+        if self._library_pending_list_entry_focus:
+            self._disarm_library_list_entry_focus()
 
     def on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
         """Let wheel scrolling supersede resize memory."""
@@ -6655,6 +6657,11 @@ class LibraryScreen(BaseAppScreen):
         row_class = _LIBRARY_LIST_ROW_CLASS_BY_ROW_ID.get(self._library_selected_row_id)
         widget = event.widget
         if row_class is not None and widget is not None and widget.has_class(row_class):
+            return
+        if (
+            self._library_notes_restoring_focus
+            and self._library_pending_list_entry_media_return is not None
+        ):
             return
         self._disarm_library_list_entry_focus()
 
@@ -10924,8 +10931,15 @@ class LibraryScreen(BaseAppScreen):
             "library-media-retry",
             "library-media-type-filter",
         }
+        semantic_return_generation = (
+            self._library_list_entry_focus_generation
+            if self._library_pending_list_entry_focus
+            and self._library_pending_list_entry_media_return is not None
+            else None
+        )
         if (
-            isinstance(focused_id, str)
+            semantic_return_generation is None
+            and isinstance(focused_id, str)
             and focused_id
             and any(widget.id == "library-media-canvas" for widget in focused.ancestors)
             and not (
@@ -10939,7 +10953,17 @@ class LibraryScreen(BaseAppScreen):
             )
         ):
             focus_identity = f"#{focused_id}"
-        if focus_identity in {
+        if semantic_return_generation is not None:
+            def focus_semantic_return() -> None:
+                try:
+                    self._focus_library_list_entry_if_current(
+                        semantic_return_generation
+                    )
+                finally:
+                    self._library_notes_restoring_focus = False
+
+            then = focus_semantic_return
+        elif focus_identity in {
             "#library-media-previous",
             "#library-media-next",
             "#library-media-retry",
@@ -10954,6 +10978,11 @@ class LibraryScreen(BaseAppScreen):
                 if focus_identity
                 else None
             )
+        if semantic_return_generation is not None:
+            # Canvas recompose temporarily drops DOM focus outside Media.
+            # Treat that automatic fallback as part of this guarded restore;
+            # keyboard and mouse input disarm the generation before callback.
+            self._library_notes_restoring_focus = True
         _sync_library_canvas(self, "media", then=then)
 
     def _focus_library_media_page_control(self, invoked: str) -> None:

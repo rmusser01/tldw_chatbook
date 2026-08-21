@@ -3,12 +3,12 @@
 The Media canvas's list view renders list | preview side by side above the
 screen's one measured width regime (``LIBRARY_NOTES_COMPACT_BREAKPOINT``,
 applied as the ``library-notes-compact`` class on ``#library-canvas``) and
-preserves the stacked layout below it. Geometry is asserted on REAL rendered
+uses a preview-free dense list below it. Geometry is asserted on REAL rendered
 regions with the real ``LibraryScreen`` mounted in ``LibraryHarness`` (which
 loads the real app stylesheet bundle) -- a canvas mounted alone in a bare App
 is not measured against the tier that wins live.
 
-Covers the three ACs: side-by-side wide / stacked narrow (geometry pins),
+Covers the three ACs: side-by-side wide / dense-list narrow (geometry pins),
 keyboard traversal incl. viewer entry in both layouts + footer honesty, and
 Select mode / bulk toolbar usability in both layouts.
 """
@@ -322,6 +322,52 @@ async def test_compact_media_viewer_back_survives_authoritative_recompose():
         )
         scroll = screen.query_one("#library-media-row-scroll", VerticalScroll)
         assert (int(scroll.scroll_x), int(scroll.scroll_y)) == scroll_offset
+
+
+@pytest.mark.asyncio
+async def test_compact_media_viewer_back_survives_targeted_reorder():
+    app = _build_media_test_app()
+    media = _many_media_items()
+    _seed_conversations(app, _two_conversations(), media=media)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=COMPACT_SCROLL_SIZE) as pilot:
+        screen, media_id, _scroll_offset = await _open_scrolled_compact_media_viewer(
+            host, pilot
+        )
+        screen.query_one("#library-media-back", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: getattr(screen.focused, "media_id", None) == media_id,
+            message="Initial viewer return did not restore its Media row.",
+        )
+
+        backing_id = int(media_id.rsplit(":", 1)[1])
+        moved = next(item for item in media if item["id"] == f"media-{backing_id}")
+        moved["last_modified"] = "2030-01-01T00:00:00Z"
+        controller = screen._library_media_browse_controller
+        screen._request_library_media_browse(
+            controller.mutation_refresh_scope,
+            focus_identity=None,
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: not controller.loading,
+            message="Targeted reorder never settled.",
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: getattr(screen.focused, "media_id", None) == media_id
+            and getattr(screen.focused, "id", None) == "library-media-row-0",
+            message=lambda: (
+                "Targeted reorder restored a stale row index instead of Media "
+                f"identity: focused={getattr(screen.focused, 'id', None)!r}/"
+                f"{getattr(screen.focused, 'media_id', None)!r}; "
+                f"pending={screen._library_pending_list_entry_focus!r}; "
+                f"return={screen._library_pending_list_entry_media_return!r}; "
+                f"restoring={screen._library_notes_restoring_focus!r}."
+            ),
+        )
 
 
 @pytest.mark.asyncio
@@ -862,6 +908,17 @@ async def test_compact_media_stale_and_retry_actions_remain_truthful():
                 assert action.tooltip == controller.stale_copy, selector
             assert not screen.query_one("#library-media-retry", Button).disabled
             assert not screen.query_one("#library-media-type-filter", Button).disabled
+
+            await pilot.resize_terminal(*WIDE_SIZE)
+            await _wait_for_compact_class(screen, pilot, compact=False)
+            assert str(screen.query_one("#library-media-row-0", Button).label).startswith(
+                "○"
+            )
+            await pilot.resize_terminal(*NARROW_SIZE)
+            await _wait_for_compact_class(screen, pilot, compact=True)
+            assert str(screen.query_one("#library-media-row-0", Button).label).startswith(
+                "○"
+            )
 
             screen._sync_library_media_browse_state(None)
             await _wait_for_condition(
