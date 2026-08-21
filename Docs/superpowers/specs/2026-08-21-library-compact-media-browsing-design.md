@@ -167,6 +167,6 @@ Repository-wide pytest is intentionally excluded.
 
 **ADR required:** no
 
-**ADR path:** N/A
+**ADR path:** `backlog/decisions/067-library-top-level-pagination-contracts.md`
 
-**Reason:** This is a responsive presentation refinement using existing Library Media ownership, controller, breakpoint, viewer, and persistence contracts. It changes no storage, service, navigation, privacy, or long-lived architectural boundary. ADR-067 remains the applicable Media source-ownership decision.
+**Reason:** ADR-067 already governs authoritative Media paging, source ownership, stale recovery, and mutation refresh. This responsive presentation refinement implements those existing contracts and changes no storage, service, navigation, privacy, or long-lived architectural boundary, so no new ADR is required.
