@@ -946,6 +946,20 @@ def test_root_cursor_latest_status_settings_and_public_projections_are_bounded(
         )
 
 
+def test_root_runtime_status_updates_atomically_and_is_validated(
+    tmp_path: Path,
+) -> None:
+    store = NotesDeviceStateStore(tmp_path / "notes-sync.sqlite3")
+    store.create_root(_root())
+
+    updated = store.update_root_status("root-1", "offline")
+
+    assert updated.last_status_code == "offline"
+    assert store.list_root_summaries()[0].last_status_code == "offline"
+    with pytest.raises(ValueError):
+        store.update_root_status("root-1", "not a reason code")
+
+
 def test_public_summaries_fail_closed_on_path_like_persisted_identifiers(
     tmp_path: Path,
 ) -> None:

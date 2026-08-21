@@ -620,6 +620,28 @@ class NotesDeviceStateStore:
             raise NotesDeviceStateError("The requested root transition is stale.")
         return self.get_root(root_id)
 
+    def update_root_status(
+        self,
+        root_id: str,
+        status_code: str,
+    ) -> NotesSyncRootRecord:
+        """Persist one bounded path-free runtime status for a known root."""
+
+        validate_notes_sync_opaque_id(root_id, field_name="root_id")
+        validate_notes_sync_reason_code(status_code)
+        with self.transaction(immediate=True) as connection:
+            changed = connection.execute(
+                """
+                UPDATE notes_sync_roots
+                SET last_status_code = ?, updated_at = ?
+                WHERE root_id = ?
+                """,
+                (status_code, _now(), root_id),
+            ).rowcount
+        if changed != 1:
+            raise NotesDeviceStateError("The requested sync root does not exist.")
+        return self.get_root(root_id)
+
     def list_root_summaries(self) -> tuple[NotesSyncRootSummary, ...]:
         with self.transaction() as connection:
             rows = connection.execute(

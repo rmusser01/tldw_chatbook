@@ -113,6 +113,8 @@ from .config import (
     get_media_db_path,
     get_prompts_db_path,
     get_notifications_db_path,
+    get_notes_sync_state_db_path,
+    get_notes_sync_recovery_capacity_bytes,
     get_research_db_path,
     get_scheduled_tasks_db_path,
     get_subscriptions_db_path,
@@ -363,6 +365,10 @@ from .Notes.Notes_Library import NotesInteropService
 from .Notes.file_notes_git_service import build_file_notes_session_owner
 from .Notes.note_folder_repository import LocalNoteFolderRepository
 from .Notes.notes_scope_service import NotesScopeService
+from .Notes.notes_sync_runtime import (
+    build_notes_sync_legacy_migrator,
+    build_notes_sync_runtime_owner,
+)
 from .Notes.server_notes_workspace_service import ServerNotesWorkspaceService
 from .Character_Chat.character_persona_scope_service import CharacterPersonaScopeService
 from .Character_Chat.chat_dictionary_scope_service import ChatDictionaryScopeService
@@ -5764,6 +5770,28 @@ class TldwCli(
             policy_enforcer=self.service_policy_enforcer,
             sync_scope_service=getattr(self, "sync_scope_service", None),
         )
+        notes_sync_state_path = get_notes_sync_state_db_path()
+        notes_sync_migrator = build_notes_sync_legacy_migrator(
+            database_path=notes_sync_state_path,
+            legacy_connection=lambda: self.chachanotes_db.get_connection(),
+            settings=self.app_config,
+            note_scope_id="local",
+            file_notes_binding=self.file_notes_session_owner.current_binding,
+            private_paths=(notes_sync_state_path, get_chachanotes_db_path()),
+        )
+        self.notes_sync_runtime_owner = build_notes_sync_runtime_owner(
+            notes_scope_service=self.notes_scope_service,
+            cutover_admitted=False,
+            database_path=notes_sync_state_path,
+            migrate_legacy=notes_sync_migrator,
+            file_notes_binding=self.file_notes_session_owner.current_binding,
+            local_user_id=self.notes_user_id,
+            recovery_capacity_bytes=get_notes_sync_recovery_capacity_bytes(
+                self.app_config
+            ),
+        )
+        self._notes_sync_runtime_start_task: asyncio.Task[None] | None = None
+        self._notes_sync_runtime_shutdown_task: asyncio.Task[None] | None = None
         # RAG admin trio (server/local/scope) is built lazily on first access
         # (task-254): its legacy UI consumers were deleted and nothing reads
         # these services at startup, so eager construction only added launch
@@ -9996,9 +10024,23 @@ class TldwCli(
             )
         raise primary_error
 
+    @staticmethod
+    def _observe_notes_sync_runtime_start(task: asyncio.Task[None]) -> None:
+        """Consume a detached startup failure without exposing private detail."""
+
+        if not task.cancelled() and task.exception() is not None:
+            logger.error("Notes sync runtime startup failed.")
+
     def on_mount(self) -> None:
         """Configure logging and schedule post-mount setup."""
         self._bind_tts_service()
+        self._notes_sync_runtime_start_task = asyncio.create_task(
+            self.notes_sync_runtime_owner.start(),
+            name="start_notes_sync_runtime",
+        )
+        self._notes_sync_runtime_start_task.add_done_callback(
+            self._observe_notes_sync_runtime_start
+        )
         mount_start = time.perf_counter()
 
         # TASK-1240. Anchors a session in the persistent log; its absence dates
@@ -11667,6 +11709,18 @@ class TldwCli(
             self._file_notes_session_owner_shutdown_task = task
         await asyncio.shield(task)
 
+    async def _shutdown_notes_sync_runtime(self) -> None:
+        """Settle the application-owned lasting-sync runtime exactly once."""
+
+        task = getattr(self, "_notes_sync_runtime_shutdown_task", None)
+        if task is None:
+            task = asyncio.create_task(
+                self.notes_sync_runtime_owner.shutdown(),
+                name="shutdown_notes_sync_runtime",
+            )
+            self._notes_sync_runtime_shutdown_task = task
+        await asyncio.shield(task)
+
     async def _shutdown_console_image_edits(self) -> None:
         """Cancel and settle app-owned H3 edits exactly once before teardown."""
         task = self._console_image_edit_shutdown_task
@@ -11710,6 +11764,7 @@ class TldwCli(
 
     async def _shutdown_app_owned_lifecycles(self) -> None:
         """Drain durable app-owned work before Textual closes screen state."""
+        await self._shutdown_notes_sync_runtime()
         # Console shutdown terminally fences every trusted Buddy producer
         # before Buddy itself closes admission and drains owned work.
         await self._shutdown_console_runtime()
