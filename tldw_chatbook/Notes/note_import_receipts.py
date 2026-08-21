@@ -438,7 +438,7 @@ def _assert_compatible_authority(
 
 
 class NoteImportReceiptRepository:
-    """Own the profile-local schema-v1 import receipt ledger."""
+    """Own import receipts within the shared profile-local Notes state store."""
 
     def __init__(self, database_path: str | Path) -> None:
         self._database_path = Path(database_path)

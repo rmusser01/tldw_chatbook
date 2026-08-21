@@ -30,7 +30,15 @@ def test_sync_models_are_frozen_and_validate_opaque_ids() -> None:
 
     with pytest.raises(FrozenInstanceError):
         plan.root_id = "replacement"  # type: ignore[misc]
-    for invalid in ("", "/private/root", "../root", "contains space", "x" * 257):
+    for invalid in (
+        "",
+        "/private/root",
+        "../root",
+        "folder/root",
+        "C:private-root",
+        "contains space",
+        "x" * 257,
+    ):
         with pytest.raises(ValueError, match="opaque"):
             NotesSyncPlan(root_id=invalid, observation_token="token-1", actions=())
 

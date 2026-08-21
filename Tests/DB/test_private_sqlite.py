@@ -78,7 +78,7 @@ def test_notes_sync_state_owner_allows_private_and_read_only_without_backup() ->
     assert policy.preserve_read_only_source_mode is False
     reason = policy.reason.casefold()
     assert "device-private import receipts" in reason
-    assert "future lasting-sync state" in reason
+    assert "lasting-sync state" in reason
     assert "notes.sync_state" not in {
         *CONNECTION_BACKUP_OWNER_IDS,
         *COPY_BACKUP_OWNER_IDS,

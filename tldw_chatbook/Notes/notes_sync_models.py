@@ -16,7 +16,12 @@ _REASON_CODE = re.compile(r"[a-z][a-z0-9_]{0,63}\Z")
 def validate_notes_sync_opaque_id(value: object, *, field_name: str) -> str:
     """Return one bounded identifier that cannot carry a path or free text."""
 
-    if type(value) is not str or _OPAQUE_ID.fullmatch(value) is None:
+    if (
+        type(value) is not str
+        or _OPAQUE_ID.fullmatch(value) is None
+        or bool(PureWindowsPath(value).drive)
+        or bool(PureWindowsPath(value).root)
+    ):
         raise ValueError(f"{field_name} must be a bounded opaque identifier.")
     return value
 

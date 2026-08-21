@@ -222,7 +222,7 @@ _SQLITE_OWNER_POLICIES = {
     "notes.sync_state": SQLiteOwnerPolicy(
         "tldw_chatbook/Notes/notes_device_state_store",
         _PRIVATE_AND_READ_ONLY,
-        "Device-private import receipts and future lasting-sync state remain "
+        "Device-private import receipts and lasting-sync state remain "
         "profile-local; planning may inspect an existing ledger read-only, and "
         "the owner remains outside centralized backup.",
     ),

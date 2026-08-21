@@ -498,6 +498,7 @@ def test_root_pause_and_disconnect_propagate_child_binding_lifecycle_atomically(
 
 def test_root_and_child_lifecycle_propagation_rolls_back_together(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     database = tmp_path / "notes-sync.sqlite3"
     store = NotesDeviceStateStore(database)
@@ -505,24 +506,103 @@ def test_root_and_child_lifecycle_propagation_rolls_back_together(
         _root(logical_folder_id="folder-1", state=NotesSyncRootState.ACTIVE)
     )
     store.create_binding(_binding())
-    with sqlite3.connect(database) as connection:
-        connection.execute(
-            """
-            CREATE TRIGGER reject_binding_pause
-            BEFORE UPDATE OF state ON notes_sync_bindings
-            WHEN NEW.state = 'paused'
-            BEGIN
-                SELECT RAISE(ABORT, 'injected');
-            END
-            """
-        )
-        connection.commit()
+    original_connect = store._connect
 
-    with pytest.raises(sqlite3.IntegrityError):
+    def rejecting_connect(*, read_only: bool = False, must_exist: bool = False):
+        connection = original_connect(read_only=read_only, must_exist=must_exist)
+
+        def authorize(
+            action: int,
+            table: str | None,
+            _column: str | None,
+            _database: str | None,
+            _trigger: str | None,
+        ) -> int:
+            if action == sqlite3.SQLITE_UPDATE and table == "notes_sync_roots":
+                return sqlite3.SQLITE_DENY
+            return sqlite3.SQLITE_OK
+
+        connection.set_authorizer(authorize)
+        return connection
+
+    monkeypatch.setattr(store, "_connect", rejecting_connect)
+
+    with pytest.raises(sqlite3.DatabaseError):
         store.transition_root("root-1", NotesSyncRootState.PAUSED)
 
+    monkeypatch.setattr(store, "_connect", original_connect)
     assert store.get_root("root-1").state is NotesSyncRootState.ACTIVE
     assert store.get_binding("binding-1").state is NotesSyncBindingState.ACTIVE
+
+
+@pytest.mark.parametrize("extra_kind", ["table", "trigger"])
+def test_v1_migration_rejects_unexpected_user_objects_without_changes(
+    tmp_path: Path,
+    extra_kind: str,
+) -> None:
+    database = tmp_path / f"v1-extra-{extra_kind}.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.executescript(HISTORICAL_V1_IMPORT_LEDGER_DDL)
+        if extra_kind == "table":
+            connection.execute("CREATE TABLE unexpected_private (value TEXT)")
+        else:
+            connection.execute(
+                """
+                CREATE TRIGGER unexpected_private
+                AFTER INSERT ON import_sessions
+                BEGIN
+                    SELECT 1;
+                END
+                """
+            )
+        connection.commit()
+    database.chmod(0o600)
+    before = database.read_bytes()
+
+    with pytest.raises(NotesDeviceStateError, match="incompatible"):
+        NotesDeviceStateStore(database).initialize()
+
+    assert database.read_bytes() == before
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone() == (1,)
+        assert connection.execute(
+            "SELECT type FROM sqlite_schema WHERE name = 'unexpected_private'"
+        ).fetchone() == (extra_kind,)
+
+
+@pytest.mark.parametrize("extra_kind", ["table", "trigger", "index"])
+def test_current_schema_rejects_unexpected_user_objects_without_changes(
+    tmp_path: Path,
+    extra_kind: str,
+) -> None:
+    database = tmp_path / f"current-extra-{extra_kind}.sqlite3"
+    store = NotesDeviceStateStore(database)
+    store.initialize()
+    with sqlite3.connect(database) as connection:
+        if extra_kind == "table":
+            connection.execute("CREATE TABLE unexpected_private (value TEXT)")
+        elif extra_kind == "trigger":
+            connection.execute(
+                """
+                CREATE TRIGGER unexpected_private
+                AFTER INSERT ON import_sessions
+                BEGIN
+                    SELECT 1;
+                END
+                """
+            )
+        else:
+            connection.execute(
+                "CREATE INDEX unexpected_private ON import_sessions(state)"
+            )
+        connection.commit()
+    database.chmod(0o600)
+    before = database.read_bytes()
+
+    with pytest.raises(NotesDeviceStateError, match="incompatible"):
+        store.initialize()
+
+    assert database.read_bytes() == before
 
 
 def test_active_binding_ownership_is_transactionally_unique(tmp_path: Path) -> None:
@@ -728,6 +808,99 @@ def test_records_round_trip_and_illegal_binding_operation_transitions_fail_close
         store.transition_operation("operation-1", NotesSyncOperationState.COMPLETED)
 
 
+@pytest.mark.parametrize(
+    ("column", "corrupt_value"),
+    [
+        ("payload", 4),
+        ("payload", "not-a-blob"),
+        ("metadata", 4),
+        ("metadata", "not-a-blob"),
+    ],
+)
+def test_recovery_reads_reject_non_blob_storage_without_coercion(
+    tmp_path: Path,
+    column: str,
+    corrupt_value: object,
+) -> None:
+    database = tmp_path / "notes-sync.sqlite3"
+    store = NotesDeviceStateStore(database)
+    store.create_root(
+        _root(logical_folder_id="folder-1", state=NotesSyncRootState.ACTIVE)
+    )
+    store.create_operation(
+        NotesSyncOperationRecord(
+            operation_id="operation-1",
+            root_id="root-1",
+            binding_id=None,
+            kind="update_note",
+            state=NotesSyncOperationState.PENDING,
+            reason_code=None,
+            observation_token="observation-1",
+            expected_note_version=3,
+            expected_file_digest="b" * 64,
+        )
+    )
+    store.put_recovery(
+        NotesSyncRecoveryRecord(
+            recovery_id="recovery-1",
+            operation_id="operation-1",
+            payload=b"payload",
+            metadata=b"metadata",
+            expires_at=2_000_000_000,
+        )
+    )
+    assert column in {"payload", "metadata"}
+    with sqlite3.connect(database) as connection:
+        connection.execute("PRAGMA ignore_check_constraints = ON")
+        connection.execute(
+            f"UPDATE notes_sync_recovery SET {column} = ? WHERE recovery_id = ?",
+            (corrupt_value, "recovery-1"),
+        )
+        connection.commit()
+
+    with pytest.raises(NotesDeviceStateError, match="corrupt"):
+        store.load_recovery("recovery-1")
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        NotesSyncOperationState.RECOVERY_ADMITTED,
+        NotesSyncOperationState.NEEDS_ATTENTION,
+        NotesSyncOperationState.COMPLETED,
+    ],
+)
+def test_new_operations_must_enter_through_the_pending_stage(
+    tmp_path: Path,
+    state: NotesSyncOperationState,
+) -> None:
+    store = NotesDeviceStateStore(tmp_path / "notes-sync.sqlite3")
+    store.create_root(
+        _root(logical_folder_id="folder-1", state=NotesSyncRootState.ACTIVE)
+    )
+    store.create_binding(_binding())
+
+    with pytest.raises(NotesDeviceStateError, match="pending"):
+        store.create_operation(
+            NotesSyncOperationRecord(
+                operation_id="operation-1",
+                root_id="root-1",
+                binding_id="binding-1",
+                kind="update_note",
+                state=state,
+                reason_code=None,
+                observation_token="observation-1",
+                expected_note_version=3,
+                expected_file_digest="b" * 64,
+            )
+        )
+
+    with store.transaction() as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM notes_sync_operations"
+        ).fetchone() == (0,)
+
+
 def test_root_cursor_latest_status_settings_and_public_projections_are_bounded(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -771,6 +944,35 @@ def test_root_cursor_latest_status_settings_and_public_projections_are_bounded(
         store.set_setting(
             NotesSyncStoreSetting(key="recovery_capacity", value="x" * 257)
         )
+
+
+def test_public_summaries_fail_closed_on_path_like_persisted_identifiers(
+    tmp_path: Path,
+) -> None:
+    root_database = tmp_path / "root-summary.sqlite3"
+    root_store = NotesDeviceStateStore(root_database)
+    root_store.create_root(
+        _root(logical_folder_id="folder-1", state=NotesSyncRootState.ACTIVE)
+    )
+    with sqlite3.connect(root_database) as connection:
+        connection.execute("UPDATE notes_sync_roots SET root_id = '/private/root'")
+        connection.commit()
+
+    with pytest.raises(ValueError, match="opaque"):
+        root_store.list_root_summaries()
+
+    binding_database = tmp_path / "binding-summary.sqlite3"
+    binding_store = NotesDeviceStateStore(binding_database)
+    binding_store.create_root(
+        _root(logical_folder_id="folder-1", state=NotesSyncRootState.ACTIVE)
+    )
+    binding_store.create_binding(_binding())
+    with sqlite3.connect(binding_database) as connection:
+        connection.execute("UPDATE notes_sync_bindings SET note_id = 'folder/note'")
+        connection.commit()
+
+    with pytest.raises(ValueError, match="opaque"):
+        binding_store.list_binding_summaries("root-1")
 
 
 @pytest.mark.parametrize(

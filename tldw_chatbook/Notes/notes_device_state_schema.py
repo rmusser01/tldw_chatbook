@@ -269,7 +269,8 @@ _LASTING_TABLE_STATEMENTS = (
         expires_at INTEGER NOT NULL CHECK (expires_at > 0),
         created_at INTEGER NOT NULL CHECK (created_at > 0),
         FOREIGN KEY (operation_id) REFERENCES notes_sync_operations(operation_id) ON DELETE RESTRICT,
-        CHECK (length(recovery_id) BETWEEN 1 AND 256)
+        CHECK (length(recovery_id) BETWEEN 1 AND 256),
+        CHECK (typeof(payload) = 'blob' AND typeof(metadata) = 'blob')
     )
     """,
     """
@@ -379,6 +380,34 @@ def _validate_objects(
             )
 
 
+def _validate_user_object_census(
+    connection: sqlite3.Connection,
+    table_statements: tuple[str, ...],
+    index_statements: tuple[str, ...],
+    *,
+    version_name: str,
+) -> None:
+    table_names = {_object_name(statement) for statement in table_statements}
+    index_names = {_object_name(statement) for statement in index_statements}
+    for object_type, name, table_name, sql in connection.execute(
+        "SELECT type, name, tbl_name, sql FROM sqlite_schema"
+    ):
+        if object_type == "table" and name in table_names:
+            continue
+        if object_type == "index" and name in index_names:
+            continue
+        if (
+            object_type == "index"
+            and str(name).startswith("sqlite_autoindex_")
+            and table_name in table_names
+            and sql is None
+        ):
+            continue
+        raise NotesDeviceSchemaError(
+            f"The private Notes device schema is incompatible with canonical {version_name}."
+        )
+
+
 def _repair_and_validate_indexes(
     connection: sqlite3.Connection,
     statements: tuple[str, ...],
@@ -441,6 +470,12 @@ def initialize_notes_device_schema(connection: sqlite3.Connection) -> None:
             _create_historical_v1(connection)
             version = 1
         if version == 1:
+            _validate_user_object_census(
+                connection,
+                _V1_TABLES,
+                _V1_INDEXES,
+                version_name="v1",
+            )
             _validate_objects(
                 connection,
                 _V1_TABLES,
@@ -448,22 +483,13 @@ def initialize_notes_device_schema(connection: sqlite3.Connection) -> None:
                 allow_missing=False,
             )
             _repair_and_validate_indexes(connection, _V1_INDEXES)
-            lasting_names = {
-                _object_name(statement)
-                for statement in (
-                    *_LASTING_TABLE_STATEMENTS,
-                    *_LASTING_INDEX_STATEMENTS,
-                )
-            }
-            existing_names = {
-                str(row[0])
-                for row in connection.execute("SELECT name FROM sqlite_schema")
-            }
-            if lasting_names & existing_names:
-                raise NotesDeviceSchemaError(
-                    "The private Notes device schema is incompatible with canonical v1."
-                )
             migrate_v1_to_current(connection)
+        _validate_user_object_census(
+            connection,
+            _CURRENT_TABLES,
+            _CURRENT_INDEXES,
+            version_name="current",
+        )
         _validate_objects(
             connection,
             _CURRENT_TABLES,

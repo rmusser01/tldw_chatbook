@@ -377,6 +377,14 @@ class NotesSyncRootSummary:
     state: NotesSyncRootState
     last_status_code: str | None
 
+    def __post_init__(self) -> None:
+        validate_notes_sync_opaque_id(self.root_id, field_name="root_id")
+        if type(self.direction) is not NotesSyncDirection:
+            raise TypeError("direction must be a NotesSyncDirection.")
+        if type(self.state) is not NotesSyncRootState:
+            raise TypeError("state must be a NotesSyncRootState.")
+        validate_notes_sync_reason_code(self.last_status_code)
+
 
 @dataclass(frozen=True, slots=True)
 class NotesSyncBindingSummary:
@@ -388,6 +396,19 @@ class NotesSyncBindingSummary:
     note_id: str
     state: NotesSyncBindingState
     note_version: int
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("binding_id", self.binding_id),
+            ("root_id", self.root_id),
+            ("note_scope_id", self.note_scope_id),
+            ("note_id", self.note_id),
+        ):
+            validate_notes_sync_opaque_id(value, field_name=name)
+        if type(self.state) is not NotesSyncBindingState:
+            raise TypeError("state must be a NotesSyncBindingState.")
+        if type(self.note_version) is not int or self.note_version < 0:
+            raise ValueError("note_version must be non-negative.")
 
 
 class NotesDeviceStateError(RuntimeError):
@@ -773,6 +794,10 @@ class NotesDeviceStateStore:
     ) -> NotesSyncOperationRecord:
         if type(record) is not NotesSyncOperationRecord:
             raise TypeError("record must be a NotesSyncOperationRecord.")
+        if record.state is not NotesSyncOperationState.PENDING:
+            raise NotesDeviceStateError(
+                "A new sync operation must enter through the pending stage."
+            )
         timestamp = _now()
         with self.transaction(immediate=True) as connection:
             if record.binding_id is not None:
@@ -892,11 +917,13 @@ class NotesDeviceStateStore:
             ).fetchone()
         if row is None:
             raise NotesDeviceStateError("The requested recovery record does not exist.")
+        if type(row[2]) is not bytes or type(row[3]) is not bytes:
+            raise NotesDeviceStateError("The requested recovery record is corrupt.")
         return NotesSyncRecoveryRecord(
             recovery_id=row[0],
             operation_id=row[1],
-            payload=bytes(row[2]),
-            metadata=bytes(row[3]),
+            payload=row[2],
+            metadata=row[3],
             expires_at=row[4],
         )
 
