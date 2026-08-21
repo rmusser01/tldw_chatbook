@@ -1,7 +1,7 @@
 # Console Assistant Turn Grouping Design
 
-**Task:** TASK-16324  
-**Date:** 2026-08-21  
+**Task:** TASK-19426
+**Date:** 2026-08-21
 **Status:** Approved interaction direction; implementation pending
 
 ## Goal
@@ -63,14 +63,15 @@ The new turn/disclosure widgets live in a focused Console widget module rather t
 
 Collapsed headers must not parse user-facing marker strings. Live and resume marker builders attach a session-only `ConsoleActivityPresentation` value to each display-only TOOL message. It carries a bounded enum-like kind, a literal label, and a terminal status (`success`, `blocked`, `failed`, or `done`). Existing `content`, `tool_output_full`, `tool_diff`, and `change_review_run_id` fields remain the detail/action payloads.
 
-The presentation value is never persisted in the conversation database and never enters provider history. `AgentStep` has no outcome field, so live and resume builders use one bridge-owned `classify_activity_status(step_kind, result)` helper before constructing the presentation value:
+The presentation value is never persisted in the conversation database and never enters provider history. Every known TOOL-marker builder attaches it: step results/spawns/errors/timeouts, task snapshots, live and resumed change summaries, concurrent/sub-agent change notices, change-tracking failures, and live/resumed diff-feedback disclosures. Only truly legacy or unknown markers use the neutral fallback. `AgentStep` has no outcome field, so step-driven live and resume builders use one bridge-owned `classify_activity_status(step_kind, result)` helper before constructing the presentation value:
 
-- `STEP_TOOL_RESULT` whose result starts with the runtime's exact `ERROR:` convention is `failed`;
-- the canonical `tool call denied by the user:` and `tool call blocked:` refusal prefixes are `blocked`;
-- every other `STEP_TOOL_RESULT` is `success`;
+- a successful `STEP_TOOL_RESULT` is `success`;
+- a `STEP_TOOL_RESULT` is compared directly against the Console controller's review-hook denial and global kill-switch verdicts, because those pre-dispatch refusals reach the step without an `ERROR:` envelope; a match is `blocked`;
+- a failed dispatched `STEP_TOOL_RESULT` first removes the runtime's exact `ERROR:` envelope, then compares the remaining error to the canonical built-in, local, and MCP denial/timeout/kill-switch refusal constants; a match is `blocked`;
+- every other `ERROR:`-wrapped `STEP_TOOL_RESULT` is `failed`;
 - `STEP_APPROVAL_TIMEOUT` is `blocked`, `STEP_ERROR` is `failed`, and non-tool activity is `done`.
 
-This classifier reads the agent-step protocol result, not the rendered `⚙ … → …` marker string. Tests pin it to the controller's canonical denial and kill-switch messages so copy drift cannot silently change status. No `AgentStep`, run-log, or persisted-step contract changes. Unknown or legacy transcript markers with no derived presentation value receive a neutral `Activity · done` header while preserving their original content; they are not hidden or guessed into a tool identity.
+This classifier reads the agent-step protocol result, not the rendered `⚙ … → …` marker string. The order is material: `agent_runtime` emits controller review refusals directly but wraps unsuccessful dispatched `ToolResult` values as `ERROR: <provider refusal>`. Treating all non-enveloped results as success would mislabel the former; checking for generic errors before unwrapping would mislabel the latter. Tests use the controller's and providers' exported refusal constants in their actual direct/enveloped shapes so copy drift cannot silently change status. No `AgentStep`, run-log, or persisted-step contract changes. Unknown or legacy transcript markers with no derived presentation value receive a neutral `Activity · done` header while preserving their original content; they are not hidden or guessed into a tool identity.
 
 ### Activity disclosure
 
@@ -82,7 +83,7 @@ The existing `o` full-output action and mouse/Enter disclosure toggle converge o
 
 ### Reasoning disclosure
 
-The agent bridge adds one `Thinking` activity marker for every safe intermediate primary-agent `STEP_MODEL` immediately followed by that model turn's tool-call work. It must not create a marker for the final answer turn. Live rendering buffers the primary `STEP_MODEL` until the next primary step determines whether it led to a tool call; resume rendering performs the equivalent look-ahead over persisted steps. This makes live and resumed marker order identical without changing the agent-step schema.
+The agent bridge adds one `Thinking` activity marker for every safe intermediate primary-agent `STEP_MODEL` whose following primary step proves that model turn initiated tool work. The proving step may be `STEP_TOOL_CALL`, `STEP_SPAWN`, or a direct `STEP_TOOL_RESULT` produced by a pre-dispatch review/continuation refusal. It must not create a marker for the final answer turn. Live rendering buffers the primary `STEP_MODEL` until the next primary step determines whether it led to tool work; resume rendering performs the equivalent look-ahead over persisted steps. This makes live and resumed marker order identical without changing the agent-step schema.
 
 Reasoning disclosure does not expose hidden chain-of-thought. It may show only a safe, already-visible intermediate preamble from `STEP_MODEL.summary`. Sanitization is conservative: strip tool-call fence payloads, reject thinking-tag/provider-private-reasoning shapes, flatten control markup, and apply the existing display cap. Provider-private reasoning content is never inferred or surfaced.
 
@@ -154,6 +155,6 @@ The design was authored while the primary checkout was on an unrelated dirty vid
 
 ## ADR Check
 
-**ADR required:** no  
-**ADR path:** N/A  
+**ADR required:** no
+**ADR path:** N/A
 **Reason:** this is a focused transcript presentation and interaction change. It preserves existing storage, marker ownership, agent-step/run-log contracts, provider/runtime boundaries, security policy, and application navigation. Activity status is derived at the existing bridge presentation seam rather than added to the runtime contract. ADR-031 remains applicable for keybinding and footer-hint truthfulness.
