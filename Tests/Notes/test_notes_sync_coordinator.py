@@ -454,6 +454,202 @@ def test_release_waits_for_close_admission_settlement(tmp_path: Path) -> None:
     contender.release(replacement.lease)
 
 
+def test_close_waits_for_concurrent_release_to_commit_unlock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _coordinator_module()
+    root = tmp_path / "root"
+    root.mkdir()
+    lock_directory = tmp_path / "locks"
+    owner = module.NotesSyncRootCoordinator(lock_directory)
+    contender = module.NotesSyncRootCoordinator(lock_directory)
+    admission = owner.try_acquire(root)
+    settlement_started = threading.Event()
+    allow_settlement = threading.Event()
+    unlock_started = threading.Event()
+    allow_unlock = threading.Event()
+    close_returned = threading.Event()
+    errors: list[BaseException] = []
+    real_release = owner.release
+    real_unlock = module.portalocker.unlock
+
+    def ordered_release(lease) -> None:
+        if threading.current_thread().name == "close-thread":
+            assert unlock_started.wait(3.0)
+        real_release(lease)
+
+    def blocking_unlock(handle) -> None:
+        if threading.current_thread().name == "release-thread":
+            unlock_started.set()
+            assert allow_unlock.wait(3.0)
+        real_unlock(handle)
+
+    monkeypatch.setattr(owner, "release", ordered_release)
+    monkeypatch.setattr(module.portalocker, "unlock", blocking_unlock)
+
+    def settle() -> None:
+        settlement_started.set()
+        assert allow_settlement.wait(3.0)
+
+    def close_owner() -> None:
+        try:
+            owner.close_admission(admission.lease, settle)
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            close_returned.set()
+
+    def release_owner() -> None:
+        try:
+            owner.release(admission.lease)
+        except BaseException as exc:
+            errors.append(exc)
+
+    close_thread = threading.Thread(target=close_owner, name="close-thread")
+    release_thread = threading.Thread(target=release_owner, name="release-thread")
+    close_thread.start()
+    assert settlement_started.wait(3.0)
+    release_thread.start()
+    allow_settlement.set()
+    assert unlock_started.wait(3.0)
+
+    assert not close_returned.wait(0.1)
+    assert contender.try_acquire(root).state is module.RootAdmissionState.PASSIVE
+    allow_unlock.set()
+    close_thread.join(3.0)
+    release_thread.join(3.0)
+
+    assert close_returned.is_set()
+    assert all(not thread.is_alive() for thread in (close_thread, release_thread))
+    assert errors == []
+    replacement = contender.try_acquire(root)
+    assert replacement.state is module.RootAdmissionState.OWNER
+    contender.release(replacement.lease)
+
+
+def test_close_does_not_settle_after_release_has_started(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _coordinator_module()
+    root = tmp_path / "root"
+    root.mkdir()
+    lock_directory = tmp_path / "locks"
+    owner = module.NotesSyncRootCoordinator(lock_directory)
+    contender = module.NotesSyncRootCoordinator(lock_directory)
+    admission = owner.try_acquire(root)
+    unlock_started = threading.Event()
+    allow_unlock = threading.Event()
+    settlement_started = threading.Event()
+    close_returned = threading.Event()
+    errors: list[BaseException] = []
+    real_unlock = module.portalocker.unlock
+
+    def blocking_unlock(handle) -> None:
+        unlock_started.set()
+        assert allow_unlock.wait(3.0)
+        real_unlock(handle)
+
+    monkeypatch.setattr(module.portalocker, "unlock", blocking_unlock)
+
+    def release_owner() -> None:
+        try:
+            owner.release(admission.lease)
+        except BaseException as exc:
+            errors.append(exc)
+
+    def close_owner() -> None:
+        try:
+            owner.close_admission(admission.lease, settlement_started.set)
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            close_returned.set()
+
+    release_thread = threading.Thread(target=release_owner)
+    close_thread = threading.Thread(target=close_owner)
+    try:
+        release_thread.start()
+        assert unlock_started.wait(3.0)
+        close_thread.start()
+
+        assert not settlement_started.wait(0.1)
+        assert not close_returned.is_set()
+        assert contender.try_acquire(root).state is module.RootAdmissionState.PASSIVE
+        allow_unlock.set()
+        release_thread.join(3.0)
+        close_thread.join(3.0)
+
+        assert all(not thread.is_alive() for thread in (release_thread, close_thread))
+        assert errors == []
+        assert not settlement_started.is_set()
+        replacement = contender.try_acquire(root)
+        assert replacement.state is module.RootAdmissionState.OWNER
+        contender.release(replacement.lease)
+    finally:
+        allow_unlock.set()
+        release_thread.join(3.0)
+        close_thread.join(3.0)
+
+
+def test_concurrent_release_reflects_committed_close_failure(
+    tmp_path: Path,
+) -> None:
+    module = _coordinator_module()
+    root = tmp_path / "root"
+    root.mkdir()
+    coordinator = module.NotesSyncRootCoordinator(tmp_path / "locks")
+    admission = coordinator.try_acquire(root)
+    raw_handle = admission.lease._handle
+    close_started = threading.Event()
+    allow_close = threading.Event()
+    second_returned = threading.Event()
+    outcomes: list[str] = []
+
+    class FailingCloseHandle:
+        def fileno(self) -> int:
+            return raw_handle.fileno()
+
+        def close(self) -> None:
+            close_started.set()
+            assert allow_close.wait(3.0)
+            raise OSError("PRIVATE close failure")
+
+    admission.lease._handle = FailingCloseHandle()
+
+    def release_owner(*, second: bool = False) -> None:
+        try:
+            coordinator.release(admission.lease)
+        except module.RootCoordinatorError as exc:
+            outcomes.append(exc.reason_code)
+        else:
+            outcomes.append("returned")
+        finally:
+            if second:
+                second_returned.set()
+
+    first = threading.Thread(target=release_owner)
+    second = threading.Thread(target=release_owner, kwargs={"second": True})
+    try:
+        first.start()
+        assert close_started.wait(3.0)
+        second.start()
+        assert not second_returned.wait(0.1)
+        allow_close.set()
+        first.join(3.0)
+        second.join(3.0)
+
+        assert all(not thread.is_alive() for thread in (first, second))
+        assert outcomes == ["lock_close_failed", "lock_close_failed"]
+        assert not admission.can_write
+    finally:
+        allow_close.set()
+        first.join(3.0)
+        second.join(3.0)
+        raw_handle.close()
+
+
 def test_concurrent_close_admission_settles_once(tmp_path: Path) -> None:
     module = _coordinator_module()
     root = tmp_path / "root"
@@ -503,13 +699,13 @@ def test_waiting_release_does_not_block_settlement_admission_check(
     release_waiting = threading.Event()
     outcomes: list[object] = []
     errors: list[BaseException] = []
-    real_take_handle = module.RootLease._take_handle
+    real_begin_release = module.RootLease._begin_release
 
-    def observed_take_handle(lease):
+    def observed_begin_release(lease):
         release_waiting.set()
-        return real_take_handle(lease)
+        return real_begin_release(lease)
 
-    monkeypatch.setattr(module.RootLease, "_take_handle", observed_take_handle)
+    monkeypatch.setattr(module.RootLease, "_begin_release", observed_begin_release)
 
     def settle() -> None:
         settlement_started.set()

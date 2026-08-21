@@ -162,6 +162,9 @@ class RootLease:
         "_lock_identity",
         "_lock_path",
         "_owner_token",
+        "_release_complete",
+        "_release_reason",
+        "_release_running",
         "_root_identity",
         "_settlement_complete",
         "_settlement_reason",
@@ -191,6 +194,9 @@ class RootLease:
         self._lock_path = lock_path
         self._lock_identity = lock_identity
         self._admission_open = True
+        self._release_running = False
+        self._release_complete = False
+        self._release_reason: str | None = None
         self._settlement_running = False
         self._settlement_complete = False
         self._settlement_reason: str | None = None
@@ -243,8 +249,12 @@ class RootLease:
 
     def _begin_settlement(self) -> tuple[bool, str | None]:
         with self._lifecycle:
-            while self._settlement_running:
+            while self._settlement_running or self._release_running:
                 self._lifecycle.wait()
+            if self._release_reason is not None:
+                return False, self._release_reason
+            if self._release_complete:
+                return False, None
             if self._settlement_complete or self._handle is None:
                 return False, None
             if self._settlement_reason is not None:
@@ -260,19 +270,28 @@ class RootLease:
             self._settlement_complete = reason is None
             self._lifecycle.notify_all()
 
-    def _take_handle(self) -> IO[str] | None:
+    def _begin_release(self) -> tuple[IO[str] | None, str | None]:
         with self._lifecycle:
-            while self._settlement_running:
+            while self._settlement_running or self._release_running:
                 self._lifecycle.wait()
-            handle = self._handle
-            self._handle = None
-            self._admission_open = False
-            return handle
-
-    def _restore_handle(self, handle: IO[str]) -> None:
-        with self._lifecycle:
+            if self._release_reason is not None:
+                return None, self._release_reason
+            if self._release_complete:
+                return None, None
             if self._handle is None:
-                self._handle = handle
+                return None, "lock_release_failed"
+            self._admission_open = False
+            self._release_running = True
+            return self._handle, None
+
+    def _finish_release(self, reason: str | None, *, released: bool) -> None:
+        with self._lifecycle:
+            self._release_running = False
+            self._release_complete = released
+            self._release_reason = reason
+            if released:
+                self._handle = None
+            self._lifecycle.notify_all()
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -565,21 +584,25 @@ class NotesSyncRootCoordinator:
         """Release one owned OS lock idempotently without unlinking its file."""
 
         selected = self._validate_lease(lease)
-        handle = selected._take_handle()
+        handle, prior_reason = selected._begin_release()
+        if prior_reason is not None:
+            raise RootCoordinatorError(prior_reason)
         if handle is None:
             return
         try:
             portalocker.unlock(handle)
         except Exception:
-            selected._restore_handle(handle)
+            selected._finish_release("lock_release_failed", released=False)
             raise RootCoordinatorError("lock_release_failed") from None
         with self._lifecycle_lock:
             if self._leases.get(selected.root_digest) is selected:
                 self._leases.pop(selected.root_digest)
         try:
             handle.close()
-        except OSError:
+        except Exception:
+            selected._finish_release("lock_close_failed", released=True)
             raise RootCoordinatorError("lock_close_failed") from None
+        selected._finish_release(None, released=True)
 
     def close_admission(
         self,
