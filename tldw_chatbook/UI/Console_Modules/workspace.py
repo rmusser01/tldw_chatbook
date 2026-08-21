@@ -79,6 +79,7 @@ from ..character_display_text import sanitize_character_display_label
 
 if TYPE_CHECKING:
     from ...Chat.console_chat_controller import ConsoleChatController
+    from ...Widgets.workspace_create_modal import WorkspaceCreateResult
     from ..Screens.chat_screen import ChatScreen
 
 logger = logger.bind(module="ChatScreen")
@@ -1649,11 +1650,16 @@ class ConsoleWorkspaceController:
         from tldw_chatbook.Widgets.workspace_create_modal import WorkspaceCreateModal
 
         self.push_screen(
-            WorkspaceCreateModal(registry_service=registry_service),
+            WorkspaceCreateModal(
+                registry_service=registry_service,
+                description="Local workspace created from Console.",
+            ),
             self._handle_workspace_create_result,
         )
 
-    def _handle_workspace_create_result(self, result) -> None:
+    def _handle_workspace_create_result(
+        self, result: WorkspaceCreateResult | None
+    ) -> None:
         """Console-side post-create sync; the modal already created/bound."""
         if result is None:
             return

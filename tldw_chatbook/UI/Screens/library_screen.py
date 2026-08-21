@@ -474,6 +474,7 @@ from .study_scope_models import (
 if TYPE_CHECKING:
     # Type-only: the shared modal owns the runtime acquisition-plan import.
     from ...Model_Artifacts.acquisition import PreflightReport
+    from ...Widgets.workspace_create_modal import WorkspaceCreateResult
 
 
 logger = logger.bind(module="LibraryScreen")
@@ -32507,7 +32508,7 @@ class LibraryScreen(BaseAppScreen):
             return
         from tldw_chatbook.Widgets.workspace_create_modal import WorkspaceCreateModal
 
-        def _done(result) -> None:
+        def _done(result: WorkspaceCreateResult | None) -> None:
             if result is None:
                 return
             notify = getattr(self.app_instance, "notify", None)
@@ -32560,7 +32561,11 @@ class LibraryScreen(BaseAppScreen):
                 )
 
         self.app.push_screen(
-            WorkspaceCreateModal(registry_service=registry_service), _done
+            WorkspaceCreateModal(
+                registry_service=registry_service,
+                description="Local workspace created from Library.",
+            ),
+            _done,
         )
 
     def _preserve_library_rail_scroll(self) -> None:
