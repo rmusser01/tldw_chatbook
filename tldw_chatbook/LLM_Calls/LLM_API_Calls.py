@@ -1573,6 +1573,15 @@ def chat_with_anthropic(
                 json=data,
                 stream=current_streaming,
                 timeout=180,
+                # task-19557: the API key travels in the custom `x-api-key`
+                # header. `requests` strips `Authorization` across a
+                # redirect host change but NOT custom headers, so a 3xx
+                # from this endpoint would re-send the key wherever
+                # `Location` points. Refuse to follow rather than silently
+                # forward credentials -- see the explicit 3xx check below.
+                # Mirrors the `x-goog-api-key` fix in the Google branch
+                # (task-686/chat_with_google).
+                allow_redirects=False,
             )
             if (
                 response.status_code == 400
@@ -1597,6 +1606,28 @@ def chat_with_anthropic(
                     json=_without_cache_control(data),
                     stream=current_streaming,
                     timeout=180,
+                    allow_redirects=False,
+                )
+            if 300 <= response.status_code < 400:
+                # No new logging call here, deliberately: this file's
+                # diagnostic call sites participate in the pinned
+                # cross-file inventory that
+                # test_summarization_diagnostic_privacy.py's
+                # "manifest_boundary" enforces (task-3796/TASK-492). The
+                # raised exception's message is the caller-visible signal;
+                # it deliberately omits the redirect target -- a 3xx
+                # `Location` is server/attacker-controlled data, same
+                # reasoning as the Google branch above never echoing it in
+                # the raised message (only its own already-reviewed log
+                # line does).
+                response.close()
+                raise ChatProviderError(
+                    provider="anthropic",
+                    message=(
+                        "Anthropic endpoint redirected unexpectedly -- refusing to "
+                        "follow with credentials."
+                    ),
+                    status_code=response.status_code,
                 )
             response.raise_for_status()
 

@@ -1127,7 +1127,31 @@ def summarize_with_anthropic(
                     headers=headers,
                     json=data,
                     stream=streaming,
+                    # task-19557: the API key travels in the custom
+                    # `x-api-key` header. `requests` strips `Authorization`
+                    # across a redirect host change but NOT custom headers,
+                    # so a 3xx here would re-send the key wherever
+                    # `Location` points. Refuse to follow rather than
+                    # silently forward credentials -- mirrors the
+                    # `x-goog-api-key` fix in LLM_API_Calls.py's
+                    # chat_with_google (task-686).
+                    allow_redirects=False,
                 )
+
+                if 300 <= response.status_code < 400:
+                    # No new logging call here, deliberately: this module's
+                    # diagnostic call sites are frozen and individually
+                    # reviewed by test_summarization_diagnostic_privacy.py's
+                    # ledger (see the sampling-params precedent a few lines
+                    # up in this same function). The returned string is the
+                    # caller-visible signal; it mirrors this function's own
+                    # "API Key Not Provided"/"Network error" convention of
+                    # reporting failure via a returned string rather than a
+                    # log line or a raised exception.
+                    return (
+                        "Anthropic: API endpoint redirected unexpectedly -- "
+                        "refusing to follow with credentials."
+                    )
 
                 # Check if the status code indicates success
                 if response.status_code == 200:

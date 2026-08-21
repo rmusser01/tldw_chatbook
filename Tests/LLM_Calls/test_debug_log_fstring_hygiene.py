@@ -143,7 +143,16 @@ def test_anthropic_debug_log_interpolates_payload_values(monkeypatch):
         def mount(self, *_args, **_kwargs):
             return None
 
-        def post(self, url, *, headers=None, json=None, stream=False, timeout=None):
+        def post(
+            self,
+            url,
+            *,
+            headers=None,
+            json=None,
+            stream=False,
+            timeout=None,
+            allow_redirects=None,
+        ):
             return _FakeResponse()
 
     class _FakeResponse:

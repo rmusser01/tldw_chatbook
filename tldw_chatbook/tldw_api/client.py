@@ -1146,9 +1146,50 @@ class TLDWAPIClient:
                 base_url=self.base_url,
                 headers=headers,
                 timeout=httpx.Timeout(self.timeout, connect=self.connect_timeout),
-                follow_redirects=True,
+                # task-19557: this client authenticates via the client-level
+                # `X-API-KEY` header (api-key is the DEFAULT auth mode; an
+                # optional bearer `Authorization` may also be present). httpx's
+                # built-in redirect-follower strips only `Authorization`/`Cookie`
+                # on a cross-host hop -- it has no notion of `X-API-KEY`, so a
+                # redirecting or compromised server (or a MITM on an `http://`
+                # base URL) could otherwise capture the real API key verbatim.
+                # `follow_redirects=False` plus `_raise_if_redirected` below
+                # refuses to follow ANY redirect rather than partially forward
+                # credentials -- the same "refuse rather than risk forwarding"
+                # shape as the `x-goog-api-key` fix in
+                # `LLM_Calls/LLM_API_Calls.py` (`chat_with_google`).
+                follow_redirects=False,
             )
         return self._client
+
+    @staticmethod
+    def _raise_if_redirected(response: httpx.Response, endpoint: str) -> None:
+        """Refuse a redirect response rather than following it with credentials.
+
+        The shared client carries the ``X-API-KEY`` (and possibly bearer
+        ``Authorization``) header and is constructed with
+        ``follow_redirects=False`` (see ``_get_client``) specifically so a
+        3xx response lands here instead of httpx silently completing the
+        hop. There is no legitimate reason for this client to follow a
+        redirect -- ``base_url`` is the server the caller explicitly
+        configured -- so any 3xx is treated as hostile/misconfigured and
+        refused outright.
+
+        Args:
+            response: The response to inspect.
+            endpoint: The request path, used only for the error message.
+
+        Raises:
+            APIConnectionError: If ``response`` is a 3xx redirect.
+        """
+        if not (300 <= response.status_code < 400):
+            return
+        location = response.headers.get("location", "<no Location header>")
+        raise APIConnectionError(
+            f"Server returned a redirect ({response.status_code} -> {location}) "
+            f"for {endpoint}; refusing to follow with the X-API-KEY/Authorization "
+            "credential."
+        )
 
     async def close(self):
         if self._client and not self._client.is_closed:
@@ -1229,6 +1270,7 @@ class TLDWAPIClient:
                 params=params,
                 headers=headers,
             )  # Pass endpoint directly
+            self._raise_if_redirected(response, endpoint)
             response.raise_for_status()  # Raises HTTPStatusError for 4xx/5xx
             if response.status_code in {204, 205}:
                 return {}
@@ -1310,6 +1352,7 @@ class TLDWAPIClient:
                 params=params,
                 headers=headers,
             )
+            self._raise_if_redirected(response, endpoint)
             response.raise_for_status()
             content_disposition = response.headers.get("content-disposition")
             return ReadingExportResponse(
@@ -1379,6 +1422,7 @@ class TLDWAPIClient:
             response = await client.request(
                 method, endpoint, params=params, headers=headers
             )
+            self._raise_if_redirected(response, endpoint)
             response.raise_for_status()
             return {
                 str(key).lower(): str(value) for key, value in response.headers.items()
@@ -1423,6 +1467,7 @@ class TLDWAPIClient:
             async with client.stream(
                 method, endpoint, data=data, files=files
             ) as response:
+                self._raise_if_redirected(response, endpoint)
                 response.raise_for_status()
                 async for line in response.aiter_lines():
                     if line:
@@ -1495,6 +1540,7 @@ class TLDWAPIClient:
                 params=params,
                 headers=headers,
             ) as response:
+                self._raise_if_redirected(response, endpoint)
                 response.raise_for_status()
                 async for line in response.aiter_lines():
                     if line == "":

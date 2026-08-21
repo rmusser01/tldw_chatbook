@@ -4462,7 +4462,16 @@ class _CapturedURLSession:
     def mount(self, *_args, **_kwargs) -> None:
         return None
 
-    def post(self, url, *, headers=None, json=None, stream=False, timeout=None):
+    def post(
+        self,
+        url,
+        *,
+        headers=None,
+        json=None,
+        stream=False,
+        timeout=None,
+        allow_redirects=None,
+    ):
         self._captured["url"] = url
         return _FakeAnthropicPostResponse()
 
