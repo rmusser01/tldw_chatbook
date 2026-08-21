@@ -187,9 +187,10 @@ class InterruptRoundHost:
         MCP detached-view leg; ``on_cancelled``/``on_timeout`` let the
         approvals wrapper stamp its decisions box and audit-log;
         ``human_wait_run_id`` wraps the wait in ``use_human_input_wait``
-        (the script bridge passes None -- it is dispatched in-loop and
-        never hosted by a per-call wrapper); ``check_revoked`` is False
-        for skill-install, which is never swept.
+        (all three bridges wrap theirs today -- ``None`` selects
+        ``nullcontext()`` instead, for a kind/test with no owning run to
+        pause); ``check_revoked`` is False for skill-install, which is
+        never swept.
         """
         event: threading.Event = state["event"]
         with self.lock:
