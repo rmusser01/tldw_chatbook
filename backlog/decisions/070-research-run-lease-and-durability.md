@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-18
-- **Task:** task-18060 (Make research runs durable, resumable jobs)
+- **Task:** task-19300 (Make research runs durable, resumable jobs; renumbered from task-18060 after an ID collision)
 - **Related:** ADR-068 (local research execution engine — this layers
   durability onto its engine); tldw_server `app/core/Jobs/` (the lease model
   adopted); `Docs/superpowers/specs/2026-08-18-durable-research-jobs-design.md`
@@ -119,4 +119,4 @@ re-searched everything it had already paid for.
   exists only in SQLite-backed mode.
 - A SIGKILLed executor's run stays declined for up to `lease_seconds`
   before takeover. Evidence read-back (skipping a completed round on
-  resume) and scheduler auto-resume remain open (task-18060 ACs #3, #5–#11).
+  resume) and scheduler auto-resume remain open (task-19300 ACs #3, #5–#11).

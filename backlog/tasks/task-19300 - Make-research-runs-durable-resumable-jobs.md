@@ -1,10 +1,10 @@
 ---
-id: TASK-18060
+id: TASK-19300
 title: Make research runs durable, resumable jobs
 status: In Progress
 assignee: []
 created_date: '2026-08-18 05:10'
-updated_date: '2026-08-18 05:40'
+updated_date: '2026-08-21 02:30'
 labels:
   - research
   - scheduling
@@ -151,3 +151,17 @@ build is refused rather than silently downgraded. Four tests cover the
 upgrade, the fresh stamp, idempotent reopen, and the future-version refusal.
 ADR-070's "no migration framework" consequence entry is superseded by this.
 <!-- SECTION:NOTES:END -->
+
+## Renumbering note (2026-08-21)
+
+Renumbered from **TASK-18060** -- that ID was independently claimed by two
+sessions (the repo's 8th collision) and the other claimant
+("Inspector-rail multi-file review and review comments") is already Done,
+so per the collision playbook the Done task keeps the ID and this
+In Progress task moves. Existing `task-18060` citations in
+`tldw_chatbook/Research_Interop/*`, `Tests/Research/*`, and the
+2026-08-18 durable-research-jobs plan refer to THIS task; they are left
+in place to avoid conflicting with the active research branch and can be
+swept to 19300 when that branch lands. `task-18060` citations in
+Console/UI/AgentRuns_DB code and the review-rail docs refer to the
+inspector task.
