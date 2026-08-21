@@ -269,10 +269,8 @@ class NotesSyncRecoveryAdmission:
         ):
             if type(value) is not int or value < 0:
                 raise ValueError(f"{name} must be non-negative.")
-        if self.admitted and self.reason_code is not None:
-            raise ValueError(
-                "an admitted recovery decision cannot carry a reason code."
-            )
+        if self.admitted != (self.reason_code is None):
+            raise ValueError("admission result and reason_code disagree.")
 
 
 __all__ = [

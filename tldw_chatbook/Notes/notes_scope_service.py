@@ -498,6 +498,28 @@ class NotesScopeService:
         )
         return await self._run_folder_repository(repository.list_restore_reviews)
 
+    async def reconcile_note_folder_owner_memberships(
+        self,
+        *,
+        scope: ScopeType | str,
+        owner_id: str,
+        desired: Sequence[tuple[str, str]],
+        user_id: str | None = None,
+    ) -> tuple[NoteFolderMembership, ...]:
+        """Converge one lasting-sync owner's managed memberships."""
+
+        repository = self._folder_repository_for_action(
+            scope=scope,
+            user_id=user_id,
+            action="update",
+            operation="membership",
+        )
+        return await self._run_folder_repository(
+            repository.reconcile_managed,
+            owner_id=owner_id,
+            desired=tuple(desired),
+        )
+
     def record_sync_mirror_report(
         self,
         *,
@@ -920,6 +942,113 @@ class NotesScopeService:
             keywords=keywords,
             version=version,
         )
+
+    async def get_note_for_sync(
+        self,
+        *,
+        scope: ScopeType | str,
+        note_id: Any,
+        user_id: str | None = None,
+    ) -> Mapping[str, Any]:
+        """Read one local note through the normalized sync authority seam."""
+
+        normalized_scope = self._normalize_scope(scope)
+        if normalized_scope is not ScopeType.LOCAL_NOTE:
+            raise RuntimeError("server_contract_missing")
+        self._enforce_policy(self._note_action_id(normalized_scope, "detail"))
+        record = self.local_notes_service.get_note_by_id(
+            self._require_user_id(user_id),
+            note_id,
+        )
+        if not isinstance(record, Mapping):
+            raise RuntimeError("note_missing")
+        return dict(record)
+
+    async def replace_note_for_sync(
+        self,
+        *,
+        scope: ScopeType | str,
+        note_id: Any,
+        title: str,
+        content: str,
+        expected_version: int,
+        user_id: str | None = None,
+    ) -> Mapping[str, Any]:
+        """Optimistically replace one local note and read back its fresh state."""
+
+        normalized_scope = self._normalize_scope(scope)
+        if normalized_scope is not ScopeType.LOCAL_NOTE:
+            raise RuntimeError("server_contract_missing")
+        self._enforce_policy(self._note_action_id(normalized_scope, "update"))
+        local_user_id = self._require_user_id(user_id)
+        updated = self.local_notes_service.update_note(
+            local_user_id,
+            note_id,
+            {"title": title, "content": content},
+            expected_version,
+        )
+        if not updated:
+            raise RuntimeError("stale_note")
+        record = self.local_notes_service.get_note_by_id(local_user_id, note_id)
+        if not isinstance(record, Mapping):
+            raise RuntimeError("note_verification_failed")
+        return dict(record)
+
+    async def create_note_for_sync(
+        self,
+        *,
+        scope: ScopeType | str,
+        note_id: Any,
+        title: str,
+        content: str,
+        user_id: str | None = None,
+    ) -> Mapping[str, Any]:
+        """Create one caller-identified local note and verify its authority."""
+
+        normalized_scope = self._normalize_scope(scope)
+        if normalized_scope is not ScopeType.LOCAL_NOTE:
+            raise RuntimeError("server_contract_missing")
+        self._enforce_policy(self._note_action_id(normalized_scope, "create"))
+        local_user_id = self._require_user_id(user_id)
+        created = self.local_notes_service.add_note(
+            local_user_id,
+            title,
+            content,
+            note_id=note_id,
+        )
+        if str(created or "") != str(note_id):
+            raise RuntimeError("note_identity_changed")
+        record = self.local_notes_service.get_note_by_id(local_user_id, note_id)
+        if not isinstance(record, Mapping):
+            raise RuntimeError("note_verification_failed")
+        return dict(record)
+
+    async def delete_note_for_sync(
+        self,
+        *,
+        scope: ScopeType | str,
+        note_id: Any,
+        expected_version: int,
+        user_id: str | None = None,
+    ) -> Mapping[str, Any]:
+        """Optimistically soft-delete one local sync note and verify its tombstone."""
+
+        normalized_scope = self._normalize_scope(scope)
+        if normalized_scope is not ScopeType.LOCAL_NOTE:
+            raise RuntimeError("server_contract_missing")
+        local_user_id = self._require_user_id(user_id)
+        deleted = await self.delete_note(
+            scope=normalized_scope,
+            note_id=note_id,
+            version=expected_version,
+            user_id=local_user_id,
+        )
+        if not deleted:
+            raise RuntimeError("stale_note")
+        record = self.local_notes_service.get_note_by_id(local_user_id, note_id)
+        if not isinstance(record, Mapping) or not record.get("deleted"):
+            raise RuntimeError("note_verification_failed")
+        return dict(record)
 
     async def delete_note(
         self,

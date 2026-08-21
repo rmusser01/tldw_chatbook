@@ -108,9 +108,7 @@ class RecordingFolderRepository:
         self._record(("restore_folder", folder_id, expected_version))
         return _mutation()
 
-    def attach_manual(
-        self, *, folder_id: str, note_id: str
-    ) -> NoteFolderMembership:
+    def attach_manual(self, *, folder_id: str, note_id: str) -> NoteFolderMembership:
         self._record(("attach_manual", folder_id, note_id))
         return NoteFolderMembership(
             membership_id="membership-1",
@@ -138,6 +136,15 @@ class RecordingFolderRepository:
 
     def list_restore_reviews(self) -> tuple[object, ...]:
         self._record(("list_restore_reviews",))
+        return ()
+
+    def reconcile_managed(
+        self,
+        *,
+        owner_id: str,
+        desired: tuple[tuple[str, str], ...],
+    ) -> tuple[NoteFolderMembership, ...]:
+        self._record(("reconcile_managed", owner_id, desired))
         return ()
 
 
@@ -212,6 +219,34 @@ def _empty_page() -> NoteFolderPage:
         next_offset=None,
         next_folder_offset=None,
     )
+
+
+@pytest.mark.asyncio
+async def test_sync_managed_membership_reconciliation_uses_scope_service_boundary() -> (
+    None
+):
+    events: list[tuple[object, ...]] = []
+    repository = RecordingFolderRepository(events)
+    policy = RecordingPolicy(events)
+    service = NotesScopeService(
+        NoCallBackend(),
+        NoCallBackend(),
+        policy_enforcer=policy,
+        folder_repository=repository,
+    )
+
+    result = await service.reconcile_note_folder_owner_memberships(
+        scope=ScopeType.LOCAL_NOTE,
+        owner_id="root-1",
+        desired=(("folder-1", "note-1"),),
+        user_id="user-1",
+    )
+
+    assert result == ()
+    assert events == [
+        ("policy", "notes.update.local"),
+        ("repository", "reconcile_managed", "root-1", (("folder-1", "note-1"),)),
+    ]
 
 
 LOCAL_FOLDER_CASES = [

@@ -111,8 +111,10 @@ class SyncPathPartialError(SyncPathError):
         self,
         reason: str,
         cleanup_leaf: str | None = None,
+        cleanup_identity: SafeSyncFileIdentity | None = None,
     ):
         self.cleanup_leaf = cleanup_leaf
+        self.cleanup_identity = cleanup_identity
         super().__init__(reason)
 
 
@@ -734,6 +736,158 @@ class PinnedSyncRoot:
         finally:
             os.close(parent_fd)
 
+    def cleanup_private_file(
+        self,
+        relative_path: Path | str,
+        *,
+        expected_identity: SafeSyncFileIdentity,
+    ) -> None:
+        """Idempotently remove one guarded replacement staging file."""
+
+        if type(expected_identity) is not SafeSyncFileIdentity:
+            raise TypeError("expected_identity must be a SafeSyncFileIdentity.")
+        selected = self._validate_relative(relative_path)
+        prefix, separator, token = selected.name.rpartition(".tmp-")
+        if (
+            separator != ".tmp-"
+            or not prefix.startswith(".")
+            or len(prefix) == 1
+            or len(token) != 32
+            or any(character not in "0123456789abcdef" for character in token)
+        ):
+            raise SyncPathError("invalid_cleanup_authority", selected)
+        self._require_supported()
+        self._verify_root_path_identity()
+        try:
+            parent_fd = self._open_parent(selected, create=False)
+        except SyncPathError:
+            raise
+        except OSError:
+            raise SyncPathError("operation_failed", selected) from None
+        try:
+            try:
+                entry = os.stat(
+                    selected.name,
+                    dir_fd=parent_fd,
+                    follow_symlinks=False,
+                )
+            except FileNotFoundError:
+                return
+            if (
+                not stat.S_ISREG(entry.st_mode)
+                or stat.S_ISLNK(entry.st_mode)
+                or _is_reparse(entry)
+                or entry.st_nlink != 1
+                or not self._same_device(entry)
+            ):
+                raise SyncPathError("invalid_cleanup_authority", selected)
+            if (
+                entry.st_dev,
+                entry.st_ino,
+                entry.st_nlink,
+            ) != (
+                expected_identity.device,
+                expected_identity.inode,
+                expected_identity.link_count,
+            ):
+                raise SyncPathError("target_identity_changed", selected)
+            self._verify_parent_identity(selected, parent_fd)
+            current = os.stat(
+                selected.name,
+                dir_fd=parent_fd,
+                follow_symlinks=False,
+            )
+            if self._descriptor_state(entry) != self._descriptor_state(current):
+                raise SyncPathError("target_identity_changed", selected)
+            self._before_cleanup_rename(selected)
+            quarantine_leaf: str | None = None
+            for _ in range(32):
+                candidate = f".{selected.name}.cleanup-{uuid.uuid4().hex}"
+                try:
+                    _rename_with_flags(
+                        parent_fd,
+                        selected.name,
+                        parent_fd,
+                        candidate,
+                        _RENAME_NOREPLACE,
+                    )
+                    quarantine_leaf = candidate
+                    break
+                except FileExistsError:
+                    continue
+                except OSError:
+                    raise SyncPathError(
+                        "guarded_rename_unavailable", selected
+                    ) from None
+            if quarantine_leaf is None:
+                raise SyncPathError("temporary_name_exhausted", selected)
+            quarantined = os.stat(
+                quarantine_leaf,
+                dir_fd=parent_fd,
+                follow_symlinks=False,
+            )
+            if (
+                quarantined.st_dev,
+                quarantined.st_ino,
+                quarantined.st_nlink,
+            ) != (
+                expected_identity.device,
+                expected_identity.inode,
+                expected_identity.link_count,
+            ):
+                try:
+                    _rename_with_flags(
+                        parent_fd,
+                        quarantine_leaf,
+                        parent_fd,
+                        selected.name,
+                        _RENAME_NOREPLACE,
+                    )
+                    os.fsync(parent_fd)
+                except OSError:
+                    raise SyncPathPartialError(
+                        "cleanup_rollback_failed",
+                        quarantine_leaf,
+                        SafeSyncFileIdentity(
+                            device=quarantined.st_dev,
+                            inode=quarantined.st_ino,
+                            link_count=quarantined.st_nlink,
+                        ),
+                    ) from None
+                raise SyncPathError("target_identity_changed", selected)
+            try:
+                os.unlink(quarantine_leaf, dir_fd=parent_fd)
+            except OSError:
+                try:
+                    _rename_with_flags(
+                        parent_fd,
+                        quarantine_leaf,
+                        parent_fd,
+                        selected.name,
+                        _RENAME_NOREPLACE,
+                    )
+                    os.fsync(parent_fd)
+                except OSError:
+                    raise SyncPathPartialError(
+                        "cleanup_rollback_failed",
+                        quarantine_leaf,
+                        expected_identity,
+                    ) from None
+                raise SyncPathError("operation_failed", selected) from None
+            try:
+                os.fsync(parent_fd)
+            except OSError:
+                raise SyncPathPartialError("cleanup_commit_unverified") from None
+        except SyncPathError:
+            raise
+        except OSError:
+            raise SyncPathError("operation_failed", selected) from None
+        finally:
+            os.close(parent_fd)
+
+    def _before_cleanup_rename(self, _relative_path: Path) -> None:
+        """Test seam immediately before private cleanup quarantine."""
+
     def _before_replace(self, _relative_path: Path) -> None:
         """Test seam immediately before identity rechecks and replacement."""
 
@@ -1217,6 +1371,9 @@ class PinnedSyncRoot:
                             raise SyncPathPartialError(
                                 "replacement_cleanup_pending",
                                 displaced_leaf,
+                                None
+                                if displaced_snapshot is None
+                                else displaced_snapshot.identity,
                             ) from None
             except SyncPathError:
                 raise

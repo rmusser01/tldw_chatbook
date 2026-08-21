@@ -877,7 +877,9 @@ def coerce_int_setting(
     # default like every other unusable input.
     if value is None:
         return default
-    if isinstance(value, float) and (value != value or value in (float("inf"), float("-inf"))):
+    if isinstance(value, float) and (
+        value != value or value in (float("inf"), float("-inf"))
+    ):
         return default
     try:
         coerced = _get_typed_value({"value": value}, "value", default, int)
@@ -3994,6 +3996,7 @@ auto_sync_enabled = false            # Enable automatic sync on startup
 sync_on_close = false               # Sync when closing the app
 conflict_resolution = "newer_wins"   # Default conflict resolution: newer_wins, ask, disk_wins, db_wins
 sync_direction = "bidirectional"     # Default sync direction: bidirectional, disk_to_db, db_to_disk
+recovery_capacity_bytes = 268435456  # Device-private lasting-sync recovery capacity (256 MiB)
 
 # Auto-save settings
 auto_save_enabled = true             # Enable auto-save feature
@@ -6647,6 +6650,23 @@ def get_notes_sync_state_db_path() -> Path:
     return get_user_data_dir() / "tldw_chatbook_notes_sync_state.db"
 
 
+def get_notes_sync_recovery_capacity_bytes(
+    config_data: Mapping[str, Any] | None = None,
+) -> int:
+    """Return the one bounded device-private sync recovery capacity."""
+
+    selected = (
+        load_cli_config_and_ensure_existence() if config_data is None else config_data
+    )
+    notes = selected.get("notes")
+    if not isinstance(notes, Mapping):
+        raise ValueError("notes.recovery_capacity_bytes must be configured.")
+    capacity = notes.get("recovery_capacity_bytes", 256 * 1024 * 1024)
+    if type(capacity) is not int or not 1 <= capacity <= 2**63 - 1:
+        raise ValueError("notes.recovery_capacity_bytes must be a positive integer.")
+    return capacity
+
+
 def get_prompts_db_path(*, ignore_override: bool = False) -> Path:
     """Get the resolved path for the Prompts database.
 
@@ -6841,9 +6861,7 @@ def seed_builtin_content(db: CharactersRAGDB) -> CharactersRAGDB:
 
         ensure_builtin_samira(db)
     except Exception as exc:  # noqa: BLE001 - bundled content cannot prevent boot
-        logger.warning(
-            "builtin_profile_seed_failed category={}", type(exc).__name__
-        )
+        logger.warning("builtin_profile_seed_failed category={}", type(exc).__name__)
     return db
 
 

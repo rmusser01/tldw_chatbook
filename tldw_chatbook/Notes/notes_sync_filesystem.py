@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import sys
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -24,6 +25,7 @@ from tldw_chatbook.Notes.notes_sync_models import (
 from tldw_chatbook.Notes.sync_paths import (
     PinnedSyncRoot,
     SafeSyncBytes,
+    SafeSyncFileIdentity,
     SyncPathError,
     SyncPathPartialError,
     guarded_rename_available,
@@ -62,6 +64,8 @@ class NotesSyncPrivateCleanupHandle:
     """Owner-private authority needed to journal a partial filesystem result."""
 
     private_relative_path: str | None
+    cleanup_kind: str | None = None
+    private_identity: SafeSyncFileIdentity | None = None
 
     def __repr__(self) -> str:
         return "NotesSyncPrivateCleanupHandle(<private>)"
@@ -275,7 +279,9 @@ class PosixNotesSyncFilesystem:
             raise NotesSyncFilesystemPartialError(
                 exc.reason,
                 NotesSyncPrivateCleanupHandle(
-                    exc.cleanup_leaf,
+                    self._cleanup_relative_path(relative_path, exc.cleanup_leaf),
+                    exc.reason,
+                    exc.cleanup_identity,
                 ),
             ) from None
         except SyncPathError as exc:
@@ -285,7 +291,10 @@ class PosixNotesSyncFilesystem:
         except NotesSyncFilesystemError:
             raise NotesSyncFilesystemPartialError(
                 "replacement_postcondition_failed",
-                NotesSyncPrivateCleanupHandle(Path(relative_path).as_posix()),
+                NotesSyncPrivateCleanupHandle(
+                    Path(relative_path).as_posix(),
+                    "replacement_postcondition_failed",
+                ),
             ) from None
         if (
             observed.raw_bytes != payload
@@ -293,7 +302,10 @@ class PosixNotesSyncFilesystem:
         ):
             raise NotesSyncFilesystemPartialError(
                 "replacement_postcondition_failed",
-                NotesSyncPrivateCleanupHandle(Path(relative_path).as_posix()),
+                NotesSyncPrivateCleanupHandle(
+                    Path(relative_path).as_posix(),
+                    "replacement_postcondition_failed",
+                ),
             )
         return NotesSyncFileSnapshot(
             observation=observed.observation,
@@ -303,6 +315,167 @@ class PosixNotesSyncFilesystem:
             representation_digest=observed.representation_digest,
             recovery_bytes=expected.raw_bytes,
         )
+
+    def create(
+        self,
+        relative_path: Path | str,
+        text: str,
+        *,
+        profile: NotesSyncSerializationProfile,
+    ) -> NotesSyncFileSnapshot:
+        """Create one absent file through guarded no-replace authority."""
+
+        if type(profile) is not NotesSyncSerializationProfile:
+            raise TypeError("profile must be a NotesSyncSerializationProfile.")
+        payload = self.serialize(text, profile)
+        try:
+            self._root.replace_bytes(
+                relative_path,
+                payload,
+                expected=None,
+                mode=profile.mode,
+            )
+        except SyncPathPartialError as exc:
+            raise NotesSyncFilesystemPartialError(
+                exc.reason,
+                NotesSyncPrivateCleanupHandle(
+                    self._cleanup_relative_path(relative_path, exc.cleanup_leaf),
+                    exc.reason,
+                    exc.cleanup_identity,
+                ),
+            ) from None
+        except SyncPathError as exc:
+            raise NotesSyncFilesystemError(exc.reason) from None
+        try:
+            observed = self.observe(relative_path)
+        except NotesSyncFilesystemError:
+            raise NotesSyncFilesystemPartialError(
+                "replacement_postcondition_failed",
+                NotesSyncPrivateCleanupHandle(
+                    Path(relative_path).as_posix(),
+                    "replacement_postcondition_failed",
+                ),
+            ) from None
+        if (
+            observed.raw_bytes != payload
+            or observed.observation.serialization != profile
+        ):
+            raise NotesSyncFilesystemPartialError(
+                "replacement_postcondition_failed",
+                NotesSyncPrivateCleanupHandle(
+                    Path(relative_path).as_posix(),
+                    "replacement_postcondition_failed",
+                ),
+            )
+        return observed
+
+    def delete(self, *, expected: NotesSyncFileSnapshot) -> None:
+        """Remove one exact reviewed file through a guarded private quarantine."""
+
+        if type(expected) is not NotesSyncFileSnapshot:
+            raise TypeError("expected must be a NotesSyncFileSnapshot.")
+        metadata_issue = self._metadata_issue(expected.reviewed_state)
+        if metadata_issue is not None:
+            raise NotesSyncFilesystemError(metadata_issue)
+        source = expected.reviewed_state.relative_path
+        quarantine = source.parent / f".{source.name}.tmp-{uuid.uuid4().hex}"
+        try:
+            moved = self._root.move_file(
+                source,
+                quarantine,
+                expected=expected.reviewed_state,
+            )
+        except SyncPathPartialError as exc:
+            raise NotesSyncFilesystemPartialError(
+                exc.reason,
+                NotesSyncPrivateCleanupHandle(
+                    self._cleanup_relative_path(quarantine, exc.cleanup_leaf),
+                    exc.reason,
+                    exc.cleanup_identity,
+                ),
+            ) from None
+        except SyncPathError as exc:
+            raise NotesSyncFilesystemError(exc.reason) from None
+        try:
+            self._root.cleanup_private_file(
+                quarantine,
+                expected_identity=moved.identity,
+            )
+        except SyncPathPartialError as exc:
+            raise NotesSyncFilesystemPartialError(
+                exc.reason,
+                NotesSyncPrivateCleanupHandle(
+                    self._cleanup_relative_path(quarantine, exc.cleanup_leaf),
+                    exc.reason,
+                    exc.cleanup_identity or moved.identity,
+                ),
+            ) from None
+        except SyncPathError:
+            raise NotesSyncFilesystemPartialError(
+                "replacement_cleanup_pending",
+                NotesSyncPrivateCleanupHandle(
+                    quarantine.as_posix(),
+                    "replacement_cleanup_pending",
+                    moved.identity,
+                ),
+            ) from None
+        try:
+            self.observe(source)
+        except NotesSyncFilesystemError as exc:
+            if exc.reason_code == "missing_target":
+                return
+            raise NotesSyncFilesystemPartialError(
+                "deletion_postcondition_failed",
+                NotesSyncPrivateCleanupHandle(None),
+            ) from None
+        raise NotesSyncFilesystemPartialError(
+            "deletion_postcondition_failed",
+            NotesSyncPrivateCleanupHandle(None),
+        )
+
+    @staticmethod
+    def _cleanup_relative_path(
+        target_path: Path | str,
+        cleanup_leaf: str | None,
+    ) -> str | None:
+        if cleanup_leaf is None:
+            return None
+        cleanup = Path(cleanup_leaf)
+        target = Path(target_path)
+        if len(cleanup.parts) == 1 and cleanup.name != target.name:
+            cleanup = target.parent / cleanup
+        return cleanup.as_posix()
+
+    def resolve_cleanup(self, handle: NotesSyncPrivateCleanupHandle) -> None:
+        """Remove only a displaced private replacement after durable admission."""
+
+        if type(handle) is not NotesSyncPrivateCleanupHandle:
+            raise TypeError("handle must be a NotesSyncPrivateCleanupHandle.")
+        if (
+            handle.cleanup_kind != "replacement_cleanup_pending"
+            or handle.private_relative_path is None
+            or handle.private_identity is None
+        ):
+            raise NotesSyncFilesystemError("cleanup_requires_review")
+        try:
+            self._root.cleanup_private_file(
+                handle.private_relative_path,
+                expected_identity=handle.private_identity,
+            )
+        except SyncPathPartialError as exc:
+            raise NotesSyncFilesystemPartialError(
+                exc.reason,
+                NotesSyncPrivateCleanupHandle(
+                    self._cleanup_relative_path(
+                        handle.private_relative_path,
+                        exc.cleanup_leaf,
+                    ),
+                    exc.reason,
+                    exc.cleanup_identity,
+                ),
+            ) from None
+        except SyncPathError as exc:
+            raise NotesSyncFilesystemError(exc.reason) from None
 
     def move(
         self,
@@ -327,7 +500,9 @@ class PosixNotesSyncFilesystem:
             raise NotesSyncFilesystemPartialError(
                 exc.reason,
                 NotesSyncPrivateCleanupHandle(
-                    exc.cleanup_leaf,
+                    self._cleanup_relative_path(destination_path, exc.cleanup_leaf),
+                    exc.reason,
+                    exc.cleanup_identity,
                 ),
             ) from None
         except SyncPathError as exc:
@@ -337,7 +512,10 @@ class PosixNotesSyncFilesystem:
         except NotesSyncFilesystemError:
             raise NotesSyncFilesystemPartialError(
                 "move_postcondition_failed",
-                NotesSyncPrivateCleanupHandle(Path(destination_path).as_posix()),
+                NotesSyncPrivateCleanupHandle(
+                    Path(destination_path).as_posix(),
+                    "move_postcondition_failed",
+                ),
             ) from None
         if (
             moved.raw_bytes != expected.raw_bytes
@@ -346,7 +524,10 @@ class PosixNotesSyncFilesystem:
         ):
             raise NotesSyncFilesystemPartialError(
                 "move_postcondition_failed",
-                NotesSyncPrivateCleanupHandle(Path(destination_path).as_posix()),
+                NotesSyncPrivateCleanupHandle(
+                    Path(destination_path).as_posix(),
+                    "move_postcondition_failed",
+                ),
             )
         return moved
 
