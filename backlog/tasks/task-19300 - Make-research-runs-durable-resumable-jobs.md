@@ -4,7 +4,7 @@ title: Make research runs durable, resumable jobs
 status: In Progress
 assignee: []
 created_date: '2026-08-18 05:10'
-updated_date: '2026-08-18 05:40'
+updated_date: '2026-08-21 02:30'
 labels:
   - research
   - scheduling
