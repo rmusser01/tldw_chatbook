@@ -55,8 +55,10 @@ state. Offsets survive in-place content updates and rail collapse/reopen, clamp 
 content shrinks, and are not written to Console rail preferences. Every descendant
 mutation owner explicitly requests a coalesced post-refresh reconciliation because
 Textual descendant layout events do not bubble; Inspector reconciliation also
-invalidates the outer hint. Existing responsive rail priority, explicit-open width
-floors, focus transfer, ordering, badges, and data semantics remain unchanged.
+invalidates the outer hint. `ConsoleLeftRail` is the single allocation coordinator: it
+measures every sibling from one post-refresh snapshot and applies the whole allocation
+set atomically. Existing responsive rail priority, explicit-open width floors, focus
+transfer, ordering, badges, and data semantics remain unchanged.
 
 Desired section height is measured before the 20-line cap, so exactly 20 physical
 content rows do not overflow and 21 do. A hint slot remains one row high while the
@@ -70,8 +72,10 @@ Every known Inspector row and action is assigned to the direct section named in 
 approved design. `Send blocked` and `Recovery action` belong to Run, `RAG/source`
 belongs to Source Readiness, and `Review Changes` receives a named Changes boundary at
 its existing tail position. There is no user-facing Other section. Unknown ownership
-raises in test/development; production retains known content, logs the stable unknown
-identifier, and exposes `Status: Inspector data incomplete` until a valid state arrives.
+uses a constructor-injected policy: STRICT raises in tests and opt-in developer
+launches; RESILIENT production retains known content, omits unknown children, logs only
+deduplicated stable identifiers, and exposes `Status: Inspector data incomplete` until
+a valid state clears it through the in-place path where structure permits.
 
 ## Context
 
@@ -107,6 +111,8 @@ visible and long sections behave consistently.
   their different outer-rail behavior.
 - The Context rail gains a pure height-allocation policy and no longer relies on the
   fixed `20%` CSS cap.
+- `ConsoleLeftRail` owns atomic allocation reconciliation; individual section bodies
+  cannot independently commit sibling allocations.
 - At constrained explicit-open heights, some open Context bodies may receive zero
   rows in normal mode; they are visibly marked and can be reprioritized. When headers
   cannot fit, the Context outer body scrolls and every open body receives a base row.

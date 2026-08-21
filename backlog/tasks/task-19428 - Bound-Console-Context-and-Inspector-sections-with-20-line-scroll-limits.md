@@ -9,6 +9,7 @@ labels:
   - ux
 dependencies:
   - TASK-19638
+  - TASK-19639
 priority: high
 ---
 
@@ -29,10 +30,10 @@ below a visible fold.
 - [ ] #3 In normal header-fit mode, Context allocates shorter sections only what they need, prioritizes the most recently activated section, redistributes unused height up to 20 lines, and marks an unfunded open body `· no room` with a transient `[>]` reprioritization action.
 - [ ] #4 When Context header chrome cannot physically fit, its outer body scrolls with a distinct pinned `▼ more sections — scroll` cue; every open non-empty body receives an honest base row, every header/body remains reachable, and persisted open preferences are unchanged.
 - [ ] #5 Inspector retains the distinct pinned `▼ more sections — scroll` cue whenever outer content remains below; local and outer active owners have dimensionally stable non-color focus treatment.
-- [ ] #6 Pointer scrolling hands off at nested-scroll boundaries; Tab/Shift+Tab traverse viewport then enabled descendants, focused descendants auto-reveal, removed focus targets recover deterministically, and rail badges/collapse/reopen/responsive focus/stored preferences do not regress.
-- [ ] #7 Inspector-local `n/p` commands navigate direct boundaries without wrapping or stealing printable input; context-sensitive footer/F1 help advertises them only while Inspector is active.
-- [ ] #8 Every existing Inspector row/action has one semantic owner, Review Changes renders under Changes, and unknown ownership raises in test/development rather than producing an Other section; production shows a compact incomplete-data status and stable diagnostic.
-- [ ] #9 Every named Context/Inspector mutation path explicitly requests coalesced post-refresh reconciliation, and Inspector section changes also invalidate the outer hint.
+- [ ] #6 Pointer scrolling hands off at nested-scroll boundaries; Tab/Shift+Tab preserve header-control, viewport, and body-control DOM order; focused descendants auto-reveal; removed focus targets recover next-then-previous; and rail badges/collapse/reopen/responsive focus/stored preferences do not regress.
+- [ ] #7 Inspector-local `n/p` commands implement the specified boundary and non-boundary anchors without wrapping or stealing editable input; footer hints refresh on Inspector focus transitions and F1 help evaluates active focus at invocation.
+- [ ] #8 Every existing Inspector row/action has one semantic owner and Review Changes renders under Changes; injected STRICT policy rejects unknown ownership, while RESILIENT production keeps known sections, omits Other/unknown children, deduplicates safe stable-ID diagnostics, and clears incomplete status in place on the next valid state.
+- [ ] #9 `ConsoleLeftRail` atomically reconciles all Context allocations from one post-refresh measurement snapshot after every named invalidation, every Context/Inspector mutation path requests coalesced reconciliation, Inspector changes invalidate the outer hint, and same-tick multi-section updates cannot mix old/new geometry.
 - [ ] #10 Production-CSS Textual compositor tests cover 235x52 and 160x45 all-open expanded states plus default and explicit-open safeguards at 120x30 and 80x24, including 20/21 boundaries, normal constrained reprioritization, short-height outer fallback, content shrink, live mutation, resize, recompose, focus recovery, and scroll clamping.
 - [ ] #11 The implementation follows ADR-077 and preserves TASK-15110's simultaneous-header outcome whenever headers physically fit, while keeping every header/body reachable through the short-height outer fallback.
 - [ ] #12 Specialized child constraints no longer override the shared ceiling: Sources' legacy 6/10-row caps and Session Settings' CSS 9-row minimum plus inline 9-row maximum are retired, and a one-row settings body occupies one content row.

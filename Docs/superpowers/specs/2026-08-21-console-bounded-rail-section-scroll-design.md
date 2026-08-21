@@ -48,7 +48,7 @@ This change preserves the following accepted behavior:
   every header remains reachable through an explicitly signaled outer Context scroll.
 - Context and Inspector rail labels, priorities, stored preferences, 70/74-column
   explicit-open floors, responsive focus handoff, and exact-100 geometry remain as
-  defined by ADR-043 and TASK-19427.
+  defined by ADR-043 and TASK-19639.
 - Collapse/reopen semantics, rail badges, action routing, row IDs, selected-message
   state, and in-place Inspector updates remain intact.
 - Phone, hover, soft-keyboard, and served-browser ownership remains outside this
@@ -195,12 +195,22 @@ changes, open/close, and allocation changes. Scroll-position changes update the 
 without recomposing content. A missing body or hint during recompose fails closed and
 is retried on the next scheduled reconciliation.
 
+Context allocation is coordinated above the shared bodies. `ConsoleLeftRail` owns an
+idempotent `request_allocation_reconcile()` that coalesces same-tick invalidations.
+After refresh, it snapshots the outer content-region height, every mounted direct
+header/chrome height, all open states, every uncapped desired height `D`, and transient
+active-section state. It runs the pure allocator once and applies the complete set of
+body allocations atomically; an individual Context body never applies a sibling-local
+allocation from a partial snapshot. Each Context body `request_reconcile()` invalidates
+this coordinator after updating its own desired geometry.
+
 Textual descendant Mount, Unmount, and Resize events do not bubble, so implicit
 ancestor resize observation is not sufficient. Each owning mutation path must call
 `request_reconcile()` after its existing state update:
 
 - Context workspace trays, Conversations, Model/settings rows, Agent rows/actions,
-  Details, and Character remounts;
+  Details, Character remounts, pinned Agent fleet-summary visibility, outer-body
+  resize, and section toggles;
 - Inspector Sources, Changed Files, Run groups/actions, dictionaries, World Books,
   Session Settings, and live-work card swaps.
 
@@ -255,17 +265,38 @@ mathematically impossible. Context switches to a height-only outer-scroll fallba
 2. Every open non-empty section receives an honest base allocation: one row for
    `D == 1`, or one content row plus its local hint for `D > 1`. No open section gets a
    zero-height body in this mode.
-3. The most recently activated section may receive additional content rows up to
-   `min(D, 20, max(1, H - 3))`, where `H` is the outer Context body viewport height and
-   three rows reserve its two-row header plus a possible local hint. Other sections
+3. The most recently activated section's **total** content allocation is
+   `A = min(D, 20, max(1, H - 3))`, where `H` is the outer Context body viewport height
+   and three rows reserve its two-row header plus a possible local hint. Other sections
    remain at their base allocation so one active section is readable without making
-   the short rail unbounded.
+   the short rail unbounded. If `D <= A`, the unused hint row is released normally.
 4. The outer scroll offset brings the activated section header and at least its first
    content row into view. Switching modes preserves open preferences and clamps both
    outer and inner offsets; it does not persist the active priority.
 5. Width-responsive visibility, explicit-open width floors, and rail priority remain
    unchanged. This fallback is selected by measured height, not by a new width
    breakpoint.
+
+### Activated-section transitions
+
+The transient active Context section follows one explicit state table:
+
+| Event | Result |
+| --- | --- |
+| First ChatScreen/Console mount | `None`; ordinary DOM order breaks allocator ties. |
+| Open a closed section | Set that section active before allocation, then save only the open preference through the existing path. |
+| Activate constrained `[>]` | Set that already-open section active and reallocate; no preference write. |
+| Keyboard focus enters a section header control, overflowing viewport, or body descendant | Set that section active and request allocation reconciliation; no preference write. |
+| Pointer presses a section header control, viewport, or body descendant | Set that section active before handling the control action; pointer-wheel movement alone does not change active priority. |
+| Close the active section | Choose the nearest preceding open non-empty section in DOM order, otherwise the first following one, otherwise `None`; the close preference uses the existing save path. |
+| Content makes the active section empty/absent | Apply the same preceding-then-following fallback without a preference write. |
+| Enter/leave short-height fallback | Retain the active ID if it is still open and non-empty; otherwise apply the same fallback. |
+| Collapse/reopen a rail on the same mounted screen | Retain active ID. |
+| Unmount and later remount Console | Reset to `None`; active priority is never restored from preferences. |
+
+Allocation application is equality-guarded. A resize caused by applying a new
+allocation may request another reconciliation, but an identical complete allocation
+set is a no-op, preventing a post-refresh loop.
 
 This replaces the fixed `max-height: 20%` rule. Short open sections return unused rows
 to the pool, allowing another open section to approach the 20-line ceiling. At smaller
@@ -335,12 +366,24 @@ currently fall through `_ROW_GROUPS`. Known row/action IDs and their relative or
 within each boundary remain unchanged. Only the new body and hint nodes receive
 derived IDs; compatibility wrappers retain the old section and header IDs.
 
-The ownership classifier is exhaustive. Test and development builds raise an explicit
-contract error for an unknown row label or action ID; no generic `Other` section is
-rendered. Production fails closed without exposing internal labels: it retains the
-known sections, logs the stable unknown label/action identifier, and changes the
-compact run-status summary to `Status: Inspector data incomplete`. A subsequent valid
-state clears that summary and reconciles normally.
+The ownership classifier is exhaustive and receives an explicit injected
+`InspectorOwnershipPolicy`:
+
+- `STRICT` raises `UnownedInspectorContentError` for an unknown row label or action ID
+  before mounting a new tree. Unit/component tests use `STRICT`; developer launches opt
+  into the same policy with `TLDW_CONSOLE_STRICT_INSPECTOR_OWNERSHIP=1`.
+- `RESILIENT` is passed explicitly by ordinary production composition. It renders all
+  known sections, omits unknown children, and never mounts a generic `Other` section.
+  It logs each unknown structural fingerprint once using only stable identifiers in
+  the form `row:<label>` or `action:<widget_id>`—never row text, action copy, or user
+  content—and changes the compact summary to
+  `Status: Inspector data incomplete`.
+
+The policy is constructor-injected rather than inferred from `__debug__`, packaging,
+or test discovery. A later valid state clears the incomplete flag and updates the
+summary in place when the known structural fingerprint is unchanged; it must not force
+an unnecessary recompose. A changed known structure follows the existing structural
+recompose path.
 
 ## Interaction contract
 
@@ -349,9 +392,12 @@ state clears that summary and reconciles normally.
 - A section viewport joins focus order only while it overflows.
 - A short, empty, closed, or absent body adds no keyboard stop.
 - The hint is never focusable.
-- Focus traversal is `section viewport -> enabled interactive descendants in DOM
-  order -> next section`; Shift+Tab reverses the path. The outer rail body remains its
-  own stop for outer scrolling and section navigation.
+- Focus traversal preserves the complete existing DOM order:
+  `enabled section-header controls -> overflowing section viewport -> enabled body
+  descendants -> next section's header controls`. Shift+Tab reverses the path. A
+  boundary with no focusable header or body control contributes only its overflowing
+  viewport; a non-overflowing static boundary adds no stop. The outer rail body remains
+  its own stop for outer scrolling and section navigation.
 - Focusing a descendant scrolls it fully into its local viewport before fold state is
   reconciled. It does not reset the section's stored session-local offset.
 - While a viewport or descendant owns focus, its header is underlined and its viewport
@@ -359,10 +405,11 @@ state clears that summary and reconciles normally.
   change geometry. When the outer body owns focus, the rail title is underlined
   instead, distinguishing the active scroll owner without color alone.
 - If a focused section stops overflowing, the shared body invokes its owner-supplied
-  recovery callback. If a focused descendant disappears, recovery first selects the
-  nearest enabled visible control in the same section. Context then targets the same
-  section's toggle; Inspector then targets the outer body and finally its collapse
-  button.
+  recovery callback. If a focused descendant disappears, recovery chooses the next
+  enabled visible control in DOM order within that section, then the previous one,
+  then an enabled section-header control. Context next targets its section toggle;
+  Inspector next targets the outer body and finally its collapse button. This
+  next-then-previous rule is the sole `nearest` tie-breaker.
 - Responsive hiding continues to hand focus to the appropriate rail reveal control.
 
 ### Keyboard scrolling
@@ -379,8 +426,19 @@ Ctrl binding or app-global binding is added or shadowed.
 ### Inspector section navigation
 
 The Inspector adds rail-local `n` (next section) and `p` (previous section) commands.
-They are active only while focus is inside Inspector and not inside an editable input
-that owns printable keys. The commands:
+"Inspector active" means the focused widget is `#console-right-rail` or one of its
+descendants. The commands are inactive inside an editable input that owns printable
+keys. Their anchor rules are:
+
+- inside a direct boundary, `n/p` targets its next/previous mounted boundary;
+- on Scope, run status, or another non-boundary descendant, `n` targets the first
+  following boundary and `p` the last preceding boundary;
+- on the rail collapse button, outer body itself, or another node without a positional
+  boundary anchor, `n` targets the first mounted boundary and `p` the last;
+- at the first/last anchored boundary, the outward command is a no-op; navigation does
+  not wrap.
+
+For a resolved target the commands:
 
 1. find the next/previous mounted direct boundary without wrapping;
 2. scroll its header fully into the outer viewport;
@@ -388,9 +446,11 @@ that owns printable keys. The commands:
    outer Inspector body;
 4. preserve local scroll offsets and section open state.
 
-The context-sensitive footer/F1 help advertises `n/p Sections` only while Inspector is
-the active rail. The screen does not bind `n` or `p` globally, so transcript selection,
-composer typing, and other panes retain their existing behavior.
+The footer refreshes on focus entering or leaving `#console-right-rail` and advertises
+`n/p Sections` only while Inspector is active. F1 help evaluates the same active-focus
+predicate at invocation time instead of relying on a static startup snapshot. The
+screen does not bind `n` or `p` globally, so transcript selection, composer typing, and
+other panes retain their existing behavior.
 
 ### Pointer scrolling and boundary handoff
 
@@ -444,10 +504,17 @@ handle label, stored intent, or exact-100 minimum waiver changes in this task.
 - Context allocator: empty, short, long, mixed, all-open, collapsed, tie, and
   insufficient-budget cases, activated-section priority, `· no room`, and the exact
   transition into/out of short-height outer-scroll fallback.
+- Every activated-section transition in the state table, including active-section
+  removal, rail collapse/reopen, Console remount reset, and zero extra preference
+  writes for transient priority changes.
 - Exact 20/21 rendered-line boundary.
 - Deterministic redistribution and hint-row accounting.
-- Exhaustive Inspector row/action ownership; known Changes content passes, and unknown
-  labels/action IDs fail the development contract with no `Other` section.
+- Exhaustive Inspector row/action ownership under `STRICT`; known Changes content
+  passes, and unknown labels/action IDs raise with no `Other` section.
+- `RESILIENT` ownership keeps known sections, omits unknown children, logs exactly one
+  stable identifier per unknown structural fingerprint with no user content, sets the
+  incomplete summary, then clears it on a valid state through the in-place path when
+  known structure is unchanged.
 
 ### Isolated widget tests
 
@@ -460,12 +527,17 @@ handle label, stored intent, or exact-100 minimum waiver changes in this task.
 - Content shrink clamps the offset and removes obsolete overflow.
 - Focusability toggles with overflow and recovers when overflow disappears.
 - Keyboard scrolling and pointer boundary handoff.
-- Tab/Shift+Tab traversal across viewport and interactive descendants, descendant
-  auto-reveal, active-owner non-color styling, and focused-descendant removal.
+- Tab/Shift+Tab traversal across header controls, viewport, and body descendants in
+  exact DOM order; descendant auto-reveal, active-owner non-color styling, and the
+  next-then-previous focused-descendant removal fallback.
 - Coalesced reconciliation from every named Context/Inspector mutation owner, including
   invalidation of the outer Inspector hint.
+- Atomic `ConsoleLeftRail` allocation reconciliation from same-tick multi-section
+  updates, outer resize, section toggle, Character remount, and fleet-summary
+  visibility; no mixed old/new measurement set and no equality-loop.
 - Inspector-local `n/p` next/previous section navigation, no-wrap boundaries, editable
-  input exclusion, focus target selection, and truthful context-sensitive help.
+  input exclusion, every non-boundary anchor rule, focus target selection, footer
+  refresh on Inspector focus transitions, and F1 help evaluated at invocation.
 - Recompose and in-place update paths preserve stable child and row IDs.
 
 ### Production-CSS compositor tests
@@ -508,7 +580,7 @@ substitute the repository-wide suite for these behavior-specific tests.
   fallback, focus traversal, and Inspector `n/p` section navigation.
 - Record the task-ID collision correction: the Console Phase 0 stream moves from the
   conflicting TASK-18912/TASK-18913/TASK-18915 IDs to
-  TASK-19426/TASK-19427/TASK-19428.
+  TASK-19638/TASK-19639/TASK-19428.
 
 ## ADR check
 
