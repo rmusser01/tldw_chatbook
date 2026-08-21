@@ -1,9 +1,11 @@
 ---
 id: TASK-18800
 title: Console thinking-effort 'off' is not honored on Claude Opus 5 or Fable 5
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-18 23:52'
+updated_date: '2026-08-21 04:35'
 labels:
   - llm
   - console
@@ -26,3 +28,9 @@ Found while fixing TASK-18414 and deliberately left out of scope there: that tas
 - [ ] #3 The by-default-thinking decision is a capability predicate alongside the two added in TASK-18414, not a new name check in the request builder
 - [ ] #4 Models where omitting the thinking parameter already means no thinking (Opus 4.8 and earlier, Sonnet 4.6 and earlier, Haiku) are unchanged, pinned by a regression test
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Standalone curl probes pinning the capability surface (opus-5 disabled accepted; fable-5 disabled 400; disabled-observable via content block types + thinking_tokens)\n2. Commit probe verdicts (session-limit insurance)\n3. Add thinks-by-default / rejects-disabled-thinking capability predicates in model_capabilities.py (outside config tables, family-matched)\n4. Rewire _anthropic_thinking_config off branch to consult them; keep _anthropic_is_sonnet_5 for the Sonnet 5 effort shape only\n5. Red-first pins, mutation tests with Edit-based restores\n6. Live verification at the chat_api_call seam + origin/dev control\n7. Hygiene: ACs, notes, Done, report, PR
+<!-- SECTION:PLAN:END -->
