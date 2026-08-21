@@ -558,6 +558,8 @@ class InstructionActivationLedger:
             staged_tokens = payload_state.count_input_tokens(final_rows)
         except Exception:
             staged_tokens = 0
+        # Unfit warnings remain receipt-backed: Task 10 must terminal-error if
+        # bounding drops them, and must never mark or provider-send absent rows.
         if (
             not final_rows
             or type(staged_tokens) is not int

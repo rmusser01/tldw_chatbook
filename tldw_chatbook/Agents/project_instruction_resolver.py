@@ -233,7 +233,8 @@ class ProjectInstructionResolver:
             terminal_scopes: Scopes with a prior terminal no-content outcome.
             admission_bytes: Current cumulative ledger allowance. Defaults to
                 ``max_bytes`` for standalone resolver calls.
-            expected_binding_identity: Dispatch-owned selected-root identity.
+            expected_binding_identity: Dispatch-owned selected-root identity;
+                required when reusing any pinned source.
 
         Returns:
             Sources in broad-to-specific order plus content-free outcomes.
@@ -246,6 +247,8 @@ class ProjectInstructionResolver:
         if admission_bytes is not None and admission_bytes < 0:
             raise ValueError("admission_bytes must be non-negative")
         root, expected_root = _canonical_binding_root(binding_root)
+        if pinned_by_canonical_path and expected_binding_identity is None:
+            expected_root = None
         if expected_binding_identity is not None and (
             root != expected_binding_identity.canonical_root
             or expected_root is None

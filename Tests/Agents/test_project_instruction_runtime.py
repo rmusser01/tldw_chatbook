@@ -21,6 +21,7 @@ from tldw_chatbook.Agents.project_instruction_resolver import (
     InstructionSource,
     NestedResolutionBatch,
     ProjectInstructionResolver,
+    capture_binding_root_identity,
 )
 from tldw_chatbook.Agents.project_instruction_runtime import (
     PROJECT_INSTRUCTION_ROW_KEY,
@@ -449,6 +450,7 @@ def test_unmeasurable_warning_only_delivery_remains_pending_until_exact_mark(
     assert first.status == "retry_with_context"
     assert any("invalid" in row["content"] for row in first.rows)
     assert ledger.initial_context_for_chain("primary", payload).receipt == first.receipt
+    # Task 10 must terminal-error rather than mark/send when bounding drops this row.
     with pytest.raises(ValueError, match="payload rows"):
         ledger.mark_payload_sent(first.receipt, [])
 
@@ -738,6 +740,7 @@ def test_nested_pinned_source_is_reused_by_identity_after_delete(tmp_path):
     path = target / "AGENTS.md"
     path.write_text("pinned")
     resolver = ProjectInstructionResolver()
+    identity = capture_binding_root_identity(tmp_path)
     first = resolver.resolve_targets(
         tmp_path,
         [target],
@@ -754,10 +757,38 @@ def test_nested_pinned_source_is_reused_by_identity_after_delete(tmp_path):
         max_bytes=0,
         dispatch_started_wall_ns=0,
         pinned_by_canonical_path=pinned,
+        expected_binding_identity=identity,
     )
 
     assert second.sources[0] is first.sources[0]
     assert second.outcomes == ()
+
+
+@pytest.mark.parametrize("identity_kind", ["absent", "mismatched"])
+def test_direct_pinned_resolution_requires_matching_dispatch_authority(
+    tmp_path, identity_kind
+):
+    target = tmp_path / "src"
+    target.mkdir()
+    source = _source(tmp_path, "src/AGENTS.md", "PIN_WITHOUT_AUTHORITY")
+    identity = None
+    if identity_kind == "mismatched":
+        other = tmp_path / "other"
+        other.mkdir()
+        identity = capture_binding_root_identity(other)
+
+    batch = ProjectInstructionResolver().resolve_targets(
+        tmp_path,
+        [target],
+        max_bytes=100,
+        dispatch_started_wall_ns=time.time_ns() + 1_000_000_000,
+        pinned_by_canonical_path={source.canonical_path: source},
+        expected_binding_identity=identity,
+    )
+
+    assert batch.sources == ()
+    assert [outcome.code for outcome in batch.outcomes] == ["resolution_failed"]
+    assert "PIN_WITHOUT_AUTHORITY" not in repr(batch)
 
 
 @pytest.mark.parametrize(
@@ -768,6 +799,7 @@ def test_nested_rejects_injected_pinned_source_metadata(tmp_path, relative_path,
     target = tmp_path / "src"
     target.mkdir()
     expected_path = target / "AGENTS.md"
+    identity = capture_binding_root_identity(tmp_path)
     injected = InstructionSource(
         canonical_path=tmp_path.parent / "outside" / "AGENTS.md",
         relative_path=relative_path,
@@ -784,6 +816,7 @@ def test_nested_rejects_injected_pinned_source_metadata(tmp_path, relative_path,
         max_bytes=100,
         dispatch_started_wall_ns=time.time_ns() + 1_000_000_000,
         pinned_by_canonical_path={expected_path: injected},
+        expected_binding_identity=identity,
     )
 
     assert batch.sources == ()
@@ -806,6 +839,7 @@ def test_nested_rejects_pinned_source_with_forged_content_identity(
     target = tmp_path / "src"
     target.mkdir()
     expected_path = target / "AGENTS.md"
+    identity = capture_binding_root_identity(tmp_path)
     forged = InstructionSource(
         canonical_path=expected_path,
         relative_path="src/AGENTS.md",
@@ -822,6 +856,7 @@ def test_nested_rejects_pinned_source_with_forged_content_identity(
         max_bytes=100,
         dispatch_started_wall_ns=time.time_ns() + 1_000_000_000,
         pinned_by_canonical_path={expected_path: forged},
+        expected_binding_identity=identity,
     )
 
     assert batch.sources == ()
@@ -834,6 +869,7 @@ def test_nested_pinned_reuse_rejects_binding_root_swap(tmp_path, monkeypatch):
     nested = root / "src"
     nested.mkdir(parents=True)
     source = _source(root, "src/AGENTS.md", "pinned")
+    identity = capture_binding_root_identity(root)
     displaced = tmp_path / "displaced"
     real_lstat = resolver_module.os.lstat
     nested_lstats = 0
@@ -855,6 +891,7 @@ def test_nested_pinned_reuse_rejects_binding_root_swap(tmp_path, monkeypatch):
         max_bytes=100,
         dispatch_started_wall_ns=time.time_ns() + 1_000_000_000,
         pinned_by_canonical_path={source.canonical_path: source},
+        expected_binding_identity=identity,
     )
 
     assert nested_lstats >= 2
@@ -869,6 +906,7 @@ def test_nested_pinned_reuse_rechecks_root_after_metadata_validation(
     nested = root / "src"
     nested.mkdir(parents=True)
     source = _source(root, "src/AGENTS.md", "pinned")
+    identity = capture_binding_root_identity(root)
     displaced = tmp_path / "displaced"
     real_validator = resolver_module._valid_pinned_source
 
@@ -886,6 +924,7 @@ def test_nested_pinned_reuse_rechecks_root_after_metadata_validation(
         max_bytes=100,
         dispatch_started_wall_ns=time.time_ns() + 1_000_000_000,
         pinned_by_canonical_path={source.canonical_path: source},
+        expected_binding_identity=identity,
     )
 
     assert batch.sources == ()
