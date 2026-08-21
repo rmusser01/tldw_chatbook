@@ -1,7 +1,8 @@
 # ADR-077: Server-offloaded scheduled agent tasks — execution seam and result pass-back
 
-Status: Proposed
+Status: Accepted
 Date: 2026-08-19
+Accepted: 2026-08-21 — owner ruling on the two judgment decisions: single-owner execution (decision 1, including the documented behavior change for server-scoped reminders) and phase-1 side-effect-free scope (decision 4)
 Renumbered: 072 → 076 → 077 (072–075 claimed by concurrent branches at the PR #1832 merge; 076 proven claimed earlier by `076-library-lifecycle-progressive-disclosure` — see TASK-19610 for the trace)
 Related Task: [TASK-18940](../tasks/task-18940%20-%20Server-offloaded-scheduled-agent-tasks-execution-seam.md)
 Amends: ADR-018 (its "execution remains `execution_unavailable` until server-side automation execution is integrated" clause)
