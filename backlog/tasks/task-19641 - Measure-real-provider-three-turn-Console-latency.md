@@ -41,6 +41,6 @@ Measure the reported three-turn Console failure path against a real local LLM so
 5. Independently recompute the report, run a live three-turn smoke through the product send path, document conclusions without conflating model latency with application latency, and close only if every acceptance criterion is supported.
 
 ADR required: no
-ADR path: N/A
-Reason: this task adds opt-in performance instrumentation and retained evidence only; it does not change runtime ownership, provider contracts, storage, or user-visible behavior.
+ADR path: `backlog/decisions/077-change-review-consent-and-asynchronous-finalization.md` (existing governing ADR)
+Reason: this task adds opt-in performance instrumentation and retained evidence only; it does not change runtime ownership, provider contracts, storage, or user-visible behavior. ADR-077 governs the consent and finalization behavior being measured.
 <!-- SECTION:PLAN:END -->

@@ -2,7 +2,7 @@
 
 Date: 2026-08-21
 Task: TASK-19641
-Status: proposed
+Status: approved
 
 ## Context
 
