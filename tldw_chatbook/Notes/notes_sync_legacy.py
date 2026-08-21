@@ -66,7 +66,6 @@ class LegacyNotesSyncMigrationError(RuntimeError):
 class _LegacyRootEvidence:
     source_kind: str
     source_id: str
-    raw_path: str | None
     canonical_path: str | None
     root_identity_digest: str | None
     ancestor_identity_digests: tuple[str, ...]
@@ -80,11 +79,9 @@ class _LegacyRootEvidence:
 class _LegacyNoteEvidence:
     note_id: object
     version: object
-    raw_root: object
     canonical_root: str | None
     root_reason_code: str | None
     raw_relative_path: object
-    raw_file_path: object
     content_digest: object
     file_identity_digest: str | None
     file_mode: int | None
@@ -103,7 +100,6 @@ class LegacyNotesSyncSnapshot:
     source_fingerprint: str
     roots: tuple[_LegacyRootEvidence, ...]
     notes: tuple[_LegacyNoteEvidence, ...]
-    policy_values: tuple[tuple[str, object], ...]
     policy_issues: tuple[str, ...]
 
     def __post_init__(self) -> None:
@@ -328,7 +324,6 @@ def _root_evidence(
         return _LegacyRootEvidence(
             source_kind=source_kind,
             source_id=source_id,
-            raw_path=None,
             canonical_path=None,
             root_identity_digest=None,
             ancestor_identity_digests=(),
@@ -339,7 +334,6 @@ def _root_evidence(
         return _LegacyRootEvidence(
             source_kind=source_kind,
             source_id=source_id,
-            raw_path=selected,
             canonical_path=None,
             root_identity_digest=None,
             ancestor_identity_digests=(),
@@ -361,7 +355,6 @@ def _root_evidence(
         return _LegacyRootEvidence(
             source_kind=source_kind,
             source_id=source_id,
-            raw_path=selected,
             canonical_path=None,
             root_identity_digest=None,
             ancestor_identity_digests=(),
@@ -381,7 +374,6 @@ def _root_evidence(
                     return _LegacyRootEvidence(
                         source_kind=source_kind,
                         source_id=source_id,
-                        raw_path=selected,
                         canonical_path=None,
                         root_identity_digest=None,
                         ancestor_identity_digests=(),
@@ -391,7 +383,6 @@ def _root_evidence(
             return _LegacyRootEvidence(
                 source_kind=source_kind,
                 source_id=source_id,
-                raw_path=selected,
                 canonical_path=None,
                 root_identity_digest=None,
                 ancestor_identity_digests=(),
@@ -415,7 +406,6 @@ def _root_evidence(
         return _LegacyRootEvidence(
             source_kind=source_kind,
             source_id=source_id,
-            raw_path=selected,
             canonical_path=None,
             root_identity_digest=None,
             ancestor_identity_digests=(),
@@ -425,7 +415,6 @@ def _root_evidence(
         return _LegacyRootEvidence(
             source_kind=source_kind,
             source_id=source_id,
-            raw_path=selected,
             canonical_path=None,
             root_identity_digest=None,
             ancestor_identity_digests=(),
@@ -434,7 +423,6 @@ def _root_evidence(
     return _LegacyRootEvidence(
         source_kind=source_kind,
         source_id=source_id,
-        raw_path=selected,
         canonical_path=str(canonical),
         root_identity_digest=root_identity_digest,
         ancestor_identity_digests=ancestor_identity_digests,
@@ -663,11 +651,9 @@ def snapshot_legacy_notes_sync(
             _LegacyNoteEvidence(
                 note_id=row[0],
                 version=row[1],
-                raw_root=raw_root,
                 canonical_root=root.canonical_path,
                 root_reason_code=root.reason_code,
                 raw_relative_path=row[3],
-                raw_file_path=row[2],
                 content_digest=row[5],
                 file_identity_digest=identity,
                 file_mode=mode,
@@ -733,7 +719,6 @@ def snapshot_legacy_notes_sync(
         source_fingerprint=source_fingerprint,
         roots=tuple(roots),
         notes=tuple(notes),
-        policy_values=policy_values,
         policy_issues=tuple(dict.fromkeys(policy_issues)),
     )
 

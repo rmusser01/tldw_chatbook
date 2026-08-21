@@ -509,6 +509,10 @@ def test_snapshot_is_read_only_and_does_not_retain_note_content(
     assert note_file.stat().st_mtime_ns == before_mtime
     assert "PRIVATE file bytes" not in repr(snapshot)
     assert str(root) not in repr(snapshot)
+    assert not hasattr(snapshot.roots[0], "raw_path")
+    assert not hasattr(snapshot.notes[0], "raw_root")
+    assert not hasattr(snapshot.notes[0], "raw_file_path")
+    assert not hasattr(snapshot, "policy_values")
     connection.close()
 
 
