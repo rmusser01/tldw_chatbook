@@ -159,6 +159,36 @@ class InterruptRoundHost:
 
         app.call_from_thread(_apply)
 
+    # -- resolve / remount (UI thread) -----------------------------------
+
+    def resolve(
+        self, kind: str, round_id: str | None, mutate: Callable[[dict[str, Any]], None]
+    ) -> bool:
+        """Apply a user decision to one armed round. UI THREAD.
+
+        Fail-closed (the TASK-913 contract, now in one place): ``None``
+        and unknown ids resolve nothing and return False. The state is
+        SNAPSHOTTED under the lock and mutated outside it -- the worker's
+        ``finally`` pops the entry concurrently, and acting on the
+        snapshot is what keeps a stale click harmless.
+        """
+        if round_id is None:
+            return False
+        with self.lock:
+            state = self.registries[kind].get(round_id)
+        if state is None:
+            return False
+        mutate(state)
+        state["event"].set()
+        return True
+
+    def remount_for_session(self, session_id: str) -> None:
+        """UI THREAD: push every kind's head for ``session_id`` in one call."""
+        for kind in KIND_SETTER_ATTRS:
+            setter = self._setter(kind)
+            if setter is not None:
+                setter(self.head_round_payload(kind, session_id))
+
     # -- generic round lifecycle ----------------------------------------
 
     def run_round(

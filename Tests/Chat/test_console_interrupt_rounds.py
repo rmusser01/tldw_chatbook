@@ -215,3 +215,20 @@ def test_run_round_legacy_none_session_skips_badge_and_park():
     )
     assert seams.badges == []
     assert host.payloads["approval"] == {}
+
+
+def test_resolve_fails_closed_on_none_and_unknown_ids(host):
+    assert host.resolve("approval", None, lambda s: None) is False
+    assert host.resolve("approval", "ghost", lambda s: None) is False
+
+
+def test_resolve_mutates_the_snapshotted_state_and_sets_the_event():
+    host = InterruptRoundHost(FakeSeamsFull())
+    event = threading.Event()
+    state = {"event": event, "session_id": "sess-A", "decision": {}}
+    with host.lock:
+        host.registries["approval"]["r1"] = state
+    assert host.resolve(
+        "approval", "r1", lambda s: s["decision"].update({"allow": True})
+    ) is True
+    assert event.is_set() and state["decision"] == {"allow": True}
