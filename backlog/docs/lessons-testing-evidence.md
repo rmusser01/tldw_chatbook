@@ -3944,6 +3944,23 @@ statements and ~10 ms of application code for a whole push, everything else Text
 per-widget CSS apply and mount. The rule is the same in both cases: find out what the
 screen is bound by before choosing what to count.
 
+## A mounted descendant is not evidence that its recompose finished (TASK-19505, 2026-08-21)
+
+**Incident.** The Console mount profiler initially declared the deferred Context rail
+"full ready" as soon as its first section header became queryable. Textual made that
+header available while the same `recompose()` was still mounting later descendants.
+The probe then focused the composer and typed during the unfinished hydration, reporting
+a 689 ms key-to-echo p95 and a misleading full-ready distribution. Waiting for the
+hydration callback itself to return moved input strictly after the recompose boundary.
+The retained raw 30-sample rerun produced the honest verdict: key latency stayed within
+budget, while Enter-to-worker p95 regressed 12.39% and rejected the candidate.
+
+**What to do.** When a performance phase ends at an async mount/recompose operation,
+gate the next phase on completion of that owning operation, not on the first descendant
+becoming queryable. A selector proves presence, not subtree completeness. Record the
+boundary before looking at the result, and keep input probes after it so deferred work is
+not silently reclassified as interaction latency.
+
 ---
 
 ## A test's stimulus can rely on the exact inefficiency your fix removes (task-15459, 2026-08-13)
