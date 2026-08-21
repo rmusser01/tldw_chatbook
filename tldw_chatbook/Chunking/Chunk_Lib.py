@@ -1023,6 +1023,12 @@ class Chunker:
 
         Returns:
             str: The final summary (parts joined by "\\n\\n---\\n\\n").
+
+        Raises:
+            ChunkingError: Fail-closed (spec §8.3) -- if any per-part LLM
+                call raises, returns an ``"Error: ..."`` string, or returns
+                a non-string, the whole summarization aborts with a message
+                naming the failed part (no marker text is persisted).
         """
         logger.info(f"Rolling summarization called. Detail: {detail}")
         text_token_length = self.token_chunker.count_tokens(text_to_summarize)
@@ -1096,11 +1102,14 @@ class Chunker:
                 if isinstance(summary_content, str) and summary_content.startswith(
                     "Error:"
                 ):
+                    # Fail closed (spec §8.3): persisting an error marker as
+                    # document text is silent data corruption.
                     logger.error(
                         f"LLM call for summarization part {i + 1} failed: {summary_content}"
                     )
-                    accumulated_summaries.append(
-                        f"[Summarization failed for this part: {chunk_for_llm[:100]}...]"
+                    raise ChunkingError(
+                        f"Rolling-summarize LLM call failed for part {i + 1}: "
+                        f"{summary_content}"
                     )
                 elif isinstance(summary_content, str):
                     accumulated_summaries.append(summary_content)
@@ -1108,17 +1117,23 @@ class Chunker:
                     logger.error(
                         f"LLM call for summarization part {i + 1} returned non-string: {type(summary_content)}"
                     )
-                    accumulated_summaries.append(
-                        f"[Summarization error for this part (unexpected type): {chunk_for_llm[:100]}...]"
+                    raise ChunkingError(
+                        f"Rolling-summarize LLM call failed for part {i + 1}: "
+                        f"provider returned unexpected type "
+                        f"{type(summary_content).__name__}"
                     )
 
+            except ChunkingError:
+                # The fail-closed raises above (spec §8.3) pass through
+                # unwrapped -- the broad handler below must not re-wrap them.
+                raise
             except Exception as e_llm:
                 logger.opt(exception=True).error(
                     f"Exception calling llm_summarize_step_func for part {i + 1}: {e_llm}"
                 )
-                accumulated_summaries.append(
-                    f"[Summarization failed for this part: {chunk_for_llm[:100]}...]"
-                )
+                raise ChunkingError(
+                    f"Rolling-summarize LLM call failed for part {i + 1}: {e_llm}"
+                ) from e_llm
 
         final_summary = "\n\n---\n\n".join(
             accumulated_summaries
@@ -1439,12 +1454,13 @@ def improved_chunking_process(
     reads), synthesizing offsets against the source text when the chunker
     did not provide them.
 
-    On the delegated ``rolling_summarize`` path, LLM-call failures append
-    legacy ``"[Summarization failed for this part: ...]"`` markers to the
-    summary rather than raising -- the legacy caller-compat behavior
-    (deliberate §9 deviation; the engine's own fail-closed path is a
-    different, engine-level contract exercised by
-    Tests/Chunking/test_rolling_summarize_fail_closed.py in Task 4).
+    On the delegated ``rolling_summarize`` path, LLM-call failures raise
+    ``ChunkingError`` (fail-closed, spec §8.3): a provider exception, an
+    ``"Error: ..."`` result string, or a non-string result each abort the
+    chunking with a message naming the failed part -- matching the engine
+    strategy's own fail-closed contract
+    (Tests/Chunking/test_rolling_summarize_fail_closed.py). Legacy marker
+    text is never persisted as document content.
 
     Args:
         text (str): The text to chunk.
