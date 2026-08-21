@@ -825,6 +825,20 @@ async def test_inspector_header_is_one_full_width_collapse_button() -> None:
 
 
 @pytest.mark.asyncio
+async def test_inspector_root_reserves_outer_hint_as_third_child() -> None:
+    async with make_console_pilot() as pilot:
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause()
+
+        rail = pilot.app.screen.query_one("#console-right-rail")
+        assert tuple(child.id for child in rail.children) == (
+            None,
+            "console-inspector-rail-body",
+            "console-inspector-outer-scroll-hint",
+        )
+
+
+@pytest.mark.asyncio
 async def test_clicking_inspector_header_title_start_collapses_the_rail() -> None:
     async with make_console_pilot() as pilot:
         await _wait_for_selector(

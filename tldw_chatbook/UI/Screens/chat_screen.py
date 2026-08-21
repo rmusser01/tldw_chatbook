@@ -2934,6 +2934,12 @@ class ChatScreen(BaseAppScreen):
         # cap so the help copy tracks a user override instead of quoting the
         # baked-in default.
         max_parallel_runs = self._ensure_console_chat_controller().max_parallel_runs
+        shortcut_groups = CONSOLE_WORKBENCH_SHORTCUT_GROUPS
+        if self._console_inspector_active():
+            shortcut_groups = (
+                *shortcut_groups,
+                ("Inspector", (("n / p", "next / previous section"),)),
+            )
         self.app.push_screen(
             WorkbenchHelpPanel(
                 WorkbenchHelpState(
@@ -2942,7 +2948,7 @@ class ChatScreen(BaseAppScreen):
                     actions=workbench_state.actions,
                     notes_heading="Agents",
                     notes=_console_workbench_agents_notes(max_parallel_runs),
-                    shortcut_groups=CONSOLE_WORKBENCH_SHORTCUT_GROUPS,
+                    shortcut_groups=shortcut_groups,
                 )
             )
         )
@@ -3149,7 +3155,19 @@ class ChatScreen(BaseAppScreen):
             else "focus"
         )
         shortcuts = (("Ctrl+Shift+F", focus_label), *shortcuts)
+        if self._console_inspector_active():
+            shortcuts = (("n/p", "Sections"), *shortcuts)
         self.register_footer_shortcuts(source="console", shortcuts=shortcuts)
+
+    def _console_inspector_active(self) -> bool:
+        """Return whether live focus is the Inspector rail or a descendant."""
+
+        try:
+            rail = self.query_one("#console-right-rail", ConsoleInspectorRail)
+        except (NoMatches, QueryError):
+            return False
+        focused = self.app.focused
+        return isinstance(focused, Widget) and rail.inspector_active(focused)
 
     def _apply_focus_chrome(self) -> None:
         """Mirror the app-level focus_mode flag onto this screen (task-18812).
