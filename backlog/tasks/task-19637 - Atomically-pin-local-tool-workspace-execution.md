@@ -4,12 +4,11 @@ title: Atomically pin local-tool workspace execution
 status: To Do
 assignee: []
 created_date: '2026-08-20 20:05'
-updated_date: '2026-08-20 20:06'
+updated_date: '2026-08-21'
 labels:
   - security
   - console
-dependencies:
-  - TASK-16320
+dependencies: []
 priority: high
 ---
 
@@ -39,3 +38,12 @@ status**), it renumbered to TASK-19637. Citations to TASK-16324
 in already-merged commit messages, ADRs, or code comments written before
 2026-08-21 refer to THIS task; the other TASK-16324 holder is the
 older arrival and keeps the id.
+
+## Prior completed foundation
+
+The project-instruction foundation is already complete in
+`backlog/tasks/task-16320 - Add-startup-AGENTS.md-project-context-to-Console.md`.
+Its governing decision is
+`backlog/decisions/069-console-project-instruction-local-state-and-preflight.md`.
+The old ambiguous `TASK-16320` dependency was removed during the TASK-19637
+renumber; this task must not depend on the unrelated duplicate TASK-16320.
