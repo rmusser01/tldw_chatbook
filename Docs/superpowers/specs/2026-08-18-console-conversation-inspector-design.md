@@ -101,9 +101,22 @@ class ExchangeCapture:
     request: dict         # allowlisted, stubbed — see Sanitization
     response: dict        # accumulated content, tool_calls, finish info, raw usage payloads
     status: str           # "complete" | "stopped" | "error"
-    usage: ProviderUsage | None   # THIS call's normalized usage (from_provider_payload)
+    usage_json: str | None        # THIS call's normalized usage, as
+                                   # ProviderUsage.to_json() (shipped as a
+                                   # JSON string, not a live ProviderUsage
+                                   # instance, so the dataclass stays
+                                   # trivially blob/JSON round-trippable)
     omitted_keys: tuple[str, ...] # names of request kwargs dropped by the allowlist
 ```
+
+`response` additionally carries two boolean markers, set at capture time
+rather than post-hoc: `synthetic_fallback` (this call's content is locally
+synthesized UI copy — `NO_PROVIDER_CONTENT_COPY`/`UNSUPPORTED_PROVIDER_
+RESPONSE_COPY` — not provider output, because the provider returned nothing
+usable) and, only on the oversize-truncation path below, `truncated`
+(alongside a matching marker in `request`) — `status` itself is never
+overloaded to signal either condition; it always reflects the real
+complete/stopped/error outcome.
 
 Storing per-call normalized usage is what lets the inspector price individual
 calls through the existing pricing catalog — finer than today's per-message
@@ -193,12 +206,15 @@ CREATE INDEX idx_message_exchanges_message ON message_exchanges(message_id);
   ~O(n²) session growth (a 100-turn text session sums to tens of MB
   uncompressed).
 - **Backstop:** a single blob exceeding 16 MB post-compression (pathological)
-  truncates with a structured marker rather than failing the flush.
-- **Schema version:** assumed v32 → v33 at time of writing. Re-verify
-  `_CURRENT_SCHEMA_VERSION` at implementation start (this repo has had version
-  collisions land mid-flight) and update the sibling migration tests that
-  hard-assert the constant (house pattern — those failures are ours, not
-  pre-existing).
+  truncates with a structured `truncated: true` marker inside the (now
+  stubbed) `request`/`response` dicts, rather than failing the flush --
+  `status` is left as the call's real outcome, never overwritten.
+- **Schema version:** assumed v32 → v33 at time of writing; the guess was
+  stale before implementation started (this repo has had version collisions
+  land mid-flight, exactly as anticipated here) — shipped as **v40 → v41**
+  (`_CURRENT_SCHEMA_VERSION = 41`, migration file
+  `chachanotes_v40_to_v41_message_exchanges.sql`), with the sibling
+  migration tests that hard-assert the constant updated to match.
 - Soft-delete visibility follows the parent join (a soft-deleted conversation's
   captures are unreachable through normal reads); hard deletes cascade.
 - Reads are lazy: the inspector loads one turn's captures on expand, on a
@@ -226,7 +242,16 @@ modal's existing idiom):
    into its turn's captured calls with per-call cost priced from each capture's
    normalized usage. Where per-call sums and the message's `usage_json`
    disagree (rounding, unpriced calls), both are shown; nothing reconciles
-   silently. Selecting a row jumps to that turn in the Exchange tab.
+   silently. **Not shipped** (M6, final review): this line originally planned
+   "selecting a row jumps to that turn in the Exchange tab" as a cross-tab
+   navigation affordance. It was never implemented and there is no
+   `console-inspector-cost-row` → `console-inspector-exchange-turn` wiring
+   anywhere in `console_conversation_inspector.py` — the drill-in that
+   shipped instead mounts each call's cost line directly in place, inside the
+   Costs row's own Collapsible (`_load_turn_captures`), so the user never
+   leaves the Costs tab to see it. Deferred; no follow-up task filed as of
+   this writing since the in-place drill-in already answers the same "what
+   did this turn cost" question the jump was meant to serve.
 2. **Exchange** — per turn, per call: collapsible sections for System prompt,
    Messages, Tools (schemas), Response, Tool calls/results, Sampling params,
    plus the `omitted_keys` manifest line and status badges
@@ -272,10 +297,10 @@ next flush point; the inspector shows "capture failed" for affected calls.
   path — trace it end-to-end, not the path the plan names); direct path;
   llama.cpp branch; kill-switch off builds nothing; mid-stream tee leaves
   transcript output byte-identical.
-- **Migration:** v33 (or renumbered) schema test + sibling version-constant
-  updates.
+- **Migration:** v41 schema test + sibling version-constant updates.
 - **Config:** kill-switch honored against live-shaped (nested) config.
-- **UI:** three tabs render; cost-row → exchange jump; no-capture rows;
+- **UI:** three tabs render; per-turn cost drill-in (in place on the Costs
+  tab — see M6 above, not a cross-tab jump); no-capture rows;
   estimate-vs-reported labeling; lazy mount on expand; Next Send tab behavior
   pins migrated from the context-modal tests.
 - **Live verify:** one real-provider session (repo-root key) exercising a

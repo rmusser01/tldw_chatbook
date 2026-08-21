@@ -443,18 +443,18 @@ Inspector shows what's in play:
    Conversation Inspector (chip or Ctrl+Shift+P), switch to **Exchange**,
    expand the turn, then a call, then the section you want (System prompt,
    Messages, Tools, Response, Tool calls, Sampling & routing).
-4. **Set a system prompt for this session** — type `/system`, write the
+3. **Set a system prompt for this session** — type `/system`, write the
    prompt, press **Apply**; the rail's `System:` line now previews it.
    Name it and press **Save to Library** first to reuse it later.
-5. **Make the reply start with a fixed opening** — type
+4. **Make the reply start with a fixed opening** — type
    `/prefill Here is the summary:` and send; the reply continues from the
    last character. `/prefill pin …` keeps it; `/prefill clear` when done.
-6. **Narrow RAG to two documents** — expand the Inspector, press
+5. **Narrow RAG to two documents** — expand the Inspector, press
    **Narrow…** on the scope row, pick the **Media** tab, filter by title,
    click the two items, press **Save**. The strip shows **Scope: 2**.
-7. **Open a citation's source in Library** — click **Sources (N)** under
+6. **Open a citation's source in Library** — click **Sources (N)** under
    the reply, select an `[S1]` row, press **Open in Library**.
-8. **Have every send ground itself automatically** — click the **RAG**
+7. **Have every send ground itself automatically** — click the **RAG**
    chip (or **Run Library RAG**) to open **Library RAG** settings, turn on
    **Auto-retrieve on send**, close the modal. It stays on across sends
    until you flip it off; it's off by default.
