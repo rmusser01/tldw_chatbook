@@ -8,7 +8,10 @@ import pytest
 
 import tldw_chatbook.Chat.Chat_Functions as chat_functions
 import tldw_chatbook.Chat.console_agent_bridge as console_agent_bridge
-from tldw_chatbook.Agents.agent_models import FENCE_TOOL_RESULT_PREFIX
+from tldw_chatbook.Agents.agent_models import ToolCall
+from tldw_chatbook.Agents.project_instruction_runtime import (
+    build_project_instruction_deferral_rows,
+)
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 
 
@@ -64,10 +67,13 @@ def test_native_transport_keeps_each_tool_result_before_separate_context_row():
 
 
 def test_fenced_transport_closes_complete_result_section_before_labeled_context():
+    calls = (
+        ToolCall("fs_read", {"path": "a"}, ""),
+        ToolCall("fs_list", {"path": "b"}, ""),
+    )
     rows = [
         {"role": "assistant", "content": "tool-call"},
-        {"role": "user", "content": f"{FENCE_TOOL_RESULT_PREFIX}fs_read: deferred-a"},
-        {"role": "user", "content": f"{FENCE_TOOL_RESULT_PREFIX}fs_list: deferred-b"},
+        *build_project_instruction_deferral_rows(calls),
         {
             "role": "user",
             "content": _CONTEXT,
@@ -83,12 +89,11 @@ def test_fenced_transport_closes_complete_result_section_before_labeled_context(
     assert len(result) == 2
     combined = result[1]
     assert combined[EPHEMERAL_ORIGIN_KEY] == "project_instructions"
-    assert combined["content"].index("fs_read: deferred-a") < combined["content"].index(
-        "fs_list: deferred-b"
-    )
-    assert combined["content"].index("fs_list: deferred-b") < combined["content"].index(
+    assert combined["content"].index("fs_read") < combined["content"].index("fs_list")
+    assert combined["content"].index("fs_list") < combined["content"].index(
         "Project instruction context:\n"
     )
+    assert combined["content"].count("Deferred because project instructions") == 2
     assert combined["content"].endswith(_CONTEXT)
 
 

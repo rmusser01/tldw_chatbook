@@ -8166,6 +8166,7 @@ class ConsoleChatController:
         self, session_id: str, snapshot: InstructionSnapshot
     ) -> None:
         """Retain only content-free metadata from a final primary delivery."""
+        self._project_instruction_activation_events.pop(session_id, None)
         source = snapshot.startup_source_metadata
         outcomes = tuple(outcome.code for outcome in snapshot.primary_delivery.outcomes)
         delivered = bool(

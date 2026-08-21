@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import copy
 import json
+import os
 import threading
 import time
 from dataclasses import replace
@@ -12,7 +13,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 from loguru import logger
 
+import tldw_chatbook.Agents.agent_service as agent_service_module
 from tldw_chatbook.Chat import console_agent_bridge
+import tldw_chatbook.Chat.console_agent_bridge as bridge_module
 from tldw_chatbook.Chat.console_agent_bridge import (
     CONSOLE_AGENT_OPERATING_PROMPT,
     FIND_LOAD_DISCOVERY_HINT,
@@ -369,6 +372,13 @@ def _native_resolution():
     return _test_resolution(provider="Groq", execution_key="groq")
 
 
+class _FencedResolution:
+    provider = "Custom"
+    execution_key = "custom"
+    model = "test-model"
+    max_tokens = 10
+
+
 def _native_calls(name, args, call_id="c1"):
     return ProviderToolCalls(
         tool_calls=(
@@ -507,6 +517,87 @@ def test_nested_project_instructions_defer_whole_batch_before_review_and_executi
     )
 
 
+@pytest.mark.parametrize(
+    ("transformed_tokens", "expected_status", "expected_calls"),
+    [(90, "done", 3), (91, "error", 1)],
+)
+def test_fenced_nested_delivery_counts_exact_transformed_payload_before_mark(
+    tmp_path, monkeypatch, transformed_tokens, expected_status, expected_calls
+):
+    root = tmp_path / "workspace"
+    nested = root / "pkg"
+    nested.mkdir(parents=True)
+    (nested / "AGENTS.md").write_text("FENCED_NESTED_GUIDANCE", encoding="utf-8")
+    (nested / "data.txt").write_text("payload", encoding="utf-8")
+    candidate = ProjectInstructionResolver().resolve_startup(
+        binding_id="binding-1",
+        binding_root=root,
+        locator_fingerprint="f" * 64,
+        max_bytes=32768,
+        dispatch_started_wall_ns=time.time_ns(),
+    )
+    call = _fence("fs_read", {"path": "pkg/data.txt"})
+    gateway = _ChunkGateway([[call], [call], ["done"]])
+    bridge, _db, store, session, assistant_id = _bridge_with_gateway(
+        tmp_path / "run", gateway
+    )
+    local = LocalToolProvider(
+        workspace_root=root,
+        specs=[spec for spec in _default_specs(root) if spec.name == "fs_read"],
+        resolve_state=lambda _tool: EffectiveToolState(
+            state="allow", origin="global_default"
+        ),
+    )
+    events = []
+    monkeypatch.setattr(agent_service_module, "get_model_token_limit", lambda *_: 100)
+    monkeypatch.setattr(agent_service_module, "_count_model_messages", lambda *_: 10)
+    monkeypatch.setattr(
+        bridge_module, "get_model_token_limit", lambda *_: 100, raising=False
+    )
+    monkeypatch.setattr(
+        bridge_module,
+        "_count_model_messages",
+        lambda *_: transformed_tokens,
+        raising=False,
+    )
+    marks = []
+    real_mark = bridge_module.InstructionActivationLedger.mark_payload_sent
+
+    def track_mark(ledger, receipt, rows):
+        marks.append(receipt)
+        return real_mark(ledger, receipt, rows)
+
+    monkeypatch.setattr(
+        bridge_module.InstructionActivationLedger, "mark_payload_sent", track_mark
+    )
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        assistant_id,
+        resolution=_FencedResolution(),
+        local_provider=local,
+        startup_instruction_candidate=candidate,
+        confirm_project_instruction_dispatch=lambda _snapshot: "proceed",
+        on_project_instruction_activation=events.append,
+    )
+
+    assert outcome.status == expected_status
+    assert gateway.calls == expected_calls
+    if expected_status == "done":
+        delivered = gateway.messages_seen[1]
+        assert all(row["role"] != "tool" for row in delivered)
+        assert "Tool results:\n```tool_results\n" in delivered[-1]["content"]
+        assert "\n```\n\nProject instruction context:\n" in delivered[-1]["content"]
+        assert "FENCED_NESTED_GUIDANCE" in delivered[-1]["content"]
+        assert events
+        assert len(marks) == 1
+    else:
+        assert events == []
+        assert marks == []
+
+
 def test_opaque_tool_arguments_do_not_activate_nested_project_instructions(tmp_path):
     root = tmp_path / "workspace"
     nested = root / "pkg"
@@ -540,6 +631,62 @@ def test_opaque_tool_arguments_do_not_activate_nested_project_instructions(tmp_p
 
     assert outcome.status == "done", outcome.steps
     assert all("NESTED_GUIDANCE" not in repr(rows) for rows in gateway.messages_seen)
+
+
+def test_nested_resolution_rejects_backdated_root_replacement_after_consent(tmp_path):
+    root = tmp_path / "workspace"
+    nested = root / "pkg"
+    nested.mkdir(parents=True)
+    (root / "AGENTS.md").write_text("ROOT_GUIDANCE", encoding="utf-8")
+    (nested / "data.txt").write_text("original", encoding="utf-8")
+    dispatch_started = time.time_ns()
+    candidate = ProjectInstructionResolver().resolve_startup(
+        binding_id="binding-1",
+        binding_root=root,
+        locator_fingerprint="f" * 64,
+        max_bytes=32768,
+        dispatch_started_wall_ns=dispatch_started,
+    )
+    read = _native_calls("fs_read", {"path": "pkg/data.txt"}, "read-1")
+    gateway = _ChunkGateway([[read], [read], ["done"]])
+    bridge, _db, store, session, assistant_id = _bridge_with_gateway(
+        tmp_path / "run", gateway
+    )
+    local = LocalToolProvider(
+        workspace_root=root,
+        specs=[spec for spec in _default_specs(root) if spec.name == "fs_read"],
+        resolve_state=lambda _tool: EffectiveToolState(
+            state="allow", origin="global_default"
+        ),
+    )
+
+    def replace_after_consent_check(_snapshot):
+        root.rename(tmp_path / "displaced")
+        (root / "pkg").mkdir(parents=True)
+        replacement = root / "pkg" / "AGENTS.md"
+        replacement.write_text("BACKDATED_REPLACEMENT_SECRET", encoding="utf-8")
+        (root / "pkg" / "data.txt").write_text("replacement", encoding="utf-8")
+        backdated = dispatch_started - 1_000_000_000
+        os.utime(replacement, ns=(backdated, backdated))
+        return "proceed"
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        assistant_id,
+        resolution=_NativeResolution(),
+        local_provider=local,
+        startup_instruction_candidate=candidate,
+        confirm_project_instruction_dispatch=replace_after_consent_check,
+    )
+
+    assert outcome.status == "done", outcome.steps
+    assert all(
+        "BACKDATED_REPLACEMENT_SECRET" not in repr(rows)
+        for rows in gateway.messages_seen
+    )
+    assert any("resolution_failed" in repr(rows) for rows in gateway.messages_seen)
 
 
 def test_parent_and_child_share_activation_but_each_receive_nested_revision(tmp_path):

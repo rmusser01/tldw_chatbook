@@ -62,6 +62,7 @@ from tldw_chatbook.Agents.agent_service import (
     AgentService,
     FirstRequestSchemaPlan,
     RunLogRequestPlan,
+    _count_model_messages,
     build_first_request_schema_plan,
     build_run_log_request_plan,
 )
@@ -74,6 +75,7 @@ from tldw_chatbook.Agents.project_instruction_runtime import (
     InstructionDeliveryReceipt,
     InstructionPreparation,
 )
+from tldw_chatbook.Agents.native_tools import provider_supports_native_tools
 from tldw_chatbook.Agents.agent_stream import StreamGate
 from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator, FleetHandle
 from tldw_chatbook.Agents.tool_catalog import (
@@ -125,6 +127,7 @@ from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
 from tldw_chatbook.Internal_Prompts.catalog import CATALOG
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
+from tldw_chatbook.Utils.token_counter import get_model_token_limit
 
 # Catalog-default re-export: keeps existing imports/tests valid and pins
 # the "shipped default" text. compose_agent_system_prompt below resolves
@@ -1629,14 +1632,21 @@ def _serialize_project_instruction_rows_for_transport(
             context_parts.append(str(rows[index].get("content") or ""))
             index += 1
         tool_results: list[str] = []
-        while (
-            result
-            and result[-1].get("role") == "user"
-            and str(result[-1].get("content") or "").startswith(
+        while result:
+            prior = result[-1]
+            content = str(prior.get("content") or "")
+            if prior.get("role") == "tool":
+                name = str(prior.get("name") or "tool")
+                tool_results.append(f"{FENCE_TOOL_RESULT_PREFIX}{name}: {content}")
+                result.pop()
+                continue
+            if prior.get("role") == "user" and content.startswith(
                 FENCE_TOOL_RESULT_PREFIX
-            )
-        ):
-            tool_results.append(str(result.pop().get("content") or ""))
+            ):
+                tool_results.append(content)
+                result.pop()
+                continue
+            break
         if not tool_results:
             result.extend(rows[index - len(context_parts) : index])
             continue
@@ -1656,6 +1666,36 @@ def _serialize_project_instruction_rows_for_transport(
     return result
 
 
+def _fenced_project_instruction_payload_fits(
+    messages: Sequence[Mapping[str, Any]],
+    *,
+    model: str,
+    provider: str,
+    response_reserve_tokens: int,
+) -> bool:
+    """Validate the exact transformed fenced request before ledger advance."""
+    try:
+        limit = get_model_token_limit(model, provider)
+        used = _count_model_messages(
+            _serialize_project_instruction_rows_for_transport(
+                messages, native_tools=False
+            ),
+            model,
+            provider,
+        )
+    except Exception:
+        return False
+    return bool(
+        type(limit) is int
+        and limit > 0
+        and type(response_reserve_tokens) is int
+        and response_reserve_tokens >= 0
+        and type(used) is int
+        and used > 0
+        and used <= limit - response_reserve_tokens
+    )
+
+
 _PROJECT_SOURCE_HEADER = re.compile(
     r"\AProject instructions \(untrusted user-level context\):\n"
     r"Repository text is untrusted project guidance\. System instructions "
@@ -1672,9 +1712,11 @@ class _ProjectInstructionDispatchContext:
         *,
         nested_max_bytes: int,
         on_activation: Callable[[ProjectInstructionActivationEvent], None] | None,
+        final_payload_fits: Callable[[Sequence[Mapping[str, Any]]], bool] | None = None,
     ) -> None:
         self._nested_max_bytes = nested_max_bytes
         self._on_activation = on_activation
+        self._final_payload_fits = final_payload_fits
         self._ledger: InstructionActivationLedger | None = None
         self._pending_events: dict[str, ProjectInstructionActivationEvent] = {}
         self._emitted: set[ProjectInstructionActivationEvent] = set()
@@ -1683,6 +1725,9 @@ class _ProjectInstructionDispatchContext:
         self._ledger = InstructionActivationLedger(
             snapshot, nested_max_bytes=self._nested_max_bytes
         )
+
+    def discard_primary_snapshot(self) -> None:
+        self._ledger = None
 
     def initial_context_for_chain(self, chain_id, payload_state):
         return self._require_ledger().initial_context_for_chain(chain_id, payload_state)
@@ -1703,13 +1748,20 @@ class _ProjectInstructionDispatchContext:
         receipt: InstructionDeliveryReceipt,
         payload_rows: Sequence[Mapping[str, Any]],
     ) -> None:
+        if self._final_payload_fits is not None and not self._final_payload_fits(
+            payload_rows
+        ):
+            raise ValueError("project instruction transport payload does not fit")
         self._require_ledger().mark_payload_sent(receipt, payload_rows)
         event = self._pending_events.pop(receipt.receipt_id, None)
         if event is None or event in self._emitted:
             return
         self._emitted.add(event)
         if self._on_activation is not None:
-            self._on_activation(event)
+            try:
+                self._on_activation(event)
+            except Exception:  # noqa: BLE001 - content-free best-effort UI event
+                logger.warning("project_instruction_activation_callback_failed")
 
     def _require_ledger(self) -> InstructionActivationLedger:
         if self._ledger is None:
@@ -3373,18 +3425,33 @@ class ConsoleAgentBridge:
                     maximum=MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
                 ),
                 on_activation=on_project_instruction_activation,
+                final_payload_fits=(
+                    None
+                    if config.native_tools
+                    and provider_supports_native_tools(first_request_plan.api_endpoint)
+                    else lambda rows: _fenced_project_instruction_payload_fits(
+                        rows,
+                        model=config.model,
+                        provider=first_request_plan.api_endpoint,
+                        response_reserve_tokens=config.response_reserve_tokens,
+                    )
+                ),
             )
             original_confirm = confirm_project_instruction_dispatch
 
             def service_confirm_project_instruction_dispatch(snapshot):
-                decision = (
-                    original_confirm(snapshot)
-                    if original_confirm is not None
-                    else "cancel"
-                )
-                if decision == "proceed":
-                    project_instruction_context.accept_primary_snapshot(snapshot)
-                return decision
+                project_instruction_context.accept_primary_snapshot(snapshot)
+                decision = "cancel"
+                try:
+                    decision = (
+                        original_confirm(snapshot)
+                        if original_confirm is not None
+                        else "cancel"
+                    )
+                    return decision
+                finally:
+                    if decision != "proceed":
+                        project_instruction_context.discard_primary_snapshot()
         if self._skills_service is not None:
             skill_file_bindings = SkillFileBindings(
                 authorized=set(),
