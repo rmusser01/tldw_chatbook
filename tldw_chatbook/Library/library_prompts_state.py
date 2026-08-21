@@ -1930,6 +1930,38 @@ class PromptEditorState:
     capabilities: PromptSourceCapabilities | None = None
 
 
+PromptEditorMode = Literal["basic", "advanced"]
+
+
+def coerce_prompt_editor_mode(value: object) -> PromptEditorMode:
+    """Return the stored Prompt editor mode, defaulting invalid values to Basic."""
+    return "advanced" if value == "advanced" else "basic"
+
+
+def prompt_basic_unavailable_reason(
+    state: PromptEditorState,
+    *,
+    conflict: bool = False,
+    can_update_original: bool = True,
+) -> str:
+    """Explain why a Prompt must use the full structured editor."""
+    if conflict:
+        return "Resolve the version conflict in Advanced view."
+    if state.artifact_type != "prompt":
+        return "Recipes require Advanced view."
+    if (
+        state.definition_state not in {"legacy", "supported_v2"}
+        or state.block_editor_state is None
+        or state.compatibility_stale
+    ):
+        return "This prompt requires compatibility or conversion controls."
+    if state.prompt_id is not None and not can_update_original:
+        return "This saved prompt cannot be safely updated from Basic view."
+    if any(len(lane.blocks) > 1 for lane in state.block_editor_state.definition.lanes):
+        return "This prompt uses multiple structured blocks."
+    return ""
+
+
 #: task-2859 item 2: plain-language labels for ``ArtifactDefinitionState``
 #: values shown in the prompt editor's artifact-status line. Every NEW
 #: prompt starts life as ``"legacy"`` -- the internal name for the flat

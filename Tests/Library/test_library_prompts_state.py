@@ -31,10 +31,12 @@ from tldw_chatbook.Library.library_prompts_state import (
     build_prompt_editor_state,
     build_prompts_list_state,
     classify_prompt_save_error,
+    coerce_prompt_editor_mode,
     format_prompt_history_restore_outcome,
     history_restore_gate,
     prompt_history_count_label,
     prompt_editor_meta_line,
+    prompt_basic_unavailable_reason,
     reset_prompt_history_page,
     require_artifact_save_supported,
 )
@@ -2965,3 +2967,129 @@ def test_meta_line_new_prompt_sentinel_appends_unsaved_marker_when_dirty():
         prompt_editor_meta_line(state, dirty=True) == "New prompt · • Unsaved changes"
     )
     assert prompt_editor_meta_line(state) == "New prompt"
+
+
+def _basic_structured_prompt(*, extra_user_block: bool = False):
+    user_blocks = [
+        {
+            "id": "message",
+            "title": "Message",
+            "syntax": "freeform",
+            "content": "Summarize this.",
+        }
+    ]
+    if extra_user_block:
+        user_blocks.append(
+            {
+                "id": "audience",
+                "title": "Audience",
+                "syntax": "xml",
+                "xml_tag": "audience",
+                "content": "Executives",
+            }
+        )
+    return build_prompt_editor_state(
+        {
+            "id": 44,
+            "artifact_type": "prompt",
+            "prompt_format": "structured",
+            "prompt_schema_version": 2,
+            "prompt_definition": {
+                "schema_version": 2,
+                "kind": "block_prompt",
+                "lanes": [
+                    {
+                        "id": "system",
+                        "blocks": [
+                            {
+                                "id": "instructions",
+                                "title": "Instructions",
+                                "syntax": "markdown",
+                                "content": "Be concise.",
+                            }
+                        ],
+                    },
+                    {"id": "user", "blocks": user_blocks},
+                ],
+            },
+            "system_prompt": "# Instructions\n\nBe concise.",
+            "user_prompt": (
+                "Summarize this.\n\n<audience>Executives</audience>"
+                if extra_user_block
+                else "Summarize this."
+            ),
+            "version": 2,
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (None, "basic"),
+        ("", "basic"),
+        ("BASIC", "basic"),
+        ("advanced", "advanced"),
+        ("future-mode", "basic"),
+        (True, "basic"),
+    ],
+)
+def test_prompt_editor_mode_coercion_fails_to_basic(raw, expected):
+    assert coerce_prompt_editor_mode(raw) == expected
+
+
+def test_prompt_basic_accepts_legacy_and_one_block_per_lane_without_mutation():
+    legacy = build_prompt_editor_state(PROMPT_A)
+    structured = _basic_structured_prompt()
+    legacy_block_state = legacy.block_editor_state
+    structured_block_state = structured.block_editor_state
+
+    assert prompt_basic_unavailable_reason(legacy) == ""
+    assert prompt_basic_unavailable_reason(structured) == ""
+    assert legacy.block_editor_state is legacy_block_state
+    assert structured.block_editor_state is structured_block_state
+
+
+@pytest.mark.parametrize(
+    ("state", "kwargs", "expected"),
+    [
+        (
+            _basic_structured_prompt(extra_user_block=True),
+            {},
+            "This prompt uses multiple structured blocks.",
+        ),
+        (
+            build_prompt_editor_state(
+                {"artifact_type": "recipe", "system_prompt": "System"}
+            ),
+            {},
+            "Recipes require Advanced view.",
+        ),
+        (
+            build_prompt_editor_state(
+                {
+                    "id": 9,
+                    "artifact_type": "prompt",
+                    "prompt_format": "foreign",
+                    "prompt_schema_version": 1,
+                    "system_prompt": "Compatibility text",
+                }
+            ),
+            {},
+            "This prompt requires compatibility or conversion controls.",
+        ),
+        (
+            _basic_structured_prompt(),
+            {"conflict": True},
+            "Resolve the version conflict in Advanced view.",
+        ),
+        (
+            _basic_structured_prompt(),
+            {"can_update_original": False},
+            "This saved prompt cannot be safely updated from Basic view.",
+        ),
+    ],
+    ids=["multi-block", "recipe", "compatibility", "conflict", "read-only"],
+)
+def test_prompt_basic_rejects_structure_and_safety_states(state, kwargs, expected):
+    assert prompt_basic_unavailable_reason(state, **kwargs) == expected

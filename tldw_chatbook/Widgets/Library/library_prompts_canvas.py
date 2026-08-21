@@ -12,10 +12,11 @@ from dataclasses import replace
 from typing import Any
 
 from rich.markup import escape as escape_markup
+from textual import events, on
 from textual.app import ComposeResult
 from textual.css.query import NoMatches
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Checkbox, Input, Static, TextArea
+from textual.widgets import Button, Checkbox, Collapsible, Input, Static, TextArea
 
 from tldw_chatbook.Library.library_prompts_state import (
     LibraryPromptDeleteReceipt,
@@ -24,6 +25,7 @@ from tldw_chatbook.Library.library_prompts_state import (
     PromptHistoryState,
     PromptMembershipState,
     PromptsListState,
+    coerce_prompt_editor_mode,
     definition_state_display_label,
     prompt_editor_meta_line,
 )
@@ -45,6 +47,8 @@ from tldw_chatbook.UI.Library_Modules.prompt_history_region import (
 from tldw_chatbook.Widgets.Prompts.prompt_block_editor import PromptBlockEditor
 from tldw_chatbook.Widgets.Prompts.prompt_block_editor_state import (
     PromptBlockEditorState,
+    add_block,
+    update_block,
 )
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
     PostRecomposeCallback,
@@ -150,6 +154,8 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         pager: LibraryPagerDisplay | None = None,
         mode: str = "list",
         editor_state: PromptEditorState | None = None,
+        editor_mode: str = "advanced",
+        basic_unavailable_reason: str = "",
         conflict: bool = False,
         status: str = "",
         show_open_existing: bool = False,
@@ -182,6 +188,8 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         self.pager = pager
         self.mode = mode
         self.editor_state = editor_state
+        self.editor_mode = coerce_prompt_editor_mode(editor_mode)
+        self.basic_unavailable_reason = basic_unavailable_reason
         self.conflict = conflict
         self.status = status
         self.show_open_existing = show_open_existing
@@ -200,6 +208,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         self.mutation_in_flight = mutation_in_flight
         self.page_actions_disabled = page_actions_disabled
         self.write_in_flight = write_in_flight
+        self.more_actions_open = False
         self.styles.width = "1fr"
         self.styles.min_width = 40
 
@@ -242,6 +251,10 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         membership_state: PromptMembershipState | None,
         sort_choices_visible: bool,
         page_actions_disabled: bool,
+        editor_mode: str = "advanced",
+        basic_unavailable_reason: str = "",
+        mutation_in_flight: bool = False,
+        write_in_flight: bool = False,
     ) -> None:
         """Apply a complete prompt snapshot within the mounted canvas.
 
@@ -277,6 +290,8 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         self.pager = pager
         self.mode = mode
         self.editor_state = editor_state
+        self.editor_mode = coerce_prompt_editor_mode(editor_mode)
+        self.basic_unavailable_reason = basic_unavailable_reason
         self.conflict = conflict
         self.status = status
         self.show_open_existing = show_open_existing
@@ -292,7 +307,190 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         self.membership_state = membership_state
         self.sort_choices_visible = sort_choices_visible
         self.page_actions_disabled = page_actions_disabled
+        self.mutation_in_flight = mutation_in_flight
+        self.write_in_flight = write_in_flight
         self.refresh(recompose=True)
+
+    async def set_editor_mode(self, mode: str) -> None:
+        """Switch mounted Prompt presentations without rebuilding either draft."""
+        requested = coerce_prompt_editor_mode(mode)
+        focused = self.app.focused
+        basic_region = self.query_one("#library-prompt-basic-region")
+        advanced_region = self.query_one("#library-prompt-advanced-region")
+        advanced_extras = self.query_one("#library-prompt-advanced-extras")
+        focused_will_hide = bool(
+            focused is not None
+            and (
+                (
+                    requested == "advanced"
+                    and basic_region in focused.ancestors_with_self
+                )
+                or (
+                    requested == "basic"
+                    and (
+                        advanced_region in focused.ancestors_with_self
+                        or advanced_extras in focused.ancestors_with_self
+                    )
+                )
+            )
+        )
+        if focused_will_hide:
+            self.screen.set_focus(None)
+        self.editor_mode = requested
+        effective = (
+            "advanced"
+            if requested == "basic" and self.basic_unavailable_reason
+            else requested
+        )
+        self.query_one("#library-prompt-basic-region").display = effective == "basic"
+        self.query_one("#library-prompt-advanced-region").display = (
+            effective == "advanced"
+        )
+        self.query_one("#library-prompt-artifact-status").display = (
+            effective == "advanced"
+        )
+        self.query_one("#library-prompt-keywords").display = effective == "advanced"
+        self.query_one("#library-prompt-author").display = effective == "advanced"
+        self.query_one("#library-prompt-author-label").display = (
+            effective == "advanced"
+        )
+        self.query_one("#library-prompt-advanced-extras").display = (
+            effective == "advanced"
+        )
+        for selector in ("#library-prompt-system", "#library-prompt-user"):
+            self.query_one(selector, TextArea).read_only = effective != "basic"
+        if focused_will_hide:
+            self.call_after_refresh(
+                self._restore_editor_mode_focus,
+                focused,
+                effective,
+            )
+
+    def _restore_editor_mode_focus(self, prior_focus, effective_mode: str) -> None:
+        """Use a bounded fallback without overriding newer user focus."""
+        live_focus = self.app.focused
+        mode_control_ids = {
+            "library-prompt-mode-basic",
+            "library-prompt-mode-advanced",
+        }
+        live_focus_is_hidden = bool(
+            live_focus is not None
+            and (
+                (
+                    effective_mode == "advanced"
+                    and self.query_one("#library-prompt-basic-region")
+                    in live_focus.ancestors_with_self
+                )
+                or (
+                    effective_mode == "basic"
+                    and (
+                        self.query_one("#library-prompt-advanced-region")
+                        in live_focus.ancestors_with_self
+                        or self.query_one("#library-prompt-advanced-extras")
+                        in live_focus.ancestors_with_self
+                    )
+                )
+            )
+        )
+        if (
+            live_focus is not None
+            and live_focus is not prior_focus
+            and live_focus.id not in mode_control_ids
+            and not live_focus_is_hidden
+        ):
+            return
+        target = self.query_one(
+            "#library-prompt-mode-basic"
+            if effective_mode == "basic"
+            else "#library-prompt-mode-advanced",
+            Button,
+        )
+        self.screen.set_focus(target, scroll_visible=False)
+
+    def sync_lifecycle_actions(
+        self,
+        *,
+        dirty: bool,
+        conflict: bool | None = None,
+        mutation_in_flight: bool | None = None,
+        write_in_flight: bool | None = None,
+    ) -> None:
+        """Patch lifecycle-valid actions without replacing editor fields."""
+        self.dirty = bool(dirty)
+        if conflict is not None:
+            self.conflict = bool(conflict)
+        if mutation_in_flight is not None:
+            self.mutation_in_flight = bool(mutation_in_flight)
+        if write_in_flight is not None:
+            self.write_in_flight = bool(write_in_flight)
+        state = self.editor_state
+        if state is None:
+            return
+        is_new = state.prompt_id is None
+        busy = self.mutation_in_flight or self.write_in_flight
+        clean_saved = not self.conflict and not is_new and not self.dirty
+        save = self.query_one("#library-prompt-save", Button)
+        save.display = not self.conflict and (is_new or self.dirty)
+        save.disabled = busy or (
+            not is_new and not self.can_update_original
+        )
+        use_console = self.query_one("#library-prompt-insert-console", Button)
+        use_console.display = clean_saved
+        use_console.disabled = busy
+        more = self.query_one("#library-prompt-more-actions", Button)
+        more.display = clean_saved
+        more.disabled = busy
+        save_new = self.query_one("#library-prompt-conflict-save-new", Button)
+        save_new.display = self.conflict
+        save_new.disabled = busy
+        reload_button = self.query_one("#library-prompt-conflict-reload", Button)
+        reload_button.display = self.conflict
+        reload_button.disabled = busy
+        discard = self.query_one("#library-prompt-discard", Button)
+        discard.display = not self.conflict and (is_new or self.dirty)
+        discard.disabled = busy
+        if not clean_saved:
+            self.more_actions_open = False
+        self.query_one("#library-prompt-more-actions-region").display = (
+            clean_saved and self.more_actions_open
+        )
+        for button in self.query("#library-prompt-more-actions-region Button"):
+            if isinstance(button, Button):
+                button.disabled = busy
+
+    @on(Button.Pressed, "#library-prompt-more-actions")
+    def _toggle_more_actions(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.more_actions_open = not self.more_actions_open
+        self.query_one("#library-prompt-more-actions-region").display = (
+            self.more_actions_open
+        )
+
+    @on(Button.Pressed, "#library-prompt-more-collections")
+    def _open_more_collections(self, event: Button.Pressed) -> None:
+        event.stop()
+        try:
+            self.query_one("#library-prompt-memberships-manage", Button).press()
+        except NoMatches:
+            return
+
+    @on(Button.Pressed, "#library-prompt-more-history")
+    def _open_more_history(self, event: Button.Pressed) -> None:
+        event.stop()
+        try:
+            history = self.query_one("#library-prompt-history-collapsible", Collapsible)
+        except NoMatches:
+            return
+        history.collapsed = False
+        history.focus()
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key != "escape" or not self.more_actions_open:
+            return
+        event.stop()
+        self.more_actions_open = False
+        self.query_one("#library-prompt-more-actions-region").display = False
+        self.query_one("#library-prompt-more-actions", Button).focus()
 
     def _compose_list(self) -> ComposeResult:
         state = self.state
@@ -930,6 +1128,9 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         editor_state = self.editor_state
         if editor_state is None:
             return
+        effective_mode = (
+            "advanced" if self.basic_unavailable_reason else self.editor_mode
+        )
         with Vertical(id="library-prompt-editor-shell"):
             with VerticalScroll(id="library-prompt-editor-content"):
                 if self.mutation_in_flight:
@@ -964,7 +1165,33 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                     id="library-prompt-details",
                     disabled=self.mutation_in_flight,
                 )
+                with Horizontal(id="library-prompt-mode-controls"):
+                    basic_mode = Button(
+                        "Basic",
+                        id="library-prompt-mode-basic",
+                        classes="library-canvas-action",
+                        compact=True,
+                        disabled=(
+                            self.mutation_in_flight
+                            or bool(self.basic_unavailable_reason)
+                        ),
+                    )
+                    basic_mode.tooltip = self.basic_unavailable_reason or None
+                    yield basic_mode
+                    yield Button(
+                        "Advanced",
+                        id="library-prompt-mode-advanced",
+                        classes="library-canvas-action",
+                        compact=True,
+                        disabled=self.mutation_in_flight,
+                    )
                 yield Static(
+                    self.basic_unavailable_reason,
+                    id="library-prompt-mode-reason",
+                    classes="destination-purpose",
+                    markup=False,
+                )
+                artifact_status = Static(
                     (
                         f"{editor_state.artifact_type.title()} · "
                         f"{editor_state.source.title()} · "
@@ -974,92 +1201,126 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                     classes="destination-purpose",
                     markup=False,
                 )
+                artifact_status.display = effective_mode == "advanced"
+                yield artifact_status
                 block_state = editor_state.block_editor_state
-                if block_state is not None:
-                    block_editor = PromptBlockEditor(
-                        block_state,
-                        can_update_original=self.can_update_original,
-                        allow_apply_system=False,
-                        apply_system_unavailable_reason=(
-                            "System apply is unavailable in Library; use the Console "
-                            "prompt workbench to apply it to the session."
-                        ),
-                        embedded=True,
-                        id="library-prompt-block-editor",
-                    )
-                    block_editor.disabled = self.mutation_in_flight
-                    yield block_editor
-                    yield Checkbox(
-                        "Include current text as starter content",
-                        value=self.include_starter_content,
-                        id="library-prompt-recipe-starter",
-                        disabled=self.mutation_in_flight,
-                    )
-                else:
+                basic_system = (
+                    block_state.definition.lanes[0].blocks[0].content
+                    if block_state is not None
+                    and len(block_state.definition.lanes[0].blocks) == 1
+                    else ""
+                )
+                basic_user = (
+                    block_state.definition.lanes[1].blocks[0].content
+                    if block_state is not None
+                    and len(block_state.definition.lanes[1].blocks) == 1
+                    else ""
+                )
+                advanced_region = Vertical(id="library-prompt-advanced-region")
+                advanced_region.display = effective_mode == "advanced"
+                with advanced_region:
+                    if block_state is not None:
+                        block_editor = PromptBlockEditor(
+                            block_state,
+                            can_update_original=self.can_update_original,
+                            allow_apply_system=False,
+                            apply_system_unavailable_reason=(
+                                "System apply is unavailable in Library; use the Console "
+                                "prompt workbench to apply it to the session."
+                            ),
+                            embedded=True,
+                            host_owned_lifecycle=True,
+                            id="library-prompt-block-editor",
+                        )
+                        block_editor.disabled = self.mutation_in_flight
+                        yield block_editor
+                        yield Checkbox(
+                            "Include current text as starter content",
+                            value=self.include_starter_content,
+                            id="library-prompt-recipe-starter",
+                            disabled=self.mutation_in_flight,
+                        )
+                    else:
+                        yield Static(
+                            editor_state.compatibility_reason,
+                            id="library-prompt-compatibility",
+                            classes="destination-purpose",
+                            markup=False,
+                        )
+                        convert = Button(
+                            "Convert and save as new Prompt",
+                            id="library-prompt-convert",
+                            classes="library-canvas-action",
+                            compact=True,
+                            disabled=(
+                                self.mutation_in_flight
+                                or not editor_state.can_convert_as_new
+                            ),
+                        )
+                        if convert.disabled:
+                            convert.tooltip = (
+                                "Conversion unavailable — this artifact has no compatible "
+                                "System or User text."
+                            )
+                        yield convert
+                basic_region = Vertical(id="library-prompt-basic-region")
+                basic_region.display = effective_mode == "basic"
+                with basic_region:
                     yield Static(
-                        editor_state.compatibility_reason,
-                        id="library-prompt-compatibility",
-                        classes="destination-purpose",
+                        "Instructions",
+                        id="library-prompt-basic-instructions-label",
+                        classes="library-prompt-field-label",
                         markup=False,
                     )
-                    convert = Button(
-                        "Convert and save as new Prompt",
-                        id="library-prompt-convert",
-                        classes="library-canvas-action",
-                        compact=True,
-                        disabled=(
-                            self.mutation_in_flight
-                            or not editor_state.can_convert_as_new
-                        ),
+                    yield Static(
+                        _SYSTEM_PROMPT_HINT,
+                        classes="library-prompt-field-hint",
+                        markup=False,
                     )
-                    if convert.disabled:
-                        convert.tooltip = (
-                            "Conversion unavailable — this artifact has no compatible "
-                            "System or User text."
-                        )
-                    yield convert
-                yield Static(
-                    "Compiled System preview",
-                    classes="library-prompt-field-label",
-                    markup=False,
-                )
-                yield Static(
-                    _SYSTEM_PROMPT_HINT,
-                    classes="library-prompt-field-hint",
-                    markup=False,
-                )
-                yield TextArea(
-                    editor_state.compiled_system_preview,
-                    read_only=True,
-                    id="library-prompt-system",
-                )
-                yield Static(
-                    "Compiled User preview",
-                    classes="library-prompt-field-label",
-                    markup=False,
-                )
-                yield Static(
-                    _USER_PROMPT_HINT, classes="library-prompt-field-hint", markup=False
-                )
-                yield TextArea(
-                    editor_state.compiled_user_preview,
-                    read_only=True,
-                    id="library-prompt-user",
-                )
-                yield Input(
+                    yield TextArea(
+                        basic_system,
+                        read_only=effective_mode != "basic",
+                        id="library-prompt-system",
+                    )
+                    yield Static(
+                        "Message template",
+                        id="library-prompt-basic-message-label",
+                        classes="library-prompt-field-label",
+                        markup=False,
+                    )
+                    yield Static(
+                        _USER_PROMPT_HINT,
+                        classes="library-prompt-field-hint",
+                        markup=False,
+                    )
+                    yield TextArea(
+                        basic_user,
+                        read_only=effective_mode != "basic",
+                        id="library-prompt-user",
+                    )
+                keywords = Input(
                     value=editor_state.keywords_csv,
                     placeholder="Keywords (comma-separated)",
                     id="library-prompt-keywords",
                     disabled=self.mutation_in_flight,
                 )
-                yield Static(
-                    "Author", classes="library-prompt-field-label", markup=False
+                keywords.display = effective_mode == "advanced"
+                yield keywords
+                author_label = Static(
+                    "Author",
+                    id="library-prompt-author-label",
+                    classes="library-prompt-field-label",
+                    markup=False,
                 )
-                yield Input(
+                author_label.display = effective_mode == "advanced"
+                yield author_label
+                author = Input(
                     value=editor_state.author,
                     id="library-prompt-author",
                     disabled=self.mutation_in_flight,
                 )
+                author.display = effective_mode == "advanced"
+                yield author
                 yield Static(
                     prompt_editor_meta_line(editor_state, dirty=self.dirty),
                     id="library-prompt-meta",
@@ -1091,144 +1352,124 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                             compact=True,
                             disabled=self.mutation_in_flight,
                         )
-                if self.membership_state is not None:
-                    yield Static(
-                        "Collections",
-                        classes="library-prompt-field-label",
-                        markup=False,
-                    )
-                    yield Static(
-                        self._membership_summary(self.membership_state),
-                        id="library-prompt-memberships-summary",
-                        classes="destination-purpose",
-                        markup=False,
-                    )
-                    yield Button(
-                        self._membership_manage_label(self.membership_state),
-                        id="library-prompt-memberships-manage",
-                        classes="library-canvas-action",
-                        compact=True,
-                        disabled=not (
-                            not self.mutation_in_flight
-                            and (
-                                self.membership_state.can_manage
-                                or self.membership_state.can_retry_load
-                            )
-                        ),
-                    )
-                    yield Button(
-                        "Apply memberships",
-                        id="library-prompt-memberships-apply",
-                        classes="library-canvas-action",
-                        compact=True,
-                        disabled=(
-                            self.mutation_in_flight
-                            or not self.membership_state.can_apply
-                        ),
-                    )
-                    yield Static(
-                        self._membership_status(self.membership_state),
-                        id="library-prompt-memberships-status",
-                        classes="destination-purpose",
-                        markup=False,
-                    )
-                # Keep the empty region mounted for an unsaved editor so its
-                # first successful create can reveal history without
-                # remounting the editor fields or persistent action strip.
-                history_region = LibraryPromptHistoryRegion(
-                    self.history_state,
-                    dirty=self.dirty,
-                    current_compatible=self.history_current_compatible,
-                    id="library-prompt-history-region",
-                )
-                history_region.disabled = self.mutation_in_flight
-                yield history_region
-
-            with Vertical(id="library-prompt-editor-actions"):
-                if self.conflict:
-                    yield Button(
-                        "Save as new",
-                        id="library-prompt-conflict-save-new",
-                        classes="library-canvas-action console-action-primary",
-                        compact=True,
-                        disabled=self.mutation_in_flight,
-                    )
-                    yield Button(
-                        "Reload",
-                        id="library-prompt-conflict-reload",
-                        classes="library-canvas-action",
-                        compact=True,
-                        disabled=self.mutation_in_flight,
-                    )
-                else:
-                    with Vertical(id="library-prompt-actions-primary"):
+                advanced_extras = Vertical(id="library-prompt-advanced-extras")
+                advanced_extras.display = effective_mode == "advanced"
+                with advanced_extras:
+                    if self.membership_state is not None:
+                        yield Static(
+                            "Collections",
+                            classes="library-prompt-field-label",
+                            markup=False,
+                        )
+                        yield Static(
+                            self._membership_summary(self.membership_state),
+                            id="library-prompt-memberships-summary",
+                            classes="destination-purpose",
+                            markup=False,
+                        )
                         yield Button(
-                            (
-                                f"Save {editor_state.artifact_type.title()}"
-                                if editor_state.prompt_id is None
-                                else "Update original"
-                            ),
-                            id="library-prompt-save",
-                            classes="library-canvas-action console-action-primary",
+                            self._membership_manage_label(self.membership_state),
+                            id="library-prompt-memberships-manage",
+                            classes="library-canvas-action",
                             compact=True,
-                            disabled=(
-                                self.mutation_in_flight
-                                or (
-                                    editor_state.prompt_id is not None
-                                    and (
-                                        block_state is None
-                                        or not self.can_update_original
-                                    )
+                            disabled=not (
+                                not self.mutation_in_flight
+                                and (
+                                    self.membership_state.can_manage
+                                    or self.membership_state.can_retry_load
                                 )
                             ),
                         )
-                    with Vertical(id="library-prompt-actions-content"):
                         yield Button(
-                            "Use in Console",
-                            id="library-prompt-insert-console",
+                            "Apply memberships",
+                            id="library-prompt-memberships-apply",
                             classes="library-canvas-action",
                             compact=True,
-                            disabled=self.mutation_in_flight,
+                            disabled=(
+                                self.mutation_in_flight
+                                or not self.membership_state.can_apply
+                            ),
                         )
+                        yield Static(
+                            self._membership_status(self.membership_state),
+                            id="library-prompt-memberships-status",
+                            classes="destination-purpose",
+                            markup=False,
+                        )
+                    # Keep the empty region mounted for an unsaved editor so its
+                    # first successful create can reveal history without
+                    # remounting the editor fields or persistent action strip.
+                    history_region = LibraryPromptHistoryRegion(
+                        self.history_state,
+                        dirty=self.dirty,
+                        current_compatible=self.history_current_compatible,
+                        id="library-prompt-history-region",
+                    )
+                    history_region.disabled = self.mutation_in_flight
+                    yield history_region
 
-                        yield Button(
-                            "Export…",
-                            id="library-prompt-export",
-                            classes="library-canvas-action",
-                            compact=True,
-                            disabled=self.mutation_in_flight,
+            with Vertical(id="library-prompt-editor-actions"):
+                is_new = editor_state.prompt_id is None
+                save = Button(
+                    "Save prompt" if is_new else "Save changes",
+                    id="library-prompt-save",
+                    classes="library-canvas-action console-action-primary",
+                    compact=True,
+                    disabled=(
+                        self.mutation_in_flight
+                        or self.write_in_flight
+                        or (
+                            not is_new
+                            and (block_state is None or not self.can_update_original)
                         )
-                        yield Button(
-                            "Copy Markdown",
-                            id="library-prompt-copy",
-                            classes="library-canvas-action",
-                            compact=True,
-                            disabled=self.mutation_in_flight,
-                        )
-                    with Vertical(id="library-prompt-actions-lifecycle"):
-                        yield Button(
-                            "Duplicate prompt",
-                            id="library-prompt-duplicate",
-                            classes="library-canvas-action",
-                            compact=True,
-                            disabled=self.mutation_in_flight,
-                        )
-                        yield Button(
-                            "Delete",
-                            id="library-prompt-delete",
-                            classes="library-canvas-action library-media-action-danger",
-                            compact=True,
-                            disabled=self.mutation_in_flight,
-                        )
-                yield Button(
-                    "Discard changes",
+                    ),
+                )
+                save.display = not self.conflict and (is_new or self.dirty)
+                yield save
+                use_console = Button(
+                    "Use in Console",
+                    id="library-prompt-insert-console",
+                    classes="library-canvas-action console-action-primary",
+                    compact=True,
+                    disabled=self.mutation_in_flight,
+                )
+                use_console.display = not self.conflict and not is_new and not self.dirty
+                yield use_console
+                more = Button(
+                    "More actions",
+                    id="library-prompt-more-actions",
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=self.mutation_in_flight,
+                )
+                more.display = not self.conflict and not is_new and not self.dirty
+                yield more
+                save_new = Button(
+                    "Save as new",
+                    id="library-prompt-conflict-save-new",
+                    classes="library-canvas-action console-action-primary",
+                    compact=True,
+                    disabled=self.mutation_in_flight,
+                )
+                save_new.display = self.conflict
+                yield save_new
+                reload_button = Button(
+                    "Reload",
+                    id="library-prompt-conflict-reload",
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=self.mutation_in_flight,
+                )
+                reload_button.display = self.conflict
+                yield reload_button
+                discard = Button(
+                    "Cancel" if is_new else "Discard changes",
                     id="library-prompt-discard",
                     classes="library-canvas-action",
                     compact=True,
                     disabled=(
                         self.mutation_in_flight
                         or self.write_in_flight
-                        or not self.dirty
                     ),
                     tooltip=(
                         PROMPT_DISCARD_TOOLTIP_BUSY
@@ -1240,6 +1481,35 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                         )
                     ),
                 )
+                discard.display = not self.conflict and (is_new or self.dirty)
+                yield discard
+                more_region = Vertical(id="library-prompt-more-actions-region")
+                more_region.display = (
+                    self.more_actions_open
+                    and not self.conflict
+                    and not is_new
+                    and not self.dirty
+                )
+                with more_region:
+                    for label, widget_id, classes in (
+                        ("Export…", "library-prompt-export", "library-canvas-action"),
+                        ("Copy Markdown", "library-prompt-copy", "library-canvas-action"),
+                        ("Duplicate", "library-prompt-duplicate", "library-canvas-action"),
+                        ("Collections", "library-prompt-more-collections", "library-canvas-action"),
+                        ("History", "library-prompt-more-history", "library-canvas-action"),
+                        (
+                            "Delete",
+                            "library-prompt-delete",
+                            "library-canvas-action library-media-action-danger",
+                        ),
+                    ):
+                        yield Button(
+                            label,
+                            id=widget_id,
+                            classes=classes,
+                            compact=True,
+                            disabled=self.mutation_in_flight,
+                        )
 
     @staticmethod
     def _membership_ids_summary(
@@ -1313,6 +1583,65 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         """Patch previews after add/move/duplicate/delete without recomposition."""
         self._sync_block_preview(event.state)
 
+    @on(TextArea.Changed, "#library-prompt-system")
+    @on(TextArea.Changed, "#library-prompt-user")
+    async def _basic_prompt_text_changed(self, event: TextArea.Changed) -> None:
+        """Apply a Basic lane edit to the existing canonical block identity."""
+        # These mounted fields are Basic's canonical controls and Advanced's
+        # read-only compiled previews.  Never let their mount/programmatic
+        # events reach the screen's legacy dirty handler; admitted Basic edits
+        # publish the semantic block event below instead.
+        event.stop()
+        if self.editor_mode != "basic" or self.basic_unavailable_reason:
+            return
+        current = self.editor_state
+        if current is None or current.block_editor_state is None:
+            return
+        lane_id = "system" if event.text_area.id == "library-prompt-system" else "user"
+        lane = current.block_editor_state.definition.lanes[
+            0 if lane_id == "system" else 1
+        ]
+        if len(lane.blocks) > 1:
+            return
+        text = event.text_area.text
+        if lane.blocks:
+            block = lane.blocks[0]
+            if block.content == text:
+                return
+            state = update_block(
+                current.block_editor_state,
+                block.id,
+                content=text,
+            )
+            block_id = block.id
+        else:
+            preferred_id = "instructions" if lane_id == "system" else "message"
+            existing_ids = {
+                block.id
+                for definition_lane in current.block_editor_state.definition.lanes
+                for block in definition_lane.blocks
+            }
+            block_id = (
+                preferred_id
+                if preferred_id not in existing_ids
+                else f"basic-{lane_id}"
+            )
+            state = add_block(
+                current.block_editor_state,
+                lane_id,
+                title="Instructions" if lane_id == "system" else "Message template",
+                content=text,
+                block_id=block_id,
+            )
+        block_editor = self.query_one(
+            "#library-prompt-block-editor", PromptBlockEditor
+        )
+        await block_editor.replace_block_state(block_id, state)
+        self._sync_block_preview(state)
+        self.post_message(
+            PromptBlockEditor.BlockFieldChanged(block_id, "content", text, state)
+        )
+
     def _sync_block_preview(self, state: PromptBlockEditorState) -> None:
         current = self.editor_state
         if current is not None:
@@ -1325,14 +1654,15 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                 system_prompt=state.compiled_system,
                 user_prompt=state.compiled_user,
             )
-        for selector, value in (
-            ("#library-prompt-system", state.compiled_system),
-            ("#library-prompt-user", state.compiled_user),
+        for selector, lane in (
+            ("#library-prompt-system", state.definition.lanes[0]),
+            ("#library-prompt-user", state.definition.lanes[1]),
         ):
             try:
                 preview = self.query_one(selector, TextArea)
             except NoMatches:
                 continue
+            value = lane.blocks[0].content if len(lane.blocks) == 1 else ""
             if preview.text != value:
                 with preview.prevent(TextArea.Changed):
                     preview.load_text(value)

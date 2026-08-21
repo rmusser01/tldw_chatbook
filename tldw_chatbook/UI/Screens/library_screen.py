@@ -223,8 +223,10 @@ from ...Library.library_prompts_state import (
     build_prompt_editor_state,
     build_prompt_browse_list_state,
     classify_prompt_save_error,
+    coerce_prompt_editor_mode,
     prepare_prompt_artifact_save,
     prompt_editor_meta_line,
+    prompt_basic_unavailable_reason,
     require_artifact_save_supported,
 )
 from ...Prompt_Management.prompt_batch_models import (
@@ -3236,6 +3238,12 @@ class LibraryScreen(BaseAppScreen):
         )
         self._library_prompt_conflict_snapshot: PromptEditorState | None = None
         self._library_prompt_block_state: PromptBlockEditorState | None = None
+        library_config = getattr(app_instance, "app_config", {}).get("library", {})
+        self._library_prompt_editor_mode = coerce_prompt_editor_mode(
+            library_config.get("prompt_editor_mode")
+            if isinstance(library_config, Mapping)
+            else None
+        )
         # Explicit provenance for an unsaved canonical structured copy.
         # Legacy block edits can clear both lane origins, so origins cannot
         # truthfully distinguish conversion/duplication from ordinary edits.
@@ -9722,23 +9730,7 @@ class LibraryScreen(BaseAppScreen):
                         # own kept text (never the stale `_library_prompt_detail`)
                         # with the Save-as-new/Reload actions surfaced.
                         yield LibraryPromptsListCanvas(
-                            mode="editor",
-                            editor_state=self._current_library_prompt_editor_state(
-                                self._library_prompt_conflict_snapshot
-                            ),
-                            conflict=True,
-                            dirty=self._library_prompt_dirty,
-                            can_update_original=False,
-                            include_starter_content=(
-                                self._library_prompt_include_starter_content
-                            ),
-                            history_state=self._library_prompt_history_state,
-                            history_current_compatible=(
-                                self._library_prompt_block_state is not None
-                            ),
-                            membership_state=self._library_prompt_collections_controller.membership_state,
-                            mutation_in_flight=self._library_prompts_mutation_in_flight,
-                            write_in_flight=self._library_prompt_write_worker_is_active(),
+                            **self._library_prompts_canvas_kwargs(),
                             id="library-prompts-canvas",
                         )
                     elif self._library_prompt_detail is None:
@@ -9750,32 +9742,7 @@ class LibraryScreen(BaseAppScreen):
                         )
                     else:
                         yield LibraryPromptsListCanvas(
-                            mode="editor",
-                            editor_state=self._current_library_prompt_editor_state(),
-                            status=self._library_prompt_status,
-                            # Task 8b D3: only the name-in-use status backs
-                            # a real "Open existing" affordance -- reusing
-                            # the same canonical copy this compares against
-                            # (not a separate boolean flag) keeps the two
-                            # in lockstep by construction.
-                            show_open_existing=(
-                                self._library_prompt_status
-                                == LIBRARY_PROMPT_SAVE_STATUS_COPY["name-in-use"]
-                            ),
-                            dirty=self._library_prompt_dirty,
-                            can_update_original=(
-                                self._library_prompt_can_update_original()
-                            ),
-                            include_starter_content=(
-                                self._library_prompt_include_starter_content
-                            ),
-                            history_state=self._library_prompt_history_state,
-                            history_current_compatible=(
-                                self._library_prompt_block_state is not None
-                            ),
-                            membership_state=self._library_prompt_collections_controller.membership_state,
-                            mutation_in_flight=self._library_prompts_mutation_in_flight,
-                            write_in_flight=self._library_prompt_write_worker_is_active(),
+                            **self._library_prompts_canvas_kwargs(),
                             id="library-prompts-canvas",
                         )
                 elif shell.canvas_kind == "prompts":
@@ -11355,6 +11322,21 @@ class LibraryScreen(BaseAppScreen):
             values["list_state"] = self._build_library_notes_state()
         return values
 
+    def _library_prompt_basic_unavailable_reason(
+        self,
+        state: PromptEditorState,
+        *,
+        conflict: bool = False,
+    ) -> str:
+        """Return the forced-Advanced reason without changing the preference."""
+        return prompt_basic_unavailable_reason(
+            state,
+            conflict=conflict,
+            can_update_original=(
+                state.prompt_id is None or self._library_prompt_can_update_original()
+            ),
+        )
+
     def _library_prompts_canvas_kwargs(self) -> dict[str, Any]:
         """Return every compose input for the mounted Prompts canvas."""
         membership_state = (
@@ -11368,6 +11350,8 @@ class LibraryScreen(BaseAppScreen):
             "pager": None,
             "mode": "list",
             "editor_state": None,
+            "editor_mode": self._library_prompt_editor_mode,
+            "basic_unavailable_reason": "",
             "conflict": False,
             "status": "",
             "show_open_existing": False,
@@ -11385,6 +11369,8 @@ class LibraryScreen(BaseAppScreen):
             "membership_state": membership_state,
             "sort_choices_visible": False,
             "page_actions_disabled": False,
+            "mutation_in_flight": self._library_prompts_mutation_in_flight,
+            "write_in_flight": self._library_prompt_write_worker_is_active(),
         }
         if self._library_prompts_view == "editor":
             values["mode"] = "editor"
@@ -11404,6 +11390,13 @@ class LibraryScreen(BaseAppScreen):
                 )
                 values["can_update_original"] = (
                     self._library_prompt_can_update_original()
+                )
+            if values["editor_state"] is not None:
+                values["basic_unavailable_reason"] = (
+                    self._library_prompt_basic_unavailable_reason(
+                        values["editor_state"],
+                        conflict=values["conflict"],
+                    )
                 )
             return values
 
@@ -21764,6 +21757,71 @@ class LibraryScreen(BaseAppScreen):
         """
         self._mark_library_prompt_dirty()
 
+    @on(Button.Pressed, "#library-prompt-mode-basic")
+    @on(Button.Pressed, "#library-prompt-mode-advanced")
+    async def handle_library_prompt_editor_mode(self, event: Button.Pressed) -> None:
+        """Switch the two mounted Prompt presentations and remember the choice."""
+        event.stop()
+        requested = (
+            "basic"
+            if event.button.id == "library-prompt-mode-basic"
+            else "advanced"
+        )
+        state = self._current_library_prompt_editor_state()
+        if requested == "basic" and self._library_prompt_basic_unavailable_reason(
+            state,
+            conflict=self._library_prompt_conflict_snapshot is not None,
+        ):
+            return
+        fields = self._read_library_prompt_editor_fields()
+        if fields is not None and isinstance(self._library_prompt_detail, Mapping):
+            name, author, details, system, user, keywords = fields
+            detail = dict(self._library_prompt_detail)
+            detail.update(
+                {
+                    "name": name,
+                    "author": author,
+                    "details": details,
+                    "system_prompt": system,
+                    "user_prompt": user,
+                    "keywords": keywords,
+                }
+            )
+            self._library_prompt_detail = detail
+        try:
+            canvas = self.query_one(
+                "#library-prompts-canvas", LibraryPromptsListCanvas
+            )
+        except NoMatches:
+            return
+        await canvas.set_editor_mode(requested)
+        self._library_prompt_editor_mode = requested
+        library_config = self.app_instance.app_config.setdefault("library", {})
+        if isinstance(library_config, dict):
+            library_config["prompt_editor_mode"] = requested
+        self.run_worker(
+            self._persist_library_prompt_editor_mode(requested),
+            group="library_prompt_editor_mode",
+            exclusive=True,
+        )
+
+    async def _persist_library_prompt_editor_mode(self, mode: str) -> None:
+        """Persist one admitted Prompt mode without blocking Textual's loop."""
+        try:
+            saved = await asyncio.to_thread(
+                save_setting_to_cli_config,
+                "library",
+                "prompt_editor_mode",
+                mode,
+            )
+        except Exception:
+            saved = False
+        if saved is not True:
+            self.app.notify(
+                "Prompt view changed for this session, but could not be saved.",
+                severity="warning",
+            )
+
     def _capture_library_prompt_block_state(
         self, state: PromptBlockEditorState
     ) -> None:
@@ -21948,10 +22006,24 @@ class LibraryScreen(BaseAppScreen):
             author = self.query_one("#library-prompt-author", Input).value
             details = self.query_one("#library-prompt-details", Input).value
             keywords_text = self.query_one("#library-prompt-keywords", Input).value
-            system_prompt = self.query_one("#library-prompt-system", TextArea).text
-            user_prompt = self.query_one("#library-prompt-user", TextArea).text
         except (NoMatches, QueryError):
             return None
+        block_state = self._library_prompt_block_state
+        if block_state is not None:
+            system_prompt = block_state.compiled_system
+            user_prompt = block_state.compiled_user
+        elif isinstance(self._library_prompt_detail, Mapping):
+            editor_state = build_prompt_editor_state(self._library_prompt_detail)
+            system_prompt = editor_state.system_prompt
+            user_prompt = editor_state.user_prompt
+        else:
+            try:
+                system_prompt = self.query_one(
+                    "#library-prompt-system", TextArea
+                ).text
+                user_prompt = self.query_one("#library-prompt-user", TextArea).text
+            except (NoMatches, QueryError):
+                return None
         return name, author, details, system_prompt, user_prompt, keywords_text
 
     def _library_prompt_text_fields_match_state(self) -> bool:
@@ -21959,16 +22031,45 @@ class LibraryScreen(BaseAppScreen):
         detail = self._library_prompt_detail
         if not isinstance(detail, Mapping):
             return False
-        fields = self._read_library_prompt_editor_fields()
-        if fields is None:
+        try:
+            name = self.query_one("#library-prompt-name", Input).value
+            author = self.query_one("#library-prompt-author", Input).value
+            details = self.query_one("#library-prompt-details", Input).value
+            keywords = self.query_one("#library-prompt-keywords", Input).value
+            basic_system = self.query_one(
+                "#library-prompt-system", TextArea
+            ).text
+            basic_user = self.query_one("#library-prompt-user", TextArea).text
+        except (NoMatches, QueryError):
             return False
         state = build_prompt_editor_state(detail)
-        return fields == (
+        block_state = self._library_prompt_block_state
+        if block_state is None:
+            expected_system = ""
+            expected_user = ""
+        else:
+            system_lane, user_lane = block_state.definition.lanes
+            expected_system = (
+                system_lane.blocks[0].content
+                if len(system_lane.blocks) == 1
+                else ""
+            )
+            expected_user = (
+                user_lane.blocks[0].content if len(user_lane.blocks) == 1 else ""
+            )
+        return (
+            name,
+            author,
+            details,
+            basic_system,
+            basic_user,
+            keywords,
+        ) == (
             state.name,
             state.author,
             state.details,
-            state.system_prompt,
-            state.user_prompt,
+            expected_system,
+            expected_user,
             state.keywords_csv,
         )
 
@@ -22097,11 +22198,24 @@ class LibraryScreen(BaseAppScreen):
                 if self._library_prompt_block_state is not None
                 else "prompt"
             )
-            outer_save.label = f"Save {artifact_type.title()}"
+            outer_save.label = f"Save {artifact_type}"
             outer_save.disabled = False
+        else:
+            outer_save.label = "Save changes"
+            outer_save.disabled = not can_update
+        try:
+            canvas = self.query_one(
+                "#library-prompts-canvas", LibraryPromptsListCanvas
+            )
+            canvas.can_update_original = can_update
+            canvas.sync_lifecycle_actions(
+                dirty=self._library_prompt_dirty,
+                conflict=self._library_prompt_conflict_snapshot is not None,
+                mutation_in_flight=self._library_prompts_mutation_in_flight,
+                write_in_flight=self._library_prompt_write_worker_is_active(),
+            )
+        except (NoMatches, QueryError):
             return
-        outer_save.label = "Update original"
-        outer_save.disabled = not can_update
 
     def _set_library_prompt_discard_enabled(
         self, enabled: bool, *, write_in_flight: bool | None = None
@@ -22110,6 +22224,18 @@ class LibraryScreen(BaseAppScreen):
         if write_in_flight is None:
             write_in_flight = self._library_prompt_write_worker_is_active()
         busy = self._library_prompts_mutation_in_flight or write_in_flight
+        try:
+            canvas = self.query_one(
+                "#library-prompts-canvas", LibraryPromptsListCanvas
+            )
+            canvas.sync_lifecycle_actions(
+                dirty=enabled,
+                conflict=self._library_prompt_conflict_snapshot is not None,
+                mutation_in_flight=self._library_prompts_mutation_in_flight,
+                write_in_flight=write_in_flight,
+            )
+        except (NoMatches, QueryError):
+            pass
         for button in self.query("#library-prompt-discard"):
             if isinstance(button, Button):
                 button.disabled = busy or not enabled

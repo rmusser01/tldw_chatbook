@@ -2150,6 +2150,11 @@ with stray left-edge border fragments), and padding 0 1 so the full
     overflow-x: hidden;
 }
 
+#library-prompt-advanced-extras {
+    height: auto;
+    margin-bottom: 1;
+}
+
 #library-prompt-editor-actions {
     width: 100%;
     height: auto;

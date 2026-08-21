@@ -448,6 +448,7 @@ class PromptBlockEditor(Vertical):
         allow_apply_system: bool = True,
         apply_system_unavailable_reason: str = "",
         embedded: bool = False,
+        host_owned_lifecycle: bool = False,
         **kwargs: object,
     ) -> None:
         super().__init__(**kwargs)
@@ -456,6 +457,7 @@ class PromptBlockEditor(Vertical):
         self._allow_apply_system = bool(allow_apply_system)
         self._apply_system_unavailable_reason = apply_system_unavailable_reason.strip()
         self._embedded = bool(embedded)
+        self._host_owned_lifecycle = bool(host_owned_lifecycle)
         self.set_class(self._embedded, "embedded")
         self._block_widgets: dict[str, PromptBlockCard] = {}
 
@@ -531,10 +533,12 @@ class PromptBlockEditor(Vertical):
             yield Static("", id="prompt-editor-update-reason", markup=False)
 
         with Horizontal(id="prompt-editor-footer"):
-            with Horizontal(
+            lane_options = Horizontal(
                 id="prompt-editor-lane-options",
                 classes="prompt-editor-footer-row",
-            ):
+            )
+            lane_options.display = not self._host_owned_lifecycle
+            with lane_options:
                 system = Checkbox(
                     "Apply system prompt to this session",
                     value=False,
@@ -554,11 +558,13 @@ class PromptBlockEditor(Vertical):
                 id="prompt-editor-actions",
                 classes="prompt-editor-footer-row",
             ):
-                yield Button(
+                back = Button(
                     "Back",
                     id="prompt-editor-back",
                     classes="prompt-editor-action",
                 )
+                back.display = not self._host_owned_lifecycle
+                yield back
                 yield Button(
                     "Save Prompt",
                     id="prompt-editor-save-prompt",
@@ -569,17 +575,21 @@ class PromptBlockEditor(Vertical):
                     id="prompt-editor-save-recipe",
                     classes="prompt-editor-action",
                 )
-                yield Button(
+                update_original = Button(
                     "Update original",
                     id="prompt-editor-update-original",
                     classes="prompt-editor-action",
                     disabled=not self._can_update_original,
                 )
-                yield Button(
+                update_original.display = not self._host_owned_lifecycle
+                yield update_original
+                apply = Button(
                     "Apply",
                     id="prompt-editor-apply",
                     classes="prompt-editor-action",
                 )
+                apply.display = not self._host_owned_lifecycle
+                yield apply
 
     def on_mount(self) -> None:
         self._set_responsive(self.size.width or self.app.size.width)

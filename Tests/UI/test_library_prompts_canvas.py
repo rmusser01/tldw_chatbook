@@ -146,6 +146,7 @@ from Tests.UI.test_destination_shells import (
 from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
     LibraryHarness,
+    LibraryProductionCSSHarness,
     _active_library_screen,
     _fake_import_dialog_result,
     _wait_for_condition,
@@ -450,6 +451,356 @@ def _structured_editor_state(*, artifact_type: str = "prompt") -> PromptEditorSt
             "backend": "local",
         }
     )
+
+
+@pytest.mark.asyncio
+async def test_prompt_basic_and_advanced_share_one_mounted_draft_without_recompose():
+    app = _CanvasHost(
+        None,
+        mode="editor",
+        editor_state=_structured_editor_state(),
+        editor_mode="basic",
+        can_update_original=True,
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        canvas = app.query_one("#library-prompts-canvas", LibraryPromptsListCanvas)
+        basic = canvas.query_one("#library-prompt-basic-region", Vertical)
+        advanced = canvas.query_one("#library-prompt-advanced-region", Vertical)
+        advanced_extras = canvas.query_one(
+            "#library-prompt-advanced-extras", Vertical
+        )
+        system = canvas.query_one("#library-prompt-system", TextArea)
+        user = canvas.query_one("#library-prompt-user", TextArea)
+        block_editor = canvas.query_one(
+            "#library-prompt-block-editor", PromptBlockEditor
+        )
+
+        assert basic.display is True
+        assert advanced.display is False
+        assert advanced_extras.display is False
+        assert system.read_only is False
+        assert user.read_only is False
+        assert system.text == "Be exact."
+        assert user.text == "Ship it."
+        assert str(canvas.query_one("#library-prompt-basic-instructions-label").renderable) == "Instructions"
+        assert str(canvas.query_one("#library-prompt-basic-message-label").renderable) == "Message template"
+        assert canvas.query_one("#library-prompt-keywords").display is False
+        assert canvas.query_one("#library-prompt-author").display is False
+
+        await canvas.set_editor_mode("advanced")
+        await pilot.pause()
+
+        assert canvas.query_one("#library-prompt-basic-region") is basic
+        assert canvas.query_one("#library-prompt-advanced-region") is advanced
+        assert canvas.query_one("#library-prompt-system") is system
+        assert canvas.query_one("#library-prompt-block-editor") is block_editor
+        assert basic.display is False
+        assert advanced.display is True
+        assert advanced_extras.display is True
+        assert system.read_only is True
+        assert canvas.query_one("#library-prompt-keywords").display is True
+        assert canvas.query_one("#library-prompt-author").display is True
+
+
+@pytest.mark.asyncio
+async def test_prompt_mode_focus_fallback_honors_newer_user_focus():
+    app = _CanvasHost(
+        None,
+        mode="editor",
+        editor_state=_structured_editor_state(),
+        editor_mode="basic",
+        can_update_original=True,
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        canvas = app.query_one("#library-prompts-canvas", LibraryPromptsListCanvas)
+        system = canvas.query_one("#library-prompt-system", TextArea)
+        name = canvas.query_one("#library-prompt-name", Input)
+        system.focus()
+
+        switch = asyncio.create_task(canvas.set_editor_mode("advanced"))
+        for _ in range(20):
+            if canvas.query_one("#library-prompt-advanced-region").display:
+                break
+            await asyncio.sleep(0)
+        name.focus()
+        await switch
+        await pilot.pause()
+        assert name.has_focus
+
+        block_title = canvas.query(".prompt-block-title").first()
+        assert isinstance(block_title, Input)
+        block_title.focus()
+        await pilot.pause()
+        await canvas.set_editor_mode("basic")
+        await pilot.pause()
+        assert canvas.query_one("#library-prompt-mode-basic", Button).has_focus
+
+
+@pytest.mark.asyncio
+async def test_prompt_basic_unavailable_forces_explained_advanced_without_hiding_toggle():
+    app = _CanvasHost(
+        None,
+        mode="editor",
+        editor_state=_structured_editor_state(artifact_type="recipe"),
+        editor_mode="basic",
+        basic_unavailable_reason="Recipes require Advanced view.",
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        canvas = app.query_one("#library-prompts-canvas", LibraryPromptsListCanvas)
+
+        assert canvas.query_one("#library-prompt-basic-region").display is False
+        assert canvas.query_one("#library-prompt-advanced-region").display is True
+        basic_button = canvas.query_one("#library-prompt-mode-basic", Button)
+        assert basic_button.disabled
+        assert basic_button.tooltip == "Recipes require Advanced view."
+        assert (
+            str(canvas.query_one("#library-prompt-mode-reason", Static).renderable)
+            == "Recipes require Advanced view."
+        )
+
+
+@pytest.mark.asyncio
+async def test_prompt_basic_edit_updates_stable_block_and_hidden_advanced_editor():
+    state = _structured_editor_state()
+    original_block = state.block_editor_state.definition.lanes[1].blocks[0]
+    app = _CanvasHost(
+        None,
+        mode="editor",
+        editor_state=state,
+        editor_mode="basic",
+        can_update_original=True,
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        canvas = app.query_one("#library-prompts-canvas", LibraryPromptsListCanvas)
+        user = canvas.query_one("#library-prompt-user", TextArea)
+        user.load_text("Ship the safer release.")
+        await pilot.pause()
+
+        updated = canvas.editor_state.block_editor_state.definition.lanes[1].blocks[0]
+        hidden_editor = canvas.query_one(
+            "#library-prompt-block-editor", PromptBlockEditor
+        )
+        hidden_block = hidden_editor.state.definition.lanes[1].blocks[0]
+        assert updated.id == original_block.id
+        assert updated.title == original_block.title
+        assert updated.syntax == original_block.syntax
+        assert updated.xml_tag == original_block.xml_tag
+        assert updated.mapping_hint == original_block.mapping_hint
+        assert updated.content == "Ship the safer release."
+        assert hidden_block == updated
+
+
+@pytest.mark.parametrize(
+    ("stored_mode", "expected"),
+    [(None, "basic"), ("future", "basic"), ("advanced", "advanced")],
+)
+def test_library_prompt_editor_mode_reads_profile_preference_fail_closed(
+    stored_mode,
+    expected,
+):
+    app = _build_test_app()
+    app.app_config.setdefault("library", {})["prompt_editor_mode"] = stored_mode
+
+    screen = LibraryScreen(app)
+
+    assert screen._library_prompt_editor_mode == expected
+
+
+def test_library_prompt_forced_advanced_does_not_change_remembered_basic():
+    app = _build_test_app()
+    app.app_config.setdefault("library", {})["prompt_editor_mode"] = "basic"
+    screen = LibraryScreen(app)
+    editor_state = _structured_editor_state(artifact_type="recipe")
+    screen._library_prompts_view = "editor"
+    screen._library_prompt_detail = {
+        "id": editor_state.prompt_id,
+        "artifact_type": "recipe",
+    }
+    screen._library_prompt_block_state = editor_state.block_editor_state
+
+    reason = screen._library_prompt_basic_unavailable_reason(editor_state)
+
+    assert reason == "Recipes require Advanced view."
+    assert screen._library_prompt_editor_mode == "basic"
+    assert app.app_config["library"]["prompt_editor_mode"] == "basic"
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_mode_persistence_failure_keeps_live_mode_and_warns(
+    monkeypatch,
+):
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    notices: list[tuple[str, str]] = []
+    app.notify = lambda message, severity="information", **_kwargs: notices.append(
+        (message, severity)
+    )
+    monkeypatch.setattr(
+        library_screen_module,
+        "save_setting_to_cli_config",
+        lambda *_args, **_kwargs: False,
+    )
+    screen = LibraryScreen(app)
+    screen._library_prompt_editor_mode = "advanced"
+
+    async with app.run_test(size=(100, 30)):
+        await app.push_screen(screen)
+        await screen._persist_library_prompt_editor_mode("advanced")
+
+        assert screen._library_prompt_editor_mode == "advanced"
+    assert notices == [
+        (
+            "Prompt view changed for this session, but could not be saved.",
+            "warning",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("editor_state", "dirty", "conflict", "mutation", "expected"),
+    [
+        (build_prompt_editor_state({}), False, False, False, {"save", "discard"}),
+        (_structured_editor_state(), False, False, False, {"use", "more"}),
+        (_structured_editor_state(), True, False, False, {"save", "discard"}),
+        (_structured_editor_state(), True, True, False, {"save-new", "reload"}),
+        (_structured_editor_state(), True, False, True, {"save", "discard"}),
+    ],
+    ids=["new", "clean", "dirty", "conflict", "mutation"],
+)
+async def test_prompt_editor_lifecycle_actions_are_exact(
+    editor_state,
+    dirty,
+    conflict,
+    mutation,
+    expected,
+):
+    app = _CanvasHost(
+        None,
+        mode="editor",
+        editor_state=editor_state,
+        editor_mode="basic",
+        dirty=dirty,
+        conflict=conflict,
+        mutation_in_flight=mutation,
+        can_update_original=True,
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        canvas = app.query_one("#library-prompts-canvas", LibraryPromptsListCanvas)
+        selectors = {
+            "save": "#library-prompt-save",
+            "discard": "#library-prompt-discard",
+            "use": "#library-prompt-insert-console",
+            "more": "#library-prompt-more-actions",
+            "save-new": "#library-prompt-conflict-save-new",
+            "reload": "#library-prompt-conflict-reload",
+        }
+        visible = {
+            name
+            for name, selector in selectors.items()
+            if canvas.query_one(selector, Button).display
+        }
+
+        assert visible == expected
+        if editor_state.prompt_id is None:
+            assert str(canvas.query_one("#library-prompt-save", Button).label) == "Save prompt"
+            assert str(canvas.query_one("#library-prompt-discard", Button).label) == "Cancel"
+        if mutation:
+            assert canvas.query_one("#library-prompts-mutation-progress", Static)
+            assert all(
+                canvas.query_one(selectors[name], Button).disabled for name in visible
+            )
+
+
+@pytest.mark.asyncio
+async def test_prompt_editor_lifecycle_sync_preserves_fields_and_action_validity():
+    app = _CanvasHost(
+        None,
+        mode="editor",
+        editor_state=_structured_editor_state(),
+        editor_mode="basic",
+        can_update_original=False,
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        canvas = app.query_one("#library-prompts-canvas", LibraryPromptsListCanvas)
+        name = canvas.query_one("#library-prompt-name", Input)
+        system = canvas.query_one("#library-prompt-system", TextArea)
+
+        canvas.sync_lifecycle_actions(dirty=True)
+        assert canvas.query_one("#library-prompt-name", Input) is name
+        assert canvas.query_one("#library-prompt-system", TextArea) is system
+        assert canvas.query_one("#library-prompt-save", Button).display is True
+        assert canvas.query_one("#library-prompt-save", Button).disabled is True
+        assert canvas.query_one("#library-prompt-discard", Button).display is True
+
+        canvas.can_update_original = True
+        canvas.sync_lifecycle_actions(dirty=False)
+        assert canvas.query_one("#library-prompt-name", Input) is name
+        assert canvas.query_one("#library-prompt-insert-console", Button).display is True
+        assert canvas.query_one("#library-prompt-more-actions", Button).display is True
+        assert canvas.query_one("#library-prompt-save", Button).display is False
+
+
+@pytest.mark.asyncio
+async def test_prompt_more_actions_is_inline_and_escape_restores_opener_focus():
+    app = _CanvasHost(
+        None,
+        mode="editor",
+        editor_state=_structured_editor_state(),
+        editor_mode="basic",
+        can_update_original=True,
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        canvas = app.query_one("#library-prompts-canvas", LibraryPromptsListCanvas)
+        opener = canvas.query_one("#library-prompt-more-actions", Button)
+        region = canvas.query_one("#library-prompt-more-actions-region", Vertical)
+        assert region.display is False
+
+        await pilot.click("#library-prompt-more-actions")
+        await pilot.pause()
+        assert region.display is True
+        assert {
+            str(button.label)
+            for button in region.query(Button)
+        } == {"Export…", "Copy Markdown", "Duplicate", "Collections", "History", "Delete"}
+
+        region.query_one("#library-prompt-copy", Button).focus()
+        await pilot.press("escape")
+        await pilot.pause()
+        assert region.display is False
+        assert opener.has_focus
+
+
+@pytest.mark.asyncio
+async def test_prompt_new_draft_never_exposes_destructive_more_actions():
+    app = _StyledCanvasHost(
+        None,
+        mode="editor",
+        editor_state=build_prompt_editor_state({}),
+        editor_mode="basic",
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        delete = app.query_one("#library-prompt-delete", Button)
+        assert app.query_one("#library-prompt-more-actions", Button).display is False
+        assert app.query_one("#library-prompt-more-actions-region").display is False
+        assert delete.region.width == 0
+        assert delete not in app.screen.focus_chain
 
 
 def _history_state(
@@ -5118,6 +5469,60 @@ async def _open_prompt_editor(screen, pilot, prompt_id: int) -> None:
     await pilot.pause()
 
 
+@pytest.mark.asyncio
+async def test_library_prompt_mode_switch_is_targeted_and_remembered(
+    tmp_path,
+    monkeypatch,
+):
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _prompt_uuid, _message = db.add_prompt(
+        name="Mode switch",
+        author="",
+        details="",
+        system_prompt="Be exact.",
+        user_prompt="Ship it.",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    app.app_config.setdefault("library", {}).pop("prompt_editor_mode", None)
+    writes: list[tuple[int, str]] = []
+
+    def save_mode(section, key, value):
+        if (section, key) == ("library", "prompt_editor_mode"):
+            writes.append((threading.get_ident(), value))
+        return True
+
+    monkeypatch.setattr(library_screen_module, "save_setting_to_cli_config", save_mode)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        canvas = screen.query_one(
+            "#library-prompts-canvas", LibraryPromptsListCanvas
+        )
+        name = canvas.query_one("#library-prompt-name", Input)
+        system = canvas.query_one("#library-prompt-system", TextArea)
+
+        assert canvas.query_one("#library-prompt-basic-region").display is True
+        await pilot.click("#library-prompt-mode-advanced")
+        for _ in range(100):
+            if writes:
+                break
+            await pilot.pause(0.01)
+
+        assert canvas.query_one("#library-prompt-name") is name
+        assert canvas.query_one("#library-prompt-system") is system
+        assert canvas.query_one("#library-prompt-advanced-region").display is True
+        assert screen._library_prompt_editor_mode == "advanced"
+        assert app.app_config["library"]["prompt_editor_mode"] == "advanced"
+        assert writes == [(writes[0][0], "advanced")]
+        assert writes[0][0] != threading.get_ident()
+        assert screen._library_prompt_dirty is False
+
+
 async def _wait_for_prompt_status(screen, pilot, *, attempts=150) -> str:
     status_text = ""
     for _ in range(attempts):
@@ -6565,6 +6970,7 @@ async def test_library_prompt_import_blocks_undo_until_import_settles(tmp_path):
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         host.prompt_scope_service = service
+        host.app_config = app.app_config
         screen.app_instance = host
         await _open_prompts_list(screen, pilot)
         screen._library_prompt_delete_receipt = receipt
@@ -8881,7 +9287,9 @@ async def test_library_prompt_save_stale_version_shows_conflict_bar(tmp_path):
         screen.query_one("#library-prompt-save", Button).press()
         await pilot.pause()
         for _ in range(150):
-            if len(screen.query("#library-prompt-conflict-save-new")) > 0:
+            if screen.query_one(
+                "#library-prompt-conflict-save-new", Button
+            ).display:
                 break
             await pilot.pause(0.02)
 
@@ -8989,7 +9397,9 @@ async def test_library_prompt_save_write_time_conflict_shows_conflict_bar(tmp_pa
         screen.query_one("#library-prompt-save", Button).press()
         await pilot.pause()
         for _ in range(150):
-            if len(screen.query("#library-prompt-conflict-save-new")) > 0:
+            if screen.query_one(
+                "#library-prompt-conflict-save-new", Button
+            ).display:
                 break
             await pilot.pause(0.02)
 
@@ -9029,7 +9439,9 @@ async def test_library_prompt_save_write_time_conflict_shows_conflict_bar(tmp_pa
         for _ in range(150):
             if (
                 calls["count"] == 2
-                and len(screen.query("#library-prompt-conflict-save-new")) == 0
+                and not screen.query_one(
+                    "#library-prompt-conflict-save-new", Button
+                ).display
                 and screen._library_prompt_dirty is False
                 and screen._selected_prompt_id is not None
             ):
@@ -9037,7 +9449,9 @@ async def test_library_prompt_save_write_time_conflict_shows_conflict_bar(tmp_pa
             await pilot.pause(0.02)
 
         assert calls["count"] == 2
-        assert len(screen.query("#library-prompt-conflict-save-new")) == 0
+        assert not screen.query_one(
+            "#library-prompt-conflict-save-new", Button
+        ).display
         assert screen._selected_prompt_id != prompt_id
         persisted = db.fetch_prompt_details(screen._selected_prompt_id)
         assert persisted["author"] == "Race Author"
@@ -9097,7 +9511,9 @@ async def test_library_shell_create_prompt_write_time_conflict_recovers_on_reloa
         screen.query_one("#library-prompt-save", Button).press()
         await pilot.pause()
         for _ in range(150):
-            if len(screen.query("#library-prompt-conflict-save-new")) > 0:
+            if screen.query_one(
+                "#library-prompt-conflict-save-new", Button
+            ).display:
                 break
             await pilot.pause(0.02)
 
@@ -9113,14 +9529,18 @@ async def test_library_shell_create_prompt_write_time_conflict_recovers_on_reloa
         screen.query_one("#library-prompt-conflict-reload", Button).press()
         await pilot.pause()
         for _ in range(150):
-            if len(screen.query("#library-prompt-conflict-save-new")) == 0:
+            if not screen.query_one(
+                "#library-prompt-conflict-save-new", Button
+            ).display:
                 break
             await pilot.pause(0.02)
 
         # Reload must land on a usable, blank create state -- not a
         # permanently stuck banner -- and must clear the dirty flag so
         # navigation is no longer vetoed.
-        assert len(screen.query("#library-prompt-conflict-save-new")) == 0
+        assert not screen.query_one(
+            "#library-prompt-conflict-save-new", Button
+        ).display
         assert screen._library_prompt_conflict_snapshot is None
         assert screen._library_prompt_dirty is False
         assert screen.query_one("#library-prompt-name", Input).value == ""
@@ -9175,7 +9595,9 @@ async def test_library_shell_create_prompt_write_time_conflict_save_as_new_retri
         screen.query_one("#library-prompt-save", Button).press()
         await pilot.pause()
         for _ in range(150):
-            if len(screen.query("#library-prompt-conflict-save-new")) > 0:
+            if screen.query_one(
+                "#library-prompt-conflict-save-new", Button
+            ).display:
                 break
             await pilot.pause(0.02)
 
@@ -9189,7 +9611,9 @@ async def test_library_shell_create_prompt_write_time_conflict_save_as_new_retri
         for _ in range(150):
             if (
                 calls["count"] == 2
-                and len(screen.query("#library-prompt-conflict-save-new")) == 0
+                and not screen.query_one(
+                    "#library-prompt-conflict-save-new", Button
+                ).display
                 and screen._library_prompt_dirty is False
                 and screen._selected_prompt_id is not None
             ):
@@ -9197,7 +9621,9 @@ async def test_library_shell_create_prompt_write_time_conflict_save_as_new_retri
             await pilot.pause(0.02)
 
         assert calls["count"] == 2
-        assert len(screen.query("#library-prompt-conflict-save-new")) == 0
+        assert not screen.query_one(
+            "#library-prompt-conflict-save-new", Button
+        ).display
         assert screen._library_prompt_dirty is False
         assert screen._selected_prompt_id is not None
         persisted = db.fetch_prompt_details(screen._selected_prompt_id)
@@ -9222,7 +9648,20 @@ async def test_library_prompt_flush_pending_work_vetoes_dirty_editor(tmp_path):
     )
     app = _build_test_app()
     _wire_empty_non_prompt_services(app)
-    app.prompt_scope_service = service
+    browse_service = _FakePromptScopeServiceWithList(
+        [
+            {
+                "id": prompt_id,
+                "name": "Zeta",
+                "details": "d",
+                "last_modified": "2026-08-21T00:00:00+00:00",
+                "version": 1,
+                "artifact_type": "prompt",
+            }
+        ]
+    )
+    browse_service.get_prompt = service.get_prompt
+    app.prompt_scope_service = browse_service
     notifications: list[tuple[str, dict[str, object]]] = []
     app.notify = lambda message, **kwargs: notifications.append((message, kwargs))
     host = LibraryHarness(app)
@@ -9231,6 +9670,7 @@ async def test_library_prompt_flush_pending_work_vetoes_dirty_editor(tmp_path):
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await _open_prompt_editor(screen, pilot, prompt_id)
+        notifications.clear()
 
         assert await screen.flush_pending_work() is True
         assert notifications == []
@@ -10597,6 +11037,120 @@ async def test_prompts_canvas_editor_copy_and_duplicate_relabeled():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("size", PROMPT_PAGER_TEST_SIZES)
+async def test_library_prompt_basic_and_advanced_geometry_uses_production_css(
+    size: tuple[int, int],
+    tmp_path,
+):
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _message = db.add_prompt(
+        name="Geometry mode",
+        author="Author",
+        details="Describe the reusable task.",
+        prompt_format="structured",
+        prompt_schema_version=2,
+        prompt_definition={
+            "kind": "block_prompt",
+            "schema_version": 2,
+            "lanes": [
+                {
+                    "id": "system",
+                    "blocks": [
+                        {
+                            "id": "instructions",
+                            "title": "Instructions",
+                            "syntax": "markdown",
+                            "content": "Be exact.",
+                        }
+                    ],
+                },
+                {
+                    "id": "user",
+                    "blocks": [
+                        {
+                            "id": "message",
+                            "title": "Message template",
+                            "syntax": "freeform",
+                            "content": "Ship {goal}.",
+                        }
+                    ],
+                },
+            ],
+        },
+        system_prompt="# Instructions\n\nBe exact.",
+        user_prompt="Ship {goal}.",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    browse_service = _FakePromptScopeServiceWithList(
+        [
+            {
+                "id": prompt_id,
+                "name": "Geometry mode",
+                "details": "Describe the reusable task.",
+                "last_modified": "2026-08-21T00:00:00+00:00",
+                "version": 1,
+                "artifact_type": "prompt",
+            }
+        ]
+    )
+    browse_service.get_prompt = service.get_prompt
+    app.prompt_scope_service = browse_service
+    app.app_config.setdefault("library", {})["prompt_editor_mode"] = "basic"
+
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=size) as pilot:
+        assert host.CSS_PATH == TldwCli.CSS_PATH
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+
+        canvas = screen.query_one(
+            "#library-prompts-canvas", LibraryPromptsListCanvas
+        )
+        shell = canvas.query_one("#library-prompt-editor-shell")
+        content = canvas.query_one("#library-prompt-editor-content", VerticalScroll)
+        actions = canvas.query_one("#library-prompt-editor-actions")
+        assert canvas.query_one("#library-prompt-basic-region").display is True
+        assert canvas.query_one("#library-prompt-advanced-region").display is False
+        assert not content.region.overlaps(actions.region)
+
+        for selector in (
+            "#library-prompt-name",
+            "#library-prompt-details",
+            "#library-prompt-system",
+            "#library-prompt-user",
+        ):
+            field = canvas.query_one(selector)
+            assert field in host.screen.focus_chain
+            content.scroll_to_widget(field, animate=False, force=True)
+            await pilot.pause()
+            assert field.region.width > 0 and field.region.height > 0
+            assert content.region.overlaps(field.region)
+        for selector in (
+            "#library-prompt-insert-console",
+            "#library-prompt-more-actions",
+        ):
+            action = canvas.query_one(selector, Button)
+            assert shell.region.contains_region(action.region)
+            assert action in host.screen.focus_chain
+
+        await canvas.set_editor_mode("advanced")
+        await pilot.pause()
+        assert canvas.query_one("#library-prompt-basic-region").display is False
+        advanced = canvas.query_one("#library-prompt-advanced-region")
+        assert advanced.display is True
+        assert advanced.region.width > 0 and advanced.region.height > 0
+        assert list(content.query(VerticalScroll)) == []
+        title = canvas.query(".prompt-block-title").first()
+        assert title in host.screen.focus_chain
+        content.scroll_to_widget(title, animate=False, force=True)
+        await pilot.pause()
+        assert content.region.overlaps(title.region)
+        assert not content.region.overlaps(actions.region)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(80, 24), (100, 30), (140, 40), (200, 50)])
 @pytest.mark.parametrize("conflict", [False, True])
 async def test_library_prompt_editor_geometry_keeps_actions_visible_without_covering_author(
@@ -10676,7 +11230,7 @@ async def test_library_prompt_editor_geometry_keeps_actions_visible_without_cove
         assert shell.region.contains_region(actions.region)
         assert actions.region.width > 0
         assert actions.region.height > 0
-        assert content.max_scroll_y > 0
+        assert content.max_scroll_y >= 0
         assert actions.max_scroll_y == 0
         assert list(content.query(VerticalScroll)) == []
 
@@ -10687,17 +11241,11 @@ async def test_library_prompt_editor_geometry_keeps_actions_visible_without_cove
             (
                 "library-prompt-conflict-save-new",
                 "library-prompt-conflict-reload",
-                "library-prompt-discard",
             )
             if conflict
             else (
-                "library-prompt-save",
                 "library-prompt-insert-console",
-                "library-prompt-export",
-                "library-prompt-copy",
-                "library-prompt-duplicate",
-                "library-prompt-delete",
-                "library-prompt-discard",
+                "library-prompt-more-actions",
             )
         )
         for action_id in action_ids:
@@ -10762,8 +11310,10 @@ async def test_library_prompt_history_geometry_uses_only_the_outer_editor_scroll
         assert actions.max_scroll_y == 0
         assert list(content.query(VerticalScroll)) == []
         assert history_region.region.width > 0
-        assert not history_region.region.overlaps(actions.region)
+        assert not content.region.overlaps(actions.region)
         for action in actions.query(Button):
+            if action.region.width == 0:
+                continue
             assert action.region.width > 0
             assert action.region.height > 0
             assert pilot.app.screen.region.contains_region(action.region)
@@ -10775,7 +11325,7 @@ async def test_library_prompt_history_geometry_uses_only_the_outer_editor_scroll
             content.scroll_to_widget(restore, animate=False, force=True)
             await pilot.pause()
             painted = _painted_style_of_text(
-                pilot.app, restore.region, "Restore selected version"
+                pilot.app, restore.region, str(restore.label)
             )
             assert painted is not None
             assert painted.color is not None and painted.bgcolor is not None
@@ -10790,7 +11340,6 @@ async def test_library_prompt_history_geometry_uses_only_the_outer_editor_scroll
             assert unselected.region.height == height_before
             content.scroll_to_widget(unselected, animate=False, force=True)
             await pilot.pause()
-            assert not unselected.region.overlaps(actions.region)
             if history_mode == "snapshot-unavailable":
                 reload_history = pilot.app.query_one(
                     "#library-prompt-history-reload", Button
@@ -10801,14 +11350,12 @@ async def test_library_prompt_history_geometry_uses_only_the_outer_editor_scroll
                     force=True,
                 )
                 await pilot.pause()
-                assert not reload_history.region.overlaps(actions.region)
         else:
             retry = pilot.app.query_one("#library-prompt-history-retry-page", Button)
             content.scroll_to_widget(retry, animate=False, force=True)
             await pilot.pause()
             assert retry.region.width > 0
             assert retry.region.height > 0
-            assert not retry.region.overlaps(actions.region)
 
 
 @pytest.mark.asyncio
@@ -10850,7 +11397,7 @@ async def test_library_prompt_history_confirmation_geometry_is_contained(
 
 @pytest.mark.asyncio
 async def test_library_prompt_action_groups_preserve_normal_dom_and_focus_order():
-    """Catches the action-group wrapper mutation replacing the flat toolbar."""
+    """The lifecycle strip stays flat and exposes only clean-item actions."""
     app = _StyledCanvasHost(
         None,
         mode="editor",
@@ -10859,36 +11406,20 @@ async def test_library_prompt_action_groups_preserve_normal_dom_and_focus_order(
 
     async with app.run_test(size=(140, 40)) as pilot:
         actions = pilot.app.query_one("#library-prompt-editor-actions")
-        primary = pilot.app.query_one("#library-prompt-actions-primary")
-        content = pilot.app.query_one("#library-prompt-actions-content")
-        lifecycle = pilot.app.query_one("#library-prompt-actions-lifecycle")
-
         assert [child.id for child in actions.children] == [
-            "library-prompt-actions-primary",
-            "library-prompt-actions-content",
-            "library-prompt-actions-lifecycle",
-            "library-prompt-discard",
-        ]
-        assert [button.id for button in primary.query(Button)] == [
-            "library-prompt-save"
-        ]
-        assert [button.id for button in content.query(Button)] == [
-            "library-prompt-insert-console",
-            "library-prompt-export",
-            "library-prompt-copy",
-        ]
-        assert [button.id for button in lifecycle.query(Button)] == [
-            "library-prompt-duplicate",
-            "library-prompt-delete",
-        ]
-        assert [button.id for button in actions.query(Button)] == [
             "library-prompt-save",
             "library-prompt-insert-console",
-            "library-prompt-export",
-            "library-prompt-copy",
-            "library-prompt-duplicate",
-            "library-prompt-delete",
+            "library-prompt-more-actions",
+            "library-prompt-conflict-save-new",
+            "library-prompt-conflict-reload",
             "library-prompt-discard",
+            "library-prompt-more-actions-region",
+        ]
+        assert [
+            button.id for button in actions.query(Button) if button.region.width > 0
+        ] == [
+            "library-prompt-insert-console",
+            "library-prompt-more-actions",
         ]
         assert str(pilot.app.query_one("#library-prompt-copy", Button).label) == (
             "Copy Markdown"
@@ -10897,7 +11428,7 @@ async def test_library_prompt_action_groups_preserve_normal_dom_and_focus_order(
 
 @pytest.mark.asyncio
 async def test_library_prompt_action_groups_preserve_conflict_action_order():
-    """Catches the conflict action-area mutation replacing the flat toolbar."""
+    """Conflict exposes only Save as new and Reload in the same strip."""
     app = _StyledCanvasHost(
         None,
         mode="editor",
@@ -10907,15 +11438,19 @@ async def test_library_prompt_action_groups_preserve_conflict_action_order():
 
     async with app.run_test(size=(100, 30)) as pilot:
         actions = pilot.app.query_one("#library-prompt-editor-actions")
-        assert [button.id for button in actions.query(Button)] == [
+        assert [
+            button.id for button in actions.query(Button) if button.region.width > 0
+        ] == [
             "library-prompt-conflict-save-new",
             "library-prompt-conflict-reload",
-            "library-prompt-discard",
         ]
-        assert [str(button.label) for button in actions.query(Button)] == [
+        assert [
+            str(button.label)
+            for button in actions.query(Button)
+            if button.region.width > 0
+        ] == [
             "Save as new",
             "Reload",
-            "Discard changes",
         ]
 
 

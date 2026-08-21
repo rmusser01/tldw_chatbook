@@ -18,7 +18,21 @@ Press **Ctrl+3** to open Library, then click **Prompts** in the rail's
 
 ## Layout tour
 
-![Prompt editor](../images/library/prompts-editor.svg)
+The editor opens in **Basic** for an eligible Prompt. Both views edit the same
+working copy; switching views does not convert, flatten, or save it.
+
+```text
+Basic                                    Advanced
++----------------------------------+     +----------------------------------+
+| [Basic] [Advanced]               |     | [Basic] [Advanced]               |
+| Name                             |     | Name                             |
+| Description                      |     | Description                      |
+| Instructions                     |     | Structured System/User blocks    |
+| Message template                 |     | Keywords · Author · Collections  |
+|                                  |     | Retained history                  |
+| [lifecycle action] [secondary]   |     | [lifecycle action] [secondary]   |
++----------------------------------+     +----------------------------------+
+```
 
 - **Prompts list** — the default view: an exact "Prompts (N)" header, the
   "Filter prompts… (Enter)" field, a local collection selector, a toolbar
@@ -32,10 +46,11 @@ Press **Ctrl+3** to open Library, then click **Prompts** in the rail's
   "Import…": a "File or folder path…" field, then "Browse…", "Import",
   and "Cancel", with an outcome line underneath.
 - **Editor** — opens when you click a Prompt or Recipe (or create one):
-  "‹ Back to list", identity fields, editable System/User blocks, compiled
-  previews, keywords, author, a muted meta line ("Modified 4h · v2"; "New
-  prompt" before the first save), a save-status line, and a persistent action
-  area. Its groups are primary save, content actions, then lifecycle actions.
+  "‹ Back to list", a Basic/Advanced switch, shared identity fields, a muted
+  meta line ("Modified 4h · v2"; "New prompt" before the first save), a
+  save-status line, and a fixed lifecycle action area. Basic shows the concise
+  Instructions and Message template fields. Advanced adds structured block,
+  metadata, collection, and retained-history controls.
 
 ## Features & controls
 
@@ -178,9 +193,16 @@ archive aborts instead of claiming a partial success.
   characters).
 - **Description** — what the prompt is for; shown under the name in the
   list.
-- **System and User blocks** — structured Prompts and Recipes expose their
-  blocks for editing. The compiled previews below them show the exact System
-  and User Markdown produced by those blocks.
+- **Basic: Instructions and Message template** — edits the exact existing
+  System/User block when each lane has at most one block. The stored block ID,
+  order, syntax, wrapper, mapping hint, and version behavior are preserved.
+- **Advanced: System and User blocks** — exposes the complete structured
+  block editor plus compiled previews, keywords, author, Collections, and
+  retained history.
+- **Remembered view** — choosing Basic or Advanced is saved for this profile.
+  A Recipe, multi-block Prompt, compatibility/conversion state, version
+  conflict, or record that cannot be safely updated opens in Advanced with a
+  reason. This temporary safety override does not replace the remembered view.
 - **Compatibility artifacts** — an unsupported structured definition is
   read-only. If its lanes can be recovered, **Convert and save as new Prompt**
   creates a detached, editable Prompt working copy: **Save Prompt** is enabled,
@@ -211,8 +233,7 @@ Prompts rail count is refreshed and the hidden exact list is invalidated. **‹ 
 to list** then reloads the current search/collection/sort/page scope before showing
 it; the membership outcome never says that the Prompt itself was saved.
 
-Nothing autosaves here — use **Save Prompt**, **Save Recipe**, or **Update
-original**. While you have unsaved edits the meta line shows an "Unsaved
+Nothing autosaves here. While you have unsaved edits the meta line shows an "Unsaved
 changes" marker, and leaving the editor (Back, another row, another screen) is
 blocked until you save or resolve the edit. The save-status line reports the
 outcome:
@@ -266,14 +287,28 @@ and selected retained row unchanged so you can correct the issue or retry.
 
 ### The action area
 
-| Control | What it does |
+The fixed action area shows only actions valid for the current lifecycle:
+
+| State | Visible actions |
 |---|---|
-| Save Prompt / Save Recipe / Update original | Saves the current Prompt or Recipe (explicit save only) |
-| Use in Console | For a saved, clean Prompt, opens the shared variable/System authorization dialog when needed, then appends the selected User text to the Console composer and optionally replaces the session System prompt. For an editable Recipe, creates a detached unsaved Prompt copy in the editor; nothing is applied. |
-| Export… | Saves a representable Prompt or Recipe as a Markdown file ("Export Prompt as Markdown" dialog). Compatibility or legacy Recipes that would lose their type fail closed and require **Convert and save as a new Prompt** first. |
-| Copy Markdown | Copies the exact live Markdown working copy, including unsaved create, duplicate, conversion, and block edits: System/User text plus applicable structured Prompt/Recipe metadata. Success follows a clipboard write; unavailable or failed clipboard support shows a warning or error. Compatibility or legacy Recipes that would flatten to Prompt-looking Markdown require **Convert and save as a new Prompt** first. |
-| Duplicate prompt | Opens a new unsaved copy named "<name> (copy)" with all fields prefilled. Compatibility or legacy Recipes that cannot retain Recipe identity require **Convert and save as a new Prompt** first. |
-| Delete | Opens a confirmation before soft-deleting the saved Prompt or Recipe; success leaves an in-place Undo/Dismiss receipt, and a dirty editor is warned that its unsaved working copy will be discarded |
+| New | **Save prompt**, **Cancel** |
+| Saved and clean | **Use in Console**, **More actions** |
+| Saved and changed | **Save changes**, **Discard changes** |
+| Version conflict | **Save as new**, **Reload** |
+| Mutation in progress | The relevant actions remain in place but are disabled with a readable reason |
+
+**More actions** expands inline for a saved, clean item. It contains Export…,
+Copy Markdown, Duplicate, Collections, History, and Delete. Press **Escape** to
+close it and return focus to More actions.
+
+- **Use in Console** opens the shared variable/System authorization dialog
+  when needed, appends the selected User text to the Console composer, and can
+  replace the session System prompt with confirmation.
+- **Export…** saves a representable Prompt or Recipe as Markdown.
+- **Copy Markdown** copies the exact live working copy.
+- **Duplicate** opens a new unsaved copy named `<name> (copy)`.
+- **Delete** confirms before soft-deleting the saved item and leaves an
+  Undo/Dismiss receipt after success.
 
 For a Prompt, **Use in Console** works differently from the notes and media
 actions: instead of staging a source for retrieval, it appends selected User
