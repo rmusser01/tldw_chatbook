@@ -449,12 +449,12 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             classes="destination-section",
             markup=False,
         )
-        # Database mode persists notes in the Library; Files edits a folder
-        # directly, while Sync mirrors a folder into this database.
+        # Database mode persists notes in the Library; Folder files edits a
+        # folder directly, while Add from files owns import/sync setup.
         database_purpose = Static(
             "These notes live in the Library's own database — for notes "
-            "that live in a folder on disk, switch to Files, or use Sync "
-            "to mirror one in.",
+            "that live in a folder on disk, switch to Folder files. To copy "
+            "or keep a folder synced, choose Add from files.",
             id="library-notes-database-purpose",
             markup=False,
         )
@@ -625,7 +625,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     )
                     disabled = list_state.operation_running and not view_import
                     yield Button(
-                        library_disabled_action_label(label, disabled),
+                        library_disabled_action_label(
+                            "View import" if view_import else label, disabled
+                        ),
                         id=button_id,
                         classes="library-canvas-action",
                         compact=True,

@@ -422,8 +422,8 @@ async def test_database_mode_list_carries_a_placement_sentence(widget_pilot):  #
         ).renderable
         text = getattr(purpose, "plain", str(purpose))
         assert "database" in text.lower()
-        assert "Files" in text
-        assert "Sync" in text
+        assert "Folder files" in text
+        assert "Add from files" in text
 
 
 async def test_tree_projection_renders_hierarchy_and_placement_metadata(widget_pilot):  # noqa: F811

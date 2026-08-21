@@ -304,6 +304,31 @@ click-driven. Global navigation keys live in the [guide index](../index.md).
 - [Library overview](../library.md) — the rail, landing canvas, and the
   other Library sources.
 
+## Verification evidence
+
+TASK-19012 verifies this journey through the real `LibraryScreen` hierarchy
+and the shipped CSS bundle. The mounted matrix covers Database Notes and its
+Add-from-files chooser at wide and 60×20 sizes, the visibly unavailable server
+destination, lasting-root attention/recovery after a fresh screen, and Folder
+files with Session Git at its supported 40×20 layout. It checks painted text,
+focus, compositor containment, disabled-action contrast, and the physical
+messages that enter Import once.
+
+For a local smoke check, run:
+
+```bash
+python Helper_Scripts/verify_notes_files_sync_tui.py
+```
+
+The helper creates a disposable HOME, XDG roots, config, and data directory
+before importing the app. It disables model downloads, scrubs caller
+credentials, proxies, SSH, and Git configuration, launches the TUI under a
+unique tmux socket, and writes a bounded evidence directory containing
+checksummed Library, New note, and Notes list frames at wide, 60×20, and 40×20
+sizes. It never opens or migrates the caller's Chatbook databases. The
+temporary profile is removed after its decoy config checksum is rechecked; the
+evidence directory remains for inspection.
+
 ## Quirks & troubleshooting
 
 - **Checking does not change Notes** — source discovery, parsing, prior-receipt

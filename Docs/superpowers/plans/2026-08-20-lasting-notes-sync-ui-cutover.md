@@ -189,19 +189,19 @@ TASK-19001 + TASK-19002 + TASK-19011 -> TASK-19012 final evidence
 - Modify: relevant text captures/screenshots only if they can be regenerated from the isolated profile
 - Modify: `backlog/docs/lessons-testing-evidence.md` or `backlog/docs/lessons-live-verification.md` only if a real new incident warrants a lesson
 
-- [ ] Write one production-shaped journey matrix.
+- [x] Write one production-shaped journey matrix.
 
   Mount the real `LibraryScreen` hierarchy and exact `TldwCli.CSS_PATH`. Cover Library notes authority, Folder files authority/actions, Import once, lasting setup/review/attention/recovery, and Session Git. Render wide and 60x20 Notes cases; render Folder Files/Session Git at their supported 40x20 alternate navigator/editor layout.
 
-- [ ] Assert pixels/compositor text and focus, not style properties alone.
+- [x] Assert pixels/compositor text and focus, not style properties alone.
 
   Capture `app.export_screenshot()` SVG or compositor strips. Check labels, authority, non-ready next actions, disabled/error contrast, disclosure containment, scroll owner, Escape behavior, focus restoration, and truthful footer hints. Add representative theme measurements for disabled and error text.
 
-- [ ] Prove lifecycle and recovery across restart with isolated files.
+- [x] Prove lifecycle and recovery across restart with isolated files.
 
   Use temporary config and data directories. Create an incomplete journal in the scratch private store, start the real app runtime, and assert it becomes resumed or Needs attention before watcher admission. Confirm the decoy/default config and real user data paths remain byte-identical.
 
-- [ ] Add a safe live-TUI helper and run it.
+- [x] Add a safe live-TUI helper and run it.
 
   `Helper_Scripts/verify_notes_files_sync_tui.py` creates its own temporary directory, writes an explicit scratch `TLDW_CONFIG_PATH` whose `[paths].data_dir` is also scratch, disables model-catalog networking, seeds only fixture notes/files/Git repositories, launches the app under a unique tmux socket, captures frames, and tears down. It must never rely on the caller's real profile or run a schema migration against it.
 
@@ -213,7 +213,7 @@ TASK-19001 + TASK-19002 + TASK-19011 -> TASK-19012 final evidence
 
   Expected: a bounded evidence directory path, checksums showing decoy/default files unchanged, and PASS summaries for the reviewed journeys. Inspect the captured frames top-to-bottom before accepting the result.
 
-- [ ] Run the broad programme gate.
+- [x] Run the broad programme gate.
 
   ```bash
   ../../.venv/bin/python tldw_chatbook/css/check_bundle_sync.py
@@ -222,11 +222,11 @@ TASK-19001 + TASK-19002 + TASK-19011 -> TASK-19012 final evidence
   git diff --check
   ```
 
-- [ ] Reproduce any inherited failures on the untouched base before documenting them.
+- [x] Reproduce any inherited failures on the untouched base before documenting them.
 
   A green focused run is not evidence for an unreachable product flow; a failing broad run is not automatically caused by this branch. Record exact commands, counts, and base comparison in TASK-19012 Implementation Notes.
 
-- [ ] Close the programme.
+- [x] Close the programme.
 
   Update guides and design status, check every TASK-19012 AC, add exact automated/live evidence and the ADR-059/073 check, and set TASK-19012 Done. Audit TASK-19000 through TASK-19012 status from the current branch; do not claim the programme complete while any prerequisite remains open.
 

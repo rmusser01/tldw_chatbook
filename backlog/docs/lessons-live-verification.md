@@ -1324,3 +1324,19 @@ single visual confirmation and report exactly what was and was not observed,
 per the honesty rule already in this file's header — a slow repro can
 consume the very verification budget it was meant to spend on other
 scenarios.
+## A broad screen needle can certify the wrong subview (TASK-19012, 2026-08-21)
+
+**What happened.** The isolated Notes journey sent the Library's advertised
+`n` shortcut and waited for `Library notes`. The check passed at wide and
+60-column sizes, and the helper reported that it had captured the Database
+Notes route. Reading the frames top-to-bottom showed the shortcut had opened
+**New note**: the heading, authority strip, and template list all contained the
+broad `Library notes` needle, but the Add-from-files entry the run meant to
+verify was not present. The process was healthy, the route was real, and the
+assertion was still false evidence.
+
+**What to do.** After every synthetic navigation input, assert a marker unique
+to the intended subview and inspect the capture itself. Here the verifier now
+captures New note honestly, sends Escape, and requires `Add from files` before
+recording the Notes-list frames. A parent-surface title proves only that the
+parent mounted; it cannot certify which retained child view is active.

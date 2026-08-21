@@ -61,6 +61,23 @@ def _resolve_picker_immediately(screen, selected_path: Path | None) -> list[obje
     return dialogs
 
 
+async def _open_import_once(screen, pilot, selected_path: Path | None) -> list[object]:
+    """Enter Import once through the shipped Add-from-files authority chooser."""
+    await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
+    dialogs = _resolve_picker_immediately(screen, selected_path)
+    screen.query_one("#library-notes-add-from-files").press()
+    await _wait_for_selector(screen, pilot, "#notes-add-import-once")
+    screen.query_one("#notes-add-import-once").press()
+    await _wait_for_selector(
+        screen,
+        pilot,
+        "#note-import-destination"
+        if selected_path is not None
+        else "#library-notes-import-back",
+    )
+    return dialogs
+
+
 async def test_picker_file_enters_destination_without_immediate_note_mutation(
     tmp_path: Path,
 ) -> None:
@@ -74,12 +91,9 @@ async def test_picker_file_enters_destination_without_immediate_note_mutation(
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-import")
+        await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
         canvas = screen.query_one("#library-notes-canvas", LibraryNotesCanvas)
-        dialogs = _resolve_picker_immediately(screen, source)
-
-        screen.query_one("#library-notes-import").press()
-        await _wait_for_selector(screen, pilot, "#note-import-destination")
+        dialogs = await _open_import_once(screen, pilot, source)
 
         assert dialogs
         assert screen.query_one("#library-notes-canvas") is canvas
@@ -90,7 +104,9 @@ async def test_picker_file_enters_destination_without_immediate_note_mutation(
         assert app.notes_scope_service.save_calls == []
 
 
-async def test_import_back_retains_canvas_and_legacy_sync_still_opens() -> None:
+async def test_import_back_retains_canvas_and_shows_truthful_lasting_availability() -> (
+    None
+):
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
     host = LibraryHarness(app)
@@ -99,19 +115,25 @@ async def test_import_back_retains_canvas_and_legacy_sync_still_opens() -> None:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-import")
+        await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
         canvas = screen.query_one("#library-notes-canvas", LibraryNotesCanvas)
-        _resolve_picker_immediately(screen, None)
-
-        screen.query_one("#library-notes-import").press()
+        await _open_import_once(screen, pilot, None)
         await _wait_for_selector(screen, pilot, "#library-notes-import-back")
         screen.query_one("#library-notes-import-back").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-sync-open")
+        await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
 
         assert screen.query_one("#library-notes-canvas") is canvas
-        screen.query_one("#library-notes-sync-open").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-sync-folder")
-        assert screen._library_notes_view == "sync"
+        screen.query_one("#library-notes-add-from-files").press()
+        await _wait_for_selector(screen, pilot, "#notes-add-keep-synced")
+        keep_synced = screen.query_one("#notes-add-keep-synced", Button)
+        keep_synced.press()
+        await pilot.pause()
+        assert screen._library_notes_sync_controller.snapshot.phase == "choose"
+        assert "unavailable" in (
+            screen._library_notes_sync_controller.snapshot.status_line.casefold()
+        )
+        assert screen.query_one("#notes-add-import-once", Button).disabled is False
+        assert screen._library_notes_view == "lasting_add"
 
 
 async def test_hidden_import_snapshot_is_retained_without_dom_sync() -> None:
@@ -123,7 +145,7 @@ async def test_hidden_import_snapshot_is_retained_without_dom_sync() -> None:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-import")
+        await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
         hidden = replace(
             screen._library_note_import_snapshot,
             phase="receipt",
@@ -160,7 +182,7 @@ async def test_receipt_back_to_list_can_reopen_the_exact_same_session_receipt() 
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-import")
+        await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
         controller = screen._library_note_import_controller
         controller._state = initial_note_import_snapshot(latest_receipt=receipt)
         controller.revisit_receipt()
@@ -186,7 +208,7 @@ async def test_back_during_import_offers_view_and_reopens_same_progress() -> Non
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-import")
+        await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
         controller = screen._library_note_import_controller
         active = replace(controller.snapshot, phase=NoteImportPhase.IMPORTING)
         controller._state = active
@@ -196,9 +218,9 @@ async def test_back_during_import_offers_view_and_reopens_same_progress() -> Non
         await _wait_for_selector(screen, pilot, "#library-notes-import-back")
 
         screen.query_one("#library-notes-import-back").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-import")
-        reopen = screen.query_one("#library-notes-import")
-        assert str(reopen.label) == "View import"
+        await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
+        reopen = screen.query_one("#library-notes-add-from-files")
+        assert reopen.label.plain == "View import"
 
         begin_selection = Mock()
         picker = Mock()
@@ -208,6 +230,7 @@ async def test_back_during_import_offers_view_and_reopens_same_progress() -> Non
         await _wait_for_selector(screen, pilot, "#note-import-cancel")
 
         assert controller.snapshot is active
+        assert screen.focused is screen.query_one("#note-import-cancel")
         begin_selection.assert_not_called()
         picker.assert_not_called()
 
@@ -318,10 +341,7 @@ async def test_real_file_backed_screen_check_is_read_only_then_import_refreshes(
             screen = _active_library_screen(host)
             await _wait_for_library_shell(screen, pilot)
             screen.query_one("#library-row-browse-notes").press()
-            await _wait_for_selector(screen, pilot, "#library-notes-import")
-            _resolve_picker_immediately(screen, source)
-            screen.query_one("#library-notes-import").press()
-            await _wait_for_selector(screen, pilot, "#note-import-destination")
+            await _open_import_once(screen, pilot, source)
             screen.query_one("#note-import-destination").value = "Inbox"
             await pilot.pause()
 
@@ -408,7 +428,7 @@ async def test_hidden_import_fences_notes_mutations_until_receipt(
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-import")
+        await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
         controller = screen._library_note_import_controller
         active = replace(controller.snapshot, phase=NoteImportPhase.IMPORTING)
         controller._state = active
@@ -417,21 +437,19 @@ async def test_hidden_import_fences_notes_mutations_until_receipt(
         library_screen_module._sync_library_canvas(screen, "notes")
         await _wait_for_selector(screen, pilot, "#library-notes-import-back")
         screen.query_one("#library-notes-import-back").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-import")
+        await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
 
         for selector in (
             "#library-notes-new",
             "#library-notes-sort",
             "#library-notes-select-toggle",
-            "#library-notes-sync-open",
             "#library-notes-export",
         ):
             assert screen.query_one(selector, Button).disabled is True
         assert all(button.disabled for button in screen.query(".library-notes-row"))
-        view_import = screen.query_one("#library-notes-import", Button)
+        view_import = screen.query_one("#library-notes-add-from-files", Button)
         assert view_import.disabled is False
         assert view_import.label.plain == "View import"
-        assert screen._begin_library_notes_sync_run(tmp_path) is None
         assert screen._begin_library_notes_operation("export") is None
         with patch.object(screen, "run_worker") as run_worker:
             screen._schedule_library_notes_tree_mutation(
@@ -444,7 +462,7 @@ async def test_hidden_import_fences_notes_mutations_until_receipt(
         await _wait_for_selector(screen, pilot, "#note-import-cancel")
         assert controller.snapshot is active
         screen.query_one("#library-notes-import-back").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-import")
+        await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
 
         settled = replace(
             active,
@@ -462,11 +480,10 @@ async def test_hidden_import_fences_notes_mutations_until_receipt(
             "#library-notes-new",
             "#library-notes-sort",
             "#library-notes-select-toggle",
-            "#library-notes-sync-open",
             "#library-notes-export",
         ):
             assert screen.query_one(selector, Button).disabled is False
         assert all(not button.disabled for button in screen.query(".library-notes-row"))
-        screen.query_one("#library-notes-sync-open").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-sync-folder")
-        assert screen._library_notes_view == "sync"
+        screen.query_one("#library-notes-add-from-files").press()
+        await _wait_for_selector(screen, pilot, "#notes-add-import-once")
+        assert screen._library_notes_view == "lasting_add"

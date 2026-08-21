@@ -18647,6 +18647,26 @@ class LibraryScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             pass
 
+    def _focus_library_notes_lasting_control(self) -> None:
+        """Focus the safe primary control after a lasting-sync recompose."""
+        try:
+            self.query_one(
+                LibraryNotesAddFromFilesCanvas
+            ).focus_first_safe_control()
+        except (NoMatches, QueryError):
+            pass
+
+    def _focus_library_note_import_control(self) -> None:
+        """Focus the enabled primary action after an import recompose."""
+        try:
+            canvas = self.query_one(LibraryNoteImportCanvas)
+            for control in canvas.query(".note-import-primary"):
+                if isinstance(control, Button) and not control.disabled:
+                    control.focus()
+                    return
+        except (NoMatches, QueryError):
+            pass
+
     async def _reconcile_library_notes_list_canvas(self) -> None:
         """Publish a completed editor-to-list transition before returning."""
         self._request_library_notes_tree_refresh(refresh_root=True)
@@ -26066,6 +26086,13 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         """Open the one authority chooser before any source picker."""
         event.stop()
+        if self._library_note_import_execution_active():
+            self._library_notes_view = "import"
+            self._apply_library_notes_footer_context()
+            _sync_library_canvas(
+                self, "notes", then=self._focus_library_note_import_control
+            )
+            return
         if self._library_notes_mutation_fenced():
             return
         note_flush = await self._flush_library_note_save()
@@ -26074,7 +26101,9 @@ class LibraryScreen(BaseAppScreen):
         self._supersede_library_notes_navigation()
         self._library_notes_view = "lasting_add"
         self._apply_library_notes_footer_context()
-        _sync_library_canvas(self, "notes")
+        _sync_library_canvas(
+            self, "notes", then=self._focus_library_notes_lasting_control
+        )
 
     @on(Button.Pressed, "#library-notes-manage-sync-folders")
     def handle_library_notes_manage_sync_folders(self, event: Button.Pressed) -> None:

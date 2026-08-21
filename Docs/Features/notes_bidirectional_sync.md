@@ -113,3 +113,25 @@ text. Diagnostics use the same bounded runtime projection.
 - [Folder Files user guide](../User_Guide/library/file-notes.md)
 - [Notes folder import and lasting-sync design](../superpowers/specs/2026-08-12-notes-folder-import-sync-design.md)
 - [Library Notes reviewed-sync surface design](../superpowers/specs/2026-08-19-library-notes-files-reviewed-sync-redesign-design.md)
+
+## Verification
+
+TASK-19012 closes the reviewed journey with production-shaped mounted tests
+and an isolated live verifier. The automated matrix mounts the real
+`LibraryScreen` with `TldwCli.CSS_PATH`; it covers the Add-from-files authority
+choice, local setup and server-disabled copy, attention/recovery projection
+across a fresh screen, Folder files, and Session Git at wide, 60×20, and its
+supported 40×20 compact layout. Assertions use painted compositor text and
+focus/containment rather than style properties alone, with representative
+disabled-action contrast measurements.
+
+`Helper_Scripts/verify_notes_files_sync_tui.py` is the reproducible live smoke
+check. It redirects HOME, all XDG roots, `TLDW_CONFIG_PATH`, and
+`[paths].data_dir` to one temporary profile before any application import,
+disables model downloads, scrubs caller credentials, proxies, SSH, and Git
+configuration, and captures checksummed Library → New note → Notes list
+frames. Its manifest records the planned and reached physical journeys,
+relative scratch paths, isolation/test-mode gates, and unchanged decoy
+checksum. Deeper chooser, activation, restart recovery, Folder files, and
+Session Git actions remain in the deterministic mounted matrix so the live
+helper does not depend on fragile Tab counts or external Git/network services.
