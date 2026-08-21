@@ -149,6 +149,12 @@ class _BlockingResolutionController(_FakeController):
             self.active_resolves -= 1
 
 
+class _FreshEquivalentVisualController(_FakeController):
+    async def resolve_current_visual(self, *, cols: int, lines: int):
+        self.visual = replace(self.visual)
+        return self.visual
+
+
 class _BuddyApp(ConsolidatedCSSApp):
     CSS_PATH = BUNDLED_STYLESHEET
     CSS = """
@@ -380,6 +386,24 @@ async def test_resolution_is_single_owned_and_stale_completion_cannot_repaint():
         controller.resolve_release.set()
         await asyncio.sleep(0.05)
         assert buddy._snapshot is previous
+
+
+@pytest.mark.asyncio
+async def test_fresh_equivalent_snapshots_preserve_animation_deadline_and_progress():
+    controller = _FreshEquivalentVisualController(
+        animate=True,
+        frames=("POLL-A", "POLL-B"),
+        durations=(180, 260),
+        loop=False,
+    )
+    app = _BuddyApp(controller)
+    async with app.run_test(size=(80, 24)):
+        await _wait_until(lambda: "POLL-A" in _compositor_text(app.screen))
+        await _wait_until(lambda: "POLL-B" in _compositor_text(app.screen), timeout=0.5)
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await asyncio.sleep(0.25)
+        assert buddy.frame_index == 1
+        assert "POLL-B" in _compositor_text(app.screen)
 
 
 @pytest.mark.asyncio

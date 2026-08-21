@@ -120,6 +120,13 @@ def _child(preferences_path: Path, report_path: Path) -> int:
                 preferences=preferences,
                 preference_writer=write_preferences,
             )
+
+            async def keep_probe_visual_unknown(*, cols: int, lines: int):
+                return None
+
+            self.persona_buddy_controller.resolve_current_visual = (
+                keep_probe_visual_unknown
+            )
             self.modal_hits = 0
             self.navigation_count = 0
             self.initial_geometry = loaded_geometry
@@ -355,10 +362,21 @@ def _run_child(
             time.sleep(0.02)
         if not report.exists():
             raise RuntimeError("persona_buddy_terminal_initial_report_missing")
+
+        def wait_for_report(predicate: Any, *, timeout: float = 2.0) -> dict[str, Any]:
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline and process.poll() is None:
+                payload = json.loads(report.read_text(encoding="utf-8"))
+                if predicate(payload):
+                    return payload
+                _drain_for(master, 0.02)
+            raise RuntimeError("persona_buddy_terminal_report_predicate_timeout")
+
         initial = json.loads(report.read_text(encoding="utf-8"))
         observed = {
             "drag": False,
             "mouse_resize": False,
+            "keyboard": False,
             "fold": False,
             "reopen": False,
             "close": False,
@@ -397,7 +415,24 @@ def _run_child(
                 > after_drag["geometry"]["height"]
             )
 
-            fold_x, fold_y = _center(after_resize["controls"]["persona-buddy-collapse"])
+            os.write(master, b"hH")
+            _drain_for(master, 0.35)
+            keyboard = json.loads(report.read_text(encoding="utf-8"))
+            keyboard_changed = (
+                keyboard["geometry"]["x"] == after_resize["geometry"]["x"] - 1
+                and keyboard["geometry"]["width"]
+                == after_resize["geometry"]["width"] - 1
+            )
+            os.write(master, b"0")
+            _drain_for(master, 0.35)
+            reset = json.loads(report.read_text(encoding="utf-8"))
+            observed["keyboard"] = (
+                keyboard_changed
+                and reset["geometry"]["width"] == 28
+                and reset["geometry"]["height"] == 12
+            )
+
+            fold_x, fold_y = _center(reset["controls"]["persona-buddy-collapse"])
             _send_mouse(master, 0, fold_x, fold_y)
             _drain_for(master, 0.10)
             _send_mouse(master, 0, fold_x, fold_y, release=True)
@@ -425,8 +460,9 @@ def _run_child(
             _drain_for(master, 0.60)
 
             os.write(master, b"m")
-            _drain_for(master, 0.35)
-            modal_report = json.loads(report.read_text(encoding="utf-8"))
+            modal_report = wait_for_report(
+                lambda payload: payload["modal_region"] is not None
+            )
             modal_region = modal_report["modal_region"]
             modal_col = modal_region["x"] + max(1, modal_region["width"] // 2)
             modal_row = modal_region["y"] + max(1, modal_region["height"] // 2)
@@ -496,6 +532,7 @@ def _parent(report_output: Path | None = None) -> int:
         checks = {
             "drag": first["observed"]["drag"],
             "mouse_resize": first["observed"]["mouse_resize"],
+            "keyboard": first["observed"]["keyboard"],
             "fold": first["observed"]["fold"],
             "reopen": first["observed"]["reopen"],
             "close": first["observed"]["close"],

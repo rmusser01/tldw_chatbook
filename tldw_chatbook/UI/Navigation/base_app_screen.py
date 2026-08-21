@@ -57,6 +57,7 @@ class BaseAppScreen(Screen):
         self.nav_bar_active: str = screen_name
         self._persona_buddy_view = None
         self._persona_buddy_view_generation = 0
+        self._persona_buddy_unavailable_authority = None
         self._persona_buddy_reconcile_lock = asyncio.Lock()
 
         logger.debug(f"Initializing {self.__class__.__name__} screen: {screen_name}")
@@ -406,12 +407,32 @@ class BaseAppScreen(Screen):
             controller = getattr(self.app_instance, "persona_buddy_controller", None)
             active = self.is_attached and self.app.screen is self
             snapshot = controller.snapshot() if controller is not None else None
+            visual = getattr(snapshot, "visual", None)
+            authority = (
+                getattr(snapshot, "selection", None),
+                getattr(snapshot, "preferences_generation", None),
+                getattr(snapshot, "profile_generation", None),
+            )
+            if visual is not None and visual.available:
+                self._persona_buddy_unavailable_authority = None
+            elif (
+                self._persona_buddy_view is not None
+                and visual is not None
+                and not visual.available
+            ):
+                self._persona_buddy_unavailable_authority = authority
+            confirmed_unavailable = (
+                visual is not None
+                and not visual.available
+                and self._persona_buddy_unavailable_authority == authority
+            )
             desired = bool(
                 active
                 and snapshot is not None
                 and snapshot.enabled
                 and snapshot.open
                 and snapshot.selection is not None
+                and not confirmed_unavailable
             )
 
             current = self._persona_buddy_view

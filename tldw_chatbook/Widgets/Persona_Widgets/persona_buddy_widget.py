@@ -228,13 +228,27 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             snapshot = self._controller.snapshot()
             if snapshot.enabled and snapshot.open and snapshot.selection is not None:
                 region = self.content_region
-                await self._controller.resolve_current_visual(
+                visual = await self._controller.resolve_current_visual(
                     cols=max(1, region.width),
                     lines=max(1, region.height),
                 )
                 if not self._is_current_view():
                     return
                 self.refresh_from_controller()
+                current_visual = self._controller.snapshot().visual
+                if (
+                    visual is not None
+                    and not visual.available
+                    and current_visual is visual
+                ):
+                    pending = self._reconcile()
+                    if inspect.isawaitable(pending):
+                        self.app.run_worker(
+                            pending,
+                            group="persona-buddy-unavailable-reconcile",
+                            exclusive=True,
+                        )
+                    return
             await asyncio.sleep(_POLL_SECONDS)
 
     def on_resize(self, _event: events.Resize) -> None:
@@ -263,10 +277,31 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         self._sync_compact_state(snapshot.collapsed)
 
         visual = snapshot.visual
+        frames = getattr(visual, "frames", ()) if visual is not None else ()
         visual_identity = (
-            id(visual),
+            getattr(visual, "source", None),
+            getattr(visual, "persona_id", None),
+            getattr(visual, "persona_revision", None),
             getattr(visual, "requested_state", None),
             getattr(visual, "resolved_state", None),
+            getattr(visual, "animation_id", None),
+            getattr(visual, "graph_identity", None),
+            getattr(visual, "cache_identity", None),
+            getattr(visual, "frame_rate", None),
+            getattr(visual, "loop", None),
+            getattr(visual, "animate", None),
+            tuple(
+                (
+                    getattr(frame, "cache_identity", None),
+                    getattr(frame, "asset_id", None),
+                    getattr(frame, "asset_sha256", None),
+                    getattr(frame, "manifest_frame_index", None),
+                    getattr(frame, "selected_frame", None),
+                    getattr(frame, "duration_ms", None),
+                    getattr(frame, "paint_digest", None),
+                )
+                for frame in frames
+            ),
         )
         if visual_identity != self._visual_identity:
             self._visual_identity = visual_identity
