@@ -30,11 +30,16 @@ from textual.widgets import Button, Markdown, Static
 from textual_diff_view import DiffView
 
 from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleActivityPresentation,
     ConsoleChatMessage,
     ConsoleCitationNoticeCode,
     ConsoleCitationPhase,
     ConsoleMessageRole,
     FEEDBACK_ACTIVE_RUN_STATUSES,
+)
+from tldw_chatbook.Chat.console_turn_grouping import (
+    ConsoleAssistantTurn,
+    group_console_transcript_messages,
 )
 from tldw_chatbook.Chat.console_image_view import (
     PIXELS_MAX_COLS,
@@ -66,6 +71,11 @@ from tldw_chatbook.Widgets.Console.console_generation_card import (
     ConsoleGenerationCard,
     ConsoleGenerationCardSpec,
     generation_card_signature,
+)
+from tldw_chatbook.Widgets.Console.console_assistant_turn import (
+    ConsoleActivityActivated,
+    ConsoleActivityDisclosure,
+    ConsoleAssistantTurnWidget,
 )
 from tldw_chatbook.Widgets.Console.console_selection import (
     SelectionManager,
@@ -845,6 +855,7 @@ class _TranscriptRow:
         "video-card",
         "actions",
         "action-help",
+        "assistant-turn",
         "empty",
     ]
     signature: tuple
@@ -857,6 +868,11 @@ class _TranscriptRow:
     image_spec: "ConsoleImageRowSpec | None" = None
     generation_card_spec: "ConsoleGenerationCardSpec | None" = None
     video_card_spec: "ConsoleVideoCardSpec | None" = None
+    assistant_turn: ConsoleAssistantTurn | None = None
+    nested_rows: tuple["_TranscriptRow", ...] = ()
+    activity_rows: tuple[tuple["_TranscriptRow", ...], ...] = ()
+    activity_signature: tuple = ()
+    adjunct_signature: tuple = ()
 
 
 def get_console_assistant_markdown(app_config: Mapping[str, object] | None) -> bool:
@@ -5403,7 +5419,8 @@ class ConsoleTranscript(VerticalScroll):
         if callable(sync_console_control_bar):
             sync_console_control_bar()
 
-    def _transcript_rows(self) -> list[_TranscriptRow]:
+    def _flat_transcript_rows(self) -> list[_TranscriptRow]:
+        """Plan the legacy per-message rows reused by standalone and nested UI."""
         rows: list[_TranscriptRow] = []
         # Hoisted: which row (if any) carries this tick's activity line is a
         # property of the message list, not of any one row.
@@ -5601,6 +5618,108 @@ class ConsoleTranscript(VerticalScroll):
             )
         return rows
 
+    def _transcript_rows(self) -> list[_TranscriptRow]:
+        """Plan top-level rows, grouping owned TOOL markers into Assistant turns."""
+        flat_rows = self._flat_transcript_rows()
+        visible_messages = [
+            message
+            for message in self._messages
+            if message.id not in self._pruned_message_ids
+            and message.id not in self._hidden_tail_ids
+        ]
+        if not visible_messages:
+            return flat_rows
+
+        starts = {
+            row.key.removeprefix("rule:"): index
+            for index, row in enumerate(flat_rows)
+            if row.kind == "rule" and row.key != "rule:end"
+        }
+        groups: dict[str, tuple[_TranscriptRow, ...]] = {}
+        for index, message in enumerate(visible_messages):
+            start = starts[message.id]
+            if index + 1 < len(visible_messages):
+                end = starts[visible_messages[index + 1].id]
+            else:
+                end = next(
+                    (
+                        row_index
+                        for row_index in range(start + 1, len(flat_rows))
+                        if flat_rows[row_index].key == "rule:end"
+                    ),
+                    len(flat_rows),
+                )
+            groups[message.id] = tuple(flat_rows[start:end])
+
+        rows: list[_TranscriptRow] = []
+        for unit in group_console_transcript_messages(visible_messages):
+            if unit.standalone is not None:
+                rows.extend(groups[unit.standalone.id])
+                continue
+
+            turn = unit.assistant_turn
+            assert turn is not None
+            assistant_rows = groups[turn.assistant.id]
+            message_index = next(
+                index for index, row in enumerate(assistant_rows) if row.kind == "message"
+            )
+            rows.extend(assistant_rows[:message_index])
+            nested_rows = assistant_rows[message_index:]
+            selected_id = self.selected_message_id
+            owned_selected_id = (
+                selected_id if selected_id in turn.owned_message_ids else None
+            )
+            activity_rows = tuple(
+                tuple(
+                    row
+                    for row in groups[activity.id]
+                    if row.kind not in {"rule", "banner"}
+                )
+                for activity in turn.activities
+            )
+            activity_signature = tuple(
+                (
+                    activity.id,
+                    activity.activity_presentation,
+                    activity.id in self._expanded_tool_output_ids,
+                    selected_id == activity.id,
+                    tuple(row.signature for row in owned_rows),
+                )
+                for activity, owned_rows in zip(turn.activities, activity_rows)
+            )
+            adjunct_signature = tuple(row.signature for row in nested_rows[1:])
+            rows.append(
+                _TranscriptRow(
+                    key=f"assistant-turn:{turn.assistant.id}",
+                    kind="assistant-turn",
+                    signature=(
+                        "assistant-turn",
+                        nested_rows[0].signature,
+                        activity_signature,
+                        tuple(activity.id for activity in turn.activities),
+                        owned_selected_id,
+                        tuple(
+                            sorted(
+                                self._expanded_tool_output_ids
+                                & set(turn.owned_message_ids)
+                            )
+                        ),
+                        adjunct_signature,
+                    ),
+                    message=turn.assistant,
+                    selected=selected_id == turn.assistant.id,
+                    assistant_turn=turn,
+                    nested_rows=tuple(nested_rows),
+                    activity_rows=activity_rows,
+                    activity_signature=activity_signature,
+                    adjunct_signature=adjunct_signature,
+                )
+            )
+        end_rule = next((row for row in flat_rows if row.key == "rule:end"), None)
+        if end_rule is not None:
+            rows.append(end_rule)
+        return rows
+
     def _message_widgets(self) -> list[Widget]:
         return [
             self._build_row_widget(row, track=False) for row in self._transcript_rows()
@@ -5651,6 +5770,12 @@ class ConsoleTranscript(VerticalScroll):
         for row in rows:
             widget = self._row_widgets.get(row.key)
             if widget is None or self._row_signatures.get(row.key) == row.signature:
+                continue
+            if row.kind == "assistant-turn" and isinstance(
+                widget, ConsoleAssistantTurnWidget
+            ):
+                await self._sync_assistant_turn_widget(widget, row)
+                self._row_signatures[row.key] = row.signature
                 continue
             updated_widget = self._update_row_widget(widget, row)
             if updated_widget is widget:
@@ -5738,6 +5863,56 @@ class ConsoleTranscript(VerticalScroll):
             previous_widget = widget
         self._paint_debug_dump("after-reconcile")
 
+    async def _sync_assistant_turn_widget(
+        self,
+        widget: ConsoleAssistantTurnWidget,
+        row: _TranscriptRow,
+    ) -> None:
+        """Sync one composite row without remounting its answer or shell."""
+        assert row.assistant_turn is not None and row.nested_rows
+        assistant = row.nested_rows[0].message
+        assert assistant is not None
+        presentation = self._message_presentation(assistant)
+        header = widget.header_widget
+        if isinstance(header, ConsoleMessageHeader):
+            header.sync_header(
+                assistant,
+                presentation,
+                self._console_speech_state(assistant.id),
+            )
+        answer = widget.answer_widget
+        if isinstance(answer, ConsoleMarkdownMessage):
+            answer.sync_message(
+                assistant,
+                presentation,
+                selected=row.selected,
+                speech_state=self._console_speech_state(assistant.id),
+            )
+        elif isinstance(answer, ConsoleTranscriptMessage):
+            answer.sync_message(
+                assistant,
+                presentation,
+                selected=row.selected,
+                speech_state=self._console_speech_state(assistant.id),
+            )
+
+        if (
+            getattr(widget, "_console_activity_signature", None)
+            != row.activity_signature
+        ):
+            await widget.replace_activity_widgets(self._build_activity_widgets(row))
+            widget._console_activity_signature = row.activity_signature
+        if getattr(widget, "_console_adjunct_signature", None) != row.adjunct_signature:
+            adjuncts = tuple(
+                self._build_row_widget(nested_row, track=False)
+                for nested_row in row.nested_rows[1:]
+            )
+            if widget.adjunct_stack.children:
+                await widget.adjunct_stack.remove_children()
+            if adjuncts:
+                await widget.adjunct_stack.mount(*adjuncts)
+            widget._console_adjunct_signature = row.adjunct_signature
+
     def _build_row_widget(self, row: _TranscriptRow, *, track: bool) -> Widget:
         if track:
             self._row_build_counts[row.key] = self._row_build_counts.get(row.key, 0) + 1
@@ -5774,38 +5949,10 @@ class ConsoleTranscript(VerticalScroll):
                 id=f"console-original-attempt-{row.message.id}",
                 classes="console-transcript-original-attempt",
             )
+        if row.kind == "assistant-turn":
+            return self._build_assistant_turn_widget(row)
         if row.kind == "message" and row.message is not None:
-            review_run_id = getattr(row.message, "change_review_run_id", None)
-            if (
-                review_run_id
-                and self._change_review_provider_factory is not None
-                and bool(get_cli_setting("console", "turn_file_cards", True))
-            ):
-                return ConsoleTurnFileCard(
-                    str(row.message.content),
-                    str(review_run_id),
-                    self._change_review_provider_factory,
-                    message_id=row.message.id,
-                    selected=row.selected,
-                    id=f"console-turn-file-card-{row.message.id}",
-                )
-            presentation = self._message_presentation(row.message)
-            if (
-                row.message.role is ConsoleMessageRole.ASSISTANT
-                and self._assistant_markdown_enabled()
-            ):
-                return ConsoleMarkdownMessage(
-                    row.message,
-                    presentation,
-                    selected=row.selected,
-                    speech_state=self._console_speech_state(row.message.id),
-                )
-            return ConsoleTranscriptMessage(
-                row.message,
-                presentation,
-                selected=row.selected,
-                speech_state=self._console_speech_state(row.message.id),
-            )
+            return self._build_message_widget(row.message, selected=row.selected)
         if (
             row.kind == "diff"
             and row.message is not None
@@ -5836,6 +5983,126 @@ class ConsoleTranscript(VerticalScroll):
         if row.kind == "actions" and row.message is not None:
             return self._action_row(row.message)
         raise ValueError(f"Unsupported transcript row: {row}")
+
+    def _build_message_widget(
+        self,
+        message: ConsoleChatMessage,
+        *,
+        selected: bool,
+        show_header: bool = True,
+    ) -> Widget:
+        """Build one message body through the shared standalone/nested seam."""
+        review_run_id = getattr(message, "change_review_run_id", None)
+        if (
+            review_run_id
+            and self._change_review_provider_factory is not None
+            and bool(get_cli_setting("console", "turn_file_cards", True))
+        ):
+            return ConsoleTurnFileCard(
+                str(message.content),
+                str(review_run_id),
+                self._change_review_provider_factory,
+                message_id=message.id,
+                selected=selected,
+                id=f"console-turn-file-card-{message.id}",
+            )
+        presentation = self._message_presentation(message)
+        if (
+            message.role is ConsoleMessageRole.ASSISTANT
+            and self._assistant_markdown_enabled()
+        ):
+            return ConsoleMarkdownMessage(
+                message,
+                presentation,
+                selected=selected,
+                speech_state=self._console_speech_state(message.id),
+                show_header=show_header,
+            )
+        return ConsoleTranscriptMessage(
+            message,
+            presentation,
+            selected=selected,
+            speech_state=self._console_speech_state(message.id),
+            show_header=show_header,
+        )
+
+    def _build_activity_widgets(self, row: _TranscriptRow) -> tuple[Widget, ...]:
+        """Build owned disclosures from the same rows used by standalone messages."""
+        turn = row.assistant_turn
+        assert turn is not None
+        disclosures: list[Widget] = []
+        for activity, owned_rows in zip(turn.activities, row.activity_rows):
+            presentation = (
+                activity.activity_presentation
+                or ConsoleActivityPresentation("activity", "Activity", "done")
+            )
+            action_widgets: list[Widget] = []
+            detail_widgets: list[Widget] = []
+            for owned_row in owned_rows:
+                if owned_row.kind in {"actions", "action-help"}:
+                    action_widgets.append(
+                        self._build_row_widget(owned_row, track=False)
+                    )
+                    continue
+                if owned_row.kind == "message":
+                    if (
+                        owned_row.message is not None
+                        and owned_row.message.content.strip()
+                    ):
+                        detail_widgets.append(
+                            self._build_message_widget(
+                                owned_row.message,
+                                selected=False,
+                                show_header=False,
+                            )
+                        )
+                    continue
+                detail_widgets.append(self._build_row_widget(owned_row, track=False))
+            disclosures.append(
+                ConsoleActivityDisclosure(
+                    activity.id,
+                    presentation.label,
+                    presentation.status,
+                    expanded=activity.id in self._expanded_tool_output_ids,
+                    selected=activity.id == self.selected_message_id,
+                    action_widgets=action_widgets,
+                    detail_widgets=detail_widgets,
+                )
+            )
+        return tuple(disclosures)
+
+    def _build_assistant_turn_widget(self, row: _TranscriptRow) -> Widget:
+        """Build one Assistant-owned surface from a composite transcript row."""
+        turn = row.assistant_turn
+        assert turn is not None and row.nested_rows
+        assistant = row.nested_rows[0].message
+        assert assistant is not None
+        presentation = self._message_presentation(assistant)
+        header = ConsoleMessageHeader(
+            assistant,
+            presentation,
+            self._console_speech_state(assistant.id),
+            markdown=self._assistant_markdown_enabled(),
+        )
+        answer = self._build_message_widget(
+            assistant,
+            selected=row.selected,
+            show_header=False,
+        )
+        adjuncts = tuple(
+            self._build_row_widget(nested_row, track=False)
+            for nested_row in row.nested_rows[1:]
+        )
+        widget = ConsoleAssistantTurnWidget(
+            assistant.id,
+            header,
+            self._build_activity_widgets(row),
+            answer,
+            adjuncts,
+        )
+        widget._console_activity_signature = row.activity_signature
+        widget._console_adjunct_signature = row.adjunct_signature
+        return widget
 
     def _image_row_widget(self, spec: ConsoleImageRowSpec) -> Widget:
         """Build the mounted widget for one inline-image row."""
@@ -6157,6 +6424,14 @@ class ConsoleTranscript(VerticalScroll):
         event.stop()
         self.toggle_tool_output(button_id.removeprefix(prefix))
 
+    @on(ConsoleActivityActivated)
+    def _on_activity_activated(self, event: ConsoleActivityActivated) -> None:
+        """Keep disclosure controls on the original message selection seam."""
+        event.stop()
+        self.select_message(event.message_id)
+        if event.toggle_requested:
+            self.toggle_tool_output(event.message_id)
+
     def toggle_tool_output(self, message_id: str) -> None:
         """Expand or collapse one TOOL marker's full result.
 
@@ -6165,6 +6440,20 @@ class ConsoleTranscript(VerticalScroll):
                 harmless -- the row simply renders collapsed, and
                 ``set_messages`` prunes ids that leave the transcript.
         """
+        message = next(
+            (candidate for candidate in self._messages if candidate.id == message_id),
+            None,
+        )
+        if (
+            message is None
+            or message.role is not ConsoleMessageRole.TOOL
+            or not (
+                message.content.strip()
+                or message.tool_output_full
+                or message.tool_diff is not None
+            )
+        ):
+            return
         if message_id in self._expanded_tool_output_ids:
             self._expanded_tool_output_ids.discard(message_id)
         else:

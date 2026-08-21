@@ -15,6 +15,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     _visible_text,
 )
 from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleActivityPresentation,
     ConsoleChatMessage,
     ConsoleCitationNoticeCode,
     ConsoleCitationPhase,
@@ -35,6 +36,10 @@ from tldw_chatbook.Chat.console_roleplay_identity import (
     resolve_console_message_presentation,
 )
 from tldw_chatbook.Widgets.Console.console_save_as_modal import ConsoleSaveAsModal
+from tldw_chatbook.Widgets.Console.console_assistant_turn import (
+    ConsoleActivityDisclosure,
+    ConsoleAssistantTurnWidget,
+)
 from tldw_chatbook.Widgets.Console.console_transcript import (
     ConsoleMarkdownMessage,
     ConsoleMessageHeader,
@@ -52,6 +57,12 @@ def _message_row_text(transcript: ConsoleTranscript, message_id: str) -> str:
     row = transcript.query_one(f"#console-message-{message_id}")
     if isinstance(row, ConsoleMarkdownMessage):
         parts = [str(static.renderable) for static in row.query(Static)]
+        turns = list(transcript.query(f"#console-assistant-turn-{message_id}"))
+        if turns:
+            parts[:0] = [
+                str(static.renderable)
+                for static in turns[0].header_widget.query(Static)
+            ]
         parts.append(row.query_one(Markdown).source)
         return "\n".join(parts)
     statics = list(row.query(Static))
@@ -82,6 +93,28 @@ def _rendered_message_ids(transcript: ConsoleTranscript) -> list[str]:
     return [
         widget.message_id for widget in transcript.query(".console-transcript-message")
     ]
+
+
+def _planned_message_widgets(transcript: ConsoleTranscript) -> list[object]:
+    """Flatten message bodies from top-level rows and Assistant turn shells."""
+    planned: list[object] = []
+    for widget in transcript._message_widgets():
+        if isinstance(widget, ConsoleAssistantTurnWidget):
+            planned.append(widget.answer_widget)
+        else:
+            planned.append(widget)
+    return planned
+
+
+def _speaker_label_for(transcript: ConsoleTranscript, message_id: str) -> Static:
+    """Resolve the label from a standalone row or an Assistant turn header."""
+    turns = list(transcript.query(f"#console-assistant-turn-{message_id}"))
+    owner = (
+        turns[0].header_widget
+        if turns
+        else transcript.query_one(f"#console-message-{message_id}")
+    )
+    return owner.query_one(".console-transcript-speaker-label", Static)
 
 
 _BUNDLE = (
@@ -187,6 +220,251 @@ class EmptyTranscriptHarness(ConsolidatedCSSApp):
 class MutableTranscriptHarness(ConsolidatedCSSApp):
     def compose(self) -> ComposeResult:
         yield ConsoleTranscript(id="console-native-transcript")
+
+
+def _assistant_turn_messages() -> list[ConsoleChatMessage]:
+    """Production-shaped Assistant turn with two owned activity markers."""
+    return [
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.USER, content="inspect", id="u-turn"
+        ),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT,
+            content="The workspace contains two files.",
+            id="a-turn",
+        ),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.TOOL,
+            content="safe planning preamble",
+            id="thinking-turn",
+            activity_presentation=ConsoleActivityPresentation(
+                "thinking", "Thinking", "done"
+            ),
+        ),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.TOOL,
+            content="⚙ fs_list → a.txt, b.txt…",
+            id="tool-turn",
+            tool_output_full="a.txt\nb.txt\nfull tail",
+            activity_presentation=ConsoleActivityPresentation(
+                "tool", "fs_list", "success"
+            ),
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_assistant_turn_nests_owned_activities_before_headerless_answer() -> None:
+    """The mounted DOM, not a planner helper, proves the causal hierarchy."""
+    app = MutableTranscriptHarness()
+    orphan = ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL,
+        content="legacy orphan",
+        id="orphan-tool",
+    )
+
+    async with app.run_test(size=(100, 34)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_messages([orphan, *_assistant_turn_messages()])
+        await transcript.refresh_messages()
+        await pilot.pause()
+
+        turn = transcript.query_one(
+            "#console-assistant-turn-a-turn", ConsoleAssistantTurnWidget
+        )
+        disclosures = list(turn.query(ConsoleActivityDisclosure))
+        answer = turn.query_one("#console-message-a-turn")
+
+        assert [row.activity_message_id for row in disclosures] == [
+            "thinking-turn",
+            "tool-turn",
+        ]
+        assert all(row.parent is turn.activity_stack for row in disclosures)
+        assert turn.children.index(turn.activity_stack) < turn.children.index(answer)
+        assert turn in transcript.children
+        for activity_id in ("thinking-turn", "tool-turn"):
+            nested_body = transcript.query_one(f"#console-message-{activity_id}")
+            assert isinstance(nested_body.parent.parent, ConsoleActivityDisclosure)
+        assert transcript.query_one("#console-message-orphan-tool")
+
+
+@pytest.mark.asyncio
+async def test_owned_activity_selection_keeps_details_collapsed_and_actions_visible() -> (
+    None
+):
+    """Selecting an owned marker targets its header without selecting the answer."""
+    app = MutableTranscriptHarness()
+
+    async with app.run_test(size=(100, 34)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_messages(_assistant_turn_messages())
+        await transcript.refresh_messages()
+        await pilot.pause()
+
+        transcript.select_message("tool-turn")
+        await transcript.refresh_messages()
+        await pilot.pause()
+        header = transcript.query_one("#console-activity-header-tool-turn")
+        disclosure = transcript.query_one(
+            "#console-activity-disclosure-tool-turn", ConsoleActivityDisclosure
+        )
+        answer = transcript.query_one("#console-message-a-turn")
+
+        assert transcript.selected_message_id == "tool-turn"
+        assert header.has_class("console-activity-header-selected")
+        assert not answer.has_class("console-transcript-message-selected")
+        assert disclosure.action_stack.display
+        assert not disclosure.detail_stack.display
+
+
+@pytest.mark.asyncio
+async def test_assistant_turn_reconcile_preserves_container_and_answer_identity() -> (
+    None
+):
+    """Streaming and later activity arrival only reconcile mutable nested state."""
+    app = MutableTranscriptHarness()
+    user, assistant, thinking, tool = _assistant_turn_messages()
+    unrelated = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER, content="unrelated", id="u-unrelated"
+    )
+
+    async with app.run_test(size=(100, 34)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_messages([user, assistant, unrelated])
+        await transcript.refresh_messages()
+        await pilot.pause()
+        turn = transcript.query_one(
+            "#console-assistant-turn-a-turn", ConsoleAssistantTurnWidget
+        )
+        answer = turn.query_one("#console-message-a-turn")
+        activity_stack = turn.activity_stack
+        unrelated_row = transcript.query_one("#console-message-u-unrelated")
+
+        assistant.content = "The workspace contains"
+        assistant.status = "streaming"
+        transcript.set_messages([user, assistant, unrelated])
+        await transcript.refresh_messages()
+        await pilot.pause()
+        assert transcript.query_one("#console-assistant-turn-a-turn") is turn
+        assert turn.query_one("#console-message-a-turn") is answer
+
+        assistant.content = "The workspace contains two files."
+        assistant.status = "completed"
+        transcript.set_messages([user, assistant, thinking, tool, unrelated])
+        await transcript.refresh_messages()
+        await pilot.pause()
+
+        assert transcript.query_one("#console-assistant-turn-a-turn") is turn
+        assert turn.query_one("#console-message-a-turn") is answer
+        assert turn.activity_stack is activity_stack
+        assert transcript.query_one("#console-message-u-unrelated") is unrelated_row
+        assert [
+            row.activity_message_id for row in turn.query(ConsoleActivityDisclosure)
+        ] == ["thinking-turn", "tool-turn"]
+
+
+def test_assistant_turn_signature_ignores_unrelated_selection() -> None:
+    """A selection in another unit is not render state for this Assistant turn."""
+    transcript = ConsoleTranscript()
+    messages = [
+        *_assistant_turn_messages(),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.USER, content="follow-up", id="other-user"
+        ),
+    ]
+    transcript.set_messages(messages)
+    before = next(
+        row.signature
+        for row in transcript._transcript_rows()
+        if row.key == "assistant-turn:a-turn"
+    )
+
+    transcript.selected_message_id = "other-user"
+    after = next(
+        row.signature
+        for row in transcript._transcript_rows()
+        if row.key == "assistant-turn:a-turn"
+    )
+
+    assert after == before
+
+
+@pytest.mark.asyncio
+async def test_disjoint_session_switch_clears_owned_activity_expansion() -> None:
+    """Disclosure expansion is session-local view state."""
+    app = MutableTranscriptHarness()
+
+    async with app.run_test(size=(100, 34)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_messages(_assistant_turn_messages())
+        await transcript.refresh_messages()
+        transcript.toggle_tool_output("tool-turn")
+        await pilot.pause()
+        assert "tool-turn" in transcript._expanded_tool_output_ids
+
+        transcript.set_messages(
+            [
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.USER, content="new", id="new-u"
+                )
+            ]
+        )
+        await transcript.refresh_messages()
+
+        assert transcript._expanded_tool_output_ids == set()
+
+
+@pytest.mark.asyncio
+async def test_activity_header_click_and_o_share_expansion_state() -> None:
+    """Disclosure activation selects the original id and uses the existing seam."""
+    app = MutableTranscriptHarness()
+
+    async with app.run_test(size=(100, 34)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_messages(_assistant_turn_messages())
+        await transcript.refresh_messages()
+
+        header = transcript.query_one("#console-activity-header-tool-turn")
+        header._activate()
+        await pilot.pause()
+        assert transcript.selected_message_id == "tool-turn"
+        assert "tool-turn" in transcript._expanded_tool_output_ids
+        assert transcript.query_one(
+            "#console-activity-disclosure-tool-turn", ConsoleActivityDisclosure
+        ).detail_stack.display
+
+        transcript.focus()
+        await pilot.press("o")
+        await pilot.pause()
+        assert transcript.selected_message_id == "tool-turn"
+        assert "tool-turn" not in transcript._expanded_tool_output_ids
+
+
+@pytest.mark.asyncio
+async def test_unknown_empty_activity_uses_neutral_nonexpandable_header() -> None:
+    """Legacy metadata is not guessed from content and empty detail has no toggle."""
+    app = MutableTranscriptHarness()
+    messages = [
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT,
+            content="answer",
+            id="neutral-answer",
+        ),
+        ConsoleChatMessage(role=ConsoleMessageRole.TOOL, content="", id="neutral-tool"),
+    ]
+
+    async with app.run_test(size=(100, 24)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_messages(messages)
+        await transcript.refresh_messages()
+        header = transcript.query_one("#console-activity-header-neutral-tool")
+
+        assert str(header.renderable) == "Activity · done"
+        assert not header.has_class("console-activity-header-expandable")
+        header._activate()
+        await pilot.pause()
+        assert transcript.selected_message_id == "neutral-tool"
+        assert "neutral-tool" not in transcript._expanded_tool_output_ids
 
 
 class StyledRoleplayTranscriptHarness(ConsolidatedCSSApp):
@@ -323,7 +601,7 @@ def test_roleplay_plain_text_uses_literal_names_and_generic_rows_gain_accents():
         ConsolePresentationContext(user_name="Builder", revision=2)
     )
     generic_rows = {
-        row.id: row for row in transcript._message_widgets() if row.id is not None
+        row.id: row for row in _planned_message_widgets(transcript) if row.id is not None
     }
     assert "Builder" in transcript.to_plain_text(width=80)
     assert "Assistant" in transcript.to_plain_text(width=80)
@@ -341,7 +619,7 @@ def test_roleplay_plain_text_uses_literal_names_and_generic_rows_gain_accents():
         )
     )
     neutral_rows = [
-        row for row in transcript._message_widgets() if row.id is not None
+        row for row in _planned_message_widgets(transcript) if row.id is not None
     ]
     assert all(
         "console-transcript-message-role-user" not in row.classes
@@ -392,10 +670,8 @@ async def test_plain_roleplay_identity_revision_updates_rows_in_place():
 
         original_user = transcript.query_one("#console-message-u1")
         original_assistant = transcript.query_one("#console-message-a1")
-        user_label = original_user.query_one(".console-transcript-speaker-label", Static)
-        assistant_label = original_assistant.query_one(
-            ".console-transcript-speaker-label", Static
-        )
+        user_label = _speaker_label_for(transcript, "u1")
+        assistant_label = _speaker_label_for(transcript, "a1")
         assert user_label.renderable.plain == "Captain [Rowan]"
         assert assistant_label.renderable.plain == "Alraune"
         assert "console-transcript-roleplay-user-label" in user_label.classes
@@ -420,15 +696,11 @@ async def test_plain_roleplay_identity_revision_updates_rows_in_place():
         assert transcript.selected_message_id == "a1"
         assert transcript.is_anchored is original_follow_state
         assert (
-            original_user.query_one(
-                ".console-transcript-speaker-label", Static
-            ).renderable.plain
+            _speaker_label_for(transcript, "u1").renderable.plain
             == "Captain [bold red]"
         )
         assert (
-            original_assistant.query_one(
-                ".console-transcript-speaker-label", Static
-            ).renderable.plain
+            _speaker_label_for(transcript, "a1").renderable.plain
             == "Cecelia"
         )
 
@@ -489,7 +761,7 @@ async def test_roleplay_tints_and_selected_precedence_are_compositor_painted(the
             ("user", user_row),
             ("character", character_row),
         ):
-            label = row.query_one(".console-transcript-speaker-label", Static)
+            label = _speaker_label_for(transcript, row.message_id)
             foreground, background = _painted_foreground_and_background(app, label)
             ratio = _contrast(foreground, background)
             assert ratio >= MIN_SPEAKER_CONTRAST, (
@@ -497,9 +769,7 @@ async def test_roleplay_tints_and_selected_precedence_are_compositor_painted(the
                 f"{theme}; expected at least {MIN_SPEAKER_CONTRAST}:1 "
                 f"(foreground={foreground}, background={background})"
             )
-        failed_label = failed_roleplay_row.query_one(
-            ".console-transcript-speaker-label", Static
-        )
+        failed_label = _speaker_label_for(transcript, "f1")
         foreground, background = _painted_foreground_and_background(app, failed_label)
         ratio = _contrast(foreground, background)
         assert ratio >= MIN_SPEAKER_CONTRAST, (
@@ -511,9 +781,10 @@ async def test_roleplay_tints_and_selected_precedence_are_compositor_painted(the
         transcript.select_message("f1")
         await transcript.refresh_messages()
         await pilot.pause()
-        assert _painted_background(app, failed_label) == _painted_background(
-            app, failed_roleplay_row
-        )
+        assert failed_roleplay_row.has_class("console-transcript-message-selected")
+        assert not transcript.query_one(
+            "#console-assistant-turn-f1", ConsoleAssistantTurnWidget
+        ).header_widget.has_class("console-transcript-message-selected")
 
         transcript.select_message("u1")
         await transcript.refresh_messages()
@@ -578,7 +849,7 @@ async def test_generic_role_accents_and_immersive_prose_are_accessibly_painted(
 
         painted_labels = []
         for row in (user_row, assistant_row):
-            label = row.query_one(".console-transcript-speaker-label", Static)
+            label = _speaker_label_for(transcript, row.message_id)
             foreground, background = _painted_foreground_and_background(app, label)
             assert _contrast(foreground, background) >= MIN_SPEAKER_CONTRAST
             painted_labels.append(foreground)
@@ -811,7 +1082,7 @@ async def test_console_transcript_append_preserves_existing_message_rows():
             after_counts[f"message:{message.id}"]
             == before_counts[f"message:{message.id}"]
         )
-    assert after_counts["message:m-new"] == 1
+    assert after_counts["assistant-turn:m-new"] == 1
 
 
 @pytest.mark.asyncio
@@ -844,7 +1115,10 @@ async def test_console_transcript_streaming_update_preserves_unrelated_message_r
 
     assert after_counts["message:m-user"] == before_counts["message:m-user"]
     assert after_counts["message:m-next"] == before_counts["message:m-next"]
-    assert after_counts["message:m-assistant"] == before_counts["message:m-assistant"]
+    assert (
+        after_counts["assistant-turn:m-assistant"]
+        == before_counts["assistant-turn:m-assistant"]
+    )
     assert "partial response" in rendered_text
 
 
@@ -873,14 +1147,22 @@ async def test_console_transcript_selection_update_preserves_message_rows():
         transcript.selected_message_id = "m-assistant"
         await transcript.refresh_messages()
         after_counts = transcript.row_build_counts()
+        assistant_actions_mounted = len(
+            transcript.query("#console-message-actions-m-assistant")
+        )
 
     for message in messages:
+        key = (
+            f"assistant-turn:{message.id}"
+            if message.role is ConsoleMessageRole.ASSISTANT
+            else f"message:{message.id}"
+        )
         assert (
-            after_counts[f"message:{message.id}"]
-            == before_counts[f"message:{message.id}"]
+            after_counts[key]
+            == before_counts[key]
         )
     assert "actions:m-user" not in transcript.row_render_signatures()
-    assert "actions:m-assistant" in transcript.row_render_signatures()
+    assert assistant_actions_mounted == 1
 
 
 @pytest.mark.asyncio
@@ -1013,7 +1295,7 @@ async def test_console_transcript_removes_build_counts_for_stale_rows():
 
     assert "rule:m-removed" not in build_counts
     assert "message:m-removed" not in build_counts
-    assert "message:m-kept" in build_counts
+    assert "assistant-turn:m-kept" in build_counts
 
 
 def test_console_transcript_compose_resets_build_count_bookkeeping():
@@ -2103,15 +2385,20 @@ async def test_original_attempt_preview_is_literal_distinct_row_after_owner():
         transcript.set_messages([message])
         transcript.set_original_attempt_previews({message.id: original})
         await transcript.refresh_messages()
-        row_keys = list(transcript.row_render_signatures())
+        turn = transcript.query_one(
+            f"#console-assistant-turn-{message.id}", ConsoleAssistantTurnWidget
+        )
         preview = app.query_one(
             f"#console-original-attempt-{message.id}",
             Static,
         )
+        answer_precedes_adjuncts = turn.children.index(
+            turn.answer_widget
+        ) < turn.children.index(turn.adjunct_stack)
+        preview_is_nested = preview.parent is turn.adjunct_stack
 
-    assert row_keys.index(f"message:{message.id}") < row_keys.index(
-        f"original-attempt:{message.id}"
-    )
+    assert answer_precedes_adjuncts
+    assert preview_is_nested
     assert "Original attempt (not selected)" in str(preview.renderable)
     assert original in str(preview.renderable)
     assert message.content == "Selected **repaired** answer [S1]"
@@ -2143,6 +2430,11 @@ async def test_original_attempt_availability_updates_action_and_message_signatur
             f"#console-message-action-view-original-attempt-{message.id}",
         )
         before = transcript.row_render_signatures()
+        before_actions = next(
+            row.signature
+            for row in transcript._flat_transcript_rows()
+            if row.key == f"actions:{message.id}"
+        )
 
         message.citation_presentation = ConsoleCitationPresentation(
             phase=ConsoleCitationPhase.SELECTED,
@@ -2152,13 +2444,20 @@ async def test_original_attempt_availability_updates_action_and_message_signatur
         transcript.set_messages([message])
         await transcript.refresh_messages()
         after = transcript.row_render_signatures()
+        after_actions = next(
+            row.signature
+            for row in transcript._flat_transcript_rows()
+            if row.key == f"actions:{message.id}"
+        )
 
     assert (
         len(app.query(f"#console-message-action-view-original-attempt-{message.id}"))
         == 0
     )
-    assert before[f"message:{message.id}"] != after[f"message:{message.id}"]
-    assert before[f"actions:{message.id}"] != after[f"actions:{message.id}"]
+    assert before[f"assistant-turn:{message.id}"] != after[
+        f"assistant-turn:{message.id}"
+    ]
+    assert before_actions != after_actions
 
 
 def test_checking_citations_uses_active_jump_pill_copy():
