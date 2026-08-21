@@ -64,18 +64,18 @@ more than 14 days and three carry no date at all.
 
 ## Acceptance Criteria
 
-- [ ] All seven duplicate ids are resolved by renumbering — the newer or
+- [x] All seven duplicate ids are resolved by renumbering — the newer or
       less-referenced task in each pair moves to a fresh id above the current
       maximum
-- [ ] `task-18913`'s In Progress ambiguity is resolved first, since an agent is
+- [x] `task-18913`'s In Progress ambiguity is resolved first, since an agent is
       actively working against it
-- [ ] Renumbering updates every inbound reference (dependencies, branch names,
+- [x] Renumbering updates every inbound reference (dependencies, branch names,
       PR bodies where practical), not just the filenames
-- [ ] Backlog Guard is green on `dev`
+- [x] Backlog Guard is green on `dev`
 - [ ] A **local** gate exists — a pytest that fails on duplicate ids — so a
       collision is caught before push rather than by a workflow nobody can
       block on
-- [ ] The id-claiming protocol is revised to survive concurrent sessions: the
+- [x] The id-claiming protocol is revised to survive concurrent sessions: the
       failure mode is two sessions observing the same maximum, so the fix must
       not be "leapfrog further" (that has now failed twice). Record the chosen
       approach in `backlog/docs/lessons-backlog-hygiene.md` **with the incident
@@ -92,3 +92,44 @@ renumbers with provenance). The "live In Progress ambiguity" was
 task-18913 Keep-Console-workspace-geometry — the younger side; it
 renumbered to TASK-19639 and continues there under its In Progress state.
 All seven collisions cleared; see TASK-19601 notes for the full map.
+
+### Verification pass (task/19573-burn, dispatched separately after the above)
+
+Re-ran the guard's own logic (both the filename and frontmatter `id:`
+checks in `.github/workflows/backlog-guard.yml`) locally at `origin/dev`
+HEAD `5f720a404`: **zero duplicates in either namespace**, across 2,324
+task files. All seven renumbered targets (TASK-19634..19640) resolve to
+exactly one file each, each carries a `## Renumbering provenance` section,
+and a repo-wide grep for the seven old ids turned up nothing stale —
+every remaining hit is either the keeper side's own code/docs (which
+correctly still cites its own id), a renumbered file's own provenance
+note, or a deliberately-preserved historical record (the 18802 report,
+the 19052 plan, ADR-067/068). No renumbering work was needed from this
+pass — TASK-19601 had already done it and it holds.
+
+Remaining work: no new id needed to be minted, so the MAX+30 sweep this
+branch was set up to run was not exercised. Added a lessons entry
+(`backlog/docs/lessons-backlog-hygiene.md`, "Task IDs collide constantly")
+documenting that MAX+20 leapfrogging failed twice against concurrent
+minting and that the durable fix is TASK-19601's older-keeps-the-id rule,
+not more distance. The guard's failure message already states that rule
+(`.github/workflows/backlog-guard.yml:59`), so no further change was
+needed there.
+
+Folding the duplicate-id check into a "derived-artifacts" CI gate was
+considered and **not done here**: TASK-19572 turns out to be about a
+different, unrelated `derived-artifacts` job (three stdlib-only checkers —
+CSS bundle sync, profile-owned-path inventory, persistent-diagnostic
+inventory — plus branch protection). It does not mention the backlog
+duplicate-id guard, so consolidating the two would be inventing scope
+TASK-19572 never claimed, not deferring to it.
+
+Three ACs below remain genuinely open and were **not** addressed in this
+pass (out of scope for this dispatch): the local pytest duplicate-id gate,
+the TASK-13262/TASK-14650 identical-title reconciliation (both still
+`In Progress`, still byte-identical apart from id and one Notes line), and
+the 13-task stale-In-Progress triage. Left `status: Done` as inherited
+rather than reopening it unilaterally, since the task's core defect (red
+guard, live ambiguity) is genuinely resolved and closed elsewhere
+(TASK-19601); the three open items above should be tracked as their own
+follow-up rather than reopening this one.
