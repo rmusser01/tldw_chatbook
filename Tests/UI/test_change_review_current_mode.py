@@ -766,9 +766,19 @@ async def test_comment_paths_no_op_in_current_mode(
 async def test_notes_are_never_queried_in_current_mode(
     monkeypatch, git_review_fixture
 ):
-    """The pseudo row has no snapshot id — the notes read must not run."""
+    """The pseudo row has no snapshot id — the notes read must not run.
+
+    Spec §4.1 names ``_current_mode_active()`` as the guard here, and this
+    test exercises THAT guard specifically: ``_active_turn`` is forced back
+    to a real turn while the Select still sits on the sentinel, so the
+    ``_active_turn is None`` early return (which would otherwise mask the
+    named guard entirely) cannot be what stops the read. Without that
+    setup the assertion passes even with the mode guard deleted — verified
+    — and the guard would silently rot the first time anything set
+    ``_active_turn`` during current mode.
+    """
     _patch_git_actions(monkeypatch, True)
-    provider, repo, _db, _run1, _run2 = git_review_fixture
+    provider, repo, _db, _run1, run2 = git_review_fixture
     reads: list[str] = []
     real_notes = provider.notes_for_run
 
@@ -780,13 +790,21 @@ async def test_notes_are_never_queried_in_current_mode(
     app = _Harness(provider)
     async with app.run_test(size=(160, 48)) as pilot:
         screen = await _enter_current_mode(pilot, app, provider)
+        turn = next(t for t in screen._turns if t.run_id == run2)
+        screen._active_turn = turn
+        assert screen._current_mode_active() is True, (
+            "the Select must still be on the sentinel for this to test the "
+            "mode guard rather than the active-turn guard"
+        )
         reads.clear()
         screen.action_next_file()
         screen.action_previous_file()
+        screen._refresh_notes_ui_for_focused_leaf()
         await pilot.pause()
         assert reads == [], (
             f"current mode must never query notes; got {reads!r}"
         )
+        assert screen._marked_diff_lines == set()
 
 
 # ---------------------------------------------------------------------------
@@ -931,3 +949,59 @@ async def test_one_root_failing_between_detect_and_status_degrades_alone(
             f"the failed root must be named honestly: {banner!r}"
         )
         assert "repository vanished mid-load" in banner
+
+
+@pytest.mark.asyncio
+async def test_every_root_failing_never_claims_the_tree_is_clean(
+    monkeypatch, tmp_path
+):
+    """When EVERY root's status read fails there are no statuses to land --
+    which must not be reported as an empty-but-healthy working tree.
+
+    "working tree clean" is a positive claim ABOUT THE USER'S REPOSITORY;
+    printing it next to a banner saying the tree could not be read is the
+    pane asserting something false (spec §8's honesty requirement). The
+    two surfaces have to agree.
+    """
+    _patch_git_actions(monkeypatch, True)
+    doomed = _init_repo(tmp_path / "doomed_repo")
+    (doomed / "unseen.txt").write_text("never read\n")
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    provider = AgentRunsChangeReviewProvider(
+        db=db, service=service, conversation_id="conv-doomed"
+    )
+
+    def failing_status(root):
+        from tldw_chatbook.Workspaces.git_workspace import GitWorkspaceError
+
+        raise GitWorkspaceError("repository vanished mid-load")
+
+    provider.current_status = failing_status
+
+    app = _Harness(provider, workspace_roots=[str(doomed)])
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _open_screen(pilot, app)
+        await _wait_for_detection(pilot, screen)
+        screen.query_one(
+            "#change-review-turn-select", Select
+        ).value = CURRENT_MODE_SENTINEL
+
+        banner = await _wait_for(
+            pilot,
+            lambda: (
+                lambda b: b if "repository vanished mid-load" in b else None
+            )(_static_text(screen, "#change-review-banner")),
+            "the failed root's banner line",
+        )
+        assert "doomed_repo" in banner
+
+        pane = screen.diff_pane_text()
+        assert "working tree clean" not in pane, (
+            "the pane must not claim a clean tree when nothing could be "
+            f"read; got {pane!r}"
+        )
+        assert "unavailable" in pane, (
+            f"the pane must point at the failure instead; got {pane!r}"
+        )
+        assert screen._leaves == []

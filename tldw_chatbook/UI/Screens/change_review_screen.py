@@ -1530,6 +1530,18 @@ class ChangeReviewScreen(Screen):
         if event.value == CURRENT_MODE_SENTINEL:
             # TASK-16801 arc B: the real working tree gets its own
             # worker-backed load; the snapshot path below is untouched.
+            #
+            # HAZARD for later work (T7/T8): this branch has NO
+            # already-loaded guard, and it cannot get the one below --
+            # current mode holds no `_active_turn` to compare against. It
+            # is safe today only because nothing rebuilds the Select's
+            # options after `_land_git_detection` runs once. If you ever
+            # rebuild them while this mode is selected (e.g. to relabel the
+            # entry after a commit changes the branch), `set_options`
+            # blanks the value and the restore posts a `Changed` naming the
+            # SENTINEL -- landing right here and re-dispatching a whole
+            # status read. Suppress it at the source (don't rebuild while
+            # `_current_mode_active()`), or give this branch its own guard.
             self._load_current_mode()
             return
         if isinstance(event.value, str) and event.value:
@@ -1836,6 +1848,25 @@ class ChangeReviewScreen(Screen):
         def _read_working_trees() -> None:
             from tldw_chatbook.Workspaces.git_workspace import GitWorkspaceError
 
+            def _land(callback, *args) -> None:
+                """Hand a result back to the UI thread, tolerating teardown.
+
+                ``call_from_thread`` raises once the app is shutting down
+                (the loop it posts onto is gone) -- which a status read can
+                easily outlive, since it is a git subprocess. Unhandled,
+                that surfaces as a logged ``WorkerFailed``; worse, raising
+                out of a per-root landing mid-loop would abort the roots
+                after it and quietly break the per-root isolation this
+                loop exists to guarantee.
+                """
+                try:
+                    app.call_from_thread(callback, *args)
+                except Exception:  # noqa: BLE001 -- app is going away
+                    logger.debug(
+                        "change_review: current-mode landing skipped -- "
+                        "the app is no longer accepting callbacks"
+                    )
+
             statuses: list["CurrentRootStatus"] = []
             for root in roots:
                 # ONE try/except PER ROOT, never one around the batch: a
@@ -1846,19 +1877,15 @@ class ChangeReviewScreen(Screen):
                 try:
                     statuses.append(provider.current_status(root))
                 except GitWorkspaceError as exc:
-                    app.call_from_thread(
-                        self._land_current_root_failure, token, root, str(exc)
-                    )
+                    _land(self._land_current_root_failure, token, root, str(exc))
                     continue
                 except Exception as exc:  # noqa: BLE001 -- worker must live
                     logger.opt(exception=True).warning(
                         f"change_review: working-tree status failed for {root!r}"
                     )
-                    app.call_from_thread(
-                        self._land_current_root_failure, token, root, str(exc)
-                    )
+                    _land(self._land_current_root_failure, token, root, str(exc))
                     continue
-            app.call_from_thread(self._land_current_mode, token, statuses)
+            _land(self._land_current_mode, token, statuses)
 
         self.run_worker(
             _read_working_trees,
@@ -1968,7 +1995,17 @@ class ChangeReviewScreen(Screen):
             # A clean tree still ENTERS the mode (spec §4): commit is
             # meaningless but unpushed commits are exactly the case for
             # push/PR right after committing.
-            self._show_empty("working tree clean")
+            #
+            # But "working tree clean" is a positive claim ABOUT THE USER'S
+            # REPOSITORY, and `statuses` is ALSO empty when every root's
+            # read failed -- printing it there would have the pane asserting
+            # something false directly beneath a banner saying the tree
+            # could not be read (spec §8: the two surfaces must agree).
+            self._show_empty(
+                "working tree clean"
+                if statuses
+                else "working tree unavailable — see above"
+            )
             self._refresh_notes_strip()
 
     @staticmethod
