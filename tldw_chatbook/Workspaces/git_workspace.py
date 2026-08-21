@@ -31,6 +31,8 @@ from pathlib import Path
 
 from loguru import logger
 
+from tldw_chatbook.Workspaces.change_tracking import ChangedFile
+
 #: Read-only probes (status, branch, remote listings).
 READ_TIMEOUT_SECONDS = 30.0
 #: Commit -- user hooks (pre-commit, commit-msg) and gpg signing may run.
@@ -332,3 +334,263 @@ def _detect_git_workspace(root: Path) -> GitWorkspaceInfo | GitWorkspaceRefusal 
         ahead=ahead,
         behind=behind,
     )
+
+
+# ---------------------------------------------------------------------------
+# Working-tree status, per-file diff, untracked preview (TASK-16801 T2).
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class CurrentRootStatus:
+    """One root's real working-tree status snapshot, for the `current` mode.
+
+    Attributes:
+        root: The workspace root this status was read from (as passed to
+            :func:`working_tree_status`, not re-resolved here -- callers
+            already hold a resolved root via :class:`GitWorkspaceInfo`).
+        info: The :class:`GitWorkspaceInfo` this status was read against;
+            its ``unborn`` flag decided whether the ``diff HEAD --numstat``
+            call ran at all.
+        files: One :class:`ChangedFile` per changed path (tracked changes
+            plus untracked adds), in porcelain order. Renames carry
+            ``old_path``; untracked adds carry zeroed ``adds``/``dels``
+            (counting every new file's lines would mean reading them all
+            at load).
+        untracked: Root-relative paths that are untracked in this working
+            tree. Carried separately from `files` (never as a new
+            `ChangedFile` field) -- the screen needs untracked-ness
+            independently of the collapsed status letter, e.g. to route a
+            leaf's diff through :func:`untracked_preview` instead of
+            :func:`working_tree_diff`.
+    """
+
+    root: Path
+    info: GitWorkspaceInfo
+    files: tuple[ChangedFile, ...]
+    untracked: frozenset[str]
+
+
+def _collapse_status_xy(xy: str) -> str:
+    """Collapse one porcelain v1 XY code to the single letter callers group on.
+
+    Precedence (spec §4, rationale per branch):
+
+    - ``"??"`` -> ``"A"``. Untracked-ness is reported separately via
+      :attr:`CurrentRootStatus.untracked`; the caller synthesizes an
+      untracked-preview diff for these rather than running ``git diff``.
+    - a rename in either column (``"R"`` in ``xy``) wins next -- a rename
+      always carries an ``old_path`` the caller must not drop by
+      collapsing to something else first.
+    - then a copy (``"C"`` in ``xy``), same reasoning as rename.
+    - then ``"D"`` -- this is what makes ``"AD"`` (staged-add,
+      then-deleted-in-worktree) collapse to ``"D"`` rather than ``"A"``:
+      the file is GONE from disk, so reporting ``"A"`` would advertise a
+      file that does not exist.
+    - then ``"A"`` for the remaining add cases (e.g. ``"A "``, ``" A"``
+      is not a real git code but ``"AM"`` etc. fall through to here).
+    - anything else passes through as its first non-space character
+      VERBATIM (``"M"``, ``"T"`` typechange, ``"U"`` unmerged, ...),
+      matching :class:`ChangedFile`'s "unknown letters pass through"
+      contract rather than coercing them into a lie.
+    """
+    if xy == "??":
+        return "A"
+    if "R" in xy:
+        return "R"
+    if "C" in xy:
+        return "C"
+    if "D" in xy:
+        return "D"
+    if "A" in xy:
+        return "A"
+    for ch in xy:
+        if ch != " ":
+            return ch
+    return xy
+
+
+def _parse_porcelain_v1(
+    raw: str,
+) -> tuple[list[tuple[str, str, str | None]], frozenset[str]]:
+    """NUL-token walk over ``git status --porcelain=v1 -z -uall`` output.
+
+    Each record is one NUL-terminated ``"XY PATH"`` token; when the index
+    status (``X``, the first char) is ``R`` or ``C``, ONE additional
+    NUL-terminated token follows carrying the OLD path -- the NEW path
+    comes first (empirically verified, spec §2 probe 2: a rename record
+    is ``R<XY>\\0new\\0old\\0``).
+
+    Args:
+        raw: The command's raw (already text-decoded) stdout.
+
+    Returns:
+        A tuple of ``(collapsed_status, path, old_path)`` rows in
+        porcelain order, plus the frozenset of untracked (``"??"``)
+        paths.
+    """
+    tokens = [t for t in raw.split("\0") if t]
+    entries: list[tuple[str, str, str | None]] = []
+    untracked: set[str] = set()
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        xy, path = token[:2], token[3:]
+        i += 1
+        old_path: str | None = None
+        if xy[:1] in ("R", "C"):
+            old_path = tokens[i]
+            i += 1
+        if xy == "??":
+            untracked.add(path)
+        entries.append((_collapse_status_xy(xy), path, old_path))
+    return entries, frozenset(untracked)
+
+
+def _parse_numstat(raw: str) -> dict[str, tuple[int, int, bool]]:
+    """NUL-token walk over ``git diff HEAD --numstat -z`` output.
+
+    Rename-tolerant token walk, copied from
+    :meth:`tldw_chatbook.Workspaces.change_tracking.ShadowRepo.changed_files`:
+    a normal record is one token ``"adds\\tdels\\tpath"``; a rename record
+    splits into three tokens -- ``"adds\\tdels\\t"`` (empty path field),
+    then the OLD path, then the NEW path -- and this merge is keyed on
+    the NEW path (the same path :func:`_parse_porcelain_v1` uses for
+    renames), so the two streams merge cleanly on path.
+
+    Args:
+        raw: The command's raw (already text-decoded) stdout.
+
+    Returns:
+        ``path -> (adds, dels, binary)``. A binary change reports
+        ``adds=0, dels=0, binary=True`` (git prints ``"-"`` for a binary
+        file's counts).
+    """
+    tokens = [t for t in raw.split("\0") if t]
+    counts: dict[str, tuple[int, int, bool]] = {}
+    i = 0
+    while i < len(tokens):
+        head = tokens[i]
+        adds_s, dels_s, rest = head.split("\t", 2)
+        if rest == "":
+            path = tokens[i + 2]
+            i += 3
+        else:
+            path = rest
+            i += 1
+        binary = adds_s == "-"
+        counts[path] = (
+            0 if binary else int(adds_s),
+            0 if binary else int(dels_s),
+            binary,
+        )
+    return counts
+
+
+def working_tree_status(root: Path, info: GitWorkspaceInfo) -> CurrentRootStatus:
+    """Read the real working tree's status at ``root``.
+
+    Runs ``status --porcelain=v1 -z -uall`` (untracked directories
+    expanded to one row per file, never collapsed to the directory) and,
+    unless ``info.unborn``, ONE ``diff HEAD --numstat -z`` call to merge
+    in tracked line counts -- ``git diff HEAD`` is a fatal error on an
+    unborn branch (spec §2 probe 4), so it is never invoked there; every
+    file on an unborn branch is untracked and gets zeroed counts.
+
+    Args:
+        root: Workspace root (must be the repo toplevel; use
+            :func:`detect_git_workspace` to establish that first).
+        info: The root's detected :class:`GitWorkspaceInfo`.
+
+    Returns:
+        The root's :class:`CurrentRootStatus`.
+
+    Raises:
+        GitWorkspaceError: A git invocation failed (git missing, timed
+            out, or exited nonzero).
+    """
+    status_result = _run_user_git(root, "status", "--porcelain=v1", "-z", "-uall")
+    entries, untracked = _parse_porcelain_v1(status_result.stdout)
+
+    counts: dict[str, tuple[int, int, bool]] = {}
+    if not info.unborn:
+        numstat_result = _run_user_git(root, "diff", "HEAD", "--numstat", "-z")
+        counts = _parse_numstat(numstat_result.stdout)
+
+    files = tuple(
+        ChangedFile(
+            path=path,
+            status=status,
+            adds=counts.get(path, (0, 0, False))[0],
+            dels=counts.get(path, (0, 0, False))[1],
+            old_path=old_path,
+            binary=counts.get(path, (0, 0, False))[2],
+        )
+        for status, path, old_path in entries
+    )
+    return CurrentRootStatus(root=root, info=info, files=files, untracked=untracked)
+
+
+def working_tree_diff(root: Path, path: str) -> str:
+    """Unified diff for one TRACKED file, working tree vs HEAD.
+
+    Callers must not invoke this for an unborn HEAD (there is no HEAD to
+    diff against -- every file there is untracked) or for an untracked
+    path; use :func:`untracked_preview` for those instead.
+
+    Args:
+        root: Workspace root.
+        path: Root-relative path to diff.
+
+    Returns:
+        Unified diff text (empty when there is no textual difference).
+
+    Raises:
+        GitWorkspaceError: The git invocation failed.
+    """
+    result = _run_user_git(root, "diff", "HEAD", "--", path)
+    return result.stdout
+
+
+def untracked_preview(root: Path, path: str, max_lines: int) -> str:
+    """Render a bounded preview of an untracked file for the diff pane.
+
+    Synthesized entirely in Python from a capped read -- never
+    ``git diff --no-index`` (exit-code-1 semantics, platform quirks) and
+    never an index trick like ``--intent-to-add`` (mutating the user's
+    index from a VIEW is forbidden).
+
+    Args:
+        root: Workspace root.
+        path: Root-relative path of the untracked file.
+        max_lines: Maximum number of content lines to render.
+
+    Returns:
+        A ``"new file: <path>"`` header, a blank line, then up to
+        ``max_lines`` ``"+"``-prefixed lines with a trailing truncation
+        note when the file has more; or, for a file whose first 8KB
+        contain a NUL byte, a one-line binary label; or, on any
+        :class:`OSError` (vanished file, permission denied, ...), an
+        honest one-line error message. Never raises.
+    """
+    target = root / path
+    try:
+        size = target.stat().st_size
+        cap = max_lines * 400
+        with target.open("rb") as fh:
+            head = fh.read(cap)
+    except OSError as exc:
+        return f"could not read {path}: {exc}"
+
+    if b"\x00" in head[:8192]:
+        return f"new file: {path}\n(binary file, {size} bytes)"
+
+    text = head.decode("utf-8", "replace")
+    lines = text.splitlines()
+    capped_read = size > len(head)
+    shown = lines[:max_lines]
+    out = [f"new file: {path}", ""]
+    out.extend(f"+{line}" for line in shown)
+    if capped_read or len(lines) > max_lines:
+        out.append(f"… truncated at {max_lines} lines")
+    return "\n".join(out) + "\n"
