@@ -1,5 +1,20 @@
 """Separate local Persona Visual operational-state contracts."""
 
+from .authoring import (
+    PersonaVisualAuthoringDraft,
+    PersonaVisualAuthoringError,
+    PersonaVisualDraftAsset,
+    PersonaVisualDraftInventory,
+    PersonaVisualDraftRow,
+    add_persona_visual_custom_state,
+    clear_persona_visual_draft_state,
+    create_persona_visual_draft,
+    inspect_persona_visual_draft,
+    persona_visual_draft_from_graph,
+    persona_visual_draft_publication_snapshot,
+    replace_persona_visual_draft_state,
+)
+
 from .contracts import (
     ALLOWED_ASSET_EXTENSIONS,
     ALLOWED_ASSET_MIME_TYPES,
@@ -44,6 +59,11 @@ __all__ = [
     "MAX_TRIGGERS",
     "REQUIRED_STATES",
     "RESERVED_STATES",
+    "PersonaVisualAuthoringDraft",
+    "PersonaVisualAuthoringError",
+    "PersonaVisualDraftAsset",
+    "PersonaVisualDraftInventory",
+    "PersonaVisualDraftRow",
     "PersonaVisualAlignment",
     "PersonaVisualAnimation",
     "PersonaVisualCapability",
@@ -56,6 +76,13 @@ __all__ = [
     "PersonaVisualStaticSelection",
     "PersonaVisualTrigger",
     "inspect_persona_visual_capability",
+    "add_persona_visual_custom_state",
+    "clear_persona_visual_draft_state",
+    "create_persona_visual_draft",
+    "inspect_persona_visual_draft",
+    "persona_visual_draft_from_graph",
+    "persona_visual_draft_publication_snapshot",
+    "replace_persona_visual_draft_state",
     "resolve_manifest_state",
     "validate_persona_visual_manifest",
 ]
