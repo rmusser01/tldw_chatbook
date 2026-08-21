@@ -11,7 +11,10 @@ import pytest
 from tldw_chatbook.Notes.notes_device_state_store import NotesDeviceStateStore
 from tldw_chatbook.Notes.notes_sync_legacy import (
     LEGACY_MIGRATION_REPORT_LIMIT,
+    LegacyMigrationReportEntry,
     LegacyNotesSyncMigrationError,
+    LegacyNotesSyncMigrationResult,
+    _bounded_report,
     authorize_legacy_candidate_activation,
     persist_legacy_notes_sync_migration,
     plan_legacy_notes_sync_migration,
@@ -560,6 +563,48 @@ def test_report_is_bounded_and_marks_truncation(tmp_path: Path) -> None:
     assert plan.report[-1].reason_code == "migration_report_truncated"
     assert plan.bindings == ()
     connection.close()
+
+
+def test_report_marks_only_real_overflow_as_truncated() -> None:
+    entries = tuple(
+        LegacyMigrationReportEntry(
+            "file_missing",
+            binding_id=f"binding-{ordinal}",
+        )
+        for ordinal in range(LEGACY_MIGRATION_REPORT_LIMIT + 1)
+    )
+
+    exact = _bounded_report(entries[:LEGACY_MIGRATION_REPORT_LIMIT])
+    overflow = _bounded_report(entries)
+
+    assert exact == entries[:LEGACY_MIGRATION_REPORT_LIMIT]
+    assert len(overflow) == LEGACY_MIGRATION_REPORT_LIMIT
+    assert overflow[:-1] == entries[: LEGACY_MIGRATION_REPORT_LIMIT - 1]
+    assert overflow[-1] == LegacyMigrationReportEntry("migration_report_truncated")
+
+
+def test_migration_result_enforces_the_fixed_report_bound() -> None:
+    entries = tuple(
+        LegacyMigrationReportEntry(
+            "file_missing",
+            binding_id=f"binding-{ordinal}",
+        )
+        for ordinal in range(LEGACY_MIGRATION_REPORT_LIMIT + 1)
+    )
+
+    accepted = LegacyNotesSyncMigrationResult(
+        False,
+        0,
+        0,
+        entries[:LEGACY_MIGRATION_REPORT_LIMIT],
+    )
+    assert accepted.report == entries[:LEGACY_MIGRATION_REPORT_LIMIT]
+    with pytest.raises(ValueError, match="report exceeds"):
+        LegacyNotesSyncMigrationResult(False, 0, 0, entries)
+    with pytest.raises(TypeError, match="report must be a tuple"):
+        LegacyNotesSyncMigrationResult(False, 0, 0, [])  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="report must be a tuple"):
+        LegacyNotesSyncMigrationResult(False, 0, 0, (object(),))  # type: ignore[arg-type]
 
 
 def test_persist_is_one_private_transaction_idempotent_and_inert(

@@ -218,6 +218,8 @@ class LegacyNotesSyncMigrationResult:
             raise TypeError(
                 "report must be a tuple of LegacyMigrationReportEntry values."
             )
+        if len(self.report) > LEGACY_MIGRATION_REPORT_LIMIT:
+            raise ValueError("migration report exceeds its fixed bound.")
 
     def __repr__(self) -> str:
         return (
@@ -745,11 +747,11 @@ def _bounded_report(
         key = (item.reason_code, item.root_id, item.binding_id)
         if key in seen:
             continue
-        seen.add(key)
-        unique.append(item)
         if len(unique) == LEGACY_MIGRATION_REPORT_LIMIT:
             unique[-1] = LegacyMigrationReportEntry("migration_report_truncated")
             break
+        seen.add(key)
+        unique.append(item)
     return tuple(unique)
 
 
