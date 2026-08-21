@@ -993,6 +993,24 @@ def _assert_no_dom_access(methods: object) -> None:
     assert not any(_calls_query_one(node) for node in methods)  # type: ignore[arg-type]
 
 
+def _assert_skill_dead_tokens_absent(sources: dict[str, str]) -> None:
+    dead_tokens = {
+        "KIND_FALLBACK",
+        "ConsoleSkillPickerModal",
+        "_CONSOLE_SKILL_SEARCH_LIMIT",
+        "_console_skill_search",
+        "_console_command_run_skill",
+        "_run_resolved_console_skill",
+        "_open_console_skill_picker",
+    }
+    offenders = {
+        path: sorted(token for token in dead_tokens if token in source)
+        for path, source in sources.items()
+        if any(token in source for token in dead_tokens)
+    }
+    assert not offenders, f"dead Console skill surface remains: {offenders}"
+
+
 def _assert_delegate_contract(
     screen_methods: dict[str, ast.AST], method_name: str, *, complete: bool
 ) -> None:
@@ -1145,13 +1163,9 @@ def test_wave6_inventory_matches_the_implementation_base() -> None:
 
         if target_path.exists():
             methods_to_scan = (
-                target_methods.values()
-                if name != "browser"
-                else (
-                    target_methods[method_name]
-                    for method_name in group.moved
-                    if method_name in target_methods
-                )
+                target_methods[method_name]
+                for method_name in group.moved
+                if method_name in target_methods
             )
             _assert_no_dom_access(methods_to_scan)
 
@@ -1214,6 +1228,120 @@ def test_retrieval_compatibility_descriptors_all_target_retrieval() -> None:
     assert _controller_state_assignments(screen_class, names) == {
         name: "_retrieval" for name in names
     }
+
+
+@pytest.mark.unit
+def test_skill_family_has_completed_controller_ownership() -> None:
+    """Require the exact nine-M/three-D/four-X skill inventory."""
+    group = WAVE6_GROUPS["skill"]
+    target_path = _REPO_ROOT / group.target_path
+    screen_methods = _methods(_SCREEN_PATH, "ChatScreen")
+
+    assert target_path.exists(), "ConsoleSkillController module is missing"
+    target_methods = _methods(target_path, group.target_class)
+    assert not (group.moved & screen_methods.keys()), (
+        "skill methods still owned by ChatScreen: "
+        f"{sorted(group.moved & screen_methods.keys())}"
+    )
+    assert group.moved <= target_methods.keys()
+    assert group.delegates <= screen_methods.keys()
+    assert group.delegates <= target_methods.keys()
+    assert not (group.deleted & screen_methods.keys())
+    assert not (group.deleted & target_methods.keys())
+    owned = [target_methods[name] for name in group.moved | group.delegates]
+    _assert_no_dom_access(owned)
+    assert "_screen" not in _self_assignments(target_methods["__init__"])
+
+
+@pytest.mark.unit
+def test_skill_compatibility_descriptor_targets_skill_controller() -> None:
+    """Keep the assignable candidate cache on the `_skill` owner."""
+    _, screen_class = _class_node(_SCREEN_PATH, "ChatScreen")
+    names = COMPATIBILITY_TARGETS["_skill"]
+
+    assert _controller_state_assignments(screen_class, names) == {
+        name: "_skill" for name in names
+    }
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "method_name",
+    [
+        "_console_command_skills",
+        "handle_console_skill_install_decided",
+        "handle_console_skill_script_decided",
+    ],
+)
+def test_skill_screen_entry_points_are_bounded_controller_delegates(
+    method_name: str,
+) -> None:
+    """Keep framework-bound screen names and one exact `_skill` call."""
+    method = _methods(_SCREEN_PATH, "ChatScreen")[method_name]
+    _assert_delegate_contract(
+        _methods(_SCREEN_PATH, "ChatScreen"), method_name, complete=True
+    )
+    calls = [
+        node
+        for node in ast.walk(method)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == method_name
+        and isinstance(node.func.value, ast.Attribute)
+        and isinstance(node.func.value.value, ast.Name)
+        and node.func.value.value.id == "self"
+        and node.func.value.attr == "_skill"
+    ]
+    assert len(calls) == 1
+
+
+@pytest.mark.unit
+def test_skill_dead_fallback_and_picker_surface_is_absent() -> None:
+    """Reject every unreachable fallback/picker production and test surface."""
+    target_path = _REPO_ROOT / WAVE6_GROUPS["skill"].target_path
+    scanned = {
+        path.relative_to(_REPO_ROOT).as_posix(): path.read_text(encoding="utf-8")
+        for path in (
+            target_path,
+            _SCREEN_PATH,
+            _REPO_ROOT / "tldw_chatbook/Chat/console_skill_resolver.py",
+            _REPO_ROOT / "tldw_chatbook/Widgets/Console/console_style_picker_modal.py",
+            _REPO_ROOT / "Tests/Chat/test_console_style_picker.py",
+        )
+    }
+    _assert_skill_dead_tokens_absent(scanned)
+
+    assert not (
+        _REPO_ROOT / "tldw_chatbook/Widgets/Console/console_skill_picker_modal.py"
+    ).exists()
+    assert not (_REPO_ROOT / "Tests/UI/test_console_skill_picker.py").exists()
+    for css_path in (
+        _REPO_ROOT / "tldw_chatbook/css/components/_agentic_terminal.tcss",
+        _REPO_ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss",
+    ):
+        assert "console-skill-picker" not in css_path.read_text(encoding="utf-8")
+
+    removed_owner_tokens = {
+        f"ChatScreen.{name}" for name in WAVE6_GROUPS["skill"].moved
+    }
+    production_offenders = {
+        path.relative_to(_REPO_ROOT).as_posix(): sorted(
+            token for token in removed_owner_tokens if token in source
+        )
+        for path in (_REPO_ROOT / "tldw_chatbook").rglob("*.py")
+        if (source := path.read_text(encoding="utf-8"))
+        and any(token in source for token in removed_owner_tokens)
+    }
+    assert not production_offenders
+
+
+@pytest.mark.unit
+def test_skill_dead_surface_oracle_is_non_vacuous() -> None:
+    """Prove one synthetic dead token makes the deletion oracle fail."""
+    with pytest.raises(AssertionError, match="dead Console skill surface"):
+        _assert_skill_dead_tokens_absent(
+            {"synthetic.py": "self._open_console_skill_picker('x', '')"}
+        )
 
 
 @pytest.mark.unit

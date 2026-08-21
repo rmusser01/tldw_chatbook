@@ -161,7 +161,6 @@ from ...Chat.console_command_grammar import (
     GENERATE_VIDEO_COMMAND_HANDLER_ID,
     GENERATE_VIDEO_COMMAND_NAME,
     KIND_COMMAND,
-    KIND_FALLBACK,
     KIND_NOT_COMMAND,
     KIND_UNKNOWN,
     PREFILL_COMMAND_HANDLER_ID,
@@ -193,13 +192,6 @@ from ...Chat.console_prefill import (
 )
 from ...Chat.console_generate_image import insert_style_token_into_draft
 from ...Chat.console_side_chat import ConsoleSideChatService, render_prompt
-from ...Chat.console_skill_resolver import (
-    SKILL_UNTRUSTED_REFUSE,
-    SkillCommandCandidate,
-    cap_skill_args,
-    format_skills_list,
-    resolve_skill_command,
-)
 from ...Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
     ConsoleChatMessage,
@@ -521,7 +513,6 @@ from ...Widgets.Console.console_model_popover import (
     ConsoleModelPopover,
     ConsoleModelPopoverResult,
 )
-from ...Widgets.Console.console_skill_picker_modal import ConsoleSkillPickerModal
 from ...Widgets.Console.console_style_picker_modal import ConsoleStylePickerModal
 from ...Widgets.Console.console_setup_modal import (
     CONSOLE_SETUP_MODAL_DETECTED_WORKBENCH_ACTION,
@@ -586,18 +577,6 @@ CONSOLE_FOCUS_FRAME_COLOR = "#0178D4"
 CONSOLE_FOCUS_FRAME_BORDER = ("solid", CONSOLE_FOCUS_FRAME_COLOR)
 CONSOLE_START_HERE_COPY = ""
 CONSOLE_ACTION_HINTS_COPY = ""
-# "Absent" bucket of the untrusted-refuse copy (Task 7's SKILL_UNTRUSTED_REFUSE):
-# a typed skill name that matches nothing at all -- not a trusted candidate,
-# not even a needs-review one.
-CONSOLE_SKILL_RUN_REFUSE_REASON_ABSENT = "no matching skill"
-# Review-mandated addition (Task 8 review, binding): a typed prefix that
-# matches ONLY needs-review (trust-blocked) skills must not read like the
-# generic "nothing found" empty state -- it must say so explicitly rather
-# than silently opening a picker that can only ever show an empty list (the
-# picker's `skill_search` closure is scoped to trusted skills only).
-CONSOLE_SKILL_NEEDS_REVIEW_HINT_TEMPLATE = (
-    "{count} matching skill(s) need review in Library ▸ Skills before running."
-)
 CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL = "Set up provider"
 CONSOLE_PROVIDER_ACTION_ARROW = " ---------------------->"
 NATIVE_CONSOLE_STATE_VERSION = "1.0"
@@ -1715,6 +1694,7 @@ class ChatScreen(BaseAppScreen):
     _last_console_world_book_scope_ids = _ControllerState(
         "_retrieval", "_last_console_world_book_scope_ids"
     )
+    _console_skill_candidates = _ControllerState("_skill", "_console_skill_candidates")
     _active_character_avatar = _ControllerState(
         "_character", "_active_character_avatar"
     )
@@ -3592,12 +3572,6 @@ class ChatScreen(BaseAppScreen):
         self._console_command_registry: ConsoleCommandRegistry = (
             default_console_registry()
         )
-        # Snapshot of trusted, user-invocable skills for the slash-command
-        # popup's skill entries; refreshed on mount/resume by
-        # `_refresh_console_skill_candidates`. Bare-`/skill-name` resolution
-        # was hard-removed (the `$`-mention migration), so this snapshot only
-        # feeds suggestions, which complete to `/skills <name> `.
-        self._console_skill_candidates: tuple[SkillCommandCandidate, ...] = ()
         self._console_unknown_send_armed: str | None = None
         self._console_image_view_state: ConsoleImageViewState | None = None
         self._console_image_cache: ConsoleImageRenderCache | None = None
@@ -5571,8 +5545,8 @@ class ChatScreen(BaseAppScreen):
             # task-2154.16 (FB-05): the ACTIVE session's own run failing --
             # one error toast carrying the run's visible copy.
             "notify_run_failure": self._notify_console_run_failure,
-            "set_pending_skill_install": self._set_console_pending_skill_install,
-            "set_pending_skill_script": self._set_console_pending_skill_script,
+            "set_pending_skill_install": self._skill._set_console_pending_skill_install,
+            "set_pending_skill_script": self._skill._set_console_pending_skill_script,
             # PR3a-2 Task 5, user-wins-ties.
             "wake_user_priority_probe": self._console_wake_user_priority,
             # task-15971: the delivery COMMIT's visibility probe -- a wake
@@ -13504,7 +13478,9 @@ class ChatScreen(BaseAppScreen):
         self.call_after_refresh(self._image._reconcile_h3_image_edit_completions)
         self.call_after_refresh(self._restore_console_workbench_focus)
         self.set_timer(0.2, self._restore_console_workbench_focus)
-        self.run_worker(self._refresh_console_skill_candidates(), exclusive=False)
+        self.run_worker(
+            self._skill._refresh_console_skill_candidates(), exclusive=False
+        )
         # task-15475: claim this visit's refreshes; the ScreenResume Textual
         # posts for this very mount consumes the token and skips its own copy.
         self._console_mount_visit_refreshed = True
@@ -15998,7 +15974,7 @@ class ChatScreen(BaseAppScreen):
                     self._clear_console_composer_draft()
             return False
 
-        if parse.kind in (KIND_COMMAND, KIND_FALLBACK):
+        if parse.kind == KIND_COMMAND:
             # Commands operate on the live composer draft (`/prompt` replaces
             # it wholesale, unrecognized handlers leave it untouched) — put
             # the stash back first so their semantics stay identical.
@@ -16021,9 +15997,9 @@ class ChatScreen(BaseAppScreen):
             # known-but-blocked command, not an unrecognized one, so a
             # repeated Enter shows the same response again rather than
             # silently falling through to a literal send.
-            context = await self._fetch_console_skill_context()
-            blocked_summaries = self._console_skill_blocked_summaries(context)
-            if await self._console_skill_blocked_match_response(
+            context = await self._skill._fetch_console_skill_context()
+            blocked_summaries = self._skill._console_skill_blocked_summaries(context)
+            if await self._skill._console_skill_blocked_match_response(
                 parse.name, blocked_summaries
             ):
                 if composer is not None:
@@ -16104,17 +16080,8 @@ class ChatScreen(BaseAppScreen):
 
         A ``handler_id`` that resolves to nothing (an unrecognized command
         name) is consumed silently: nothing is sent and the draft is left
-        untouched. The ``KIND_FALLBACK`` branch below is dead code as of
-        the hard removal (Task 4 of the `$`-mention migration): no caller
-        registers a fallback resolver anymore, so
-        ``self._console_command_registry.parse`` never produces that kind.
-        Kept only because the grammar's generic
-        ``register_fallback_resolver`` extension point itself is not being
-        removed -- a future caller could still register one.
+        untouched.
         """
-        if parse.kind == KIND_FALLBACK:
-            await self._console_command_run_skill(parse.name, parse.args)
-            return
         handler_id = self._CONSOLE_COMMAND_NAME_TO_HANDLER_ID.get(parse.name)
         # F5 (task-9 review): the composer-menu entry that BUILDS a
         # /generate-image draft was gated, but typing (or pasting) the
@@ -16678,310 +16645,8 @@ class ChatScreen(BaseAppScreen):
         """Delegate to `ConsolePromptsController` (wave-3 console decomposition, task 3)."""
         await self._prompts._open_console_system_prompt_editor()
 
-    # ------------------------------------------------------------------
-    # Task 9 (Skills spec, Phase 2), reshaped by the `$`-mention migration
-    # (Task 4 hard removal): `/skills` registered command (bare list /
-    # `$name` run-form hint) + the KIND_UNKNOWN needs-review hint.
-    # Invocation itself is the controller-side `$name` mention.
-    # ------------------------------------------------------------------
-
-    # Bounded skill-search page size for the picker's `skill_search`
-    # callable -- mirrors `_CONSOLE_PROMPT_SEARCH_LIMIT`'s <= 25-row bound.
-    _CONSOLE_SKILL_SEARCH_LIMIT = 25
-
-    async def _fetch_console_skill_context(self) -> Mapping[str, Any]:
-        """Fetch a FRESH ``skills_scope_service.get_context`` payload.
-
-        Used by every list/search/hint path -- always an authoritative
-        fetch, never a cached snapshot.
-        Returns ``{}`` (never raises) when the service is unavailable or the
-        call fails, so callers can treat "no skills" and "service down" the
-        same way: an empty candidate/blocked population.
-        """
-        service = getattr(self.app_instance, "skills_scope_service", None)
-        get_context = getattr(service, "get_context", None)
-        if not callable(get_context):
-            return {}
-        try:
-            context = await get_context(mode="local")
-        except Exception:
-            logger.opt(exception=True).warning("Console skill context fetch failed.")
-            return {}
-        return context if isinstance(context, Mapping) else {}
-
-    @staticmethod
-    def _console_skill_trusted_candidates_from_context(
-        context: Mapping[str, Any],
-    ) -> tuple[SkillCommandCandidate, ...]:
-        """Build the trusted, user-invocable candidate population.
-
-        Scoped to ``user_invocable and not trust_blocked`` (blocked skills
-        are excluded here even though ``get_context``'s own
-        ``available_skills`` should already exclude them -- defensive, since
-        a caller-supplied fake service isn't guaranteed to uphold that).
-        Stably sorted by case-folded name (Task 7 review note) so result
-        order never depends on the backend's own iteration order.
-        """
-        available = (
-            context.get("available_skills") if isinstance(context, Mapping) else None
-        )
-        candidates = [
-            SkillCommandCandidate(
-                name=str(item.get("name")),
-                description=str(item.get("description") or ""),
-            )
-            for item in (available or [])
-            if isinstance(item, Mapping)
-            and item.get("name")
-            and item.get("user_invocable", True)
-            and not item.get("trust_blocked", False)
-        ]
-        candidates.sort(key=lambda candidate: candidate.name.casefold())
-        return tuple(candidates)
-
-    @staticmethod
-    def _console_skill_blocked_summaries(
-        context: Mapping[str, Any],
-    ) -> tuple[Mapping[str, Any], ...]:
-        """Return the needs-review (trust-blocked) skill summaries, named only."""
-        blocked = (
-            context.get("blocked_skills") if isinstance(context, Mapping) else None
-        )
-        return tuple(
-            item
-            for item in (blocked or [])
-            if isinstance(item, Mapping) and item.get("name")
-        )
-
-    async def _refresh_console_skill_candidates(self) -> None:
-        """Refresh the cached trusted-candidate snapshot for the fallback resolver.
-
-        Called on Console mount/resume; the fallback resolver itself always
-        reads through ``self._console_skill_candidates`` via a closure, so
-        updating this attribute is all a refresh needs to do.
-        """
-        context = await self._fetch_console_skill_context()
-        self._console_skill_candidates = (
-            self._console_skill_trusted_candidates_from_context(context)
-        )
-        # Pick up newly-arrived skill entries in an open popup without
-        # waiting for the next keystroke.
-        self._sync_console_command_popup()
-
-    async def _console_skill_search(self, query: str) -> list[Mapping[str, object]]:
-        """Bounded, fresh-fetched trusted-skill search for the skill picker."""
-        context = await self._fetch_console_skill_context()
-        candidates = self._console_skill_trusted_candidates_from_context(context)
-        normalized_query = query.strip().casefold()
-        if normalized_query:
-            candidates = tuple(
-                candidate
-                for candidate in candidates
-                if normalized_query in candidate.name.casefold()
-                or normalized_query in candidate.description.casefold()
-            )
-        return [
-            {"name": candidate.name, "description": candidate.description}
-            for candidate in candidates[: self._CONSOLE_SKILL_SEARCH_LIMIT]
-        ]
-
-    @staticmethod
-    def _split_console_skill_name_args(text: str) -> tuple[str, str]:
-        """Split ``text`` (already stripped) into its leading word and the rest.
-
-        Mirrors ``console_command_grammar._split_leading_token``'s single-
-        whitespace-character split rule, used here to pull a skill name back
-        out of `/skills <name> [args]`'s own ``args`` text.
-        """
-        for index, character in enumerate(text):
-            if character.isspace():
-                return text[:index], text[index + 1 :]
-        return text, ""
-
     async def _console_command_skills(self, parse: CommandParse) -> None:
-        """Handle the registered `/skills` command: bare list, or `<name> [args]` hint.
-
-        Hard removal (Task 4 of the `$`-mention migration): `/skills` only
-        ever lists now -- a typed `<name> [args]` never resolves or runs
-        anything, it just points the user at the `$name` invocation form
-        via a transcript hint row (the same mechanism the list uses).
-        """
-        args = parse.args.strip()
-        if not args:
-            context = await self._fetch_console_skill_context()
-            candidates = self._console_skill_trusted_candidates_from_context(context)
-            await self._append_native_console_system_message(
-                format_skills_list(candidates)
-            )
-            return
-        name, _rest = self._split_console_skill_name_args(args)
-        await self._append_native_console_system_message(
-            f"Run skills by typing ${name} — /skills only lists them."
-        )
-
-    async def _console_command_run_skill(self, name: str, args: str) -> None:
-        """Resolve and run a skill by name (spec Slash surface run semantics).
-
-        Hard removal (Task 4 of the `$`-mention migration): neither of this
-        method's original two callers reach it anymore -- `/skills <name>`
-        now always shows a static `$name` hint instead
-        (`_console_command_skills`), and the bare `/skill-name` fallback
-        dispatch (`KIND_FALLBACK`) that used to route here has no resolver
-        registered to ever produce that parse kind. Left in place (with the
-        picker chain it opens) since nothing currently calls it; if that
-        changes, it still re-resolves against a FRESH ``get_context`` (never
-        a cached snapshot) for the authoritative trust decision.
-        """
-        args = cap_skill_args(args)
-        context = await self._fetch_console_skill_context()
-        trusted_candidates = self._console_skill_trusted_candidates_from_context(
-            context
-        )
-        blocked_summaries = self._console_skill_blocked_summaries(context)
-        resolution = resolve_skill_command(name, args, trusted_candidates)
-
-        if resolution.kind == "resolved":
-            await self._run_resolved_console_skill(resolution.name, args)
-            return
-        if resolution.kind == "ambiguous":
-            await self._open_console_skill_picker(name, args)
-            return
-
-        # resolution.kind == "none": distinguish "genuinely absent" from
-        # "exists but needs review" before falling back to the picker --
-        # review-mandated addition (Task 8 review): a typed name/prefix that
-        # matches ONLY needs-review skills must not read like the generic
-        # empty state. Shares `_console_skill_blocked_match_response` with
-        # the composer's KIND_UNKNOWN dispatch site.
-        if await self._console_skill_blocked_match_response(name, blocked_summaries):
-            return
-        if args:
-            await self._open_console_skill_picker(name, args)
-            return
-        await self._append_skill_refuse_row(
-            name, CONSOLE_SKILL_RUN_REFUSE_REASON_ABSENT
-        )
-
-    async def _console_skill_blocked_match_response(
-        self, name: str, blocked_summaries: tuple[Mapping[str, Any], ...]
-    ) -> bool:
-        """Surface the needs-review response for ``name`` against blocked skill summaries.
-
-        Called from the composer's `KIND_UNKNOWN` dispatch site (a bare
-        draft that matched no registered command -- there is no fallback
-        resolver to claim it anymore, hard removal Task 4) so a typed
-        name/prefix that matches ONLY needs-review (trust-blocked) skills
-        reads as a distinguishing hint instead of the generic
-        "Unknown command" copy. `_console_command_run_skill`'s "none" branch
-        also calls this (fold-in from the Task 9 fix-wave review), though
-        that method currently has no live caller of its own -- see its
-        docstring.
-
-        Args:
-            name: The typed command word (no leading slash).
-            blocked_summaries: Fresh ``get_context``-derived blocked-skill
-                summaries (never a cached snapshot).
-
-        Returns:
-            ``True`` when a blocked match was found and a response was
-            appended (an exact match appends the ``SKILL_UNTRUSTED_REFUSE``
-            row; one or more prefix matches append the
-            ``CONSOLE_SKILL_NEEDS_REVIEW_HINT_TEMPLATE`` hint) -- the caller
-            should stop further handling. ``False`` when ``name`` matches no
-            blocked skill at all, so the caller falls through to its own
-            default (the generic "Unknown command" hint for the composer's
-            `KIND_UNKNOWN` site).
-        """
-        name_lower = name.lower()
-        exact_blocked = next(
-            (
-                item
-                for item in blocked_summaries
-                if str(item.get("name") or "").lower() == name_lower
-            ),
-            None,
-        )
-        if exact_blocked is not None:
-            reason = str(
-                exact_blocked.get("trust_reason_code")
-                or exact_blocked.get("trust_status")
-                or "needs review"
-            )
-            await self._append_skill_refuse_row(
-                str(exact_blocked.get("name") or name), reason
-            )
-            return True
-        prefix_blocked = [
-            item
-            for item in blocked_summaries
-            if str(item.get("name") or "").lower().startswith(name_lower)
-        ]
-        if prefix_blocked:
-            await self._append_native_console_system_message(
-                CONSOLE_SKILL_NEEDS_REVIEW_HINT_TEMPLATE.format(
-                    count=len(prefix_blocked)
-                )
-            )
-            return True
-        return False
-
-    async def _run_resolved_console_skill(self, name: str, args: str) -> None:
-        """Submit a resolved skill's raw `$name [args]` command as the user turn.
-
-        Hard removal (Task 4 of the `$`-mention migration): this composes
-        the `$`-sigil invocation form now, not `/name [args]`. The
-        substitution rule renders it at payload build time -- this method
-        only sends the literal, unmodified command text through the exact
-        same send-blocked/readiness gate a normal Enter-to-send goes
-        through. The old composer-staged TOOL "driving this turn" marker
-        was deleted along with the bare `/name` dispatch it annotated (Task
-        4 fix wave): the visible `$name` USER row is itself the transcript
-        record of which skill drove the turn.
-        """
-        raw_command = f"${name} {args}" if args else f"${name}"
-        await self._dispatch_console_draft_send(raw_command)
-
-    async def _append_skill_refuse_row(self, name: str, reason: str) -> None:
-        """Append the `SKILL_UNTRUSTED_REFUSE` transcript row for a run attempt.
-
-        Covers all three "nothing runs" buckets the spec groups together:
-        untrusted (present but trust-blocked), edited (a fallback-cached
-        resolution that no longer holds at fresh re-resolution), and absent
-        (no matching skill at all). The draft is deliberately left
-        untouched by this method -- the composer never gets cleared on a
-        refusal, so the user can correct the name in place.
-        """
-        await self._append_native_console_system_message(
-            SKILL_UNTRUSTED_REFUSE.format(name=name, reason=reason)
-        )
-
-    async def _open_console_skill_picker(self, initial_query: str, args: str) -> None:
-        """Open the skill picker prefilled with ``initial_query`` (ambiguous or 0-match-with-args).
-
-        ``args`` is the text that followed the unresolved word -- preserved
-        across the picker detour so a picked skill still runs with whatever
-        parameters the user already typed, exactly as a direct resolution
-        would have.
-        """
-
-        def _apply_picker_choice(record: Optional[Mapping[str, Any]]) -> None:
-            self._focus_console_composer_if_needed(force=True)
-            if record is None:
-                return
-            picked_name = str(record.get("name") or "").strip()
-            if not picked_name:
-                return
-            self.run_worker(
-                self._run_resolved_console_skill(picked_name, args), exclusive=False
-            )
-
-        self.app.push_screen(
-            ConsoleSkillPickerModal(
-                initial_query=initial_query,
-                skill_search=self._console_skill_search,
-            ),
-            callback=_apply_picker_choice,
-        )
+        await self._skill._console_command_skills(parse)
 
     @on(Input.Changed, "#console-command-input")
     def _on_console_composer_draft_changed(self, event: Input.Changed) -> None:
@@ -19703,7 +19368,9 @@ class ChatScreen(BaseAppScreen):
         ):
             self._dispatch_active_console_roleplay_refresh()
         if not mount_already_refreshed:
-            self.run_worker(self._refresh_console_skill_candidates(), exclusive=False)
+            self.run_worker(
+                self._skill._refresh_console_skill_candidates(), exclusive=False
+            )
         # Note: BaseAppScreen doesn't have on_screen_resume, so no super() call
 
     def set_task_resume_state(self, task_state: TaskResumeState) -> None:
@@ -19742,9 +19409,9 @@ class ChatScreen(BaseAppScreen):
         machinery" convention, rather than a bespoke copy per bridge.
         Deliberately does NOT touch ``task_resume_state``/``set_task_
         resume_state`` -- that slot is reserved for whichever session is
-        actually being viewed (``_set_console_pending_approval``/
-        ``_set_console_pending_skill_install``/``_set_console_pending_
-        skill_script`` above); parking must never steal the mounted card
+        actually being viewed (``_set_console_pending_approval`` and the
+        `ConsoleSkillController` pending-state setters); parking must never
+        steal the mounted card
         out from under the session the user is currently looking at. The
         controller's own ``_parked_approval_payloads``/``_parked_skill_
         install_payloads``/``_parked_skill_script_payloads`` maps
@@ -19995,34 +19662,6 @@ class ChatScreen(BaseAppScreen):
         """
         self.app_instance.notify(visible_copy, severity="error")
 
-    def _set_console_pending_skill_install(
-        self, payload: Dict[str, Any] | None
-    ) -> None:
-        """Set/clear the pending skill-install confirm, then sync the task cards.
-
-        UI-thread bridge target for ConsoleChatController.
-        request_skill_install_confirm, invoked via call_from_thread. Mutates
-        only pending_skill_install so an in-flight approval/resume state is
-        never clobbered.
-        """
-        current = self._task_resume_state
-        self.set_task_resume_state(replace(current, pending_skill_install=payload))
-
-    def _set_console_pending_skill_script(self, payload: Dict[str, Any] | None) -> None:
-        """Set/clear the pending skill-script confirm, then sync the task cards.
-
-        UI-thread bridge target for ``ConsoleChatController.
-        request_skill_script_confirm``, invoked via ``call_from_thread``
-        (task-5). Mutates only ``pending_skill_script`` so an in-flight
-        approval/resume state is never clobbered.
-
-        Args:
-            payload: The pending confirm's dict (see
-                ``SkillScriptConfirmCard.set_script``), or None to clear it.
-        """
-        current = self._task_resume_state
-        self.set_task_resume_state(replace(current, pending_skill_script=payload))
-
     @on(ChatApprovalCard.ApprovalDecided)
     def handle_console_approval_decided(
         self, event: ChatApprovalCard.ApprovalDecided
@@ -20043,42 +19682,18 @@ class ChatScreen(BaseAppScreen):
             )
 
     @on(SkillInstallConfirmCard.InstallDecided)
-    def handle_console_skill_install_decided(
-        self, event: SkillInstallConfirmCard.InstallDecided
-    ) -> None:
-        """Forward the user's install decision to the controller's worker thread.
-
-        TASK-910: ``event.request_id`` MUST be threaded through unchanged --
-        ``ConsoleChatController.resolve_pending_skill_install`` silently
-        drops a resolve whose id doesn't match the currently-armed round,
-        mirroring ``handle_console_skill_script_decided``'s identical
-        contract below.
-        """
+    def handle_console_skill_install_decided(self, event: Any) -> None:
         event.stop()
-        controller = self._console_chat_controller
-        if controller is not None:
-            controller.resolve_pending_skill_install(
-                event.allow, request_id=event.request_id
-            )
+        self._skill.handle_console_skill_install_decided(
+            event.allow, request_id=event.request_id
+        )
 
     @on(SkillScriptConfirmCard.ScriptDecided)
-    def handle_console_skill_script_decided(
-        self, event: SkillScriptConfirmCard.ScriptDecided
-    ) -> None:
-        """Forward the user's run decision to the controller's worker thread.
-
-        ``event.request_id`` MUST be threaded through unchanged: ``Console
-        ChatController.resolve_pending_skill_script`` (task-5) silently
-        drops a resolve whose id doesn't match the currently-armed round,
-        which is exactly what ``SkillScriptConfirmCard.ScriptDecided``
-        carries it for.
-        """
+    def handle_console_skill_script_decided(self, event: Any) -> None:
         event.stop()
-        controller = self._console_chat_controller
-        if controller is not None:
-            controller.resolve_pending_skill_script(
-                event.allow, event.remember, request_id=event.request_id
-            )
+        self._skill.handle_console_skill_script_decided(
+            event.allow, event.remember, request_id=event.request_id
+        )
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """

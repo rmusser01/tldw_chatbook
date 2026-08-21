@@ -13,14 +13,14 @@ class TaskResumeState:
     pending_approval: dict[str, Any] | None = None
     # TASK-1051 / TASK-1130: this field is fully live within one screen
     # instance -- the normal path is
-    # `ChatScreen._set_console_pending_skill_install` mutating it directly
+    # `ConsoleSkillController._set_console_pending_skill_install` mutating it
     # while a `ConsoleChatController` round is actually armed -- but
     # `from_dict` below deliberately never repopulates it from a snapshot.
     # See `from_dict`'s docstring for why that's true of both skill-confirm
     # fields, not an oversight to "fix" by restoring one of them.
     pending_skill_install: dict[str, Any] | None = None
     # TASK-1051 / TASK-1130: this field is fully live within one screen instance -- the
-    # normal path is `ChatScreen._set_console_pending_skill_script` mutating
+    # normal path is `ConsoleSkillController._set_console_pending_skill_script` mutating
     # it directly while a `ConsoleChatController` round is actually armed --
     # but `from_dict` below deliberately never repopulates it from a
     # snapshot. See `from_dict`'s docstring -- `pending_skill_install`

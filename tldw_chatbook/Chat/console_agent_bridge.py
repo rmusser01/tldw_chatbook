@@ -1983,7 +1983,7 @@ class _StreamingModelAdapter:
 def _eligible_skill_entries(context: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     """Trusted, model-invocable skill summaries from a ``get_context`` snapshot.
 
-    Mirrors ``ChatScreen._console_skill_trusted_candidates_from_context``'s
+    Mirrors ``ConsoleSkillController._console_skill_trusted_candidates_from_context``'s
     defensive filter shape, but scoped to model-invocation eligibility
     rather than user (``$skill-name``) invocation: a skill is eligible here
     when it is not ``trust_blocked`` (the local-skill-trust-integrity gate)

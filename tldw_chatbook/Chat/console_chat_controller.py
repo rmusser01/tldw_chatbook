@@ -1016,7 +1016,7 @@ def _split_skill_command_word(text: str) -> tuple[str, str]:
     whitespace-character split rule. That helper is module-private (by
     design -- callers own their own tokenization per its module docstring),
     so this is a deliberate small duplicate rather than an import, the same
-    precedent ``chat_screen.ChatScreen._split_console_skill_name_args``
+    precedent ``ConsoleSkillController._split_console_skill_name_args``
     already follows. ``text`` is assumed to already start with
     `MENTION_SIGIL` (the `$`-mention leading form, not `COMMAND_PREFIX`'s
     `/` -- its sole caller is `_apply_skill_substitution`'s leading-form
@@ -1698,7 +1698,7 @@ class ConsoleChatController:
         self._parked_approval_payloads: dict[str, dict[str, Any]] = {}
         #: UI-thread callback that pushes/clears the pending skill-install
         #: confirm payload into the owning screen's task-resume state
-        #: (ChatScreen._set_console_pending_skill_install). Invoked through
+        #: (`ConsoleSkillController._set_console_pending_skill_install`). Invoked through
         #: self.app.call_from_thread from request_skill_install_confirm.
         self.set_pending_skill_install: Callable[[dict | None], None] | None = None
         #: Optional test override for the confirm timeout.
@@ -8239,7 +8239,7 @@ class ConsoleChatController:
     ) -> tuple[SkillCommandCandidate, ...]:
         """Build the user-invocable, trusted skill candidate population.
 
-        Mirrors ``chat_screen.ChatScreen.
+        Mirrors ``ConsoleSkillController.
         _console_skill_trusted_candidates_from_context``'s filter -- kept as
         a small duplicate rather than a shared import because `Chat/`
         business logic must not depend on `UI/Screens/` (project layering),

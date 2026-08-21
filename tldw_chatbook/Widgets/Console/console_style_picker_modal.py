@@ -12,8 +12,7 @@ inserts the token. `/generate-image @<id> ...` is what later resolves
 (`console_generate_image.resolve_style_token`) and applies the style at
 generation time.
 
-Keyboard/focus discipline mirrors ``ConsoleSkillPickerModal`` exactly (see
-that module's docstring for the full rationale): the filter ``Input`` keeps
+Keyboard/focus discipline mirrors ``ConsolePromptPickerModal``: the filter ``Input`` keeps
 focus for the whole session; Up/Down move a synthetic highlighted-row index
 via a raw-key ``on_key`` intercept (``Input`` has no arrow-key bindings in
 this Textual version); Enter activates the highlighted row via the bubbled
@@ -28,9 +27,9 @@ guard against (nothing here ever awaits I/O). Filtering itself is
 synchronous; what is NOT free is the row mount/unmount that follows it
 (``VerticalScroll.remove_children``/``mount_all`` tear down and rebuild
 every result ``Button``). task-15476: this modal used to run that rebuild
-on every keystroke -- its three sibling Console pickers
-(``ConsolePromptPickerModal``, ``ConsoleSkillPickerModal``,
-``ConsoleCharacterPickerModal``) already debounced theirs, and this one now
+on every keystroke -- its sibling Console pickers
+(``ConsolePromptPickerModal`` and ``ConsoleCharacterPickerModal``) already
+debounced theirs, and this one now
 matches: a 0.2 s timer (`SEARCH_DEBOUNCE_SECONDS`) re-arms on every
 keystroke and only the settled query is applied.
 
@@ -44,8 +43,7 @@ since it makes bracket-looking content (e.g. a base prompt containing
 ``[red]``) render literally with no escaping step to forget.
 
 Note: this screen only dismisses; the CALLER is responsible for returning
-focus to the Console composer afterwards (mirrors every sibling Console
-modal, including ``ConsoleSkillPickerModal``).
+focus to the Console composer afterwards (mirrors the prompt picker).
 """
 
 from __future__ import annotations
@@ -184,8 +182,7 @@ class ConsoleStylePickerModal(
         # for the current render. Template ids are static, unique,
         # lowercase-with-underscore identifiers (see
         # `generation_templates.BUILTIN_TEMPLATES`), always a legal Textual
-        # id suffix -- unlike the skill picker's user-controllable `name`
-        # field, no duplicate/malformed-id fallback is needed here.
+        # id suffix, so no duplicate/malformed-id fallback is needed here.
         self._row_ids: list[str] = []
         self._highlighted_index = 0
         self._search_debounce_timer: Timer | None = None
@@ -294,7 +291,7 @@ class ConsoleStylePickerModal(
             container = self.query_one(f"#{RESULTS_CONTAINER_ID}", VerticalScroll)
         except (NoMatches, QueryError):
             return  # Modal was dismissed/unmounted mid-render.
-        # Awaited (mirrors ConsoleSkillPickerModal): the removal must
+        # Awaited (mirrors ConsolePromptPickerModal): the removal must
         # complete before mounting a same-id replacement, or a DuplicateIds
         # error can fire if the message pump hasn't caught up.
         await container.remove_children()
