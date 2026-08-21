@@ -253,28 +253,35 @@ class _ConnDb:
 def _templates_db() -> _ConnDb:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    # The v6 table (PR B's task 8 changes the columns; name/template_json
-    # are the stable ones the resolver is allowed to touch).
+    # v7 shape (PR B): the deleted column exists and the runtime resolver
+    # filters on it (task 10 re-assigned Task 5's deferred filter here —
+    # PR D's resolution task, per Task 8's review carry-forward).
     conn.execute(
         """
         CREATE TABLE ChunkingTemplates (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            uuid TEXT NOT NULL UNIQUE,
             name TEXT UNIQUE NOT NULL,
             description TEXT,
             template_json TEXT NOT NULL,
-            is_system BOOLEAN DEFAULT 0,
+            tags TEXT,
+            is_builtin BOOLEAN DEFAULT 0,
+            version INTEGER DEFAULT 1,
+            deleted BOOLEAN DEFAULT 0,
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
         """
     )
     conn.execute(
-        "INSERT INTO ChunkingTemplates (name, template_json) VALUES (?, ?)",
-        ("flat", json.dumps(FLAT)),
+        "INSERT INTO ChunkingTemplates (uuid, name, template_json) "
+        "VALUES ('u-flat', 'flat', ?)",
+        (json.dumps(FLAT),),
     )
     conn.execute(
-        "INSERT INTO ChunkingTemplates (name, template_json) VALUES (?, ?)",
-        ("broken", "{not json"),
+        "INSERT INTO ChunkingTemplates (uuid, name, template_json) "
+        "VALUES ('u-broken', 'broken', ?)",
+        ("{not json",),
     )
     return _ConnDb(conn)
 
@@ -293,10 +300,26 @@ class TestResolveTemplate:
     def test_corrupt_json_returns_none(self):
         assert tr.resolve_template(_templates_db(), "broken") is None
 
-    def test_queries_only_the_stable_columns_no_deleted_filter(self):
-        # Pre-flight ruling: query ONLY (name, template_json) — stable across
-        # v6/v7 — with NO deleted filter yet (v6 has no deleted column; the
-        # CRUD rewrite in PR B's task 8 adds it).
+    def test_soft_deleted_row_does_not_resolve(self):
+        # The filter Task 8 re-assigned here: soft-deleted templates must
+        # not be runtime-resolvable (the CRUD layer already filters them
+        # from every fetch; this closes the runtime read).
+        db = _templates_db()
+        conn = db.get_connection()
+        conn.execute(
+            "INSERT INTO ChunkingTemplates (uuid, name, template_json, deleted) "
+            "VALUES ('u-dead', 'dead', ?, 1)",
+            (json.dumps(FLAT),),
+        )
+        assert tr.resolve_template(db, "dead") is None
+
+    def test_queries_only_the_stable_columns_with_deleted_filter(self):
+        # Task 5's pin, updated by task 10: the SELECT list stays the
+        # v6/v7-stable pair ``(name, template_json)`` and the WHERE clause
+        # now carries the deleted filter (the v6-era "no deleted filter"
+        # half of this pin is superseded). Clause order is name-first: the
+        # ``WHERE name`` fingerprint is what the resolver guard below keys
+        # on (CRUD fetches put the deleted filter first).
         db = _templates_db()
         statements: list[str] = []
         db.get_connection().set_trace_callback(statements.append)
@@ -309,11 +332,10 @@ class TestResolveTemplate:
         # placeholder or the bound literal.
         assert re.search(
             r"SELECT\s+name\s*,\s*template_json\s+FROM\s+ChunkingTemplates"
-            r"\s+WHERE\s+name\s*=\s*(?:\?|'[^']*')",
+            r"\s+WHERE\s+name\s*=\s*(?:\?|'[^']*')\s+AND\s+deleted\s*=\s*0",
             sql,
             re.IGNORECASE,
         ), sql
-        assert "deleted" not in sql.lower(), sql
 
 
 # ---------------------------------------------------------------------------

@@ -575,7 +575,11 @@ def _decode_ingest_text(
 
 
 def _chunk_text_for_ingest(
-    content: str, method: Any, max_size: Any, overlap: Any
+    content: str,
+    method: Any,
+    max_size: Any,
+    overlap: Any,
+    template: Any = None,
 ) -> tuple[list[Dict[str, Any]], list[str]]:
     """Chunk extracted text with the repo's shared chunking service.
 
@@ -588,6 +592,11 @@ def _chunk_text_for_ingest(
         method: Chunking method name (``sentences``, ``words``, ...).
         max_size: Target chunk size (display strings are coerced).
         overlap: Chunk overlap (display strings are coerced).
+        template: Optional pre-resolved template dict (spec §9.2 -- this
+            fresh three-key dict used to be the fourth seam that dropped
+            it). Unresolvable/invalid templates never reach here: the
+            Library builder refuses them with named errors at option-build
+            time (AC 37).
 
     Returns:
         ``(chunks, warnings)`` -- chunks in the ``{"text", "metadata"}``
@@ -604,14 +613,16 @@ def _chunk_text_for_ingest(
     try:
         from ..RAG_Search.chunking_service import improved_chunking_process
 
-        chunks = improved_chunking_process(
-            content,
-            {
-                "method": str(method or "sentences"),
-                "max_size": _as_int(max_size, 500),
-                "overlap": _as_int(overlap, 100),
-            },
-        )
+        chunk_options: Dict[str, Any] = {
+            "method": str(method or "sentences"),
+            "max_size": _as_int(max_size, 500),
+            "overlap": _as_int(overlap, 100),
+        }
+        if template is not None:
+            # The wrapper pops this key and forwards it as the Chunker
+            # keyword -- the same pop-and-forward the pdf path relies on.
+            chunk_options["template"] = template
+        chunks = improved_chunking_process(content, chunk_options)
     except Exception as chunk_err:
         logger.opt(exception=True).error(f"Text chunking failed: {chunk_err}")
         warnings.append(f"Chunking failed: {chunk_err}")
@@ -945,6 +956,24 @@ def parse_local_file_for_ingest(
     if chunk_options is None:
         chunk_options = {}
 
+    # (task 10, spec §9.1/§9.2) A resolved template travelling in
+    # ``chunk_options["template"]`` (placed there by the Library job-option
+    # builder) is materialized HERE, once, as this parse's chunk-stage
+    # DEFAULTS. Every downstream seam re-injects its own defaults via
+    # ``setdefault`` -- process_pdf (sentences/500/100), process_epub/
+    # process_fb2 (ebook_chapters/1500/200), the audio/video key-by-key
+    # re-projection, the shared text tail's fresh three-key dict -- and
+    # those would arrive at the Chunker as EXPLICIT options that beat the
+    # template (its merge order is defaults <- template <- explicit):
+    # the inert-picker trap. Occupying the keys here makes each of those
+    # re-injections a no-op; ``setdefault`` preserves any user-changed
+    # value the builder kept, which is the other half of the ruling.
+    ingest_template = chunk_options.get("template")
+    if isinstance(ingest_template, dict):
+        from ..Chunking.template_runtime import materialize_template_chunk_options
+
+        materialize_template_chunk_options(chunk_options, ingest_template)
+
     # Prepare common parameters
     common_params = {
         "title": title,
@@ -1127,7 +1156,10 @@ def parse_local_file_for_ingest(
                 # "chunk ON with nothing typed" arrives as ``{}``, so the
                 # OCR text persisted as one whole-text blob whatever size
                 # the form asked for. Two chunking layers is how that
-                # happened; there is now one.
+                # happened; there is now one. (task 10, spec §9.2) The
+                # image branch is therefore template-unaffected BY DESIGN:
+                # a resolved template governs the OCR text through the
+                # shared tail's widened call, not through process_image.
                 chunk_options=None,
                 perform_analysis=False,
             )
@@ -1190,6 +1222,13 @@ def parse_local_file_for_ingest(
                 use_adaptive_chunking=chunk_options.get("adaptive", False),
                 use_multi_level_chunking=chunk_options.get("multi_level", False),
                 chunk_language=chunk_options.get("language", "en"),
+                # (task 10, spec §9.2) The key-by-key re-projection used to
+                # drop any key it did not name -- a template travelling in
+                # chunk_options died here. The scalars above now carry the
+                # materialized template options; the template dict itself
+                # rides this explicit kwarg so the chunk site's Chunker
+                # template path is genuinely engaged.
+                chunk_template=ingest_template,
                 diarize=options.get("diarization", chunk_options.get("diarize", False)),
                 # (task-3303) The panel's VAD toggle travels as its own
                 # option; the chunk-options spelling stays as a fallback for
@@ -1313,6 +1352,11 @@ def parse_local_file_for_ingest(
                 use_adaptive_chunking=chunk_options.get("adaptive", False),
                 use_multi_level_chunking=chunk_options.get("multi_level", False),
                 chunk_language=chunk_options.get("language", "en"),
+                # (task 10, spec §9.2) Same widened re-projection as the
+                # audio branch: the template rides an explicit kwarg
+                # (video's ``process_videos(**kwargs)`` forwards it into
+                # the shared audio chunk site).
+                chunk_template=ingest_template,
                 diarize=options.get("diarization", chunk_options.get("diarize", False)),
                 # (task-3303) The panel's VAD toggle travels as its own
                 # option; the chunk-options spelling stays as a fallback for
@@ -1536,6 +1580,7 @@ def parse_local_file_for_ingest(
                 chunk_options.get("method") or "words",
                 chunk_options.get("max_size", chunk_options.get("size", 500)),
                 chunk_options.get("overlap", 100),
+                template=ingest_template,
             )
             warnings = list(warnings) + chunk_warnings
 

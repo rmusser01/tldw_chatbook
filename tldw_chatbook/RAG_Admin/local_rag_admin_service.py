@@ -118,7 +118,52 @@ class LocalRAGAdminService:
             decorated.get("template") or decorated.get("template_json")
         )
         decorated["tags"] = self._extract_template_tags(decorated, template_config)
+        # (task 10, AC-24a) The listing surface carries validity DATA: a
+        # stored-invalid template is listed WITH a flag rather than hidden
+        # or silently applied. The flag is computed here (the data half);
+        # where it renders is the UI task's. The validator never raises
+        # (Task 6 contract: ``{valid, errors, warnings}``), so decoration
+        # cannot break a listing.
+        validated = {
+            key: value
+            for key, value in template_config.items()
+            if key not in ("name", "description")
+        }
+        result = self._validate_template_body(validated)
+        decorated["template_valid"] = bool(result["valid"])
+        issues = [
+            f"{issue['field']}: {issue['message']}"
+            for issue in result["errors"]
+        ]
+        if issues:
+            decorated["template_validation_errors"] = issues
         return decorated
+
+    @staticmethod
+    def _validate_template_body(body: Mapping[str, Any]) -> dict[str, Any]:
+        """Run the server-parity validator on a template body.
+
+        Never raises (the validator's own contract, Task 6): returns
+        ``{"valid": bool, "errors": [...], "warnings": [...]}`` so callers
+        can flag rather than crash. An un-runnable body (not a mapping)
+        reports invalid instead of blowing up the listing/apply surface.
+        """
+        # Lazy: module scope would be circular (RAG_Admin imports this
+        # module's package through the scope service).
+        from .template_validation import validate_template
+
+        if not isinstance(body, Mapping):
+            return {
+                "valid": False,
+                "errors": [
+                    {
+                        "field": "template",
+                        "message": "template body is not an object",
+                    }
+                ],
+                "warnings": [],
+            }
+        return validate_template(dict(body))
 
     def _get_collection(self, collection_name: str) -> Any:
         return self._require_chroma_client().get_collection(name=collection_name)
@@ -299,8 +344,36 @@ class LocalRAGAdminService:
         override_options: Optional[Mapping[str, Any]] = None,
         include_metadata: bool = False,
     ) -> dict[str, Any]:
+        """Apply a stored template to text.
+
+        (task 10, AC-24b) A stored-invalid template body is REFUSED here
+        with the named :class:`InvalidTemplateError` -- never an unnamed
+        engine error surfacing mid-chunk. The apply path cannot rely on
+        validate-on-write alone: stored-invalid rows exist (v6→v7
+        conversion can mint them; rows written before the gate existed),
+        and they remain deliberately editable (update validates the NEW
+        body only) -- so apply is the last line of defense.
+        """
         record = self.get_template(template_name)
         template_config = self._parse_template_config(record.get("template_json"))
+        validation = self._validate_template_body(
+            {
+                key: value
+                for key, value in template_config.items()
+                if key not in ("name", "description")
+            }
+        )
+        if not validation["valid"]:
+            from ..Chunking.chunking_interop_library import InvalidTemplateError
+
+            summary = "; ".join(
+                f"{issue['field']}: {issue['message']}"
+                for issue in validation["errors"][:3]
+            )
+            raise InvalidTemplateError(
+                f"Template '{template_name}' failed validation and was "
+                f"refused: {summary}"
+            )
         method, options = self._chunking_options_from_template(template_config)
         options.update(dict(override_options or {}))
 

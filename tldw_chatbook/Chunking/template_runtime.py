@@ -29,9 +29,29 @@ from .Chunk_Lib import _synthesize_flat_offsets
 from .engine.exceptions import TemplateError
 from .engine.templates import ChunkingTemplate, TemplateProcessor, TemplateStage
 
-__all__ = ["template_from_record", "resolve_template", "apply_template"]
+__all__ = [
+    "template_from_record",
+    "resolve_template",
+    "resolve_ingest_template",
+    "materialize_template_chunk_options",
+    "apply_template",
+    "TemplateResolutionError",
+]
 
 _SOURCE_BASIS = "source"
+
+
+class TemplateResolutionError(Exception):
+    """An ingest/re-chunk template choice no longer resolves (spec §9.1).
+
+    Raised by :func:`resolve_ingest_template` when a NON-EMPTY choice
+    (picker, batch, stored per-media, or the configured
+    ``[chunking] default_template``) names a template that is absent or
+    soft-deleted. Named on purpose (AC 37): a template that silently fell
+    through to plain chunking is how a library gets chunked two ways
+    without the user knowing. The ingest dispatch fails the item on this
+    error; the re-chunk worker (PR E) skips-and-counts on it.
+    """
 
 
 def template_from_record(record: Dict[str, Any]) -> ChunkingTemplate:
@@ -142,9 +162,10 @@ def resolve_template(db: Any, name: str) -> Optional[Dict[str, Any]]:
 
     The ONLY name→template resolution in the codebase (spec §6.2). Queries
     just the columns that are stable across Media DB v6/v7 — ``(name,
-    template_json)`` — and, for now, applies no ``deleted`` filter: the v6
-    ``ChunkingTemplates`` table has no ``deleted`` column; the CRUD rewrite
-    (PR B, task 8) adds both the column and the filter together.
+    template_json)`` — and filters ``deleted = 0`` (the filter was
+    re-assigned here from Task 5 by Task 8's review: PR B's v7 schema added
+    the column, and runtime resolution must not resurrect soft-deleted
+    templates).
 
     Args:
         db: Media DB handle exposing ``get_connection()``.
@@ -152,13 +173,20 @@ def resolve_template(db: Any, name: str) -> Optional[Dict[str, Any]]:
 
     Returns:
         The parsed template dict with the authoritative ``name`` column set,
-        or ``None`` when the name is unknown or the stored JSON is corrupt.
+        or ``None`` when the name is unknown, soft-deleted, or the stored
+        JSON is corrupt.
     """
     if not isinstance(name, str) or not name:
         return None
     conn = db.get_connection()
+    # Clause ORDER is load-bearing: ``FROM ChunkingTemplates WHERE name``
+    # is the resolver guard's fingerprint for genuine name→body
+    # resolution sites (the CRUD layer's fetches put ``deleted = 0``
+    # first), so the name predicate stays first with the deleted filter
+    # ANDed after it.
     row = conn.execute(
-        "SELECT name, template_json FROM ChunkingTemplates WHERE name = ?",
+        "SELECT name, template_json FROM ChunkingTemplates "
+        "WHERE name = ? AND deleted = 0",
         (name,),
     ).fetchone()
     if row is None:
@@ -189,6 +217,162 @@ def resolve_template(db: Any, name: str) -> Optional[Dict[str, Any]]:
     # The name column is authoritative (it is what the UNIQUE index guards).
     resolved["name"] = row_name if isinstance(row_name, str) else name
     return resolved
+
+
+def resolve_ingest_template(
+    db: Any,
+    picker_choice: Optional[str] = None,
+    *,
+    per_media: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Resolve the template a chunking run should use (spec §9.1, AC 34).
+
+    One resolution helper for both paths, because they differ ONLY in what
+    sits at the top of the order:
+
+    * **ingest** (no media row exists yet): ``picker_choice`` (the Library
+      ingest picker / batch default) → config ``[chunking]
+      default_template`` → ``None`` (plain method/size/overlap options —
+      today's behavior).
+    * **re-chunk** (``per_media`` given): the stored per-media choice
+      (``Media.chunking_config["template"]``) → config default → ``None``.
+
+    Not-found is NEVER a silent fallback (AC 37, spec §9.1): a NON-EMPTY
+    choice at any level that no longer resolves (soft-deleted, renamed)
+    raises :class:`TemplateResolutionError` instead of falling through to
+    the next level or to plain chunking — the ingest dispatch fails the
+    item with it; the re-chunk worker (PR E) catches it and
+    skips-and-counts.
+
+    Stored-invalid bodies are refused here too (AC-24b ingest half): the
+    resolved template is run through the server-parity validator so an
+    unexecutable template fails with the NAMED ``InvalidTemplateError``
+    rather than an unnamed engine error mid-chunk.
+
+    Args:
+        db: Media DB handle exposing ``get_connection()`` (the template
+            store). ``None`` means no local store: resolution returns
+            ``None`` unless a choice was actually made, in which case the
+            named error fires (a made choice must never silently vanish).
+        picker_choice: The ingest picker/batch choice, if any.
+        per_media: The stored per-media template name (re-chunk path).
+
+    Returns:
+        The resolved flat template dict (name + body), or ``None`` when no
+        choice exists at any level and no config default is set (plain
+        options).
+
+    Raises:
+        TemplateResolutionError: A non-empty choice (or config default)
+            does not resolve.
+        InvalidTemplateError: The resolved stored body fails validation
+            (imported from ``chunking_interop_library`` lazily).
+    """
+    if per_media is not None:
+        choice, source = str(per_media).strip(), "stored per-media"
+    else:
+        choice, source = str(picker_choice or "").strip(), "picker/batch"
+    if not choice:
+        # config import at call time: module scope would make this
+        # import-light runtime module depend on the config machinery.
+        from ..config import get_cli_setting
+
+        configured = get_cli_setting("chunking", "default_template")
+        choice = str(configured or "").strip()
+        source = "config [chunking] default_template"
+    if not choice:
+        return None
+    if db is None:
+        raise TemplateResolutionError(
+            f"Template '{choice}' (from {source}) cannot be resolved: "
+            "no template store is available."
+        )
+    resolved = resolve_template(db, choice)
+    if resolved is None:
+        raise TemplateResolutionError(
+            f"Template '{choice}' (from {source}) no longer resolves "
+            "(deleted or renamed); it was refused instead of silently "
+            "falling back to different chunking."
+        )
+    _refuse_invalid_body(resolved)
+    return resolved
+
+
+def _refuse_invalid_body(template: Dict[str, Any]) -> None:
+    """Validate a resolved template body, refusing it with the NAMED error.
+
+    AC-24b: the apply/ingest paths must never surface unnamed engine
+    errors for a stored-invalid body — the server-parity validator (Task 6)
+    decides before any chunking runs. Mirrors
+    ``ChunkingInteropService._validate_body`` (name/description never enter
+    the validated body, §7.1 carve-out).
+    """
+    # Lazy: both imports would be circular at module scope
+    # (RAG_Admin.template_validation → ... → Chunking; interop → DB).
+    from ..RAG_Admin.template_validation import validate_template
+    from .chunking_interop_library import InvalidTemplateError
+
+    body = {
+        key: value
+        for key, value in template.items()
+        if key not in ("name", "description")
+    }
+    result = validate_template(body)
+    if not result["valid"]:
+        summary = "; ".join(
+            f"{issue['field']}: {issue['message']}"
+            for issue in result["errors"][:3]
+        )
+        raise InvalidTemplateError(
+            f"Template '{template.get('name', 'template')}' failed "
+            f"validation and was refused: {summary}"
+        )
+
+
+def materialize_template_chunk_options(
+    chunk_options: Dict[str, Any], template: Dict[str, Any]
+) -> None:
+    """Setdefault the template's chunk-stage options into ``chunk_options``
+    (in place).
+
+    The precedence fix's second half (spec §9.1/§9.2): the ingest builder
+    strips its DEFAULTS when a template is resolved, but every downstream
+    seam re-injects its own defaults via ``setdefault`` — ``process_pdf``
+    (sentences/500/100), ``process_epub``/``process_fb2``
+    (ebook_chapters/1500/200), the audio/video key-by-key re-projection,
+    the plain-text tail's fresh three-key dict. Those re-injected defaults
+    would arrive at ``Chunker`` as EXPLICIT options, and the Chunker's
+    merge order (defaults ← template ← explicit) would let them beat the
+    template — the inert-picker trap. Materializing the template's
+    chunk-stage options HERE, once, before any branch dispatch, occupies
+    those keys so every downstream ``setdefault`` is a no-op and the
+    template's values are what travel.
+
+    ``setdefault`` (not overwrite) preserves the other half of the ruling:
+    a user-changed form value the builder kept in ``chunk_options``
+    overrides the template.
+
+    The ``size`` alias: the audio/video re-projection reads the ``size``
+    spelling while the flat template contract uses ``max_size``; both are
+    filled from the template's ``max_size``.
+
+    Args:
+        chunk_options: The parse's chunking options dict (mutated in
+            place; it is per-job data owned by this parse).
+        template: The resolved flat template dict.
+    """
+    chunking = template.get("chunking")
+    if not isinstance(chunking, dict):
+        return  # invalid bodies are refused upstream (resolve_ingest_template)
+    method = chunking.get("method")
+    if isinstance(method, str) and method:
+        chunk_options.setdefault("method", method)
+    config = chunking.get("config")
+    if isinstance(config, dict):
+        for key, value in config.items():
+            chunk_options.setdefault(key, value)
+        if "max_size" in config:
+            chunk_options.setdefault("size", config["max_size"])
 
 
 def apply_template(
