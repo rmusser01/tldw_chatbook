@@ -20,7 +20,9 @@ TASK-3070.8 implements the already-approved fleet/wake boundary in
 `DESIGN.md` section 7. The immutable planning base is
 `0a8e2882588fdad5a99aca6e2215735c43927528` (`origin/dev` on 2026-08-21).
 The source-inspected family is 401 physical definition lines across 16 direct
-`ChatScreen` methods. The existing Wave 6 architecture manifest already names
+`ChatScreen` methods. The implementation-base screen is 20,349 physical lines and
+652 direct methods, so this child must leave it at no more than 19,948 lines and
+636 direct methods. The existing Wave 6 architecture manifest already names
 `fleet.py`, `ConsoleFleetLifecycleController`, and screen owner slot `_fleet`.
 
 Focused baseline evidence is green: 17 tests passed across the Wave 6 compatibility
@@ -45,25 +47,63 @@ The controller must:
 
 `ConsoleFleetLifecycleController` is constructed in
 `tldw_chatbook/UI/Console_Modules/wiring.py` and stored at `screen._fleet`.
-Its constructor is keyword-only. Dependencies are callables or service accessors,
-not a screen object. The exact constructor surface is finalized from source during
-planning, but it is limited to these owned edges:
+Its constructor is keyword-only. Dependencies are callables, not a screen or sibling
+controller object. Its complete constructor contract is:
 
-- app and pending-handoff access;
-- current/ensured chat store and chat controller access;
-- agent-bridge readiness and fleet-wake access;
-- workspace activation and session switching;
-- displayed-composer resolution and displayed-screen status;
-- UI-loop deferral, worker scheduling, and native-console repaint;
-- interval creation and UI-timer bookkeeping;
-- transcript-timer activity;
-- runtime leave and app-level teardown-notice staging.
+- `pending_handoffs_accessor() -> PendingHandoffStore`;
+- `ensure_chat_store() -> ConsoleChatStore` and
+  `chat_store_accessor() -> ConsoleChatStore | None`;
+- `activate_workspace_for_session(session_id) -> None`;
+- `switch_chat_session(session_id) -> None`;
+- `schedule_native_console_sync() -> None`;
+- `ensure_agent_bridge() -> object | None`;
+- `wire_wake_coordinator() -> bool`, `seed_wake_from_marks() -> bool`, and
+  `retry_wake_soon() -> None`;
+- `wake_has_pending(conversation_id) -> bool` and
+  `wake_delivering_conversation_id() -> str | None`;
+- `displayed_composer_draft_accessor() -> str | None` and
+  `screen_displayed_accessor() -> bool`;
+- `active_session_id_accessor() -> str | None` and
+  `chat_sessions_accessor() -> tuple[ConsoleChatSession, ...]`;
+- `defer_on_message_pump(callback) -> None` and
+  `start_transcript_sync_timer() -> None`;
+- `transcript_sync_timer_active() -> bool`;
+- `sync_native_console_ui() -> Awaitable[None]`;
+- `create_interval(seconds, callback) -> Timer`,
+  `record_timer_created(name) -> None`, and
+  `record_timer_stopped(name) -> None`;
+- `chat_controller_available() -> bool`,
+  `fleet_has_unsettled_children() -> bool`, and
+  `run_marker_for_session(session_id) -> ConsoleRunMarker`;
+- `fleet_teardown_split() -> tuple[int, int]`,
+  `leave_runtime() -> Awaitable[bool]`, and
+  `stage_teardown_notices(killed, surviving) -> None`;
+- `fleet_unseen_revision_accessor() -> int`,
+  `read_fleet_unseen_ids() -> frozenset[str]`, and
+  `clear_fleet_unseen(conversation_id) -> bool`.
+
+The fleet controller therefore never receives the chat controller or wake coordinator
+as an object. Wiring converts their individual operations into the named callables
+above, keeping sibling ownership out of the controller.
+
+Two module-level helpers in `wiring.py` own the only screen/app resolution needed by
+these callbacks:
+
+- `_displayed_console_composer_draft(screen) -> str | None` resolves
+  `screen.app.screen` defensively, uses a different displayed Console's
+  `_console_composer_or_none` when present, otherwise uses the supplied screen's
+  composer, and returns its current draft text;
+- `_console_screen_is_displayed(screen) -> bool` returns whether the supplied screen
+  is displayed, with the existing unmounted-fixture fallback of `True`.
+
+They are stateless wiring adapters, not `ChatScreen` methods. No replacement screen
+helper is introduced for either moved method.
 
 Every callback is evaluated when the controller operation runs. Wiring must not
 capture a controller, store, composer, active session, or configuration value eagerly.
-The controller may invoke methods on an already-resolved composer or service object,
-but it never locates that object through `query`, `query_one`, `screen`, `_workspace`,
-`_session`, `_agent`, or another controller field.
+The controller receives only the composer's plain draft value; it never locates a
+widget or sibling through `query`, `query_one`, `screen`, `_workspace`, `_session`,
+`_agent`, or another controller field.
 
 ### Exact moved inventory
 
@@ -90,8 +130,11 @@ Controller-private helpers may be introduced only where they consolidate an exis
 policy that is currently embedded in a staying screen method. In particular, one
 plain-value helper will prepare session run markers: it reads the unseen cache, defers
 view-clear while the wake coordinator still owes delivery, clears only when this view
-is displayed, and returns the marker mapping. This removes unseen/view-clear policy
-from `_sync_console_native_session_tabs` without moving that DOM-rendering method.
+is displayed, and returns `dict[str, ConsoleRunMarker] | None`. It returns `None` when
+no chat controller is available, preserving `ConsoleSessionSurface`'s existing
+`streaming_session_id` fallback; an empty dictionary is not equivalent and is forbidden
+for that branch. This removes unseen/view-clear policy from
+`_sync_console_native_session_tabs` without moving that DOM-rendering method.
 
 ### State ownership
 
@@ -114,7 +157,8 @@ controller owns its cached projection and policy, not its persistence implementa
 - `_notify_console_fleet_teardown_if_any`, because it renders app notifications;
 - `_sync_console_native_session_tabs`, because it queries and paints the session UI;
 - transcript-timer creation/stop policy outside the survivor-only interval;
-- the screen/app logic that resolves the displayed Console composer;
+- the screen/app values consumed by the stateless wiring resolvers for displayed
+  Console composer draft and displayed status;
 - Textual worker/timer primitives exposed to the controller through wiring.
 
 The staying methods invoke `_fleet` directly. They do not retain any of the 16 old
@@ -133,10 +177,18 @@ fleet state.
 3. Existing 0.15-second and 0.3-second mount hedges schedule
    `_fleet.consume_pending_console_fleet_completion` and
    `_fleet._maybe_start_console_fleet_survivor_tick` respectively.
-4. A completion claim finds the still-open session, activates its workspace, switches
-   the chat controller, then schedules the existing exclusive console-sync worker.
-   Missing sessions are acknowledged and dropped; exceptions release the claim for
-   retry; successful paths acknowledge exactly once.
+4. A completion claim searches the still-open sessions with the current precedence:
+   an exact non-empty `target.session_id` match wins immediately and breaks the scan;
+   otherwise every session whose id or persisted conversation id matches
+   `target.conversation_id` replaces the candidate, so the last conversation match is
+   retained.
+5. A missing match is acknowledged and dropped. An already-active match is also
+   acknowledged without ensuring a chat controller, changing workspace, switching a
+   session, or scheduling a worker. Only a different active session performs the
+   existing order: activate its workspace, switch the chat session, then schedule the
+   exclusive console-sync worker.
+6. Exceptions release the exact claim for retry; every successful or missing-session
+   path acknowledges exactly once.
 
 The identical 0.15-second completion retry used by resume/activation paths is rewired
 to `_fleet`, so the first available signal still performs the handoff.
@@ -156,8 +208,8 @@ start still hops through the Textual message pump before arming the transcript t
 ### Durable unseen markers
 
 The controller caches IDs against `FLEET_UNSEEN_REVISION_ATTR`. Session-tab sync passes
-plain sessions, active-session identity, and the current chat controller into the
-controller's marker-preparation operation. The controller:
+plain sessions and active-session identity into the controller's marker-preparation
+operation; named callbacks provide controller-derived facts. The controller:
 
 1. reads the cached unseen IDs;
 2. identifies the active conversation;
@@ -185,8 +237,8 @@ one final native-console repaint. An idle Console never receives this interval.
 
 `on_unmount` retains its subsystem order: video drain, transcript timer stop, fleet
 timer stop, cost timer stop, then the remaining subsystem cleanup. When a chat
-controller exists it awaits `_fleet._record_console_fleet_teardown(controller)`.
-That method snapshots killed/surviving counts before `leave_console_runtime`, stages
+controller exists it awaits `_fleet._record_console_fleet_teardown()`.
+That method reads the split through its named callback before `leave_console_runtime`, stages
 notices only when the visit actually ended, and leaves overlapping successor-screen
 visits silent. Notification copy remains in the next screen's presentation method.
 
@@ -209,22 +261,32 @@ reconciled latest-dev changes.
 
 Implementation follows focused TDD; no local full-suite run is authorized.
 
-1. Add no-mount controller tests for defaults, completion claim outcomes, mount wake
+1. Add no-mount controller tests for defaults, completion claim outcomes (including
+   exact-session precedence, last conversation match, and already-active no-op), mount wake
    claim, user-priority/display semantics, retry/delivery hooks, unseen cache/marker
-   precedence, teardown gating, and survivor timer lifecycle.
+   precedence and the missing-controller `None` result, teardown gating, and survivor
+   timer lifecycle.
 2. Extend the Wave 6 architecture test to require all 16 methods solely on
    `ConsoleFleetLifecycleController`, zero DOM calls across every controller method,
-   no sibling-controller/screen reach-through, and exact named keyword-only wiring.
+   no sibling-controller/screen reach-through, exact named keyword-only wiring, no new
+   fleet replacement definition on `ChatScreen`, and task-local ceilings of 19,948
+   screen lines and 636 direct methods.
 3. Add mutation-sensitive checks for claim release/acknowledge, durable-mark deferral,
    late-bound composer/controller access, teardown leave gating, and final settle paint.
 4. Update only focused callers/fixtures that still invoke the moved screen methods.
-5. Run the directly affected fleet/wake/teardown/hidden-screen/UI-freshness tests,
+5. Retain the production-shaped mounted oracles: hidden-screen composer priority must
+   enter text with `pilot.press` in `test_console_fleet_wake_hidden_screen.py`, and wake
+   delivery freshness must enter through a plain `threading.Thread` drain callback in
+   `test_console_fleet_wake_ui_freshness.py`. Direct controller calls cannot replace
+   either entry path.
+6. Run the directly affected fleet/wake/teardown/hidden-screen/UI-freshness tests,
    targeted Ruff lint/format, changed-module compile, `git diff --check`, and the
    persistent-diagnostic inventory gates.
 
 The implementation is complete only when the screen contains none of the 16 moved
 definitions, no production caller targets those names on `ChatScreen`, Workspace is
-wired directly to `_fleet`, and the focused behavior remains green.
+wired directly to `_fleet`, the task-local 19,948-line/636-method ceilings pass, and
+the focused behavior remains green.
 
 ## Scope Exclusions
 
