@@ -215,6 +215,33 @@ def _static_text(screen, selector: str) -> str:
     return str(renderable)
 
 
+def _current_mode_landed(screen) -> bool:
+    """Whether a current-mode LOAD has landed (not merely been selected).
+
+    Fix round 1: waiting on ``_current_mode_active()`` + an idle worker
+    group is a RACE, proven with an instrumented probe rather than
+    guessed at. Setting the ``Select``'s value flips
+    ``_current_mode_active()`` SYNCHRONOUSLY, but the load is dispatched by
+    the ``Select.Changed`` handler on the message pump — so at that instant
+    the worker group is empty, ``_wait_idle`` returns immediately with the
+    tree still unpopulated, and only a single ``pilot.pause()`` stood
+    between the caller and an empty ``_leaves`` (probe:
+    ``live_workers_right_after_set: []``, ``leaves_after_wait_idle: 0``).
+    With no leaves there is no commit target, so `action_git_commit`
+    notifies "working tree clean" and pushes NO modal — which is exactly
+    the intermittent "timed out waiting for the commit modal" the review
+    saw.
+
+    This waits on the LANDED state instead, which no dispatch timing can
+    outrun: either the working tree's leaves are up, or the load landed
+    with nothing to show (clean/unreadable).
+    """
+    if screen._leaves:
+        return all(row.get("kind") == "git_current" for row, _c in screen._leaves)
+    text = screen.diff_pane_text()
+    return "working tree clean" in text or "working tree unavailable" in text
+
+
 async def _enter_current_mode(pilot, app) -> ChangeReviewScreen:
     """Open the screen and switch it to the REAL working tree."""
     screen = await _open_screen(pilot, app)
@@ -226,6 +253,11 @@ async def _enter_current_mode(pilot, app) -> ChangeReviewScreen:
         pilot,
         lambda: screen._current_mode_active() or None,
         "the current-mode selection",
+    )
+    await _wait_for(
+        pilot,
+        lambda: _current_mode_landed(screen) or None,
+        "the working tree to LAND (never merely to be selected)",
     )
     await _wait_idle(pilot, app, "change-review-current")
     await pilot.pause()
@@ -680,42 +712,70 @@ async def test_an_unstaged_rename_commits_as_its_two_real_rows(
         assert _git(repo, "diff", "--cached", "--name-only") == ""
 
 
+@pytest.mark.parametrize(
+    "prepare, row_paths, row_label",
+    [
+        (
+            lambda repo: _git(repo, "mv", "a.txt", "renamed.txt"),
+            ["a.txt", "renamed.txt"],
+            "a.txt → renamed.txt",
+        ),
+        (
+            lambda repo: _git(repo, "rm", "-q", "a.txt"),
+            ["a.txt"],
+            "a.txt",
+        ),
+    ],
+    ids=["index-recorded-rename-git-mv", "staged-deletion-git-rm"],
+)
 @pytest.mark.asyncio
-async def test_an_index_recorded_rename_refuses_loudly_and_stages_nothing(
-    monkeypatch, tmp_path
+async def test_a_path_absent_from_worktree_and_index_refuses_loudly(
+    monkeypatch, tmp_path, prepare, row_paths, row_label
 ):
-    """A `git mv` rename is ONE row carrying BOTH paths — and today it fails.
+    """A staged rename AND a staged deletion both refuse — same root cause.
 
     Known limitation, pinned deliberately rather than papered over (see
-    `_commit_entries`' docstring and the T7 report): the engine shares one
-    pathspec between `git add -A --` and `git commit --`, and an
-    index-recorded rename's OLD path exists in neither the worktree nor
-    the index, so the add step exits fatal. What matters — and what this
-    asserts — is that the refusal is LOUD, that nothing is committed, and
-    that the user's staged rename survives intact. The alternative (send
-    only the new path) would commit an ADD while leaving the old path in
-    HEAD: a commit that silently contradicts the row the user checked.
+    `_commit_entries`' docstring and the T7 report). The trigger is not
+    "renames": it is ANY selected path that exists in neither the worktree
+    nor the index, because the engine shares one pathspec between
+    `git add -A --` and `git commit --`. `git mv` and `git rm` are both
+    ordinary terminal gestures that produce exactly that, and both exit
+    `fatal: pathspec … did not match any files` at the stage step.
+
+    What matters — and what this asserts — is that the refusal is LOUD,
+    that nothing is committed, that the user's staged work survives
+    intact, and that unchecking the offending row lets everything else
+    commit. The alternative (silently dropping the missing path) would
+    commit something that contradicts the row the user checked.
     """
     _patch_git_actions(monkeypatch, True)
-    repo = _init_repo(tmp_path / "rename_repo")
-    _git(repo, "mv", "a.txt", "renamed.txt")
+    repo = _init_repo(tmp_path / "staged_repo")
+    (repo / "b.txt").write_text("second\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "second")
+    prepare(repo)
+    (repo / "b.txt").write_text("edited alongside\n")
     before = _commit_count(repo)
-    provider, _db, _service = _make_provider(tmp_path, "conv-rename")
+    provider, _db, _service = _make_provider(tmp_path, "conv-staged")
     app = _Harness(provider, workspace_roots=[str(repo)])
     async with app.run_test(size=(160, 48)) as pilot:
         screen = await _enter_current_mode(pilot, app)
         modal = await _open_commit_modal(pilot, app, screen)
 
-        boxes = list(modal.query(Checkbox))
-        assert len(boxes) == 1, "a recorded rename is ONE row, not two"
-        assert sorted(boxes[0].file_paths) == ["a.txt", "renamed.txt"], (
-            f"both paths must ride the one checkbox; got {boxes[0].file_paths!r}"
+        offending = [
+            box
+            for box in modal.query(Checkbox)
+            if "a.txt" in box.file_paths
+        ]
+        assert len(offending) == 1, "the staged change is ONE row"
+        assert sorted(offending[0].file_paths) == row_paths, (
+            f"the row must carry its real pathspec; got {offending[0].file_paths!r}"
         )
-        assert "a.txt → renamed.txt" in str(boxes[0].label)
+        assert row_label in str(offending[0].label)
 
         notes: list[tuple] = []
         app.notify = lambda *a, **kw: notes.append((a, kw))
-        await _submit_modal(pilot, modal, "rename it")
+        await _submit_modal(pilot, modal, "should be refused")
         await _wait_idle(pilot, app, GIT_ACTION_WORKER_GROUP)
         await pilot.pause()
 
@@ -723,11 +783,24 @@ async def test_an_index_recorded_rename_refuses_loudly_and_stages_nothing(
         assert any("Commit failed at stage" in m for m in messages), (
             f"the blocking step must be named with git's own error; got {messages!r}"
         )
+        assert any("did not match any files" in m for m in messages), (
+            f"...carrying git's own excerpt; got {messages!r}"
+        )
         assert _commit_count(repo) == before, "nothing may be committed"
         staged = _git(repo, "diff", "--cached", "--name-status")
-        assert "renamed.txt" in staged and "a.txt" in staged, (
-            f"the user's staged rename must survive untouched; got {staged!r}"
+        assert "a.txt" in staged, (
+            f"the user's staged work must survive untouched; got {staged!r}"
         )
+
+        # The escape hatch: uncheck that row and the rest commits.
+        modal = await _open_commit_modal(pilot, app, screen)
+        await _submit_modal(
+            pilot, modal, "the rest of it", uncheck=("a.txt", "renamed.txt")
+        )
+        await _wait_idle(pilot, app, GIT_ACTION_WORKER_GROUP)
+        await pilot.pause()
+        assert _commit_count(repo) == before + 1
+        assert _committed_paths(repo) == ["b.txt"], _committed_paths(repo)
 
 
 @pytest.mark.asyncio
@@ -885,6 +958,63 @@ async def test_a_failing_step_is_named_with_its_git_error(
 
 
 @pytest.mark.asyncio
+async def test_a_later_step_failing_is_never_reported_as_a_commit(
+    monkeypatch, commit_fixture
+):
+    """The blocking step is the LAST outcome, not the first (Task 3's ruling).
+
+    Built so the run has THREE outcomes with a passing one first:
+    `create-branch` succeeds, `stage` succeeds, and `commit` is rejected by
+    a real pre-commit hook. Reading `outcomes[0]` instead of `outcomes[-1]`
+    sees a PASSING step, falls through to the sha branch, and notifies
+    "Committed 1 file(s) — could not resolve the new commit's sha" — a
+    false success about a write to the user's repository, which is the
+    dishonesty class this arc keeps catching.
+    """
+    _patch_git_actions(monkeypatch, True)
+    provider, repo = commit_fixture
+    hook = repo / ".git" / "hooks" / "pre-commit"
+    hook.write_text('#!/bin/sh\necho "refusing: policy check failed" >&2\nexit 1\n')
+    hook.chmod(0o755)
+    before = _commit_count(repo)
+
+    app = _Harness(provider, workspace_roots=[str(repo)])
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _enter_current_mode(pilot, app)
+        modal = await _open_commit_modal(pilot, app, screen)
+        notes: list[tuple] = []
+        app.notify = lambda *a, **kw: notes.append((a, kw))
+
+        await _submit_modal(
+            pilot,
+            modal,
+            "blocked by the hook",
+            uncheck=("brand_new.txt",),
+            branch="feat/hooked",
+        )
+        await _wait_idle(pilot, app, GIT_ACTION_WORKER_GROUP)
+        await pilot.pause()
+
+        messages = [str(call[0][0]) for call in notes]
+        # The earlier step really did succeed, so `outcomes[0]` is a
+        # PASSING row — without this the mutation would have nothing to
+        # read and the test would pass for the wrong reason.
+        assert _git(repo, "rev-parse", "--abbrev-ref", "HEAD") == "feat/hooked", (
+            "the create-branch step must have succeeded before the failure"
+        )
+        assert any("Commit failed at commit" in m for m in messages), (
+            f"the LAST (blocking) step must be named; got {messages!r}"
+        )
+        assert any("policy check failed" in m for m in messages), (
+            f"...with git's own stderr excerpt; got {messages!r}"
+        )
+        assert not any("Committed" in m for m in messages), (
+            f"a failed commit must never read as a success; got {messages!r}"
+        )
+        assert _commit_count(repo) == before, "nothing may be committed"
+
+
+@pytest.mark.asyncio
 async def test_merge_in_progress_refuses_with_copy_and_commits_nothing(
     monkeypatch, tmp_path
 ):
@@ -973,6 +1103,173 @@ async def test_buttons_are_disabled_while_the_commit_worker_runs(
             "the commit button to come back",
         )
         assert "a.txt" in _committed_paths(repo)
+
+
+@pytest.mark.asyncio
+async def test_the_outcome_copy_counts_checked_rows_not_pathspec_entries(
+    monkeypatch, tmp_path
+):
+    """"N file(s)" must mean what the user checked (review fix 4).
+
+    A rename is ONE checked row carrying TWO pathspec entries, so counting
+    `files` would report "2 file(s)" for a single checkbox. The count is
+    asserted where it actually reaches the copy — the `file_count`
+    argument `_land_commit_result` is handed — so both halves are pinned:
+    the modal computing it and `_dispatch_commit` passing it through.
+    """
+    _patch_git_actions(monkeypatch, True)
+    repo = _init_repo(tmp_path / "count_repo")
+    _git(repo, "mv", "a.txt", "renamed.txt")
+    provider, _db, _service = _make_provider(tmp_path, "conv-count")
+    app = _Harness(provider, workspace_roots=[str(repo)])
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _enter_current_mode(pilot, app)
+        landed: list[tuple] = []
+        real_land = screen._land_commit_result
+
+        def recording_land(token, result, file_count):
+            landed.append((result, file_count))
+            return real_land(token, result, file_count)
+
+        screen._land_commit_result = recording_land
+
+        modal = await _open_commit_modal(pilot, app, screen)
+        paths = _modal_paths(modal)
+        assert len(list(modal.query(Checkbox))) == 1 and len(paths) == 2, (
+            f"the setup needs one row carrying two paths; got {paths!r}"
+        )
+        await _submit_modal(pilot, modal, "count me once")
+        await _wait_idle(pilot, app, GIT_ACTION_WORKER_GROUP)
+        await _wait_for(pilot, lambda: landed or None, "the commit landing")
+
+        _result, file_count = landed[0]
+        assert file_count == 1, (
+            f"one checked row must read as 1 file, not {file_count} pathspec "
+            "entries"
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_commit_worker_never_rides_the_status_read_group(
+    monkeypatch, commit_fixture
+):
+    """Task 6's carry-forward #1, pinned rather than merely documented.
+
+    `change-review-current` is the STATUS-READ group and its workers are
+    exclusive — a commit sharing it would be cancelled the moment anything
+    reloaded the view (and a cancelled thread worker still lands its
+    queued `call_from_thread`, which is the shape that produced this
+    rule). So: assert the running commit worker's group, and then really
+    dispatch a status read over it and assert the commit was not
+    cancelled.
+    """
+    _patch_git_actions(monkeypatch, True)
+    provider, repo = commit_fixture
+    release = threading.Event()
+    entered = threading.Event()
+    real_commit = provider.commit_selected
+
+    def blocking_commit(root, files, message, new_branch):
+        entered.set()
+        release.wait(10)
+        return real_commit(root, files, message, new_branch)
+
+    provider.commit_selected = blocking_commit
+    app = _Harness(provider, workspace_roots=[str(repo)])
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _enter_current_mode(pilot, app)
+        modal = await _open_commit_modal(pilot, app, screen)
+        await _submit_modal(pilot, modal, "grouped correctly")
+        await _wait_for(pilot, lambda: entered.is_set() or None, "the commit worker")
+        await pilot.pause()
+
+        assert GIT_ACTION_WORKER_GROUP != "change-review-current", (
+            "the git-action group must be distinct from the status-read group"
+        )
+        live = [
+            w
+            for w in app.workers
+            if w.state.name in ("PENDING", "RUNNING")
+        ]
+        groups = {w.group for w in live}
+        assert GIT_ACTION_WORKER_GROUP in groups, (
+            f"the in-flight commit must ride its own group; got {groups!r}"
+        )
+        assert "change-review-current" not in groups, (
+            f"a commit must never run in the status-read group; got {groups!r}"
+        )
+        commit_worker = next(
+            w for w in live if w.group == GIT_ACTION_WORKER_GROUP
+        )
+
+        # A real status read over the top of the in-flight commit.
+        screen._load_current_mode()
+        await pilot.pause()
+        assert commit_worker.state.name != "CANCELLED", (
+            "a status reload must not cancel an in-flight commit "
+            f"(state={commit_worker.state.name})"
+        )
+
+        release.set()
+        await _wait_idle(pilot, app, GIT_ACTION_WORKER_GROUP)
+        await pilot.pause()
+        assert sorted(_committed_paths(repo)) == ["a.txt", "brand_new.txt"], (
+            "the commit must still land after an overlapping status read"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_superseded_git_action_landing_is_discarded(
+    monkeypatch, commit_fixture
+):
+    """`_git_action_is_live`: the token guard, proven with a real overlap.
+
+    Two preflights overlap (the first blocked inside `current_status`).
+    Textual's exclusive group cancels the first worker's TASK, but the
+    thread it already started keeps running and its `call_from_thread` is
+    still delivered — so without the token check the stale landing pushes
+    a SECOND commit modal on top of the live one.
+    """
+    _patch_git_actions(monkeypatch, True)
+    provider, repo = commit_fixture
+    gate = threading.Event()
+    calls: list[str] = []
+    real_status = provider.current_status
+
+    def gated_status(root):
+        calls.append(root)
+        if len(calls) == 1:
+            gate.wait(10)
+        return real_status(root)
+
+    app = _Harness(provider, workspace_roots=[str(repo)])
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _enter_current_mode(pilot, app)
+        root = screen._commit_target_root()
+        assert root is not None
+        provider.current_status = gated_status
+
+        screen._dispatch_commit_preflight(root)  # worker 1 — blocks
+        await _wait_for(pilot, lambda: len(calls) >= 1 or None, "the first preflight")
+        screen._dispatch_commit_preflight(root)  # worker 2 — supersedes it
+        modal = await _wait_for_modal(pilot, app, "the live commit modal")
+
+        gate.set()
+        await _wait_for(pilot, lambda: len(calls) >= 2 or None, "both preflights")
+        await _wait_idle(pilot, app, GIT_ACTION_WORKER_GROUP)
+        for _ in range(4):
+            await pilot.pause(0.05)
+
+        modals = [
+            screen_
+            for screen_ in app.screen_stack
+            if isinstance(screen_, ChangeGitCommitModal)
+        ]
+        assert len(modals) == 1, (
+            f"the superseded preflight's landing must be dropped; got {len(modals)} "
+            "commit modals on the stack"
+        )
+        assert modals[0] is modal
 
 
 # ---------------------------------------------------------------------------

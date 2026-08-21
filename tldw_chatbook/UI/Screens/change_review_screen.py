@@ -1040,17 +1040,28 @@ def _commit_entries(
       that does not match what the checkbox promised, and one the user may
       well push before noticing.
 
-    **Known limitation, deliberately loud (see the T7 report):** a rename
-    that is already RECORDED IN THE INDEX (``git mv``, i.e. porcelain
-    ``R``) has its old path in neither the worktree nor the index, so the
-    engine's ``git add -A -- <paths>`` step -- which shares this one
-    pathspec with the commit -- exits fatal ("pathspec … did not match any
-    files") and the commit is refused with git's own message. Nothing is
-    staged or committed; the user's staged rename is untouched and is
+    **Known limitation, deliberately loud (see the T7 report).** It is not
+    a rename-only problem -- the trigger is ANY selected path that exists
+    in neither the worktree NOR the index, because the engine's
+    ``git add -A -- <paths>`` step shares this one pathspec with the
+    commit and exits fatal ("pathspec … did not match any files"). Two
+    shapes reach it, and BOTH are ordinary terminal gestures rather than
+    anything an agent had to do:
+
+    1. a rename already RECORDED IN THE INDEX (``git mv``, porcelain
+       ``R``) -- the old path is gone from both;
+    2. a STAGED DELETION (``git rm <path>``, or ``rm`` followed by
+       ``git add``, porcelain ``D`` in the index column) -- the deleted
+       path is likewise in neither.
+
+    In both cases the commit is refused with git's own message and
+    NOTHING is staged or committed; the user's staged work is untouched,
+    unchecking that one row lets the rest commit, and the change is
     committable from a terminal. Splitting the engine's add/commit
     pathspecs is the fix, and it belongs in ``git_workspace.py``, not
-    here. An UNSTAGED rename is unaffected: git reports it as a separate
-    deletion and untracked add, which commit exactly as expected.
+    here. UNSTAGED versions of both are unaffected: git reports them as
+    worktree-column changes whose paths are still in the index, which
+    stage and commit exactly as expected.
 
     Args:
         files: The fresh status read's changed files, in porcelain order.
@@ -2435,12 +2446,16 @@ class ChangeReviewScreen(Screen):
 
         Args:
             request: The modal's result --
-                ``{"message", "new_branch", "files", "root"}``.
+                ``{"message", "new_branch", "files", "root", "file_count"}``.
+                ``files`` is the flat PATHSPEC (a rename row contributes
+                two paths); ``file_count`` is what the user actually
+                checked, and is what the outcome copy must count.
         """
         root = str(request["root"])
         files = list(request["files"])
         message = str(request["message"])
         new_branch = request["new_branch"]
+        file_count = int(request.get("file_count") or len(files))
         token = self._git_action_token = object()
         self._set_git_busy(True)
         provider = self._provider
@@ -2470,7 +2485,7 @@ class ChangeReviewScreen(Screen):
                 )
                 _land_on_ui(app, self._land_commit_refused, token, str(exc))
                 return
-            _land_on_ui(app, self._land_commit_result, token, result, len(files))
+            _land_on_ui(app, self._land_commit_result, token, result, file_count)
 
         self.run_worker(
             _commit,
@@ -3608,10 +3623,10 @@ class ChangeGitCommitModal(SafeModalDismissMixin, ModalScreen["dict | None"]):
             if not message:
                 self._show_error("a commit message is required")
                 return
+            selected = [box for box in self.query(Checkbox) if box.value]
             files = [
                 path
-                for box in self.query(Checkbox)
-                if box.value
+                for box in selected
                 for path in getattr(box, "file_paths", ())
             ]
             if not files:
@@ -3626,6 +3641,13 @@ class ChangeGitCommitModal(SafeModalDismissMixin, ModalScreen["dict | None"]):
                     "new_branch": branch or None,
                     "files": files,
                     "root": self._root,
+                    # Review fix round 1: the success copy counts what the
+                    # USER checked, not pathspec elements -- one row can
+                    # carry two paths (a rename), and "Committed 2 file(s)"
+                    # for a single checked rename is a small lie about a
+                    # write to their repository. Additive key; the four the
+                    # plan pinned are unchanged.
+                    "file_count": len(selected),
                 }
             )
         except Exception:  # noqa: BLE001 -- never raise out of a handler
