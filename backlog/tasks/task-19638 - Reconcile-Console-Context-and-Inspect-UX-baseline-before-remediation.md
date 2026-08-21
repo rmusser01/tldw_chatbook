@@ -73,12 +73,13 @@ Corrected the Console guide's obsolete Session-era information architecture,
 rail labels, and compact-width promise. Reconciled TASK-14810 without closing it:
 31 Confluence tests now collect and all eight rail-width-budget tests pass, but
 the architecture gate remains red at 21,292 lines against a 17,727-line budget.
-Filed independent follow-ups TASK-18913 (exact 100-column grid containment) and
-TASK-18915 (Inspector overflow fold hint), both dependent on this baseline and
+Filed independent follow-ups TASK-19639 (exact 100-column grid containment) and
+TASK-19428 (bounded Context/Inspector sections and fold hints), both dependent
+on this baseline and
 excluding TASK-18911's mobile scope.
 
 Verification: 15 focused Console rail/narrow-layout tests passed; scoped
-frontmatter checks prove TASK-18912, TASK-18913, and TASK-18915 each occur exactly
+frontmatter checks prove TASK-19638, TASK-19639, and TASK-19428 each occur exactly
 once; documentation drift and `git diff --check` guards passed. The repository's
 global Backlog-ID test remains red on unchanged `origin/dev` because TASK-17165
 intentionally carries `id: taREDACTED-17165`; this task neither introduced nor

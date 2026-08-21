@@ -440,7 +440,7 @@ Check all acceptance criteria, add concise `## Implementation Notes` listing beh
 
 - [ ] **Step 7: Review the final diff**
 
-Confirm the change contains only the inclusive override, exact resize band, tests, comment corrections, and task documentation. Do not include TASK-18915 or manual-collapse focus behavior.
+Confirm the change contains only the inclusive override, exact resize band, tests, comment corrections, and task documentation. Do not include TASK-19428 or manual-collapse focus behavior.
 
 - [ ] **Step 8: Commit task completion**
 
