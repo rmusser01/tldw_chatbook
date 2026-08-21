@@ -1,5 +1,5 @@
 ---
-id: task-18300
+id: TASK-18300
 title: Console Conversation Inspector — exchange capture + unified cost/context review
 status: In Progress
 assignee: ['@claude']
