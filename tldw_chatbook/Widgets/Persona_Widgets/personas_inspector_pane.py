@@ -153,6 +153,7 @@ class PersonasInspectorPane(Vertical):
         self._buddy_persona_id: str | None = None
         self._buddy_revision: int | None = None
         self._buddy_active = False
+        self._buddy_profile_current = False
         # F-040: marked library rows drive bulk Delete/Export JSON affordances.
         self._marked_count = 0
 
@@ -305,6 +306,7 @@ class PersonasInspectorPane(Vertical):
         entity_id: str | None = None,
         revision: int | None = None,
         active: bool = False,
+        profile_current: bool = False,
     ) -> None:
         """Reflect the selected library item in the inspector summary.
 
@@ -320,6 +322,7 @@ class PersonasInspectorPane(Vertical):
         self._buddy_persona_id = entity_id
         self._buddy_revision = revision
         self._buddy_active = active is True
+        self._buddy_profile_current = profile_current is True
         self._tts_export_available = False
         self.query_one("#personas-export-include-tts", Checkbox).value = False
         self.query_one("#personas-selected-name", Static).update(f"Selected: {name}")
@@ -334,6 +337,7 @@ class PersonasInspectorPane(Vertical):
         self._buddy_persona_id = None
         self._buddy_revision = None
         self._buddy_active = False
+        self._buddy_profile_current = False
         self._tts_export_available = False
         self.query_one("#personas-export-include-tts", Checkbox).value = False
         self.set_console_actions_enabled(False, reason="select an item")
@@ -572,12 +576,10 @@ class PersonasInspectorPane(Vertical):
         # CTA. When a profile IS assigned, the enabled/disabled-with-reason
         # gating below (and the F-041 legibility CSS) covers the shown case.
         tts_checkbox.display = (
-            (kind is None or kind == "character") and self._tts_export_available
-        )
+            kind is None or kind == "character"
+        ) and self._tts_export_available
         tts_checkbox.disabled = not (
-            export_enabled
-            and kind == "character"
-            and self._tts_export_available
+            export_enabled and kind == "character" and self._tts_export_available
         )
         tts_checkbox.tooltip = (
             export_tooltip
@@ -617,16 +619,12 @@ class PersonasInspectorPane(Vertical):
         json_button.display = export_json_applies
         json_button.disabled = (not export_enabled) and marked == 0
         json_button.tooltip = (
-            f"Export the {marked} marked items as JSON."
-            if marked
-            else export_tooltip
+            f"Export the {marked} marked items as JSON." if marked else export_tooltip
         )
         png_button = self.query_one("#personas-export-png", Button)
         png_button.display = export_png_applies
         png_button.disabled = marked > 0 or not (export_enabled and kind == "character")
-        png_button.tooltip = (
-            "Bulk export is JSON only." if marked else export_tooltip
-        )
+        png_button.tooltip = "Bulk export is JSON only." if marked else export_tooltip
         delete_button = self.query_one("#personas-delete", Button)
         delete_button.disabled = (not selected) and marked == 0
         delete_button.tooltip = (
@@ -639,6 +637,7 @@ class PersonasInspectorPane(Vertical):
         buddy_eligible = (
             buddy_applies
             and not unsaved
+            and self._buddy_profile_current
             and self._buddy_source == "local"
             and bool(self._buddy_persona_id)
             and type(self._buddy_revision) is int
@@ -649,6 +648,8 @@ class PersonasInspectorPane(Vertical):
             buddy_tooltip = "Save a local copy first"
         elif unsaved:
             buddy_tooltip = _UNSAVED_TOOLTIP
+        elif not self._buddy_profile_current:
+            buddy_tooltip = "Persona details are unavailable. Refresh and try again."
         elif not self._buddy_active:
             buddy_tooltip = "Activate this Persona first."
         else:

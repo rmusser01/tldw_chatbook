@@ -11830,14 +11830,71 @@ async def test_restore_reresolves_same_selection(
     mock_app_instance,
     stub_characters,
 ) -> None:
-    record = {**PROFILE, "version": 3, "is_active": True, "deleted": False}
+    record = {**PROFILE, "version": 3, "is_active": False, "deleted": False}
+    records = {"p-1": record}
     controller = _configure_persona_buddy(
         mock_app_instance,
-        {"p-1": record},
+        records,
         preferences=PersonaBuddyPreferences(
             enabled=True,
-            open=False,
+            open=True,
             collapsed=True,
+            selection=PersonaBuddySelection("local", "p-1"),
+        ),
+    )
+    resolved = []
+
+    async def reconcile():
+        resolved.append(await controller.resolve_current_visual(cols=80, lines=24))
+        return True
+
+    mock_app_instance.reconcile_persona_buddy_view.side_effect = reconcile
+    app = PersonasTestApp(mock_app_instance)
+
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        before = controller.snapshot().profile_generation
+        await screen._refresh_persona_buddy_lifecycle("p-1")
+        records["p-1"] = {
+            **record,
+            "version": 4,
+            "is_active": True,
+            "deleted": False,
+        }
+        await screen._refresh_persona_buddy_lifecycle("p-1")
+
+        preferences = controller.current_preferences()
+        assert preferences.selection == PersonaBuddySelection("local", "p-1")
+        assert preferences.enabled is True
+        assert preferences.open is True
+        assert preferences.collapsed is True
+        assert controller.snapshot().profile_generation == before + 2
+        assert [visual.reason for visual in resolved] == [
+            "persona_buddy_persona_unavailable",
+            "persona_buddy_binding_unavailable",
+        ]
+
+
+async def test_buddy_action_fetch_aba_cannot_apply_or_reconcile(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    records = {
+        "p-1": {**PROFILE, "version": 2, "is_active": True, "deleted": False},
+        "p-2": {
+            **PROFILE,
+            "id": "p-2",
+            "name": "Navigator",
+            "version": 5,
+            "is_active": True,
+            "deleted": False,
+        },
+    }
+    controller = _configure_persona_buddy(
+        mock_app_instance,
+        records,
+        preferences=PersonaBuddyPreferences(
+            enabled=True,
             selection=PersonaBuddySelection("local", "p-1"),
         ),
     )
@@ -11845,13 +11902,57 @@ async def test_restore_reresolves_same_selection(
 
     async with app.run_test() as pilot:
         screen = await _mounted(pilot)
-        await screen._refresh_persona_buddy_lifecycle("p-1")
+        await screen._apply_mode("personas")
+        await screen._select_profile("p-1", "Archivist")
+        started = asyncio.Event()
+        release = asyncio.Event()
+        calls = 0
 
-        preferences = controller.current_preferences()
-        assert preferences.selection == PersonaBuddySelection("local", "p-1")
-        assert preferences.enabled is True
-        assert preferences.open is False
-        assert preferences.collapsed is True
+        async def fetch(persona_id: str, *, mode: str):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                started.set()
+                await release.wait()
+            return dict(records[persona_id])
+
+        mock_app_instance.character_persona_scope_service.get_persona_profile = fetch
+        screen.post_message(
+            PersonaBuddyActionRequested(
+                action="close", source="local", persona_id="p-1", revision=2
+            )
+        )
+        await started.wait()
+        await screen._select_profile("p-2", "Navigator")
+        await screen._select_profile("p-1", "Archivist")
+        release.set()
+        await pilot.pause()
+
+        assert controller.current_preferences().open is True
+        mock_app_instance.reconcile_persona_buddy_view.assert_not_awaited()
+
+
+async def test_incomplete_profile_fetch_disables_cached_buddy_actions(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    records = {
+        "p-1": {**PROFILE, "version": 2, "is_active": True, "deleted": False}
+    }
+    _configure_persona_buddy(mock_app_instance, records)
+    app = PersonasTestApp(mock_app_instance)
+
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        await screen._apply_mode("personas")
+        mock_app_instance.character_persona_scope_service.get_persona_profile = (
+            AsyncMock(side_effect=RuntimeError("service unavailable"))
+        )
+        await screen._select_profile("p-1", "Archivist")
+
+        for button in screen.query(".persona-buddy-action").results(Button):
+            assert button.disabled is True
+            assert button.tooltip == "Persona details are unavailable. Refresh and try again."
 
 
 async def test_local_save_and_delete_refresh_only_the_same_buddy_selection(
@@ -11962,10 +12063,65 @@ async def test_stale_buddy_action_does_not_refresh_replaced_workbench_selection(
             await asyncio.sleep(0)
         assert controller.current_preferences().open is False
         await screen._select_profile("p-2", "Navigator")
+        await screen._select_profile("p-1", "Archivist")
         release.set()
         await pilot.pause()
 
         mock_app_instance.reconcile_persona_buddy_view.assert_not_awaited()
+
+
+async def test_newer_buddy_action_wins_serialized_persistence_and_reconcile(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    records = {
+        "p-1": {**PROFILE, "version": 2, "is_active": True, "deleted": False}
+    }
+    started = threading.Event()
+    release = threading.Event()
+    writes = []
+
+    def blocked_first_writer(preferences):
+        writes.append(preferences)
+        if len(writes) == 1:
+            started.set()
+            release.wait(timeout=5)
+        return True
+
+    controller = _configure_persona_buddy(
+        mock_app_instance,
+        records,
+        preferences=PersonaBuddyPreferences(
+            enabled=True,
+            selection=PersonaBuddySelection("local", "p-1"),
+        ),
+    )
+    controller._preference_writer = blocked_first_writer
+    app = PersonasTestApp(mock_app_instance)
+
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        await screen._apply_mode("personas")
+        await screen._select_profile("p-1", "Archivist")
+        screen.post_message(
+            PersonaBuddyActionRequested(
+                action="close", source="local", persona_id="p-1", revision=2
+            )
+        )
+        while not started.is_set():
+            await asyncio.sleep(0)
+        screen.post_message(
+            PersonaBuddyActionRequested(
+                action="show", source="local", persona_id="p-1", revision=2
+            )
+        )
+        await pilot.pause()
+        release.set()
+        await pilot.pause()
+
+        assert [preferences.open for preferences in writes] == [False, True]
+        assert controller.current_preferences().open is True
+        mock_app_instance.reconcile_persona_buddy_view.assert_awaited_once()
 
 
 async def test_persona_json_export_excludes_buddy_preferences(

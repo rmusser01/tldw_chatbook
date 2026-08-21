@@ -86,6 +86,7 @@ async def test_active_local_persona_buddy_actions_are_explicit_and_typed(
             entity_id="persona-7",
             revision=4,
             active=True,
+            profile_current=True,
         )
         await pilot.pause()
 
@@ -115,6 +116,7 @@ async def test_server_persona_buddy_actions_are_disabled_with_exact_recovery_cop
             entity_id="persona-7",
             revision=4,
             active=True,
+            profile_current=True,
         )
         await pilot.pause()
 
@@ -140,6 +142,7 @@ async def test_persona_highlight_alone_emits_no_buddy_action():
             entity_id="persona-7",
             revision=4,
             active=True,
+            profile_current=True,
         )
         await pilot.pause()
 
@@ -158,6 +161,7 @@ async def test_buddy_actions_keep_exact_labels_and_focus_without_keybindings(siz
             entity_id="persona-7",
             revision=4,
             active=True,
+            profile_current=True,
         )
         await pilot.pause()
 
@@ -196,11 +200,35 @@ async def test_buddy_rejects_incomplete_or_inactive_local_persona(
             entity_id=entity_id,
             revision=revision,
             active=active,
+            profile_current=True,
         )
         await pilot.pause()
 
         for button in pilot.app.query(".persona-buddy-action").results(Button):
             assert button.disabled is True
+
+
+async def test_buddy_requires_current_complete_profile_not_cached_eligibility():
+    app = InspectorApp()
+    async with app.run_test(size=(170, 50)) as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        pane.show_selection(
+            name="Cached Persona",
+            kind="persona",
+            source="local",
+            entity_id="persona-7",
+            revision=4,
+            active=True,
+            profile_current=False,
+        )
+        await pilot.pause()
+
+        for button in pilot.app.query(".persona-buddy-action").results(Button):
+            assert button.disabled is True
+            assert (
+                button.tooltip
+                == "Persona details are unavailable. Refresh and try again."
+            )
 
 
 async def test_default_state_shows_no_selection_and_disabled_actions():

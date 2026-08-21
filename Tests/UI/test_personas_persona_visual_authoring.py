@@ -26,6 +26,7 @@ from tldw_chatbook.Persona_Visual.publication import (
     PersonaVisualPublicationResult,
 )
 from tldw_chatbook.Persona_Visual.repository import PersonaVisualIdentity
+from tldw_chatbook.Persona_Buddy import PersonaBuddySelection
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
 from tldw_chatbook.Utils.paths import get_user_data_dir
 from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
@@ -79,6 +80,15 @@ def _identity(version: int = 1) -> PersonaVisualIdentity:
         pack_version_id=13,
         version_number=version,
         manifest_sha256="a" * 64,
+    )
+
+
+def _buddy_snapshot(*, visual, persona_id: str = "p-1"):
+    return SimpleNamespace(
+        selection=PersonaBuddySelection("local", persona_id),
+        preferences_generation=7,
+        profile_generation=11,
+        visual=visual,
     )
 
 
@@ -253,8 +263,13 @@ async def test_visual_publication_invalidates_bound_buddy_old_and_new_identity_o
     invalidate_profile = Mock()
     reconcile = AsyncMock(return_value=True)
     buddy = SimpleNamespace(
-        snapshot=lambda: SimpleNamespace(
-            visual=SimpleNamespace(graph_identity=_identity())
+        snapshot=lambda: _buddy_snapshot(
+            visual=SimpleNamespace(
+                source="local",
+                persona_id="p-1",
+                persona_revision=2,
+                graph_identity=_identity(),
+            )
         ),
         invalidate_profile=invalidate_profile,
     )
@@ -286,14 +301,104 @@ async def test_visual_publication_invalidates_bound_buddy_old_and_new_identity_o
         invalidate_profile.assert_not_called()
         reconcile.assert_not_awaited()
 
-        buddy.snapshot = lambda: SimpleNamespace(
-            visual=SimpleNamespace(graph_identity=_identity(2))
+        buddy.snapshot = lambda: _buddy_snapshot(
+            visual=SimpleNamespace(
+                source="local",
+                persona_id="p-1",
+                persona_revision=2,
+                graph_identity=_identity(2),
+            )
         )
         await screen._invalidate_persona_visual_publication(
             PersonaVisualPublicationResult(_identity(), _identity(2), None)
         )
         invalidate_profile.assert_called_once_with()
         reconcile.assert_awaited_once_with()
+
+
+@pytest.mark.parametrize(
+    "visual",
+    (
+        None,
+        SimpleNamespace(
+            source="local",
+            persona_id="p-1",
+            persona_revision=2,
+            graph_identity=None,
+        ),
+    ),
+)
+async def test_visual_publication_remounts_exact_selected_unavailable_buddy(
+    visual,
+    monkeypatch,
+    mock_app_instance,
+    stub_characters,
+    local_scope,
+):
+    monkeypatch.setattr(personas_screen_module, "PersonaVisualRepository", _Repository)
+    invalidate_profile = Mock()
+    reconcile = AsyncMock(return_value=True)
+    buddy = SimpleNamespace(
+        snapshot=lambda: _buddy_snapshot(visual=visual),
+        invalidate_profile=invalidate_profile,
+    )
+    app = PersonasTestApp(mock_app_instance)
+
+    async with app.run_test() as pilot:
+        screen = await _open_editor(pilot)
+        mock_app_instance.persona_buddy_controller = buddy
+        mock_app_instance.reconcile_persona_buddy_view = reconcile
+
+        await screen._invalidate_persona_visual_publication(
+            PersonaVisualPublicationResult(_identity(), _identity(2), None)
+        )
+
+        invalidate_profile.assert_called_once_with()
+        reconcile.assert_awaited_once_with()
+
+
+async def test_visual_publication_rejects_stale_cached_actor_after_selection_change(
+    monkeypatch,
+    mock_app_instance,
+    stub_characters,
+    local_scope,
+):
+    monkeypatch.setattr(personas_screen_module, "PersonaVisualRepository", _Repository)
+    invalidate_profile = Mock()
+    buddy = SimpleNamespace(
+        snapshot=lambda: _buddy_snapshot(
+            persona_id="p-2",
+            visual=SimpleNamespace(
+                source="local",
+                persona_id="p-1",
+                persona_revision=2,
+                graph_identity=_identity(),
+            ),
+        ),
+        invalidate_profile=invalidate_profile,
+    )
+    app = PersonasTestApp(mock_app_instance)
+
+    async with app.run_test() as pilot:
+        screen = await _open_editor(pilot)
+        local_scope.get_persona_profile = AsyncMock(
+            return_value={
+                **PROFILE,
+                "id": "p-2",
+                "version": 5,
+                "is_active": True,
+                "deleted": False,
+            }
+        )
+        mock_app_instance.persona_buddy_controller = buddy
+        mock_app_instance.reconcile_persona_buddy_view = AsyncMock(return_value=True)
+
+        await screen._invalidate_persona_visual_publication(
+            PersonaVisualPublicationResult(_identity(), _identity(2), None)
+        )
+
+        invalidate_profile.assert_not_called()
+        mock_app_instance.reconcile_persona_buddy_view.assert_not_awaited()
 
 
 async def test_failed_publication_keeps_draft_and_invalidates_nothing(
@@ -360,10 +465,22 @@ async def test_cancel_signals_active_operation_and_discards_only_draft(
     monkeypatch, mock_app_instance, stub_characters, local_scope
 ):
     monkeypatch.setattr(personas_screen_module, "PersonaVisualRepository", _Repository)
+    buddy_invalidation = Mock()
     app = PersonasTestApp(mock_app_instance)
 
     async with app.run_test() as pilot:
         screen = await _open_editor(pilot)
+        mock_app_instance.persona_buddy_controller = SimpleNamespace(
+            snapshot=lambda: _buddy_snapshot(
+                visual=SimpleNamespace(
+                    source="local",
+                    persona_id="p-1",
+                    persona_revision=2,
+                    graph_identity=_identity(),
+                )
+            ),
+            invalidate_profile=buddy_invalidation,
+        )
         state = screen._persona_visual_authoring
         assert state is not None
         state.dirty = True
@@ -385,6 +502,7 @@ async def test_cancel_signals_active_operation_and_discards_only_draft(
 
         assert screen._persona_visual_authoring is None
         assert screen._configure_persona_visual.await_count == 1
+        buddy_invalidation.assert_not_called()
 
 
 async def test_stale_import_is_cleaned_and_cannot_repaint(
