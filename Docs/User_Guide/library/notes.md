@@ -19,7 +19,42 @@ under the rail's "Create" section.
 
 ## Layout tour
 
-![Notes editor](../images/library/notes-editor.svg)
+Wide Database Notes keeps Library navigation beside the list while you scan:
+
+```text
++----------------------+-----------------------------------------------+
+| Library              | Database | Files                              |
+| Browse               | Notes (N)                                     |
+|   Notes              | Filter...   Sort   Sync   Import   Export     |
+|   Media              |                                               |
+|   Conversations      |  Note title                           age     |
+| ...                  |  Note title                           age     |
++----------------------+-----------------------------------------------+
+```
+
+Opening a database note—or switching to Files—turns the workbench into one
+focused task. The Library rail stays mounted but yields its width, and one
+stable cue names the return destination:
+
+```text
++-----------------------------------------------------------------------+
+| ‹ Library / Notes                                                     |
+|                                                                       |
+|  Focused note editor or retained Files workspace                      |
+|                                                                       |
++-----------------------------------------------------------------------+
+```
+
+Below 120 columns, Notes keeps the existing navigation-first, one-stage
+layout. Choose Notes in the rail, then work in the full canvas; the compact
+editor's own Back control returns to its list.
+
+```text
++----------------------------+     +----------------------------+
+| Library rail               | --> | Notes list or editor       |
+|   Notes                    |     | ‹ Back to list (editor)    |
++----------------------------+     +----------------------------+
+```
 
 - **Source strip** — a "Database | Files" toggle above the canvas. This
   page covers the Database side; see below for Files.
@@ -27,7 +62,9 @@ under the rail's "Create" section.
   "Filter notes… (Enter)" field, a toolbar (sort / Sync / Import note /
   Export… / Select), and one row per note showing its title and age.
 - **Editor** — opens when you click a note: title, body, keywords, a meta
-  line with the autosave status, and an action row.
+  line with the autosave status, and an action row. On wide terminals the
+  top `‹ Library / Notes` cue returns to the exact prior list row, scope, and
+  scroll positions; on compact terminals use `‹ Back to list`.
 - **New note view** — opens from the rail's "New note": a "Blank note"
   button plus a "From a template" list.
 - **Notes sync panel** — opens from the toolbar's "Sync" button: folder,
@@ -81,6 +118,13 @@ flips to "saving…" and back to "saved". If the same note was changed
 somewhere else while you were editing, a banner appears: "This note
 changed elsewhere — Overwrite saves your text; Reload discards it." —
 pick **Overwrite** or **Reload**.
+
+The wide `‹ Library / Notes` cue and Escape use the same guarded return as
+the compact Back control. A dirty save, sync, conflict, reload confirmation,
+or running mutation can therefore keep the focused task open until it is safe
+to leave. A successful return restores the Database/Files source, filter,
+sort, selected note or placement, Notes-list scroll, Library-rail scroll, and
+semantic keyboard focus instead of starting over at the first row.
 
 After a confirmed delete, the receipt stays in the Notes list until you
 choose **Undo**, choose **Dismiss**, or complete a newer note deletion.
@@ -256,3 +300,8 @@ panel actually shows.)*
 confirmed Database Note deletion now leaves a named inline Undo/Dismiss
 receipt; Undo restores the exact soft-deleted row and Notes rail count through
 the version-checked service seam.)*
+
+*Verified 2026-08-21 (TASK-19026): wide Database browsing retains the Library
+rail; database editing and Files use one focused workbench with a guarded
+`‹ Library / Notes` return; exact browse identity and independent scroll
+positions survive return and compact/wide breakpoint crossings.*

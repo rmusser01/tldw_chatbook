@@ -27716,6 +27716,180 @@ async def test_library_note_wide_deep_link_back_clears_future_compact_intent() -
 
 
 @pytest.mark.asyncio
+async def test_library_note_wide_browse_retains_rail_and_editor_owns_focused_task() -> (
+    None
+):
+    """Wide Notes keeps navigation for scanning, then yields it to editing."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_library_notes_compact(screen, pilot, False)
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-filter")
+
+        rail = screen.query_one("#library-rail")
+        canvas = screen.query_one("#library-canvas")
+        assert rail.display is True
+        assert canvas.display is True
+        assert canvas.region.x >= rail.region.right
+        assert screen.query_one("#library-notes-task-return", Button).display is False
+
+        screen.query_one("#library-notes-row-0").press()
+        await _wait_for_selector(screen, pilot, "#library-note-body")
+        await pilot.pause()
+
+        assert rail.display is False
+        assert screen.query_one("#library-rail-handle").display is False
+        task_return = screen.query_one("#library-notes-task-return", Button)
+        assert task_return.display is True
+        assert str(task_return.label) == "‹ Library / Notes"
+        assert screen.query_one("#library-note-back", Button).display is False
+        assert canvas.display is True
+        assert canvas.region == screen.query_one("#library-shell-grid").content_region
+        painted = "\n".join(strip.text for strip in screen._compositor.render_strips())
+        assert "‹ Library / Notes" in painted
+
+
+@pytest.mark.asyncio
+async def test_library_note_task_return_restores_exact_wide_browse_context() -> None:
+    """Focused editing returns to the same scope, row, and two scroll owners."""
+    notes = [
+        {
+            "id": f"n-{index:02d}",
+            "title": f"Scope note {index:02d}",
+            "content": f"scope body {index}",
+            "last_modified": f"2026-07-{(index % 28) + 1:02d}T12:00:00+00:00",
+            "version": 1,
+            "keywords": [],
+        }
+        for index in range(32)
+    ]
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=notes)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(170, 24)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_library_notes_compact(screen, pilot, False)
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-filter")
+
+        screen.query_one("#library-notes-sort", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-sort-title")
+        screen.query_one("#library-notes-sort-title", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_notes_sort == "title",
+            message="Notes title scope did not settle.",
+        )
+        await pilot.pause()
+        notes_filter = screen.query_one("#library-notes-filter", Input)
+        notes_filter.value = "scope"
+        notes_filter.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_notes_filter == "scope"
+                and screen._library_notes_filter_records is not None
+            ),
+            message=lambda: (
+                "Filtered Notes scope did not settle: "
+                f"value={notes_filter.value!r}, focused={screen.focused!r}, "
+                f"filter={screen._library_notes_filter!r}, "
+                f"calls={app.notes_scope_service.search_calls!r}."
+            ),
+        )
+        assert len(screen._library_notes_filter_records) == 32
+        assert len(screen.query(".library-notes-row")) >= 20
+
+        rail = screen.query_one("#library-rail")
+        notes_list = screen.query_one("#library-notes-list")
+        assert int(rail.max_scroll_y) > 0
+        assert int(notes_list.max_scroll_y) > 0
+        target = list(screen.query(".library-notes-row"))[18]
+        target_note_id = str(getattr(target, "note_id", ""))
+        placement_id = str(getattr(target, "placement_id", ""))
+        rail.scroll_to(y=2, animate=False, force=True, immediate=True)
+        notes_list.scroll_to(y=7, animate=False, force=True, immediate=True)
+        screen.set_focus(target, scroll_visible=False)
+        await pilot.pause()
+        before_rail_scroll = int(rail.scroll_y)
+        before_list_scroll = int(notes_list.scroll_y)
+        assert before_rail_scroll == 2
+        assert before_list_scroll == 7
+
+        target.press()
+        await _wait_for_selector(screen, pilot, "#library-note-body")
+        screen.query_one("#library-notes-task-return", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-filter")
+        await _wait_for_condition(
+            pilot,
+            lambda: getattr(screen.focused, "note_id", None) == target_note_id,
+            message="Task return did not restore the selected note row.",
+        )
+
+        assert screen._library_notes_source == "database"
+        assert screen._library_notes_filter == "scope"
+        assert screen._library_notes_sort == "title"
+        assert screen._library_notes_tree_selected_placement_id == placement_id
+        assert screen.query_one("#library-notes-filter", Input).value == "scope"
+        assert (
+            int(screen.query_one("#library-notes-list").scroll_y) == before_list_scroll
+        )
+        assert int(screen.query_one("#library-rail").scroll_y) == before_rail_scroll
+        assert screen.query_one("#library-rail").display is True
+        assert screen.query_one("#library-notes-task-return", Button).display is False
+
+
+@pytest.mark.asyncio
+async def test_library_note_task_return_receipt_respects_newer_user_focus() -> None:
+    """A deferred browse receipt cannot steal focus chosen after return admission."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        row = screen.query_one("#library-notes-row-0")
+        row.focus(scroll_visible=False)
+        receipt = screen._capture_library_notes_browse_return_receipt(
+            note_id=str(row.note_id)
+        )
+        stale_generation = screen._library_notes_focus_intent_generation
+        guard = library_screen_module._LibraryNotesRestoreGuard(
+            focus_generation=stale_generation
+        )
+
+        newer_target = screen.query_one("#library-rail-collapse", Button)
+        screen._mark_library_notes_user_interaction()
+        newer_target.focus()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                newer_target.has_focus
+                and screen._library_notes_focus_intent_generation > stale_generation
+            ),
+            message="Newer rail focus did not advance Notes focus authority.",
+        )
+
+        screen._restore_library_notes_browse_return_receipt(receipt, guard)
+        await pilot.pause()
+
+        assert screen.focused is newer_target
+        assert newer_target.has_focus
+
+
+@pytest.mark.asyncio
 @pytest.mark.allow_network
 async def test_library_navigation_rail_collapses_in_place_and_survives_breakpoints() -> (
     None
@@ -28048,18 +28222,32 @@ async def test_library_note_breakpoint_round_trip_restores_editor_focus_tuple() 
         selection = body.selection
         scroll_y = body.scroll_y
         coordinator = screen._library_note_session
+        receipt = screen._library_notes_browse_return_receipt
+        assert receipt is not None
+        assert screen.query_one("#library-rail").display is False
+        assert screen.query_one("#library-notes-task-return", Button).display is True
+        assert screen.query_one("#library-note-back", Button).display is False
 
-        await pilot.resize_terminal(60, 20)
+        await pilot.resize_terminal(100, 30)
         await _wait_for_library_notes_compact(screen, pilot, True)
+        assert screen._library_note_session is coordinator
+        assert screen._library_notes_browse_return_receipt is receipt
+        assert screen.query_one("#library-notes-task-return", Button).display is False
+        assert screen.query_one("#library-note-back", Button).display is True
         await pilot.resize_terminal(170, 48)
         await _wait_for_library_notes_compact(screen, pilot, False)
 
         restored = screen.query_one("#library-note-body", TextArea)
         assert screen._library_note_session is coordinator
+        assert screen._library_notes_browse_return_receipt is receipt
+        assert restored is body
         assert screen.focused is restored
         assert restored.selection == selection
         assert restored.scroll_y == scroll_y
         assert screen._library_note_session.snapshot.body == body.text
+        assert screen.query_one("#library-rail").display is False
+        assert screen.query_one("#library-notes-task-return", Button).display is True
+        assert screen.query_one("#library-note-back", Button).display is False
 
 
 @pytest.mark.asyncio

@@ -778,6 +778,14 @@ class _LibraryNotesRecomposeCapture:
 
 
 @dataclasses.dataclass(frozen=True)
+class _LibraryNotesBrowseReturnReceipt:
+    """Portable Notes browse context retained while a focused task owns the canvas."""
+
+    focus: LibraryNotesFocusIdentity
+    rail_scroll_offset: tuple[int, int] | None = None
+
+
+@dataclasses.dataclass(frozen=True)
 class _LibraryNotesRestoreGuard:
     """Generations that keep deferred focus/scroll restoration current."""
 
@@ -3444,6 +3452,9 @@ class LibraryScreen(BaseAppScreen):
             None
         )
         self._library_notes_last_user_focus: LibraryNotesFocusIdentity | None = None
+        self._library_notes_browse_return_receipt: (
+            _LibraryNotesBrowseReturnReceipt | None
+        ) = None
         self._library_notes_recompose_generation = 0
         self._library_note_shortcut_status: str = ""
         self._library_note_presentation_syncing: bool = False
@@ -4157,6 +4168,7 @@ class LibraryScreen(BaseAppScreen):
         finally:
             self._library_note_presentation_syncing = False
 
+        self._apply_library_notes_stage_visibility()
         self._apply_library_notes_footer_context()
 
     def _library_notes_workflow_active(self) -> bool:
@@ -4173,6 +4185,14 @@ class LibraryScreen(BaseAppScreen):
     def _library_notes_compact_workflow_active(self) -> bool:
         """Return whether either Notes source owns compact canvas routing."""
         return self._library_notes_workflow_active() or self._file_notes_active()
+
+    def _library_notes_focused_task_active(self) -> bool:
+        """Return whether Notes owns a task surface rather than its navigator."""
+        return self._file_notes_active() or (
+            self._library_notes_workflow_active()
+            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+            and self._library_notes_view == "editor"
+        )
 
     def _library_notes_focus_region(
         self,
@@ -4362,6 +4382,72 @@ class LibraryScreen(BaseAppScreen):
             context=self._library_note_context,
             confirming_delete=self._library_note_confirming_delete,
         )
+
+    def _capture_library_notes_browse_return_receipt(
+        self,
+        *,
+        note_id: str = "",
+        placement_id: str = "",
+    ) -> _LibraryNotesBrowseReturnReceipt:
+        """Capture the current Database Notes browse position before a focused task."""
+        focus = self._capture_library_notes_focus_identity(stage_from_focus=False)
+        if focus.region != "navigator" or not focus.semantic_role:
+            for cached in (
+                self._library_notes_last_user_focus,
+                self._library_notes_interaction_focus,
+                self._library_notes_last_presented_focus,
+            ):
+                if cached is not None and cached.region == "navigator":
+                    focus = cached
+                    break
+        notes_list = self._library_notes_scroll_owner("navigator")
+        scroll_offset = (
+            (int(notes_list.scroll_x), int(notes_list.scroll_y))
+            if notes_list is not None
+            else focus.scroll_offset
+        )
+        resolved_note_id = note_id or str(focus.note_id or "")
+        semantic_role = focus.semantic_role or "filter"
+        if resolved_note_id:
+            semantic_role = (
+                f"note-placement:{placement_id}"
+                if placement_id
+                else f"note-row:{resolved_note_id}"
+            )
+        focus = dataclasses.replace(
+            focus,
+            stage="notes",
+            region="navigator",
+            note_id=resolved_note_id or None,
+            semantic_role=semantic_role,
+            scroll_offset=scroll_offset,
+        )
+        rail = self._library_notes_scroll_owner("rail")
+        rail_scroll_offset = (
+            (int(rail.scroll_x), int(rail.scroll_y)) if rail is not None else None
+        )
+        return _LibraryNotesBrowseReturnReceipt(
+            focus=focus,
+            rail_scroll_offset=rail_scroll_offset,
+        )
+
+    def _restore_library_notes_browse_return_receipt(
+        self,
+        receipt: _LibraryNotesBrowseReturnReceipt,
+        guard: _LibraryNotesRestoreGuard | None = None,
+    ) -> None:
+        """Restore the retained Notes row/list position plus independent rail scroll."""
+        if not self._restore_library_notes_focus_identity(receipt.focus, guard):
+            return
+        rail = self._library_notes_scroll_owner("rail")
+        if rail is not None and receipt.rail_scroll_offset is not None:
+            rail.scroll_to(
+                x=receipt.rail_scroll_offset[0],
+                y=receipt.rail_scroll_offset[1],
+                animate=False,
+                force=True,
+                immediate=True,
+            )
 
     def _commit_library_note_widgets_before_recompose(self) -> None:
         """Move queued editor values into the canonical coordinator before teardown."""
@@ -4761,14 +4847,26 @@ class LibraryScreen(BaseAppScreen):
         else:
             if notes_canvas.compact != self._library_notes_compact:
                 notes_canvas.apply_compact_presentation(self._library_notes_compact)
-        single_stage = (
+        compact_single_stage = (
             self._library_notes_compact and self._library_notes_compact_stage_applies()
         )
+        wide_focused_task = (
+            not self._library_notes_compact
+            and self._library_notes_focused_task_active()
+        )
+        single_stage = compact_single_stage or wide_focused_task
         manually_collapsed = self._library_rail_collapsed and not single_stage
         rail_display = (
-            not single_stage or self._library_notes_stage == "rail"
-        ) and not manually_collapsed
-        canvas_display = not single_stage or self._library_notes_stage == "notes"
+            False
+            if wide_focused_task
+            else (not compact_single_stage or self._library_notes_stage == "rail")
+            and not manually_collapsed
+        )
+        canvas_display = (
+            True
+            if wide_focused_task
+            else (not compact_single_stage or self._library_notes_stage == "notes")
+        )
         handle_display = manually_collapsed
         if rail_handle.display != handle_display:
             rail_handle.display = handle_display
@@ -4782,6 +4880,28 @@ class LibraryScreen(BaseAppScreen):
             pass
         else:
             collapse.display = not single_stage
+        for selector in (
+            "#library-notes-source-database",
+            "#library-notes-source-separator",
+            "#library-notes-source-files",
+        ):
+            try:
+                source_control = self.query_one(selector, Widget)
+            except (NoMatches, QueryError):
+                continue
+            source_control.display = not wide_focused_task
+        try:
+            task_return = self.query_one("#library-notes-task-return", Button)
+        except (NoMatches, QueryError):
+            pass
+        else:
+            task_return.display = wide_focused_task
+        try:
+            note_back = self.query_one("#library-note-back", Button)
+        except (NoMatches, QueryError):
+            pass
+        else:
+            note_back.display = not wide_focused_task
 
     def _sync_library_ingest_rail_for_width(self, width: int) -> None:
         """Auto-collapse the rail only while narrow Ingest needs the space."""
@@ -9575,7 +9695,18 @@ class LibraryScreen(BaseAppScreen):
         yield install_label
         yield install_progress
         if shell.canvas_kind in LIBRARY_NOTES_SOURCE_STRIP_CANVAS_KINDS:
+            wide_focused_task = (
+                not self._library_notes_compact
+                and self._library_notes_focused_task_active()
+            )
             with Horizontal(id="library-notes-source-strip"):
+                task_return = Button(
+                    "‹ Library / Notes",
+                    id="library-notes-task-return",
+                    compact=True,
+                )
+                task_return.display = wide_focused_task
+                yield task_return
                 database_selected = (
                     self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
                 )
@@ -9585,12 +9716,15 @@ class LibraryScreen(BaseAppScreen):
                     compact=True,
                 )
                 database_source.set_class(database_selected, "-selected")
+                database_source.display = not wide_focused_task
                 yield database_source
-                yield Static(
+                source_separator = Static(
                     "|",
                     id="library-notes-source-separator",
                     markup=False,
                 )
+                source_separator.display = not wide_focused_task
+                yield source_separator
                 files_selected = self._library_notes_source == LIBRARY_NOTES_SOURCE_FILES
                 files_source = Button(
                     "Files (selected)" if files_selected else "Files",
@@ -9598,6 +9732,7 @@ class LibraryScreen(BaseAppScreen):
                     compact=True,
                 )
                 files_source.set_class(files_selected, "-selected")
+                files_source.display = not wide_focused_task
                 yield files_source
         shell_grid = Horizontal(
             id="library-shell-grid", classes="ds-panel destination-workbench"
@@ -9607,6 +9742,9 @@ class LibraryScreen(BaseAppScreen):
         shell_grid.set_class(self._library_notes_compact, "library-notes-compact")
         single_notes_stage = (
             self._library_notes_compact and self._library_notes_compact_stage_applies()
+        ) or (
+            not self._library_notes_compact
+            and self._library_notes_focused_task_active()
         )
         with shell_grid:
             rail_handle = LibraryNavigationRailHandle(id="library-rail-handle")
@@ -12302,6 +12440,7 @@ class LibraryScreen(BaseAppScreen):
                 # loading children and left focus outside the canvas. Arming
                 # is dirty-tracking, not cosmetics: a miss leaves the editor
                 # unarmed, so this is the one that must not be lost.
+                self._apply_library_notes_stage_visibility()
                 self._arm_library_note_editor()
                 self._restore_library_notes_focus_identity(editor_identity)
 
@@ -12329,6 +12468,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_note_delete_origin_context = False
         self._library_note_delete_origin_preview = False
         self._library_note_editor_armed = False
+        self._apply_library_notes_stage_visibility()
         self.run_worker(
             self._refresh_library_note_detail(note_id, entry_origin=entry_origin),
             exclusive=True,
@@ -15963,6 +16103,10 @@ class LibraryScreen(BaseAppScreen):
         await self._flush_library_note_save()
         if self._library_note_dirty:
             return
+        if self._library_notes_view == "list":
+            self._library_notes_browse_return_receipt = (
+                self._capture_library_notes_browse_return_receipt()
+            )
         self._supersede_library_notes_navigation()
         self._reset_library_note_editor_state()
         if self._library_file_notes_workspace is None:
@@ -15981,6 +16125,19 @@ class LibraryScreen(BaseAppScreen):
         # final shell geometry so a compact terminal cannot retain stale wide
         # presentation state from startup.
         self.call_after_refresh(self._update_library_notes_responsive_state)
+
+    @on(Button.Pressed, "#library-notes-task-return")
+    async def _return_from_library_notes_task(self, event: Button.Pressed) -> None:
+        """Return through the active Notes owner's existing guarded exit."""
+        event.stop()
+        if self._file_notes_active():
+            await self._return_to_library_database_notes()
+            return
+        if (
+            self._library_notes_workflow_active()
+            and self._library_notes_view == "editor"
+        ):
+            await self._exit_library_note_editor_guarded()
 
     @on(Button.Pressed, "#library-notes-source-database")
     async def _show_library_database_notes(self, event: Button.Pressed) -> None:
@@ -16018,14 +16175,26 @@ class LibraryScreen(BaseAppScreen):
         if release_source is False:
             return
         try:
+            guard = _LibraryNotesRestoreGuard(
+                scroll_generation=self._library_notes_scroll_intent_generation,
+                focus_generation=self._library_notes_focus_intent_generation,
+            )
             self._acknowledge_library_destination_change()
             self._library_notes_source = LIBRARY_NOTES_SOURCE_DATABASE
             self._register_footer_shortcuts()
             await self.recompose()
-            # task-2856 AC1: this lands on the Notes LIST (never Files'
-            # own editor state), so re-focus its first row the same way
-            # every other "enter/return to a list" seam does.
-            self._arm_library_list_entry_focus()
+            receipt = self._library_notes_browse_return_receipt
+            if receipt is None:
+                # task-2856 AC1: this lands on the Notes LIST (never Files'
+                # own editor state), so re-focus its first row the same way
+                # every other "enter/return to a list" seam does.
+                self._arm_library_list_entry_focus()
+            else:
+                self.call_after_refresh(
+                    self._restore_library_notes_browse_return_receipt,
+                    receipt,
+                    guard,
+                )
         finally:
             if callable(release_source):
                 release_source()
@@ -16308,6 +16477,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_filter = ""
         self._library_notes_filter_records = None
         self._library_notes_tree_search_page = None
+        self._library_notes_browse_return_receipt = None
         self._reset_library_note_editor_state()
         self._reset_library_prompt_editor_state()
         self._reset_library_skills_import_state()
@@ -28623,6 +28793,12 @@ class LibraryScreen(BaseAppScreen):
             self._library_notes_row_selection.toggle(note_id)
             _apply_library_row_toggle(self, "notes", event.button, note_id)
             return
+        self._library_notes_browse_return_receipt = (
+            self._capture_library_notes_browse_return_receipt(
+                note_id=note_id,
+                placement_id=self._library_notes_tree_selected_placement_id,
+            )
+        )
         self._library_notes_notice = ""
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
         # A normal row switch never carries the blank-note GC identity.
@@ -28978,15 +29154,20 @@ class LibraryScreen(BaseAppScreen):
             return False
         navigation_generation = self._supersede_library_notes_navigation()
         placement_id = self._library_notes_tree_selected_placement_id
-        identity = LibraryNotesFocusIdentity(
-            stage="notes",
-            region="navigator",
-            note_id=note_id or None,
-            semantic_role=(
-                f"note-placement:{placement_id}"
-                if note_id and placement_id
-                else (f"note-row:{note_id}" if note_id else "filter")
-            ),
+        receipt = self._library_notes_browse_return_receipt
+        identity = (
+            receipt.focus
+            if receipt is not None
+            else LibraryNotesFocusIdentity(
+                stage="notes",
+                region="navigator",
+                note_id=note_id or None,
+                semantic_role=(
+                    f"note-placement:{placement_id}"
+                    if note_id and placement_id
+                    else (f"note-row:{note_id}" if note_id else "filter")
+                ),
+            )
         )
         self._library_notes_pending_focus_identity = identity
         self._library_notes_pending_focus_waits_for_snapshot = True
@@ -28994,7 +29175,19 @@ class LibraryScreen(BaseAppScreen):
         self._reset_library_note_editor_state()
         self._refresh_local_source_snapshot()
         self.refresh(recompose=True)
-        self.call_after_refresh(self._restore_library_notes_focus_identity, identity)
+        if receipt is None:
+            self.call_after_refresh(
+                self._restore_library_notes_focus_identity, identity
+            )
+        else:
+            self.call_after_refresh(
+                self._restore_library_notes_browse_return_receipt,
+                receipt,
+                _LibraryNotesRestoreGuard(
+                    scroll_generation=self._library_notes_scroll_intent_generation,
+                    focus_generation=self._library_notes_focus_intent_generation,
+                ),
+            )
         return True
 
     async def action_library_note_editor_back(self) -> None:
@@ -32376,6 +32569,7 @@ class LibraryScreen(BaseAppScreen):
             if not entry_origin:
                 self._acknowledge_library_destination_change()
             self._clear_library_prompt_selection(announce=True)
+            self._library_notes_browse_return_receipt = None
             self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
             if entry_origin:
                 self._supersede_library_notes_navigation()
