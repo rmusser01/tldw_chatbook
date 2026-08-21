@@ -44,6 +44,8 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from fractions import Fraction
+from math import ceil
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -303,12 +305,35 @@ class ConsoleLeftRail(Vertical):
                 ContextAllocationResult,
                 bool,
                 tuple[ConsoleBoundedSection, ...],
+                str | None,
             ]
             | None
         ) = None
+        self._active_transition_generation = 0
+        self._pending_active_reveal_generation: int | None = None
+        self._active_reveal_token = 0
         self._no_room_section_ids: frozenset[str] = frozenset()
         self._outer_hint_exists = False
         self._outer_hint_text = ""
+
+    @staticmethod
+    def _section_header(
+        section_id: str,
+        is_open: bool,
+    ) -> DestinationRailSectionHeader:
+        """Build a direct header from the stable descriptor title source."""
+
+        descriptor = next(
+            item
+            for item in CONTEXT_SECTION_DESCRIPTORS
+            if item.section_id == section_id
+        )
+        return DestinationRailSectionHeader(
+            descriptor.title,
+            section_id=section_id,
+            open=is_open,
+            id=f"console-rail-section-header-{section_id}",
+        )
 
     @staticmethod
     def _section_body(
@@ -372,7 +397,11 @@ class ConsoleLeftRail(Vertical):
             descriptor.section_id for descriptor in self._mounted_descriptors()
         }:
             return
-        self._active_section_id = section_id
+        if section_id != self._active_section_id:
+            self._active_section_id = section_id
+            self._active_transition_generation += 1
+            self._pending_active_reveal_generation = self._active_transition_generation
+            self._active_reveal_token += 1
         self.request_allocation_reconcile()
 
     def request_allocation_reconcile(self) -> None:
@@ -442,6 +471,9 @@ class ConsoleLeftRail(Vertical):
                     demands,
                     active_section_id,
                 )
+                if active_section_id != self._active_section_id:
+                    self._active_reveal_token += 1
+                    self._pending_active_reveal_generation = None
                 self._active_section_id = active_section_id
             result = allocate_context_sections(
                 viewport_height=viewport_height,
@@ -486,15 +518,28 @@ class ConsoleLeftRail(Vertical):
         self,
         descriptors: tuple[ContextSectionDescriptor, ...],
     ) -> int:
-        """Measure all visible direct headers and fixed inter-section chrome."""
+        """Measure unconstrained direct-header demand from Textual box models."""
 
-        return sum(
-            self.query_one(
+        outer = self.query_one("#console-left-rail-body", VerticalScroll)
+        container_size = outer.content_region.size
+        viewport_size = self.screen.size
+        width_fraction = Fraction(max(0, container_size.width))
+        height_fraction = Fraction(max(0, container_size.height))
+        total = 0
+        for descriptor in descriptors:
+            header = self.query_one(
                 f"#console-rail-section-header-{descriptor.section_id}",
                 DestinationRailSectionHeader,
-            ).outer_size.height
-            for descriptor in descriptors
-        )
+            )
+            box_model = header._get_box_model(
+                container_size,
+                viewport_size,
+                width_fraction,
+                height_fraction,
+                greedy=False,
+            )
+            total += ceil(box_model.height) + header.styles.margin.height
+        return total
 
     def _apply_allocation_state(
         self,
@@ -510,12 +555,24 @@ class ConsoleLeftRail(Vertical):
             result,
             needs_outer_hint,
             tuple(sections),
+            self._active_section_id,
         )
         if complete_state == self._last_allocation_state:
             self._update_outer_hint()
-            if result.uses_outer_scroll and self._active_section_id is not None:
-                self.call_after_refresh(self._reveal_active_section)
             return
+
+        previous_result = (
+            self._last_allocation_state[0]
+            if self._last_allocation_state is not None
+            else None
+        )
+        entering_fallback = result.uses_outer_scroll and (
+            previous_result is None or not previous_result.uses_outer_scroll
+        )
+        if previous_result is not None and (
+            previous_result.uses_outer_scroll != result.uses_outer_scroll
+        ):
+            self._active_reveal_token += 1
 
         no_room_ids = frozenset(
             allocation.section_id
@@ -537,15 +594,14 @@ class ConsoleLeftRail(Vertical):
                 f"#{RAIL_SECTION_TOGGLE_PREFIX}{descriptor.section_id}", Button
             )
             constrained = descriptor.section_id in no_room_ids
-            target_title = (
-                f"{descriptor.title} · no room" if constrained else descriptor.title
-            )
+            base_title = header.title
+            target_title = f"{base_title} · no room" if constrained else base_title
             if str(title.renderable) != target_title:
                 title.update(target_title)
             if constrained:
                 if str(toggle.label) != "[>]":
                     toggle.label = "[>]"
-                toggle.tooltip = f"Prioritize {descriptor.title}"
+                toggle.tooltip = f"Prioritize {base_title}"
             else:
                 header.sync_open(header.open)
 
@@ -565,19 +621,73 @@ class ConsoleLeftRail(Vertical):
         self._last_allocation_state = complete_state
         self._update_outer_hint()
 
-        if result.uses_outer_scroll and self._active_section_id is not None:
-            self.call_after_refresh(self._schedule_active_reveal)
+        activation_pending = self._pending_active_reveal_generation is not None
+        if (
+            result.uses_outer_scroll
+            and self._active_section_id is not None
+            and (entering_fallback or activation_pending)
+        ):
+            self._pending_active_reveal_generation = None
+            self._queue_active_reveal(self._active_section_id)
+        elif not result.uses_outer_scroll:
+            self._pending_active_reveal_generation = None
 
-    def _schedule_active_reveal(self) -> None:
+    def _queue_active_reveal(self, section_id: str) -> None:
+        """Queue one reveal guarded by the current mode/activation token."""
+
+        self._active_reveal_token += 1
+        token = self._active_reveal_token
+        self.call_after_refresh(self._schedule_active_reveal, token, section_id)
+
+    def _schedule_active_reveal(self, token: int, section_id: str) -> None:
         """Wait through bounded-body layout before revealing outer content."""
 
-        self.call_after_refresh(self._reveal_active_section)
+        if not self._active_reveal_is_current(token, section_id):
+            return
+        self.call_after_refresh(self._stage_active_reveal, token, section_id)
 
-    def _reveal_active_section(self) -> None:
+    def _stage_active_reveal(self, token: int, section_id: str) -> None:
+        """Wait through the outer-scroll reflow before committing its offset."""
+
+        if not self._active_reveal_is_current(token, section_id):
+            return
+        self.call_after_refresh(self._reveal_active_section, token, section_id)
+
+    def _active_reveal_is_current(self, token: int, section_id: str) -> bool:
+        """Return whether a delayed reveal still matches active fallback state."""
+
+        return bool(
+            token == self._active_reveal_token
+            and section_id == self._active_section_id
+            and self._last_allocation_state is not None
+            and self._last_allocation_state[0].uses_outer_scroll
+        )
+
+    def _reveal_active_section(self, token: int, section_id: str) -> None:
         """Reveal the active header and its first content row in fallback mode."""
 
-        section_id = self._active_section_id
-        if section_id is None:
+        if not self._active_reveal_is_current(token, section_id):
+            return
+        try:
+            outer = self.query_one("#console-left-rail-body", VerticalScroll)
+            header = self.query_one(
+                f"#console-rail-section-header-{section_id}",
+                DestinationRailSectionHeader,
+            )
+        except (NoMatches, QueryError):
+            return
+        outer.scroll_to(
+            y=max(0, header.virtual_region.y),
+            animate=False,
+            immediate=True,
+        )
+        self._update_outer_hint()
+        self.call_after_refresh(self._confirm_active_reveal, token, section_id)
+
+    def _confirm_active_reveal(self, token: int, section_id: str) -> None:
+        """Commit the transition reveal against the final outer virtual height."""
+
+        if not self._active_reveal_is_current(token, section_id):
             return
         try:
             outer = self.query_one("#console-left-rail-body", VerticalScroll)
@@ -701,11 +811,9 @@ class ConsoleLeftRail(Vertical):
             # TASK-14810: the former Session body mixed three distinct jobs.
             # Keep the live session first, then expose workspace context and
             # durable conversation browsing as peer disclosure sections.
-            yield DestinationRailSectionHeader(
-                "Sessions",
-                section_id="session",
-                open=rail_state.session_open,
-                id="console-rail-section-header-session",
+            yield self._section_header(
+                "session",
+                rail_state.session_open,
             )
             session_context_tray = ConsoleWorkspaceContextTray(
                 workspace_context_state,
@@ -727,11 +835,9 @@ class ConsoleLeftRail(Vertical):
                 owner=self,
             )
 
-            yield DestinationRailSectionHeader(
-                "Workspaces",
-                section_id="workspace",
-                open=rail_state.workspace_open,
-                id="console-rail-section-header-workspace",
+            yield self._section_header(
+                "workspace",
+                rail_state.workspace_open,
             )
             workspace_context_tray = ConsoleWorkspaceContextTray(
                 workspace_context_state,
@@ -753,11 +859,9 @@ class ConsoleLeftRail(Vertical):
                 owner=self,
             )
 
-            yield DestinationRailSectionHeader(
-                "Conversations",
-                section_id="conversations",
-                open=rail_state.conversations_open,
-                id="console-rail-section-header-conversations",
+            yield self._section_header(
+                "conversations",
+                rail_state.conversations_open,
             )
             conversation_context_tray = ConsoleWorkspaceContextTray(
                 workspace_context_state,
@@ -787,11 +891,9 @@ class ConsoleLeftRail(Vertical):
 
             # Model (provider/model readout lines plus a
             # Configure shortcut into the Console session settings).
-            yield DestinationRailSectionHeader(
-                "Model",
-                section_id="model",
-                open=rail_state.model_open,
-                id="console-rail-section-header-model",
+            yield self._section_header(
+                "model",
+                rail_state.model_open,
             )
             summary_state = self._settings_summary_state
             provider_value = _summary_row_value(summary_state.provider_row) or "—"
@@ -908,11 +1010,9 @@ class ConsoleLeftRail(Vertical):
             # Agent (run inspector -- the watch-and-drill surface
             # for the live/most-recent agent run and its historical
             # sub-agent runs).
-            yield DestinationRailSectionHeader(
-                "Agent",
-                section_id="agent",
-                open=rail_state.agent_open,
-                id="console-rail-section-header-agent",
+            yield self._section_header(
+                "agent",
+                rail_state.agent_open,
             )
             agent_status = Static(
                 self._agent_status_line,
@@ -998,11 +1098,9 @@ class ConsoleLeftRail(Vertical):
             )
 
             # Details (storage, sync, handoff plumbing).
-            yield DestinationRailSectionHeader(
-                "Details",
-                section_id="details",
-                open=rail_state.details_open,
-                id="console-rail-section-header-details",
+            yield self._section_header(
+                "details",
+                rail_state.details_open,
             )
             details_tray = ConsoleWorkspaceDetailsTray(
                 workspace_context_state,
@@ -1024,11 +1122,9 @@ class ConsoleLeftRail(Vertical):
 
             # Character (avatar of the active character).
             if self._show_character_section:
-                yield DestinationRailSectionHeader(
-                    "Character",
-                    section_id="character",
-                    open=rail_state.character_open,
-                    id="console-rail-section-header-character",
+                yield self._section_header(
+                    "character",
+                    rail_state.character_open,
                 )
                 avatar_children = ()
                 if self._character_avatar_widget_builder is not None:

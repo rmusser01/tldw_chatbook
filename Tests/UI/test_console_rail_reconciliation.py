@@ -9,6 +9,12 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Static
 
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET
+from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
+from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+    ConsoleHarness,
+)
 from tldw_chatbook.Chat.console_rail_state import ConsoleRailState
 from tldw_chatbook.Chat.console_session_settings import ConsoleSettingsSummaryState
 from tldw_chatbook.UI.Console_Modules import left_rail as left_rail_module
@@ -155,6 +161,12 @@ class _RailHarness(App[None]):
         self.section_toggles.append(event.section_id)
 
 
+class _ProductionConsoleHarness(ConsoleHarness):
+    """Real ChatScreen host with the complete production CSS cascade."""
+
+    CSS_PATH = str(BUNDLED_STYLESHEET)
+
+
 async def _settle(pilot, passes: int = 5) -> None:
     for _ in range(passes):
         await pilot.pause()
@@ -199,6 +211,83 @@ def _force_geometry(
 
 def _sections(rail: ConsoleLeftRail) -> Iterator[ConsoleBoundedSection]:
     return iter(rail.query("#console-left-rail-body ConsoleBoundedSection"))
+
+
+async def _open_all_production_context_sections(host, pilot) -> ConsoleLeftRail:
+    screen = host.screen_stack[-1]
+    await _wait_for_selector(screen, pilot, "#console-left-rail")
+    rail = screen.query_one("#console-left-rail", ConsoleLeftRail)
+    if rail.display:
+        screen.query_one("#console-context-rail-collapse", Button).press()
+        await _settle(pilot)
+    screen.query_one("#console-context-rail-open", Button).press()
+    await _settle(pilot)
+    for section_id in SECTION_IDS:
+        header = rail.query_one(f"#console-rail-section-header-{section_id}")
+        if not header.open:
+            rail.query_one(f"#console-rail-section-toggle-{section_id}", Button).press()
+            await _settle(pilot, passes=2)
+    await _settle(pilot, passes=8)
+    return rail
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("terminal_size", "uses_outer_scroll"),
+    [((120, 30), False), ((80, 24), True)],
+)
+async def test_production_css_uses_uncompressed_header_demand_and_reaches_every_section(
+    terminal_size: tuple[int, int],
+    uses_outer_scroll: bool,
+) -> None:
+    """Real CSS keeps two-row headers and selects fallback from fixed demand."""
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = _ProductionConsoleHarness(app)
+
+    async with host.run_test(size=(120, 30)) as pilot:
+        rail = await _open_all_production_context_sections(host, pilot)
+        if terminal_size != (120, 30):
+            await pilot.resize_terminal(*terminal_size)
+            await _settle(pilot, passes=10)
+        outer = rail.query_one("#console-left-rail-body")
+        cue = rail.query_one("#console-left-rail-outer-hint", Static)
+        headers = [
+            rail.query_one(f"#console-rail-section-header-{section_id}")
+            for section_id in SECTION_IDS
+        ]
+
+        header_heights = [header.virtual_region.height for header in headers]
+        assert all(height >= 2 for height in header_heights), (
+            header_heights,
+            outer.content_region.height,
+            str(outer.styles.overflow_y),
+            cue.display,
+        )
+        assert str(outer.styles.overflow_y) == (
+            "auto" if uses_outer_scroll else "hidden"
+        )
+        assert cue.display is uses_outer_scroll
+
+        if not uses_outer_scroll:
+            assert outer.scroll_y == 0
+            assert all(
+                header.region.overlaps(outer.content_region) for header in headers
+            )
+            return
+
+        outer.scroll_home(animate=False)
+        await pilot.pause()
+        assert str(cue.renderable) == OUTER_HINT
+        for section_id, header in zip(SECTION_IDS, headers):
+            bounded = rail.query_one(
+                f"#console-bounded-section-{section_id}", ConsoleBoundedSection
+            )
+            outer.scroll_to(y=header.virtual_region.y, animate=False, immediate=True)
+            await pilot.pause()
+            assert header.region.overlaps(outer.content_region)
+            assert bounded.viewport.region.overlaps(outer.content_region)
 
 
 @pytest.mark.asyncio
@@ -410,6 +499,77 @@ async def test_normal_mode_disables_outer_scroll_and_short_mode_keeps_every_body
             await pilot.pause()
             assert header.region.overlaps(outer.content_region)
             assert bounded.viewport.region.overlaps(outer.content_region)
+
+
+@pytest.mark.asyncio
+async def test_fallback_reveal_runs_on_entry_but_unchanged_work_preserves_user_scroll(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    demands = dict.fromkeys(SECTION_IDS, 8)
+    _install_demands(monkeypatch, demands)
+    app = _RailHarness()
+
+    async with app.run_test(size=(60, 30)) as pilot:
+        await _settle(pilot)
+        rail = app.query_one(ConsoleLeftRail)
+        outer = app.query_one("#console-left-rail-body")
+        _force_geometry(rail, viewport_height=30, header_chrome_height=14)
+        rail.activate_section("agent")
+        await _settle(pilot)
+
+        _force_geometry(rail, viewport_height=10, header_chrome_height=14)
+        rail.request_allocation_reconcile()
+        await _settle(pilot)
+        active_header = rail.query_one("#console-rail-section-header-agent")
+        assert outer.scroll_y > 0
+        assert active_header.region.overlaps(outer.content_region)
+
+        outer.scroll_home(animate=False)
+        await pilot.pause()
+        assert outer.scroll_y == 0
+        rail.request_allocation_reconcile()
+        await _settle(pilot)
+        assert outer.scroll_y == 0
+
+        demands["session"] = 9
+        rail.query_one(
+            "#console-bounded-section-session", ConsoleBoundedSection
+        ).request_reconcile()
+        await _settle(pilot)
+        assert outer.scroll_y == 0
+
+
+@pytest.mark.asyncio
+async def test_no_room_suffix_uses_the_mounted_headers_canonical_title(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    demands = dict.fromkeys(SECTION_IDS, 30)
+    _install_demands(monkeypatch, demands)
+    app = _RailHarness()
+
+    async with app.run_test(size=(60, 30)) as pilot:
+        await _settle(pilot)
+        rail = app.query_one(ConsoleLeftRail)
+        _force_geometry(rail, viewport_height=18, header_chrome_height=14)
+        header = rail.query_one("#console-rail-section-header-agent")
+        title = rail.query_one("#console-rail-section-title-agent", Static)
+        header.title = "Workers"
+        title.update("Workers")
+
+        demands["session"] = 1
+        rail.query_one(
+            "#console-bounded-section-session", ConsoleBoundedSection
+        ).request_reconcile()
+        await _settle(pilot)
+        assert str(title.renderable) == "Workers · no room"
+
+        rail.activate_section("agent")
+        await _settle(pilot)
+        assert str(title.renderable) == "Workers"
+        assert (
+            str(rail.query_one("#console-rail-section-toggle-agent", Button).tooltip)
+            == "Collapse Workers"
+        )
 
 
 @pytest.mark.asyncio
