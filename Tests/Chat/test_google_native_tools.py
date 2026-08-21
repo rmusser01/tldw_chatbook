@@ -261,6 +261,35 @@ def test_project_context_follows_gemini_function_responses_as_separate_turn(mock
 
 
 @patch("requests.Session.post")
+def test_nested_context_follows_all_parallel_gemini_results_in_distinct_turn(mock_post):
+    messages = [
+        {"role": "user", "content": "go"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "a", "type": "function", "function": {"name": "one", "arguments": "{}"}},
+                {"id": "b", "type": "function", "function": {"name": "two", "arguments": "{}"}},
+            ],
+        },
+        {"role": "tool", "tool_call_id": "a", "content": "deferred-a"},
+        {"role": "tool", "tool_call_id": "b", "content": "deferred-b"},
+        {
+            "role": "user",
+            "content": "NESTED_CONTEXT",
+            EPHEMERAL_ORIGIN_KEY: "project_instructions",
+        },
+    ]
+
+    contents = _call_google(mock_post, messages)["contents"]
+
+    assert len(contents[-2]["parts"]) == 2
+    assert all("functionResponse" in part for part in contents[-2]["parts"])
+    assert contents[-1] == {"role": "user", "parts": [{"text": "NESTED_CONTEXT"}]}
+    assert "NESTED_CONTEXT" not in str(contents[-2])
+
+
+@patch("requests.Session.post")
 def test_tool_result_with_json_object_content_passes_object(mock_post):
     """Dict-parseable tool-result content is used directly as the
     functionResponse ``response`` object; non-dict JSON (e.g. a bare array)

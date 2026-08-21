@@ -46,6 +46,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleCitationPhase,
     ConsoleCitationPresentation,
     ConsoleContextSnapshot,
+    ProjectInstructionActivationEvent,
     ProjectInstructionPreview,
     ConsoleMessageRole,
     ConsoleProviderSelection,
@@ -1771,6 +1772,9 @@ class ConsoleChatController:
         self._select_project_instruction_binding = select_project_instruction_binding
         self._project_instruction_display: dict[
             str, ProjectInstructionDisplayMetadata
+        ] = {}
+        self._project_instruction_activation_events: dict[
+            str, list[ProjectInstructionActivationEvent]
         ] = {}
         # Parallel-agents spec §2: run state is a PER-SESSION map, not a
         # single global slot -- two sessions can each have their own
@@ -8183,6 +8187,21 @@ class ConsoleChatController:
 
     def _clear_project_instruction_delivery(self, session_id: str) -> None:
         self._project_instruction_display.pop(session_id, None)
+        self._project_instruction_activation_events.pop(session_id, None)
+
+    def _record_project_instruction_activation(
+        self, session_id: str, event: ProjectInstructionActivationEvent
+    ) -> None:
+        """Keep one run's content-free activation notices in session memory."""
+        self._project_instruction_activation_events.setdefault(session_id, []).append(
+            event
+        )
+
+    def project_instruction_activation_events(
+        self, session_id: str
+    ) -> tuple[ProjectInstructionActivationEvent, ...]:
+        """Return content-free activation notices for one live session."""
+        return tuple(self._project_instruction_activation_events.get(session_id, ()))
 
     def project_instruction_display_metadata(
         self, session_id: str
@@ -11506,6 +11525,7 @@ class ConsoleChatController:
         project_selection: ProjectInstructionBindingSelection | None = None
         confirm_project_dispatch = None
         project_authority_guard = None
+        project_activation_callback = None
         if session is not None and session.project_instruction_state.project_instructions_enabled:
             try:
                 registry = getattr(self.app, "workspace_registry_service", None)
@@ -11594,6 +11614,13 @@ class ConsoleChatController:
                     if callable(call_from_thread):
                         return call_from_thread(callback)
                     return callback()
+
+                def project_activation_callback(event):
+                    return on_owning_loop(
+                        lambda: self._record_project_instruction_activation(
+                            session_id, event
+                        )
+                    )
 
                 def project_authority_guard():
                     return bool(
@@ -11849,6 +11876,7 @@ class ConsoleChatController:
                 ),
                 startup_instruction_candidate=startup_candidate,
                 confirm_project_instruction_dispatch=confirm_project_dispatch,
+                on_project_instruction_activation=project_activation_callback,
                 # Advertised must equal usable (the #847 lesson, restated in
                 # the run_skill_script docstring below): only pass the
                 # confirm callback -- and therefore only let the bridge

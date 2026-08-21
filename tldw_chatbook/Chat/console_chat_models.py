@@ -696,6 +696,28 @@ class ProjectInstructionPreview:
 
 
 @dataclass(frozen=True)
+class ProjectInstructionActivationEvent:
+    """Content-free notice that project guidance changed for one run."""
+
+    relative_sources: tuple[str, ...] = ()
+    scopes: tuple[str, ...] = ()
+    outcome_codes: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        fields = (
+            self.relative_sources,
+            self.scopes,
+            self.outcome_codes,
+        )
+        if any(
+            not isinstance(value, str) or "\n" in value or "\r" in value
+            for values in fields
+            for value in values
+        ):
+            raise ValueError("project instruction event values must be single-line text")
+
+
+@dataclass(frozen=True)
 class ConsoleContextSnapshot:
     """Independent snapshot of current transcript and next-send provider payload.
 

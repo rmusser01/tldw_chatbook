@@ -80,6 +80,9 @@ from tldw_chatbook.Agents.tool_catalog import (
     SkillToolProvider,
     ToolCatalogRegistry,
 )
+from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider, _default_specs
+from tldw_chatbook.Agents.project_instruction_resolver import ProjectInstructionResolver
+from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 
 from Tests.Agents.test_agent_service import SUBAGENT_PROMPT_PREFIX
@@ -419,6 +422,189 @@ def _run(bridge, store, session, assistant_id, **over):
     # run_reply returns (run_id, outcome); these tests assert on the outcome.
     _run_id, outcome = bridge.run_reply(**kwargs)
     return outcome
+
+
+def test_nested_project_instructions_defer_whole_batch_before_review_and_execution(
+    tmp_path,
+):
+    root = tmp_path / "workspace"
+    nested = root / "pkg"
+    nested.mkdir(parents=True)
+    (root / "AGENTS.md").write_text("ROOT_GUIDANCE", encoding="utf-8")
+    (nested / "AGENTS.md").write_text("NESTED_GUIDANCE", encoding="utf-8")
+    (nested / "data.txt").write_text("payload", encoding="utf-8")
+    candidate = ProjectInstructionResolver().resolve_startup(
+        binding_id="binding-1",
+        binding_root=root,
+        locator_fingerprint="f" * 64,
+        max_bytes=32768,
+        dispatch_started_wall_ns=time.time_ns(),
+    )
+    first_calls = ProviderToolCalls(
+        tool_calls=(
+            {
+                "id": "read-1",
+                "type": "function",
+                "function": {
+                    "name": "fs_read",
+                    "arguments": json.dumps({"path": "pkg/data.txt"}),
+                },
+            },
+            {
+                "id": "list-1",
+                "type": "function",
+                "function": {
+                    "name": "fs_list",
+                    "arguments": json.dumps({"path": "pkg"}),
+                },
+            },
+        )
+    )
+    gateway = _ChunkGateway([[first_calls], [first_calls], ["done"]])
+    bridge, _db, store, session, assistant_id = _bridge_with_gateway(
+        tmp_path / "run", gateway
+    )
+    local = LocalToolProvider(
+        workspace_root=root,
+        specs=[
+            spec for spec in _default_specs(root) if spec.name in {"fs_read", "fs_list"}
+        ],
+        resolve_state=lambda _tool: EffectiveToolState(
+            state="allow", origin="global_default"
+        ),
+    )
+    reviews = []
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        assistant_id,
+        resolution=_NativeResolution(),
+        local_provider=local,
+        startup_instruction_candidate=candidate,
+        confirm_project_instruction_dispatch=lambda _snapshot: "proceed",
+        review_tool_calls=lambda calls: reviews.append(tuple(c.name for c in calls))
+        or {},
+    )
+
+    assert outcome.status == "done", outcome.steps
+    assert reviews == [("fs_read", "fs_list")]
+    second = gateway.messages_seen[1]
+    assert [row["tool_call_id"] for row in second if row["role"] == "tool"] == [
+        "read-1",
+        "list-1",
+    ]
+    context_rows = [
+        row for row in second if "NESTED_GUIDANCE" in str(row.get("content", ""))
+    ]
+    assert len(context_rows) == 1
+    assert second.index(context_rows[0]) > max(
+        index for index, row in enumerate(second) if row["role"] == "tool"
+    )
+    assert all(
+        "NESTED_GUIDANCE" not in str(step.result) for step in outcome.steps
+    )
+
+
+def test_opaque_tool_arguments_do_not_activate_nested_project_instructions(tmp_path):
+    root = tmp_path / "workspace"
+    nested = root / "pkg"
+    nested.mkdir(parents=True)
+    (root / "AGENTS.md").write_text("ROOT_GUIDANCE", encoding="utf-8")
+    (nested / "AGENTS.md").write_text("NESTED_GUIDANCE", encoding="utf-8")
+    candidate = ProjectInstructionResolver().resolve_startup(
+        binding_id="binding-1",
+        binding_root=root,
+        locator_fingerprint="f" * 64,
+        max_bytes=32768,
+        dispatch_started_wall_ns=time.time_ns(),
+    )
+    calculator = _native_calls(
+        "calculator", {"expression": "len('pkg/data.txt')"}, "calc-1"
+    )
+    gateway = _ChunkGateway([[calculator], ["done"]])
+    bridge, _db, store, session, assistant_id = _bridge_with_gateway(
+        tmp_path / "run", gateway
+    )
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        assistant_id,
+        resolution=_NativeResolution(),
+        startup_instruction_candidate=candidate,
+        confirm_project_instruction_dispatch=lambda _snapshot: "proceed",
+    )
+
+    assert outcome.status == "done", outcome.steps
+    assert all("NESTED_GUIDANCE" not in repr(rows) for rows in gateway.messages_seen)
+
+
+def test_parent_and_child_share_activation_but_each_receive_nested_revision(tmp_path):
+    root = tmp_path / "workspace"
+    nested = root / "pkg"
+    nested.mkdir(parents=True)
+    (root / "AGENTS.md").write_text("ROOT_GUIDANCE", encoding="utf-8")
+    (nested / "AGENTS.md").write_text("NESTED_GUIDANCE", encoding="utf-8")
+    (nested / "data.txt").write_text("payload", encoding="utf-8")
+    candidate = ProjectInstructionResolver().resolve_startup(
+        binding_id="binding-1",
+        binding_root=root,
+        locator_fingerprint="f" * 64,
+        max_bytes=32768,
+        dispatch_started_wall_ns=time.time_ns(),
+    )
+    read = _native_calls("fs_read", {"path": "pkg/data.txt"}, "read-1")
+    gateway = _ChunkGateway(
+        [
+            [_native_calls(SPAWN_TOOL_NAME, {"task": "inspect pkg"}, "spawn-1")],
+            [read],
+            [read],
+            ["child done"],
+            [read],
+            [read],
+            ["parent done"],
+        ]
+    )
+    bridge, _db, store, session, assistant_id = _bridge_with_gateway(
+        tmp_path / "run", gateway
+    )
+    local = LocalToolProvider(
+        workspace_root=root,
+        specs=[spec for spec in _default_specs(root) if spec.name == "fs_read"],
+        resolve_state=lambda _tool: EffectiveToolState(
+            state="allow", origin="global_default"
+        ),
+    )
+    reviews = []
+    events = []
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        assistant_id,
+        resolution=_NativeResolution(),
+        local_provider=local,
+        startup_instruction_candidate=candidate,
+        confirm_project_instruction_dispatch=lambda _snapshot: "proceed",
+        review_tool_calls=lambda calls: reviews.append(tuple(c.name for c in calls))
+        or {},
+        on_project_instruction_activation=events.append,
+    )
+
+    assert outcome.status == "done", outcome.steps
+    nested_visibility = [
+        any("NESTED_GUIDANCE" in str(row.get("content", "")) for row in rows)
+        for rows in gateway.messages_seen
+    ]
+    assert nested_visibility == [False, False, True, True, False, True, True]
+    assert reviews.count(("fs_read",)) == 2
+    assert reviews.count((SPAWN_TOOL_NAME,)) == 1
+    assert len(events) == 1
+    assert events[0].relative_sources == ("pkg/AGENTS.md",)
 
 
 @pytest.mark.asyncio

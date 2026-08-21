@@ -235,6 +235,37 @@ def test_project_context_coalesces_after_all_anthropic_tool_results(mock_post):
 
 
 @patch("requests.Session.post")
+def test_nested_context_is_distinct_final_block_after_parallel_anthropic_results(
+    mock_post,
+):
+    messages = [
+        {"role": "user", "content": "go"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "a", "type": "function", "function": {"name": "one", "arguments": "{}"}},
+                {"id": "b", "type": "function", "function": {"name": "two", "arguments": "{}"}},
+            ],
+        },
+        {"role": "tool", "tool_call_id": "a", "content": "deferred-a"},
+        {"role": "tool", "tool_call_id": "b", "content": "deferred-b"},
+        {
+            "role": "user",
+            "content": "NESTED_CONTEXT",
+            EPHEMERAL_ORIGIN_KEY: "project_instructions",
+        },
+    ]
+
+    blocks = _call_anthropic(mock_post, messages)["messages"][-1]["content"]
+
+    assert [block["type"] for block in blocks] == ["tool_result", "tool_result", "text"]
+    assert [block["tool_use_id"] for block in blocks[:2]] == ["a", "b"]
+    assert blocks[-1] == {"type": "text", "text": "NESTED_CONTEXT"}
+    assert all("NESTED_CONTEXT" not in str(block) for block in blocks[:2])
+
+
+@patch("requests.Session.post")
 def test_assistant_text_plus_tool_calls_keeps_text_block_first(mock_post):
     messages = [
         {"role": "user", "content": "2+2?"},
