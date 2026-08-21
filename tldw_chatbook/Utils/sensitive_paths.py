@@ -1,11 +1,36 @@
 # tldw_chatbook/Utils/sensitive_paths.py
 """Paths refused by the agent-facing file tools, regardless of configured root.
 
-Enforced directly inside ``Tools/file_operation_tools.py``'s ``ReadFileTool``,
-``WriteFileTool``, ``ListDirectoryTool``, ``GlobFiles`` and ``GrepFiles`` --
-each calls :func:`is_sensitive_path` (directly, or through that module's
-``is_within`` helper) on every candidate path immediately after path
-validation and before touching the filesystem. It is *not* wired into
+TWO independent agent file-tool families enforce this, and both must:
+
+1. ``Tools/file_operation_tools.py``'s ``ReadFileTool``, ``WriteFileTool``,
+   ``ListDirectoryTool``, ``GlobFiles`` and ``GrepFiles`` (sandbox-root
+   confined) -- each calls :func:`is_sensitive_path` (directly, or through
+   that module's ``is_within`` helper) on every candidate path immediately
+   after path validation and before touching the filesystem.
+2. The workspace-local ``fs_*`` family -- ``Tools/local_tool_impls.py``'s
+   ``resolve_workspace_path``, the single choke point every ``fs_*`` and
+   ``git_*`` core function (including ``Tools/patch_tool_impls.py``'s
+   ``patch_files`` and ``Tools/git_tool_impls.py``) resolves its target
+   through, so the check lives in ONE place for all of them. The three
+   ENUMERATING tools there (``list_directory``/``glob_files``/
+   ``grep_files``) additionally filter their own walked candidates, since
+   the choke point only ever sees their root.
+
+   That family was added AFTER this contract was written and, until
+   TASK-19551, called none of this: it confined paths to ``[console]
+   workspace_root`` and stopped there. With the shipped default root (the
+   app's cwd at startup) an app launched from ``$HOME`` made ``$HOME`` the
+   confinement root, so ``fs_read`` returned ``~/.ssh/id_rsa`` and
+   ``fs_write``/``fs_patch`` could rewrite ``mcp_permissions.json`` -- the
+   one-step gate bypass described below -- reachable by prompt injection
+   from fetched web content. **A new agent-facing file tool joins one of
+   these two families; it does not get a third path-resolution seam.**
+   ``Tests/Tools/test_local_tool_sensitive_paths.py`` pins both the choke
+   point and the two families' agreement, so they cannot drift apart
+   again.
+
+This is *not* wired into
 ``Utils/path_validation.validate_path``/``validate_path_multi`` themselves:
 those helpers are the app's general-purpose validators, used by ~40
 first-party call sites (config screens, DB path resolution, exports, ...) to
@@ -508,11 +533,17 @@ def is_sensitive_path(
     recent data as the database itself.
 
     This function only decides the question; it enforces nothing by
-    itself. Callers -- ``ReadFileTool.execute``, ``WriteFileTool.execute``,
-    ``ListDirectoryTool.execute``, ``GlobFiles.execute`` and
-    ``GrepFiles.execute`` in ``Tools/file_operation_tools.py`` -- must call
-    it (directly, or via that module's ``is_within``) explicitly on their
-    target before touching the filesystem.
+    itself. Callers must call it explicitly on their target before touching
+    the filesystem:
+
+    * ``ReadFileTool.execute``, ``WriteFileTool.execute``,
+      ``ListDirectoryTool.execute``, ``GlobFiles.execute`` and
+      ``GrepFiles.execute`` in ``Tools/file_operation_tools.py`` (directly,
+      or via that module's ``is_within``).
+    * ``Tools/local_tool_impls.py``'s ``resolve_workspace_path`` -- the
+      choke point the whole workspace-local ``fs_*``/``git_*`` family
+      resolves through -- plus the per-candidate filters in
+      ``list_directory``/``glob_files``/``grep_files`` there (TASK-19551).
 
     Args:
         candidate: The path a tool intends to touch.

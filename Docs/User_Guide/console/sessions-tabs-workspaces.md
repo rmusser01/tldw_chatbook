@@ -156,6 +156,13 @@ feature is enabled for that session. Bindings marked read-only expose only
 read-capable tools. Folder names and instruction contents are not synchronized;
 the local control fields stay with the local conversation record.
 
+Whichever root is in effect, some paths inside it are still refused: your SSH,
+GPG and cloud-provider credential directories, Chatbook's own `config.toml`,
+its permission store, and its databases. A tool asking for one of those is
+answered with "protected path", even when the root you chose contains it — so
+a session rooted at your home directory cannot read `~/.ssh/id_rsa` or rewrite
+the file that records which tools you approved.
+
 ### Details
 
 Open the "Details" header in the left rail to see where your chats live:

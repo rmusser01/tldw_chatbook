@@ -2949,7 +2949,16 @@ compaction_target_ratio = 0.55
 compaction_summary_max_tokens = 1024
 compaction_failure_behavior = "stop_and_ask"  # stop_and_ask, omit_older_context
 compaction_carry_forward_mode = "memory_with_recent_turns"  # memory_with_recent_turns, memory_with_latest_exchange
-# workspace_root = ""           # confinement root for fs_* tools; empty = app cwd at startup
+# Confinement root for the fs_*/git_* agent tools (ADR-032). Empty = the app's
+# cwd at startup, so the boundary MOVES with where you launch the app: start it
+# from your home directory and every personal file under it is inside the
+# agent's reach. Credential, gate-state and app-state paths (~/.ssh, ~/.aws,
+# this file, mcp_permissions.json, the app's databases) are refused regardless
+# of this setting -- see Utils/sensitive_paths.py, enforced for these tools in
+# Tools/local_tool_impls.py's resolve_workspace_path (TASK-19551) -- but that
+# denylist is a guardrail, not a substitute for pointing this at the one
+# project directory you actually want an agent working in.
+# workspace_root = ""
 
 # Agent run budget (Settings > Console Behavior > Agent run budget).
 # Applies to ONE run = one user message; sub-agents inherit turns/steps/tokens

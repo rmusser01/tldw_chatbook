@@ -387,11 +387,19 @@ class LocalToolProvider:
         )
 
         root = Path(self._root).resolve()
-        if name in {"fs_read", "fs_write", "fs_edit"}:
-            path = resolve_workspace_path(args["path"], root)
+        # `intent` only selects the refusal wording (and, for writes, the
+        # new-directory-chain guard) inside the choke point; a protected
+        # path raises LocalToolError here exactly as it does at execution
+        # time, so this preflight can never report a target the tool would
+        # then refuse to touch.
+        if name == "fs_read":
+            path = resolve_workspace_path(args["path"], root, intent="read")
+            return (ToolPathTarget(path=path, kind="exact"),)
+        if name in {"fs_write", "fs_edit"}:
+            path = resolve_workspace_path(args["path"], root, intent="write")
             return (ToolPathTarget(path=path, kind="exact"),)
         if name == "fs_list":
-            path = resolve_workspace_path(args["path"], root)
+            path = resolve_workspace_path(args["path"], root, intent="list")
             return (ToolPathTarget(path=path, kind="directory"),)
         if name in {"fs_glob", "fs_grep"}:
             return (ToolPathTarget(path=root, kind="directory"),)
@@ -411,7 +419,7 @@ class LocalToolProvider:
             seen: set[Path] = set()
             for plan in plans:
                 assert plan.new_path is not None
-                path = resolve_workspace_path(plan.new_path, root)
+                path = resolve_workspace_path(plan.new_path, root, intent="write")
                 if path in seen:
                     continue
                 seen.add(path)

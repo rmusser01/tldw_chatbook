@@ -5,6 +5,32 @@ agent runtime's worker thread via Agents/local_tool_provider.py. Every
 failure raises LocalToolError; the provider converts those (and any other
 exception) into ToolResult error strings — nothing raises across the
 provider boundary.
+
+Path safety has TWO layers, and both are mandatory (TASK-19551):
+
+1. **Confinement** to the configured ``[console] workspace_root``
+   (ADR-032), enforced by ``validate_path`` inside
+   ``resolve_workspace_path`` — the single choke point every path-taking
+   function here (and in ``patch_tool_impls``/``git_tool_impls``) funnels
+   through.
+2. **The sensitive-path denylist** (``Utils/sensitive_paths.py``), also
+   enforced inside that same choke point. Confinement alone is not enough:
+   the shipped ``workspace_root`` default is the app's cwd at startup, so
+   launching from ``$HOME`` makes ``$HOME`` the confinement root — and
+   ``~/.ssh/id_rsa``, ``~/.aws/credentials``, this app's own ``config.toml``
+   and ``mcp_permissions.json`` are all inside it. Reading them exfiltrates
+   credentials into a transcript sent to a provider; WRITING
+   ``mcp_permissions.json`` turns every ``ask`` into ``allow``, a one-step
+   bypass of the permission gate that authorized the call.
+
+The three ENUMERATING tools (``list_directory``/``glob_files``/
+``grep_files``) resolve only the workspace root through the choke point, so
+the choke point cannot cover the entries they walk: each filters its own
+candidates against the same denylist, resolving the sensitive-path context
+ONCE per invocation (see ``Utils.sensitive_paths.resolve_sensitive_context``)
+rather than once per candidate. ``grep_files`` is the sharpest of the three
+— it READS every file it walks and prints matching lines — so its check
+must run before the read, not after.
 """
 
 from __future__ import annotations
@@ -12,8 +38,15 @@ from __future__ import annotations
 import os
 import heapq
 from pathlib import Path
+from typing import Literal
 
 from tldw_chatbook.Utils.path_validation import validate_path
+from tldw_chatbook.Utils.sensitive_paths import (
+    SensitivePathContext,
+    is_sensitive_path,
+    refuses_new_directory_chain,
+    resolve_sensitive_context,
+)
 
 MAX_LIST_ENTRIES = 200
 #: Upper bound on how many directory entries ``list_directory`` will even
@@ -31,30 +64,97 @@ class LocalToolError(ValueError):
     """Model-actionable failure from a local tool (path, not-found, …)."""
 
 
-def resolve_workspace_path(path: str, workspace_root: Path) -> Path:
-    """Resolve ``path`` against ``workspace_root``, confined to it.
+#: Intent of the access a caller is about to perform, threaded into the
+#: choke point below. It selects the refusal verb AND, for ``"write"``,
+#: the extra ``refuses_new_directory_chain`` guard — never a weaker check.
+PathIntent = Literal["read", "write", "list"]
 
-    Hidden components (``.github/``) are allowed under the root; anything
-    resolving outside it is refused.
+_INTENT_VERBS: dict[str, str] = {"read": "read", "write": "written", "list": "listed"}
+
+
+def resolve_workspace_path(
+    path: str,
+    workspace_root: Path,
+    *,
+    intent: PathIntent = "read",
+    context: SensitivePathContext | None = None,
+) -> Path:
+    """Resolve ``path`` against ``workspace_root``, confined and denylisted.
+
+    The single choke point for this tool family: every ``fs_*`` and
+    ``git_*`` core function resolves its target here, so both path checks
+    are enforced in ONE place rather than re-implemented per tool (which is
+    exactly how the denylist came to be missing from all seven of them —
+    TASK-19551).
+
+    Two checks, in order:
+
+    1. **Confinement** (``validate_path``). Hidden components (``.github/``,
+       ``.gitignore``) are allowed under the root, per ADR-032: a coding
+       agent that cannot read a repository's dotfile configuration is
+       useless, and the ADR adopted ``allow_hidden`` for exactly this
+       family. That parameter is deliberately KEPT — dotted names are how
+       ``~/.ssh``/``~/.aws`` are spelled, but "starts with a dot" is a name
+       heuristic, not a security boundary, and check 2 is the one designed
+       to answer that question (by resolved ancestry, so a symlink or a
+       ``~/.sshfoo`` lookalike cannot game it).
+    2. **The sensitive-path denylist** (``is_sensitive_path``), matching
+       what ``Tools/file_operation_tools.py``'s ``ReadFileTool``/
+       ``WriteFileTool``/``ListDirectoryTool`` already do for the other
+       file-tool family, message shape included, so agent-facing refusals
+       stay consistent across the two.
+
+    For ``intent="write"`` the denylist check is additionally applied to
+    every not-yet-existing ancestor of the target
+    (``refuses_new_directory_chain``), the same guard ``WriteFileTool``
+    consults before ``mkdir(parents=True)``. No tool in this family creates
+    directories today (a write target's parent must already exist), so this
+    normally short-circuits on the first existing ancestor; it is here so
+    that a future ``create_directories``-style option cannot reintroduce
+    TASK-849's shadow-directory denial of service by forgetting it.
 
     Args:
         path: The user/model-supplied path, absolute or relative to
             ``workspace_root``.
         workspace_root: The confinement root the resolved path must stay
             within.
+        intent: What the caller is about to do with the path — selects the
+            refusal verb and enables the new-directory-chain guard for
+            writes. Never weakens a check.
+        context: Optional pre-resolved ``SensitivePathContext``. Callers
+            that check many paths in one tool invocation (the enumerating
+            tools, ``patch_files``' multi-file loop) resolve one with
+            ``Utils.sensitive_paths.resolve_sensitive_context()`` and pass
+            it through, so the ~11 config accessors behind the denylist are
+            resolved once per CALL rather than once per path. ``None``
+            resolves it fresh — that still enforces the denylist.
 
     Returns:
         The validated absolute ``Path`` inside ``workspace_root``.
 
     Raises:
-        LocalToolError: If the path resolves outside ``workspace_root``.
+        LocalToolError: If the path resolves outside ``workspace_root``, or
+            is a protected credential/gate-state/app-state path.
     """
     try:
-        return validate_path(path, workspace_root, allow_hidden=True)
+        resolved = validate_path(path, workspace_root, allow_hidden=True)
     except ValueError as exc:
         raise LocalToolError(
             f"Path '{path}' is outside the workspace root ({workspace_root})"
         ) from exc
+
+    verb = _INTENT_VERBS.get(intent, "accessed")
+    if is_sensitive_path(resolved, context=context):
+        raise LocalToolError(
+            f"Refused: '{path}' is a protected path and cannot be {verb}"
+        )
+    if intent == "write" and refuses_new_directory_chain(
+        resolved.parent, context=context
+    ):
+        raise LocalToolError(
+            f"Refused: creating '{resolved.parent}' would collide with a protected path"
+        )
+    return resolved
 
 
 def list_directory(
@@ -68,6 +168,13 @@ def list_directory(
     the scanned entries are sorted (dirs-first contract preserved for the
     scanned set), and hitting the scan cap appends a "directory too large"
     notice instead of silently presenting a partial listing as complete.
+
+    Individual denylisted ENTRIES are omitted from the listing (TASK-19551),
+    mirroring ``ListDirectoryTool``'s per-entry check in
+    ``Tools/file_operation_tools.py``: refusing the target directory alone
+    would still disclose this app's own ``mcp_permissions.json`` or
+    ``chachanotes.db`` by name and existence whenever an ordinary,
+    listable ancestor happens to contain them.
 
     Args:
         path: Directory to list, absolute or relative to
@@ -84,7 +191,10 @@ def list_directory(
         LocalToolError: If ``path`` is not an existing directory, or
             resolves outside ``workspace_root``.
     """
-    root = resolve_workspace_path(path, workspace_root)
+    sensitive_ctx = resolve_sensitive_context()
+    root = resolve_workspace_path(
+        path, workspace_root, intent="list", context=sensitive_ctx
+    )
     if not root.is_dir():
         raise LocalToolError(f"not a directory: {path}")
     scanned: list[Path] = []
@@ -93,6 +203,10 @@ def list_directory(
         if index >= MAX_SCAN_ENTRIES:
             scan_capped = True
             break
+        # Skipped entries still count against the scan cap: the cap bounds
+        # the WORK done, and a denied entry was still scanned.
+        if is_sensitive_path(entry, context=sensitive_ctx):
+            continue
         scanned.append(entry)
     entries = sorted(scanned, key=lambda p: (p.is_file(), p.name.lower()))
     lines = [
@@ -123,7 +237,7 @@ def read_file(
     LocalToolError with model-actionable messages. UTF-16 files trip the
     binary sniff; other non-UTF-8 text reads with U+FFFD replacement.
     """
-    root = resolve_workspace_path(path, workspace_root)
+    root = resolve_workspace_path(path, workspace_root, intent="read")
     if not root.is_file():
         raise LocalToolError(f"file not found: {path}")
     with open(root, "rb") as fh:
@@ -150,7 +264,7 @@ def write_file(path: str, content: str, *, workspace_root: Path) -> str:
     The parent directory must already exist (deliberate divergence from
     claude-code's Write, to catch model path typos early — spec §2).
     """
-    root = resolve_workspace_path(path, workspace_root)
+    root = resolve_workspace_path(path, workspace_root, intent="write")
     if not root.parent.is_dir():
         raise LocalToolError(f"parent directory does not exist for: {path}")
     try:
@@ -187,7 +301,7 @@ def edit_file(
         raise LocalToolError("old_string must not be empty")
     if old_string == new_string:
         raise LocalToolError("old_string and new_string are identical")
-    root = resolve_workspace_path(path, workspace_root)
+    root = resolve_workspace_path(path, workspace_root, intent="write")
     if not root.is_file():
         raise LocalToolError(f"file not found: {path}")
     try:
@@ -225,7 +339,9 @@ def glob_files(
     Paths in the result are workspace-relative. Hidden files/dirs under the
     root ARE matched (workspace policy, ADR-032). Matches that escape the
     root via ``..`` pattern segments are excluded (lexical check only —
-    symlinks are not resolved, per ADR-032 review).
+    symlinks are not resolved, per ADR-032 review). Denylisted matches are
+    excluded too (TASK-19551): under a home-rooted workspace ``**/*`` would
+    otherwise report ``.ssh/id_rsa`` back to the model by name.
 
     Memory is bounded at ``max_results``: a min-heap keeps only the newest N
     while the total is counted in one pass (no full-list materialization or
@@ -236,7 +352,10 @@ def glob_files(
     """
     if max_results < 1:
         raise LocalToolError("max_results must be >= 1")
-    root = resolve_workspace_path(".", workspace_root)
+    sensitive_ctx = resolve_sensitive_context()
+    root = resolve_workspace_path(
+        ".", workspace_root, intent="list", context=sensitive_ctx
+    )
     heap: list[tuple[float, Path]] = []  # min-heap of (mtime, normpath)
     total = 0
     for p in root.glob(pattern):
@@ -246,6 +365,8 @@ def glob_files(
             norm = Path(os.path.normpath(p))
             if not norm.is_relative_to(root):
                 continue
+            if is_sensitive_path(norm, context=sensitive_ctx):
+                continue  # never disclose a protected path, even by name
             mtime = p.stat().st_mtime
         except OSError:
             continue  # racy/unreadable entry — skip it, not the whole search
@@ -276,6 +397,11 @@ def grep_files(
     filesystem order (no global sort — that would materialize the whole
     tree); within a file, lines are in order.
 
+    Denylisted files are skipped BEFORE they are read (TASK-19551): this is
+    the sharpest of the three enumerating tools, since ``content`` mode
+    prints matching LINES — a home-rooted workspace and a pattern as bland
+    as ``KEY`` would otherwise emit ``~/.ssh/id_rsa`` into the transcript.
+
     Raises:
         LocalToolError: If ``max_results`` is below 1.
     """
@@ -289,7 +415,10 @@ def grep_files(
         raise LocalToolError(f"unknown mode: {mode}")
     if max_results < 1:
         raise LocalToolError("max_results must be >= 1")
-    root = resolve_workspace_path(".", workspace_root)
+    sensitive_ctx = resolve_sensitive_context()
+    root = resolve_workspace_path(
+        ".", workspace_root, intent="list", context=sensitive_ctx
+    )
     # Memory-bounded: only the first max_results output lines are kept; the
     # rest are counted, not stored. Per-entry fs errors (races, permissions)
     # skip the entry rather than failing the whole search.
@@ -301,6 +430,8 @@ def grep_files(
                 continue
             if not p.resolve().is_relative_to(root):
                 continue  # symlink escaping the root — never read outside content
+            if is_sensitive_path(p, context=sensitive_ctx):
+                continue  # protected path — skipped BEFORE it is read
         except OSError:
             continue  # racy/unreadable entry — skip it, not the whole search
         try:

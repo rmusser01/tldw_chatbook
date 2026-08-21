@@ -380,6 +380,10 @@ fixed `GatewayLimits` defaults: 600 requests per minute and 16 in-flight
 requests. Those limits are not Chatbook config keys. When local tools are
 enabled, workspace confinement comes from `[console] workspace_root` and each
 call still uses the shared permission store and kill switch described above.
+Confinement is not the only path check: credential, permission-store and
+app-database paths (`Utils/sensitive_paths.py`) are refused regardless of the
+configured root, enforced for these tools inside
+`Tools/local_tool_impls.py`'s `resolve_workspace_path`.
 
 ## Installation and Setup
 
