@@ -38,6 +38,20 @@ import threading
 from pathlib import Path
 from typing import Callable
 
+_OWNER_ONLY_FILE_MODE = 0o600
+
+
+def _owner_only_open_flags() -> int:
+    """Return flags for exclusive owner-only temp-file creation."""
+    return (
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_BINARY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+
 
 def unique_temp_path(path: Path, *, hidden: bool = False) -> Path:
     """Build a writer-unique temp path alongside ``path``.
@@ -65,15 +79,26 @@ def unique_temp_path(path: Path, *, hidden: bool = False) -> Path:
 
 
 def replace_atomically(
-    temp_path: Path, target_path: Path, write_fn: Callable[[Path], None]
+    temp_path: Path,
+    target_path: Path,
+    write_fn: Callable[[Path], None],
+    *,
+    owner_only: bool = False,
 ) -> None:
     """Call ``write_fn(temp_path)`` then atomically replace ``target_path``.
 
-    On any exception from either the write or the replace, the temp file is
-    best-effort unlinked (it is this writer's own temp file -- writer-unique
-    naming means no other writer could be relying on it) and the original
-    exception is re-raised unchanged. This never swallows a genuine failure;
-    it only ever prevents a stray temp file from being left behind by one.
+    By default, behavior is unchanged: ``write_fn`` creates the temp file, and
+    any write or replace failure triggers best-effort cleanup. With
+    ``owner_only=True``, the temp file is instead created exclusively with mode
+    ``0o600`` before content is written. On POSIX, ``fchmod`` confirms that mode
+    before the descriptor is closed, the callback runs, and the atomic replace
+    occurs. An exclusive-open collision happens before this writer owns the
+    temp path, so the unexplained existing file is preserved.
+
+    Once this call creates or delegates creation of its own temp file, any
+    exception from the setup, write, or replace best-effort unlinks that temp
+    file and re-raises the original exception unchanged. Cleanup errors alone
+    are suppressed.
 
     Args:
         temp_path: Writer-unique temp file to write through, normally from
@@ -82,19 +107,33 @@ def replace_atomically(
         target_path: Final destination, replaced in one step once the write
             has completed.
         write_fn: Callable given ``temp_path``; performs the actual write.
+        owner_only: Exclusively precreate ``temp_path`` with owner-only mode
+            before invoking ``write_fn``. The default leaves creation to
+            ``write_fn`` for compatibility with existing callers.
 
     Raises:
-        BaseException: Whatever ``write_fn`` or ``Path.replace`` raised,
-            re-raised unchanged after the temp file is cleaned up.
+        BaseException: Whatever secure temp setup, ``write_fn``, or
+            ``Path.replace`` raised, re-raised unchanged after cleanup of a
+            temp file owned by this call.
     """
+    created_temp = False
     try:
+        if owner_only:
+            fd = os.open(temp_path, _owner_only_open_flags(), _OWNER_ONLY_FILE_MODE)
+            created_temp = True
+            try:
+                if os.name == "posix" and hasattr(os, "fchmod"):
+                    os.fchmod(fd, _OWNER_ONLY_FILE_MODE)
+            finally:
+                os.close(fd)
         write_fn(temp_path)
         temp_path.replace(target_path)
     except BaseException:
-        try:
-            temp_path.unlink(missing_ok=True)
-        except OSError:
-            pass
+        if not owner_only or created_temp:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
         raise
 
 
