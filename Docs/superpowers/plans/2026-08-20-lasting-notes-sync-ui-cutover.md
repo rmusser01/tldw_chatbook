@@ -124,7 +124,7 @@ TASK-19001 + TASK-19002 + TASK-19011 -> TASK-19012 final evidence
 - Modify: `Tests/UI/test_library_canvas_scoped_sync.py`
 - Modify: `Tests/UI/test_library_shell.py`
 
-- [ ] Write the dual-owner prevention tests before production edits.
+- [x] Write the dual-owner prevention tests before production edits.
 
   In `Tests/Notes/test_notes_sync_cutover.py`, add source/AST/runtime guards proving:
 
@@ -137,7 +137,7 @@ TASK-19001 + TASK-19002 + TASK-19011 -> TASK-19012 final evidence
 
   Expected: FAIL against current production wiring.
 
-- [ ] Add an explicit cutover startup barrier.
+- [x] Add an explicit cutover startup barrier.
 
   Cutover occurs across a normal application restart; do not invent a hot-swap controller between screen-owned legacy code and the app-owned runtime. At startup of the cutover release:
 
@@ -150,19 +150,19 @@ TASK-19001 + TASK-19002 + TASK-19011 -> TASK-19012 final evidence
 
   If another process is already open, show `Close the other Chatbook process and restart before activating folder sync`; do not activate. The current app cannot retroactively fence an older binary launched after it, so documentation and tests must scope the no-dual-owner guarantee to production paths in the cutover release and require old versions to be closed before activation. The marker is not set and activation stays disabled on migration failure. Do not run both engines during a comparison window.
 
-- [ ] Swap toolbar and retained canvas entry points in one changeset.
+- [x] Swap toolbar and retained canvas entry points in one changeset.
 
   Replace adjacent legacy `Sync` and `Import` with one `Add from files…`; add `Manage sync folders` only when roots/candidates exist. The one TASK-19010 chooser routes `Import once` into TASK-19003's controller and `Keep a folder synced` into lasting setup. Decorate top-level root nodes with text-explicit state and contextual actions.
 
-- [ ] Remove every legacy mutation path.
+- [x] Remove every legacy mutation path.
 
   Delete the legacy engine/service/state modules. Before deleting `library_notes_sync_state.py`, remove its unrelated `count_noun` dependency from `library_local_rag_search_service.py`: use the direct singular/plural expression at the one conversation-row call site and preserve the existing exact-output cases in `test_library_local_rag_search_service.py`; do not create a new shared utility for one use. Remove sync fields, timer, config loading/writes, `_compose_sync`, focus roles, handlers, auto tick, run worker, and legacy panel CSS. Retain legacy config keys, note columns, `sync_sessions`, and `sync_conflicts` as read-only compatibility inputs; do not drop schema or history in this task. Retarget the `notes_sync` entry in `Tests/test_remaining_diagnostic_sentinel_matrix.py` from the deleted legacy engine to `tldw_chatbook.Notes.notes_sync_runtime` so diagnostic redaction remains owned by the live runtime.
 
-- [ ] Test fail-closed startup, migration review, and activation ordering.
+- [x] Test fail-closed startup, migration review, and activation ordering.
 
   Cover clean install, legacy config only, incomplete legacy evidence, migration failure, paused candidates, missing cutover marker, another already-running profile process, no runtime backend, passive root lease, offline root, and successful reviewed activation. Prove the UI shows `Review migration` and requires a current dry-run; it never honors legacy conflict winners or auto-sync.
 
-- [ ] Update documentation and run the atomic gate.
+- [x] Update documentation and run the atomic gate.
 
   ```bash
   ../../.venv/bin/python -B -m pytest -q -p no:cacheprovider -o addopts="" Tests/Notes/test_notes_sync_cutover.py Tests/Notes/test_notes_sync_runtime.py Tests/Notes/test_notes_sync_legacy_migration.py Tests/ProductionApp/test_notes_sync_runtime_lifecycle.py Tests/Library/test_library_local_rag_search_service.py Tests/test_remaining_diagnostic_sentinel_matrix.py Tests/UI/test_library_notes_lasting_sync_flow.py Tests/UI/test_library_canvas_scoped_sync.py Tests/UI/test_library_shell.py Tests/Widgets/Library/test_library_notes_canvas.py
@@ -172,7 +172,7 @@ TASK-19001 + TASK-19002 + TASK-19011 -> TASK-19012 final evidence
 
   Expected grep result: references only in explicitly retained migration/history documentation or none in production Python; the AST test is authoritative.
 
-- [ ] Commit and close only after the no-dual-owner gate passes.
+- [x] Commit and close only after the no-dual-owner gate passes.
 
   Commit: `feat(notes): cut over to lasting folder sync`
 

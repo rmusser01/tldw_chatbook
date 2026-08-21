@@ -6130,65 +6130,25 @@ class ToolsStep(SetupStep):
 
 
 class NotesSyncStep(SetupStep):
-    """Optional bidirectional notes sync: a directory and a toggle."""
+    """Explain where reviewed lasting folder sync is configured."""
 
     def compose_step(self) -> ComposeResult:
-        from tldw_chatbook.UI.Wizards.first_run_setup_state import read_wizard_prefill
-
-        prefill = read_wizard_prefill(
-            getattr(self.wizard.app_instance, "app_config", {}) or {}
-        )
         with Vertical(classes="setup-notes"):
-            yield Static("Notes sync", classes="setup-title")
+            yield Static("Notes folder sync", classes="setup-title")
             yield Static(
-                "Keep a folder of Markdown files in sync with your notes. "
-                "Skip if you only want in-app notes.",
+                "After setup, use Library → Notes → Add from files… to review a folder before activating sync.",
                 classes="setup-subtitle",
             )
-            with Horizontal(classes="setup-tool-row"):
-                yield Switch(value=prefill.auto_sync_enabled, id="setup-notes-enable")
-                yield Label("Enable notes sync")
-            yield Label("Notes directory", classes="setup-field-label")
-            yield Input(
-                value=prefill.sync_directory or "~/Documents/Notes",
-                id="setup-notes-directory",
+            yield Static(
+                "Nothing is activated during first-run setup.",
+                classes="setup-step-error",
             )
-            yield Static("", classes="setup-step-error")
 
     async def commit(self) -> tuple[bool, str]:
-        from tldw_chatbook.UI.Wizards.first_run_setup_state import (
-            build_notes_commit,
-            read_wizard_prefill,
-        )
-
-        enabled = self.query_one("#setup-notes-enable", Switch).value
-        directory = self.query_one("#setup-notes-directory", Input).value.strip()
-        if enabled:
-            if not directory:
-                return False, "Pick a directory or turn sync off."
-            ok = await self.wizard.commit_config(
-                build_notes_commit(sync_directory=directory, auto_sync_enabled=True)
-            )
-            return (True, "") if ok else (False, "Saving notes sync settings failed.")
-        # Toggle is off. Task 11's prefill can start this switch ON on
-        # re-run, so an OFF-transition is reachable here -- only write the
-        # disable when the persisted config currently says ON (fresh config
-        # stays a true no-op); sync_directory is deliberately left out of
-        # the commit so it survives untouched (see build_notes_commit).
-        prefill = read_wizard_prefill(
-            getattr(self.wizard.app_instance, "app_config", {}) or {}
-        )
-        if not prefill.auto_sync_enabled:
-            return True, ""
-        ok = await self.wizard.commit_config(
-            build_notes_commit(auto_sync_enabled=False)
-        )
-        return (True, "") if ok else (False, "Saving notes sync settings failed.")
+        return True, ""
 
     def get_step_data(self) -> Dict[str, Any]:
-        return {
-            "auto_sync_enabled": self.query_one("#setup-notes-enable", Switch).value
-        }
+        return {}
 
 
 class AppearanceStep(SetupStep):
@@ -7716,17 +7676,6 @@ class SetupWizardContainer(WizardContainer):
                     rag_step.query_one("#setup-rag-model-choice", RadioSet),
                     lambda button: str(button.label) == embedding_model,
                 )
-
-            notes_values = draft.values.get(wizard_state.STEP_NOTES, {})
-            notes_step = self.steps[self._step_index_for_id(wizard_state.STEP_NOTES)]
-            if (
-                isinstance(notes_step, NotesSyncStep)
-                and "auto_sync_enabled" in notes_values
-            ):
-                notes_enabled = notes_values["auto_sync_enabled"]
-                notes_step.query_one(
-                    "#setup-notes-enable", Switch
-                ).value = notes_enabled
 
             appearance_values = draft.values.get(wizard_state.STEP_APPEARANCE, {})
             appearance_step = self.steps[

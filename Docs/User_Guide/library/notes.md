@@ -6,8 +6,8 @@ The Notes canvas is where you create and edit the notes stored in your
 Library: quick captures, meeting notes, research summaries — anything you
 want to keep, search, and later hand to the Console as context. Notes
 autosave as you type, can be started from templates, imported from files,
-exported as Markdown or text, and mirrored to a folder on disk with the
-built-in sync panel. For the rail, landing canvas, and the other Library
+exported as Markdown or text, and connected to reviewed local folder sync.
+For the rail, landing canvas, and the other Library
 sources, start with the [Library overview](../library.md).
 
 ## Getting there
@@ -59,7 +59,7 @@ editor's own Back control returns to its list.
 - **Source strip** — a "Library notes | Folder files" toggle above the canvas.
   This page covers the Library notes side; see below for Folder files.
 - **Notes list** — the default view: a "Notes (N)" header, the
-  "Filter notes… (Enter)" field, a toolbar (sort / Sync / Import /
+  "Filter notes… (Enter)" field, a toolbar (sort / Add from files… /
   Export… / Select), and one row per note showing its title and age.
 - **Editor** — opens when you click a note: title, body, keywords, a meta
   line with the autosave status, and an action row. On wide terminals the
@@ -67,25 +67,23 @@ editor's own Back control returns to its list.
   scroll positions; on compact terminals use `‹ Back to list`.
 - **New note view** — opens from the rail's "New note": a "Blank note"
   button plus a "From a template" list.
-- **Import once** — opens from the toolbar's "Import" button and keeps
-  selection, read-only checking, review, progress, and the final receipt in
-  the retained Notes canvas.
-- **Notes sync panel** — remains a separate mode opened from the toolbar's
-  "Sync" button: folder,
-  direction, conflict policy, auto-sync, and an activity log.
+- **Add from files…** — asks whether this is an **Import once** or a lasting
+  **Keep a folder synced** relationship before reading a source.
+- **Manage sync folders** — appears when roots or migration candidates exist;
+  it shows text-explicit status and the valid action for each root.
 
-### Library notes vs. Folder files vs. Sync
+### Library notes vs. Folder files vs. lasting sync
 
 Three different notes worlds meet here, and each surface now says so in
 place: the strip above the canvas switches between two of them.
-**Library notes** (this page) keeps notes inside the Library database — its
-own placement line points to Folder files or Sync for notes that live in a
-folder on disk. **Folder files** swaps the whole canvas for the File Notes
+**Library notes** (this page) keeps notes inside the Library database.
+**Folder files** swaps the whole canvas for the File Notes
 workspace, which edits plain files under a folder you choose directly and
-has its own Session Git panel — see [File notes](file-notes.md). **Sync** (opened from
-this page's toolbar, below) is the third: it mirrors a folder's notes INTO
-the Library's database, unlike Folder files mode, which edits that folder
-directly without mirroring it in.
+has its own Session Git panel — see [File notes](file-notes.md). **Keep a
+folder synced** creates a reviewed, lasting relationship between one local
+folder and a managed Library Notes folder. Unlike Folder files, both sides
+remain distinct authorities and every reconciliation is reviewed or recovered
+through the lasting-sync runtime.
 
 ## Features & controls
 
@@ -95,8 +93,8 @@ directly without mirroring it in.
 |---|---|
 | "Filter notes… (Enter)" | Type and press Enter to filter; the status line then reads "filter: \<text\> · N results". |
 | "Sort: Newest" | Opens a one-row strip of Newest / Oldest / Title (✓ on the active one) in place of the action row; pick one directly, or press Escape to cancel. |
-| "Sync" | Opens the Notes sync panel (below). |
-| "Import" | Opens **Import once**. Select one or more files, one at a time, or select one folder. Nothing is added until you check the selection, review every proposed action, and choose **Import selected items**. |
+| "Add from files…" | Choose **Import once** or **Keep a folder synced** before selecting a source. |
+| "Manage sync folders" | Appears only when roots or paused migration candidates exist; opens root status and contextual controls. |
 | "Last import" | Reopens the latest import receipt from this app session after you return to the Notes list. |
 | "Export…" | Opens the "Export bundle (.zip)" canvas scoped to notes — bundle notes into a .zip. |
 | "Select" / "Done" | Toggles select mode: rows grow ☑/☐ checkboxes, and a row appears with "N selected", "Select all N shown", "Clear", and "Export selected". "Export…" hides while selecting. |
@@ -152,24 +150,31 @@ name with the title the note will get. Available templates: Brainstorming
 session, Bug report, Code review, Daily journal entry, Meeting notes,
 Project planning, Research notes, Todo list.
 
-### Notes sync panel
+### Add from files and lasting sync
 
-Mirrors notes between a folder on disk and the Library ("Mirror notes
-between a folder on disk and the Library.").
+**Add from files…** first asks what relationship you want:
 
-| Control | What it does |
-|---|---|
-| "‹ Back to notes" | Returns to the list. |
-| folder + "Browse…" | The folder to mirror; Browse opens "Select Notes Sync Folder". |
-| "Direction" choices | An always-visible choice row — "Bidirectional", "Disk → Library", "Library → Disk" — with ✓ on the active one; click to pick. |
-| "Conflicts" choices | The same choice-row shape for the conflict policy: "Newer wins", "Disk wins", "Library wins". |
-| "auto-sync: every 5m ✓/○" | Toggles a background sync every five minutes. |
-| "Sync now" | Runs a sync immediately; the button reads "Syncing…" while it runs. |
+- **Import once** copies supported files into Database Notes and ends after its
+  reviewed receipt. Later changes to the originals are not tracked.
+- **Keep a folder synced** creates a lasting local relationship. Choose the
+  folder, direction, and local Library destination, then choose **Check
+  folder**. Checking is mutation-free. Review safe actions, attention items,
+  skips, filesystem effects, and deletion-like effects before **Activate
+  reviewed root** is enabled.
 
-The status line below reports "idle", "syncing · 3/12",
-"done · no changes", "done · N changes · M conflicts", or
-"failed · \<reason\>", and an activity log keeps the last 20 entries,
-most recent first.
+If files or notes change after checking, activation is refused as stale and the
+nearest valid action is **Check again**. Conflicts and deletion choices are not
+silently settled by a global winner policy. Server setup is visibly disabled
+with **Unavailable - server sync-folder capability not installed**.
+Conflict and deletion-resolution choices are also visibly disabled in this
+release; Chatbook keeps the root in attention instead of staging a change it
+cannot durably execute.
+
+**Manage sync folders** lists active, paused, passive, offline, attention,
+recovery, stopped, and migrated-candidate states. The declared next action is
+shown first—for example **Review migration**, **Review attention**, **Sync
+now**, **Pause**, or **Resume**. **Retarget** and **Disconnect** remain visibly
+disabled with an unavailable-in-this-release reason; no files or notes change.
 
 #### What a conflict policy does to the copy that loses
 
@@ -200,8 +205,8 @@ both copies kept as they are" when the run did not change either side.
 ### Import once
 
 **Import once** copies supported note files into local Database Notes. It is
-not the same as **Sync**: the import ends after this reviewed batch, while Sync
-continues mirroring a configured folder.
+not the same as **Keep a folder synced**: the import ends after this reviewed
+batch, while lasting sync retains a root relationship.
 
 Choose files one at a time with **Add another file**, or choose one folder.
 A folder is exclusive; it cannot be combined with selected files. Selected
@@ -236,7 +241,8 @@ receipt afterward.
 
 ### Import Markdown files or a folder
 
-1. In the notes list, click **Import** and pick the first file or one folder.
+1. In the notes list, click **Add from files…**, choose **Import once**, and
+   pick the first file or one folder.
 2. For files, click **Add another file** as needed and enter the Database Notes
    destination. A folder already supplies its proposed hierarchy.
 3. Click **Check selection** and review classifications, actions, matches, and
@@ -244,13 +250,23 @@ receipt afterward.
 4. Click **Import selected items**. You can cancel cooperatively, retry work
    identified by the receipt, or return to Notes and reopen **Last import**.
 
-### Set up folder sync
-1. In the notes list, click **Sync**.
-2. Enter a folder (or click **Browse…**), then pick a Direction and a
-   Conflicts policy — each is a choice row with ✓ on the active value;
-   click the one you want.
-3. Click **Sync now** and watch the status line; optionally turn on
-   "auto-sync: every 5m" to keep it running every five minutes.
+### Set up lasting folder sync
+
+1. Close any older Chatbook version using this profile, then restart the
+   cutover release.
+2. In the notes list, click **Add from files…** and choose **Keep a folder
+   synced**.
+3. Choose a local folder, direction, and local destination. Server sync remains
+   unavailable until its separate capability is installed.
+4. Choose **Check folder** and review the exact safe, attention, skipped, and
+   deletion-like effects.
+5. Choose **Activate reviewed root**. If the review is stale, choose **Check
+   again** instead.
+
+Existing legacy evidence appears as a paused candidate. Open **Manage sync
+folders**, choose **Review migration**, inspect the current dry-run, and
+activate explicitly. The migration never inherits a legacy conflict winner or
+automatic-sync setting.
 
 ### Use a note in Console
 1. Open the note and click **Use in Console**.
@@ -280,12 +296,10 @@ click-driven. Global navigation keys live in the [guide index](../index.md).
 
 ## Related settings & docs
 
-- `[notes]` in config.toml — the sync panel reads and writes these:
-  `sync_direction` (default `bidirectional`), `sync_conflict_resolution`
-  (default `newer_wins`), `auto_sync` (default `false`), and
-  `sync_directory` (default `~/Documents/Notes`).
-- [Notes bidirectional sync](../../Features/notes_bidirectional_sync.md) —
-  deep dive on the sync engine behind the panel.
+- Lasting root paths, bindings, operations, and recovery state live in the
+  private device sync store, not ordinary `config.toml` settings.
+- [Lasting Notes folder sync](../../Features/notes_bidirectional_sync.md) —
+  runtime, cutover, ownership, and recovery details.
 - [File notes](file-notes.md) — the **Folder files** side of the source strip.
 - [Library overview](../library.md) — the rail, landing canvas, and the
   other Library sources.
@@ -298,15 +312,12 @@ click-driven. Global navigation keys live in the [guide index](../index.md).
 - **Cancellation is partial, not undo** — work already completed remains in
   Database Notes and is reported honestly in the receipt. Retry resumes only
   unfinished or explicitly retryable work from that same app session.
-- **Sync never asks about conflicts** — there is no "ask me" policy by
-  design; conflicts are always resolved by the "conflicts" setting, and
-  the count is reported in the status line afterwards. The copy that
-  loses is never simply discarded — see
-  ["What a conflict policy does to the copy that loses"](#what-a-conflict-policy-does-to-the-copy-that-loses).
-- **`.conflict-…bak` files appear in your sync folder** — those are the
-  replaced copies from a conflict, kept on purpose. Delete them once you
-  are happy with the merge; rename one back over the original to restore
-  what it holds. Sync ignores them.
+- **Another Chatbook process blocks activation** — close it and restart before
+  activating folder sync. The cutover does not hot-swap or run two writers.
+- **Unknown cutover state fails closed** — a future or unrecognized private
+  marker is not repaired or downgraded. No migration or sync work starts.
+- **Migration candidates stay paused** — choose **Review migration** and approve
+  a current dry-run; legacy conflict/automatic settings are never replayed.
 - **Notes rows have no ▸ marker** — unlike media rows, note rows show
   only the title and age; they still open on click.
 - **Notes cap at 2,000,000 characters** — longer content is rejected
@@ -324,10 +335,6 @@ round-trip tests, task-2374).*
 "Blank note" no longer leaves a stray "Untitled" row if abandoned
 untouched, and the title shows an "Untitled" placeholder instead of
 literal editable text).*
-*Verified against dev @ 6b38a13b8 — 2026-08-07 (task-2858 Task 4, LIB-19:
-Library notes mode, Folder files mode, and the Sync panel each now carry a
-one-line placement sentence in-app relating them to each other).*
-
 *Re-stamped against dev @ 4acb17a0b — 2026-08-07 (TASK-2857: "Export…"
 now opens the "Export bundle (.zip)" canvas, not "Export chatbook").*
 
@@ -359,15 +366,8 @@ paragraph's prose already covered).*
 (task-4023 AC#5: the Notes footer speaks the shared per-key grammar —
 "ctrl+n new note | / find note | esc focus rail" on the list, "ctrl+s
 save note | esc back to notes" in the editor (with shorter labels at
-compact widths); locked states such as a running sync advertise no dead
+compact widths); locked operations advertise no dead
 keys.)*
-*Verified against feat/library-queue-batch @ 0662e09f5 — 2026-08-11
-(task-14902: the Sort chooser described above is this page's pre-existing
-pattern — it became the Library-wide one; the table copy above was
-re-verified against the live control (its label reads "Sort: Newest",
-not the stale "sort: Newest ▸"), and the sync panel's Direction/Conflicts
-rows were corrected to describe the always-visible ✓ choice groups the
-panel actually shows.)*
 
 *Verified on codex/notes-delete-undo-receipt — 2026-08-11 (TASK-15100:
 confirmed Database Note deletion now leaves a named inline Undo/Dismiss

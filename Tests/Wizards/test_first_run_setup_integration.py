@@ -119,11 +119,6 @@ class TestCommitRoundTrip:
         assert wizard_state.should_offer_wizard(config, {}) is False
 
     def test_summary_rows_match_persisted_state(self, temp_config):
-        _write(
-            wizard_state.build_notes_commit(
-                sync_directory="~/N", auto_sync_enabled=True
-            )
-        )
         config = _reload()
         rows = {
             r.label: r
@@ -131,7 +126,8 @@ class TestCommitRoundTrip:
                 config, {}, rag_deps_installed=False
             )
         }
-        assert rows["Notes sync"].ok is True
+        assert rows["Notes folder sync"].ok is False
+        assert rows["Notes folder sync"].detail == "set up later in Library"
 
 
 class TestFreshTemplateOfferGuard:

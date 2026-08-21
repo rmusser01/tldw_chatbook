@@ -11,7 +11,7 @@ Study. This page is the orientation tour; the details live on eight child
 pages:
 
 - [Media & conversations](library/media-and-conversations.md) — browse imported media (with the media viewer) and your Console conversations.
-- [Notes](library/notes.md) — the notes list, editor, templates, and the Notes sync panel.
+- [Notes](library/notes.md) — the notes list, editor, templates, reviewed import, and lasting folder sync.
 - [File Notes](library/file-notes.md) — the folder-backed File Notes workspace and its Session Git panel.
 - [Prompts](library/prompts.md) — saved prompts: list, editor, import, and Console insert.
 - [Skills](library/skills.md) — skill packs: import, editing, and the trust/approval flow.
@@ -392,11 +392,11 @@ here in Library.
   limit) and
   `[library.ingest_options]` (per-type ingest options, persisted by the
   ingest canvas); `[library.search]` (recent-search history); `[notes]`
-  (notes auto-save and sync); `[file_notes]` (File Notes root folder);
+  (note editor behavior; lasting sync state is device-private); `[file_notes]` (File Notes root folder);
   `[rag]`, `[rag_search]`, and `[embedding_config]` for retrieval and
   embeddings.
 - Child pages: [Media & conversations](library/media-and-conversations.md) · [Notes](library/notes.md) · [File Notes](library/file-notes.md) · [Prompts](library/prompts.md) · [Skills](library/skills.md) · [Collections](library/collections.md) · [Search & RAG](library/search-and-rag.md) · [Import & export](library/import-and-export.md)
-- Deep dives: [Notes bidirectional sync](../Features/notes_bidirectional_sync.md) · [Transcription](../Features/TRANSCRIPTION.md) (audio/video ingest backends).
+- Deep dives: [Lasting Notes folder sync](../Features/notes_bidirectional_sync.md) · [Transcription](../Features/TRANSCRIPTION.md) (audio/video ingest backends).
 
 ## Quirks & troubleshooting
 

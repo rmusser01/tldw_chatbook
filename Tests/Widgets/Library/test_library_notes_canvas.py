@@ -20,7 +20,6 @@ from tldw_chatbook.Library.library_note_import_state import (
     initial_note_import_snapshot,
     project_library_note_import_snapshot,
 )
-from tldw_chatbook.Library.library_notes_sync_state import LibraryNotesSyncState
 from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     initial_lasting_sync_snapshot,
 )
@@ -42,17 +41,6 @@ def _list_state() -> LibraryNotesListState:
         header_copy="Notes (0)",
         status_copy="",
         empty_copy="No notes yet. Create one to see it here.",
-    )
-
-
-def _sync_state() -> LibraryNotesSyncState:
-    return LibraryNotesSyncState(
-        folder="",
-        direction="bidirectional",
-        conflict="newer_wins",
-        auto_sync=False,
-        status_line="idle",
-        activity_lines=(),
     )
 
 
@@ -173,7 +161,6 @@ def _tree_projection() -> LibraryNotesTreeProjection:
             {"create_status": "Could not create note."},
             "Could not create note.",
         ),
-        ("sync", {"sync_panel_state": _sync_state()}, "Sync idle"),
         (
             "import",
             {
@@ -287,7 +274,6 @@ async def test_lasting_setup_retained_wrapper_preserves_input_and_pins_action_at
             filter_value="",
             mode="lasting_add",
             presentation_state=None,
-            sync_panel_state=None,
             import_snapshot=None,
             import_receipt_available=False,
             tree_projection=None,
@@ -438,20 +424,6 @@ async def test_database_mode_list_carries_a_placement_sentence(widget_pilot):  #
         assert "database" in text.lower()
         assert "Files" in text
         assert "Sync" in text
-
-
-async def test_sync_mode_placement_sentence_names_files_mode(widget_pilot):  # noqa: F811
-    async with await widget_pilot(
-        LibraryNotesCanvas,
-        mode="sync",
-        sync_panel_state=_sync_state(),
-    ) as pilot:
-        await pilot.pause()
-        purpose = pilot.app.query_one("#library-notes-sync-purpose", Static).renderable
-        text = getattr(purpose, "plain", str(purpose))
-        assert "Files mode" in text
-        assert "directly" in text
-        assert "mirror" in text.lower()
 
 
 async def test_tree_projection_renders_hierarchy_and_placement_metadata(widget_pilot):  # noqa: F811

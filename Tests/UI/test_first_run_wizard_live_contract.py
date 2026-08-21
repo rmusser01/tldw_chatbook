@@ -55,7 +55,6 @@ from textual.widgets import (
     RadioButton,
     RadioSet,
     Static,
-    Switch,
 )
 
 from Tests.UI.app_factory import _build_test_app
@@ -1008,7 +1007,6 @@ def _attempted_full_appearance_resume_config():
                     "provider_value": "openai",
                 },
                 "model": {"model_id": "gpt-resume-test"},
-                "notes": {"auto_sync_enabled": True},
                 "appearance": {
                     "theme": "textual-light",
                     "splash_card": "",
@@ -1198,8 +1196,8 @@ async def test_resumed_target_restores_then_clears_attempt_after_mount(
                 == "gpt-resume-test"
             )
             notes_step = container.steps[container._step_index_for_id(STEP_NOTES)]
-            assert notes_step.get_step_data() == {"auto_sync_enabled": True}
-            assert notes_step.query_one("#setup-notes-enable", Switch).value is True
+            assert notes_step.get_step_data() == {}
+            assert not notes_step.query("#setup-notes-enable")
 
             appearance_step = container.steps[
                 container._step_index_for_id(STEP_APPEARANCE)

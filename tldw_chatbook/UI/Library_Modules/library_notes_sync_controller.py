@@ -16,8 +16,10 @@ from tldw_chatbook.Library.library_notes_lasting_sync_state import (
 from tldw_chatbook.Notes.notes_sync_reconciler import ReconciliationPlan
 from tldw_chatbook.Notes.notes_sync_runtime import (
     NotesSyncControlResult,
+    NotesSyncRootSetup,
     NotesSyncRuntimeSnapshot,
 )
+from tldw_chatbook.Notes.notes_sync_models import NotesSyncDirection
 
 
 class LastingSyncRuntimePort(Protocol):
@@ -31,6 +33,10 @@ class LastingSyncRuntimePort(Protocol):
     def snapshot(self) -> NotesSyncRuntimeSnapshot: ...
 
     async def check_root(self, root_id: str) -> ReconciliationPlan: ...
+
+    async def review_setup(self, setup: NotesSyncRootSetup) -> ReconciliationPlan: ...
+
+    async def abandon_setup(self, root_id: str) -> None: ...
 
     async def request_sync_now(self, root_id: str) -> ReconciliationPlan: ...
 
@@ -71,6 +77,12 @@ class InertLastingSyncRuntime:
         raise RuntimeError("notes_sync_cutover_not_admitted")
 
     async def check_root(self, root_id: str) -> ReconciliationPlan:
+        return await self._blocked()
+
+    async def review_setup(self, setup: NotesSyncRootSetup) -> ReconciliationPlan:
+        return await self._blocked()
+
+    async def abandon_setup(self, root_id: str) -> None:
         return await self._blocked()
 
     async def request_sync_now(self, root_id: str) -> ReconciliationPlan:
@@ -121,11 +133,13 @@ _ACTION_LABELS = {
     "reconnect_folder": "Reconnect folder",
     "open_active_process": "Open active process",
     "review_settings": "Review settings",
+    "review_migration": "Review migration",
     "resolve_cleanup": "Resolve recovery",
     "wait": "Wait",
     "none": "No action",
     "apply_reviewed": "Apply reviewed",
     "finish_upgrade": "Finish upgrade",
+    "close_other_process_and_restart": "Close other process and restart",
 }
 _ROOT_PAGE_SIZE = 20
 
@@ -138,19 +152,29 @@ class LibraryNotesSyncController:
         *,
         runtime: LastingSyncRuntimePort,
         import_controller: _ImportOncePort,
-        lasting_available: bool,
         publish_snapshot: Callable[[LibraryNotesLastingSyncSnapshot], None]
         | None = None,
     ) -> None:
-        if type(lasting_available) is not bool:
-            raise TypeError("lasting_available must be a boolean")
         self._runtime = runtime
         self._import_controller = import_controller
         self._publish_snapshot = publish_snapshot
         self._review_plan: ReconciliationPlan | None = None
-        self._state = initial_lasting_sync_snapshot(lasting_available=lasting_available)
+        self._state = initial_lasting_sync_snapshot(
+            lasting_available=runtime.snapshot().status == "active"
+        )
         self._all_roots: tuple[LastingSyncRootRow, ...] = ()
         self.refresh_roots()
+
+    def _unavailable_copy(self) -> str:
+        runtime = self._runtime.snapshot()
+        if runtime.next_action == "close_other_process_and_restart":
+            return (
+                "Close the other Chatbook process and restart before activating "
+                "folder sync"
+            )
+        if runtime.status == "failed":
+            return "Lasting folder sync could not start. Review settings and restart."
+        return "Lasting folder sync is unavailable until the reviewed cutover."
 
     @property
     def snapshot(self) -> LibraryNotesLastingSyncSnapshot:
@@ -164,6 +188,7 @@ class LibraryNotesSyncController:
         """Refresh path-free root rows from the public runtime projection."""
 
         runtime = self._runtime.snapshot()
+        available = runtime.status == "active"
         self._all_roots = tuple(
             LastingSyncRootRow(
                 root.root_id,
@@ -185,6 +210,7 @@ class LibraryNotesSyncController:
         start = (page - 1) * _ROOT_PAGE_SIZE
         self._state = replace(
             self._state,
+            lasting_available=available,
             roots=self._all_roots[start : start + _ROOT_PAGE_SIZE],
             root_page=page,
             root_page_count=page_count,
@@ -214,10 +240,13 @@ class LibraryNotesSyncController:
             return "import"
         if relationship != "keep_synced":
             raise ValueError("unknown relationship")
+        available = self._runtime.snapshot().status == "active"
+        if available != self._state.lasting_available:
+            self._state = replace(self._state, lasting_available=available)
         if not self._state.lasting_available:
             self._state = replace(
                 self._state,
-                status_line="Lasting folder sync is unavailable until the reviewed cutover.",
+                status_line=self._unavailable_copy(),
             )
             self._publish()
             return "choose"
@@ -258,17 +287,62 @@ class LibraryNotesSyncController:
         )
         self._publish()
 
-    async def check_setup(self, root_id: str) -> None:
+    async def check_setup(self) -> None:
         """Run the same mutation-free check and label it as activation review."""
+        setup = self._state.setup
+        direction = NotesSyncDirection(setup.direction)
+        self._state = replace(
+            self._state, phase="checking", status_line="Checking folder…"
+        )
+        self._publish()
+        try:
+            plan = await self._runtime.review_setup(
+                NotesSyncRootSetup(
+                    display_name=setup.display_name,
+                    canonical_path=setup.folder,
+                    note_scope_id=setup.note_scope_id,
+                    direction=direction,
+                )
+            )
+        except Exception:
+            self._state = replace(
+                self._state,
+                phase="configure",
+                status_line="Check failed. Review the folder and settings, then try again.",
+            )
+            self._publish()
+            return
+        self._review_plan = plan
+        self._state = replace(
+            self._state,
+            phase="review",
+            review=replace(build_reconciliation_review(plan), activation=True),
+            status_line="Review setup effects before activating this root.",
+        )
+        self._publish()
+
+    async def check_migration(self, root_id: str) -> None:
+        """Build a current activation review for one paused migrated root."""
 
         await self.check_root(root_id)
-        if self._state.phase == "review" and self._state.review.root_id:
+        if self._state.phase == "review" and self._state.review.root_id == root_id:
             self._state = replace(
                 self._state,
                 review=replace(self._state.review, activation=True),
-                status_line="Review setup effects before activating this root.",
+                status_line="Review migration before activating this folder.",
             )
             self._publish()
+
+    async def abandon_setup(self) -> None:
+        """Release an unpersisted setup review when the user leaves it."""
+
+        root_id = self._state.review.root_id
+        if self._state.review.activation and root_id:
+            try:
+                await self._runtime.abandon_setup(root_id)
+            except Exception:
+                pass
+        self._review_plan = None
 
     def set_review_page(self, page: int) -> None:
         """Page the controller-private reviewed plan without copying its IDs."""
@@ -386,8 +460,8 @@ class LibraryNotesSyncController:
         self._state = replace(
             self._state,
             status_line=(
-                "Choice reviewed. Applying attention resolutions remains unavailable "
-                "until the lasting-sync cutover."
+                "Conflict and deletion choices are unavailable in this release; "
+                "no files or notes changed."
             ),
         )
         self._publish()
@@ -407,8 +481,8 @@ class LibraryNotesSyncController:
             self._state,
             phase="roots",
             status_line=(
-                f"{action.title()} requires a reviewed flow that remains unavailable "
-                "until the lasting-sync cutover; no files or notes changed."
+                f"{action.title()} is unavailable in this release; "
+                "no files or notes changed."
             ),
         )
         self._publish()
@@ -428,7 +502,9 @@ class LibraryNotesSyncController:
         )
         self._publish()
         try:
-            result = await self._runtime.activate_root(root_id, self._state.setup)
+            result = await self._runtime.activate_root(
+                root_id, self._state.review.observation_token
+            )
         except Exception:
             self._state = replace(
                 self._state,
@@ -438,13 +514,26 @@ class LibraryNotesSyncController:
             self._publish()
             return False
         accepted = bool(getattr(result, "accepted", False))
+        applied_count = getattr(result, "applied_count", 0)
+        recovery = not accepted and getattr(result, "status", "") in {
+            "failed",
+            "partial",
+            "needs_attention",
+        }
         self._state = replace(
             self._state,
-            phase="receipt" if accepted else "review",
+            phase="receipt" if accepted else "roots" if recovery else "review",
             status_line=(
                 "Sync root activated."
                 if accepted
+                else "Activation needs attention. Open root recovery."
+                if recovery
                 else "Activation needs attention. Review settings, then check again."
+            ),
+            receipt_line=(
+                f"{applied_count} applied · durable receipt recorded"
+                if accepted
+                else ""
             ),
         )
         self.refresh_roots()

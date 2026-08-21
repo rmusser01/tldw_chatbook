@@ -2522,83 +2522,11 @@ class ToolsSettingsWindow(Container):
         yield Container(*widgets, classes="config-form")
 
     def _compose_notes_config_form(self) -> ComposeResult:
-        """Form for notes configuration."""
-        notes_config = self.config_data.get("notes", {})
-
-        conflict_options = [
-            ("Newer Wins", "newer_wins"),
-            ("Ask User", "ask"),
-            ("Disk Wins", "disk_wins"),
-            ("Database Wins", "db_wins"),
-        ]
-
-        sync_direction_options = [
-            ("Bidirectional", "bidirectional"),
-            ("Disk to Database", "disk_to_db"),
-            ("Database to Disk", "db_to_disk"),
-        ]
-
-        widgets = []
-
-        widgets.append(
-            Static("Notes Synchronization Settings", classes="form-section-title")
+        """Point legacy settings users to the lasting-sync Library flow."""
+        yield Container(
+            Static("Notes folder sync is managed from Library → Notes → Add from files…", classes="form-section-title"),
+            classes="config-form",
         )
-
-        widgets.append(Label("Sync Directory:", classes="form-label"))
-        widgets.append(
-            Input(
-                value=notes_config.get("sync_directory", "~/Documents/Notes"),
-                id="config-notes-sync-directory",
-                placeholder="~/Documents/Notes",
-            )
-        )
-
-        widgets.append(
-            Checkbox(
-                "Enable Auto Sync on Startup",
-                value=notes_config.get("auto_sync_enabled", False),
-                id="config-notes-auto-sync",
-            )
-        )
-
-        widgets.append(
-            Checkbox(
-                "Sync on Close",
-                value=notes_config.get("sync_on_close", False),
-                id="config-notes-sync-on-close",
-            )
-        )
-
-        widgets.append(Label("Conflict Resolution:", classes="form-label"))
-        widgets.append(
-            Select(
-                options=conflict_options,
-                value=notes_config.get("conflict_resolution", "newer_wins"),
-                id="config-notes-conflict-resolution",
-            )
-        )
-
-        widgets.append(Label("Sync Direction:", classes="form-label"))
-        widgets.append(
-            Select(
-                options=sync_direction_options,
-                value=notes_config.get("sync_direction", "bidirectional"),
-                id="config-notes-sync-direction",
-            )
-        )
-
-        # Action buttons
-        widgets.append(
-            Container(
-                Button(
-                    "Save Notes Config", id="save-notes-config-form", variant="primary"
-                ),
-                Button("Reset Section", id="reset-notes-config-form"),
-                classes="form-actions",
-            )
-        )
-
-        yield Container(*widgets, classes="config-form")
 
     def _compose_tts_config_form(self) -> ComposeResult:
         """Form for TTS configuration."""
@@ -5660,61 +5588,12 @@ class ToolsSettingsWindow(Container):
             )
 
     async def _save_notes_config_form(self) -> None:
-        """Save notes configuration form."""
-        try:
-            save_setting_to_cli_config(
-                "notes",
-                "sync_directory",
-                self.query_one("#config-notes-sync-directory", Input).value,
-            )
-            save_setting_to_cli_config(
-                "notes",
-                "auto_sync_enabled",
-                self.query_one("#config-notes-auto-sync", Checkbox).value,
-            )
-            save_setting_to_cli_config(
-                "notes",
-                "sync_on_close",
-                self.query_one("#config-notes-sync-on-close", Checkbox).value,
-            )
-            save_setting_to_cli_config(
-                "notes",
-                "conflict_resolution",
-                self.query_one("#config-notes-conflict-resolution", Select).value,
-            )
-            save_setting_to_cli_config(
-                "notes",
-                "sync_direction",
-                self.query_one("#config-notes-sync-direction", Select).value,
-            )
-
-            self.config_data = load_cli_config_and_ensure_existence(force_reload=True)
-            self.app_instance.notify("Notes configuration saved!")
-        except Exception as e:
-            self.app_instance.notify(
-                f"Error saving notes config: {e}", severity="error"
-            )
+        """Keep the retired settings action inert."""
+        self.app_instance.notify("Manage Notes folder sync from Library → Notes.")
 
     async def _reset_notes_config_form(self) -> None:
-        """Reset notes configuration form to defaults."""
-        try:
-            self.query_one(
-                "#config-notes-sync-directory", Input
-            ).value = "~/Documents/Notes"
-            self.query_one("#config-notes-auto-sync", Checkbox).value = False
-            self.query_one("#config-notes-sync-on-close", Checkbox).value = False
-            self.query_one(
-                "#config-notes-conflict-resolution", Select
-            ).value = "newer_wins"
-            self.query_one(
-                "#config-notes-sync-direction", Select
-            ).value = "bidirectional"
-
-            self.app_instance.notify("Notes configuration reset to defaults!")
-        except Exception as e:
-            self.app_instance.notify(
-                f"Error resetting notes config: {e}", severity="error"
-            )
+        """Keep the retired settings action inert."""
+        self.app_instance.notify("Manage Notes folder sync from Library → Notes.")
 
     async def _save_tts_config_form(self) -> None:
         """Save TTS configuration form."""

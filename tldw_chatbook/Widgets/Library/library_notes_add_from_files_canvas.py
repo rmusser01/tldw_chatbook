@@ -254,6 +254,11 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                     )
                     yield Static(row.effect, markup=False)
                     if row.choices:
+                        yield Static(
+                            "Conflict and deletion choices are unavailable in this release.",
+                            classes="library-disabled-reason",
+                            markup=False,
+                        )
                         with Vertical(classes="library-notes-sync-attention-actions"):
                             for choice_index, choice in enumerate(row.choices):
                                 yield Button(
@@ -262,6 +267,11 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                                     id=f"notes-sync-attention-{index}-{choice_index}",
                                     classes="library-canvas-action",
                                     compact=True,
+                                    disabled=True,
+                                    tooltip=(
+                                        "Conflict and deletion choices are unavailable "
+                                        "in this release."
+                                    ),
                                 )
             if review.page_count > 1:
                 yield Static(

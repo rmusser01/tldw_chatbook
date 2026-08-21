@@ -3990,12 +3990,8 @@ show_analysis_button = true
 model_download_dir = "~/Downloads/tldw_models"  # Legacy read-only scan root for Installed models
 
 [notes]
-# Default settings for the Notes tab
-sync_directory = "~/Documents/Notes"  # Default directory for notes synchronization
-auto_sync_enabled = false            # Enable automatic sync on startup
-sync_on_close = false               # Sync when closing the app
-conflict_resolution = "newer_wins"   # Default conflict resolution: newer_wins, ask, disk_wins, db_wins
-sync_direction = "bidirectional"     # Default sync direction: bidirectional, disk_to_db, db_to_disk
+# Device-private lasting-sync settings. Legacy sync keys are intentionally not
+# emitted for fresh profiles; already-present keys remain migration input only.
 recovery_capacity_bytes = 268435456  # Device-private lasting-sync recovery capacity (256 MiB)
 
 # Auto-save settings

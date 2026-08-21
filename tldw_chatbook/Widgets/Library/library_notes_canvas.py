@@ -21,12 +21,6 @@ from tldw_chatbook.Library.library_note_import_state import LibraryNoteImportSna
 from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     LibraryNotesLastingSyncSnapshot,
 )
-from tldw_chatbook.Library.library_notes_sync_state import (
-    LibraryNotesSyncState,
-    auto_sync_label,
-    sync_conflict_label,
-    sync_direction_label,
-)
 from tldw_chatbook.Library.library_notes_tree_state import (
     LibraryNotesTreeProjection,
     LibraryNotesTreeRow,
@@ -53,16 +47,6 @@ from tldw_chatbook.Widgets.Library.library_notes_sync_roots_canvas import (
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 _SORT_LABELS = {"newest": "Newest", "oldest": "Oldest", "title": "Title"}
-_COMPACT_SYNC_DIRECTION_LABELS = {
-    "bidirectional": "Both",
-    "disk_to_db": "Disk → Lib",
-    "db_to_disk": "Lib → Disk",
-}
-_COMPACT_SYNC_CONFLICT_LABELS = {
-    "newer_wins": "Newest",
-    "disk_wins": "Disk",
-    "db_wins": "Library",
-}
 
 
 @dataclass(frozen=True)
@@ -105,13 +89,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             note editor for ``presentation_state``; ``"create"`` renders the
             Blank note / template picker reached from the rail's Create > New
             note row; ``"sync"`` renders the in-canvas notes sync panel for
-            ``sync_panel_state``.
         presentation_state: Canonical snapshot plus presentation-only state.
             Required when ``mode == "editor"``.
-        sync_panel_state: The sync panel's display state. Required when
-            ``mode == "sync"``. This deliberately does not use the name
-            ``sync_state`` because that name belongs to the mounted canvas's
-            targeted update hook.
         import_snapshot: Reviewed one-time import presentation state. Required
             when ``mode == "import"``.
         import_receipt_available: Whether the latest same-session receipt can
@@ -143,7 +122,6 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         filter_value: str = "",
         mode: str = "list",
         presentation_state: LibraryNotePresentationState | None = None,
-        sync_panel_state: LibraryNotesSyncState | None = None,
         import_snapshot: LibraryNoteImportSnapshot | None = None,
         import_receipt_available: bool = False,
         lasting_sync_snapshot: LibraryNotesLastingSyncSnapshot | None = None,
@@ -167,7 +145,6 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             mode: Canvas surface to compose: list, loading, editor, create,
                 or sync.
             presentation_state: Canonical editor snapshot and UI-only flags.
-            sync_panel_state: Display state for the sync surface.
             import_snapshot: Display state for the one-time import surface.
             tree_projection: Placement-aware folder rows for list mode.
             tree_selected_placement_id: Context row for folder actions.
@@ -187,7 +164,6 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.filter_value = filter_value
         self.mode = mode
         self.presentation_state = presentation_state
-        self.sync_panel_state = sync_panel_state
         self.import_snapshot = import_snapshot
         self.import_receipt_available = import_receipt_available
         self.lasting_sync_snapshot = lasting_sync_snapshot
@@ -234,9 +210,6 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             return
         if self.mode == "create":
             yield from self._compose_create()
-            return
-        if self.mode == "sync":
-            yield from self._compose_sync()
             return
         if self.mode == "import":
             if self.import_snapshot is not None:
@@ -306,18 +279,6 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 else "Choose Blank note or a template."
             )
             return f"{prefix} · {status} · Next: {next_action}"
-        if self.mode == "sync":
-            state = self.sync_panel_state
-            status = (
-                "Sync unavailable" if state is None else f"Sync {state.status_line}"
-            )
-            if state is None or state.status_line.startswith("failed"):
-                next_action = "Review the error, then Sync now."
-            elif state.running:
-                next_action = "Wait for sync to finish."
-            else:
-                next_action = "Choose a folder, then Sync now."
-            return f"{prefix} · {status} · Next: {next_action}"
         if self.mode == "import":
             state = self.import_snapshot
             status = "Import unavailable" if state is None else state.status_line
@@ -340,7 +301,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         next_action = (
             "Wait for the running notes operation to finish."
             if running
-            else "Create, Sync, or Import."
+            else "Create a note or add from files."
         )
         return f"{prefix} · {status} · Next: {next_action}"
 
@@ -352,7 +313,6 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         filter_value: str,
         mode: str,
         presentation_state: LibraryNotePresentationState | None,
-        sync_panel_state: LibraryNotesSyncState | None,
         import_snapshot: LibraryNoteImportSnapshot | None = None,
         import_receipt_available: bool = False,
         lasting_sync_snapshot: LibraryNotesLastingSyncSnapshot | None = None,
@@ -379,7 +339,6 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             filter_value: Current Notes filter text.
             mode: Canvas surface to render.
             presentation_state: Note editor/create presentation snapshot.
-            sync_panel_state: Notes folder-sync panel snapshot.
             import_snapshot: Reviewed one-time import presentation snapshot.
             import_receipt_available: Whether the latest same-session receipt can reopen.
             tree_projection: Placement-aware folder rows for list mode.
@@ -398,7 +357,6 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.filter_value = filter_value
         self.mode = mode
         self.presentation_state = presentation_state
-        self.sync_panel_state = sync_panel_state
         self.import_snapshot = import_snapshot
         self.import_receipt_available = import_receipt_available
         self.lasting_sync_snapshot = lasting_sync_snapshot
@@ -652,31 +610,17 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             import_phase = (
                 self.import_snapshot.phase if self.import_snapshot is not None else ""
             )
-            import_label = (
-                "View import"
-                if import_phase == "importing"
-                else "Continue import"
-                if import_phase in {"destination", "checking", "review"}
-                or (
-                    import_phase == "select"
-                    and bool(
-                        self.import_snapshot and self.import_snapshot.selected_names
-                    )
-                )
-                else "Import"
-            )
             transfer_actions = Horizontal(
                 id="library-notes-transfer-actions", classes="ds-toolbar"
             )
             transfer_actions.styles.height = "auto"
             with transfer_actions:
                 for label, button_id in (
-                    ("Sync", "library-notes-sync-open"),
-                    (import_label, "library-notes-import"),
+                    ("Add from files…", "library-notes-add-from-files"),
                     ("Export", "library-notes-export"),
                 ):
                     view_import = (
-                        button_id == "library-notes-import"
+                        button_id == "library-notes-add-from-files"
                         and import_phase == "importing"
                     )
                     disabled = list_state.operation_running and not view_import
@@ -687,6 +631,17 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         compact=True,
                         disabled=disabled,
                         tooltip=running_tooltip if disabled else None,
+                    )
+                if self.lasting_sync_snapshot is not None and (
+                    self.lasting_sync_snapshot.roots
+                    or self.lasting_sync_snapshot.root_page_count > 1
+                ):
+                    yield Button(
+                        "Manage sync folders",
+                        id="library-notes-manage-sync-folders",
+                        classes="library-canvas-action",
+                        compact=True,
+                        disabled=list_state.operation_running,
                     )
                 if self.import_receipt_available:
                     yield Button(
@@ -1286,34 +1241,6 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     export_base, button.disabled
                 )
             return
-        if self.mode != "sync" or self.sync_panel_state is None:
-            return
-        for value in ("bidirectional", "disk_to_db", "db_to_disk"):
-            label = (
-                _COMPACT_SYNC_DIRECTION_LABELS[value]
-                if compact
-                else sync_direction_label(value)
-            )
-            prefix = "✓ " if value == self.sync_panel_state.direction else ""
-            choices = self.query(f"#library-notes-sync-direction-{value}")
-            if choices:
-                choices.first(Button).label = f"{prefix}{label}"
-        for value in ("newer_wins", "disk_wins", "db_wins"):
-            label = (
-                _COMPACT_SYNC_CONFLICT_LABELS[value]
-                if compact
-                else sync_conflict_label(value)
-            )
-            prefix = "✓ " if value == self.sync_panel_state.conflict else ""
-            choices = self.query(f"#library-notes-sync-conflict-{value}")
-            if choices:
-                choices.first(Button).label = f"{prefix}{label}"
-        auto_label = auto_sync_label(self.sync_panel_state.auto_sync)
-        if compact:
-            auto_label = auto_label.replace("auto-sync: every ", "Auto ", 1)
-        auto = self.query("#library-notes-sync-auto")
-        if auto:
-            auto.first(Button).label = auto_label
 
     @staticmethod
     def _static_text(widget: Static) -> str:
@@ -1565,146 +1492,5 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             yield Static(
                 self.create_status,
                 id="library-notes-create-status",
-                markup=False,
-            )
-
-    def _compose_sync(self) -> ComposeResult:
-        """Render the notes sync panel: folder, direction, conflicts, activity.
-
-        Direction and conflict policy use explicit compact choice groups so
-        every available value and the current selection remain visible.
-        Auto-sync stays a direct toggle button. All mutable controls are
-        disabled while a sync run is active.
-        """
-        sync_state = self.sync_panel_state
-        if sync_state is None:
-            return
-        with Horizontal(id="library-notes-sync-heading"):
-            yield Button(
-                "‹ Notes",
-                id="library-notes-sync-back",
-                classes="library-canvas-action",
-                compact=True,
-                disabled=sync_state.running,
-            )
-            yield Static(
-                "Notes sync",
-                id="library-notes-sync-header",
-                classes="destination-section",
-                markup=False,
-            )
-        with VerticalScroll(id="library-notes-sync-viewport"):
-            yield Static(
-                "Mirror notes between a folder on disk and the Library — "
-                "unlike Files mode, which edits that folder directly without "
-                "mirroring it in.",
-                id="library-notes-sync-purpose",
-                markup=False,
-            )
-            with Horizontal(id="library-notes-sync-folder-row"):
-                yield Static(
-                    "Folder", id="library-notes-sync-folder-label", markup=False
-                )
-                yield Input(
-                    value=sync_state.folder,
-                    placeholder="Folder to sync…",
-                    id="library-notes-sync-folder",
-                    disabled=sync_state.running,
-                )
-                yield Button(
-                    "Browse…",
-                    id="library-notes-sync-browse",
-                    classes="library-canvas-action",
-                    compact=True,
-                    disabled=sync_state.running,
-                )
-            with Horizontal(id="library-notes-sync-direction-row"):
-                yield Static(
-                    "Direction", id="library-notes-sync-direction-label", markup=False
-                )
-                direction_choices = Horizontal(
-                    id="library-notes-sync-direction-choices", classes="ds-toolbar"
-                )
-                direction_choices.styles.height = "auto"
-                with direction_choices:
-                    for value in ("bidirectional", "disk_to_db", "db_to_disk"):
-                        label = (
-                            _COMPACT_SYNC_DIRECTION_LABELS[value]
-                            if self.compact
-                            else sync_direction_label(value)
-                        )
-                        button = Button(
-                            f"{'✓ ' if value == sync_state.direction else ''}{label}",
-                            id=f"library-notes-sync-direction-{value}",
-                            classes=(
-                                "library-canvas-action "
-                                "library-notes-sync-direction-choice"
-                            ),
-                            compact=True,
-                            disabled=sync_state.running,
-                        )
-                        button.choice_value = value
-                        yield button
-            with Horizontal(id="library-notes-sync-conflict-row"):
-                yield Static(
-                    "Conflicts", id="library-notes-sync-conflict-label", markup=False
-                )
-                conflict_choices = Horizontal(
-                    id="library-notes-sync-conflict-choices", classes="ds-toolbar"
-                )
-                conflict_choices.styles.height = "auto"
-                with conflict_choices:
-                    for value in ("newer_wins", "disk_wins", "db_wins"):
-                        label = (
-                            _COMPACT_SYNC_CONFLICT_LABELS[value]
-                            if self.compact
-                            else sync_conflict_label(value)
-                        )
-                        button = Button(
-                            f"{'✓ ' if value == sync_state.conflict else ''}{label}",
-                            id=f"library-notes-sync-conflict-{value}",
-                            classes=(
-                                "library-canvas-action "
-                                "library-notes-sync-conflict-choice"
-                            ),
-                            compact=True,
-                            disabled=sync_state.running,
-                        )
-                        button.choice_value = value
-                        yield button
-            with Horizontal(id="library-notes-sync-actions"):
-                auto_label = auto_sync_label(sync_state.auto_sync)
-                if self.compact:
-                    auto_label = auto_label.replace("auto-sync: every ", "Auto ", 1)
-                yield Button(
-                    auto_label,
-                    id="library-notes-sync-auto",
-                    classes="library-canvas-action",
-                    compact=True,
-                    disabled=sync_state.running,
-                )
-                yield Button(
-                    "Syncing…" if sync_state.running else "Sync now",
-                    id="library-notes-sync-run",
-                    classes="library-canvas-action",
-                    compact=True,
-                    disabled=sync_state.running,
-                )
-            # ``sync_status_line``'s own tested contract is that a failed status
-            # always starts with the literal prefix "failed" -- safe to key the
-            # error styling off that prefix here.
-            yield Static(
-                sync_state.status_line,
-                id="library-notes-sync-status",
-                classes=(
-                    "library-notes-sync-status-failed"
-                    if sync_state.status_line.startswith("failed")
-                    else ""
-                ),
-                markup=False,
-            )
-            yield Static(
-                "\n".join(sync_state.activity_lines),
-                id="library-notes-sync-activity",
                 markup=False,
             )

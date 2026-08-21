@@ -59,11 +59,13 @@ _ROOT_NEXT_ACTIONS = frozenset(
         "reconnect_folder",
         "open_active_process",
         "review_settings",
+        "review_migration",
         "resolve_cleanup",
         "wait",
         "none",
         "apply_reviewed",
         "finish_upgrade",
+        "close_other_process_and_restart",
     }
 )
 
@@ -75,7 +77,7 @@ class LastingSyncSetup:
     display_name: str = ""
     folder: str = ""
     destination: str = "local"
-    note_scope_id: str = "local-notes"
+    note_scope_id: str = "local_note"
     direction: str = "bidirectional"
     server_available: bool = False
     server_disabled_reason: str = (

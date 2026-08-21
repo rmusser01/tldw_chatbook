@@ -7,10 +7,11 @@ import hashlib
 import sqlite3
 import time
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import Protocol
+from uuid import uuid4
 
 from tldw_chatbook.Notes.note_import_discovery import (
     ImportSelectionError,
@@ -22,6 +23,7 @@ from tldw_chatbook.Notes.notes_device_state_store import (
     NotesSyncBindingRecord,
     NotesSyncOperationRecord,
     NotesSyncRootRecord,
+    NotesSyncStoreSetting,
 )
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService, ScopeType
 from tldw_chatbook.Notes.notes_sync_authority import (
@@ -36,8 +38,9 @@ from tldw_chatbook.Notes.notes_sync_coordinator import (
 from tldw_chatbook.Notes.notes_sync_models import (
     NotesSyncAction,
     NotesSyncActionKind,
-    NotesSyncOperationState,
     NotesSyncBindingState,
+    NotesSyncDirection,
+    NotesSyncOperationState,
     NotesSyncRootState,
     validate_notes_sync_opaque_id,
 )
@@ -79,6 +82,7 @@ _SYNC_FILE_EXTENSIONS = frozenset({".md", ".markdown", ".txt"})
 _OBSERVATION_BUNDLE_LIMIT = 8
 _DURABLE_BLOCKED_STATUS = MappingProxyType(
     {
+        "activation_recovery_required": ("needs_attention", "review_settings"),
         "failed": ("failed", "review_changes"),
         "needs_attention": ("needs_attention", "review_changes"),
         "partial": ("partial", "review_changes"),
@@ -111,10 +115,12 @@ _NEXT_ACTIONS = frozenset(
         "none",
         "open_active_process",
         "reconnect_folder",
+        "close_other_process_and_restart",
         "resolve_cleanup",
         "resume_sync",
         "review_changes",
         "review_settings",
+        "review_migration",
         "sync_now",
         "wait",
     }
@@ -167,11 +173,59 @@ class NotesSyncControlResult:
     accepted: bool
     status: str
     next_action: str
+    applied_count: int = 0
 
     def __post_init__(self) -> None:
         if type(self.accepted) is not bool:
             raise TypeError("accepted must be a boolean")
         _validate_projection(self.status, self.next_action)
+        if type(self.applied_count) is not int or not 0 <= self.applied_count <= 1_000:
+            raise ValueError("applied_count must be a bounded non-negative integer")
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class NotesSyncRootSetup:
+    """Private local-root configuration used only for review and activation."""
+
+    display_name: str
+    canonical_path: str
+    note_scope_id: str
+    direction: NotesSyncDirection
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.display_name) is not str
+            or not self.display_name.strip()
+            or len(self.display_name) > 160
+            or "\n" in self.display_name
+            or "/" in self.display_name
+            or "\\" in self.display_name
+        ):
+            raise ValueError("display_name must be a bounded non-path label")
+        path = Path(self.canonical_path)
+        if (
+            type(self.canonical_path) is not str
+            or not self.canonical_path
+            or len(self.canonical_path) > 4096
+            or "\x00" in self.canonical_path
+            or not path.is_absolute()
+        ):
+            raise ValueError("canonical_path must be a bounded absolute path")
+        validate_notes_sync_opaque_id(self.note_scope_id, field_name="note_scope_id")
+        if type(self.direction) is not NotesSyncDirection:
+            raise TypeError("direction must be a NotesSyncDirection")
+
+    def __repr__(self) -> str:
+        return "NotesSyncRootSetup(<private>)"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _SetupReview:
+    setup: NotesSyncRootSetup
+    plan: ReconciliationPlan
+
+    def __repr__(self) -> str:
+        return "_SetupReview(<private>)"
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -201,6 +255,10 @@ class _RuntimeAdapter(Protocol):
         *,
         after_stage: Callable[[NotesSyncOperationState], None],
     ) -> object: ...
+
+    async def create_root_folder(self, display_name: str) -> tuple[str, object]: ...
+
+    async def rollback_root_folder(self, receipt: object) -> None: ...
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -237,6 +295,30 @@ class _ProductionRuntimeAdapter:
             ),
             max_depth=32,
             max_entries=10_000,
+        )
+
+    async def create_root_folder(self, display_name: str) -> tuple[str, object]:
+        folder = await self._service.create_note_folder(
+            scope=ScopeType.LOCAL_NOTE,
+            name=display_name,
+            parent_id=None,
+            user_id=self._user_id,
+        )
+        return folder.folder_id, (folder.folder_id, folder.version)
+
+    async def rollback_root_folder(self, receipt: object) -> None:
+        if (
+            type(receipt) is not tuple
+            or len(receipt) != 2
+            or type(receipt[0]) is not str
+            or type(receipt[1]) is not int
+        ):
+            raise TypeError("folder rollback receipt is invalid")
+        await self._service.delete_note_folder(
+            scope=ScopeType.LOCAL_NOTE,
+            folder_id=receipt[0],
+            expected_version=receipt[1],
+            user_id=self._user_id,
         )
 
     def _notes(self, root: NotesSyncRootRecord) -> NotesScopeSyncAuthority:
@@ -344,7 +426,14 @@ class _ProductionRuntimeAdapter:
                     note_scope_id=binding.note_scope_id,
                     note_id=binding.note_id,
                     note_version=note.version if note else binding.note_version,
-                    bound=binding.state is NotesSyncBindingState.ACTIVE,
+                    bound=(
+                        binding.state is NotesSyncBindingState.ACTIVE
+                        or (
+                            binding.state is NotesSyncBindingState.CANDIDATE
+                            and root.state is NotesSyncRootState.PAUSED
+                            and root.last_status_code == "migration_review_required"
+                        )
+                    ),
                     baseline_serialization=binding.serialization,
                     serialization=(file.observation.serialization if file else None),
                 )
@@ -537,9 +626,12 @@ class NotesSyncRuntimeOwner:
         watcher_factory: Callable[[Callable[[str], object]], object],
         file_notes_binding: Callable[[], object | None] = lambda: None,
         cutover_admitted: bool,
+        profile_process_is_sole: bool,
     ) -> None:
         if type(cutover_admitted) is not bool:
             raise TypeError("cutover_admitted must be a private boolean.")
+        if type(profile_process_is_sole) is not bool:
+            raise TypeError("profile_process_is_sole must be a private boolean.")
         if not callable(migrate_legacy) or not callable(watcher_factory):
             raise TypeError("runtime factories must be callable.")
         self._store = store
@@ -549,6 +641,7 @@ class NotesSyncRuntimeOwner:
         self._watcher_factory = watcher_factory
         self._file_notes_binding = file_notes_binding
         self._cutover_admitted = cutover_admitted
+        self._profile_process_is_sole = profile_process_is_sole
         self._coordinator: object | None = None
         self._watcher: object | None = None
         self._watcher_task: asyncio.Task[None] | None = None
@@ -563,6 +656,7 @@ class NotesSyncRuntimeOwner:
         self._durably_blocked_roots: set[str] = set()
         self._closed_roots: set[str] = set()
         self._reviews: dict[str, ReconciliationPlan] = {}
+        self._setup_reviews: dict[str, _SetupReview] = {}
         self._root_status: dict[str, NotesSyncRootRuntimeSnapshot] = {}
         self._root_paths: dict[str, str] = {}
         self._status = "starting"
@@ -591,53 +685,95 @@ class NotesSyncRuntimeOwner:
     async def _start_once(self) -> None:
         try:
             await asyncio.to_thread(self._store.initialize)
-            await asyncio.to_thread(self._migrate_legacy)
+            marker = await asyncio.to_thread(self._store.get_setting, "cutover_marker")
         except Exception:
             self._status = "failed"
             self._next_action = "review_settings"
             return
         if self._closing:
             return
-        marker = await asyncio.to_thread(self._store.get_setting, "cutover_marker")
-        if (
-            not self._cutover_admitted
-            or marker is None
-            or marker.value != CUTOVER_MARKER
-        ):
+        if marker is not None and marker.value != CUTOVER_MARKER:
             self._status = "awaiting_cutover"
             self._next_action = "finish_upgrade"
             return
+        if marker is None:
+            try:
+                await asyncio.to_thread(self._migrate_legacy)
+                if not self._cutover_admitted:
+                    self._status = "awaiting_cutover"
+                    self._next_action = "finish_upgrade"
+                    return
+                await asyncio.to_thread(
+                    self._store.set_setting,
+                    NotesSyncStoreSetting("cutover_marker", CUTOVER_MARKER),
+                )
+            except Exception:
+                self._status = "failed"
+                self._next_action = "review_settings"
+                return
+            marker = await asyncio.to_thread(self._store.get_setting, "cutover_marker")
+        if not self._cutover_admitted or marker is None:
+            self._status = "awaiting_cutover"
+            self._next_action = "finish_upgrade"
+            return
+        if not self._profile_process_is_sole:
+            self._status = "awaiting_cutover"
+            self._next_action = "close_other_process_and_restart"
+            return
 
-        self._status = "active"
-        self._next_action = "sync_now"
-        self._coordinator = (
-            self._coordinator_source()
-            if callable(self._coordinator_source)
-            else self._coordinator_source
-        )
-        roots = await self._load_roots()
-        self._root_paths = {
-            root_id: root.canonical_path for root_id, root in roots.items()
-        }
-        incomplete_operations = await asyncio.to_thread(
-            self._store.list_incomplete_operations
-        )
-        incomplete_root_ids = {operation.root_id for operation in incomplete_operations}
-        for root in roots.values():
-            blocked = _DURABLE_BLOCKED_STATUS.get(root.last_status_code or "")
-            if root.state is not NotesSyncRootState.ACTIVE or blocked is None:
-                continue
-            self._durably_blocked_roots.add(root.root_id)
-            if root.root_id in incomplete_root_ids:
-                continue
-            self._blocked_roots.add(root.root_id)
-            await self._publish(root.root_id, *blocked)
-        await self._resume_incomplete(roots, incomplete_operations)
+        try:
+            self._coordinator = (
+                self._coordinator_source()
+                if callable(self._coordinator_source)
+                else self._coordinator_source
+            )
+            roots = await self._load_roots()
+            self._root_paths = {
+                root_id: root.canonical_path for root_id, root in roots.items()
+            }
+            incomplete_operations = await asyncio.to_thread(
+                self._store.list_incomplete_operations
+            )
+        except Exception:
+            self._status = "failed"
+            self._next_action = "review_settings"
+            return
+        try:
+            incomplete_root_ids = {
+                operation.root_id for operation in incomplete_operations
+            }
+            for root in roots.values():
+                blocked = _DURABLE_BLOCKED_STATUS.get(root.last_status_code or "")
+                if root.state is not NotesSyncRootState.ACTIVE or blocked is None:
+                    continue
+                self._durably_blocked_roots.add(root.root_id)
+                if root.root_id in incomplete_root_ids:
+                    continue
+                self._blocked_roots.add(root.root_id)
+                await self._publish(root.root_id, *blocked)
+            await self._resume_incomplete(roots, incomplete_operations)
+        except Exception:
+            self._status = "failed"
+            self._next_action = "review_settings"
+            return
         for root in roots.values():
             if self._closing:
                 break
             if root.state is NotesSyncRootState.PAUSED:
-                await self._publish(root.root_id, "paused", "resume_sync")
+                durable = _DURABLE_BLOCKED_STATUS.get(root.last_status_code or "")
+                if durable is not None:
+                    self._blocked_roots.add(root.root_id)
+                    self._durably_blocked_roots.add(root.root_id)
+                    await self._publish(root.root_id, *durable, persist=False)
+                elif root.last_status_code == "migration_review_required":
+                    await self._publish(
+                        root.root_id,
+                        "needs_attention",
+                        "review_migration",
+                        persist=False,
+                    )
+                else:
+                    await self._publish(root.root_id, "paused", "resume_sync")
                 continue
             if root.state is not NotesSyncRootState.ACTIVE:
                 continue
@@ -651,6 +787,8 @@ class NotesSyncRuntimeOwner:
                 self._blocked_roots.add(root.root_id)
                 await self._publish(root.root_id, "failed", "review_changes")
 
+        self._status = "active"
+        self._next_action = "sync_now"
         self._admission_open = True
         if self._closing:
             self._admission_open = False
@@ -680,6 +818,8 @@ class NotesSyncRuntimeOwner:
         summaries = await asyncio.to_thread(self._store.list_root_summaries)
         roots: dict[str, NotesSyncRootRecord] = {}
         for summary in summaries:
+            if summary.state is NotesSyncRootState.DISCONNECTED:
+                continue
             roots[summary.root_id] = await asyncio.to_thread(
                 self._store.get_root, summary.root_id
             )
@@ -793,13 +933,121 @@ class NotesSyncRuntimeOwner:
             return "unsupported", "review_settings"
         return None
 
+    async def _review_candidate(self, root: NotesSyncRootRecord) -> ReconciliationPlan:
+        """Build a complete mutation-free plan for a pending or migrated root."""
+
+        if root.note_scope_id != ScopeType.LOCAL_NOTE.value:
+            await self._publish(root.root_id, "unsupported", "review_settings")
+            raise RuntimeError("noncanonical_note_scope")
+        self._require_authority(root.root_id, "plan")
+        observations = await self._adapter.observe_root(root)
+        plan: ReconciliationPlan | None = None
+        try:
+            plan = plan_reconciliation(observations)
+            self._require_authority(root.root_id, "plan")
+            if observations.root_id != root.root_id:
+                raise RuntimeError("root_observation_mismatch")
+            if observations.direction is not root.direction:
+                raise RuntimeError("root_direction_changed")
+            return plan
+        finally:
+            release = getattr(self._adapter, "release_observation", None)
+            if plan is not None and callable(release):
+                release(plan.observation_token)
+
+    async def review_setup(self, setup: NotesSyncRootSetup) -> ReconciliationPlan:
+        """Review a new local root without persisting root or note/file changes."""
+
+        if type(setup) is not NotesSyncRootSetup:
+            raise TypeError("setup must be a NotesSyncRootSetup")
+        if setup.note_scope_id != ScopeType.LOCAL_NOTE.value:
+            raise ValueError("setup note scope must be local_note")
+        self._require_cutover("setup-review")
+        matching_root_id = next(
+            (
+                root_id
+                for root_id, review in self._setup_reviews.items()
+                if review.setup == setup
+            ),
+            None,
+        )
+        for root_id in tuple(self._setup_reviews):
+            if root_id != matching_root_id:
+                await self.abandon_setup(root_id)
+        root_id = matching_root_id or str(uuid4())
+        root = NotesSyncRootRecord(
+            root_id=root_id,
+            note_scope_id=setup.note_scope_id,
+            logical_folder_id=None,
+            canonical_path=setup.canonical_path,
+            direction=setup.direction,
+            state=NotesSyncRootState.PENDING,
+        )
+        self._root_paths[root_id] = setup.canonical_path
+        if matching_root_id is None and not await self._ensure_lease(root):
+            self._root_paths.pop(root_id, None)
+            raise RuntimeError("root_lease_unavailable")
+        try:
+            plan = await self._review_candidate(root)
+        except Exception:
+            await self._release_setup_authority(root_id)
+            raise
+        self._setup_reviews[root_id] = _SetupReview(setup, plan)
+        return plan
+
+    async def abandon_setup(self, root_id: str) -> None:
+        """Release one unpersisted setup review and its provisional lease."""
+
+        validate_notes_sync_opaque_id(root_id, field_name="root_id")
+        if not any(
+            root_id in owner
+            for owner in (
+                self._setup_reviews,
+                self._leases,
+                self._admissions,
+                self._root_paths,
+            )
+        ):
+            return
+        await self._release_setup_authority(root_id)
+
+    async def _release_setup_authority(self, root_id: str) -> None:
+        """Forget every provisional setup owner, even before a review exists."""
+
+        lease = self._leases.get(root_id)
+        if lease is not None and self._coordinator is not None:
+            await asyncio.to_thread(
+                self._coordinator.close_admission, lease, lambda: None
+            )
+        self._leases.pop(root_id, None)
+        self._admissions.pop(root_id, None)
+        self._setup_reviews.pop(root_id, None)
+        self._root_paths.pop(root_id, None)
+        self._root_status.pop(root_id, None)
+
+    async def _retire_failed_setup(self, root_id: str) -> None:
+        """Retire a persisted setup after proving no folder authority remains."""
+
+        await asyncio.to_thread(
+            self._store.transition_root,
+            root_id,
+            NotesSyncRootState.DISCONNECTED,
+        )
+        await self._release_setup_authority(root_id)
+        self._blocked_roots.discard(root_id)
+        self._durably_blocked_roots.discard(root_id)
+
     async def check_root(self, root_id: str) -> ReconciliationPlan:
         """Perform one fresh, mutation-free complete reconciliation."""
 
         task = self._admit_task(root_id)
         try:
             root = await asyncio.to_thread(self._store.get_root, root_id)
-            if root.state is not NotesSyncRootState.ACTIVE:
+            migration_candidate = (
+                root.state is NotesSyncRootState.PAUSED
+                and root.last_status_code == "migration_review_required"
+            )
+            if root.state is not NotesSyncRootState.ACTIVE and not migration_candidate:
                 await self._publish(root_id, "paused", "resume_sync")
                 raise RuntimeError("sync_root_not_active")
             if not await self._ensure_lease(root):
@@ -824,7 +1072,20 @@ class NotesSyncRuntimeOwner:
             self._blocked_roots.discard(root_id)
             self._durably_blocked_roots.discard(root_id)
             try:
-                return await self._reconcile(root, automatic=False)
+                plan = await (
+                    self._review_candidate(root)
+                    if migration_candidate
+                    else self._reconcile(root, automatic=False)
+                )
+                if migration_candidate:
+                    self._reviews[root_id] = plan
+                    await self._publish(
+                        root_id,
+                        "changes_available",
+                        "apply_reviewed",
+                        persist=False,
+                    )
+                return plan
             except Exception:
                 self._blocked_roots.add(root_id)
                 self._durably_blocked_roots.add(root_id)
@@ -1182,26 +1443,250 @@ class NotesSyncRuntimeOwner:
             self._finish_task(root_id, task)
 
     async def resume_root(self, root_id: str) -> NotesSyncControlResult:
-        return await self._blocked_control(root_id, "activation_review_required")
+        self._require_cutover(root_id)
+        root = await asyncio.to_thread(self._store.get_root, root_id)
+        if root.state is not NotesSyncRootState.PAUSED:
+            return NotesSyncControlResult(False, "needs_attention", "review_settings")
+        self._closed_roots.discard(root_id)
+        if not await self._ensure_lease(root):
+            current = self._root_status.get(
+                root_id, ("passive", "open_active_process", None)
+            )
+            return NotesSyncControlResult(False, current[0], current[1])
+        try:
+            plan = await self._review_candidate(root)
+        except Exception:
+            self._blocked_roots.add(root_id)
+            await self._publish(root_id, "failed", "review_changes")
+            return NotesSyncControlResult(False, "failed", "review_changes")
+        blocked = self._blocked_plan_status(plan)
+        executable = tuple(
+            action for action in plan.safe_actions if action.kind in _EXECUTABLE_ACTIONS
+        )
+        if blocked is not None or executable:
+            self._reviews[root_id] = plan
+            self._blocked_roots.add(root_id)
+            await self._publish(root_id, "changes_available", "review_changes")
+            return NotesSyncControlResult(False, "changes_available", "review_changes")
+        active = await asyncio.to_thread(
+            self._store.transition_root, root_id, NotesSyncRootState.ACTIVE
+        )
+        self._blocked_roots.discard(root_id)
+        await self._publish(active.root_id, "up_to_date", "sync_now")
+        self._start_watcher()
+        return NotesSyncControlResult(True, "up_to_date", "sync_now")
 
     async def activate_root(
         self, root_id: str, authorization: object
     ) -> NotesSyncControlResult:
-        return await self._blocked_control(root_id, "activation_review_required")
+        task = self._admit_task(root_id)
+        try:
+            return await self._activate_root(root_id, authorization)
+        finally:
+            self._finish_task(root_id, task)
+
+    async def _activate_root(
+        self, root_id: str, authorization: object
+    ) -> NotesSyncControlResult:
+        self._require_cutover(root_id)
+        token = (
+            authorization
+            if type(authorization) is str
+            else getattr(authorization, "observation_token", None)
+        )
+        if type(token) is not str:
+            raise ValueError("current_review_required")
+        setup_review = self._setup_reviews.get(root_id)
+        if setup_review is not None:
+            setup = setup_review.setup
+            reviewed = setup_review.plan
+            root = NotesSyncRootRecord(
+                root_id=root_id,
+                note_scope_id=setup.note_scope_id,
+                logical_folder_id=None,
+                canonical_path=setup.canonical_path,
+                direction=setup.direction,
+                state=NotesSyncRootState.PENDING,
+            )
+        else:
+            setup = None
+            reviewed = self._reviews.get(root_id)
+            root = await asyncio.to_thread(self._store.get_root, root_id)
+            if not (
+                root.state is NotesSyncRootState.PAUSED
+                and root.last_status_code == "migration_review_required"
+            ):
+                raise ValueError("activation_review_required")
+        if reviewed is None or reviewed.observation_token != token:
+            raise ValueError("stale_review")
+        if not await self._ensure_lease(root):
+            return NotesSyncControlResult(False, "passive", "open_active_process")
+        fresh = await self._review_candidate(root)
+        if fresh != reviewed:
+            raise ValueError("stale_review")
+        if self._blocked_plan_status(fresh) is not None:
+            return NotesSyncControlResult(False, "needs_attention", "review_changes")
+        display_name = (
+            setup.display_name
+            if setup is not None
+            else f"Migrated notes {hashlib.sha256(root_id.encode()).hexdigest()[:8]}"
+        )
+        persisted = setup is None
+        attached = root.logical_folder_id is not None
+        folder_receipt: object | None = None
+        logical_folder_id: str | None = root.logical_folder_id
+        try:
+            if setup is not None:
+                root = await asyncio.to_thread(self._store.create_root, root)
+                persisted = True
+            logical_folder_id, folder_receipt = await self._adapter.create_root_folder(
+                display_name
+            )
+            validate_notes_sync_opaque_id(
+                logical_folder_id, field_name="logical_folder_id"
+            )
+            await asyncio.to_thread(
+                self._store.assign_root_folder, root_id, logical_folder_id
+            )
+            attached = True
+            planned_root = replace(root, logical_folder_id=logical_folder_id)
+            authority = await self._fresh_authority(planned_root)
+            if authority.plan != reviewed:
+                raise ValueError("stale_review")
+            selected = tuple(
+                action
+                for action in authority.plan.safe_actions
+                if action.kind in _EXECUTABLE_ACTIONS
+            )
+            if setup is not None:
+                active_root = await asyncio.to_thread(
+                    self._store.transition_root,
+                    root_id,
+                    NotesSyncRootState.ACTIVE,
+                )
+            else:
+                candidate_ids = tuple(
+                    sorted(
+                        binding.binding_id
+                        for binding in await asyncio.to_thread(
+                            self._store.list_bindings, root_id
+                        )
+                        if binding.state is NotesSyncBindingState.CANDIDATE
+                    )
+                )
+                reviewed_binding_ids = {
+                    action.binding_id
+                    for action in authority.plan.safe_actions
+                    if action.binding_id is not None
+                }
+                if not set(candidate_ids) <= reviewed_binding_ids:
+                    raise ValueError("stale_review")
+                active_root = await asyncio.to_thread(
+                    self._store.activate_migration_candidate,
+                    root_id,
+                    logical_folder_id,
+                    candidate_ids,
+                )
+            persisted = True
+        except Exception as error:
+            if (
+                setup is not None
+                and persisted
+                and folder_receipt is None
+                and not attached
+            ):
+                await self._retire_failed_setup(root_id)
+                return NotesSyncControlResult(False, "failed", "review_settings")
+            if folder_receipt is not None and not attached:
+                try:
+                    await self._adapter.rollback_root_folder(folder_receipt)
+                except Exception:
+                    if persisted and logical_folder_id is not None:
+                        await asyncio.to_thread(
+                            self._store.record_root_activation_recovery,
+                            root_id,
+                            logical_folder_id,
+                        )
+                    await self._publish(
+                        root_id,
+                        "needs_attention",
+                        "review_settings",
+                        persist=False,
+                    )
+                    return NotesSyncControlResult(
+                        False, "needs_attention", "review_settings"
+                    )
+                if setup is not None and persisted:
+                    await self._retire_failed_setup(root_id)
+                    return NotesSyncControlResult(False, "failed", "review_settings")
+            if attached and persisted and logical_folder_id is not None:
+                await asyncio.to_thread(
+                    self._store.record_root_activation_recovery,
+                    root_id,
+                    logical_folder_id,
+                )
+                self._setup_reviews.pop(root_id, None)
+                self._reviews.pop(root_id, None)
+                self._blocked_roots.add(root_id)
+                self._durably_blocked_roots.add(root_id)
+                await self._publish(
+                    root_id,
+                    "needs_attention",
+                    "review_settings",
+                    persist=False,
+                )
+                return NotesSyncControlResult(
+                    False, "needs_attention", "review_settings"
+                )
+            if isinstance(error, ValueError):
+                raise
+            if persisted:
+                await self._publish(root_id, "failed", "review_changes")
+                return NotesSyncControlResult(False, "failed", "review_changes")
+            raise RuntimeError("root_activation_persistence_failed") from None
+        self._setup_reviews.pop(root_id, None)
+        self._reviews.pop(root_id, None)
+        if selected:
+            try:
+                results = await self._execute(active_root, authority, selected)
+            except Exception:
+                return NotesSyncControlResult(False, "failed", "review_changes")
+            applied_count = sum(
+                getattr(result, "state", None) is NotesSyncOperationState.COMPLETED
+                for result in results
+            )
+            if len(results) != len(selected):
+                await self._publish(root_id, "partial", "review_changes")
+                return NotesSyncControlResult(
+                    False, "partial", "review_changes", applied_count
+                )
+            if any(
+                getattr(result, "state", None) is not NotesSyncOperationState.COMPLETED
+                for result in results
+            ):
+                current = self._root_status.get(
+                    root_id, ("needs_attention", "review_changes", None)
+                )
+                return NotesSyncControlResult(
+                    False, current[0], current[1], applied_count
+                )
+        else:
+            applied_count = 0
+            await self._publish(root_id, "up_to_date", "sync_now")
+        self._start_watcher()
+        return NotesSyncControlResult(True, "up_to_date", "sync_now", applied_count)
 
     async def retarget_root(
         self, root_id: str, *_args: object
     ) -> NotesSyncControlResult:
-        return await self._blocked_control(root_id, "retarget_review_required")
+        return await self._blocked_control(root_id)
 
     async def disconnect_root(
         self, root_id: str, *_args: object
     ) -> NotesSyncControlResult:
-        return await self._blocked_control(root_id, "disconnect_review_required")
+        return await self._blocked_control(root_id)
 
-    async def _blocked_control(
-        self, root_id: str, _reason: str
-    ) -> NotesSyncControlResult:
+    async def _blocked_control(self, root_id: str) -> NotesSyncControlResult:
         self._require_cutover(root_id)
         await self._publish(root_id, "needs_attention", "review_settings")
         return NotesSyncControlResult(False, "needs_attention", "review_settings")
@@ -1258,8 +1743,10 @@ class NotesSyncRuntimeOwner:
         next_action: str,
         *,
         action_id: str | None = None,
+        persist: bool = True,
     ) -> None:
-        await asyncio.to_thread(self._store.update_root_status, root_id, status)
+        if persist:
+            await asyncio.to_thread(self._store.update_root_status, root_id, status)
         self._root_status[root_id] = NotesSyncRootRuntimeSnapshot(
             root_id, status, next_action, action_id
         )
@@ -1333,6 +1820,7 @@ def build_notes_sync_runtime_owner(
     *,
     notes_scope_service: object,
     cutover_admitted: bool,
+    profile_process_is_sole: bool,
     database_path: Path | str,
     migrate_legacy: Callable[[], object] | None = None,
     adapter: _RuntimeAdapter | None = None,
@@ -1380,6 +1868,7 @@ def build_notes_sync_runtime_owner(
         watcher_factory=selected_watcher_factory,
         file_notes_binding=file_notes_binding or (lambda: None),
         cutover_admitted=cutover_admitted,
+        profile_process_is_sole=profile_process_is_sole,
     )
     owner_holder["owner"] = owner
     return owner
@@ -1420,6 +1909,7 @@ __all__ = [
     "CUTOVER_MARKER",
     "NotesSyncControlResult",
     "NotesSyncRootRuntimeSnapshot",
+    "NotesSyncRootSetup",
     "NotesSyncRuntimeOwner",
     "NotesSyncRuntimeSnapshot",
     "build_notes_sync_legacy_migrator",

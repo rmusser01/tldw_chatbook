@@ -21,10 +21,12 @@ from tldw_chatbook.Notes.notes_device_state_store import (
 )
 from tldw_chatbook.Notes.notes_sync_coordinator import RootAdmissionState
 from tldw_chatbook.Notes.notes_sync_models import (
+    NotesSyncActionKind,
     NotesSyncBindingState,
     NotesSyncDirection,
     NotesSyncOperationState,
     NotesSyncRootState,
+    NotesSyncSerializationProfile,
 )
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
 from tldw_chatbook.Notes.notes_sync_executor import NotesSyncExecutor
@@ -212,6 +214,67 @@ class _BlockingRootListStore(NotesDeviceStateStore):
         return super().list_root_summaries()
 
 
+class _PostCommitReadFailStore(NotesDeviceStateStore):
+    """Inject the former read-after-commit failure window."""
+
+    fail_committed_read = False
+
+    def activate_migration_candidate(
+        self,
+        root_id: str,
+        logical_folder_id: str,
+        binding_ids: tuple[str, ...],
+    ) -> NotesSyncRootRecord:
+        self.fail_committed_read = True
+        try:
+            return super().activate_migration_candidate(
+                root_id, logical_folder_id, binding_ids
+            )
+        finally:
+            self.fail_committed_read = False
+
+    def get_root(self, root_id: str) -> NotesSyncRootRecord:
+        if self.fail_committed_read:
+            raise RuntimeError("injected post-commit read failure")
+        return super().get_root(root_id)
+
+
+class _RecoveryPostCommitReadFailStore(NotesDeviceStateStore):
+    """Reject a read after a committed activation-recovery write."""
+
+    fail_committed_read = False
+
+    def record_root_activation_recovery(
+        self, root_id: str, logical_folder_id: str
+    ) -> NotesSyncRootRecord:
+        self.fail_committed_read = True
+        try:
+            return super().record_root_activation_recovery(root_id, logical_folder_id)
+        finally:
+            self.fail_committed_read = False
+
+    def get_root(self, root_id: str) -> NotesSyncRootRecord:
+        if self.fail_committed_read:
+            raise RuntimeError("injected post-commit recovery read failure")
+        return super().get_root(root_id)
+
+
+class _StartupInventoryFailStore(NotesDeviceStateStore):
+    def __init__(self, path: Path, stage: str) -> None:
+        super().__init__(path)
+        self.stage = stage
+
+    def list_root_summaries(self):
+        if self.stage == "roots":
+            raise RuntimeError("private inventory failure")
+        return super().list_root_summaries()
+
+    def list_incomplete_operations(self):
+        if self.stage == "recovery":
+            raise RuntimeError("private recovery failure")
+        return super().list_incomplete_operations()
+
+
 class _Executor:
     def __init__(self) -> None:
         self.executed: list[object] = []
@@ -244,6 +307,8 @@ class _Adapter:
         self.observations = observations
         self.observe_calls = 0
         self.executor = _Executor()
+        self.created_folders: list[str] = []
+        self.rolled_back_folders: list[object] = []
 
     async def observe_root(self, _root: NotesSyncRootRecord) -> ReconciliationInput:
         result = self.observations[min(self.observe_calls, len(self.observations) - 1)]
@@ -258,6 +323,13 @@ class _Adapter:
     ) -> _Executor:
         self.executor.after_stage = after_stage
         return self.executor
+
+    async def create_root_folder(self, display_name: str) -> tuple[str, object]:
+        self.created_folders.append(display_name)
+        return "folder-real", "folder-receipt"
+
+    async def rollback_root_folder(self, receipt: object) -> None:
+        self.rolled_back_folders.append(receipt)
 
 
 class _MultiRootAdapter(_Adapter):
@@ -335,6 +407,28 @@ class _BlockingHeartbeatLocalNotes(_LocalNotes):
 
 
 class _Folders:
+    def __init__(self) -> None:
+        self.created: list[str] = []
+        self.deleted: list[str] = []
+
+    def create_folder(self, *, name: str, parent_id: str | None):
+        from tldw_chatbook.Notes.note_folder_models import NoteFolder
+
+        self.created.append(name)
+        return NoteFolder(
+            folder_id="folder-real",
+            parent_id=parent_id,
+            name=name,
+            path=name,
+            normalized_path=name.casefold(),
+            version=1,
+            deleted=False,
+        )
+
+    def soft_delete_folder(self, folder_id: str, *, expected_version: int):
+        self.deleted.append(folder_id)
+        return object()
+
     def reconcile_managed(self, **_kwargs: object) -> tuple[object, ...]:
         return ()
 
@@ -506,12 +600,13 @@ def _owner(
         adapter=adapter,
         watcher_factory=lambda _schedule_hint: selected_watcher,
         cutover_admitted=admitted,
+        profile_process_is_sole=True,
     )
     return owner, selected_coordinator, selected_watcher
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("admitted,marker", [(False, True), (True, False)])
+@pytest.mark.parametrize("admitted,marker", [(False, True)])
 async def test_startup_is_inert_until_both_private_cutover_gates_exist(
     tmp_path: Path,
     admitted: bool,
@@ -528,7 +623,7 @@ async def test_startup_is_inert_until_both_private_cutover_gates_exist(
 
     await owner.start()
 
-    assert migrations == ["migrated"]
+    assert migrations == []
     assert owner.snapshot().status == "awaiting_cutover"
     assert owner.snapshot().next_action == "finish_upgrade"
     assert coordinator.acquire_calls == 0
@@ -544,7 +639,14 @@ async def test_startup_rejects_a_noncanonical_cutover_marker(tmp_path: Path) -> 
     store = _store(tmp_path, marker=False)
     store.set_setting(NotesSyncStoreSetting("cutover_marker", "wrong-marker"))
     adapter = _Adapter([_input()])
-    owner, coordinator, watcher = _owner(store=store, admitted=True, adapter=adapter)
+    migrations: list[str] = []
+    before = (tmp_path / "sync.sqlite3").read_bytes()
+    owner, coordinator, watcher = _owner(
+        store=store,
+        admitted=True,
+        adapter=adapter,
+        migrated=migrations,
+    )
 
     await owner.start()
 
@@ -552,6 +654,8 @@ async def test_startup_rejects_a_noncanonical_cutover_marker(tmp_path: Path) -> 
     assert coordinator.acquire_calls == 0
     assert adapter.observe_calls == 0
     assert not watcher.started.is_set()
+    assert migrations == []
+    assert (tmp_path / "sync.sqlite3").read_bytes() == before
     await owner.shutdown()
 
 
@@ -564,12 +668,13 @@ async def test_migration_failure_is_bounded_and_never_starts_runtime_work(
     coordinator = _Coordinator()
     watcher = _Watcher()
     owner = NotesSyncRuntimeOwner(
-        store=_store(tmp_path),
+        store=_store(tmp_path, marker=False),
         migrate_legacy=lambda: (_ for _ in ()).throw(RuntimeError("private")),
         coordinator=coordinator,
         adapter=_Adapter([_input()]),
         watcher_factory=lambda _schedule: watcher,
         cutover_admitted=True,
+        profile_process_is_sole=True,
     )
 
     await owner.start()
@@ -601,6 +706,7 @@ async def test_inert_builder_performs_no_legacy_read_or_runtime_construction(
     owner = build_notes_sync_runtime_owner(
         notes_scope_service=object(),
         cutover_admitted=False,
+        profile_process_is_sole=True,
         database_path=tmp_path / "sync.sqlite3",
         migrate_legacy=lambda: None,
         adapter=_Adapter([_input()]),
@@ -625,6 +731,7 @@ def test_builder_requires_the_concrete_notes_scope_service_for_production(
         build_notes_sync_runtime_owner(
             notes_scope_service=object(),
             cutover_admitted=True,
+            profile_process_is_sole=True,
             database_path=tmp_path / "sync.sqlite3",
             migrate_legacy=lambda: None,
         )
@@ -641,6 +748,7 @@ def test_builder_cannot_admit_cutover_without_the_idempotent_migrator(
         build_notes_sync_runtime_owner(
             notes_scope_service=object(),
             cutover_admitted=True,
+            profile_process_is_sole=True,
             database_path=tmp_path / "sync.sqlite3",
             adapter=_Adapter([_input()]),
             watcher_factory=lambda _schedule: _Watcher(),
@@ -666,7 +774,7 @@ async def test_production_migration_wrapper_is_idempotent_on_the_real_stores(
         database_path=database_path,
         legacy_connection=lambda: sqlite3.connect(legacy_path),
         settings={},
-        note_scope_id="local",
+        note_scope_id="local_note",
         file_notes_binding=lambda: None,
         private_paths=(),
     )
@@ -717,6 +825,7 @@ async def test_production_builder_executes_one_safe_action_durably(
     owner = build_notes_sync_runtime_owner(
         notes_scope_service=service,
         cutover_admitted=True,
+        profile_process_is_sole=True,
         database_path=tmp_path / "sync.sqlite3",
         migrate_legacy=lambda: None,
         local_user_id="user-1",
@@ -808,6 +917,7 @@ async def test_production_note_observation_does_not_block_the_event_loop(
     owner = build_notes_sync_runtime_owner(
         notes_scope_service=service,
         cutover_admitted=True,
+        profile_process_is_sole=True,
         database_path=tmp_path / "sync.sqlite3",
         migrate_legacy=lambda: None,
         local_user_id="user-1",
@@ -849,6 +959,7 @@ async def test_production_builder_discovers_an_unbound_text_file_once(
     owner = build_notes_sync_runtime_owner(
         notes_scope_service=service,
         cutover_admitted=True,
+        profile_process_is_sole=True,
         database_path=tmp_path / "sync.sqlite3",
         migrate_legacy=lambda: None,
         local_user_id="user-1",
@@ -868,6 +979,672 @@ async def test_production_builder_discovers_an_unbound_text_file_once(
     assert owner._changed_root_ids() == ()
     sync_file.write_text("changed body", encoding="utf-8")
     assert owner._changed_root_ids() == ("root-1",)
+    await owner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_clean_setup_activation_creates_note_binding_and_completed_operation(
+    tmp_path: Path,
+) -> None:
+    from tldw_chatbook.Notes.notes_sync_runtime import (
+        NotesSyncRootSetup,
+        build_notes_sync_runtime_owner,
+    )
+
+    root_path = tmp_path / "new-root"
+    root_path.mkdir()
+    (root_path / "new.md").write_text("new body", encoding="utf-8")
+    folders = _Folders()
+    local_notes = _CreatingLocalNotes("old")
+    owner = build_notes_sync_runtime_owner(
+        notes_scope_service=NotesScopeService(
+            local_notes, None, folder_repository=folders
+        ),
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+        database_path=tmp_path / "sync.sqlite3",
+        migrate_legacy=lambda: None,
+        local_user_id="user-1",
+        recovery_capacity_bytes=1024 * 1024,
+    )
+    await owner.start()
+    review = await owner.review_setup(
+        NotesSyncRootSetup(
+            display_name="Research",
+            canonical_path=str(root_path),
+            note_scope_id="local_note",
+            direction=NotesSyncDirection.BIDIRECTIONAL,
+        )
+    )
+
+    result = await owner.activate_root(review.root_id, review.observation_token)
+
+    assert result.accepted is True
+    assert result.applied_count == 1
+    assert local_notes.note["content"] == "new body"
+    bindings = owner._store.list_bindings(review.root_id)
+    assert len(bindings) == 1
+    assert bindings[0].state is NotesSyncBindingState.ACTIVE
+    with owner._store.transaction() as connection:
+        assert (
+            connection.execute("SELECT state FROM notes_sync_operations").fetchone()[0]
+            == NotesSyncOperationState.COMPLETED.value
+        )
+    assert owner.snapshot().roots[0].status == "up_to_date"
+    assert folders.created == ["Research"]
+    await owner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_post_persist_activation_execution_failure_returns_root_recovery(
+    tmp_path: Path,
+) -> None:
+    from tldw_chatbook.Notes.notes_sync_runtime import (
+        NotesSyncRootSetup,
+        build_notes_sync_runtime_owner,
+    )
+
+    root_path = tmp_path / "failing-root"
+    root_path.mkdir()
+    (root_path / "new.md").write_text("new body", encoding="utf-8")
+    folders = _Folders()
+    owner = build_notes_sync_runtime_owner(
+        notes_scope_service=NotesScopeService(
+            _CreatingLocalNotes("old"), None, folder_repository=folders
+        ),
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+        database_path=tmp_path / "sync.sqlite3",
+        migrate_legacy=lambda: None,
+        local_user_id="user-1",
+        recovery_capacity_bytes=1024 * 1024,
+    )
+    await owner.start()
+    review = await owner.review_setup(
+        NotesSyncRootSetup(
+            display_name="Research",
+            canonical_path=str(root_path),
+            note_scope_id="local_note",
+            direction=NotesSyncDirection.BIDIRECTIONAL,
+        )
+    )
+    failing = _FailingExecutor()
+    owner._adapter.executor_for = lambda _root, **_kwargs: failing
+
+    result = await owner.activate_root(review.root_id, review.observation_token)
+
+    assert (result.accepted, result.status, result.next_action) == (
+        False,
+        "failed",
+        "review_changes",
+    )
+    assert owner._store.get_root(review.root_id).state is NotesSyncRootState.ACTIVE
+    assert folders.created == ["Research"]
+    assert folders.deleted == []
+    assert owner.snapshot().roots[0].status == "failed"
+    assert review.root_id not in owner._setup_reviews
+    await owner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_failed_setup_observation_releases_provisional_lease_before_retry(
+    tmp_path: Path,
+) -> None:
+    from tldw_chatbook.Notes.notes_sync_runtime import (
+        NotesSyncRootSetup,
+        NotesSyncRuntimeOwner,
+    )
+
+    store = NotesDeviceStateStore(tmp_path / "sync.sqlite3")
+    store.initialize()
+    store.set_setting(NotesSyncStoreSetting("cutover_marker", "notes-sync-cutover-v1"))
+    root_path = tmp_path / "setup-root"
+    root_path.mkdir()
+    coordinator = _Coordinator()
+    adapter = _MultiRootAdapter([_input(file_digest=_A, note_digest=_A)])
+    original_observe = adapter.observe_root
+    attempts = 0
+
+    async def fail_then_observe(root: NotesSyncRootRecord) -> ReconciliationInput:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("private observation failure")
+        return await original_observe(root)
+
+    adapter.observe_root = fail_then_observe
+    owner = NotesSyncRuntimeOwner(
+        store=store,
+        migrate_legacy=lambda: None,
+        coordinator=coordinator,
+        adapter=adapter,
+        watcher_factory=lambda _schedule: _Watcher(),
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+    )
+    await owner.start()
+    setup = NotesSyncRootSetup(
+        display_name="Research",
+        canonical_path=str(root_path),
+        note_scope_id="local_note",
+        direction=NotesSyncDirection.BIDIRECTIONAL,
+    )
+
+    with pytest.raises(RuntimeError, match="private observation failure"):
+        await owner.review_setup(setup)
+
+    assert coordinator.events[-3:] == [
+        "lease-admission-closed",
+        "lease-settled",
+        "lease-released",
+    ]
+    assert owner._leases == {}
+    assert owner._admissions == {}
+    assert owner._root_paths == {}
+
+    review = await owner.review_setup(setup)
+    assert review.root_id
+    assert coordinator.acquire_calls == 2
+    await owner.abandon_setup(review.root_id)
+    await owner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_migrated_candidate_requires_current_review_then_activates_exact_pair(
+    tmp_path: Path,
+) -> None:
+    from tldw_chatbook.Notes.notes_sync_runtime import build_notes_sync_runtime_owner
+
+    store = NotesDeviceStateStore(tmp_path / "sync.sqlite3")
+    store.initialize()
+    store.set_setting(NotesSyncStoreSetting("cutover_marker", "notes-sync-cutover-v1"))
+    root_path = tmp_path / "legacy"
+    root_path.mkdir()
+    file_path = root_path / "note.md"
+    file_path.write_text("same", encoding="utf-8")
+    with PosixNotesSyncFilesystem(root_path) as filesystem:
+        file = filesystem.observe("note.md")
+    root_id = "legacy-root-" + "a" * 40
+    binding_id = "legacy-binding-" + "b" * 40
+    store.create_root(
+        NotesSyncRootRecord(
+            root_id=root_id,
+            note_scope_id="local_note",
+            logical_folder_id=None,
+            canonical_path=str(root_path),
+            direction=NotesSyncDirection.BIDIRECTIONAL,
+            state=NotesSyncRootState.PAUSED,
+            last_status_code="migration_review_required",
+        )
+    )
+    store.create_binding(
+        NotesSyncBindingRecord(
+            binding_id=binding_id,
+            root_id=root_id,
+            note_scope_id="local_note",
+            note_id="note-1",
+            normalized_relative_path="note.md",
+            stable_identity_digest=NotesSyncExecutor.stable_identity_digest(file),
+            state=NotesSyncBindingState.CANDIDATE,
+            serialization=file.observation.serialization,
+            content_digest=file.observation.content_digest,
+            note_version=1,
+        )
+    )
+    folders = _Folders()
+    owner = build_notes_sync_runtime_owner(
+        notes_scope_service=NotesScopeService(
+            _LocalNotes("same"), None, folder_repository=folders
+        ),
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+        database_path=tmp_path / "sync.sqlite3",
+        migrate_legacy=lambda: None,
+        local_user_id="user-1",
+        recovery_capacity_bytes=1024 * 1024,
+    )
+    await owner.start()
+    assert owner.snapshot().roots[0].next_action == "review_migration"
+
+    review = await owner.check_root(root_id)
+    assert owner._adapter._bundles == {}
+    assert review.attention == ()
+    assert [action.kind for action in review.safe_actions] == [
+        NotesSyncActionKind.NO_CHANGE
+    ]
+    result = await owner.activate_root(root_id, review.observation_token)
+
+    assert result.accepted is True
+    assert store.get_root(root_id).state is NotesSyncRootState.ACTIVE
+    assert store.get_root(root_id).logical_folder_id == "folder-real"
+    assert store.get_binding(binding_id).state is NotesSyncBindingState.ACTIVE
+    assert len(folders.created) == 1
+    assert folders.created[0].startswith("Migrated notes ")
+    assert owner._adapter._bundles == {}
+    await owner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_migration_activation_has_no_read_after_commit_folder_rollback_window(
+    tmp_path: Path,
+) -> None:
+    store = _PostCommitReadFailStore(tmp_path / "sync.sqlite3")
+    store.initialize()
+    store.set_setting(NotesSyncStoreSetting("cutover_marker", "notes-sync-cutover-v1"))
+    root_path = tmp_path / "legacy-post-commit"
+    root_path.mkdir()
+    root_id = "legacy-root-" + "c" * 40
+    store.create_root(
+        NotesSyncRootRecord(
+            root_id=root_id,
+            note_scope_id="local_note",
+            logical_folder_id=None,
+            canonical_path=str(root_path),
+            direction=NotesSyncDirection.BIDIRECTIONAL,
+            state=NotesSyncRootState.PAUSED,
+            last_status_code="migration_review_required",
+        )
+    )
+    store.create_binding(
+        NotesSyncBindingRecord(
+            binding_id="binding-1",
+            root_id=root_id,
+            note_scope_id="local_note",
+            note_id="note-1",
+            normalized_relative_path="note.md",
+            stable_identity_digest=_C,
+            state=NotesSyncBindingState.CANDIDATE,
+            serialization=NotesSyncSerializationProfile(False, "lf", False, 0o644),
+            content_digest=_A,
+            note_version=1,
+        )
+    )
+    adapter = _MultiRootAdapter([_input(file_digest=_A, note_digest=_A)])
+    owner, _, _ = _owner(store=store, admitted=True, adapter=adapter)
+    await owner.start()
+    review = await owner.check_root(root_id)
+
+    result = await owner.activate_root(root_id, review.observation_token)
+
+    assert result.accepted is True
+    assert (
+        NotesDeviceStateStore.get_root(store, root_id).state
+        is NotesSyncRootState.ACTIVE
+    )
+    assert adapter.rolled_back_folders == []
+    await owner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_activation_recovery_record_has_no_postcommit_read_and_reopens_blocked(
+    tmp_path: Path,
+) -> None:
+    store = _RecoveryPostCommitReadFailStore(tmp_path / "sync.sqlite3")
+    store.initialize()
+    store.set_setting(NotesSyncStoreSetting("cutover_marker", "notes-sync-cutover-v1"))
+    root_path = tmp_path / "recovery-root"
+    root_path.mkdir()
+    store.create_root(
+        NotesSyncRootRecord(
+            root_id="root-recovery",
+            note_scope_id="local_note",
+            logical_folder_id=None,
+            canonical_path=str(root_path),
+            direction=NotesSyncDirection.BIDIRECTIONAL,
+            state=NotesSyncRootState.PENDING,
+        )
+    )
+
+    committed = store.record_root_activation_recovery(
+        "root-recovery", "folder-recovery"
+    )
+
+    assert committed.state is NotesSyncRootState.PAUSED
+    assert committed.last_status_code == "activation_recovery_required"
+    reopened = NotesDeviceStateStore(tmp_path / "sync.sqlite3")
+    owner, _, _ = _owner(
+        store=reopened,
+        admitted=True,
+        adapter=_Adapter([_input(file_digest=_A, note_digest=_A)]),
+    )
+    await owner.start()
+    root = owner.snapshot().roots[0]
+    assert (root.status, root.next_action) == (
+        "needs_attention",
+        "review_settings",
+    )
+    assert reopened.get_root("root-recovery").last_status_code == (
+        "activation_recovery_required"
+    )
+    await owner.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ("coordinator", "roots", "recovery", "resume"))
+async def test_startup_inventory_failure_never_publishes_active_or_opens_admission(
+    tmp_path: Path, stage: str
+) -> None:
+    store = _StartupInventoryFailStore(tmp_path / "sync.sqlite3", stage)
+    store.initialize()
+    store.set_setting(NotesSyncStoreSetting("cutover_marker", "notes-sync-cutover-v1"))
+
+    def coordinator_source():
+        if stage == "coordinator":
+            raise RuntimeError("private coordinator failure")
+        return _Coordinator()
+
+    owner, _, _ = _owner(
+        store=store,
+        admitted=True,
+        adapter=_Adapter([_input(file_digest=_A, note_digest=_A)]),
+        coordinator=coordinator_source,
+    )
+    if stage == "resume":
+
+        async def fail_resume(*_args: object) -> None:
+            raise RuntimeError("private resume failure")
+
+        owner._resume_incomplete = fail_resume
+
+    await owner.start()
+
+    assert (owner.snapshot().status, owner.snapshot().next_action) == (
+        "failed",
+        "review_settings",
+    )
+    assert owner._admission_open is False
+    assert owner.schedule_hint("root-1") is None
+
+
+@pytest.mark.asyncio
+async def test_shutdown_settles_activation_and_partial_cardinality_is_not_success(
+    tmp_path: Path,
+) -> None:
+    from tldw_chatbook.Notes.notes_sync_runtime import NotesSyncRootSetup
+
+    store = NotesDeviceStateStore(tmp_path / "sync.sqlite3")
+    store.initialize()
+    store.set_setting(NotesSyncStoreSetting("cutover_marker", "notes-sync-cutover-v1"))
+    root_path = tmp_path / "activation-shutdown"
+    root_path.mkdir()
+
+    class _SetupTwoActionAdapter(_Adapter):
+        async def observe_root(self, root: NotesSyncRootRecord) -> ReconciliationInput:
+            self.observe_calls += 1
+            return replace(_two_action_input(), root_id=root.root_id)
+
+    adapter = _SetupTwoActionAdapter([_two_action_input()])
+    executor = _BlockingExecutor()
+    adapter.executor = executor
+    owner, coordinator, _ = _owner(
+        store=store,
+        admitted=True,
+        adapter=adapter,
+        coordinator=_Coordinator(),
+    )
+    await owner.start()
+    review = await owner.review_setup(
+        NotesSyncRootSetup(
+            display_name="Research",
+            canonical_path=str(root_path),
+            note_scope_id="local_note",
+            direction=NotesSyncDirection.BIDIRECTIONAL,
+        )
+    )
+    activation = asyncio.create_task(
+        owner.activate_root(review.root_id, review.observation_token)
+    )
+    await executor.started.wait()
+
+    shutdown = asyncio.create_task(owner.shutdown())
+    await asyncio.sleep(0)
+    assert not shutdown.done()
+    assert coordinator.events == []
+    executor.release.set()
+    result = await activation
+    await shutdown
+
+    assert (result.accepted, result.status, result.next_action) == (
+        False,
+        "partial",
+        "review_changes",
+    )
+    assert result.applied_count == 1
+    assert len(executor.executed) == 1
+    assert coordinator.events[-1] == "lease-released"
+
+
+@pytest.mark.asyncio
+async def test_migration_activation_adopts_candidates_and_executes_extra_file(
+    tmp_path: Path,
+) -> None:
+    store = NotesDeviceStateStore(tmp_path / "sync.sqlite3")
+    store.initialize()
+    store.set_setting(NotesSyncStoreSetting("cutover_marker", "notes-sync-cutover-v1"))
+    root_path = tmp_path / "legacy-extra"
+    root_path.mkdir()
+    root_id = "legacy-root-" + "d" * 40
+    store.create_root(
+        NotesSyncRootRecord(
+            root_id=root_id,
+            note_scope_id="local_note",
+            logical_folder_id=None,
+            canonical_path=str(root_path),
+            direction=NotesSyncDirection.BIDIRECTIONAL,
+            state=NotesSyncRootState.PAUSED,
+            last_status_code="migration_review_required",
+        )
+    )
+    store.create_binding(
+        NotesSyncBindingRecord(
+            binding_id="binding-1",
+            root_id=root_id,
+            note_scope_id="local_note",
+            note_id="note-1",
+            normalized_relative_path="note.md",
+            stable_identity_digest=_C,
+            state=NotesSyncBindingState.CANDIDATE,
+            serialization=NotesSyncSerializationProfile(False, "lf", False, 0o644),
+            content_digest=_A,
+            note_version=1,
+        )
+    )
+    base = _input(file_digest=_A, note_digest=_A)
+    extra = replace(
+        base.bindings[0],
+        binding_id="binding-extra",
+        baseline_file_digest=_A,
+        baseline_note_digest=_A,
+        baseline_relative_path="extra.md",
+        baseline_identity_digest=_C,
+        relative_path="extra.md",
+        file_digest=_B,
+        note_digest=None,
+        file_identity_digest=_C,
+        note_id="note-extra",
+        bound=False,
+    )
+    adapter = _Adapter(
+        [replace(base, root_id=root_id, bindings=(base.bindings[0], extra))]
+    )
+    owner, _, _ = _owner(store=store, admitted=True, adapter=adapter)
+    await owner.start()
+    review = await owner.check_root(root_id)
+
+    result = await owner.activate_root(root_id, review.observation_token)
+
+    assert result.accepted is True
+    assert store.get_binding("binding-1").state is NotesSyncBindingState.ACTIVE
+    assert [action.binding_id for action in adapter.executor.executed] == [
+        "binding-extra"
+    ]
+    await owner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_migrated_candidate_refuses_stale_two_sided_drift(
+    tmp_path: Path,
+) -> None:
+    from tldw_chatbook.Notes.notes_sync_runtime import build_notes_sync_runtime_owner
+
+    store = NotesDeviceStateStore(tmp_path / "sync.sqlite3")
+    store.initialize()
+    store.set_setting(NotesSyncStoreSetting("cutover_marker", "notes-sync-cutover-v1"))
+    root_path = tmp_path / "legacy"
+    root_path.mkdir()
+    file_path = root_path / "note.md"
+    file_path.write_text("same", encoding="utf-8")
+    with PosixNotesSyncFilesystem(root_path) as filesystem:
+        file = filesystem.observe("note.md")
+    root_id = "legacy-root-" + "a" * 40
+    binding_id = "legacy-binding-" + "b" * 40
+    store.create_root(
+        NotesSyncRootRecord(
+            root_id=root_id,
+            note_scope_id="local_note",
+            logical_folder_id=None,
+            canonical_path=str(root_path),
+            direction=NotesSyncDirection.BIDIRECTIONAL,
+            state=NotesSyncRootState.PAUSED,
+            last_status_code="migration_review_required",
+        )
+    )
+    store.create_binding(
+        NotesSyncBindingRecord(
+            binding_id=binding_id,
+            root_id=root_id,
+            note_scope_id="local_note",
+            note_id="note-1",
+            normalized_relative_path="note.md",
+            stable_identity_digest=NotesSyncExecutor.stable_identity_digest(file),
+            state=NotesSyncBindingState.CANDIDATE,
+            serialization=file.observation.serialization,
+            content_digest=file.observation.content_digest,
+            note_version=1,
+        )
+    )
+    local_notes = _LocalNotes("same")
+    folders = _Folders()
+    owner = build_notes_sync_runtime_owner(
+        notes_scope_service=NotesScopeService(
+            local_notes, None, folder_repository=folders
+        ),
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+        database_path=tmp_path / "sync.sqlite3",
+        migrate_legacy=lambda: None,
+        local_user_id="user-1",
+        recovery_capacity_bytes=1024 * 1024,
+    )
+    await owner.start()
+    review = await owner.check_root(root_id)
+    file_path.write_text("file changed", encoding="utf-8")
+    local_notes.note["content"] = "note changed"
+    local_notes.note["version"] = 2
+
+    with pytest.raises(ValueError, match="stale_review"):
+        await owner.activate_root(root_id, review.observation_token)
+
+    assert store.get_root(root_id).state is NotesSyncRootState.PAUSED
+    assert store.get_binding(binding_id).state is NotesSyncBindingState.CANDIDATE
+    assert folders.created == []
+    await owner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_two_migrated_candidates_activate_with_distinct_safe_folder_names(
+    tmp_path: Path,
+) -> None:
+    from tldw_chatbook.Notes.note_folder_models import NoteFolder
+    from tldw_chatbook.Notes.notes_sync_runtime import build_notes_sync_runtime_owner
+
+    class _DistinctFolders(_Folders):
+        def create_folder(self, *, name: str, parent_id: str | None):
+            if name in self.created:
+                raise ValueError("folder name already exists")
+            self.created.append(name)
+            ordinal = len(self.created)
+            return NoteFolder(
+                folder_id=f"folder-real-{ordinal}",
+                parent_id=parent_id,
+                name=name,
+                path=name,
+                normalized_path=name.casefold(),
+                version=1,
+                deleted=False,
+            )
+
+    class _TwoNotes(_LocalNotes):
+        def get_note_by_id(self, _user_id: str, note_id: str):
+            if note_id not in {"note-1", "note-2"}:
+                return None
+            return {
+                "id": note_id,
+                "title": "Note",
+                "content": "same",
+                "version": 1,
+                "deleted": False,
+            }
+
+    store = NotesDeviceStateStore(tmp_path / "sync.sqlite3")
+    store.initialize()
+    store.set_setting(NotesSyncStoreSetting("cutover_marker", "notes-sync-cutover-v1"))
+    root_ids: list[str] = []
+    for ordinal, character in enumerate(("a", "b"), start=1):
+        root_path = tmp_path / f"legacy-{ordinal}"
+        root_path.mkdir()
+        (root_path / "note.md").write_text("same", encoding="utf-8")
+        with PosixNotesSyncFilesystem(root_path) as filesystem:
+            file = filesystem.observe("note.md")
+        root_id = "legacy-root-" + character * 40
+        root_ids.append(root_id)
+        store.create_root(
+            NotesSyncRootRecord(
+                root_id=root_id,
+                note_scope_id="local_note",
+                logical_folder_id=None,
+                canonical_path=str(root_path),
+                direction=NotesSyncDirection.BIDIRECTIONAL,
+                state=NotesSyncRootState.PAUSED,
+                last_status_code="migration_review_required",
+            )
+        )
+        store.create_binding(
+            NotesSyncBindingRecord(
+                binding_id=f"legacy-binding-{character * 40}",
+                root_id=root_id,
+                note_scope_id="local_note",
+                note_id=f"note-{ordinal}",
+                normalized_relative_path="note.md",
+                stable_identity_digest=NotesSyncExecutor.stable_identity_digest(file),
+                state=NotesSyncBindingState.CANDIDATE,
+                serialization=file.observation.serialization,
+                content_digest=file.observation.content_digest,
+                note_version=1,
+            )
+        )
+    folders = _DistinctFolders()
+    owner = build_notes_sync_runtime_owner(
+        notes_scope_service=NotesScopeService(
+            _TwoNotes("same"), None, folder_repository=folders
+        ),
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+        database_path=tmp_path / "sync.sqlite3",
+        migrate_legacy=lambda: None,
+        local_user_id="user-1",
+        recovery_capacity_bytes=1024 * 1024,
+    )
+    await owner.start()
+
+    for root_id in root_ids:
+        review = await owner.check_root(root_id)
+        result = await owner.activate_root(root_id, review.observation_token)
+        assert result.accepted is True
+
+    assert len(folders.created) == 2
+    assert len(set(folders.created)) == 2
+    assert all(name.startswith("Migrated notes ") for name in folders.created)
     await owner.shutdown()
 
 
@@ -1529,6 +2306,53 @@ async def test_pause_closes_root_admission_and_releases_its_lease(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    ("resume_input", "accepted", "status", "next_action", "root_state"),
+    (
+        (
+            _input(file_digest=_A, note_digest=_A),
+            True,
+            "up_to_date",
+            "sync_now",
+            NotesSyncRootState.ACTIVE,
+        ),
+        (
+            _input(),
+            False,
+            "changes_available",
+            "review_changes",
+            NotesSyncRootState.PAUSED,
+        ),
+    ),
+)
+async def test_resume_checks_fresh_state_before_reopening_a_paused_root(
+    tmp_path: Path,
+    resume_input: ReconciliationInput,
+    accepted: bool,
+    status: str,
+    next_action: str,
+    root_state: NotesSyncRootState,
+) -> None:
+    store = _store(tmp_path)
+    adapter = _Adapter([_input(file_digest=_A, note_digest=_A), resume_input])
+    owner, _, _ = _owner(store=store, admitted=True, adapter=adapter)
+    await owner.start()
+    await owner.pause_root("root-1")
+
+    result = await owner.resume_root("root-1")
+
+    assert (result.accepted, result.status, result.next_action) == (
+        accepted,
+        status,
+        next_action,
+    )
+    assert store.get_root("root-1").state is root_state
+    assert adapter.observe_calls == 2
+    assert adapter.executor.executed == []
+    await owner.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     "admission,input_value,expected_status,expected_action",
     [
         (RootAdmissionState.PASSIVE, _input(), "passive", "open_active_process"),
@@ -1781,6 +2605,7 @@ async def test_sync_now_restarts_one_failed_watcher_after_a_fresh_check(
         adapter=adapter,
         watcher_factory=lambda _schedule: next(watchers),
         cutover_admitted=True,
+        profile_process_is_sole=True,
     )
     await owner.start()
     await failed.started.wait()
@@ -1823,6 +2648,7 @@ async def test_failed_sync_now_check_does_not_restart_the_watcher(
         adapter=_FailingObservationAdapter([_input(file_digest=_A, note_digest=_A)]),
         watcher_factory=watcher_factory,
         cutover_admitted=True,
+        profile_process_is_sole=True,
     )
     await owner.start()
     await failed.started.wait()
@@ -1875,6 +2701,7 @@ async def test_sync_now_cannot_clear_an_unresolved_recovery_journal(
         adapter=adapter,
         watcher_factory=watcher_factory,
         cutover_admitted=True,
+        profile_process_is_sole=True,
     )
     await owner.start()
     await failed.started.wait()

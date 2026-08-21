@@ -204,7 +204,15 @@ async def test_review_renders_effect_choices_paging_and_posts_physical_messages(
     async with app.run_test(size=(60, 20)) as pilot:
         await pilot.pause()
         assert "Keep file" in _frame(app)
-        assert await pilot.click("#notes-sync-attention-1-0")
+        attention = app.query_one("#notes-sync-attention-1-0", Button)
+        assert attention.disabled is True
+        assert "unavailable in this release" in str(attention.tooltip)
+        assert any(
+            "Conflict and deletion choices are unavailable in this release"
+            in str(copy.renderable)
+            for copy in app.query(".library-disabled-reason")
+        )
+        await pilot.click(attention)
         assert app.query_one("#notes-sync-apply", Button).disabled is True
         next_page = app.query_one("#notes-sync-page-next", Button)
         next_page.scroll_visible(immediate=True)
@@ -214,12 +222,9 @@ async def test_review_renders_effect_choices_paging_and_posts_physical_messages(
         await pilot.pause()
 
     assert any(type(message).__name__ == "PageRequested" for message in app.messages)
-    choice = next(
-        message
-        for message in app.messages
-        if type(message).__name__ == "AttentionChoiceRequested"
+    assert not any(
+        type(message).__name__ == "AttentionChoiceRequested" for message in app.messages
     )
-    assert (choice.item_id, choice.choice) == ("bind-2", "Keep file")
 
 
 async def test_safe_review_apply_posts_only_visible_reviewed_action_ids() -> None:
@@ -273,7 +278,7 @@ async def test_activation_review_posts_distinct_activate_message() -> None:
     )
 
 
-async def test_long_deletion_choices_stack_and_remain_focusable_at_60x20() -> None:
+async def test_long_deletion_choices_stack_and_remain_visible_at_60x20() -> None:
     review = LastingSyncReview(
         root_id="root-1",
         observation_token="e" * 64,
@@ -301,9 +306,8 @@ async def test_long_deletion_choices_stack_and_remain_focusable_at_60x20() -> No
     async with app.run_test(size=(60, 20)) as pilot:
         last = app.query_one("#notes-sync-attention-0-2", Button)
         last.scroll_visible(immediate=True)
-        last.focus()
         await pilot.pause()
-        assert app.focused is last
+        assert last.disabled is True
         assert last in app.screen._compositor.visible_widgets
         assert last.region.right <= 60
 

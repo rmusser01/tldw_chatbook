@@ -1,7 +1,7 @@
 # Library Notes, Folder Files, and Lasting Sync Surface Redesign
 
 Date: 2026-08-20
-Status: Approved for implementation planning
+Status: Approved; local lasting-sync UI cutover implemented 2026-08-21
 Governing decisions:
 [ADR-059](../../../backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md),
 [ADR-073](../../../backlog/decisions/073-notes-sync-round-trip-and-interoperability-constraints.md)
@@ -22,6 +22,13 @@ draft's global `newer_wins`/`disk_wins`/`db_wins` policies, single timer,
 legacy `sync_sessions` receipt mapping, and legacy ownership-gate extension.
 Those concepts conflict with the accepted multi-root, explicit-attention,
 device-private journal architecture.
+
+The production cutover now uses the single **Add from files…** chooser and
+app-owned lasting runtime. Legacy mutation modules, Library handlers/timer,
+first-run/settings writers, and legacy panel CSS are removed. Existing evidence
+is admitted only as paused migration candidates after a restart barrier; a
+current dry-run and explicit activation are required. Server-backed setup
+remains visibly disabled until its separate capability ships.
 
 ## User Decisions
 
@@ -362,6 +369,10 @@ manual folder placements remain. Choosing one side resolves that occurrence
 only; it does not change root direction.
 
 ### Pause, resume, retarget, and disconnect
+
+The cutover release implements Pause and safe Resume. **Retarget** and
+**Disconnect** remain visibly disabled with an unavailable-in-this-release
+reason and do not invoke a runtime mutation.
 
 - Pause closes new automatic admission but lets admitted work reach a durable
   terminal or recovery state.

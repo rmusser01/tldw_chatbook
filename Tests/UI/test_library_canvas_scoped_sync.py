@@ -41,7 +41,6 @@ from tldw_chatbook.Library.library_ingest_state import (
     LibraryIngestFormState,
     build_library_ingest_state,
 )
-from tldw_chatbook.Library.library_notes_sync_state import auto_sync_label
 from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
@@ -147,34 +146,10 @@ async def test_notes_per_click_updates_keep_screen_and_canvas_identity() -> None
             await _wait_for_widget_text(
                 screen, pilot, "#library-notes-sort", "Oldest"
             )
-            screen.query_one("#library-notes-sync-open").press()
-            await _wait_for_selector(screen, pilot, "#library-notes-sync-folder")
-            screen.query_one(
-                "#library-notes-sync-direction-disk_to_db"
-            ).press()
-            await _wait_for_widget_text(
-                screen,
-                pilot,
-                "#library-notes-sync-direction-disk_to_db",
-                "✓",
-            )
-            screen.query_one("#library-notes-sync-conflict-disk_wins").press()
-            await _wait_for_widget_text(
-                screen,
-                pilot,
-                "#library-notes-sync-conflict-disk_wins",
-                "✓",
-            )
-            screen.query_one("#library-notes-sync-auto").press()
-            await _wait_for_widget_text(
-                screen, pilot, "#library-notes-sync-auto", auto_sync_label(True)
-            )
-            screen.query_one("#library-notes-sync-auto").press()
-            await _wait_for_widget_text(
-                screen, pilot, "#library-notes-sync-auto", auto_sync_label(False)
-            )
-            screen.query_one("#library-notes-sync-back").press()
-            await _wait_for_selector(screen, pilot, "#library-notes-sync-open")
+            screen.query_one("#library-notes-add-from-files").press()
+            await _wait_for_selector(screen, pilot, "#notes-add-import-once")
+            screen.query_one("#notes-sync-back").press()
+            await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
             screen.query_one("#library-notes-row-0").press()
             await _wait_for_selector(screen, pilot, "#library-note-title")
 

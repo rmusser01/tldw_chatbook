@@ -364,7 +364,7 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
 from .Notes.Notes_Library import NotesInteropService
 from .Notes.file_notes_git_service import build_file_notes_session_owner
 from .Notes.note_folder_repository import LocalNoteFolderRepository
-from .Notes.notes_scope_service import NotesScopeService
+from .Notes.notes_scope_service import NotesScopeService, ScopeType
 from .Notes.notes_sync_runtime import (
     build_notes_sync_legacy_migrator,
     build_notes_sync_runtime_owner,
@@ -5775,13 +5775,14 @@ class TldwCli(
             database_path=notes_sync_state_path,
             legacy_connection=lambda: self.chachanotes_db.get_connection(),
             settings=self.app_config,
-            note_scope_id="local",
+            note_scope_id=ScopeType.LOCAL_NOTE.value,
             file_notes_binding=self.file_notes_session_owner.current_binding,
             private_paths=(notes_sync_state_path, get_chachanotes_db_path()),
         )
         self.notes_sync_runtime_owner = build_notes_sync_runtime_owner(
             notes_scope_service=self.notes_scope_service,
-            cutover_admitted=False,
+            cutover_admitted=True,
+            profile_process_is_sole=self._instance_lock_status.acquired,
             database_path=notes_sync_state_path,
             migrate_legacy=notes_sync_migrator,
             file_notes_binding=self.file_notes_session_owner.current_binding,
@@ -10024,12 +10025,18 @@ class TldwCli(
             )
         raise primary_error
 
-    @staticmethod
-    def _observe_notes_sync_runtime_start(task: asyncio.Task[None]) -> None:
+    def _observe_notes_sync_runtime_start(self, task: asyncio.Task[None]) -> None:
         """Consume a detached startup failure without exposing private detail."""
 
-        if not task.cancelled() and task.exception() is not None:
+        if task.cancelled():
+            return
+        if task.exception() is not None:
             logger.error("Notes sync runtime startup failed.")
+            return
+        screen = self.screen
+        refresh = getattr(screen, "refresh_notes_sync_runtime", None)
+        if callable(refresh):
+            self.call_after_refresh(refresh)
 
     def on_mount(self) -> None:
         """Configure logging and schedule post-mount setup."""

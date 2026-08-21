@@ -831,7 +831,7 @@ _SETUP_DRAFT_FIELD_TYPES: Mapping[str, Mapping[str, type]] = {
     STEP_RAG: {"embedding_model": str},
     STEP_SPEECH: {},
     STEP_TOOLS: {},
-    STEP_NOTES: {"auto_sync_enabled": bool},
+    STEP_NOTES: {},
     STEP_APPEARANCE: {"theme": str, "splash_card": str},
     STEP_PROTECT: {"encryption_enabled": bool},
     STEP_SUMMARY: {},
@@ -1266,30 +1266,6 @@ def tools_commit_delta(
     }
 
 
-def build_notes_commit(
-    *, sync_directory: str | None = None, auto_sync_enabled: bool
-) -> dict[str, dict[str, Any]]:
-    """Mutation for the notes-sync step.
-
-    ``sync_directory`` is optional: omit it (leave as None) to commit only
-    the enabled flag -- e.g. an OFF-transition on re-run, where the
-    directory should survive untouched. ``save_settings_to_cli_config``
-    merges per-key within a section, so a dict missing "sync_directory"
-    never clobbers the persisted value; passing an empty string here would.
-
-    Args:
-        sync_directory: The notes-sync directory to persist, or None to
-            omit the key entirely (see above).
-        auto_sync_enabled: Whether notes sync should be turned on.
-
-    Returns:
-        The section/value mapping to persist under ``notes``.
-    """
-    values: dict[str, Any] = {"auto_sync_enabled": auto_sync_enabled}
-    if sync_directory is not None:
-        values["sync_directory"] = sync_directory
-    return {"notes": values}
-
 
 def build_appearance_commit(
     *,
@@ -1431,8 +1407,6 @@ class WizardPrefill:
 
     provider_value: str = ""
     model_id: str = ""
-    sync_directory: str = ""
-    auto_sync_enabled: bool = False
     default_theme: str = ""
     tool_gates: tuple[tuple[str, bool], ...] = ()
     card_selection: str = ""
@@ -1548,15 +1522,12 @@ def read_provider_secret_presence(
 
 def read_wizard_prefill(app_config: Mapping[str, object]) -> WizardPrefill:
     chat_defaults = _section(app_config, "chat_defaults")
-    notes = _section(app_config, "notes")
     general = _section(app_config, "general")
     tools = _section(app_config, "tools")
     splash_screen = _section(app_config, "splash_screen")
     return WizardPrefill(
         provider_value=str(chat_defaults.get("provider") or ""),
         model_id=str(chat_defaults.get("model") or ""),
-        sync_directory=str(notes.get("sync_directory") or ""),
-        auto_sync_enabled=coerce_wizard_flag(notes.get("auto_sync_enabled")),
         default_theme=str(general.get("default_theme") or ""),
         tool_gates=tuple(
             (str(key), coerce_wizard_flag(value)) for key, value in tools.items()
@@ -1610,7 +1581,6 @@ def build_summary_rows(
     # committed endpoint (the one-click "Use this server" path).
     provider_ok = provider_summary_configured(app_config, environ)
     tools_on = [key for key, value in prefill.tool_gates if value]
-    notes_on = prefill.auto_sync_enabled and bool(prefill.sync_directory)
     encryption_on = coerce_wizard_flag(
         _section(app_config, "encryption").get("enabled")
     )
@@ -1727,9 +1697,9 @@ def build_summary_rows(
             f"{len(tools_on)} enabled" if tools_on else "all off (default)",
         ),
         SummaryRow(
-            "Notes sync",
-            ROW_CONFIGURED if notes_on else ROW_DEFAULT,
-            prefill.sync_directory if notes_on else "off",
+            "Notes folder sync",
+            ROW_DEFAULT,
+            "set up later in Library",
         ),
         SummaryRow(
             "Theme",

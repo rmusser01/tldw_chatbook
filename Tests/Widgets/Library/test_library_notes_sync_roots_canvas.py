@@ -83,24 +83,53 @@ async def test_declared_review_action_is_first_and_visually_primary() -> None:
         assert not actions[1].has_class("console-action-primary")
 
 
-async def test_root_controls_post_typed_messages_and_disconnect_copy_is_no_delete() -> (
-    None
-):
+async def test_migration_review_is_a_physical_primary_action_at_60x20() -> None:
+    snapshot = replace(
+        initial_lasting_sync_snapshot(lasting_available=True),
+        phase="roots",
+        roots=(
+            LastingSyncRootRow(
+                "legacy-root-" + "a" * 40,
+                "Sync folder (name unavailable before cutover)",
+                "paused",
+                "review_migration",
+                "Ⅱ Migration review required",
+                "Review migration",
+            ),
+        ),
+    )
+    app = _Host(snapshot)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        button = app.query_one("#notes-sync-root-migration-0", Button)
+        assert button.has_class("console-action-primary")
+        assert await pilot.click(button)
+        await pilot.pause()
+
+    assert [(message.root_id, message.action) for message in app.messages] == [
+        ("legacy-root-" + "a" * 40, "migration")
+    ]
+
+
+async def test_unimplemented_root_management_is_disabled_with_explicit_reason() -> None:
     app = _Host(_snapshot())
     async with app.run_test(size=(80, 24)) as pilot:
         assert await pilot.click("#notes-sync-root-check-0")
+        retarget = app.query_one("#notes-sync-root-retarget-0", Button)
         disconnect = app.query_one("#notes-sync-root-disconnect-0", Button)
-        disconnect.scroll_visible(immediate=True)
+        for button in (retarget, disconnect):
+            button.scroll_visible(immediate=True)
+            assert button.disabled is True
+            assert "unavailable in this release" in str(button.tooltip)
         await pilot.pause()
-        assert await pilot.click(disconnect)
+        await pilot.click(disconnect)
         await pilot.pause()
         painted = _frame(app)
 
     assert [(message.root_id, message.action) for message in app.messages] == [
         ("root-1", "check"),
-        ("root-1", "disconnect"),
     ]
-    assert "does not delete files or notes" in painted
+    assert "Retarget and Disconnect are unavailable in this release" in painted
 
 
 async def test_root_canvas_is_scrollable_contained_and_focusable_at_60x20() -> None:

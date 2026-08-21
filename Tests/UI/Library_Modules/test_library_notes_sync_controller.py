@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from inspect import signature
 
 import pytest
 
@@ -19,6 +20,10 @@ from tldw_chatbook.UI.Library_Modules.library_notes_sync_controller import (
 
 pytestmark = pytest.mark.asyncio
 TOKEN = "b" * 64
+
+
+async def test_runtime_snapshot_is_the_only_availability_source() -> None:
+    assert "lasting_available" not in signature(LibraryNotesSyncController).parameters
 
 
 @dataclass
@@ -54,6 +59,9 @@ class _Runtime:
             managed_placement_effects=(),
             deletion_groups=(),
         )
+
+    async def abandon_setup(self, root_id: str) -> None:
+        self.calls.append(("abandon_setup", root_id))
 
     async def request_sync_now(self, root_id: str) -> ReconciliationPlan:
         self.calls.append(("request_sync_now", root_id))
@@ -100,12 +108,41 @@ async def test_import_once_routes_exactly_once_to_existing_import_controller() -
     controller = LibraryNotesSyncController(
         runtime=runtime,
         import_controller=importer,
-        lasting_available=False,
     )
 
     assert controller.choose_relationship("import_once") == "import"
     assert importer.calls == 1
     assert runtime.calls == []
+
+
+async def test_refresh_after_runtime_start_updates_availability_and_candidates() -> (
+    None
+):
+    runtime = _Runtime()
+    current = NotesSyncRuntimeSnapshot("starting", "wait")
+    runtime.snapshot = lambda: current
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    assert controller.snapshot.lasting_available is False
+    assert controller.snapshot.roots == ()
+
+    current = NotesSyncRuntimeSnapshot(
+        "active",
+        "sync_now",
+        (
+            NotesSyncRootRuntimeSnapshot(
+                "legacy-root-" + "a" * 40,
+                "paused",
+                "review_migration",
+            ),
+        ),
+    )
+    controller.refresh_roots()
+
+    assert controller.snapshot.lasting_available is True
+    assert controller.snapshot.roots[0].next_action == "review_migration"
 
 
 async def test_check_and_apply_reviewed_use_observation_token_and_selected_actions() -> (
@@ -115,7 +152,6 @@ async def test_check_and_apply_reviewed_use_observation_token_and_selected_actio
     controller = LibraryNotesSyncController(
         runtime=runtime,
         import_controller=_ImportController(),
-        lasting_available=True,
     )
 
     await controller.check_root("root-1")
@@ -129,6 +165,35 @@ async def test_check_and_apply_reviewed_use_observation_token_and_selected_actio
     assert "1 applied" in controller.snapshot.receipt_line
 
 
+async def test_migration_review_is_activation_typed_and_uses_activate_path() -> None:
+    runtime = _Runtime()
+    runtime.snapshot = lambda: NotesSyncRuntimeSnapshot(
+        "active",
+        "sync_now",
+        (
+            NotesSyncRootRuntimeSnapshot(
+                "legacy-root-" + "a" * 40,
+                "paused",
+                "review_migration",
+            ),
+        ),
+    )
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    root_id = "legacy-root-" + "a" * 40
+
+    await controller.check_migration(root_id)
+    await controller.activate_root(root_id)
+
+    assert controller.snapshot.review.activation is True
+    assert runtime.calls == [
+        ("check_root", root_id),
+        ("activate_root", root_id, TOKEN),
+    ]
+
+
 async def test_stale_review_returns_to_review_with_check_again_and_does_not_retry() -> (
     None
 ):
@@ -136,7 +201,6 @@ async def test_stale_review_returns_to_review_with_check_again_and_does_not_retr
     controller = LibraryNotesSyncController(
         runtime=runtime,
         import_controller=_ImportController(),
-        lasting_available=True,
     )
     await controller.check_root("root-1")
     runtime.stale = True
@@ -173,7 +237,6 @@ async def test_stale_review_paging_cannot_restore_apply_eligibility() -> None:
     controller = LibraryNotesSyncController(
         runtime=runtime,
         import_controller=_ImportController(),
-        lasting_available=True,
     )
     await controller.check_root("root-1")
     runtime.stale = True
@@ -193,7 +256,6 @@ async def test_root_controls_are_explicit_and_disconnect_copy_promises_no_deleti
     controller = LibraryNotesSyncController(
         runtime=runtime,
         import_controller=_ImportController(),
-        lasting_available=True,
     )
 
     await controller.pause_root("root-1")
@@ -210,10 +272,12 @@ async def test_root_controls_are_explicit_and_disconnect_copy_promises_no_deleti
 
 async def test_inert_controller_never_calls_activation() -> None:
     runtime = _Runtime()
+    runtime.snapshot = lambda: NotesSyncRuntimeSnapshot(
+        "awaiting_cutover", "finish_upgrade"
+    )
     controller = LibraryNotesSyncController(
         runtime=runtime,
         import_controller=_ImportController(),
-        lasting_available=False,
     )
 
     result = await controller.activate_root("root-1")
@@ -231,7 +295,6 @@ async def test_active_fake_publishes_activating_before_truthful_review_required_
     controller = LibraryNotesSyncController(
         runtime=runtime,
         import_controller=_ImportController(),
-        lasting_available=True,
         publish_snapshot=lambda snapshot: phases.append(snapshot.phase),
     )
 
@@ -239,7 +302,7 @@ async def test_active_fake_publishes_activating_before_truthful_review_required_
 
     assert accepted is False
     assert "activating" in phases
-    assert controller.snapshot.phase == "review"
+    assert controller.snapshot.phase == "roots"
     assert "needs attention" in controller.snapshot.status_line.casefold()
 
 
@@ -255,7 +318,6 @@ async def test_activation_failure_is_bounded_redacted_and_leaves_activating_phas
     controller = LibraryNotesSyncController(
         runtime=runtime,
         import_controller=_ImportController(),
-        lasting_available=True,
     )
 
     accepted = await controller.activate_root("root-1")
@@ -295,7 +357,6 @@ async def test_root_status_projection_names_bounded_next_action(
     controller = LibraryNotesSyncController(
         runtime=runtime,
         import_controller=_ImportController(),
-        lasting_available=True,
     )
 
     root = controller.snapshot.roots[0]
@@ -314,7 +375,6 @@ async def test_runtime_failure_is_bounded_redacted_and_leaves_checking_phase() -
     controller = LibraryNotesSyncController(
         runtime=runtime,
         import_controller=_ImportController(),
-        lasting_available=True,
     )
 
     await controller.check_root("root-1")
@@ -336,7 +396,6 @@ async def test_control_failure_publishes_explicit_bounded_recovery_action() -> N
     controller = LibraryNotesSyncController(
         runtime=runtime,
         import_controller=_ImportController(),
-        lasting_available=True,
     )
 
     await controller.pause_root("root-1")
@@ -359,7 +418,6 @@ async def test_root_list_is_bounded_and_pageable_without_paths() -> None:
     controller = LibraryNotesSyncController(
         runtime=runtime,
         import_controller=_ImportController(),
-        lasting_available=True,
     )
 
     assert len(controller.snapshot.roots) == 20
@@ -373,7 +431,6 @@ async def test_rejected_resume_is_not_reported_as_success() -> None:
     controller = LibraryNotesSyncController(
         runtime=_Runtime(),
         import_controller=_ImportController(),
-        lasting_available=True,
     )
 
     await controller.resume_root("root-1")
@@ -408,7 +465,6 @@ async def test_controller_privately_applies_all_safe_actions_across_review_pages
     controller = LibraryNotesSyncController(
         runtime=runtime,
         import_controller=_ImportController(),
-        lasting_available=True,
     )
     await controller.check_root("root-1")
 
@@ -426,7 +482,6 @@ async def test_manual_sync_now_and_operation_recovery_use_existing_runtime_metho
     controller = LibraryNotesSyncController(
         runtime=runtime,
         import_controller=_ImportController(),
-        lasting_available=True,
     )
 
     await controller.sync_now("root-1")

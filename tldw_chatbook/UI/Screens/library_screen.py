@@ -217,16 +217,6 @@ from ...Library.library_notes_session import (
     NoteSaveOutcome,
     NoteSaveOutcomeKind,
 )
-from ...Library.library_notes_sync_state import (
-    AUTO_SYNC_INTERVAL_SECONDS,
-    SYNC_CONFLICTS,
-    SYNC_DIRECTIONS,
-    LibraryNotesSyncState,
-    append_activity,
-    count_noun,
-    sync_conflict_label,
-    sync_status_line,
-)
 from ...Library.library_notes_tree_state import (
     LibraryNotesTreeIdentity,
     LibraryNotesTreeProjection,
@@ -2341,19 +2331,13 @@ class LibraryScreen(BaseAppScreen):
     #library-note-heading,
     #library-note-title-row,
     #library-note-context-keywords-row,
-    #library-notes-create-heading,
-    #library-notes-sync-heading,
-    #library-notes-sync-folder-row,
-    #library-notes-sync-direction-row,
-    #library-notes-sync-conflict-row,
-    #library-notes-sync-actions {
+    #library-notes-create-heading {
         layout: vertical;
         height: auto;
         min-height: 0;
     }
 
-    #library-notes-create-viewport,
-    #library-notes-sync-viewport {
+    #library-notes-create-viewport {
         height: 1fr;
         min-height: 0;
         overflow-y: auto;
@@ -2550,8 +2534,7 @@ class LibraryScreen(BaseAppScreen):
     #library-canvas.library-notes-compact #library-note-preview-title,
     #library-canvas.library-notes-compact #library-note-context-title,
     #library-canvas.library-notes-compact #library-note-loading-title,
-    #library-canvas.library-notes-compact #library-notes-create-header,
-    #library-canvas.library-notes-compact #library-notes-sync-header {
+    #library-canvas.library-notes-compact #library-notes-create-header {
         width: 1fr;
         height: 1;
         min-height: 1;
@@ -2586,8 +2569,7 @@ class LibraryScreen(BaseAppScreen):
     }
 
     #library-canvas.library-notes-compact #library-note-title,
-    #library-canvas.library-notes-compact #library-note-context-keywords,
-    #library-canvas.library-notes-compact #library-notes-sync-folder {
+    #library-canvas.library-notes-compact #library-note-context-keywords {
         width: 1fr;
         height: 1;
         min-height: 1;
@@ -2740,23 +2722,6 @@ class LibraryScreen(BaseAppScreen):
         overflow-x: hidden;
     }
 
-    #library-canvas.library-notes-compact #library-notes-sync-heading {
-        layout: horizontal;
-        height: 1;
-        min-height: 1;
-        max-height: 1;
-        margin: 0;
-    }
-
-    #library-canvas.library-notes-compact #library-notes-sync-viewport {
-        height: 1fr;
-        min-height: 0;
-        margin: 0;
-        padding: 0;
-        overflow-y: auto;
-        overflow-x: hidden;
-    }
-
     #library-canvas.library-notes-compact #library-note-load-state {
         width: 100%;
         height: 1fr;
@@ -2788,51 +2753,6 @@ class LibraryScreen(BaseAppScreen):
         min-height: 0;
         margin: 0;
         overflow-y: auto;
-        overflow-x: hidden;
-    }
-
-    #library-canvas.library-notes-compact #library-notes-sync-purpose,
-    #library-canvas.library-notes-compact #library-notes-sync-folder-row,
-    #library-canvas.library-notes-compact #library-notes-sync-direction-row,
-    #library-canvas.library-notes-compact #library-notes-sync-conflict-row,
-    #library-canvas.library-notes-compact #library-notes-sync-actions,
-    #library-canvas.library-notes-compact #library-notes-sync-status {
-        height: 1;
-        min-height: 1;
-        max-height: 1;
-        margin: 0;
-        overflow-x: hidden;
-    }
-
-    #library-canvas.library-notes-compact #library-notes-sync-activity {
-        height: auto;
-        min-height: 1;
-        margin: 0;
-        overflow-x: hidden;
-    }
-
-    #library-canvas.library-notes-compact #library-notes-sync-folder-row,
-    #library-canvas.library-notes-compact #library-notes-sync-direction-row,
-    #library-canvas.library-notes-compact #library-notes-sync-conflict-row,
-    #library-canvas.library-notes-compact #library-notes-sync-actions {
-        layout: horizontal;
-    }
-
-    #library-canvas.library-notes-compact #library-notes-sync-folder-label,
-    #library-canvas.library-notes-compact #library-notes-sync-direction-label,
-    #library-canvas.library-notes-compact #library-notes-sync-conflict-label {
-        width: 11;
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-    }
-
-    #library-canvas.library-notes-compact #library-notes-sync-direction-choices,
-    #library-canvas.library-notes-compact #library-notes-sync-conflict-choices {
-        width: 1fr;
-        height: 1;
-        min-height: 1;
-        margin: 0;
         overflow-x: hidden;
     }
 
@@ -3289,14 +3209,11 @@ class LibraryScreen(BaseAppScreen):
         )
         # TASK-19010 is presentation-only. The app owns runtime lifecycle;
         # harnesses without it receive an honest inert structural adapter.
-        lasting_runtime = (
-            getattr(app_instance, "notes_sync_runtime_owner", None)
-            or InertLastingSyncRuntime()
-        )
+        app_lasting_runtime = getattr(app_instance, "notes_sync_runtime_owner", None)
+        lasting_runtime = app_lasting_runtime or InertLastingSyncRuntime()
         self._library_notes_sync_controller = LibraryNotesSyncController(
             runtime=lasting_runtime,
             import_controller=self._library_note_import_controller,
-            lasting_available=False,
             publish_snapshot=self._publish_library_notes_lasting_sync_snapshot,
         )
         self._library_notes_lasting_sync_snapshot = (
@@ -3646,27 +3563,6 @@ class LibraryScreen(BaseAppScreen):
         # deep link / full editor reset) -- deliberately NOT cleared by a
         # save, so the distinction survives a save round-trip.
         self._library_note_title_user_edited: bool = False
-        # Notes sync panel state. Seeded from config lazily on first entry
-        # into sync mode (``_ensure_library_notes_sync_config_loaded``), not
-        # here in __init__, so tests/screens that never open the sync panel
-        # never pay for a config read.
-        self._library_notes_sync_config_loaded: bool = False
-        self._library_notes_sync_direction: str = "bidirectional"
-        self._library_notes_sync_conflict: str = "newer_wins"
-        self._library_notes_sync_auto: bool = False
-        self._library_notes_sync_status: str = "idle"
-        self._library_notes_sync_activity: tuple[str, ...] = ()
-        self._library_notes_sync_counter: int = 0
-        self._library_notes_sync_active_token: int | None = None
-        self._library_notes_sync_running: bool = False
-        self._library_notes_auto_sync_timer: Timer | None = None
-        # The folder box's live (possibly uncommitted) text. Typing updates
-        # only this field -- persisting to the TOML config on every
-        # Input.Changed meant a full config rewrite + cache reload per
-        # keystroke. It commits to config on Enter, Browse…, or a validated
-        # Sync now run. None = not edited this panel visit; fall back to the
-        # persisted config value.
-        self._library_notes_sync_folder_text: str | None = None
         # Ingest canvas form echo -- a single bundled mutable dataclass
         # (rather than a scatter of scalar fields like the sync panel
         # above) since every field here is reset together on rail
@@ -4343,15 +4239,15 @@ class LibraryScreen(BaseAppScreen):
     def _library_notes_focus_region(
         self,
     ) -> Literal[
-        "", "navigator", "editor", "preview", "context", "create", "sync", "import"
+        "", "navigator", "editor", "preview", "context", "create", "lasting_add", "lasting_roots", "import"
     ]:
         """Return the semantic Notes region currently presented by the host."""
         if self._library_selected_row_id == LIBRARY_ROW_CREATE_NOTE:
             return "create"
         if self._library_selected_row_id != LIBRARY_ROW_BROWSE_NOTES:
             return ""
-        if self._library_notes_view == "sync":
-            return "sync"
+        if self._library_notes_view in {"lasting_add", "lasting_roots"}:
+            return self._library_notes_view
         if self._library_notes_view == "import":
             return "import"
         if self._library_notes_view == "list":
@@ -4443,9 +4339,10 @@ class LibraryScreen(BaseAppScreen):
             "library-note-load-retry": "load-retry",
             "library-note-conflict-copy": "conflict-callout",
             "library-note-delete-cancel": "delete-cancel",
-            "library-notes-sync-folder": "sync-folder",
-            "library-notes-sync-auto": "sync-auto",
-            "library-notes-sync-run": "sync-run",
+            "notes-sync-display-name": "lasting-display-name",
+            "notes-sync-folder-choose": "lasting-folder-choose",
+            "notes-sync-check": "lasting-check",
+            "notes-sync-roots-back": "lasting-roots-back",
             "note-import-add-source": "import-add-source",
             "note-import-destination": "import-destination",
             "note-import-check": "import-check",
@@ -4461,17 +4358,15 @@ class LibraryScreen(BaseAppScreen):
             "library-note-back",
             "library-note-context-back",
             "library-notes-create-back",
-            "library-notes-sync-back",
+            "notes-sync-back",
+            "notes-sync-roots-back",
         }:
             return f"region-back:{self._library_notes_focus_region()}"
         if widget_id.startswith("library-note-context-"):
             return f"context-action:{widget_id}"
-        direction = "library-notes-sync-direction-"
+        direction = "notes-sync-direction-"
         if widget_id.startswith(direction):
-            return f"sync-direction:{widget_id.removeprefix(direction)}"
-        conflict = "library-notes-sync-conflict-"
-        if widget_id.startswith(conflict):
-            return f"sync-conflict-policy:{widget_id.removeprefix(conflict)}"
+            return f"sync-direction:{widget_id.removeprefix(direction).replace('-', '_')}"
         return ""
 
     def _library_landing_focus_control_id(self, focused: Widget | None) -> str:
@@ -4529,7 +4424,8 @@ class LibraryScreen(BaseAppScreen):
             "preview": "#library-note-preview-region",
             "context": "#library-note-context-region",
             "create": "#library-notes-create-viewport",
-            "sync": "#library-notes-sync-viewport",
+            "lasting_add": "#notes-sync-body",
+            "lasting_roots": "#notes-sync-roots-body",
             "import": "#library-note-import-canvas",
         }.get(region)
         if selector is None:
@@ -4721,9 +4617,10 @@ class LibraryScreen(BaseAppScreen):
             "load-retry": "#library-note-load-retry",
             "conflict-callout": "#library-note-conflict-copy",
             "delete-cancel": "#library-note-delete-cancel",
-            "sync-folder": "#library-notes-sync-folder",
-            "sync-auto": "#library-notes-sync-auto",
-            "sync-run": "#library-notes-sync-run",
+            "lasting-display-name": "#notes-sync-display-name",
+            "lasting-folder-choose": "#notes-sync-folder-choose",
+            "lasting-check": "#notes-sync-check",
+            "lasting-roots-back": "#notes-sync-roots-back",
             "import-add-source": "#note-import-add-source",
             "import-destination": "#note-import-destination",
             "import-check": "#note-import-check",
@@ -4736,19 +4633,13 @@ class LibraryScreen(BaseAppScreen):
         if role.startswith("context-action:"):
             selector = f"#{role.removeprefix('context-action:')}"
         elif role.startswith("sync-direction:"):
-            selector = (
-                f"#library-notes-sync-direction-{role.removeprefix('sync-direction:')}"
-            )
-        elif role.startswith("sync-conflict-policy:"):
-            selector = (
-                "#library-notes-sync-conflict-"
-                f"{role.removeprefix('sync-conflict-policy:')}"
-            )
+            selector = f"#notes-sync-direction-{role.removeprefix('sync-direction:').replace('_', '-')}"
         elif role.startswith("region-back:"):
             selector = {
                 "context": "#library-note-context-back",
                 "create": "#library-notes-create-back",
-                "sync": "#library-notes-sync-back",
+                "lasting_add": "#notes-sync-back",
+                "lasting_roots": "#notes-sync-roots-back",
             }.get(role.removeprefix("region-back:"), "#library-note-back")
         elif role.startswith("landing-control:"):
             control_id = role.removeprefix("landing-control:")
@@ -4856,9 +4747,13 @@ class LibraryScreen(BaseAppScreen):
             return self._library_notes_role_target(
                 dataclasses.replace(identity, semantic_role="create-template:blank")
             )
-        if region == "sync":
+        if region == "lasting_add":
             return self._library_notes_role_target(
-                dataclasses.replace(identity, semantic_role="sync-folder")
+                dataclasses.replace(identity, semantic_role="lasting-display-name")
+            )
+        if region == "lasting_roots":
+            return self._library_notes_role_target(
+                dataclasses.replace(identity, semantic_role="lasting-roots-back")
             )
         if region == "import":
             phase = self._library_note_import_controller.snapshot.phase
@@ -5080,7 +4975,8 @@ class LibraryScreen(BaseAppScreen):
             "preview",
             "context",
             "create",
-            "sync",
+            "lasting_add",
+            "lasting_roots",
         }:
             return "notes"
         return "rail"
@@ -5383,7 +5279,8 @@ class LibraryScreen(BaseAppScreen):
             "preview",
             "context",
             "create",
-            "sync",
+            "lasting_add",
+            "lasting_roots",
         ):
             owner = self._library_notes_scroll_owner(region)
             if owner is not None:
@@ -5701,9 +5598,10 @@ class LibraryScreen(BaseAppScreen):
                 (("enter", "create note"), ("esc", "back to notes")),
                 (("enter", "create"), ("esc", "notes")),
             )
-        if region == "sync":
-            if self._library_notes_sync_active_token is not None:
-                return ()
+        if region in {"lasting_add", "lasting_roots"}:
+            phase = self._library_notes_sync_controller.snapshot.phase
+            if phase in {"checking", "activating"}:
+                return (("wait", "current step"),)
             return self._notes_footer_tier(
                 (("enter", "run action"), ("esc", "back to notes")),
                 (("enter", "act"), ("esc", "notes")),
@@ -5944,20 +5842,8 @@ class LibraryScreen(BaseAppScreen):
             self._library_note_create_status = ""
             await self._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
             return
-        if self._library_notes_view == "sync":
-            if self._library_notes_sync_active_token is not None:
-                notify = getattr(self.app_instance, "notify", None)
-                if callable(notify):
-                    notify(
-                        "Sync is running — wait for it to finish.", severity="warning"
-                    )
-                return
-            self._supersede_library_notes_navigation()
-            self._library_notes_view = "list"
-            self._reset_library_notes_sync_transient_state()
-            _sync_library_canvas(
-                self, "notes", then=self._focus_library_notes_filter_input
-            )
+        if self._library_notes_view in {"lasting_add", "lasting_roots"}:
+            await self._exit_library_notes_lasting_sync()
             return
         if self._library_notes_view == "import":
             phase = self._library_note_import_controller.snapshot.phase
@@ -6140,6 +6026,23 @@ class LibraryScreen(BaseAppScreen):
             direction=1,
         )
 
+    def refresh_notes_sync_runtime(self) -> None:
+        """Project the app-owned runtime after detached startup settles."""
+
+        self._library_notes_sync_controller.refresh_roots()
+        if (
+            self.is_mounted
+            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+            and self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
+            and self._library_notes_view == "list"
+        ):
+            _sync_library_canvas(self, "notes")
+
+    def on_screen_resume(self) -> None:
+        """Refresh lasting-sync availability whenever Library becomes current."""
+
+        self.call_after_refresh(self.refresh_notes_sync_runtime)
+
     def on_mount(self) -> None:
         """Populate the Library on entry, rendering instantly from cache.
 
@@ -6159,6 +6062,7 @@ class LibraryScreen(BaseAppScreen):
         # No super().on_mount(): the dispatcher already invokes
         # BaseAppScreen.on_mount separately for this Mount event.
         self.call_after_refresh(self._update_library_notes_responsive_state)
+        self.call_after_refresh(self.refresh_notes_sync_runtime)
         self._load_library_ingest_options_from_config()
         self.set_timer(
             LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS,
@@ -6336,7 +6240,6 @@ class LibraryScreen(BaseAppScreen):
         self._library_prompt_collections_controller.invalidate()
         self._clear_library_prompt_selection(announce=False)
         self._library_prompt_mutation_disabled_states.clear()
-        self._cancel_library_notes_auto_sync_timer()
         self._invalidate_library_external_submission()
         super().on_unmount()
         registry = self._library_ingest_registry()
@@ -12344,7 +12247,6 @@ class LibraryScreen(BaseAppScreen):
             "filter_value": self._library_notes_filter,
             "mode": "list",
             "presentation_state": None,
-            "sync_panel_state": None,
             "import_snapshot": self._library_note_import_snapshot,
             "import_receipt_available": (
                 self._library_note_import_controller.snapshot.can_revisit_receipt
@@ -12367,9 +12269,6 @@ class LibraryScreen(BaseAppScreen):
         }
         if self._library_selected_row_id == LIBRARY_ROW_CREATE_NOTE:
             values["mode"] = "create"
-        elif self._library_notes_view == "sync":
-            values["mode"] = "sync"
-            values["sync_panel_state"] = self._build_library_notes_sync_state()
         elif self._library_notes_view == "import":
             values["mode"] = "import"
         elif self._library_notes_view == "lasting_add":
@@ -13429,36 +13328,12 @@ class LibraryScreen(BaseAppScreen):
             self._library_notes_autosave_timer.stop()
             self._library_notes_autosave_timer = None
 
-    def _reset_library_notes_sync_transient_state(self) -> None:
-        """Clear the sync panel's run-scoped (non-persisted) state.
-
-        Called on rail re-entry into Notes (extends the existing reset) so
-        stale status/activity from a previous visit never reappears; the
-        persisted direction/conflict/auto-sync preferences and the
-        auto-sync timer are left untouched here -- the timer's lifetime is
-        the whole Library screen's, not a single sync-panel visit (see
-        ``handle_library_notes_sync_auto_toggle``).
-        """
-        if self._library_notes_sync_active_token is not None:
-            # A thread-backed run owns this state until its matching finally
-            # block releases the token. Navigation may hide the panel, but it
-            # cannot make a still-running filesystem/DB side effect restartable.
-            return
-        self._library_notes_sync_status = "idle"
-        self._library_notes_sync_activity = ()
-        self._library_notes_sync_running = False
-        # Typed-but-uncommitted folder text is visit-scoped, like the
-        # status/activity above: re-entering the panel re-reads the
-        # committed config value.
-        self._library_notes_sync_folder_text = None
-
     def _reset_library_ingest_transient_state(self) -> None:
         """Clear the ingest canvas's form to defaults on rail re-entry.
 
-        Called on every ``_select_library_rail_row`` switch (mirrors
-        ``_reset_library_notes_sync_transient_state``'s placement) so a
-        stale in-progress form from a previous Ingest visit never
-        reappears when the user comes back to the canvas. The job queue
+        Called on every ``_select_library_rail_row`` switch so a stale
+        in-progress form from a previous Ingest visit never reappears when
+        the user comes back to the canvas. The job queue
         itself is registry-owned and untouched by this reset -- only the
         local form echo resets. Any in-flight pre-flight worker is
         cancelled AND generation-fenced (cancellation is cooperative, so a
@@ -15191,123 +15066,6 @@ class LibraryScreen(BaseAppScreen):
             retry_confirm_armed=getattr(
                 self, "_library_ingest_retry_confirm_armed", False
             ),
-        )
-
-    def _ensure_library_notes_sync_config_loaded(self) -> None:
-        """Seed sync direction/conflict/auto-sync from config on first entry.
-
-        Idempotent: only reads config once per screen lifetime
-        (``_library_notes_sync_config_loaded`` guards re-entry), so
-        in-session choices/toggling are never clobbered by a later sync-mode
-        re-entry re-reading stale config.
-
-        A stale persisted conflict value not in ``SYNC_CONFLICTS`` (e.g. an
-        old config still holding ``"ask"``, which this panel no longer
-        offers) coerces to ``"newer_wins"``; likewise an unrecognized
-        direction coerces to ``"bidirectional"``. This guarantees ``"ask"``
-        can neither render nor reach the sync engine from this panel.
-        """
-        if self._library_notes_sync_config_loaded:
-            return
-        self._library_notes_sync_config_loaded = True
-        direction = str(
-            get_cli_setting("notes", "sync_direction", "bidirectional")
-            or "bidirectional"
-        )
-        self._library_notes_sync_direction = (
-            direction if direction in SYNC_DIRECTIONS else "bidirectional"
-        )
-        conflict = str(
-            get_cli_setting("notes", "sync_conflict_resolution", "newer_wins")
-            or "newer_wins"
-        )
-        self._library_notes_sync_conflict = (
-            conflict if conflict in SYNC_CONFLICTS else "newer_wins"
-        )
-        self._library_notes_sync_auto = bool(
-            get_cli_setting("notes", "auto_sync", False)
-        )
-        if self._library_notes_sync_auto:
-            self._arm_library_notes_auto_sync_timer()
-
-    def _library_notes_sync_folder(self) -> str:
-        """Return the sync folder as text (unexpanded).
-
-        Prefers the folder box's live typed text (``Input.Changed`` keeps it
-        in screen state without touching disk) so recomposes and Sync now
-        always see what the user sees; falls back to the committed config
-        value when the box hasn't been edited this panel visit.
-        """
-        if self._library_notes_sync_folder_text is not None:
-            return self._library_notes_sync_folder_text
-        return str(get_cli_setting("notes", "sync_directory", "~/Documents/Notes"))
-
-    def _build_library_notes_sync_state(self) -> LibraryNotesSyncState:
-        """Build the sync panel's display state from screen fields."""
-        return LibraryNotesSyncState(
-            folder=self._library_notes_sync_folder(),
-            direction=self._library_notes_sync_direction,
-            conflict=self._library_notes_sync_conflict,
-            auto_sync=self._library_notes_sync_auto,
-            status_line=self._library_notes_sync_status,
-            activity_lines=self._library_notes_sync_activity,
-            running=self._library_notes_sync_running,
-        )
-
-    def _resolve_library_notes_sync_db(self) -> Any:
-        """Resolve the per-user ChaChaNotes DB the sync service writes to.
-
-        Mirrors the retired standalone Notes screen's sync-pane resolution
-        EXACTLY: prefer the app's ``chachanotes_db``, falling back to the
-        notes service's own ``db`` attribute when that is unset.
-        """
-        notes_service = getattr(self.app_instance, "notes_service", None)
-        return getattr(self.app_instance, "chachanotes_db", None) or getattr(
-            notes_service, "db", None
-        )
-
-    def _arm_library_notes_auto_sync_timer(self) -> None:
-        """Start the 300s auto-sync repeating timer if not already running.
-
-        Scoped to this Library screen instance's lifetime (like the retired
-        standalone Notes screen's sync-pane timer) -- it is never persisted
-        or resumed across screen instances; only the ``auto_sync`` boolean
-        preference is persisted, and is re-armed on the next sync-mode
-        entry via ``_ensure_library_notes_sync_config_loaded``.
-        """
-        if self._library_notes_auto_sync_timer is not None:
-            return
-        self._library_notes_auto_sync_timer = self.set_interval(
-            AUTO_SYNC_INTERVAL_SECONDS,
-            self._library_notes_auto_sync_tick,
-        )
-
-    def _cancel_library_notes_auto_sync_timer(self) -> None:
-        if self._library_notes_auto_sync_timer is not None:
-            self._library_notes_auto_sync_timer.stop()
-            self._library_notes_auto_sync_timer = None
-
-    def _library_notes_auto_sync_tick(self) -> None:
-        """Auto-sync timer callback: skip quietly when busy or misconfigured."""
-        if self._library_notes_sync_active_token is not None:
-            return
-        folder_value = self._library_notes_sync_folder()
-        if not folder_value:
-            return
-        try:
-            folder = validate_path_simple(
-                Path(folder_value).expanduser(), require_exists=True
-            )
-        except ValueError:
-            return
-        if not folder.is_dir():
-            return
-        token = self._begin_library_notes_sync_run(folder)
-        if token is None:
-            return
-        self.run_worker(
-            self._run_library_notes_sync(folder, token),
-            group="library_notes_sync",
         )
 
     # ----- Notes editor: save, autosave, conflict policy -----------------
@@ -17470,7 +17228,6 @@ class LibraryScreen(BaseAppScreen):
         # switching rail rows away leaves it armed, and it can reappear
         # unprompted on a later, unrelated entry into the skills view.
         self._library_skill_trust_confirming_reset = False
-        self._reset_library_notes_sync_transient_state()
         # (task-2043) The ingest form now PERSISTS across rail switches --
         # the old full reset discarded a typed path/metadata on every
         # switch, destructive for multi-batch workflows (round-2 critique).
@@ -26264,6 +26021,8 @@ class LibraryScreen(BaseAppScreen):
         """Retain one typed projection and patch only a visible inert route."""
 
         self._library_notes_lasting_sync_snapshot = snapshot
+        if self.is_mounted:
+            self._apply_library_notes_footer_context()
         if (
             self.is_mounted
             and self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
@@ -26301,31 +26060,30 @@ class LibraryScreen(BaseAppScreen):
             import_callback,
         )
 
-    @on(Button.Pressed, "#library-notes-import")
-    def handle_library_notes_import(self, event: Button.Pressed) -> None:
-        """Enter reviewed import selection and open the existing picker."""
+    @on(Button.Pressed, "#library-notes-add-from-files")
+    async def handle_library_notes_add_from_files(
+        self, event: Button.Pressed
+    ) -> None:
+        """Open the one authority chooser before any source picker."""
         event.stop()
-        self._begin_library_notes_import_once()
-
-    def _begin_library_notes_import_once(self) -> None:
-        """Route every one-time branch into the one reviewed import owner."""
-
-        snapshot = self._library_note_import_controller.snapshot
-        if snapshot.phase in {
-            NoteImportPhase.DESTINATION,
-            NoteImportPhase.CHECKING,
-            NoteImportPhase.REVIEW,
-            NoteImportPhase.IMPORTING,
-        } or (snapshot.phase is NoteImportPhase.SELECT and snapshot.selected_paths):
-            self._library_notes_view = "import"
-            self._apply_library_notes_footer_context()
-            _sync_library_canvas(self, "notes")
+        if self._library_notes_mutation_fenced():
             return
-        self._library_note_import_controller.begin_selection()
-        self._library_notes_view = "import"
+        note_flush = await self._flush_library_note_save()
+        if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
+            return
+        self._supersede_library_notes_navigation()
+        self._library_notes_view = "lasting_add"
         self._apply_library_notes_footer_context()
         _sync_library_canvas(self, "notes")
-        self._push_library_note_import_picker()
+
+    @on(Button.Pressed, "#library-notes-manage-sync-folders")
+    def handle_library_notes_manage_sync_folders(self, event: Button.Pressed) -> None:
+        """Open the path-free lasting root list."""
+        event.stop()
+        self._library_notes_sync_controller.refresh_roots()
+        self._library_notes_view = "lasting_roots"
+        self._apply_library_notes_footer_context()
+        _sync_library_canvas(self, "notes")
 
     @on(LibraryNotesAddFromFilesCanvas.RelationshipRequested)
     def handle_library_notes_relationship_choice(
@@ -26376,8 +26134,7 @@ class LibraryScreen(BaseAppScreen):
         self, event: LibraryNotesAddFromFilesCanvas.CheckRequested
     ) -> None:
         event.stop()
-        root_id = self._library_notes_sync_controller.snapshot.review.root_id
-        await self._library_notes_sync_controller.check_setup(root_id or "pending-root")
+        await self._library_notes_sync_controller.check_setup()
 
     @on(LibraryNotesAddFromFilesCanvas.ApplyRequested)
     async def handle_library_notes_lasting_apply(
@@ -26394,6 +26151,9 @@ class LibraryScreen(BaseAppScreen):
         root_id = self._library_notes_sync_controller.snapshot.review.root_id
         if root_id:
             await self._library_notes_sync_controller.activate_root(root_id)
+            if self._library_notes_sync_controller.snapshot.phase == "roots":
+                self._library_notes_view = "lasting_roots"
+                _sync_library_canvas(self, "notes")
 
     @on(LibraryNotesAddFromFilesCanvas.AttentionChoiceRequested)
     def handle_library_notes_lasting_attention_choice(
@@ -26428,6 +26188,8 @@ class LibraryScreen(BaseAppScreen):
         controller = self._library_notes_sync_controller
         if event.action == "check":
             await controller.sync_now(event.root_id)
+        elif event.action == "migration":
+            await controller.check_migration(event.root_id)
         elif event.action == "review":
             await controller.check_root(event.root_id)
         elif event.action == "pause":
@@ -26456,12 +26218,24 @@ class LibraryScreen(BaseAppScreen):
 
     @on(LibraryNotesAddFromFilesCanvas.BackRequested)
     @on(LibraryNotesSyncRootsCanvas.BackRequested)
-    def handle_library_notes_lasting_back(self, event: Any) -> None:
+    async def handle_library_notes_lasting_back(self, event: Any) -> None:
         """Return from a directly mounted inert surface without mutation."""
 
         event.stop()
+        await self._exit_library_notes_lasting_sync()
+
+    async def _exit_library_notes_lasting_sync(self) -> bool:
+        """Settle provisional authority before leaving a lasting-sync canvas."""
+
+        phase = self._library_notes_sync_controller.snapshot.phase
+        if phase in {"checking", "activating"}:
+            self._apply_library_notes_footer_context()
+            return False
+        await self._library_notes_sync_controller.abandon_setup()
+        self._supersede_library_notes_navigation()
         self._library_notes_view = "list"
         _sync_library_canvas(self, "notes", then=self._focus_library_notes_filter_input)
+        return True
 
     @on(Button.Pressed, "#library-notes-import-receipt")
     def handle_library_notes_import_receipt(self, event: Button.Pressed) -> None:
@@ -26641,456 +26415,6 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         event.stop()
         self._library_note_import_controller.cancel()
-
-    # ----- Notes sync panel ------------------------------------------------
-
-    @on(Button.Pressed, "#library-notes-sync-open")
-    async def handle_library_notes_sync_open(self, event: Button.Pressed) -> None:
-        """Enter the in-canvas notes sync panel from the notes list header.
-
-        Flushes any pending editor save first (mirrors every other exit
-        from the notes list/editor) and seeds direction/conflict/auto-sync
-        from config on first entry only.
-
-        Args:
-            event: Button press event emitted by the "Sync" action.
-        """
-        event.stop()
-        if self._library_notes_mutation_fenced():
-            return
-        note_flush = await self._flush_library_note_save()
-        if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
-            return
-        self._supersede_library_notes_navigation()
-        self._ensure_library_notes_sync_config_loaded()
-        self._library_notes_view = "sync"
-        self._apply_library_notes_footer_context()
-        _sync_library_canvas(self, "notes")
-
-    @on(Button.Pressed, "#library-notes-sync-back")
-    async def handle_library_notes_sync_back(self, event: Button.Pressed) -> None:
-        """Return the Library notes canvas from the sync panel to its list view.
-
-        Args:
-            event: Button press event emitted by the "‹ Back to notes" action.
-        """
-        event.stop()
-        if self._library_notes_sync_active_token is not None:
-            return
-        note_flush = await self._flush_library_note_save()
-        if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
-            return
-        self._supersede_library_notes_navigation()
-        self._library_notes_view = "list"
-        self._reset_library_notes_sync_transient_state()
-        _sync_library_canvas(self, "notes", then=self._focus_library_notes_filter_input)
-
-    @on(Input.Changed, "#library-notes-sync-folder")
-    def handle_library_notes_sync_folder_changed(self, event: Input.Changed) -> None:
-        """Track the sync folder text as the user edits it (state only).
-
-        Deliberately does NOT persist: writing the TOML config here meant a
-        full config rewrite + cache reload per keystroke. The typed value is
-        committed by ``handle_library_notes_sync_folder_submitted`` (Enter),
-        ``_apply_library_notes_sync_folder`` (Browse…), or a validated
-        ``handle_library_notes_sync_run``.
-
-        Args:
-            event: Input change event emitted by the sync folder box.
-        """
-        event.stop()
-        if self._library_notes_sync_active_token is not None:
-            return
-        self._library_notes_sync_folder_text = event.value
-
-    @on(Input.Submitted, "#library-notes-sync-folder")
-    def handle_library_notes_sync_folder_submitted(
-        self, event: Input.Submitted
-    ) -> None:
-        """Commit the typed sync folder to config on Enter.
-
-        Args:
-            event: Input submit event emitted by the sync folder box.
-        """
-        event.stop()
-        if self._library_notes_sync_active_token is not None:
-            return
-        self._library_notes_sync_folder_text = event.value
-        self._save_library_notes_sync_setting("sync_directory", event.value)
-
-    @work(thread=True)
-    def _save_library_notes_sync_setting(self, key: str, value: Any) -> None:
-        """Persist one ``[notes]`` sync setting without blocking the UI thread.
-
-        task-15470: each of this cluster's commit points (Enter, Browse,
-        direction/conflict choice, auto-sync toggle, a validated Sync run)
-        used to call ``save_setting_to_cli_config`` directly on the event
-        loop -- a full config.toml read+atomic-rewrite+cache-reload
-        synchronously inside a button-press/submit handler. These are
-        discrete, already-gated-by-user-intent actions (not a keystroke
-        burst -- see ``handle_library_notes_sync_folder_changed`` above,
-        which deliberately does NOT persist per keystroke), so the fix is
-        the same off-loop dispatch this file already uses for Library
-        search history and rail preferences (``_save_library_search_
-        history``, ``_save_library_rail_preferences`` above), not a timer.
-        """
-        try:
-            save_setting_to_cli_config("notes", key, value)
-        except Exception:
-            logger.error("Failed to persist a Library notes setting")
-
-    @on(Button.Pressed, "#library-notes-sync-browse")
-    async def handle_library_notes_sync_browse(self, event: Button.Pressed) -> None:
-        """Open a directory picker and adopt the chosen folder.
-
-        Args:
-            event: Button press event emitted by the "Browse…" action.
-        """
-        event.stop()
-        if self._library_notes_sync_active_token is not None:
-            return
-        from ...Third_Party.textual_fspicker import SelectDirectory
-
-        current = Path(self._library_notes_sync_folder()).expanduser()
-        if not current.exists():
-            current = Path.home()
-        await self.app.push_screen(
-            SelectDirectory(str(current), title="Select Notes Sync Folder"),
-            callback=self._apply_library_notes_sync_folder,
-        )
-
-    def _apply_library_notes_sync_folder(self, path: Path | None) -> None:
-        """Persist and render the folder chosen via ``SelectDirectory``."""
-        if not path or self._library_notes_sync_active_token is not None:
-            return
-        self._library_notes_sync_folder_text = str(path)
-        self._save_library_notes_sync_setting("sync_directory", str(path))
-        if self._library_notes_view == "sync":
-            _sync_library_canvas(self, "notes")
-
-    @on(Button.Pressed, ".library-notes-sync-direction-choice")
-    def handle_library_notes_sync_direction(self, event: Button.Pressed) -> None:
-        """Apply and persist one explicitly chosen sync direction.
-
-        Args:
-            event: Button press event emitted by a direction choice.
-        """
-        event.stop()
-        if self._library_notes_sync_active_token is not None:
-            return
-        value = str(getattr(event.button, "choice_value", "") or "")
-        if value not in SYNC_DIRECTIONS:
-            return
-        self._library_notes_sync_direction = value
-        self._save_library_notes_sync_setting(
-            "sync_direction", self._library_notes_sync_direction
-        )
-        _sync_library_canvas(self, "notes")
-
-    @on(Button.Pressed, ".library-notes-sync-conflict-choice")
-    def handle_library_notes_sync_conflict(self, event: Button.Pressed) -> None:
-        """Apply and persist one explicitly chosen conflict policy.
-
-        Args:
-            event: Button press event emitted by a conflict choice.
-        """
-        event.stop()
-        if self._library_notes_sync_active_token is not None:
-            return
-        value = str(getattr(event.button, "choice_value", "") or "")
-        if value not in SYNC_CONFLICTS:
-            return
-        self._library_notes_sync_conflict = value
-        self._save_library_notes_sync_setting(
-            "sync_conflict_resolution", self._library_notes_sync_conflict
-        )
-        _sync_library_canvas(self, "notes")
-
-    @on(Button.Pressed, "#library-notes-sync-auto")
-    def handle_library_notes_sync_auto_toggle(self, event: Button.Pressed) -> None:
-        """Toggle auto-sync, persist it, and arm/cancel the repeating timer.
-
-        The timer is scoped to this Library screen instance's lifetime --
-        the same scope the retired standalone Notes screen's sync-pane
-        timer had -- not persisted/resumed across screen instances; only
-        the boolean
-        preference persists, and is re-armed the next time sync mode is
-        entered (``_ensure_library_notes_sync_config_loaded``).
-
-        Args:
-            event: Button press event emitted by the auto-sync toggle.
-        """
-        event.stop()
-        if self._library_notes_sync_active_token is not None:
-            return
-        self._library_notes_sync_auto = not self._library_notes_sync_auto
-        self._save_library_notes_sync_setting(
-            "auto_sync", self._library_notes_sync_auto
-        )
-        if self._library_notes_sync_auto:
-            self._arm_library_notes_auto_sync_timer()
-        else:
-            self._cancel_library_notes_auto_sync_timer()
-        _sync_library_canvas(self, "notes")
-
-    @on(Button.Pressed, "#library-notes-sync-run")
-    def handle_library_notes_sync_run(self, event: Button.Pressed) -> None:
-        """Validate the folder, claim single-flight ownership, and run sync.
-
-        Args:
-            event: Button press event emitted by the "Sync now" action.
-        """
-        event.stop()
-        if self._library_notes_sync_active_token is not None:
-            return
-        folder_value = self._library_notes_sync_folder()
-        if not folder_value:
-            self._notify_library_notes_sync_warning("Please select a folder to sync.")
-            return
-        try:
-            folder = validate_path_simple(
-                Path(folder_value).expanduser(), require_exists=True
-            )
-        except ValueError:
-            self._notify_library_notes_sync_warning("That sync folder does not exist.")
-            return
-        if not folder.is_dir():
-            self._notify_library_notes_sync_warning(
-                "Selected path is a file; choose a folder to sync."
-            )
-            return
-        # A validated run is a commit point for a typed-but-unsubmitted
-        # folder (see handle_library_notes_sync_folder_changed): the folder
-        # a run actually used is always the one that persists.
-        self._save_library_notes_sync_setting("sync_directory", folder_value)
-        token = self._begin_library_notes_sync_run(folder)
-        if token is None:
-            return
-        self.run_worker(
-            self._run_library_notes_sync(folder, token),
-            group="library_notes_sync",
-        )
-
-    def _begin_library_notes_sync_run(self, folder: Path) -> int | None:
-        """Claim one sync token synchronously before worker dispatch."""
-        if (
-            self._library_notes_sync_active_token is not None
-            or self._library_notes_mutation_fenced()
-        ):
-            return None
-        self._library_notes_sync_counter += 1
-        token = self._library_notes_sync_counter
-        self._library_notes_sync_active_token = token
-        self._library_notes_sync_running = True
-        self._library_notes_sync_status = sync_status_line(
-            "syncing", processed=0, total=0
-        )
-        self._library_notes_sync_activity = append_activity(
-            self._library_notes_sync_activity, f"Starting sync: {folder.name}"
-        )
-        if self._library_notes_view == "sync" and self.is_mounted:
-            self.refresh(recompose=True)
-        return token
-
-    def _finish_library_notes_sync_run(self, token: int) -> bool:
-        """Release only the matching thread-backed sync claim."""
-        if token != self._library_notes_sync_active_token:
-            return False
-        self._library_notes_sync_active_token = None
-        self._library_notes_sync_running = False
-        if self._library_notes_view == "sync" and self.is_mounted:
-            self.refresh(recompose=True)
-        return True
-
-    def _notify_library_notes_sync_warning(self, message: str) -> None:
-        notify = getattr(self.app_instance, "notify", None)
-        if callable(notify):
-            notify(message, severity="warning")
-
-    async def _run_library_notes_sync(self, folder: Path, token: int) -> None:
-        """Run one notes sync pass against ``folder`` and report the outcome.
-
-        Builds a fresh ``NotesSyncService`` per run (mirroring the retired
-        standalone Notes screen's sync-pane setup -- see
-        ``_resolve_library_notes_sync_db``)
-        and calls ``sync_folder`` offloaded onto a worker thread via
-        ``_run_library_service_call(..., isolate_in_worker=True)``, since
-        the sync engine walks the filesystem and touches the DB
-        synchronously in places.
-
-        The engine's ``progress_callback`` fires from that worker thread
-        (a plain function call, not a coroutine -- see
-        ``NotesSyncEngine``), so it is never called directly here; it is
-        marshaled onto the UI thread via ``self.app.call_from_thread``
-        (Textual's own running-App property -- the same object as
-        ``self.app_instance`` in production, but the one that actually
-        matters for ``call_from_thread``'s event-loop lookup) and only
-        ever performs targeted ``query_one(...).update(...)`` calls,
-        guarded against the user having navigated away mid-run. Only the
-        start and the final outcome trigger a recompose (also
-        freshness-guarded). Only the matching token's ``finally`` block can
-        release the running claim, including after rail navigation.
-
-        Args:
-            folder: Validated root folder for this sync pass.
-            token: Monotonic run identity claimed before worker dispatch.
-        """
-        from ...Notes.sync_engine import ConflictResolution, SyncDirection
-        from ...Notes.sync_service import NotesSyncService
-
-        notes_service = getattr(self.app_instance, "notes_service", None)
-        db = self._resolve_library_notes_sync_db()
-        if notes_service is None or db is None:
-            self._notify_library_notes_sync_warning(
-                "Sync service is unavailable in this runtime."
-            )
-            if token == self._library_notes_sync_active_token:
-                self._library_notes_sync_status = sync_status_line(
-                    "failed", error="Sync service unavailable"
-                )
-            self._finish_library_notes_sync_run(token)
-            return
-
-        try:
-            direction = SyncDirection(self._library_notes_sync_direction)
-        except ValueError:
-            direction = SyncDirection.BIDIRECTIONAL
-        try:
-            resolution = ConflictResolution(self._library_notes_sync_conflict)
-        except ValueError:
-            resolution = ConflictResolution.NEWER_WINS
-
-        def progress_callback(sync_progress: Any) -> None:
-            def apply() -> None:
-                if (
-                    token != self._library_notes_sync_active_token
-                    or self._library_notes_view != "sync"
-                    or not self.is_mounted
-                ):
-                    return
-                total = getattr(sync_progress, "total_files", 0)
-                processed = getattr(sync_progress, "processed_files", 0)
-                self._library_notes_sync_status = sync_status_line(
-                    "syncing", processed=processed, total=total
-                )
-                try:
-                    self.query_one("#library-notes-sync-status", Static).update(
-                        self._library_notes_sync_status
-                    )
-                except (NoMatches, QueryError):
-                    pass
-
-            # ``self.app`` (Textual's own running-App property), not
-            # ``self.app_instance`` -- in production the two are the same
-            # object (``screen_class(self)`` in app.py), but
-            # ``call_from_thread`` needs the App whose event loop is
-            # actually running this screen, which is what ``self.app``
-            # always resolves to even where a test harness's ``app_instance``
-            # is a separate, non-running object.
-            try:
-                self.app.call_from_thread(apply)
-            except RuntimeError:
-                # The app already finished shutting down mid-sync (or this
-                # is being invoked outside a running app entirely) --
-                # a missed progress tick must never surface as a sync
-                # error for an otherwise-successful file.
-                pass
-
-        try:
-            service = NotesSyncService(notes_service=notes_service, db=db)
-            _session_id, results = await self._run_library_service_call(
-                service.sync_folder,
-                root_folder=folder,
-                user_id=self._library_notes_user_id(),
-                direction=direction,
-                conflict_resolution=resolution,
-                progress_callback=progress_callback,
-                isolate_in_worker=True,
-            )
-            changes = (
-                len(results.created_notes)
-                + len(results.updated_notes)
-                + (len(results.created_files) + len(results.updated_files))
-            )
-            conflicts = len(results.conflicts)
-            # The done line counts CHANGES the run made, not files scanned
-            # (a no-op run over N files is "done · no changes", never
-            # "done · 0 files" -- the PR reviewer's misleading-count flag).
-            self._library_notes_sync_status = sync_status_line(
-                "done", processed=changes, conflicts=conflicts
-            )
-            summary_parts = []
-            if results.created_notes:
-                summary_parts.append(
-                    f"{count_noun(len(results.created_notes), 'note')} created"
-                )
-            if results.updated_notes:
-                summary_parts.append(
-                    f"{count_noun(len(results.updated_notes), 'note')} updated"
-                )
-            if results.created_files:
-                summary_parts.append(
-                    f"{count_noun(len(results.created_files), 'file')} created"
-                )
-            if results.updated_files:
-                summary_parts.append(
-                    f"{count_noun(len(results.updated_files), 'file')} updated"
-                )
-            summary = ", ".join(summary_parts) if summary_parts else "No changes"
-            self._library_notes_sync_activity = append_activity(
-                self._library_notes_sync_activity, f"Sync complete: {summary}"
-            )
-            if conflicts:
-                # Honest-copy fix: this used to promise a "review" surface
-                # that doesn't exist in this panel. State the resolved
-                # policy instead -- what actually happened to the conflict.
-                #
-                # task-19554 second pass: it also used to call EVERY recorded
-                # conflict "resolved", including the ones the engine applied
-                # nothing for (which, before that task, was every conflict
-                # under "Disk wins" and "Library wins"). Count what the run
-                # actually applied, name what it kept, and say plainly when
-                # some are still open.
-                applied = [
-                    conflict
-                    for conflict in results.conflicts
-                    if getattr(conflict, "applied", False)
-                ]
-                if applied:
-                    self._library_notes_sync_activity = append_activity(
-                        self._library_notes_sync_activity,
-                        f"{count_noun(len(applied), 'conflict')} resolved "
-                        f"({sync_conflict_label(resolution.value)})",
-                    )
-                preserved = list(getattr(results, "preserved_files", ()))
-                if preserved:
-                    self._library_notes_sync_activity = append_activity(
-                        self._library_notes_sync_activity,
-                        "Replaced copy saved as "
-                        + ", ".join(Path(path).name for path in preserved[:3])
-                        + ("…" if len(preserved) > 3 else ""),
-                    )
-                if len(applied) < conflicts:
-                    self._library_notes_sync_activity = append_activity(
-                        self._library_notes_sync_activity,
-                        f"{count_noun(conflicts - len(applied), 'conflict')} "
-                        "left unresolved — both copies kept as they are",
-                    )
-            if results.errors:
-                self._library_notes_sync_activity = append_activity(
-                    self._library_notes_sync_activity,
-                    f"{count_noun(len(results.errors), 'error')} during sync",
-                )
-        except Exception as exc:
-            logger.opt(exception=True).error(
-                f"Library notes sync failed (folder={folder}): {exc}"
-            )
-            self._library_notes_sync_status = sync_status_line("failed", error=str(exc))
-            self._library_notes_sync_activity = append_activity(
-                self._library_notes_sync_activity, f"Sync failed: {exc}"
-            )
-        finally:
-            self._finish_library_notes_sync_run(token)
 
     # ----- Ingest canvas -----------------------------------------------
 
@@ -27522,7 +26846,7 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_ingest_browse(self, event: Button.Pressed) -> None:
         """Push a ``FileOpen`` dialog to pick a local file to ingest.
 
-        Mirrors ``handle_library_notes_import``'s dialog flow exactly (the
+        Mirrors the reviewed import dialog flow exactly (the
         working ``FileOpen`` reference, invoked the same simple
         ``title=``-only way). The callback writes the chosen path straight
         into the form and recomposes so the Input and the Start button's

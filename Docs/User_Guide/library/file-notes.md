@@ -7,9 +7,9 @@ what you see in the editor is exactly what's in the file, and saves write
 straight back to it. It is a separate system from [Database notes](notes.md):
 nothing here is stored in the Library database, there are no templates or
 autosync, and no "Use in Console" handoff. This is also the key difference
-from the Library notes side's Notes sync panel: Sync *mirrors* a folder's
-notes into the Library database (a copy lives in both places), while Folder
-files mode edits that folder directly with nothing mirrored anywhere. Reach for it
+from Library Notes lasting sync: lasting sync keeps a reviewed relationship
+between a managed Library folder and a local folder, while Folder files mode
+edits that folder directly with nothing mirrored anywhere. Reach for it
 when your notes are a
 folder of Markdown files (a wiki, a repo's docs, an Obsidian vault) and you
 want to read, edit, search, and — if the folder is a Git repository — stage
@@ -306,9 +306,8 @@ not available.
 - **config.toml `[file_notes]`** — `root` is the linked folder; written
   whenever you use **Choose folder…** / **Change…**.
 - [Database notes](notes.md) — the Library-stored notes system, with
-  templates, the Notes sync panel, and Console handoff. The sync panel there
-  mirrors DB notes to a folder; File Notes is different — the files *are*
-  the notes.
+  templates, reviewed **Add from files…**, lasting root management, and Console
+  handoff. Folder files is different — the files *are* the notes.
 - [Library](../library.md) — the parent screen; [guide index](../index.md)
   for global keys.
 - There is no deeper Docs/Features write-up for File Notes or Session Git —
@@ -366,5 +365,5 @@ not available.
 stays inside the Library rail/canvas frame instead of replacing the whole
 shell; Escape returns to Library notes)*
 *Verified against dev @ 6b38a13b8 — 2026-08-07 (task-2858 Task 4, LIB-19:
-Folder files mode's canvas now states in-app how it differs from Sync — edits the
-folder directly, versus Sync's mirror-into-the-Library behavior).*
+Folder files mode's canvas states in-app that it edits the folder directly,
+unlike a managed Library relationship).*

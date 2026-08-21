@@ -100,7 +100,7 @@ class LibraryNotesSyncRootsCanvas(Vertical):
                         >= self.snapshot.root_page_count,
                     )
         yield Static(
-            "Disconnect does not delete files or notes; it changes only this root's managed organization.",
+            "Retarget and Disconnect are unavailable in this release. No files or notes are changed.",
             id="notes-sync-disconnect-copy",
             classes="library-disabled-reason",
             markup=False,
@@ -133,6 +133,8 @@ class LibraryNotesSyncRootsCanvas(Vertical):
         ]
         if root.next_action == "review_changes":
             actions.append(("review", "Review", False, None))
+        if root.next_action == "review_migration":
+            actions.append(("migration", "Review migration", False, None))
         if root.status == "paused":
             actions.append(("resume", "Resume", False, None))
         elif root.status not in {"passive", "offline"}:
@@ -141,13 +143,24 @@ class LibraryNotesSyncRootsCanvas(Vertical):
             actions.append(("recover", "Recovery", False, None))
         actions.extend(
             (
-                ("retarget", "Retarget", False, None),
-                ("disconnect", "Disconnect", False, None),
+                (
+                    "retarget",
+                    "○ Retarget",
+                    True,
+                    "Retarget is unavailable in this release.",
+                ),
+                (
+                    "disconnect",
+                    "○ Disconnect",
+                    True,
+                    "Disconnect is unavailable in this release.",
+                ),
             )
         )
         primary_action = {
             "sync_now": "check",
             "review_changes": "review",
+            "review_migration": "migration",
             "resume_sync": "resume",
             "resolve_cleanup": "recover",
             "reconnect_folder": "retarget",

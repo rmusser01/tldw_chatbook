@@ -563,6 +563,136 @@ class NotesDeviceStateStore:
         if changed != 1:
             raise NotesDeviceStateError("The sync root cannot accept a folder owner.")
 
+    def record_root_activation_recovery(
+        self, root_id: str, logical_folder_id: str
+    ) -> NotesSyncRootRecord:
+        """Durably retain an orphan-risk folder under a revisitable root."""
+
+        validate_notes_sync_opaque_id(root_id, field_name="root_id")
+        validate_notes_sync_opaque_id(logical_folder_id, field_name="logical_folder_id")
+        with self.transaction(immediate=True) as connection:
+            root = connection.execute(
+                """
+                SELECT root_id, note_scope_id, canonical_path, direction,
+                       remote_origin_id, cursor
+                FROM notes_sync_roots
+                WHERE root_id = ? AND state IN ('pending', 'paused')
+                """,
+                (root_id,),
+            ).fetchone()
+            if root is None:
+                raise NotesDeviceStateError(
+                    "The activation recovery owner could not be retained."
+                )
+            changed = connection.execute(
+                """
+                UPDATE notes_sync_roots
+                SET logical_folder_id = ?, state = 'paused',
+                    last_status_code = 'activation_recovery_required', updated_at = ?
+                WHERE root_id = ? AND state IN ('pending', 'paused')
+                """,
+                (logical_folder_id, _now(), root_id),
+            ).rowcount
+        if changed != 1:
+            raise NotesDeviceStateError(
+                "The activation recovery owner could not be retained."
+            )
+        return NotesSyncRootRecord(
+            root_id=root[0],
+            note_scope_id=root[1],
+            logical_folder_id=logical_folder_id,
+            canonical_path=root[2],
+            direction=NotesSyncDirection(root[3]),
+            state=NotesSyncRootState.PAUSED,
+            remote_origin_id=root[4],
+            cursor=root[5],
+            last_status_code="activation_recovery_required",
+        )
+
+    def activate_migration_candidate(
+        self,
+        root_id: str,
+        logical_folder_id: str,
+        binding_ids: tuple[str, ...],
+    ) -> NotesSyncRootRecord:
+        """Atomically admit one reviewed migrated root and its exact candidates."""
+
+        validate_notes_sync_opaque_id(root_id, field_name="root_id")
+        validate_notes_sync_opaque_id(logical_folder_id, field_name="logical_folder_id")
+        if type(binding_ids) is not tuple:
+            raise TypeError("binding_ids must be a tuple.")
+        for binding_id in binding_ids:
+            validate_notes_sync_opaque_id(binding_id, field_name="binding_id")
+        if len(set(binding_ids)) != len(binding_ids):
+            raise ValueError("binding_ids must be unique.")
+        with self.transaction(immediate=True) as connection:
+            root = connection.execute(
+                """
+                SELECT root_id, note_scope_id, logical_folder_id, canonical_path,
+                       direction, state, remote_origin_id, cursor, last_status_code
+                FROM notes_sync_roots WHERE root_id = ?
+                """,
+                (root_id,),
+            ).fetchone()
+            if (
+                root is None
+                or root[5] != NotesSyncRootState.PAUSED.value
+                or root[8] != "migration_review_required"
+                or root[2] not in (None, logical_folder_id)
+            ):
+                raise NotesDeviceStateError(
+                    "The migrated sync root is not awaiting activation review."
+                )
+            current = tuple(
+                row[0]
+                for row in connection.execute(
+                    """
+                    SELECT binding_id FROM notes_sync_bindings
+                    WHERE root_id = ? AND state = 'candidate'
+                    ORDER BY binding_id
+                    """,
+                    (root_id,),
+                ).fetchall()
+            )
+            total = connection.execute(
+                "SELECT COUNT(*) FROM notes_sync_bindings WHERE root_id = ?",
+                (root_id,),
+            ).fetchone()[0]
+            if current != tuple(sorted(binding_ids)) or total != len(binding_ids):
+                raise NotesDeviceStateError(
+                    "The reviewed migration candidate set is stale."
+                )
+            timestamp = _now()
+            connection.execute(
+                """
+                UPDATE notes_sync_roots
+                SET logical_folder_id = ?, state = 'active',
+                    last_status_code = 'activating', updated_at = ?
+                WHERE root_id = ? AND state = 'paused'
+                """,
+                (logical_folder_id, timestamp, root_id),
+            )
+            connection.execute(
+                """
+                UPDATE notes_sync_bindings
+                SET state = 'active', updated_at = ?
+                WHERE root_id = ? AND state = 'candidate'
+                """,
+                (timestamp, root_id),
+            )
+            activated = NotesSyncRootRecord(
+                root_id=root[0],
+                note_scope_id=root[1],
+                logical_folder_id=logical_folder_id,
+                canonical_path=root[3],
+                direction=NotesSyncDirection(root[4]),
+                state=NotesSyncRootState.ACTIVE,
+                remote_origin_id=root[6],
+                cursor=root[7],
+                last_status_code="activating",
+            )
+        return activated
+
     def transition_root(
         self,
         root_id: str,
@@ -597,6 +727,15 @@ class NotesDeviceStateStore:
                     UPDATE notes_sync_bindings
                     SET state = 'paused', updated_at = ?
                     WHERE root_id = ? AND state = 'active'
+                    """,
+                    (timestamp, root_id),
+                )
+            elif state is NotesSyncRootState.ACTIVE:
+                connection.execute(
+                    """
+                    UPDATE notes_sync_bindings
+                    SET state = 'active', updated_at = ?
+                    WHERE root_id = ? AND state = 'paused'
                     """,
                     (timestamp, root_id),
                 )

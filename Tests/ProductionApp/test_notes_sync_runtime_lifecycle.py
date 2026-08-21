@@ -43,7 +43,7 @@ class _FileOwnerProbe:
         self.events.append("file-notes-stopped")
 
 
-def test_app_constructs_exactly_one_inert_runtime_after_notes_scope_service(
+def test_app_constructs_exactly_one_cutover_runtime_after_notes_scope_service(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import tldw_chatbook.app as app_module
@@ -62,12 +62,13 @@ def test_app_constructs_exactly_one_inert_runtime_after_notes_scope_service(
     assert app.notes_sync_runtime_owner is runtime
     assert len(calls) == 1
     assert calls[0]["notes_scope_service"] is app.notes_scope_service
-    assert calls[0]["cutover_admitted"] is False
+    assert calls[0]["cutover_admitted"] is True
+    assert calls[0]["profile_process_is_sole"] is app._instance_lock_status.acquired
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("marker_present", [False, True])
-async def test_real_mounted_runtime_migrates_then_remains_inert_with_code_gate_false(
+async def test_real_mounted_runtime_migrates_then_opens_the_cutover_gate(
     marker_present: bool,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -92,14 +93,34 @@ async def test_real_mounted_runtime_migrates_then_remains_inert_with_code_gate_f
         await app._notes_sync_runtime_start_task
         owner = app.notes_sync_runtime_owner
         assert type(owner) is NotesSyncRuntimeOwner
-        assert owner.snapshot().status == "awaiting_cutover"
-        assert owner._coordinator is None
+        assert owner.snapshot().status == "active"
+        assert owner._coordinator is not None
         assert owner._watcher is None
         assert owner._leases == {}
-        with pytest.raises(RuntimeError, match="cutover"):
-            await owner.activate_root("root-1", authorization=None)
 
-    assert migrations == ["migrated"]
+    assert migrations == ([] if marker_present else ["migrated"])
+
+
+@pytest.mark.asyncio
+async def test_runtime_start_completion_refreshes_the_current_library_screen() -> None:
+    from types import SimpleNamespace
+
+    from tldw_chatbook.app import TldwCli
+
+    refreshed: list[str] = []
+    screen = SimpleNamespace(
+        refresh_notes_sync_runtime=lambda: refreshed.append("refreshed")
+    )
+    app = SimpleNamespace(
+        screen=screen,
+        call_after_refresh=lambda callback: callback(),
+    )
+    task = asyncio.create_task(asyncio.sleep(0))
+    await task
+
+    TldwCli._observe_notes_sync_runtime_start(app, task)
+
+    assert refreshed == ["refreshed"]
 
 
 @pytest.mark.asyncio

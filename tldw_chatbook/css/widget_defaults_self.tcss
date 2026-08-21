@@ -838,20 +838,6 @@
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     /* task-14900: Media list|preview side by side above the measured
        compact breakpoint; the host's library-notes-compact class flips it
        back to the stacked flow. No-bundle harness fallback -- the bundle
