@@ -19,7 +19,32 @@ fills the center of the screen.
 
 ## Layout tour
 
-![Media viewer](../images/library/media-viewer.svg)
+```text
+Wide (120 columns and above)
+
++---------------------------+  +---------------------------+
+| Media rows                |  | Selected-item preview     |
+| Title                     |  | Type / Updated            |
+|   type · age              |  |                           |
+| ...                       |  | Open in viewer            |
++---------------------------+  +---------------------------+
+| Previous   1-20 of N   Next                              |
++-----------------------------------------------------------+
+
+Compact (below 120 columns)
+
++-----------------------------------------------------------+
+| Title · type · age                                      |
+| Title · type · age                                      |
+| Title · type · age      (at least five rows at 100x30)  |
+| Title · type · age                                      |
+| Title · type · age                                      |
++-----------------------------------------------------------+
+| Previous   1-20 of N   Next                              |
++-----------------------------------------------------------+
+
+Enter on a compact row -> Media viewer -> Back -> same row
+```
 
 Both list canvases follow the same shape, top to bottom:
 
@@ -33,27 +58,34 @@ Both list canvases follow the same shape, top to bottom:
   Conversations instead has a "Filter conversations… (Enter)" text box,
   which now renders above the empty-state text (task-2859: it used to sit
   below "No conversations yet.", reading as an afterthought).
-- **Row list** — one two-line row per item: the title with a **▸** marker,
-  then a dimmer second line (Media: type and age; Conversations:
-  "3 messages - 4h"). Hovering a row shows its full title as a tooltip.
-  Media rows scroll independently above a pinned 20-item pager, so paging
-  controls remain visible after moving through a full page.
+- **Row list** — at 120 columns and above, each item uses two lines: the
+  title with a **▸** marker, then a dimmer second line (Media: type and age;
+  Conversations: "3 messages - 4h"). Below 120 columns, Media becomes a
+  denser one-line browser: **title · type · age**. At 100x30 it keeps at
+  least five populated rows painted without hiding the pager. Hovering a row
+  shows its full title as a tooltip. Media rows scroll independently above a
+  pinned 20-item pager, so paging controls remain visible after moving through
+  a full page.
 - **Preview block** — a few summary lines plus one action ("Open in
   viewer" for media, "Open in Console" for conversations). On a wide
   terminal the **Media** list shows it **beside** the row list — list on
   the left, preview on the right, each half scrolling on its own — the
-  same split shape as the Collections workbench; below the Library's one
-  width breakpoint (the same crossing that compacts Notes) it returns to
-  the stacked under-the-list flow. Hidden in Media while Select mode is
-  active (see below) — it never shows an item outside the current
-  selection; in the wide split the right half then says "No preview in
-  Select mode." instead of sitting blank. Conversations keeps the stacked
-  shape at every width, and the Trash view and media viewer are single
-  surfaces that always use the full canvas width.
+  same split shape as the Collections workbench. Below the Library's one
+  width breakpoint (the same crossing that compacts Notes), Media hides the
+  preview completely and row activation opens the existing viewer directly;
+  the hidden action cannot receive keyboard focus. The preview is also hidden
+  in Media Select mode (see below); in the wide split the right half then says
+  "No preview in Select mode." instead of sitting blank. Conversations keeps
+  the stacked shape at every width, and the Trash view and media viewer are
+  single surfaces that always use the full canvas width.
 
-Opening a media item swaps the list for the **media viewer** (pictured
-above): "‹ Back to list", the title, metadata lines, then the "Content",
+Opening a media item swaps the list for the **media viewer**: "‹ Back to
+list", the title, metadata lines, then the "Content",
 "Analysis", and "Highlights" sections, and an action row at the bottom.
+Back returns to the applied page and restores the activated row and list
+scroll position. If an authoritative refresh removed that row or clamped the
+page, focus moves to the first row that actually remains; an exact empty page
+uses its nearest recovery action instead.
 
 ## Features & controls
 
@@ -139,8 +171,8 @@ restoring it.
 | "Retry" | Repeats a failed page request. If retained rows may be out of date, unsafe row and bulk actions stay disabled until recovery succeeds. |
 | "Export…" / "Select" | The shared grammar above; Export… is scoped to the active type filter. |
 | "Trash" | Opens the Trash view — every deleted media item, restorable per item (see "Media Trash" above). Hidden while selecting, like "Export…". |
-| Row press | Selects the row and shows the preview (title, "Type: …", "Updated: …"). |
-| "Open in viewer" | Opens the selected item in the media viewer. |
+| Row press / Enter | Opens that item in the media viewer. In Select mode, it toggles the row's checkbox instead. |
+| "Open in viewer" | Wide layout only: opens the previewed item in the media viewer. Compact layout has no preview action; activate its row directly. |
 
 Empty states: with nothing imported, "No media in your Library yet. Import
 something to see it here."; with a filter that matches nothing, "No media
