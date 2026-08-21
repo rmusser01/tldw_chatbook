@@ -43,7 +43,7 @@ Uniform contracts already in place that C relies on:
   - skill bridges: cancel probe + visit-teardown event + shutdown flag + ADR-067 optional deadline (`timeout <= 0` arms none);
   - all kinds: `revoked` re-read after wake.
 - `resolve(kind, round_id, decision) -> bool` — fail-closed on `None`/unknown ids (the TASK-913 contract, now in one place).
-- `revoke_for_run(run_id)` — the sweep, per kind, with per-round unpark + remount.
+- `revoke_for_run(run_id)` — the sweep, per kind, with per-round unpark + remount. **Deferred out of C1 at plan time:** the controller's existing sweep operates entirely through the aliased registries, the single lock, and the host's unpark/remount helpers, so moving it changes no behavior until a fourth kind needs sweeping. Sub-project A's question rounds will (a cancelled run must fail its question round closed), so the sweep migrates then.
 - `remount_for_session(session_id)` — pushes every kind's head in one call; the four re-derive call sites collapse from three calls each to one.
 
 **Construction-order trap:** the controller's `.app` handle is assigned at *screen attach* (`ChatScreen` wiring), long after `__init__` constructs the host — and several UI tests swap in controller doubles before re-running that wiring. The host must therefore take app access as a **late-bound callable** (e.g. `get_app: Callable[[], object | None]` reading `controller.app` at call time), never capture the handle at construction. Same for the setters, which are also attach-time assignments.
