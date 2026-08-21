@@ -175,6 +175,7 @@ class ConsoleInspectorRail(Vertical):
         self._ownership_policy = (
             ownership_policy or _resolve_inspector_ownership_policy()
         )
+        self._reported_unknown_fingerprints: set[tuple[str, ...]] = set()
 
     def compose(self) -> ComposeResult:
         """Compose the rail header, staged-context tray, scope row, and run inspector.
@@ -285,6 +286,7 @@ class ConsoleInspectorRail(Vertical):
                 yield ConsoleRunInspector(
                     self._inspector_state,
                     ownership_policy=self._ownership_policy,
+                    reported_unknown_fingerprints=(self._reported_unknown_fingerprints),
                     id="console-run-inspector-state",
                 )
                 settings_summary = ConsoleSettingsSummary(

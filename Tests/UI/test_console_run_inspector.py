@@ -21,7 +21,6 @@ from tldw_chatbook.Chat.console_display_state import (
 from tldw_chatbook.Widgets.Console.console_run_inspector import (
     _ACTION_GROUPS,
     _ROW_GROUPS,
-    _ROW_IDS,
     ConsoleRunInspector,
 )
 
@@ -120,7 +119,7 @@ def test_inspector_row_and_action_inventory_has_exactly_one_owner():
     ]
 
     assert ownership.ROW_OWNERS == EXPECTED_ROW_OWNERS
-    assert set(_ROW_IDS) == set(EXPECTED_ROW_OWNERS)
+    assert set(ownership.ROW_IDS) == set(EXPECTED_ROW_OWNERS)
     assert Counter(label for label, _owner in grouped_rows) == Counter(
         {label: 1 for label in EXPECTED_ROW_OWNERS}
     )
@@ -151,9 +150,13 @@ def test_dynamic_inspector_collection_items_have_explicit_owner(
         else ConsoleInspectorAction("dynamic-action", "dynamic action", True)
     )
     state = _base_state(**{collection_name: (item,)})
+    classified = ownership.classify_inspector_content(
+        state, ownership.InspectorOwnershipPolicy.STRICT
+    )
+    projected = getattr(classified, collection_name)
 
     assert ownership.DYNAMIC_COLLECTION_OWNERS[collection_name] == expected_owner
-    assert ownership.dynamic_item_owner(state, collection_name, 0) == expected_owner
+    assert projected[0].owner == expected_owner
 
 
 @pytest.mark.parametrize(
@@ -206,6 +209,166 @@ async def test_strict_sync_rejects_unknown_content_before_replacing_valid_tree()
             inspector.query_one("#console-inspector-provider", Static)
             is provider_before
         )
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        _base_state(
+            rows=(
+                ConsoleDisplayRow("Provider", "first"),
+                ConsoleDisplayRow("Provider", "second"),
+            )
+        ),
+        _base_state(
+            rows=(),
+            actions=(
+                ConsoleInspectorAction(
+                    "console-inspector-save-chatbook", "first", True
+                ),
+                ConsoleInspectorAction(
+                    "console-inspector-save-chatbook", "second", True
+                ),
+            ),
+        ),
+        _base_state(
+            rows=(),
+            actions=(
+                ConsoleInspectorAction(
+                    "console-inspector-save-chatbook", "ordinary", True
+                ),
+            ),
+            dictionary_actions=(
+                ConsoleInspectorAction(
+                    "console-inspector-save-chatbook", "dictionary", True
+                ),
+            ),
+        ),
+        _base_state(
+            rows=(),
+            dictionary_actions=(
+                ConsoleInspectorAction("dynamic-collision", "dictionary", True),
+            ),
+            world_book_actions=(
+                ConsoleInspectorAction("dynamic-collision", "world book", True),
+            ),
+        ),
+        _base_state(
+            rows=(),
+            dictionary_rows=(ConsoleDisplayRow("Dictionary", "attached"),),
+            world_book_actions=(
+                ConsoleInspectorAction(
+                    "console-inspector-dictionaries-row-0", "collision", True
+                ),
+            ),
+        ),
+    ],
+)
+def test_strict_ownership_rejects_duplicate_or_colliding_stable_ids(state):
+    ownership = _ownership_module()
+
+    with pytest.raises(ownership.UnownedInspectorContentError):
+        ConsoleRunInspector(
+            state,
+            ownership_policy=ownership.InspectorOwnershipPolicy.STRICT,
+        )
+
+
+@pytest.mark.asyncio
+async def test_resilient_collision_projection_keeps_first_instance_consistently(
+    monkeypatch,
+):
+    ownership = _ownership_module()
+    inspector_module = importlib.import_module(
+        "tldw_chatbook.Widgets.Console.console_run_inspector"
+    )
+    diagnostics = []
+    monkeypatch.setattr(
+        inspector_module.logger,
+        "warning",
+        lambda message, fingerprint: diagnostics.append((message, fingerprint)),
+    )
+    state = _base_state(
+        rows=(
+            ConsoleDisplayRow("Provider", "first provider"),
+            ConsoleDisplayRow("Provider", "SECOND PROVIDER SECRET"),
+        ),
+        actions=(
+            ConsoleInspectorAction(
+                "console-inspector-save-chatbook", "first save", True
+            ),
+            ConsoleInspectorAction(
+                "console-inspector-save-chatbook", "SECOND SAVE SECRET", True
+            ),
+        ),
+        dictionary_rows=(ConsoleDisplayRow("Dictionary", "attached"),),
+        dictionary_actions=(
+            ConsoleInspectorAction(
+                "console-inspector-save-chatbook", "DICTIONARY SECRET", True
+            ),
+        ),
+        world_book_actions=(
+            ConsoleInspectorAction(
+                "console-inspector-dictionaries-row-0", "WORLD SECRET", True
+            ),
+        ),
+    )
+    app = InspectorHarness(
+        state,
+        ownership_policy=ownership.InspectorOwnershipPolicy.RESILIENT,
+    )
+
+    async with app.run_test(size=(80, 32)) as pilot:
+        inspector = app.query_one("#inspector", ConsoleRunInspector)
+        provider = inspector.query_one("#console-inspector-provider", Static)
+        assert str(provider.renderable) == "Provider: first provider"
+        assert len(app.query("#console-inspector-save-chatbook")) == 1
+        assert len(app.query("#console-inspector-dictionaries-row-0")) == 1
+        assert (
+            str(
+                app.query_one(
+                    "#console-inspector-run-status-summary", Static
+                ).renderable
+            )
+            == "Status: Inspector data incomplete"
+        )
+        assert diagnostics == [
+            (
+                "Inspector ownership incomplete: {}",
+                (
+                    "action:console-inspector-dictionaries-row-0",
+                    "action:console-inspector-save-chatbook",
+                    "row:Provider",
+                ),
+            )
+        ]
+        assert not any(
+            secret in repr(diagnostics)
+            for secret in (
+                "SECOND PROVIDER SECRET",
+                "SECOND SAVE SECRET",
+                "DICTIONARY SECRET",
+                "WORLD SECRET",
+            )
+        )
+
+        inspector.sync_state(
+            _base_state(
+                rows=(
+                    ConsoleDisplayRow("Provider", "updated first"),
+                    ConsoleDisplayRow("Provider", "changed duplicate"),
+                ),
+                actions=state.actions,
+                dictionary_rows=state.dictionary_rows,
+                dictionary_actions=state.dictionary_actions,
+                world_book_actions=state.world_book_actions,
+            )
+        )
+        await pilot.pause()
+        assert inspector.recompose_count == 0
+        assert inspector.query_one("#console-inspector-provider", Static) is provider
+        assert str(provider.renderable) == "Provider: updated first"
+        assert len(diagnostics) == 1
 
 
 @pytest.mark.asyncio

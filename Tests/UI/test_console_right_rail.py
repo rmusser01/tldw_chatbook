@@ -24,20 +24,28 @@ and byte-identical afterwards (task-4 brief, global constraint 3).
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from dataclasses import replace
 import importlib
 import threading
 
 import pytest
 from textual.containers import Horizontal
-from textual.widgets import Button
+from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_display_state import (
+    ConsoleDisplayRow,
+    ConsoleInspectorAction,
+    ConsoleInspectorState,
+)
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
 )
 from tldw_chatbook.Widgets.Console.console_conversation_inspector import (
     ConsoleConversationInspector,
 )
+from tldw_chatbook.Widgets.Console.console_context_modal import ConsoleContextModal
+from tldw_chatbook.Widgets.Console.console_run_inspector import ConsoleRunInspector
 
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -79,12 +87,76 @@ def _handle_visible(pilot) -> bool:
     return bool(handle.display) and handle.styles.display != "none"
 
 
-def test_inspector_boundary_inventory_has_approved_order_and_specialized_owners():
-    ownership = importlib.import_module(
-        "tldw_chatbook.Widgets.Console.console_inspector_ownership"
+_EXPECTED_BOUNDARY_ANCHORS = (
+    ("console-project-instruction-status", "Project Instructions"),
+    ("console-staged-context-tray", "Sources"),
+    ("console-retrieval-scope-row", "Scope"),
+    ("console-changed-files-section", "Changed Files"),
+    ("console-inspector-run-status-summary", "Run status"),
+    ("console-inspector-run-heading", "Run"),
+    ("console-inspector-source-readiness-heading", "Source Readiness"),
+    ("console-inspector-tools-heading", "Tools"),
+    ("console-inspector-approvals-heading", "Approvals"),
+    ("console-inspector-artifacts-heading", "Artifacts"),
+    (
+        "console-inspector-selected-conversation-heading",
+        "Selected Conversation",
+    ),
+    ("console-inspector-session-defaults-heading", "Session Defaults"),
+    ("console-inspector-selected-message-heading", "Selected Message"),
+    ("console-inspector-changes-heading", "Changes"),
+    ("console-inspector-dictionaries-heading", "Chat Dictionaries"),
+    ("console-inspector-worldbooks-heading", "World Books"),
+    ("console-settings-summary", "Session Settings"),
+)
+_LIVE_WORK_IDS = {
+    "console-pending-launch-card",
+    "console-live-work-source-readiness",
+}
+
+
+def _mounted_boundary_ids(rail) -> tuple[str, ...]:
+    """Read semantic boundaries from the mounted production hierarchy."""
+    body = rail.query_one("#console-inspector-rail-body")
+    direct_children = tuple(child.id for child in body.children)
+    assert direct_children[:5] == (
+        "console-project-instruction-status",
+        "console-staged-context-tray",
+        "console-retrieval-scope-row",
+        "console-changed-files-section",
+        "console-run-inspector",
+    )
+    assert len(direct_children) == 6
+    assert direct_children[-1] in _LIVE_WORK_IDS
+
+    run_wrapper = rail.query_one("#console-run-inspector")
+    run_wrapper_children = tuple(child.id for child in run_wrapper.children)
+    assert run_wrapper_children == (
+        "console-run-inspector-state",
+        "console-settings-summary",
+    )
+    inspector = run_wrapper.query_one(
+        "#console-run-inspector-state", ConsoleRunInspector
+    )
+    inspector_boundaries = tuple(
+        child.id
+        for child in inspector.children
+        if child.id == "console-inspector-run-status-summary"
+        or child.has_class("console-inspector-group-heading")
+    )
+    return (
+        *direct_children[:4],
+        *inspector_boundaries,
+        run_wrapper_children[-1],
+        direct_children[-1],
     )
 
-    assert ownership.INSPECTOR_BOUNDARY_ORDER == (
+
+def test_inspector_boundary_inventory_has_approved_order_and_specialized_owners():
+    assert tuple(owner for _widget_id, owner in _EXPECTED_BOUNDARY_ANCHORS) + (
+        "Live Work",
+    ) == (
+        "Project Instructions",
         "Sources",
         "Scope",
         "Changed Files",
@@ -103,8 +175,10 @@ def test_inspector_boundary_inventory_has_approved_order_and_specialized_owners(
         "Session Settings",
         "Live Work",
     )
-    assert ownership.SPECIALIZED_CONTENT_OWNERS == {
-        "console-project-instruction-status": "Sources",
+    assert dict(_EXPECTED_BOUNDARY_ANCHORS[:5]) | {
+        "console-settings-summary": "Session Settings",
+    } | {live_id: "Live Work" for live_id in _LIVE_WORK_IDS} == {
+        "console-project-instruction-status": "Project Instructions",
         "console-staged-context-tray": "Sources",
         "console-retrieval-scope-row": "Scope",
         "console-changed-files-section": "Changed Files",
@@ -113,6 +187,211 @@ def test_inspector_boundary_inventory_has_approved_order_and_specialized_owners(
         "console-pending-launch-card": "Live Work",
         "console-live-work-source-readiness": "Live Work",
     }
+
+
+@pytest.mark.asyncio
+async def test_mounted_inspector_semantic_census_matches_actual_right_rail_order():
+    exhaustive_rows = tuple(
+        ConsoleDisplayRow(label, "value")
+        for label in (
+            "Run recipe",
+            "Live work",
+            "Setup",
+            "Send blocked",
+            "Recovery action",
+            "Blocked impact",
+            "Next action",
+            "Provider",
+            "Sources",
+            "RAG/source",
+            "Evidence",
+            "Authority",
+            "Tools",
+            "MCP",
+            "Approvals",
+            "Artifacts",
+            "Selected conversation",
+            "Conversation source",
+            "Workspace",
+            "Resume state",
+            "Prefill (next send only)",
+            "Prefill (pinned)",
+            "Session provider",
+            "Session model",
+            "Session endpoint",
+            "Session sampling",
+            "Session persona",
+            "Selected message",
+            "Message actions",
+            "Keyboard",
+            "Variants",
+            "Excerpt",
+            "Delete confirmation",
+        )
+    )
+    exhaustive_state = ConsoleInspectorState(
+        rows=exhaustive_rows,
+        actions=(
+            ConsoleInspectorAction(
+                "console-inspector-review-approval", "Review approval", True
+            ),
+            ConsoleInspectorAction(
+                "console-inspector-review-changes", "Review changes", True
+            ),
+            ConsoleInspectorAction(
+                "console-inspector-save-chatbook", "Save as Chatbook", True
+            ),
+        ),
+        dictionary_rows=(ConsoleDisplayRow("Dictionary", "attached"),),
+        dictionary_actions=(
+            ConsoleInspectorAction(
+                "console-inspector-dictionaries-attach", "Attach dictionary", True
+            ),
+        ),
+        world_book_rows=(ConsoleDisplayRow("World Book", "attached"),),
+        world_book_actions=(
+            ConsoleInspectorAction(
+                "console-inspector-worldbooks-attach", "Attach World Book", True
+            ),
+        ),
+    )
+
+    async with make_console_pilot() as pilot:
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause()
+        rail = pilot.app.screen.query_one("#console-right-rail")
+        rail._inspector_state = exhaustive_state
+        await rail.recompose()
+        await pilot.pause()
+
+        mounted_ids = _mounted_boundary_ids(rail)
+        expected_ids = tuple(item[0] for item in _EXPECTED_BOUNDARY_ANCHORS)
+        assert mounted_ids[:-1] == expected_ids
+        assert mounted_ids[-1] in _LIVE_WORK_IDS
+
+
+@pytest.mark.asyncio
+async def test_new_specialized_sibling_fails_mounted_production_census():
+    async with make_console_pilot() as pilot:
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause()
+        rail = pilot.app.screen.query_one("#console-right-rail")
+        for parent_selector, sibling_id in (
+            ("#console-inspector-rail-body", "console-new-specialized-sibling"),
+            ("#console-run-inspector", "console-new-run-wrapper-sibling"),
+        ):
+            sibling = Static("new", id=sibling_id)
+            await rail.query_one(parent_selector).mount(sibling)
+            with pytest.raises(AssertionError):
+                _mounted_boundary_ids(rail)
+            await sibling.remove()
+
+
+@pytest.mark.asyncio
+async def test_real_inspector_producer_variants_are_strictly_owned(monkeypatch):
+    ownership = importlib.import_module(
+        "tldw_chatbook.Widgets.Console.console_inspector_ownership"
+    )
+
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        store = screen._ensure_console_chat_store()
+        message = store.append_message(
+            store.active_session_id,
+            role=ConsoleMessageRole.USER,
+            content="selected producer message",
+        )
+        await screen._sync_native_console_chat_ui()
+        transcript = screen.query_one("#console-native-transcript")
+        transcript.select_message(message.id)
+        screen._retrieval._active_dictionaries_summary = {
+            "dictionaries": [{"name": "Producer dictionary", "source": "conversation"}]
+        }
+        screen._retrieval._active_world_books_summary = {
+            "world_books": [
+                {"name": "Producer world book", "entry_count": 2, "enabled": True}
+            ]
+        }
+        monkeypatch.setattr(
+            screen, "_console_provider_blocker_copy", lambda: "Provider setup needed"
+        )
+        monkeypatch.setattr(
+            screen,
+            "_console_provider_recovery_action",
+            lambda: ("Open Settings", "settings", "Open provider settings"),
+        )
+
+        state = screen._build_console_inspector_state(None)
+        classified = ownership.classify_inspector_content(
+            state, ownership.InspectorOwnershipPolicy.STRICT
+        )
+
+        assert not classified.incomplete
+        assert {row.label for row in state.rows} >= {
+            "Setup",
+            "Blocked impact",
+            "Next action",
+            "Selected conversation",
+            "Conversation source",
+            "Selected message",
+            "Message actions",
+            "Keyboard",
+        }
+        assert state.dictionary_rows
+        assert state.dictionary_actions
+        assert state.world_book_rows
+        assert state.world_book_actions
+
+
+@pytest.mark.asyncio
+async def test_rail_recompose_retains_unknown_fingerprint_deduper(monkeypatch):
+    ownership = importlib.import_module(
+        "tldw_chatbook.Widgets.Console.console_inspector_ownership"
+    )
+    inspector_module = importlib.import_module(
+        "tldw_chatbook.Widgets.Console.console_run_inspector"
+    )
+    diagnostics = []
+    monkeypatch.setattr(
+        inspector_module.logger,
+        "warning",
+        lambda message, fingerprint: diagnostics.append((message, fingerprint)),
+    )
+
+    async with make_console_pilot() as pilot:
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause()
+        rail = pilot.app.screen.query_one("#console-right-rail")
+        initial = rail._inspector_state
+        rail._inspector_state = replace(
+            initial,
+            rows=initial.rows
+            + (ConsoleDisplayRow("Unknown retained", "PRIVATE VALUE"),),
+        )
+        await rail.recompose()
+        await pilot.pause()
+        assert len(diagnostics) == 1
+        assert (
+            rail.query_one(
+                "#console-run-inspector-state", ConsoleRunInspector
+            ).ownership_policy
+            is ownership.InspectorOwnershipPolicy.RESILIENT
+        )
+
+        await rail.recompose()
+        await pilot.pause()
+        assert len(diagnostics) == 1
+
+        rail._inspector_state = replace(
+            initial,
+            rows=initial.rows
+            + (ConsoleDisplayRow("Another unknown", "OTHER PRIVATE VALUE"),),
+        )
+        await rail.recompose()
+        await pilot.pause()
+        assert len(diagnostics) == 2
+        assert diagnostics[-1][1] == ("row:Another unknown",)
+        assert "PRIVATE VALUE" not in repr(diagnostics)
 
 
 def test_inspector_composition_boundary_resolves_strict_opt_in(monkeypatch):

@@ -11,7 +11,6 @@ from textual.css.query import NoMatches, QueryError
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_display_state import (
-    ConsoleDisplayRow,
     ConsoleInspectorAction,
     ConsoleInspectorState,
 )
@@ -19,7 +18,6 @@ from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from tldw_chatbook.Widgets.Console.console_inspector_ownership import (
     ACTION_GROUPS,
     ROW_GROUPS as _ROW_GROUPS,
-    ROW_IDS as _ROW_IDS,
     InspectorOwnedContent,
     InspectorOwnershipPolicy,
     classify_inspector_content,
@@ -36,6 +34,7 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
         state: ConsoleInspectorState,
         *,
         ownership_policy: InspectorOwnershipPolicy = InspectorOwnershipPolicy.STRICT,
+        reported_unknown_fingerprints: set[tuple[str, ...]] | None = None,
         **kwargs: Any,
     ) -> None:
         ownership = classify_inspector_content(state, ownership_policy)
@@ -43,7 +42,11 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
         self.state = state
         self.ownership_policy = ownership_policy
         self._ownership = ownership
-        self._reported_unknown_fingerprints: set[tuple[str, ...]] = set()
+        self._reported_unknown_fingerprints = (
+            reported_unknown_fingerprints
+            if reported_unknown_fingerprints is not None
+            else set()
+        )
         self._report_unowned_content(ownership)
         self.styles.height = "auto"
         self.styles.min_height = 0
@@ -120,9 +123,8 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
     ) -> list[tuple[str, str, str]]:
         """Return ``(widget_id, text, status)`` for each row ``compose`` mounts.
 
-        Mirrors the grouped-then-leftover walk in ``compose`` (including its
-        duplicate-label semantics) so per-row updates target exactly the
-        mounted widgets.
+        Reads the same filtered projection as ``compose`` so per-row updates
+        target exactly the mounted widgets.
 
         Args:
             state: Inspector display-state snapshot to project.
@@ -133,27 +135,15 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
         owned = ownership or classify_inspector_content(
             state, InspectorOwnershipPolicy.STRICT
         )
-        entries: list[tuple[str, str, str]] = []
-        rows_by_label = {
-            row.label: (index, row)
-            for owner, _heading_id, _labels in _ROW_GROUPS
-            for index, row in owned.rows_for(owner)
-        }
-        for _owner, _heading_id, labels in _ROW_GROUPS:
-            for label in labels:
-                if label not in rows_by_label:
-                    continue
-                index, row = rows_by_label[label]
-                entries.append((cls._row_id(row, index), row.text, row.status))
-        for index, row in enumerate(getattr(state, "dictionary_rows", ()) or ()):
-            entries.append(
-                (f"console-inspector-dictionaries-row-{index}", row.text, row.status)
-            )
-        for index, row in enumerate(getattr(state, "world_book_rows", ()) or ()):
-            entries.append(
-                (f"console-inspector-worldbooks-row-{index}", row.text, row.status)
-            )
-        return entries
+        projected_rows = (
+            *owned.rows,
+            *owned.dictionary_rows,
+            *owned.world_book_rows,
+        )
+        return [
+            (entry.widget_id, entry.row.text, entry.row.status)
+            for entry in projected_rows
+        ]
 
     @classmethod
     def _structural_key(
@@ -190,14 +180,8 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
         return (
             tuple(entry[0] for entry in cls._rendered_row_entries(state, owned)),
             tuple(_action_key(action) for action in owned.known_actions),
-            tuple(
-                _action_key(action)
-                for action in getattr(state, "dictionary_actions", ()) or ()
-            ),
-            tuple(
-                _action_key(action)
-                for action in getattr(state, "world_book_actions", ()) or ()
-            ),
+            tuple(_action_key(entry.action) for entry in owned.dictionary_actions),
+            tuple(_action_key(entry.action) for entry in owned.world_book_actions),
         )
 
     def _apply_row_updates(
@@ -238,10 +222,6 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
                 row_widget.remove_class(f"console-inspector-row-{old_status}")
                 row_widget.add_class(f"console-inspector-row-{status}")
         return True
-
-    @staticmethod
-    def _row_id(row: ConsoleDisplayRow, index: int) -> str:
-        return _ROW_IDS[row.label]
 
     @staticmethod
     def _button_for_action(action: ConsoleInspectorAction) -> Button:
@@ -290,7 +270,7 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
         owned = ownership or self._ownership
         if owned.incomplete:
             return "Status: Inspector data incomplete"
-        rows = {row.label: row for row in (state or self.state).rows}
+        rows = {entry.row.label: entry.row for entry in owned.rows}
         provider = rows.get("Provider")
         approvals = rows.get("Approvals")
         rag_source = rows.get("Sources") or rows.get("RAG/source")
@@ -312,19 +292,13 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
             id="console-inspector-run-status-summary",
             classes="console-inspector-status-summary",
         )
-        rows_by_label = {
-            row.label: (index, row)
-            for owner, _heading_id, _labels in _ROW_GROUPS
-            for index, row in self._ownership.rows_for(owner)
-        }
-
-        for heading, heading_id, labels in _ROW_GROUPS:
-            group_labels = [label for label in labels if label in rows_by_label]
+        for heading, heading_id, _labels in _ROW_GROUPS:
+            group_rows = self._ownership.rows_for(heading)
             group_actions = self._ownership.actions_for(heading)
-            if not group_labels and not group_actions:
+            if not group_rows and not group_actions:
                 continue
 
-            if not group_labels and not any(action.enabled for action in group_actions):
+            if not group_rows and not any(action.enabled for action in group_actions):
                 for action in group_actions:
                     yield from self._compose_action(action)
                 continue
@@ -334,51 +308,58 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
                 id=heading_id,
                 classes="console-inspector-group-heading destination-section",
             )
-            for label in group_labels:
-                row_entry = rows_by_label[label]
-                index, row = row_entry
+            for entry in group_rows:
                 yield Static(
-                    row.text,
-                    id=self._row_id(row, index),
-                    classes=f"console-inspector-row console-inspector-row-{row.status}",
+                    entry.row.text,
+                    id=entry.widget_id,
+                    classes=(
+                        "console-inspector-row "
+                        f"console-inspector-row-{entry.row.status}"
+                    ),
                     markup=False,
                 )
 
             for action in group_actions:
                 yield from self._compose_action(action)
 
-        dict_rows = getattr(self.state, "dictionary_rows", ())
-        dict_actions = getattr(self.state, "dictionary_actions", ())
+        dict_rows = self._ownership.dictionary_rows
+        dict_actions = self._ownership.dictionary_actions
         if dict_rows or dict_actions:
             yield Static(
                 "Chat Dictionaries",
                 id="console-inspector-dictionaries-heading",
                 classes="console-inspector-group-heading destination-section",
             )
-            for index, row in enumerate(dict_rows):
+            for entry in dict_rows:
                 yield Static(
-                    row.text,
-                    id=f"console-inspector-dictionaries-row-{index}",
-                    classes=f"console-inspector-row console-inspector-row-{row.status}",
+                    entry.row.text,
+                    id=entry.widget_id,
+                    classes=(
+                        "console-inspector-row "
+                        f"console-inspector-row-{entry.row.status}"
+                    ),
                     markup=False,
                 )
-            for action in dict_actions:
-                yield from self._compose_action(action)
+            for entry in dict_actions:
+                yield from self._compose_action(entry.action)
 
-        world_book_rows = getattr(self.state, "world_book_rows", ())
-        world_book_actions = getattr(self.state, "world_book_actions", ())
+        world_book_rows = self._ownership.world_book_rows
+        world_book_actions = self._ownership.world_book_actions
         if world_book_rows or world_book_actions:
             yield Static(
                 "World Books",
                 id="console-inspector-worldbooks-heading",
                 classes="console-inspector-group-heading destination-section",
             )
-            for index, row in enumerate(world_book_rows):
+            for entry in world_book_rows:
                 yield Static(
-                    row.text,
-                    id=f"console-inspector-worldbooks-row-{index}",
-                    classes=f"console-inspector-row console-inspector-row-{row.status}",
+                    entry.row.text,
+                    id=entry.widget_id,
+                    classes=(
+                        "console-inspector-row "
+                        f"console-inspector-row-{entry.row.status}"
+                    ),
                     markup=False,
                 )
-            for action in world_book_actions:
-                yield from self._compose_action(action)
+            for entry in world_book_actions:
+                yield from self._compose_action(entry.action)
