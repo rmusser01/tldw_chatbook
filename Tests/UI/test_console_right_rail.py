@@ -24,6 +24,7 @@ and byte-identical afterwards (task-4 brief, global constraint 3).
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import importlib
 import threading
 
 import pytest
@@ -76,6 +77,65 @@ def _right_rail_open(pilot) -> bool:
 def _handle_visible(pilot) -> bool:
     handle = pilot.app.screen.query_one("#console-inspector-rail-handle")
     return bool(handle.display) and handle.styles.display != "none"
+
+
+def test_inspector_boundary_inventory_has_approved_order_and_specialized_owners():
+    ownership = importlib.import_module(
+        "tldw_chatbook.Widgets.Console.console_inspector_ownership"
+    )
+
+    assert ownership.INSPECTOR_BOUNDARY_ORDER == (
+        "Sources",
+        "Scope",
+        "Changed Files",
+        "Run status",
+        "Run",
+        "Source Readiness",
+        "Tools",
+        "Approvals",
+        "Artifacts",
+        "Selected Conversation",
+        "Session Defaults",
+        "Selected Message",
+        "Changes",
+        "Chat Dictionaries",
+        "World Books",
+        "Session Settings",
+        "Live Work",
+    )
+    assert ownership.SPECIALIZED_CONTENT_OWNERS == {
+        "console-project-instruction-status": "Sources",
+        "console-staged-context-tray": "Sources",
+        "console-retrieval-scope-row": "Scope",
+        "console-changed-files-section": "Changed Files",
+        "console-inspector-run-status-summary": "Run status",
+        "console-settings-summary": "Session Settings",
+        "console-pending-launch-card": "Live Work",
+        "console-live-work-source-readiness": "Live Work",
+    }
+
+
+def test_inspector_composition_boundary_resolves_strict_opt_in(monkeypatch):
+    right_rail = importlib.import_module("tldw_chatbook.UI.Console_Modules.right_rail")
+    ownership = importlib.import_module(
+        "tldw_chatbook.Widgets.Console.console_inspector_ownership"
+    )
+
+    monkeypatch.delenv("TLDW_CONSOLE_STRICT_INSPECTOR_OWNERSHIP", raising=False)
+    assert (
+        right_rail._resolve_inspector_ownership_policy()
+        is ownership.InspectorOwnershipPolicy.RESILIENT
+    )
+    monkeypatch.setenv("TLDW_CONSOLE_STRICT_INSPECTOR_OWNERSHIP", "1")
+    assert (
+        right_rail._resolve_inspector_ownership_policy()
+        is ownership.InspectorOwnershipPolicy.STRICT
+    )
+    monkeypatch.setenv("TLDW_CONSOLE_STRICT_INSPECTOR_OWNERSHIP", "true")
+    assert (
+        right_rail._resolve_inspector_ownership_policy()
+        is ownership.InspectorOwnershipPolicy.RESILIENT
+    )
 
 
 @pytest.mark.asyncio
@@ -272,7 +332,9 @@ async def test_context_modal_refresh_factory_keeps_opening_session_after_switch(
         state = await modal._project_instruction_recovery(captured.id, "disable")
         assert state.status == "Off"
         assert setter_threads == [main_thread_id]
-        captured_after = next(item for item in store.sessions() if item.id == captured.id)
+        captured_after = next(
+            item for item in store.sessions() if item.id == captured.id
+        )
         active_after = next(item for item in store.sessions() if item.id == active.id)
         assert captured_after.project_instruction_state == (
             ProjectInstructionControlState.legacy_disabled()

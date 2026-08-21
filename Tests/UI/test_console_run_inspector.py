@@ -6,6 +6,9 @@ actions added/removed, dictionary section shape changes) still recompose
 the widget -- and only the widget, never the owning screen.
 """
 
+from collections import Counter
+import importlib
+
 import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Static
@@ -15,7 +18,61 @@ from tldw_chatbook.Chat.console_display_state import (
     ConsoleInspectorAction,
     ConsoleInspectorState,
 )
-from tldw_chatbook.Widgets.Console.console_run_inspector import ConsoleRunInspector
+from tldw_chatbook.Widgets.Console.console_run_inspector import (
+    _ACTION_GROUPS,
+    _ROW_GROUPS,
+    _ROW_IDS,
+    ConsoleRunInspector,
+)
+
+
+EXPECTED_ROW_OWNERS = {
+    "Run recipe": "Run",
+    "Live work": "Run",
+    "Setup": "Run",
+    "Send blocked": "Run",
+    "Recovery action": "Run",
+    "Blocked impact": "Run",
+    "Next action": "Run",
+    "Provider": "Run",
+    "Sources": "Source Readiness",
+    "RAG/source": "Source Readiness",
+    "Evidence": "Source Readiness",
+    "Authority": "Source Readiness",
+    "Tools": "Tools",
+    "MCP": "Tools",
+    "Approvals": "Approvals",
+    "Artifacts": "Artifacts",
+    "Selected conversation": "Selected Conversation",
+    "Conversation source": "Selected Conversation",
+    "Workspace": "Selected Conversation",
+    "Resume state": "Selected Conversation",
+    "Prefill (next send only)": "Selected Conversation",
+    "Prefill (pinned)": "Selected Conversation",
+    "Session provider": "Session Defaults",
+    "Session model": "Session Defaults",
+    "Session endpoint": "Session Defaults",
+    "Session sampling": "Session Defaults",
+    "Session persona": "Session Defaults",
+    "Selected message": "Selected Message",
+    "Message actions": "Selected Message",
+    "Keyboard": "Selected Message",
+    "Variants": "Selected Message",
+    "Excerpt": "Selected Message",
+    "Delete confirmation": "Selected Message",
+}
+
+EXPECTED_ACTION_OWNERS = {
+    "console-inspector-save-chatbook": "Artifacts",
+    "console-inspector-review-approval": "Approvals",
+    "console-inspector-review-changes": "Changes",
+}
+
+
+def _ownership_module():
+    return importlib.import_module(
+        "tldw_chatbook.Widgets.Console.console_inspector_ownership"
+    )
 
 
 def _base_state(**overrides) -> ConsoleInspectorState:
@@ -34,12 +91,267 @@ def _base_state(**overrides) -> ConsoleInspectorState:
 
 
 class InspectorHarness(App):
-    def __init__(self, state: ConsoleInspectorState) -> None:
+    def __init__(self, state: ConsoleInspectorState, *, ownership_policy=None) -> None:
         super().__init__()
         self._state = state
+        ownership = _ownership_module()
+        self._ownership_policy = (
+            ownership_policy or ownership.InspectorOwnershipPolicy.STRICT
+        )
 
     def compose(self) -> ComposeResult:
-        yield ConsoleRunInspector(self._state, id="inspector")
+        yield ConsoleRunInspector(
+            self._state,
+            ownership_policy=self._ownership_policy,
+            id="inspector",
+        )
+
+
+def test_inspector_row_and_action_inventory_has_exactly_one_owner():
+    ownership = _ownership_module()
+
+    grouped_rows = [
+        (label, owner) for owner, _heading_id, labels in _ROW_GROUPS for label in labels
+    ]
+    grouped_actions = [
+        (action_id, owner)
+        for owner, action_ids in _ACTION_GROUPS.items()
+        for action_id in action_ids
+    ]
+
+    assert ownership.ROW_OWNERS == EXPECTED_ROW_OWNERS
+    assert set(_ROW_IDS) == set(EXPECTED_ROW_OWNERS)
+    assert Counter(label for label, _owner in grouped_rows) == Counter(
+        {label: 1 for label in EXPECTED_ROW_OWNERS}
+    )
+    assert dict(grouped_rows) == EXPECTED_ROW_OWNERS
+    assert ownership.ACTION_OWNERS == EXPECTED_ACTION_OWNERS
+    assert Counter(action_id for action_id, _owner in grouped_actions) == Counter(
+        {action_id: 1 for action_id in EXPECTED_ACTION_OWNERS}
+    )
+    assert dict(grouped_actions) == EXPECTED_ACTION_OWNERS
+
+
+@pytest.mark.parametrize(
+    ("collection_name", "expected_owner"),
+    [
+        ("dictionary_rows", "Chat Dictionaries"),
+        ("dictionary_actions", "Chat Dictionaries"),
+        ("world_book_rows", "World Books"),
+        ("world_book_actions", "World Books"),
+    ],
+)
+def test_dynamic_inspector_collection_items_have_explicit_owner(
+    collection_name, expected_owner
+):
+    ownership = _ownership_module()
+    item = (
+        ConsoleDisplayRow("dynamic label", "dynamic value")
+        if collection_name.endswith("rows")
+        else ConsoleInspectorAction("dynamic-action", "dynamic action", True)
+    )
+    state = _base_state(**{collection_name: (item,)})
+
+    assert ownership.DYNAMIC_COLLECTION_OWNERS[collection_name] == expected_owner
+    assert ownership.dynamic_item_owner(state, collection_name, 0) == expected_owner
+
+
+@pytest.mark.parametrize(
+    "unknown_content",
+    [
+        {"rows": (ConsoleDisplayRow("Unknown row", "private row text"),)},
+        {
+            "actions": (
+                ConsoleInspectorAction(
+                    "console-inspector-unknown-action",
+                    "private action copy",
+                    True,
+                ),
+            )
+        },
+    ],
+)
+def test_strict_ownership_rejects_unknown_content_before_mount(unknown_content):
+    ownership = _ownership_module()
+    state = _base_state(**{"rows": (), **unknown_content})
+
+    with pytest.raises(ownership.UnownedInspectorContentError):
+        ConsoleRunInspector(
+            state,
+            ownership_policy=ownership.InspectorOwnershipPolicy.STRICT,
+        )
+
+
+@pytest.mark.asyncio
+async def test_strict_sync_rejects_unknown_content_before_replacing_valid_tree():
+    ownership = _ownership_module()
+    initial = _base_state()
+    app = InspectorHarness(initial)
+
+    async with app.run_test(size=(80, 32)):
+        inspector = app.query_one("#inspector", ConsoleRunInspector)
+        provider_before = inspector.query_one("#console-inspector-provider", Static)
+
+        with pytest.raises(ownership.UnownedInspectorContentError):
+            inspector.sync_state(
+                _base_state(
+                    rows=initial.rows
+                    + (ConsoleDisplayRow("Unknown row", "private row text"),)
+                )
+            )
+
+        assert inspector.state is initial
+        assert inspector.recompose_count == 0
+        assert (
+            inspector.query_one("#console-inspector-provider", Static)
+            is provider_before
+        )
+
+
+@pytest.mark.asyncio
+async def test_review_changes_mounts_under_changes_before_dictionaries():
+    state = _base_state(
+        actions=(
+            ConsoleInspectorAction(
+                "console-inspector-review-changes", "Review changes", True
+            ),
+        ),
+        dictionary_rows=(ConsoleDisplayRow("Dictionary", "attached"),),
+    )
+    app = InspectorHarness(state)
+
+    async with app.run_test(size=(80, 32)):
+        inspector = app.query_one("#inspector", ConsoleRunInspector)
+        mounted_ids = [widget.id for widget in inspector.query("*") if widget.id]
+
+        assert mounted_ids.index(
+            "console-inspector-changes-heading"
+        ) < mounted_ids.index("console-inspector-review-changes")
+        assert mounted_ids.index(
+            "console-inspector-review-changes"
+        ) < mounted_ids.index("console-inspector-dictionaries-heading")
+
+
+@pytest.mark.asyncio
+async def test_resilient_ownership_omits_unknowns_deduplicates_safe_diagnostic_and_clears_in_place(
+    monkeypatch,
+):
+    ownership = _ownership_module()
+    inspector_module = importlib.import_module(
+        "tldw_chatbook.Widgets.Console.console_run_inspector"
+    )
+    diagnostics = []
+    monkeypatch.setattr(
+        inspector_module.logger,
+        "warning",
+        lambda message, fingerprint: diagnostics.append((message, fingerprint)),
+    )
+    state = _base_state(
+        rows=(
+            ConsoleDisplayRow("Provider", "known provider", status="ready"),
+            ConsoleDisplayRow("Unknown row", "ROW SECRET"),
+        ),
+        actions=(
+            ConsoleInspectorAction(
+                "console-inspector-save-chatbook", "Save as Chatbook", True
+            ),
+            ConsoleInspectorAction(
+                "console-inspector-unknown-action", "ACTION SECRET", True
+            ),
+        ),
+    )
+    app = InspectorHarness(
+        state,
+        ownership_policy=ownership.InspectorOwnershipPolicy.RESILIENT,
+    )
+
+    async with app.run_test(size=(80, 32)) as pilot:
+        inspector = app.query_one("#inspector", ConsoleRunInspector)
+        provider_before = inspector.query_one("#console-inspector-provider", Static)
+        summary_before = inspector.query_one(
+            "#console-inspector-run-status-summary", Static
+        )
+        assert str(summary_before.renderable) == "Status: Inspector data incomplete"
+        assert not app.query("#console-inspector-unknown-action")
+        assert not [
+            widget
+            for widget in app.query(Static)
+            if "ROW SECRET" in str(widget.renderable)
+            or "ACTION SECRET" in str(widget.renderable)
+            or str(widget.renderable) == "Other"
+        ]
+        assert len(diagnostics) == 1
+        assert diagnostics[0][1] == (
+            "action:console-inspector-unknown-action",
+            "row:Unknown row",
+        )
+        assert "ROW SECRET" not in repr(diagnostics)
+        assert "ACTION SECRET" not in repr(diagnostics)
+
+        inspector.sync_state(
+            _base_state(
+                rows=(
+                    ConsoleDisplayRow("Provider", "updated provider", status="ready"),
+                    ConsoleDisplayRow("Unknown row", "DIFFERENT ROW SECRET"),
+                ),
+                actions=state.actions,
+            )
+        )
+        await pilot.pause()
+        assert inspector.recompose_count == 0
+        assert len(diagnostics) == 1
+        assert (
+            inspector.query_one("#console-inspector-provider", Static)
+            is provider_before
+        )
+
+        inspector.sync_state(
+            _base_state(
+                rows=(
+                    ConsoleDisplayRow("Provider", "updated again", status="ready"),
+                    ConsoleDisplayRow("Unknown row", "FIRST DUPLICATE SECRET"),
+                    ConsoleDisplayRow("Unknown row", "SECOND DUPLICATE SECRET"),
+                ),
+                actions=state.actions,
+            )
+        )
+        await pilot.pause()
+        assert inspector.recompose_count == 0
+        assert len(diagnostics) == 1
+
+        inspector.sync_state(
+            _base_state(
+                rows=(ConsoleDisplayRow("Provider", "valid provider", status="ready"),),
+                actions=(
+                    ConsoleInspectorAction(
+                        "console-inspector-save-chatbook", "Save as Chatbook", True
+                    ),
+                ),
+            )
+        )
+        await pilot.pause()
+        assert inspector.recompose_count == 0
+        assert (
+            inspector.query_one("#console-inspector-run-status-summary", Static)
+            is summary_before
+        )
+        assert str(summary_before.renderable) == "Status: Ready"
+
+        inspector.sync_state(
+            _base_state(
+                rows=(
+                    ConsoleDisplayRow("Provider", "valid provider", status="ready"),
+                    ConsoleDisplayRow("Sources", "staged", status="ready"),
+                ),
+                actions=(
+                    ConsoleInspectorAction(
+                        "console-inspector-save-chatbook", "Save as Chatbook", True
+                    ),
+                ),
+            )
+        )
+        await pilot.pause()
+        assert inspector.recompose_count == 1
 
 
 @pytest.mark.asyncio

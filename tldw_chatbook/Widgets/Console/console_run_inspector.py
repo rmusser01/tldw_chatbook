@@ -4,146 +4,47 @@ from __future__ import annotations
 
 from typing import Any
 
+from loguru import logger
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.css.query import NoMatches, QueryError
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_display_state import (
-    CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,
-    CONSOLE_INSPECTOR_REVIEW_CHANGES_ID,
-    CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,
     ConsoleDisplayRow,
     ConsoleInspectorAction,
     ConsoleInspectorState,
 )
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
-
-
-_ROW_IDS = {
-    "Run recipe": "console-inspector-run-recipe",
-    "Live work": "console-inspector-live-work",
-    "Setup": "console-inspector-setup",
-    "Send blocked": "console-inspector-send-blocked",
-    "Recovery action": "console-inspector-recovery-action",
-    "Blocked impact": "console-inspector-blocked-impact",
-    "Next action": "console-inspector-next-action",
-    "Provider": "console-inspector-provider",
-    "Sources": "console-inspector-sources",
-    "Tools": "console-inspector-tools",
-    "MCP": "console-inspector-mcp",
-    "RAG/source": "console-inspector-rag-source",
-    "Evidence": "console-inspector-evidence",
-    "Authority": "console-inspector-authority",
-    "Artifacts": "console-inspector-artifacts",
-    "Approvals": "console-inspector-approvals",
-    "Selected message": "console-inspector-selected-message",
-    "Selected conversation": "console-inspector-selected-conversation",
-    "Conversation source": "console-inspector-conversation-source",
-    "Workspace": "console-inspector-workspace",
-    "Resume state": "console-inspector-resume-state",
-    "Prefill (next send only)": "console-inspector-prefill-one-shot",
-    "Prefill (pinned)": "console-inspector-prefill-pinned",
-    "Session provider": "console-inspector-session-provider",
-    "Session model": "console-inspector-session-model",
-    "Session endpoint": "console-inspector-session-endpoint",
-    "Session sampling": "console-inspector-session-sampling",
-    "Session persona": "console-inspector-session-persona",
-    "Message actions": "console-inspector-message-actions",
-    "Keyboard": "console-inspector-message-keyboard",
-    "Variants": "console-inspector-message-variants",
-    "Excerpt": "console-inspector-message-excerpt",
-    "Delete confirmation": "console-inspector-delete-confirmation",
-}
-
-_ROW_GROUPS = (
-    (
-        "Run",
-        "console-inspector-run-heading",
-        (
-            "Run recipe",
-            "Live work",
-            "Setup",
-            "Blocked impact",
-            "Next action",
-            "Provider",
-        ),
-    ),
-    (
-        "Source Readiness",
-        "console-inspector-source-readiness-heading",
-        ("Sources", "Evidence", "Authority"),
-    ),
-    (
-        "Tools",
-        "console-inspector-tools-heading",
-        ("Tools", "MCP"),
-    ),
-    (
-        "Approvals",
-        "console-inspector-approvals-heading",
-        ("Approvals",),
-    ),
-    (
-        "Artifacts",
-        "console-inspector-artifacts-heading",
-        ("Artifacts",),
-    ),
-    (
-        "Selected Conversation",
-        "console-inspector-selected-conversation-heading",
-        (
-            "Selected conversation",
-            "Conversation source",
-            "Workspace",
-            "Resume state",
-            "Prefill (next send only)",
-            "Prefill (pinned)",
-        ),
-    ),
-    (
-        "Session Defaults",
-        "console-inspector-session-defaults-heading",
-        (
-            "Session provider",
-            "Session model",
-            "Session endpoint",
-            "Session sampling",
-            "Session persona",
-        ),
-    ),
-    (
-        "Selected Message",
-        "console-inspector-selected-message-heading",
-        (
-            "Selected message",
-            "Message actions",
-            "Keyboard",
-            "Variants",
-            "Excerpt",
-            "Delete confirmation",
-        ),
-    ),
+from tldw_chatbook.Widgets.Console.console_inspector_ownership import (
+    ACTION_GROUPS,
+    ROW_GROUPS as _ROW_GROUPS,
+    ROW_IDS as _ROW_IDS,
+    InspectorOwnedContent,
+    InspectorOwnershipPolicy,
+    classify_inspector_content,
 )
 
-_ACTION_GROUPS = {
-    "Artifacts": (CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,),
-    # TASK-1843: the "Tools" group is intentionally empty of actions now.
-    # "Review tool call" gated on a counter production never populates, so it
-    # was permanently disabled while permanently claiming a reason, and its
-    # handler was a notify() stub. The Tools ROW stays -- it reports a real
-    # count -- but it no longer carries a control the user cannot use.
-    "Approvals": (CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,),
-    "Changes": (CONSOLE_INSPECTOR_REVIEW_CHANGES_ID,),
-}
+_ACTION_GROUPS = ACTION_GROUPS
 
 
 class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
     """Render Console run readiness, recovery, and action affordances."""
 
-    def __init__(self, state: ConsoleInspectorState, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        state: ConsoleInspectorState,
+        *,
+        ownership_policy: InspectorOwnershipPolicy = InspectorOwnershipPolicy.STRICT,
+        **kwargs: Any,
+    ) -> None:
+        ownership = classify_inspector_content(state, ownership_policy)
         super().__init__(**kwargs)
         self.state = state
+        self.ownership_policy = ownership_policy
+        self._ownership = ownership
+        self._reported_unknown_fingerprints: set[tuple[str, ...]] = set()
+        self._report_unowned_content(ownership)
         self.styles.height = "auto"
         self.styles.min_height = 0
         #: Count of wholesale recomposes taken by ``sync_state`` (test seam).
@@ -164,11 +65,16 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
         if state == self.state:
             return
         previous = self.state
+        previous_ownership = self._ownership
+        ownership = classify_inspector_content(state, self.ownership_policy)
         self.state = state
+        self._ownership = ownership
+        self._report_unowned_content(ownership)
         if (
             not self.is_mounted
-            or self._structural_key(previous) != self._structural_key(state)
-            or not self._apply_row_updates(previous)
+            or self._structural_key(previous, previous_ownership)
+            != self._structural_key(state, ownership)
+            or not self._apply_row_updates(previous, previous_ownership)
         ):
             self.recompose_count += 1
             self.refresh(recompose=True)
@@ -177,6 +83,14 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
         # recompose lands on the NEXT refresh cycle, i.e. after any rail
         # cascade the owning screen applies later in the same sync tick.
         self.call_after_refresh(self._restore_rail_cascade_visibility)
+
+    def _report_unowned_content(self, ownership: InspectorOwnedContent) -> None:
+        """Log one privacy-safe diagnostic for each unknown fingerprint."""
+        fingerprint = ownership.unknown_identifiers
+        if not fingerprint or fingerprint in self._reported_unknown_fingerprints:
+            return
+        self._reported_unknown_fingerprints.add(fingerprint)
+        logger.warning("Inspector ownership incomplete: {}", fingerprint)
 
     def _restore_rail_cascade_visibility(self) -> None:
         """Mirror recompose semantics for the Console rail-collapse cascade.
@@ -200,7 +114,9 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
 
     @classmethod
     def _rendered_row_entries(
-        cls, state: ConsoleInspectorState
+        cls,
+        state: ConsoleInspectorState,
+        ownership: InspectorOwnedContent | None = None,
     ) -> list[tuple[str, str, str]]:
         """Return ``(widget_id, text, status)`` for each row ``compose`` mounts.
 
@@ -214,22 +130,21 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
         Returns:
             Row entries in compose order, dictionary rows last.
         """
+        owned = ownership or classify_inspector_content(
+            state, InspectorOwnershipPolicy.STRICT
+        )
         entries: list[tuple[str, str, str]] = []
         rows_by_label = {
-            row.label: (index, row) for index, row in enumerate(state.rows)
+            row.label: (index, row)
+            for owner, _heading_id, _labels in _ROW_GROUPS
+            for index, row in owned.rows_for(owner)
         }
-        rendered_labels: set[str] = set()
-        for _heading, _heading_id, labels in _ROW_GROUPS:
+        for _owner, _heading_id, labels in _ROW_GROUPS:
             for label in labels:
                 if label not in rows_by_label:
                     continue
                 index, row = rows_by_label[label]
-                rendered_labels.add(label)
                 entries.append((cls._row_id(row, index), row.text, row.status))
-        for index, row in enumerate(state.rows):
-            if row.label in rendered_labels:
-                continue
-            entries.append((cls._row_id(row, index), row.text, row.status))
         for index, row in enumerate(getattr(state, "dictionary_rows", ()) or ()):
             entries.append(
                 (f"console-inspector-dictionaries-row-{index}", row.text, row.status)
@@ -241,7 +156,11 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
         return entries
 
     @classmethod
-    def _structural_key(cls, state: ConsoleInspectorState) -> tuple:
+    def _structural_key(
+        cls,
+        state: ConsoleInspectorState,
+        ownership: InspectorOwnedContent | None = None,
+    ) -> tuple:
         """Return a key identifying the mounted widget structure for a state.
 
         Two states with equal keys mount the same widget ids in the same
@@ -265,9 +184,12 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
                 getattr(action, "classes", ""),
             )
 
+        owned = ownership or classify_inspector_content(
+            state, InspectorOwnershipPolicy.STRICT
+        )
         return (
-            tuple(entry[0] for entry in cls._rendered_row_entries(state)),
-            tuple(_action_key(action) for action in state.actions),
+            tuple(entry[0] for entry in cls._rendered_row_entries(state, owned)),
+            tuple(_action_key(action) for action in owned.known_actions),
             tuple(
                 _action_key(action)
                 for action in getattr(state, "dictionary_actions", ()) or ()
@@ -278,7 +200,11 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
             ),
         )
 
-    def _apply_row_updates(self, previous: ConsoleInspectorState) -> bool:
+    def _apply_row_updates(
+        self,
+        previous: ConsoleInspectorState,
+        previous_ownership: InspectorOwnedContent,
+    ) -> bool:
         """Update changed row Statics in place after a non-structural change.
 
         Args:
@@ -289,7 +215,7 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
             target widget was missing (caller falls back to recompose).
         """
         new_summary = self._status_summary()
-        if new_summary != self._status_summary(previous):
+        if new_summary != self._status_summary(previous, previous_ownership):
             try:
                 summary = self.query_one(
                     "#console-inspector-run-status-summary", Static
@@ -297,9 +223,9 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
             except (NoMatches, QueryError):
                 return False
             summary.update(new_summary)
-        old_entries = self._rendered_row_entries(previous)
+        old_entries = self._rendered_row_entries(previous, previous_ownership)
         for (widget_id, text, status), (_old_id, old_text, old_status) in zip(
-            self._rendered_row_entries(self.state), old_entries
+            self._rendered_row_entries(self.state, self._ownership), old_entries
         ):
             if text == old_text and status == old_status:
                 continue
@@ -315,7 +241,7 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
 
     @staticmethod
     def _row_id(row: ConsoleDisplayRow, index: int) -> str:
-        return _ROW_IDS.get(row.label, f"console-inspector-row-{index}")
+        return _ROW_IDS[row.label]
 
     @staticmethod
     def _button_for_action(action: ConsoleInspectorAction) -> Button:
@@ -351,12 +277,19 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
             reason.styles.min_height = 0
             yield reason
 
-    def _status_summary(self, state: ConsoleInspectorState | None = None) -> str:
+    def _status_summary(
+        self,
+        state: ConsoleInspectorState | None = None,
+        ownership: InspectorOwnedContent | None = None,
+    ) -> str:
         """Return the primary run-inspector state in one scannable row.
 
         Args:
             state: Snapshot to summarize; defaults to the current state.
         """
+        owned = ownership or self._ownership
+        if owned.incomplete:
+            return "Status: Inspector data incomplete"
         rows = {row.label: row for row in (state or self.state).rows}
         provider = rows.get("Provider")
         approvals = rows.get("Approvals")
@@ -380,20 +313,20 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
             classes="console-inspector-status-summary",
         )
         rows_by_label = {
-            row.label: (index, row) for index, row in enumerate(self.state.rows)
+            row.label: (index, row)
+            for owner, _heading_id, _labels in _ROW_GROUPS
+            for index, row in self._ownership.rows_for(owner)
         }
-        rendered_labels: set[str] = set()
-        rendered_action_ids: set[str] = set()
 
         for heading, heading_id, labels in _ROW_GROUPS:
             group_labels = [label for label in labels if label in rows_by_label]
-            action_ids = _ACTION_GROUPS.get(heading, ())
-            group_actions = [
-                action
-                for action in self.state.actions
-                if action.widget_id in action_ids
-            ]
+            group_actions = self._ownership.actions_for(heading)
             if not group_labels and not group_actions:
+                continue
+
+            if not group_labels and not any(action.enabled for action in group_actions):
+                for action in group_actions:
+                    yield from self._compose_action(action)
                 continue
 
             yield Static(
@@ -404,7 +337,6 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
             for label in group_labels:
                 row_entry = rows_by_label[label]
                 index, row = row_entry
-                rendered_labels.add(label)
                 yield Static(
                     row.text,
                     id=self._row_id(row, index),
@@ -413,22 +345,7 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
                 )
 
             for action in group_actions:
-                rendered_action_ids.add(action.widget_id)
                 yield from self._compose_action(action)
-
-        for index, row in enumerate(self.state.rows):
-            if row.label in rendered_labels:
-                continue
-            yield Static(
-                row.text,
-                id=self._row_id(row, index),
-                classes=f"console-inspector-row console-inspector-row-{row.status}",
-                markup=False,
-            )
-        for action in self.state.actions:
-            if action.widget_id in rendered_action_ids:
-                continue
-            yield from self._compose_action(action)
 
         dict_rows = getattr(self.state, "dictionary_rows", ())
         dict_actions = getattr(self.state, "dictionary_actions", ())

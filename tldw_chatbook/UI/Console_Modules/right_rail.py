@@ -52,6 +52,7 @@ the compound-widget boundary transparently, proven live in task 3's review.
 from __future__ import annotations
 
 from collections.abc import Callable
+import os
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -68,6 +69,7 @@ from ...Chat.console_session_settings import ConsoleSettingsSummaryState
 from ...Widgets.Console import (
     ConsoleChangedFilesSection,
     ConsoleChangedFilesState,
+    InspectorOwnershipPolicy,
     ConsoleProjectInstructionStatusRow,
     ConsoleRetrievalScopeRow,
     ConsoleRunInspector,
@@ -78,6 +80,13 @@ from ...Widgets.Console.console_retrieval_scope_row import (
     ROW_ID as CONSOLE_RETRIEVAL_SCOPE_ROW_ID,
 )
 from .frame import frame_console_region
+
+
+def _resolve_inspector_ownership_policy() -> InspectorOwnershipPolicy:
+    """Resolve the opt-in strict policy at the production composition boundary."""
+    if os.environ.get("TLDW_CONSOLE_STRICT_INSPECTOR_OWNERSHIP") == "1":
+        return InspectorOwnershipPolicy.STRICT
+    return InspectorOwnershipPolicy.RESILIENT
 
 
 class ConsoleInspectorRail(Vertical):
@@ -101,6 +110,7 @@ class ConsoleInspectorRail(Vertical):
         project_instruction_state: ConsoleProjectInstructionState,
         settings_summary_state: ConsoleSettingsSummaryState,
         live_work_card_builder: Callable[[], Widget],
+        ownership_policy: InspectorOwnershipPolicy | None = None,
         **kwargs,
     ) -> None:
         """Create the right rail from pre-computed display data.
@@ -145,6 +155,9 @@ class ConsoleInspectorRail(Vertical):
                 ``ConsoleDictationController``'s late-binding constructor
                 rule -- see ``dictation.py``'s module docstring) always
                 mounts a brand-new instance instead.
+            ownership_policy: Optional explicit Inspector ownership policy.
+                Production resolves the strict opt-in environment flag at
+                this composition boundary when omitted.
             kwargs: Forwarded to ``Vertical``.
         """
         super().__init__(
@@ -159,6 +172,9 @@ class ConsoleInspectorRail(Vertical):
         self._project_instruction_state = project_instruction_state
         self._settings_summary_state = settings_summary_state
         self._live_work_card_builder = live_work_card_builder
+        self._ownership_policy = (
+            ownership_policy or _resolve_inspector_ownership_policy()
+        )
 
     def compose(self) -> ComposeResult:
         """Compose the rail header, staged-context tray, scope row, and run inspector.
@@ -268,6 +284,7 @@ class ConsoleInspectorRail(Vertical):
             with Vertical(id="console-run-inspector"):
                 yield ConsoleRunInspector(
                     self._inspector_state,
+                    ownership_policy=self._ownership_policy,
                     id="console-run-inspector-state",
                 )
                 settings_summary = ConsoleSettingsSummary(
