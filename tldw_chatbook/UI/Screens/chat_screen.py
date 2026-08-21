@@ -1709,9 +1709,22 @@ def _build_console_inspector_exchanges_loader(
                             bool(db_row.get("abandoned", False)),
                         )
                     )
-                except Exception:
-                    logger.opt(exception=True).warning(
-                        "exchange_blob_decode_failed"
+                except Exception as exc:
+                    # No traceback (review finding M8): this frame holds
+                    # `capture_blob` (raw compressed bytes) and, mid-loop,
+                    # already-decoded ExchangeCapture payloads in `out` --
+                    # loguru's diagnose formatter would annotate the
+                    # failing source line's names with their values across
+                    # the whole frame chain. The Exchange tab's own
+                    # handlers (console_conversation_inspector.py's
+                    # ``_load_turn_captures``) deliberately refuse
+                    # tracebacks for the identical reason; this brings the
+                    # loader's own decode failure to the same standard.
+                    # type(exc).__name__ plus the message id is enough to
+                    # diagnose and retry.
+                    logger.warning(
+                        f"exchange_blob_decode_failed: persisted_id="
+                        f"{persisted_id!r}: {type(exc).__name__}"
                     )
             return out
 

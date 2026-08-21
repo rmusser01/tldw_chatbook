@@ -14,6 +14,7 @@ over the returned loader callable.
 from __future__ import annotations
 
 import pytest
+from loguru import logger as loguru_logger
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
 from tldw_chatbook.Chat.console_exchange_capture import ExchangeCapture, capture_to_blob
@@ -238,3 +239,45 @@ async def test_a_corrupt_blob_is_skipped_not_fatal_to_the_rest() -> None:
     decoded_capture, abandoned = result[0]
     assert decoded_capture == good_capture
     assert abandoned is False
+
+
+@pytest.mark.asyncio
+async def test_corrupt_blob_diagnostic_omits_traceback_and_blob_bytes() -> None:
+    """Review finding M8: the decode-failure log line used to call
+    ``logger.opt(exception=True)`` in a frame holding the raw
+    ``capture_blob`` bytes (and, mid-loop, already-decoded
+    ``ExchangeCapture`` payloads from earlier rows) -- loguru's diagnose
+    formatter would annotate the failing source line's names with their
+    values across the whole frame chain. Mirrors the Exchange tab's own
+    handlers (``console_conversation_inspector.py``'s
+    ``_load_turn_captures``), which deliberately refuse tracebacks for the
+    identical reason -- type(exc).__name__ plus the message id is enough
+    to diagnose and retry."""
+    marker_bytes = b"CANARY_BLOB_BYTES_SHOULD_NOT_APPEAR_IN_LOG"
+    db = _FakeExchangesDB(
+        rows=[
+            {
+                "run_tag": "run-1",
+                "seq": 1,
+                "status": "complete",
+                "abandoned": False,
+                "capture_blob": marker_bytes,
+                "created_at": "2026-08-20T10:00:00Z",
+            },
+        ]
+    )
+    message = _message(native_id="n1", persisted_message_id="p1", exchanges=())
+    loader = _build_console_inspector_exchanges_loader({"n1": message}, lambda: db)
+
+    diagnostics: list[str] = []
+    sink_id = loguru_logger.add(diagnostics.append, level="WARNING")
+    try:
+        result = await loader("n1")
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert result == []
+    assert any("exchange_blob_decode_failed" in d for d in diagnostics), diagnostics
+    joined = "\n".join(diagnostics)
+    assert "CANARY_BLOB_BYTES_SHOULD_NOT_APPEAR_IN_LOG" not in joined
+    assert "Traceback" not in joined

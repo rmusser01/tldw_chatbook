@@ -259,31 +259,58 @@ class ConsoleProviderStreamSignals:
             self._active_exchanges[token] = flight
 
     def _mutate_scoped_exchange(self, token: object, key: str, items: list) -> None:
-        with self._exchange_lock:
-            flight = self._active_exchanges.get(token)
-            if flight is not None:
-                flight[key].extend(items)
+        """Never raises (review finding M4): capture is diagnostic tooling
+        layered over the real send path -- the gateway's own call sites
+        (record_exchange_content/record_exchange_tool_calls) are NOT all
+        wrapped in their own try/except, and three of them sit inside
+        ``_stream_generic_chat``'s worker ``try``, whose ``except
+        BaseException`` would otherwise convert a capture-bookkeeping bug
+        into a fabricated provider error, turning a good turn into a failed
+        one. No exception text/traceback logged -- ``items`` can hold raw
+        captured request/response content."""
+        try:
+            with self._exchange_lock:
+                flight = self._active_exchanges.get(token)
+                if flight is not None:
+                    flight[key].extend(items)
+        except Exception as exc:
+            logger.warning(f"exchange_capture_mutate_failed: {type(exc).__name__}")
 
     def _mark_scoped_exchange_synthetic(self, token: object) -> None:
         """Stamp one call's in-flight record as carrying locally
         synthesized fallback UI copy, not provider output (review finding
-        M3)."""
-        with self._exchange_lock:
-            flight = self._active_exchanges.get(token)
-            if flight is not None:
-                flight["synthetic_fallback"] = True
+        M3). Never raises -- same M4 contract as ``_mutate_scoped_
+        exchange``."""
+        try:
+            with self._exchange_lock:
+                flight = self._active_exchanges.get(token)
+                if flight is not None:
+                    flight["synthetic_fallback"] = True
+        except Exception as exc:
+            logger.warning(f"exchange_capture_mark_synthetic_failed: {type(exc).__name__}")
 
     def _complete_scoped_exchange(
         self, token: object, status: str,
         usage_payload: dict[str, Any] | None,
     ) -> None:
-        with self._exchange_lock:
-            flight = self._active_exchanges.pop(token, None)
-            if flight is None:
-                return
-            self.completed_exchanges.append(_flight_capture(
-                self.run_tag, len(self.completed_exchanges), flight,
-                status, usage_payload))
+        """Never raises (review finding M4) -- same "never break send"
+        contract as ``_mutate_scoped_exchange``: this is the ``close_
+        exchange`` call site's own implementation, called at both a
+        `finally` (stream_chat) and inside ``_stream_generic_chat``'s
+        worker `try`/`except` (twice), where an uncaught raise here would
+        either mask the real cleanup or itself be relabeled a provider
+        error. No exception text/traceback logged -- ``flight`` holds raw
+        captured request/response content."""
+        try:
+            with self._exchange_lock:
+                flight = self._active_exchanges.pop(token, None)
+                if flight is None:
+                    return
+                self.completed_exchanges.append(_flight_capture(
+                    self.run_tag, len(self.completed_exchanges), flight,
+                    status, usage_payload))
+        except Exception as exc:
+            logger.warning(f"exchange_capture_complete_failed: {type(exc).__name__}")
 
     def exchange_captures(self) -> list["ExchangeCapture"]:
         """Completed calls + in-flight tails (as "stopped") — tails cover
@@ -422,8 +449,13 @@ class ConsoleProviderCallSignals:
                 self._aggregate._mark_scoped_exchange_synthetic(self._token)
 
     def record_exchange_tool_calls(self, calls: "Sequence[Mapping[str, Any]]") -> None:
+        # Review finding M9: `dict(c)` is a SHALLOW copy -- the nested
+        # `function` dict (and any other nested mapping/list) stays aliased
+        # to the live object the caller passed in until this flush reaches
+        # `close_exchange`/`_flight_capture`, seconds later on a real turn.
+        # `deepcopy` closes that window permanently.
         self._aggregate._mutate_scoped_exchange(
-            self._token, "tool_calls", [dict(c) for c in calls])
+            self._token, "tool_calls", [deepcopy(dict(c)) for c in calls])
 
     def close_exchange(self, status: str = "complete") -> None:
         """Publish this call's capture exactly once (token pop = move

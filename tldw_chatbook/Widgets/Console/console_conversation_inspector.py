@@ -1125,12 +1125,15 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
 
     def _save_exchange_capture(self, call_key: str) -> None:
         """Verbatim idiom from the retired standalone context modal's own
-        ``_save_json``, applied to one call's ``ExchangeCapture``. This
-        method writes UNCONDITIONALLY -- the only enforcement of
-        ``self._save_blocked_reason`` is the Save button's own
-        ``disabled=`` state (set in ``_mount_exchange_call_body``); a
-        direct call here (e.g. a future caller that bypasses the button)
-        still writes to disk."""
+        ``_save_json``, applied to one call's ``ExchangeCapture``.
+
+        Review finding M7: the Save button's own ``disabled=`` state (set
+        in ``_mount_exchange_call_body``) was previously the ONLY
+        enforcement of ``self._save_blocked_reason`` -- a direct call here
+        (e.g. a future caller that bypasses the button) still wrote to
+        disk. Re-checked here as defense in depth on a privacy contract."""
+        if self._save_blocked_reason is not None:
+            return
         capture = self._exchange_capture_by_call_key.get(call_key)
         if capture is None:
             return

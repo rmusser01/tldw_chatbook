@@ -1002,6 +1002,54 @@ async def test_save_button_disabled_and_tooltip_when_ephemeral() -> None:
 
 
 @pytest.mark.asyncio
+async def test_save_exchange_capture_direct_call_still_blocked_when_ephemeral(
+    monkeypatch,
+) -> None:
+    """Review finding M7: ``_save_exchange_capture`` used to write
+    unconditionally -- the Save button's own ``disabled=`` state
+    (asserted by the test above) was the ONLY enforcement of the ephemeral
+    save-block. A direct call bypassing the button (e.g. a future caller)
+    must still be blocked. Patches this module's own ``Path`` name to
+    raise if ``Path.home()`` is ever reached -- proving the method returns
+    before touching the filesystem at all."""
+    cap = _capture("r1", 0, "t", "m")
+
+    async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
+        return [(cap, False)]
+
+    app = InspectorHarness(
+        **_default_kwargs(
+            exchanges_loader=loader, initial_tab=TAB_EXCHANGE, ephemeral=True
+        )
+    )
+
+    async with app.run_test(size=(120, 44)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+
+        turn = modal.query_one("#console-inspector-exchange-turn-0", Collapsible)
+        turn.collapsed = False
+        await _wait_until(pilot, lambda: bool(turn.query(Collapsible)))
+
+        call = turn.query_one("#console-inspector-exchange-call-0-0", Collapsible)
+        call.collapsed = False
+        await _wait_until(pilot, lambda: bool(call.query(Button)))
+
+        import tldw_chatbook.Widgets.Console.console_conversation_inspector as inspector_module
+
+        class _BoomPath:
+            @staticmethod
+            def home():
+                raise AssertionError(
+                    "Path.home() must not be reached when save is blocked"
+                )
+
+        monkeypatch.setattr(inspector_module, "Path", _BoomPath)
+
+        modal._save_exchange_capture("0-0")  # must not raise, must not write
+
+
+@pytest.mark.asyncio
 async def test_per_message_collapsible_mounts_its_json_body() -> None:
     """Finding 4 (task-9 review): the fourth lazy level (per-message,
     nested inside the Messages section) was never exercised by any test --
@@ -1245,3 +1293,50 @@ async def test_next_send_refresh_does_not_cancel_an_in_flight_costs_capture_load
             )
 
         await _wait_until(pilot, _has_call_line)
+
+
+@pytest.mark.asyncio
+async def test_refresh_shows_the_refreshed_estimate_in_the_same_refresh() -> None:
+    """Review finding M15: no test anywhere passed ``estimate_factory=``,
+    so task-10 review finding 6's fix (``_load_snapshot`` re-estimates
+    BEFORE reassigning ``self.snapshot``, so the header shows the NEW
+    estimate in the same refresh rather than one refresh stale) had zero
+    coverage. Two distinguishable estimates: the first from ``on_mount``'s
+    initial load, the second from a Refresh click.
+
+    ``snapshot_factory`` returns a distinguishable payload on every call --
+    the default ``_noop_snapshot`` returns a snapshot that dataclass-equals
+    the reactive's own default (both empty), and Textual's ``reactive``
+    skips the watcher (so ``_update_view`` never runs) when a reassignment
+    doesn't change the value -- that would mask this exact bug rather than
+    exercise it.
+    """
+    calls = {"estimate": 0, "snapshot": 0}
+
+    def estimate_factory() -> int:
+        calls["estimate"] += 1
+        return 111 if calls["estimate"] == 1 else 222
+
+    async def snapshot_factory() -> ConsoleContextSnapshot:
+        calls["snapshot"] += 1
+        return ConsoleContextSnapshot(
+            current_messages=[], next_send_payload={"call": calls["snapshot"]}
+        )
+
+    app = InspectorHarness(
+        **_default_kwargs(
+            estimate_factory=estimate_factory,
+            snapshot_factory=snapshot_factory,
+            initial_tab=TAB_NEXT_SEND,
+        )
+    )
+
+    async with app.run_test(size=(120, 44)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        header = modal.query_one("#console-inspector-next-send-header", Static)
+        await _wait_until(pilot, lambda: "~111 tokens" in str(header.renderable))
+
+        await pilot.click("#console-inspector-next-send-refresh")
+        await _wait_until(pilot, lambda: "~222 tokens" in str(header.renderable))
+        assert "~111" not in str(header.renderable)

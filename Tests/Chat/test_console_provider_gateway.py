@@ -6161,6 +6161,27 @@ class TestSignalsExchangeCapture:
         call.close_exchange()
         assert aggregate.exchange_captures()[0].response["tool_calls"][0]["id"] == "t1"
 
+    def test_tool_calls_recorded_are_deep_not_aliased(self):
+        """Review finding M9: ``record_exchange_tool_calls`` used to
+        shallow-copy (``dict(c)``), leaving the nested ``function`` dict
+        aliased to the caller's live object until the flush reaches
+        ``close_exchange``/``_flight_capture`` seconds later on a real
+        turn -- mutating the ORIGINAL dict the caller passed in must never
+        be visible in the already-recorded capture."""
+        aggregate = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
+        call = aggregate.new_usage_call()
+        self._begin(call)
+        live_call = {"id": "t1", "function": {"name": "get_time", "arguments": "{}"}}
+        call.record_exchange_tool_calls([live_call])
+        # Mutate the caller's own object AFTER recording -- the nested
+        # `function` dict, not just the top-level one.
+        live_call["function"]["name"] = "MUTATED_AFTER_RECORD"
+        live_call["function"]["arguments"] = "MUTATED_AFTER_RECORD"
+        call.close_exchange()
+        recorded = aggregate.exchange_captures()[0].response["tool_calls"][0]
+        assert recorded["function"]["name"] == "get_time"
+        assert recorded["function"]["arguments"] == "{}"
+
     def test_close_attaches_this_calls_normalized_usage(self):
         aggregate = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
         call = aggregate.new_usage_call()
@@ -6179,6 +6200,43 @@ class TestSignalsExchangeCapture:
         self._begin(call)
         call.record_exchange_content("x")
         call.close_exchange()
+        assert aggregate.exchange_captures() == []
+
+    def test_mutate_scoped_exchange_swallows_exceptions(self):
+        """Review finding M4: the low-level mutate call must never raise --
+        it is called from THREE sites inside ``_stream_generic_chat``'s
+        worker ``try``, whose ``except BaseException`` would otherwise
+        relabel a capture-bookkeeping bug as a fabricated provider error."""
+        aggregate = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
+        call = aggregate.new_usage_call()
+        self._begin(call)
+
+        class _BoomList:
+            def extend(self, items):
+                raise RuntimeError("boom")
+
+        # Corrupt the in-flight record directly to force extend() to raise.
+        aggregate._active_exchanges[call._token]["content"] = _BoomList()
+
+        call.record_exchange_content("more text")  # must not raise
+
+    def test_complete_scoped_exchange_swallows_exceptions(self, monkeypatch):
+        """Review finding M4: close_exchange's own implementation
+        (_complete_scoped_exchange) must never raise -- it is called from
+        stream_chat's `finally` AND twice inside `_stream_generic_chat`'s
+        worker `try`/`except`. Patches the CONSUMER namespace (the module's
+        own `_flight_capture` reference) so the raise happens inside the
+        method's try block."""
+        aggregate = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
+        call = aggregate.new_usage_call()
+        self._begin(call)
+
+        def raising_flight_capture(*args, **kwargs):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(gateway_module, "_flight_capture", raising_flight_capture)
+
+        call.close_exchange()  # must not raise
         assert aggregate.exchange_captures() == []
 
     def test_run_tags_differ_across_signals_objects(self):

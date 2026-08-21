@@ -95,6 +95,11 @@ def test_blob_is_compressed_json():
 
 
 def test_oversize_blob_truncates_with_marker():
+    """Review finding M13: the oversize branch must preserve the call's
+    REAL outcome in ``status`` (it used to overwrite it with the literal
+    string ``"truncated"``, discarding whether the call had completed,
+    stopped, or errored) -- truncation is marked separately via a
+    ``truncated: True`` key inside the (now stubbed) request/response."""
     cap = ExchangeCapture(
         run_tag="r1", seq=0, created_at="t", provider="p", model="m",
         endpoint=None,
@@ -104,10 +109,62 @@ def test_oversize_blob_truncates_with_marker():
     blob = capture_to_blob(cap)
     assert len(blob) <= EXCHANGE_BLOB_MAX_BYTES
     restored = capture_from_blob(blob)
-    assert restored.status == "truncated"
-    assert "truncated" in json.dumps(restored.request)
+    assert restored.status == "complete"
+    assert restored.request.get("truncated") is True
+    assert restored.response.get("truncated") is True
+
+
+def test_oversize_blob_preserves_error_status():
+    """Companion to the above: an oversize capture that was actually an
+    "error" (or "stopped") must not be reported as "complete" -- the fix
+    keeps whatever status the caller passed in, not a hard-coded value."""
+    cap = ExchangeCapture(
+        run_tag="r1", seq=0, created_at="t", provider="p", model="m",
+        endpoint=None,
+        request={"messages_payload": [{"role": "user", "content": __import__("os").urandom(15 * 1024 * 1024).hex()}]},
+        response={}, status="error", usage_json=None, omitted_keys=(),
+    )
+    restored = capture_from_blob(capture_to_blob(cap))
+    assert restored.status == "error"
 
 
 def test_unserializable_value_degrades_not_raises():
     request, _ = build_request_capture({**_kwargs(), "tools": [object()]})
     json.dumps(request)  # must not raise
+
+
+def test_capture_from_blob_ignores_unknown_future_fields():
+    """Review finding M11: a blob written by a NEWER build with an extra
+    field must not raise ``TypeError`` in an older build reading it back --
+    ``capture_from_blob`` filters to ``ExchangeCapture``'s own known field
+    names before construction."""
+    cap = ExchangeCapture(
+        run_tag="r1", seq=0, created_at="t", provider="p", model="m",
+        endpoint=None, request={}, response={}, status="complete",
+        usage_json=None, omitted_keys=(),
+    )
+    data = json.loads(zlib.decompress(capture_to_blob(cap)))
+    data["a_field_from_the_future"] = "unexpected"
+    blob_from_the_future = zlib.compress(json.dumps(data).encode("utf-8"))
+
+    restored = capture_from_blob(blob_from_the_future)
+
+    assert restored.run_tag == "r1"
+    assert not hasattr(restored, "a_field_from_the_future")
+
+
+def test_line_wrapped_base64_is_still_stubbed():
+    """Review finding M12: ``_BASE64_RE`` permits embedded whitespace
+    (line-wrapped base64), but ``b64decode(..., validate=True)`` rejects
+    it outright -- without stripping first, line-wrapped base64 always
+    failed validation and was never stubbed, landing in the blob verbatim
+    (unredacted size/structure, though still allowlist-filtered content)."""
+    raw = "QUJD" * 2000
+    wrapped = "\n".join(raw[i : i + 76] for i in range(0, len(raw), 76))
+    row = {"role": "user", "content": wrapped}
+
+    stubbed = stub_binary_strings(row)
+
+    text = json.dumps(stubbed)
+    assert "QUJDQUJD" not in text
+    assert "sha256:" in text

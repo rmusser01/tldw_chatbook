@@ -12,7 +12,7 @@ import hashlib
 import json
 import re
 import zlib
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, fields, replace
 from typing import Any, Mapping
 
 CAPTURE_REQUEST_ALLOWLIST: frozenset[str] = frozenset({
@@ -48,7 +48,10 @@ class ExchangeCapture:
     endpoint: str | None
     request: dict
     response: dict
-    status: str  # "complete" | "stopped" | "error" | "truncated"
+    status: str  # "complete" | "stopped" | "error" -- the real outcome,
+    # even when capture_to_blob's own oversize truncation fires (M13):
+    # truncation is a separate `truncated: True` marker inside request/
+    # response, never a fourth status value overwriting this one.
     usage_json: str | None  # THIS call's normalized ProviderUsage.to_json()
     omitted_keys: tuple[str, ...]
 
@@ -70,8 +73,15 @@ def _maybe_stub_string(value: str, mime_hint: str | None = None) -> str:
     if match:
         return _stub_for(match.group("data"), match.group("mime"))
     if _BASE64_RE.match(value):
+        # Review finding M12: `_BASE64_RE` permits embedded whitespace
+        # (line-wrapped base64), but `b64decode(..., validate=True)`
+        # rejects it outright -- without stripping first, line-wrapped
+        # base64 always fails validation and is never stubbed, landing in
+        # the blob verbatim (a size/redaction-completeness gap, not a
+        # safety one: it is still allowlist-filtered content).
+        candidate = "".join(value.split())
         try:
-            base64.b64decode(value[:4096], validate=True)
+            base64.b64decode(candidate[:4096], validate=True)
         except Exception:
             return value
         return _stub_for(value, mime_hint or "application/octet-stream")
@@ -122,20 +132,38 @@ def build_request_capture(kwargs: Mapping[str, Any]) -> tuple[dict, tuple[str, .
 
 
 def capture_to_blob(capture: ExchangeCapture) -> bytes:
-    """zlib-compressed JSON; oversize captures truncate, never fail."""
+    """zlib-compressed JSON; oversize captures truncate, never fail.
+
+    Review finding M13: the oversize branch used to overwrite ``status``
+    with ``"truncated"``, discarding whether the call had actually
+    completed/stopped/errored. The real outcome is preserved; truncation
+    is marked separately via a ``truncated: True`` key in the (now
+    stubbed) request/response dicts.
+    """
     blob = zlib.compress(json.dumps(asdict(capture), default=str).encode("utf-8"))
     if len(blob) <= EXCHANGE_BLOB_MAX_BYTES:
         return blob
     truncated = replace(
         capture,
-        status="truncated",
-        request={"truncated": f"capture exceeded {EXCHANGE_BLOB_MAX_BYTES} bytes compressed"},
+        request={
+            "truncated": True,
+            "reason": f"capture exceeded {EXCHANGE_BLOB_MAX_BYTES} bytes compressed",
+        },
         response={"truncated": True},
     )
     return zlib.compress(json.dumps(asdict(truncated), default=str).encode("utf-8"))
 
 
 def capture_from_blob(blob: bytes) -> ExchangeCapture:
+    """Inverse of :func:`capture_to_blob`.
+
+    Review finding M11: filters to ``ExchangeCapture``'s own known field
+    names before construction -- a future blob written by a newer version
+    with an extra field would otherwise raise ``TypeError`` here today,
+    on every OLDER build reading it back.
+    """
     data = json.loads(zlib.decompress(blob))
     data["omitted_keys"] = tuple(data.get("omitted_keys") or ())
-    return ExchangeCapture(**data)
+    known_fields = {f.name for f in fields(ExchangeCapture)}
+    filtered = {key: value for key, value in data.items() if key in known_fields}
+    return ExchangeCapture(**filtered)
