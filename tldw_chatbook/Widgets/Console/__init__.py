@@ -1,5 +1,11 @@
 """Console-native widgets."""
 
+from .console_assistant_turn import (
+    ConsoleActivityActivated,
+    ConsoleActivityDisclosure,
+    ConsoleActivityHeader,
+    ConsoleAssistantTurnWidget,
+)
 from .console_control_bar import ConsoleControlBar
 from .console_context_controls import (
     ConsoleContextControlState,
@@ -53,6 +59,10 @@ from .console_workspace_switcher_modal import (
 
 __all__ = [
     "build_console_workbench_state",
+    "ConsoleActivityActivated",
+    "ConsoleActivityDisclosure",
+    "ConsoleActivityHeader",
+    "ConsoleAssistantTurnWidget",
     "ConsoleComposerBar",
     "ConsoleComposerUndoHistory",
     "ConsoleDraftStash",

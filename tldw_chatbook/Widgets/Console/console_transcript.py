@@ -1288,6 +1288,7 @@ class ConsoleMarkdownMessage(Vertical):
         *,
         selected: bool = False,
         speech_state: ConsoleSpeechPresentationState = "idle",
+        show_header: bool = True,
     ) -> None:
         self.message_id = message.id
         self._presentation = presentation or resolve_console_message_presentation(
@@ -1301,6 +1302,7 @@ class ConsoleMarkdownMessage(Vertical):
         super().__init__(id=f"console-message-{message.id}", classes=classes)
         self._message = message
         self._speech_state = speech_state
+        self._show_header = show_header
         self._body_text = _assistant_markdown_body(message, self._presentation)
         # Text-selection range over the markdown SOURCE at line granularity
         # (task G): offsets are always whole-line bounds. None = no highlight.
@@ -1312,12 +1314,13 @@ class ConsoleMarkdownMessage(Vertical):
         self._fence_defer_deadline: float | None = None
 
     def compose(self) -> ComposeResult:
-        yield ConsoleMessageHeader(
-            self._message,
-            self._presentation,
-            self._speech_state,
-            markdown=True,
-        )
+        if self._show_header:
+            yield ConsoleMessageHeader(
+                self._message,
+                self._presentation,
+                self._speech_state,
+                markdown=True,
+            )
         yield ConsoleRoleplayMarkdown(
             self._body_text,
             classes="console-markdown-body",
@@ -1450,12 +1453,16 @@ class ConsoleMarkdownMessage(Vertical):
             markdown=True,
         )
         try:
-            header = self.query_one(ConsoleMessageHeader)
             markdown = self.query_one(Markdown)
             footer = self.query_one(".console-markdown-footer", Static)
         except NoMatches:
             return
-        header.sync_header(message, presentation, speech_state)
+        try:
+            header = self.query_one(ConsoleMessageHeader)
+        except NoMatches:
+            header = None
+        if header is not None:
+            header.sync_header(message, presentation, speech_state)
         footer_content = _assistant_markdown_footer(message)
         footer.update(footer_content or "")
         footer.display = footer_content is not None
@@ -1613,6 +1620,7 @@ class ConsoleTranscriptMessage(Vertical):
         *,
         selected: bool = False,
         speech_state: ConsoleSpeechPresentationState = "idle",
+        show_header: bool = True,
     ) -> None:
         self.message_id = message.id
         self._message = message
@@ -1621,6 +1629,7 @@ class ConsoleTranscriptMessage(Vertical):
         )
         self._selected = selected
         self._speech_state = speech_state
+        self._show_header = show_header
         # Text-selection range over the BODY text domain (header excluded),
         # console selection phase 1. None = no highlight.
         self._selection_range: tuple[int, int] | None = None
@@ -1646,12 +1655,13 @@ class ConsoleTranscriptMessage(Vertical):
         )
 
     def compose(self) -> ComposeResult:
-        yield ConsoleMessageHeader(
-            self._message,
-            self._presentation,
-            self._speech_state,
-            markdown=False,
-        )
+        if self._show_header:
+            yield ConsoleMessageHeader(
+                self._message,
+                self._presentation,
+                self._speech_state,
+                markdown=False,
+            )
         yield Static(
             _message_body_render_text(self._message, self._presentation),
             classes="console-transcript-message-body",
@@ -1750,11 +1760,15 @@ class ConsoleTranscriptMessage(Vertical):
             markdown=False,
         )
         try:
-            header = self.query_one(ConsoleMessageHeader)
             self.query_one(".console-transcript-message-body", Static)
         except NoMatches:
             return
-        header.sync_header(message, presentation, speech_state)
+        try:
+            header = self.query_one(ConsoleMessageHeader)
+        except NoMatches:
+            header = None
+        if header is not None:
+            header.sync_header(message, presentation, speech_state)
         # Clamp any live text-selection range to the NEW body length before
         # re-rendering: streaming deltas shrink/grow the text under the
         # selection (console selection phase 1).

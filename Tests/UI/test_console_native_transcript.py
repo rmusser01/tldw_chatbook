@@ -32,10 +32,12 @@ from tldw_chatbook.Chat.console_onboarding_state import ConsoleSetupCardState
 from tldw_chatbook.Chat.console_roleplay_identity import (
     ConsolePresentationContext,
     ConsoleTranscriptStyle,
+    resolve_console_message_presentation,
 )
 from tldw_chatbook.Widgets.Console.console_save_as_modal import ConsoleSaveAsModal
 from tldw_chatbook.Widgets.Console.console_transcript import (
     ConsoleMarkdownMessage,
+    ConsoleMessageHeader,
     ConsoleTranscript,
     ConsoleTranscriptMessage,
 )
@@ -192,6 +194,112 @@ class StyledRoleplayTranscriptHarness(ConsolidatedCSSApp):
 
     def compose(self) -> ComposeResult:
         yield ConsoleTranscript(id="console-native-transcript")
+
+
+class HeaderlessMessageHarness(App[None]):
+    """Mount plain and Markdown rows in their Assistant-turn answer shape."""
+
+    def compose(self) -> ComposeResult:
+        yield ConsoleTranscriptMessage(
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.ASSISTANT,
+                content="plain before",
+                id="plain-headerless",
+            ),
+            show_header=False,
+        )
+        yield ConsoleMarkdownMessage(
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.ASSISTANT,
+                content="markdown before",
+                id="markdown-headerless",
+                status="streaming",
+            ),
+            show_header=False,
+        )
+
+
+def test_standalone_message_widgets_keep_headers_by_default() -> None:
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="answer", id="default-header"
+    )
+
+    assert isinstance(next(iter(ConsoleTranscriptMessage(message).compose())), ConsoleMessageHeader)
+    assert isinstance(next(iter(ConsoleMarkdownMessage(message).compose())), ConsoleMessageHeader)
+
+
+@pytest.mark.asyncio
+async def test_show_header_false_omits_plain_and_markdown_headers() -> None:
+    app = HeaderlessMessageHarness()
+
+    async with app.run_test():
+        plain = app.query_one("#console-message-plain-headerless")
+        markdown = app.query_one("#console-message-markdown-headerless")
+
+        assert len(plain.query(ConsoleMessageHeader)) == 0
+        assert len(markdown.query(ConsoleMessageHeader)) == 0
+
+
+@pytest.mark.asyncio
+async def test_headerless_plain_sync_still_updates_body() -> None:
+    app = HeaderlessMessageHarness()
+
+    async with app.run_test() as pilot:
+        plain = app.query_one(
+            "#console-message-plain-headerless", ConsoleTranscriptMessage
+        )
+        updated = ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT,
+            content="plain after",
+            id="plain-headerless",
+        )
+        plain.sync_message(
+            updated,
+            resolve_console_message_presentation(
+                updated, ConsolePresentationContext()
+            ),
+        )
+        await pilot.pause()
+
+        body = plain.query_one(".console-transcript-message-body", Static)
+        assert body.renderable.plain == "plain after"
+
+
+@pytest.mark.asyncio
+async def test_headerless_markdown_sync_updates_stream_and_footer() -> None:
+    app = HeaderlessMessageHarness()
+
+    async with app.run_test() as pilot:
+        markdown_row = app.query_one(
+            "#console-message-markdown-headerless", ConsoleMarkdownMessage
+        )
+        updated = ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT,
+            content="markdown before and after",
+            id="markdown-headerless",
+            status="streaming",
+        )
+        updated.attachments = (
+            MessageAttachment(
+                data=b"report",
+                mime_type="text/plain",
+                display_name="report.txt",
+                position=0,
+            ),
+        )
+
+        markdown_row.sync_message(
+            updated,
+            resolve_console_message_presentation(
+                updated, ConsolePresentationContext()
+            ),
+        )
+        await pilot.pause()
+
+        assert markdown_row.query_one(Markdown).source == "markdown before and after"
+        footer = markdown_row.query_one(".console-markdown-footer", Static)
+        assert footer.display
+        assert "report.txt" in footer.renderable.plain
 
 
 def test_roleplay_plain_text_uses_literal_names_and_generic_rows_gain_accents():
