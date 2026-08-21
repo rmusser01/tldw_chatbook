@@ -8,11 +8,13 @@ import time
 
 import pytest
 
+from tldw_chatbook.Agents import agent_service
 from tldw_chatbook.Agents.agent_models import (
     DIRECT_DISCLOSE_THRESHOLD,
     FIND_TOOLS_NAME,
     LOAD_TOOLS_NAME,
     RUN_DONE,
+    RUN_ERROR,
     RUN_STUCK,
     SPAWN_TOOL_NAME,
     WAIT_AGENTS_TOOL_NAME,
@@ -32,7 +34,11 @@ from tldw_chatbook.Chat.provider_continuation import (
     ContinuationRound,
     ProviderContinuationCheckpoint,
 )
-from tldw_chatbook.Agents import agent_service
+from tldw_chatbook.Agents.project_instruction_runtime import (
+    PROJECT_INSTRUCTION_ROW_KEY,
+    InstructionDeliveryReceipt,
+    InstructionPreparation,
+)
 from tldw_chatbook.Agents.agent_service import (
     SUBAGENT_SYSTEM_PROMPT,
     AgentService,
@@ -44,6 +50,7 @@ from tldw_chatbook.Agents.tool_catalog import (
     BuiltinToolProvider,
     ToolCatalogRegistry,
 )
+from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 from Tests.Agents.conftest import join_fleet_children
@@ -281,11 +288,203 @@ def _service_with(db, chat):
     return AgentService(db=db, registry=registry, chat_call=chat)
 
 
+class _ProjectInstructionContextSpy:
+    """Duck-typed Task 9 ledger spy with content-free call evidence."""
+
+    def __init__(self, *, initial_rows: bool = True) -> None:
+        self.initial_rows = initial_rows
+        self.initial_calls: list[str] = []
+        self.prepare_calls: list[tuple[str, tuple[str, ...]]] = []
+        self.mark_calls: list[tuple[str, tuple[dict, ...]]] = []
+
+    @staticmethod
+    def _delivery(chain_id: str) -> InstructionPreparation:
+        safe_chain = chain_id.replace(":", "-")
+        row_key = f"{safe_chain}-row"
+        receipt = InstructionDeliveryReceipt(
+            receipt_id=f"receipt-{safe_chain}",
+            chain_id=chain_id,
+            through_revision=1,
+            source_digests=(),
+            outcome_keys=(),
+            row_keys=(row_key,),
+        )
+        row = {
+            "role": "user",
+            "content": f"instructions for {chain_id}",
+            EPHEMERAL_ORIGIN_KEY: "project_instructions",
+            PROJECT_INSTRUCTION_ROW_KEY: row_key,
+        }
+        return InstructionPreparation("retry_with_context", (row,), receipt)
+
+    def initial_context_for_chain(self, chain_id, payload_state):
+        self.initial_calls.append(chain_id)
+        if not self.initial_rows:
+            return InstructionPreparation("proceed")
+        return self._delivery(chain_id)
+
+    def prepare(self, calls, chain_id, registry, payload_state):
+        self.prepare_calls.append((chain_id, tuple(call.name for call in calls)))
+        return InstructionPreparation("proceed")
+
+    def mark_payload_sent(self, receipt, payload_rows):
+        self.mark_calls.append(
+            (receipt.chain_id, tuple(dict(row) for row in payload_rows))
+        )
+
+
 CFG = AgentConfig(
     model="test-model",
     system_prompt="You are helpful.",
     allowed_tools=("calculator", "get_current_datetime", SPAWN_TOOL_NAME),
 )
+
+
+def test_initial_project_instruction_rows_are_verified_and_marked_before_provider(db):
+    context = _ProjectInstructionContextSpy()
+    events: list[str] = []
+
+    def chat_call(**kwargs):
+        assert context.mark_calls
+        events.append("provider")
+        payload = kwargs["messages_payload"]
+        assert [
+            row[PROJECT_INSTRUCTION_ROW_KEY]
+            for row in payload
+            if PROJECT_INSTRUCTION_ROW_KEY in row
+        ] == ["primary-row"]
+        return provider_reply("done")
+
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    service = AgentService(
+        db=db,
+        registry=registry,
+        chat_call=chat_call,
+        project_instruction_context=context,
+    )
+    original = [{"role": "user", "content": "go"}]
+    _run_id, outcome = service.run_turn(
+        conversation_id="c-project-initial",
+        messages=original,
+        config=CFG,
+        api_endpoint="openai",
+    )
+
+    assert outcome.status == RUN_DONE
+    assert context.initial_calls == ["primary"]
+    assert [chain for chain, _payload in context.mark_calls] == ["primary"]
+    assert events == ["provider"]
+    assert original == [{"role": "user", "content": "go"}]
+
+
+def test_bounding_that_drops_pending_instruction_row_stops_without_send_or_mark(
+    db, monkeypatch
+):
+    context = _ProjectInstructionContextSpy()
+    service, chat = make_service(db, ["must not send"])
+    service.project_instruction_context = context
+
+    def drop_project_rows(messages, **_kwargs):
+        return [row for row in messages if PROJECT_INSTRUCTION_ROW_KEY not in row]
+
+    monkeypatch.setattr(agent_service, "bound_history_for_send", drop_project_rows)
+    _run_id, outcome = service.run_turn(
+        conversation_id="c-project-unfit",
+        messages=[{"role": "user", "content": "go"}],
+        config=CFG,
+        api_endpoint="openai",
+    )
+
+    assert outcome.status == RUN_ERROR
+    assert chat.calls == []
+    assert context.mark_calls == []
+    assert outcome.steps[0].summary == "project instruction context could not fit"
+
+
+def test_provider_failure_after_instruction_mark_does_not_undo_advance(db):
+    context = _ProjectInstructionContextSpy()
+
+    def failing_chat(**_kwargs):
+        assert [chain for chain, _payload in context.mark_calls] == ["primary"]
+        raise RuntimeError("provider unavailable")
+
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    service = AgentService(
+        db=db,
+        registry=registry,
+        chat_call=failing_chat,
+        project_instruction_context=context,
+    )
+    _run_id, outcome = service.run_turn(
+        conversation_id="c-project-provider-failure",
+        messages=[{"role": "user", "content": "go"}],
+        config=CFG,
+        api_endpoint="openai",
+    )
+
+    assert outcome.status == RUN_ERROR
+    assert [chain for chain, _payload in context.mark_calls] == ["primary"]
+
+
+def test_later_batch_context_retries_before_review_and_is_marked_on_exact_request(db):
+    class LaterContext(_ProjectInstructionContextSpy):
+        def __init__(self):
+            super().__init__(initial_rows=False)
+            self.issued = False
+
+        def prepare(self, calls, chain_id, registry, payload_state):
+            self.prepare_calls.append((chain_id, tuple(call.name for call in calls)))
+            if self.issued:
+                return InstructionPreparation("proceed")
+            self.issued = True
+            return self._delivery(chain_id)
+
+    context = LaterContext()
+    reviewed: list = []
+    chat = ScriptedChat(
+        [
+            {
+                "content": None,
+                "tool_calls": [native_call("calculator", {"expression": "2+2"})],
+            },
+            "done",
+        ]
+    )
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    service = AgentService(
+        db=db,
+        registry=registry,
+        chat_call=chat,
+        review_tool_calls=lambda batch: reviewed.append(list(batch)) or {},
+        project_instruction_context=context,
+    )
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="c-project-later",
+        messages=[{"role": "user", "content": "go"}],
+        config=CFG,
+        api_endpoint="openai",
+    )
+
+    assert outcome.status == RUN_DONE
+    assert context.prepare_calls == [("primary", ("calculator",))]
+    assert reviewed == []
+    assert len(chat.calls) == 2
+    second = chat.calls[1]["messages_payload"]
+    instruction_index = next(
+        index for index, row in enumerate(second) if PROJECT_INSTRUCTION_ROW_KEY in row
+    )
+    stub_index = next(
+        index
+        for index, row in enumerate(second)
+        if "Deferred because project instructions were loaded"
+        in str(row.get("content", ""))
+    )
+    assert stub_index < instruction_index
+    assert [chain for chain, _payload in context.mark_calls] == ["primary"]
 
 
 def test_native_endpoint_sends_tools_and_suppresses_fence_protocol(db):

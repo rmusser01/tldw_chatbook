@@ -79,7 +79,12 @@ from tldw_chatbook.Chat.provider_continuation import (
     ContinuationRestoreTarget,
     ProviderContinuationCheckpoint,
 )
-from .agent_runtime import LoopDeps, render_tool_protocol, run_agent_loop
+from .agent_runtime import (
+    LoopDeps,
+    ToolBatchPreparation,
+    render_tool_protocol,
+    run_agent_loop,
+)
 from .fleet_coordinator import (
     DEFAULT_RETAINED_TRANSCRIPT_MAX_CHARS,
     DEFAULT_RETAINED_TRANSCRIPTS,
@@ -109,6 +114,13 @@ from .project_instruction_resolver import (
     InstructionSource,
     InstructionSourceMetadata,
     StartupInstructionCandidate,
+)
+from .project_instruction_runtime import (
+    PROJECT_INSTRUCTION_ROW_KEY,
+    InstructionActivationLedger,
+    InstructionChainPayloadState,
+    InstructionDeliveryReceipt,
+    InstructionPreparation,
 )
 from .tool_catalog import (
     CHECK_AGENTS_SCHEMA,
@@ -485,6 +497,10 @@ RUN_LOG_PROMPT_SECTION = (
 
 PROJECT_INSTRUCTION_ORIGIN = "project_instructions"
 PROJECT_INSTRUCTION_LABEL = "[Project instructions — untrusted repository context]"
+
+
+class _ProjectInstructionPayloadError(RuntimeError):
+    """Content-free terminal error for a staged row dropped by bounding."""
 
 
 def _count_model_messages(messages: list[dict], model: str, provider: str) -> int:
@@ -964,6 +980,10 @@ class AgentService:
             [InstructionSnapshot], str
         ]
         | None = None,
+        project_instruction_context: InstructionActivationLedger | None = None,
+        on_ephemeral_runtime_warning: (
+            Callable[[str, tuple[str, ...], int], None] | None
+        ) = None,
     ) -> None:
         self.db = db
         self.registry = registry
@@ -1161,6 +1181,8 @@ class AgentService:
         self.confirm_project_instruction_dispatch = (
             confirm_project_instruction_dispatch
         )
+        self.project_instruction_context = project_instruction_context
+        self.on_ephemeral_runtime_warning = on_ephemeral_runtime_warning
         self._startup_instruction_snapshot: InstructionSnapshot | None = None
         self._tool_protocol_cache: dict[tuple[str, ...], str] = {}
         self._run_log_requested = bool(
@@ -1383,8 +1405,15 @@ class AgentService:
         continuation_groups: tuple[ContinuationOwnerGroup, ...] = (),
         continuation_owner_key: str | None = None,
         continuation_owner_message_id: str | None = None,
+        *,
+        project_instruction_context: InstructionActivationLedger | None = None,
+        chain_id: str = "primary",
+        payload_state: InstructionChainPayloadState | None = None,
+        staged_delivery: dict[str, InstructionDeliveryReceipt] | None = None,
     ):
         native = config.native_tools and provider_supports_native_tools(api_endpoint)
+        initial_context_checked = False
+        staged = staged_delivery if staged_delivery is not None else {}
         # TASK-1272 (Phase 3): the ONLY gate on whether eviction may run at
         # all is (a) `log_active` -- the SAME condition, reused verbatim,
         # that gates the search_run_log tool and the prompt section above,
@@ -1423,7 +1452,20 @@ class AgentService:
             active_schemas: tuple,
             current_continuation: ProviderContinuationCheckpoint | None = None,
         ) -> ModelTurn:
-            nonlocal protocol_key, protocol_text
+            nonlocal protocol_key, protocol_text, initial_context_checked
+            if (
+                project_instruction_context is not None
+                and payload_state is not None
+                and not initial_context_checked
+            ):
+                payload_state.capture(messages, active_schemas, ())
+                initial = project_instruction_context.initial_context_for_chain(
+                    chain_id, payload_state
+                )
+                initial_context_checked = True
+                if initial.status == "retry_with_context":
+                    messages.extend(dict(row) for row in initial.ephemeral_rows)
+                    staged["receipt"] = initial.delivery_receipt
             effective_log_active = bool(
                 log_active
                 and self.run_log_writer is not None
@@ -1526,6 +1568,20 @@ class AgentService:
                 ]
             if gateway_prepares_continuation:
                 call_kwargs["continuation_groups"] = effective_groups
+            receipt = staged.get("receipt")
+            if receipt is not None:
+                row_keys = tuple(
+                    row.get(PROJECT_INSTRUCTION_ROW_KEY)
+                    for row in payload
+                    if row.get(PROJECT_INSTRUCTION_ROW_KEY) in receipt.row_keys
+                )
+                if row_keys != receipt.row_keys:
+                    raise _ProjectInstructionPayloadError(
+                        "project instruction context could not fit"
+                    )
+                assert project_instruction_context is not None
+                project_instruction_context.mark_payload_sent(receipt, payload)
+                staged.pop("receipt", None)
             resp = self.chat_call(
                 api_endpoint=api_endpoint,
                 messages_payload=payload,
@@ -1598,6 +1654,36 @@ class AgentService:
             )
 
         return call_model
+
+    def _build_effective_model_request(
+        self,
+        config: AgentConfig,
+        api_endpoint: str,
+        runtime_schemas: list,
+        messages: list[dict],
+        active_schemas: tuple,
+        log_active: bool,
+    ) -> ModelRequest:
+        """Build one request after applying the writer's live fail-closed gate."""
+        effective_log_active = bool(log_active and self.run_log_writer.is_active)
+        run_log_schema_names = {
+            SEARCH_RUN_LOG_TOOL_SCHEMA.name,
+            RUN_LOG_STATS_TOOL_SCHEMA.name,
+            RUN_LOG_SLICE_TOOL_SCHEMA.name,
+        }
+        effective_runtime_schemas = [
+            schema
+            for schema in runtime_schemas
+            if effective_log_active or schema.name not in run_log_schema_names
+        ]
+        return self._build_model_request(
+            config,
+            api_endpoint,
+            effective_runtime_schemas,
+            messages,
+            active_schemas,
+            effective_log_active,
+        )
 
     def _make_invoke_tool(
         self,
@@ -2039,6 +2125,7 @@ class AgentService:
         resume_provider_continuation: bool = False,
         continuation_groups: tuple[ContinuationOwnerGroup, ...] = (),
         continuation_owner_key: str | None = None,
+        chain_id: str = "primary",
     ) -> tuple[str, RunOutcome]:
         # PR3a-1 Task 3 -- THE WRITER THIS RUN RECORDS THROUGH, resolved
         # ONCE, here, and closed over by every log closure below instead of
@@ -2197,6 +2284,30 @@ class AgentService:
                     RUN_LOG_STATS_TOOL_SCHEMA,
                     RUN_LOG_SLICE_TOOL_SCHEMA,
                 )
+            )
+        project_context = self.project_instruction_context
+        payload_state: InstructionChainPayloadState | None = None
+        staged_delivery: dict[str, InstructionDeliveryReceipt] = {}
+        if project_context is not None:
+            payload_state = InstructionChainPayloadState(
+                request_builder=lambda rows, schemas: (
+                    self._build_effective_model_request(
+                        config,
+                        api_endpoint,
+                        runtime_schemas,
+                        rows,
+                        schemas,
+                        log_active,
+                    )
+                ),
+                safe_token_allowance=lambda request, rows: (
+                    self.safe_project_instruction_tokens(
+                        config, api_endpoint, request, rows
+                    )
+                ),
+                count_tokens=lambda rows: count_tokens_messages(
+                    rows, config.model, provider=api_endpoint
+                ),
             )
 
         run_messages = messages
@@ -2827,6 +2938,7 @@ class AgentService:
                     compute_definition_fingerprint(resolved) if resolved else None
                 ),
                 continuation_durability=continuation_durability,
+                chain_id=f"{chain_id}:child-{sub_agent_spawns}",
                 # PR3a-1 Task 3: THIS run tree's writer, captured here on
                 # the PARENT's thread rather than looked up later from the
                 # child's. A child that outlives the turn (Task 2) may not
@@ -4014,6 +4126,22 @@ class AgentService:
                 call_id=str(payload.get("call_id", "")),
             )
 
+        def prepare_project_instructions(
+            calls: list[ToolCall],
+        ) -> ToolBatchPreparation:
+            assert project_context is not None and payload_state is not None
+            preparation: InstructionPreparation = project_context.prepare(
+                calls, chain_id, self.registry, payload_state
+            )
+            result = ToolBatchPreparation(
+                preparation.status,
+                preparation.ephemeral_rows,
+                preparation.delivery_receipt,
+            )
+            if result.delivery_receipt is not None:
+                staged_delivery["receipt"] = result.delivery_receipt
+            return result
+
         call_model = self._make_call_model(
             config,
             api_endpoint,
@@ -4022,6 +4150,10 @@ class AgentService:
             continuation_groups,
             continuation_owner_key,
             continuation_owner_message_id,
+            project_instruction_context=project_context,
+            chain_id=chain_id,
+            payload_state=payload_state,
+            staged_delivery=staged_delivery,
         )
         deps = LoopDeps(
             call_model=call_model,
@@ -4051,6 +4183,11 @@ class AgentService:
                 if self.review_tool_calls is not None
                 else None
             ),
+            prepare_tool_calls=(
+                prepare_project_instructions if project_context is not None else None
+            ),
+            project_instruction_payload_state=payload_state,
+            on_ephemeral_runtime_warning=self.on_ephemeral_runtime_warning,
             # Qodo/PR#814: wired under the SAME predicate as the schema pin
             # above (~:356-360) -- bindings with an EMPTY authorized set
             # must never reach the named-refusal dispatch either; a
@@ -4161,6 +4298,17 @@ class AgentService:
                     deps,
                     **continuation_kwargs,
                 )
+        except _ProjectInstructionPayloadError:
+            outcome = RunOutcome(
+                status=RUN_ERROR,
+                steps=[
+                    AgentStep(
+                        index=0,
+                        kind=STEP_ERROR,
+                        summary="project instruction context could not fit",
+                    )
+                ],
+            )
         except Exception as exc:  # noqa: BLE001 — a run never raises out
             from tldw_chatbook.Chat.provider_failures import describe_stream_failure
 
@@ -4390,6 +4538,7 @@ class AgentService:
             resume_provider_continuation=resume_provider_continuation,
             continuation_groups=continuation_groups,
             continuation_owner_key=continuation_owner_key,
+            chain_id="primary",
         )
         # Settle the children that must not outlive this turn. Must happen
         # BEFORE the manifest is written and the writer closed below: a

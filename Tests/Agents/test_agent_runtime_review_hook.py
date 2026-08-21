@@ -99,6 +99,9 @@ def test_loop_deps_review_tool_calls_defaults_to_none():
         clock=lambda: 0.0,
     )
     assert deps.review_tool_calls is None
+    assert deps.prepare_tool_calls is None
+    assert deps.project_instruction_payload_state is None
+    assert deps.on_ephemeral_runtime_warning is None
 
 
 # --- hook receives the full batch before any dispatch ------------------
