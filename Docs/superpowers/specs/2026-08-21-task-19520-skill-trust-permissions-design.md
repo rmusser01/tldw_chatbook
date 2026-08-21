@@ -46,7 +46,7 @@ TASK-17963 moved these writes to writer-unique temporary paths before an atomic 
 
 ### 1. Secure creation in the shared primitive, trust-store opt-in — selected
 
-Extend the shared atomic-write boundary with an optional secure temporary-file creation step. When requested, the primitive exclusively pre-creates the writer-unique temporary path with `os.open` and mode `0o600`, normalizes its owner bits through the open descriptor on POSIX, closes it, then invokes the existing writer callback and atomic replacement. Because reopening an existing file for truncation preserves its mode, the current JSON/text/bytes callbacks and serialization remain intact. Only the trust store enables this option.
+Extend the shared atomic-write boundary with an optional owner-only temporary-file creation step. When requested, the primitive exclusively pre-creates the writer-unique temporary path with `os.open` and the fixed mode `0o600`, normalizes its owner bits through the open descriptor on POSIX, closes it, then invokes the existing writer callback and atomic replacement. Because reopening an existing file for truncation preserves its mode, the current JSON/text/bytes callbacks and serialization remain intact. Only the trust store enables this option.
 
 This centralizes the security-critical ordering beside the existing atomic replace and cleanup logic while avoiding permission changes for ordinary local-skill files.
 
@@ -66,17 +66,17 @@ Making `0o600` the default would be simple but would silently change user-visibl
 
 ### Shared atomic-write behavior
 
-`Skills_Interop/atomic_write.py` will accept an optional, keyword-only temporary-file mode on `replace_atomically`. The default remains `None` and preserves current behavior.
+`Skills_Interop/atomic_write.py` will accept an optional, keyword-only `owner_only: bool = False` switch on `replace_atomically`. The default preserves current behavior. The switch always means mode `0o600`; it is deliberately not a generic caller-supplied mode because TASK-19520 needs one security invariant, not a new permission-policy API.
 
-When a mode is provided, the helper will:
+When `owner_only` is true, the helper will:
 
 1. Exclusively create the supplied writer-unique temporary path with `os.open` using `O_WRONLY | O_CREAT | O_EXCL`, plus `O_CLOEXEC`, `O_BINARY`, and `O_NOFOLLOW` where those flags are available.
 2. Pass `0o600` at creation. A process umask can only remove permissions at this step, never add group or other access.
 3. On POSIX, call `os.fchmod` on the still-open descriptor to normalize the mode to exactly `0o600` before closing it. This preserves the no-broad-permissions invariant even under an unusual umask.
 4. Close the descriptor, invoke the existing path-based writer callback, and atomically replace the target.
-5. Use the existing `BaseException` cleanup path for exclusive-create, content-write, and replace failures.
+5. Record ownership only after `os.open` succeeds. Failures after successful creation use the existing `BaseException` cleanup path; an `EEXIST` failure before creation does not unlink the unexplained path.
 
-`O_EXCL` deliberately refuses a stale or attacker-precreated temporary path instead of truncating or following it. The existing PID-and-thread writer-unique name makes legitimate collisions exceptional; a collision fails closed and leaves the target unchanged. The task will not delete an unexplained pre-existing temporary file because ownership cannot be established safely.
+`O_EXCL` deliberately refuses a stale or attacker-precreated temporary path instead of truncating or following it. The existing PID-and-thread writer-unique name makes legitimate collisions exceptional; a collision fails closed and leaves both the target and unexplained temporary path unchanged. The implementation will track whether this invocation created the temp path so the outer cleanup handler unlinks only a path it owns. Default-mode callers retain their current cleanup behavior because their callback remains the creator.
 
 ### Trust-store integration
 
@@ -87,17 +87,20 @@ When a mode is provided, the helper will:
 - preserve JSON ordering, indentation, encoding, and trailing-newline behavior; and
 - propagate write failures.
 
-Their calls to `replace_atomically` will opt into `temp_mode=0o600`. This covers manifests, encrypted snapshots, marker writes, and manifest rollback bytes through the existing call graph.
+Their calls to `replace_atomically` will opt into `owner_only=True`. This covers manifests, encrypted snapshots, marker writes, and manifest rollback bytes through the existing call graph.
 
 ### Directory permissions
 
-`_ensure_trust_directory` will keep its existing path validation and symlink refusal, create the requested leaf directory with `mode=0o700`, and on POSIX normalize that trust-owned leaf to `0o700` before returning it to a writer. Normalizing on every write also tightens permissive trust and snapshots directories left by earlier versions. The parent hierarchy is not recursively chmodded; the security boundary is the validated trust-owned leaf directory.
+`_ensure_trust_directory` will keep its existing path validation and symlink refusal, create the requested leaf directory with `mode=0o700`, and on POSIX normalize that trust-owned leaf to `0o700` before returning it to a writer. Normalizing on every write also tightens permissive trust and snapshots directories left by earlier versions.
+
+`SkillTrustStore.save_snapshot` must explicitly secure `self.store_dir` before securing `self.snapshots_dir`. It cannot rely on `snapshots_dir.mkdir(parents=True)` because production bootstrap can save a snapshot before a manifest, and Python does not apply the leaf's requested mode to intermediate parents. Manifest and marker writes already secure their trust-store base through `_atomic_write_json`. Ancestors above `self.store_dir` remain unchanged; the two trust-owned boundaries are `store_dir` and `snapshots_dir`.
 
 On non-POSIX platforms the directory and file writes follow the same atomic code path, but `fchmod`/`chmod` enforcement and mode-bit assertions are skipped. This avoids pretending Unix mode bits implement Windows ACL policy while preserving compatibility.
 
 ## Error Handling and Recovery
 
-- Failure to create or restrict a POSIX temporary file aborts the write. The target remains unchanged and best-effort cleanup removes only this writer's temporary path.
+- Failure after this writer creates a POSIX temporary file aborts the write. The target remains unchanged and best-effort cleanup removes this writer's temporary path.
+- An exclusive-create collision before ownership is established leaves the unexplained temporary path untouched and surfaces the error.
 - Failure to restrict a POSIX trust-owned directory aborts before sensitive file creation.
 - A stale temporary-path collision raises rather than truncating an unexplained file.
 - Marker-save rollback continues to restore the previous manifest through `_atomic_write_bytes`; the restored file is therefore tightened to `0o600` as well.
@@ -112,6 +115,8 @@ Add focused tests under `Tests/Skills/` that run on real temporary filesystem pa
 - Intercept `Path.replace` and inspect the source path before delegating, proving the in-flight temporary file is already `0o600` before publication.
 - Exercise both JSON and bytes secure-write paths so manifest rollback bytes are not covered only indirectly.
 - Verify a secure-create or replace failure cleans up its temporary path and preserves the original exception.
+- Pre-create the exact writer-unique temp path, assert an `EEXIST` failure leaves that unexplained file byte-identical, and distinguish it from cleanup after successful creation.
+- Save a snapshot into a missing or permissive trust root before saving a manifest and assert both the trust root and `snapshots/` are `0o700`.
 - Keep existing concurrency and serialization-preservation tests green.
 - Gate POSIX mode assertions with `os.name == "posix"`; retain platform-neutral round-trip tests so Windows exercises the new optional path in CI without asserting advisory Unix bits.
 
