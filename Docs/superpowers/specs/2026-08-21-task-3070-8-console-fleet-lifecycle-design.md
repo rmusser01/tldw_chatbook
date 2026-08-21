@@ -19,10 +19,11 @@ TASK-3070.8 implements the already-approved fleet/wake boundary in
 `Docs/superpowers/specs/2026-08-13-console-decomposition-wave6-design.md` and
 `DESIGN.md` section 7. The immutable planning base is
 `0a8e2882588fdad5a99aca6e2215735c43927528` (`origin/dev` on 2026-08-21).
-The source-inspected family is 401 physical definition lines across 16 direct
-`ChatScreen` methods. The implementation-base screen is 20,349 physical lines and
-652 direct methods, so this child must leave it at no more than 19,948 lines and
-636 direct methods. The existing Wave 6 architecture manifest already names
+The historical Wave 6 manifest recorded this family as 401 physical definition lines.
+On the immutable current base, the same 16 direct `ChatScreen` method definitions span
+421 physical lines. The implementation-base screen is 20,349 physical lines and
+652 direct methods, so this child must leave it at no more than 19,928 lines and
+636 direct methods; there is no replacement-screen-line budget. The existing Wave 6 architecture manifest already names
 `fleet.py`, `ConsoleFleetLifecycleController`, and screen owner slot `_fleet`.
 
 Focused baseline evidence is green: 17 tests passed across the Wave 6 compatibility
@@ -63,6 +64,7 @@ controller object. Its complete constructor contract is:
   `wake_delivering_conversation_id() -> str | None`;
 - `displayed_composer_draft_accessor() -> str | None` and
   `screen_displayed_accessor() -> bool`;
+- `screen_mounted_accessor() -> bool`;
 - `active_session_id_accessor() -> str | None` and
   `chat_sessions_accessor() -> tuple[ConsoleChatSession, ...]`;
 - `defer_on_message_pump(callback) -> None` and
@@ -92,7 +94,11 @@ these callbacks:
 - `_displayed_console_composer_draft(screen) -> str | None` resolves
   `screen.app.screen` defensively, uses a different displayed Console's
   `_console_composer_or_none` when present, otherwise uses the supplied screen's
-  composer, and returns its current draft text;
+  composer, and returns its current draft text. Failure to reach `screen.app` or failure
+  in a foreign screen's composer resolver falls back to the supplied screen's composer.
+  Failure in that own-composer resolver or in the selected composer's `draft_text()`
+  propagates so the wake coordinator preserves its existing user-wins-on-uncertainty
+  deferral;
 - `_console_screen_is_displayed(screen) -> bool` returns whether the supplied screen
   is displayed, with the existing unmounted-fixture fallback of `True`.
 
@@ -171,23 +177,25 @@ fleet state.
 
 ### Mount and completion handoff
 
-1. `on_mount` shows any prior teardown notice.
-2. It synchronously calls `_fleet._claim_console_fleet_wake_marks()` before any timer,
+1. `on_mount` first consumes the pending first-chat intent exactly as today. That step
+   may create or switch session state and remains before every fleet operation.
+2. It then shows any prior teardown notice.
+3. It synchronously calls `_fleet._claim_console_fleet_wake_marks()` before any timer,
    worker, activation sync, or view-clear can run.
-3. Existing 0.15-second and 0.3-second mount hedges schedule
+4. Existing 0.15-second and 0.3-second mount hedges schedule
    `_fleet.consume_pending_console_fleet_completion` and
    `_fleet._maybe_start_console_fleet_survivor_tick` respectively.
-4. A completion claim searches the still-open sessions with the current precedence:
+5. A completion claim searches the still-open sessions with the current precedence:
    an exact non-empty `target.session_id` match wins immediately and breaks the scan;
    otherwise every session whose id or persisted conversation id matches
    `target.conversation_id` replaces the candidate, so the last conversation match is
    retained.
-5. A missing match is acknowledged and dropped. An already-active match is also
+6. A missing match is acknowledged and dropped. An already-active match is also
    acknowledged without ensuring a chat controller, changing workspace, switching a
    session, or scheduling a worker. Only a different active session performs the
    existing order: activate its workspace, switch the chat session, then schedule the
    exclusive console-sync worker.
-6. Exceptions release the exact claim for retry; every successful or missing-session
+7. Exceptions release the exact claim for retry; every successful or missing-session
    path acknowledges exactly once.
 
 The identical 0.15-second completion retry used by resume/activation paths is rewired
@@ -203,7 +211,9 @@ The displayed-composer resolver remains late-bound and preserves the hidden/resi
 screen rule: a different displayed Console contributes its composer; otherwise the
 current screen's composer is used. Any non-empty draft wins ties. A delivery is in
 view only when this screen is displayed and its target session is active. Delivery
-start still hops through the Textual message pump before arming the transcript timer.
+start first checks the separate mounted-state callback: unmounted screens no-op,
+whereas hidden-but-mounted screens still hop through the Textual message pump and arm
+the transcript timer.
 
 ### Durable unseen markers
 
@@ -265,11 +275,13 @@ Implementation follows focused TDD; no local full-suite run is authorized.
    exact-session precedence, last conversation match, and already-active no-op), mount wake
    claim, user-priority/display semantics, retry/delivery hooks, unseen cache/marker
    precedence and the missing-controller `None` result, teardown gating, and survivor
-   timer lifecycle.
+   timer lifecycle. Pin unmounted delivery-start as a no-op, hidden-but-mounted
+   delivery-start as an arm, and a raising selected-composer draft read as a propagated
+   exception that the coordinator converts into deferral.
 2. Extend the Wave 6 architecture test to require all 16 methods solely on
    `ConsoleFleetLifecycleController`, zero DOM calls across every controller method,
    no sibling-controller/screen reach-through, exact named keyword-only wiring, no new
-   fleet replacement definition on `ChatScreen`, and task-local ceilings of 19,948
+   fleet replacement definition on `ChatScreen`, and task-local ceilings of 19,928
    screen lines and 636 direct methods.
 3. Add mutation-sensitive checks for claim release/acknowledge, durable-mark deferral,
    late-bound composer/controller access, teardown leave gating, and final settle paint.
@@ -285,7 +297,7 @@ Implementation follows focused TDD; no local full-suite run is authorized.
 
 The implementation is complete only when the screen contains none of the 16 moved
 definitions, no production caller targets those names on `ChatScreen`, Workspace is
-wired directly to `_fleet`, the task-local 19,948-line/636-method ceilings pass, and
+wired directly to `_fleet`, the task-local 19,928-line/636-method ceilings pass, and
 the focused behavior remains green.
 
 ## Scope Exclusions
