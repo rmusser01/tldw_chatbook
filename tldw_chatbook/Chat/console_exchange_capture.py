@@ -71,7 +71,13 @@ def _maybe_stub_string(value: str, mime_hint: str | None = None) -> str:
         return value
     match = _DATA_URI_RE.match(value)
     if match:
-        return _stub_for(match.group("data"), match.group("mime"))
+        # Qodo PR #1883 finding: hash/size the whitespace-stripped payload,
+        # not the raw one -- otherwise the same bytes line-wrapped at a
+        # different column produce a different sha256/size and the
+        # "deterministic stub" promise (identical bytes -> identical stub)
+        # breaks for any line-wrapped data URI.
+        canonical_data = "".join(match.group("data").split())
+        return _stub_for(canonical_data, match.group("mime"))
     if _BASE64_RE.match(value):
         # Review finding M12: `_BASE64_RE` permits embedded whitespace
         # (line-wrapped base64), but `b64decode(..., validate=True)`
@@ -84,7 +90,12 @@ def _maybe_stub_string(value: str, mime_hint: str | None = None) -> str:
             base64.b64decode(candidate[:4096], validate=True)
         except Exception:
             return value
-        return _stub_for(value, mime_hint or "application/octet-stream")
+        # Qodo PR #1883 finding: stub the STRIPPED candidate, not the raw
+        # `value` -- otherwise the same underlying bytes wrapped at
+        # different line lengths (e.g. 76 cols vs. unwrapped) hash and
+        # size differently, breaking `stub_binary_strings`'s documented
+        # determinism guarantee and misreporting size in the inspector.
+        return _stub_for(candidate, mime_hint or "application/octet-stream")
     return value
 
 

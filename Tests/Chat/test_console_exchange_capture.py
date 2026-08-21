@@ -153,6 +153,40 @@ def test_capture_from_blob_ignores_unknown_future_fields():
     assert not hasattr(restored, "a_field_from_the_future")
 
 
+def test_wrapped_and_unwrapped_base64_produce_identical_stub():
+    """Qodo PR #1883 finding: `stub_binary_strings` promises deterministic
+    stubs (same bytes -> same [mime, size, sha256:...]), but the old code
+    validated a whitespace-stripped candidate and then hashed/sized the
+    ORIGINAL whitespace-preserving value -- so the same underlying bytes
+    wrapped at different line lengths produced different sha256 AND
+    different reported size. Same bytes, wrapped at 76 columns vs. not
+    wrapped at all, must yield the identical stub string."""
+    raw = "QUJD" * 2000
+    wrapped = "\n".join(raw[i : i + 76] for i in range(0, len(raw), 76))
+    row_wrapped = {"role": "user", "content": wrapped}
+    row_unwrapped = {"role": "user", "content": raw}
+
+    stubbed_wrapped = stub_binary_strings(row_wrapped)
+    stubbed_unwrapped = stub_binary_strings(row_unwrapped)
+
+    assert stubbed_wrapped["content"] == stubbed_unwrapped["content"]
+    assert stubbed_wrapped["content"].startswith("[")
+
+
+def test_wrapped_and_unwrapped_data_uri_produce_identical_stub():
+    """Same determinism guarantee for the data-URI branch: line-wrapping
+    the base64 payload inside a data URI must not change the hash/size."""
+    raw = "QUJD" * 2000
+    wrapped_payload = "\n".join(raw[i : i + 76] for i in range(0, len(raw), 76))
+    row_wrapped = {"role": "user", "content": "data:image/png;base64," + wrapped_payload}
+    row_unwrapped = {"role": "user", "content": "data:image/png;base64," + raw}
+
+    stubbed_wrapped = stub_binary_strings(row_wrapped)
+    stubbed_unwrapped = stub_binary_strings(row_unwrapped)
+
+    assert stubbed_wrapped["content"] == stubbed_unwrapped["content"]
+
+
 def test_line_wrapped_base64_is_still_stubbed():
     """Review finding M12: ``_BASE64_RE`` permits embedded whitespace
     (line-wrapped base64), but ``b64decode(..., validate=True)`` rejects
