@@ -1101,6 +1101,17 @@ def test_owned_cleanup_suppresses_child_cancellation_but_not_task_cancellation()
     asyncio.run(externally_cancelled())
 
 
+def test_owned_teardown_cancel_requires_completed_contract_and_live_caller() -> None:
+    should_suppress = getattr(
+        profile, "should_suppress_owned_teardown_cancel", None
+    )
+
+    assert callable(should_suppress)
+    assert should_suppress(contract_complete=True, cancellation_count=0) is True
+    assert should_suppress(contract_complete=False, cancellation_count=0) is False
+    assert should_suppress(contract_complete=True, cancellation_count=1) is False
+
+
 def test_main_dispatches_nonpreflight_modes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

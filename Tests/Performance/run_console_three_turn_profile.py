@@ -20,6 +20,7 @@ import sys
 import time
 import traceback
 from collections.abc import Callable, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace as dataclass_replace
 from pathlib import Path
 from threading import Lock
@@ -857,8 +858,18 @@ async def await_owned_cleanup(awaitable: Any) -> None:
         await awaitable
     except asyncio.CancelledError:
         current = asyncio.current_task()
-        if current is not None and current.cancelling():
+        if not should_suppress_owned_teardown_cancel(
+            contract_complete=True,
+            cancellation_count=current.cancelling() if current is not None else 0,
+        ):
             raise
+
+
+def should_suppress_owned_teardown_cancel(
+    *, contract_complete: bool, cancellation_count: int
+) -> bool:
+    """Distinguish child-loop teardown cancellation from caller cancellation."""
+    return contract_complete and cancellation_count == 0
 
 
 def write_boundary_event(destination: IO[str], event: Mapping[str, Any]) -> None:
@@ -2437,7 +2448,24 @@ async def run_mounted_sample(
                 if coordinator.publication_signal.snapshot().pending:
                     raise RuntimeError("change_review_publication_pending")
 
-        async with host.run_test(size=(160, 48)) as pilot:
+        mounted_contract_complete = False
+
+        @asynccontextmanager
+        async def owned_host_test():
+            try:
+                async with host.run_test(size=(160, 48)) as pilot:
+                    yield pilot
+            except asyncio.CancelledError:
+                current = asyncio.current_task()
+                if not should_suppress_owned_teardown_cancel(
+                    contract_complete=mounted_contract_complete,
+                    cancellation_count=(
+                        current.cancelling() if current is not None else 0
+                    ),
+                ):
+                    raise
+
+        async with owned_host_test() as pilot:
             console = host.screen_stack[-1]
             await _wait_for_selector(console, pilot, "#console-native-composer")
             composer = console.query_one("#console-native-composer", ConsoleComposerBar)
@@ -2516,6 +2544,7 @@ async def run_mounted_sample(
             console_runtime = console._console_runtime()
             await await_owned_cleanup(console_runtime.dispose())
             console_runtime = None
+            mounted_contract_complete = True
 
         heartbeat_stop.set()
         await heartbeat_task
