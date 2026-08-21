@@ -192,7 +192,7 @@ fleet state.
    retained.
 6. A missing match is acknowledged and dropped. An already-active match is also
    acknowledged without ensuring a chat controller, changing workspace, switching a
-   session, or scheduling a worker. Only a different active session performs the
+   session, or scheduling a worker, and returns `True` after acknowledgement. Only a different active session performs the
    existing order: activate its workspace, switch the chat session, then schedule the
    exclusive console-sync worker.
 7. Exceptions release the exact claim for retry; every successful or missing-session
@@ -227,6 +227,11 @@ operation; named callbacks provide controller-derived facts. The controller:
 4. leaves the mark intact when delivery is owed or the screen is hidden;
 5. otherwise clears through the existing marks service and refreshes the cache;
 6. derives each run marker, with live/terminal run state outranking `SUBAGENT_UNSEEN`.
+
+Mount-time wake claiming deliberately calls the uncached `read_fleet_unseen_ids()`
+dependency directly. It must not reuse `_console_fleet_unseen_ids()` or its revision
+cache: mount claiming is the durable restart-staging read that must observe the marks
+service before any view-clear or cached projection is consulted.
 
 The screen only supplies the returned marker mapping to the DOM surface. Workspace
 browser rows call the same `_fleet` cache and marker methods, so tab and browser
@@ -263,8 +268,14 @@ visits silent. Notification copy remains in the next screen's presentation metho
 - Teardown staging happens only after a successful, truthy runtime leave.
 
 Moving diagnostics between owner files must not change message text, metadata fields,
-exception-capture disposition, or sink topology. The governed inventory is regenerated
-only after proving the delta is a content-identical owner transfer plus any independently
+exception-capture disposition, or sink topology. Three reviewed metadata-only labels
+move from `chat_screen.py` to `fleet.py`: `Console fleet completion handoff will retry`,
+`console fleet wake mount-claim failed`, and `fleet survivor check failed`.
+`Tests/Architecture/test_persistent_diagnostic_inventory.py` must transfer those exact
+three label/field entries to a new `tldw_chatbook/UI/Console_Modules/fleet.py` registry
+entry while leaving `Pending sidebar-state write failed` under `chat_screen.py`. The
+generated `Docs/security/production-diagnostic-inventory.json` owner counts/digests are
+updated only after proving a content-identical transfer plus any independently
 reconciled latest-dev changes.
 
 ## Testing and Verification
@@ -272,7 +283,7 @@ reconciled latest-dev changes.
 Implementation follows focused TDD; no local full-suite run is authorized.
 
 1. Add no-mount controller tests for defaults, completion claim outcomes (including
-   exact-session precedence, last conversation match, and already-active no-op), mount wake
+   exact-session precedence, last conversation match, and already-active `True` no-op), mount wake
    claim, user-priority/display semantics, retry/delivery hooks, unseen cache/marker
    precedence and the missing-controller `None` result, teardown gating, and survivor
    timer lifecycle. Pin unmounted delivery-start as a no-op, hidden-but-mounted
@@ -293,7 +304,8 @@ Implementation follows focused TDD; no local full-suite run is authorized.
    either entry path.
 6. Run the directly affected fleet/wake/teardown/hidden-screen/UI-freshness tests,
    targeted Ruff lint/format, changed-module compile, `git diff --check`, and the
-   persistent-diagnostic inventory gates.
+   persistent-diagnostic inventory gates. The diagnostic gate must prove both the
+   hand-reviewed three-label registry transfer and generated owner redistribution.
 
 The implementation is complete only when the screen contains none of the 16 moved
 definitions, no production caller targets those names on `ChatScreen`, Workspace is
