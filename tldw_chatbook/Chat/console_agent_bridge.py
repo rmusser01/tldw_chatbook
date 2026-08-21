@@ -45,7 +45,9 @@ from tldw_chatbook.Agents.agent_models import (
     TERMINAL_RUN_STATUSES,
     SPAWN_TOOL_NAME,
     STEP_ERROR,
+    STEP_MODEL,
     STEP_SPAWN,
+    STEP_TOOL_CALL,
     STEP_TOOL_RESULT,
     AgentConfig,
     AgentStep,
@@ -923,6 +925,159 @@ def _sanitize_task_marker_label(text: str) -> str:
         for char in flattened
     )
     return sanitized[:200]
+
+
+_PRIVATE_REASONING_TAG_RE = re.compile(
+    r"""
+    (?:
+        <\s*/?\s*(?:
+            think(?:ing)?
+            |analysis
+            |reasoning(?:[_\s-]?(?:content|details?))?
+            |chain[_\s-]?of[_\s-]?thought
+            |cot
+        )\b[^>]*>
+        |
+        \[\s*/?\s*(?:
+            think(?:ing)?
+            |analysis
+            |reasoning(?:[_\s-]?(?:content|details?))?
+            |chain[_\s-]?of[_\s-]?thought
+            |cot
+        )\s*\]
+        |
+        ```\s*(?:
+            think(?:ing)?
+            |analysis
+            |reasoning(?:[_\s-]?(?:content|details?))?
+            |chain[_\s-]?of[_\s-]?thought
+            |cot
+        )\b
+        |
+        <\|\s*(?:
+            think(?:ing)?
+            |analysis
+            |reasoning(?:[_\s-]?(?:content|details?))?
+            |chain[_\s-]?of[_\s-]?thought
+            |cot
+        )\s*\|>
+        |
+        <\|\s*channel\s*\|>\s*(?:thinking|analysis|reasoning)\b
+        |
+        (?:^|\n)\s*(?:
+            (?:begin|end)\s+(?:
+                thinking
+                |analysis
+                |reasoning(?:[_\s-]?(?:content|details?))?
+                |chain[_\s-]?of[_\s-]?thought
+            )\s*:?\s*(?=$|\n)
+            |
+            (?:
+                thinking
+                |analysis
+                |reasoning(?:[_\s-]?(?:content|details?))?
+                |chain[_\s-]?of[_\s-]?thought
+            )\s*:\s*
+        )
+    )
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+_TOOL_PAYLOAD_KEY_RE = re.compile(
+    r"(?i)(?:[\"']?\b(?:tool_calls?|function_call|arguments)\b[\"']?\s*:)"
+)
+
+_THINKING_PROVING_STEP_KINDS = frozenset(
+    {STEP_TOOL_CALL, STEP_SPAWN, STEP_TOOL_RESULT}
+)
+
+
+def safe_intermediate_thinking_summary(summary: str | None) -> str | None:
+    """Return a bounded visible model preamble, never private reasoning.
+
+    ``AgentStep.summary`` is the run rail's existing visible-summary seam.
+    Even there, this disclosure stays conservative: provider-private wrapper
+    shapes reject the whole value, fenced payloads are discarded, and an
+    explicit tool/function payload key rejects the remaining visible prefix.
+    No redaction copy is returned because that would create fake detail.
+    """
+    raw = str(summary or "")
+    if _PRIVATE_REASONING_TAG_RE.search(raw):
+        return None
+    visible = raw.split("```", 1)[0]
+    if _TOOL_PAYLOAD_KEY_RE.search(visible):
+        return None
+    safe = _sanitize_task_marker_label(visible).strip()
+    if not safe:
+        return None
+    return _truncate_step_text(
+        safe,
+        limit=_console_tool_result_display_cap(),
+    )
+
+
+def build_intermediate_thinking_marker(
+    summary: str | None,
+) -> ConsoleChatMessage:
+    """Build one session-only Thinking activity from a visible step summary."""
+    safe_summary = safe_intermediate_thinking_summary(summary)
+    return ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL,
+        content=safe_summary or "",
+        status="complete",
+        activity_presentation=ConsoleActivityPresentation(
+            "thinking", "Thinking", "done"
+        ),
+        # A Thinking row never carries uncapped/raw model text. Its bounded
+        # content is the complete safe detail, so a full-output sidecar would
+        # only add a dead expansion affordance (or weaken the privacy cap).
+        tool_output_full=None,
+    )
+
+
+def _step_proves_intermediate_tool_work(kind: str) -> bool:
+    """Return whether the next primary step proves its model round used tools."""
+    return kind in _THINKING_PROVING_STEP_KINDS
+
+
+class _PendingPrimaryThinkingDeriver:
+    """Derive at most one Thinking marker from each primary model round."""
+
+    def __init__(self) -> None:
+        self._has_pending_model = False
+        self._pending_summary: str | None = None
+
+    def observe(
+        self,
+        step: AgentStep | Mapping[str, Any],
+        agent_kind: str,
+    ) -> ConsoleChatMessage | None:
+        """Observe one attributed step and return a marker before it, if proven."""
+        if agent_kind != AGENT_KIND_PRIMARY:
+            return None
+        if isinstance(step, Mapping):
+            kind = str(step.get("kind") or "")
+            summary_value = step.get("summary")
+        else:
+            kind = step.kind
+            summary_value = step.summary
+        summary = None if summary_value is None else str(summary_value)
+        if kind == STEP_MODEL:
+            # A consecutive model step proves the earlier pending round did
+            # not initiate tool work. Replace it; if this is the final answer
+            # no later proving step will ever flush it.
+            self._has_pending_model = True
+            self._pending_summary = summary
+            return None
+        if not self._has_pending_model:
+            return None
+        pending_summary = self._pending_summary
+        self._has_pending_model = False
+        self._pending_summary = None
+        if not _step_proves_intermediate_tool_work(kind):
+            return None
+        return build_intermediate_thinking_marker(pending_summary)
 
 
 _BUILTIN_KILL_SWITCH_REFUSAL = "tool execution is disabled by the kill switch"
@@ -3867,6 +4022,7 @@ class ConsoleAgentBridge:
         # source of truth for this conversation from here on, so any
         # previously cached historical (DB-derived) summary is stale.
         self._historical_cache.pop(conversation_id, None)
+        thinking_deriver = _PendingPrimaryThinkingDeriver()
 
         def on_step(step: AgentStep, agent_kind: str, run_id: str) -> None:
             # PR 2a (task-3): AgentService now attributes every step to its
@@ -3911,7 +4067,17 @@ class ConsoleAgentBridge:
             tool_diff: tuple[str, str, str] | None = None
             if step.kind == STEP_TOOL_RESULT and pending_diffs:
                 tool_diff = _pair_step_diff(pending_diffs, step.tool_name)
+            thinking_marker = thinking_deriver.observe(step, agent_kind)
             if agent_kind == AGENT_KIND_PRIMARY:
+                if thinking_marker is not None:
+                    self._append_marker(
+                        session_id,
+                        thinking_marker.content,
+                        full_output=thinking_marker.tool_output_full,
+                        activity_presentation=(
+                            thinking_marker.activity_presentation
+                        ),
+                    )
                 if step.kind == STEP_SPAWN:
                     # PR2b Task 2: this is this run's ONLY source of rows
                     # on the inline path (fleet off, `[agents]
@@ -5718,9 +5884,26 @@ class ConsoleAgentBridge:
         blocks: list[tuple[str | None, list[ConsoleChatMessage]]] = []
         for record in records:
             block: list[ConsoleChatMessage] = []
-            for step in record.get("steps") or []:
+            steps = record.get("steps") or []
+            for index, step in enumerate(steps):
+                kind = str(step.get("kind") or "")
+                # Resume's persisted primary run has no interleaved child
+                # steps. Immediate look-ahead is therefore equivalent to
+                # the live pending-primary state machine above: only a
+                # proving next primary step turns this model round into a
+                # Thinking row; a final model round has no proving successor.
+                if (
+                    kind == STEP_MODEL
+                    and index + 1 < len(steps)
+                    and _step_proves_intermediate_tool_work(
+                        str(steps[index + 1].get("kind") or "")
+                    )
+                ):
+                    block.append(
+                        build_intermediate_thinking_marker(step.get("summary"))
+                    )
                 text = format_agent_step_marker(
-                    str(step.get("kind") or ""),
+                    kind,
                     tool_name=step.get("tool_name"),
                     result=step.get("result"),
                     summary=step.get("summary"),

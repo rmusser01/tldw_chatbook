@@ -71,7 +71,9 @@ from tldw_chatbook.Agents.agent_models import (
     STEP_ERROR,
     STEP_MODEL,
     STEP_SPAWN,
+    STEP_TOOL_CALL,
     STEP_TOOL_RESULT,
+    AgentStep,
     RunOutcome,
     SkillFileBindings,
     ToolCatalogEntry,
@@ -933,7 +935,7 @@ def test_tool_turn_renders_a_tool_marker_not_prose(tmp_path):
         if m.role is ConsoleMessageRole.TOOL
     ]
     assert tool_rows, "a tool turn must drop a TOOL marker"
-    assert "calculator" in tool_rows[0].content
+    assert any("calculator" in marker.content for marker in tool_rows)
     # The fenced tool JSON never streamed into the assistant answer.
     assert FENCE_OPEN not in store.get_message(aid).content
     assert store.get_message(aid).content == "It is 42."
@@ -1063,7 +1065,9 @@ def test_run_reply_threads_builtin_gate_end_to_end(tmp_path):
         if m.role is ConsoleMessageRole.TOOL
     ]
     assert tool_rows, "a refused tool call still drops a TOOL marker"
-    assert "disabled for test: calculator" in tool_rows[0].content
+    assert any(
+        "disabled for test: calculator" in marker.content for marker in tool_rows
+    )
     assert store.get_message(aid).content == "it was refused."
 
 
@@ -1260,7 +1264,7 @@ def test_run_reply_refuses_write_file_in_an_ephemeral_session_end_to_end(
         if m.role is ConsoleMessageRole.TOOL
     ]
     assert tool_rows, "a refused tool call still drops a TOOL marker"
-    assert "temporary chat" in tool_rows[0].content
+    assert any("temporary chat" in marker.content for marker in tool_rows)
 
     # CONTROL: the identical scripted call executes normally outside a
     # temporary chat.
@@ -1334,7 +1338,7 @@ def test_native_tool_call_round_trip_streams_final_answer(tmp_path):
         if m.role is ConsoleMessageRole.TOOL
     ]
     assert tool_rows, "a native tool turn must drop a TOOL marker too"
-    assert "get_current_datetime" in tool_rows[0].content
+    assert any("get_current_datetime" in marker.content for marker in tool_rows)
 
 
 def test_native_leaked_prose_is_reset_before_final_answer(tmp_path):
@@ -2935,7 +2939,8 @@ def test_resume_marker_messages_reproduces_live_markers_after_simulated_restart(
     resumed_markers = [m for _anchor, block in blocks for m in block]
     assert [m.content for m in resumed_markers] == live_tool_contents
     assert [m.activity_presentation for m in resumed_markers] == [
-        ConsoleActivityPresentation("tool", "calculator", "success")
+        ConsoleActivityPresentation("thinking", "Thinking", "done"),
+        ConsoleActivityPresentation("tool", "calculator", "success"),
     ]
     live_markers = [
         m
@@ -2944,6 +2949,144 @@ def test_resume_marker_messages_reproduces_live_markers_after_simulated_restart(
     ]
     assert [m.activity_presentation for m in live_markers] == [
         m.activity_presentation for m in resumed_markers
+    ]
+
+
+def _thinking_markers_for_attributed_steps(
+    events: list[tuple[AgentStep, str]],
+) -> list[ConsoleChatMessage]:
+    deriver = bridge_module._PendingPrimaryThinkingDeriver()
+    return [
+        marker
+        for step, agent_kind in events
+        if (marker := deriver.observe(step, agent_kind)) is not None
+    ]
+
+
+@pytest.mark.parametrize(
+    ("events", "expected_content"),
+    [
+        (
+            [
+                (AgentStep(0, STEP_MODEL, summary="Checking."), "primary"),
+                (AgentStep(1, STEP_TOOL_CALL, tool_name="fs_read"), "primary"),
+                (AgentStep(2, STEP_TOOL_RESULT, tool_name="fs_read"), "primary"),
+                (AgentStep(3, STEP_MODEL, summary="Final answer."), "primary"),
+            ],
+            ["Checking."],
+        ),
+        (
+            [
+                (AgentStep(0, STEP_MODEL, summary="Delegating."), "primary"),
+                (AgentStep(1, STEP_SPAWN, summary="research"), "primary"),
+            ],
+            ["Delegating."],
+        ),
+        (
+            [
+                (AgentStep(0, STEP_MODEL, summary="Preparing call."), "primary"),
+                (
+                    AgentStep(
+                        1,
+                        STEP_TOOL_RESULT,
+                        tool_name="fs_write",
+                        result="denied",
+                    ),
+                    "primary",
+                ),
+            ],
+            ["Preparing call."],
+        ),
+        (
+            [
+                (AgentStep(0, STEP_MODEL, summary="Two checks."), "primary"),
+                (AgentStep(1, STEP_TOOL_CALL, tool_name="first"), "primary"),
+                (AgentStep(2, STEP_TOOL_RESULT, tool_name="first"), "primary"),
+                (AgentStep(3, STEP_TOOL_CALL, tool_name="second"), "primary"),
+                (AgentStep(4, STEP_TOOL_RESULT, tool_name="second"), "primary"),
+            ],
+            ["Two checks."],
+        ),
+        (
+            [(AgentStep(0, STEP_MODEL, summary="Final only."), "primary")],
+            [],
+        ),
+        (
+            [
+                (AgentStep(0, STEP_MODEL, summary="Will fail."), "primary"),
+                (AgentStep(1, STEP_ERROR, summary="provider failed"), "primary"),
+            ],
+            [],
+        ),
+    ],
+)
+def test_pending_primary_thinking_marker_sequence_rules(
+    events: list[tuple[AgentStep, str]], expected_content: list[str]
+) -> None:
+    markers = _thinking_markers_for_attributed_steps(events)
+
+    assert [marker.content for marker in markers] == expected_content
+    assert all(
+        marker.activity_presentation
+        == ConsoleActivityPresentation("thinking", "Thinking", "done")
+        for marker in markers
+    )
+
+
+def test_subagent_steps_do_not_flush_or_clear_pending_primary_thinking() -> None:
+    events = [
+        (AgentStep(0, STEP_MODEL, summary="Primary preamble."), "primary"),
+        (AgentStep(0, STEP_MODEL, summary="Child private turn."), "subagent"),
+        (AgentStep(1, STEP_TOOL_CALL, tool_name="child_tool"), "subagent"),
+        (AgentStep(2, STEP_TOOL_RESULT, tool_name="child_tool"), "subagent"),
+        (AgentStep(1, STEP_TOOL_CALL, tool_name="primary_tool"), "primary"),
+    ]
+
+    markers = _thinking_markers_for_attributed_steps(events)
+
+    assert [marker.content for marker in markers] == ["Primary preamble."]
+
+
+def test_thinking_live_resume_marker_order_content_and_presentation_parity(
+    tmp_path,
+) -> None:
+    scripts = [
+        [
+            "I will calculate this safely.\n",
+            _fence("calculator", {"expression": "6*7"}),
+        ],
+        ["It is 42."],
+    ]
+    bridge, db, store, session, aid = _bridge(tmp_path, scripts)
+
+    outcome = _run(bridge, store, session, aid)
+    live = [
+        message
+        for message in store.messages_for_session(session.id)
+        if message.role is ConsoleMessageRole.TOOL
+    ]
+    resumed = [
+        message
+        for _anchor, block in ConsoleAgentBridge(
+            agent_runs_db=db, store=None, provider_gateway=None
+        ).resume_marker_messages("conv-1")
+        for message in block
+    ]
+
+    assert outcome.status == "done"
+    assert [message.activity_presentation.kind for message in live] == [
+        "thinking",
+        "tool",
+    ]
+    assert live[0].content == "I will calculate this safely."
+    assert [message.content for message in resumed] == [
+        message.content for message in live
+    ]
+    assert [message.activity_presentation for message in resumed] == [
+        message.activity_presentation for message in live
+    ]
+    assert [message.tool_output_full for message in resumed] == [
+        message.tool_output_full for message in live
     ]
 
 

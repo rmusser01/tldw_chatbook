@@ -6,6 +6,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
+import tldw_chatbook.Chat.console_agent_bridge as bridge_module
 from tldw_chatbook.Agents.agent_models import STEP_ERROR, STEP_SPAWN, STEP_TOOL_RESULT
 from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_DENY_REFUSAL,
@@ -248,6 +249,92 @@ def test_unknown_error_wrapped_tool_failure_is_failed() -> None:
     assert (
         classify_activity_status(STEP_TOOL_RESULT, "ERROR: disk exploded")
         == "failed"
+    )
+
+
+def test_safe_intermediate_thinking_summary_retains_only_safe_prefence_preamble(
+    monkeypatch,
+) -> None:
+    from tldw_chatbook.config import MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS
+
+    monkeypatch.setenv(
+        "TLDW_CONSOLE_TOOL_RESULT_DISPLAY_CHARS",
+        str(MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS),
+    )
+    preamble = "I will inspect the relevant files before choosing the smallest fix."
+    summary = (
+        f"{preamble}\n```tool_call\n"
+        '{"name":"fs_read","arguments":{"path":"secret"}}\n```'
+    )
+
+    safe = bridge_module.safe_intermediate_thinking_summary(summary)
+
+    assert safe == bridge_module._truncate_step_text(
+        preamble,
+        limit=MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+    )
+    assert "secret" not in safe
+
+
+@pytest.mark.parametrize(
+    "summary",
+    [
+        "<thinking>private chain</thinking>",
+        "<ANALYSIS>private chain</ANALYSIS>",
+        "</reasoning>",
+        "<reasoning_content>private chain</reasoning_content>",
+        "[analysis] private chain [/analysis]",
+        "BEGIN THINKING\nprivate chain\nEND THINKING",
+        "Safe-looking text\n```analysis\nprivate chain\n```",
+        "<|channel|>analysis private chain",
+        "<|reasoning|>private chain",
+        'Safe-looking text {"tool_call": {"name": "fs_read"}}',
+        'Safe-looking text {"tool_calls": []}',
+        'Safe-looking text {"function_call": {}}',
+        'Safe-looking text {"arguments": {"path": "private"}}',
+        '```json\n{"name":"fs_read","arguments":{"path":"private"}}\n```',
+        "",
+        " \n\t ",
+        None,
+    ],
+)
+def test_safe_intermediate_thinking_summary_rejects_private_or_payload_shapes(
+    summary: str | None,
+) -> None:
+    assert bridge_module.safe_intermediate_thinking_summary(summary) is None
+
+
+def test_safe_intermediate_thinking_summary_flattens_controls_and_lines() -> None:
+    summary = "Inspect\nthese\tfiles\x00before\x1b continuing."
+
+    safe = bridge_module.safe_intermediate_thinking_summary(summary)
+
+    assert safe == "Inspect these files before  continuing."
+    assert all(ord(char) >= 0x20 and not 0x7F <= ord(char) <= 0x9F for char in safe)
+
+
+def test_thinking_marker_without_safe_summary_has_no_expandable_detail() -> None:
+    marker = bridge_module.build_intermediate_thinking_marker(
+        "<thinking>private chain</thinking>"
+    )
+
+    assert marker.role is ConsoleMessageRole.TOOL
+    assert marker.content == ""
+    assert marker.tool_output_full is None
+    assert marker.activity_presentation == ConsoleActivityPresentation(
+        "thinking", "Thinking", "done"
+    )
+
+
+def test_thinking_marker_with_safe_summary_uses_bounded_content_as_its_detail() -> None:
+    marker = bridge_module.build_intermediate_thinking_marker(
+        "I will inspect the relevant files."
+    )
+
+    assert marker.content == "I will inspect the relevant files."
+    assert marker.tool_output_full is None
+    assert marker.activity_presentation == ConsoleActivityPresentation(
+        "thinking", "Thinking", "done"
     )
 
 
