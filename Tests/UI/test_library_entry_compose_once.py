@@ -11,8 +11,9 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from textual.app import App, ComposeResult
 from textual.widget import Widget
-from textual.widgets import Input
+from textual.widgets import Button, Input, Static
 from textual.widgets._input import Selection
 
 from tldw_chatbook.Constants import (
@@ -47,6 +48,7 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_CREATE_STUDY,
     LIBRARY_ROW_INGEST_EXPORT,
 )
+from tldw_chatbook.Library.library_rail_state import LibraryLifecycle
 from tldw_chatbook.Widgets.Library import (
     LibraryCollectionsPanel,
     LibraryConversationsCanvas,
@@ -132,6 +134,165 @@ _ENTRY_WORKER_CASES = (
         owner_replaced=True,
     ),
 )
+
+
+class _LandingCanvasHarness(App):
+    """Mount one retained landing owner without the surrounding screen."""
+
+    def __init__(self, state: LibraryLandingCanvasState) -> None:
+        super().__init__()
+        self.state = state
+
+    def compose(self) -> ComposeResult:
+        yield LibraryLandingCanvas(self.state, id="library-landing-canvas")
+
+
+def _landing_state(
+    lifecycle: LibraryLifecycle,
+    *,
+    status: str = "",
+    warning: str = "",
+    show_retry: bool = False,
+    show_explore: bool = False,
+    recent_items: tuple[LibraryLandingRecentItem, ...] = (),
+) -> LibraryLandingCanvasState:
+    """Build one explicit lifecycle presentation state for retained-owner tests."""
+    return LibraryLandingCanvasState(
+        purpose="Keep your useful material in one place.",
+        counts_line="Notes (3) · Media (2) · Conversations (1)",
+        recent_items=recent_items,
+        lifecycle=lifecycle,
+        lifecycle_status=status,
+        persistence_warning=warning,
+        show_retry=show_retry,
+        show_explore=show_explore,
+    )
+
+
+@pytest.mark.asyncio
+async def test_library_landing_syncs_unknown_to_starter_without_duplicate_actions():
+    app = _LandingCanvasHarness(
+        _landing_state(
+            LibraryLifecycle.UNKNOWN,
+            status="Checking your Library…",
+        )
+    )
+
+    async with app.run_test() as pilot:
+        landing = app.query_one("#library-landing-canvas", LibraryLandingCanvas)
+        import_action = app.query_one("#library-hub-action-import", Button)
+        note_action = app.query_one("#library-hub-action-new-note", Button)
+        assert not app.query("#library-hub-counts")
+        assert not app.query("#library-hub-action-search")
+        assert not app.query(".library-hub-recent")
+        assert str(
+            app.query_one("#library-hub-lifecycle-status", Static).renderable
+        ) == "Checking your Library…"
+
+        landing.sync_state(_landing_state(LibraryLifecycle.STARTER))
+        await pilot.pause()
+
+        assert app.query_one("#library-hub-action-import", Button) is import_action
+        assert app.query_one("#library-hub-action-new-note", Button) is note_action
+        assert len(app.query("#library-hub-action-import")) == 1
+        assert len(app.query("#library-hub-action-new-note")) == 1
+        assert "1 Add · 2 Find · 3 Use" in str(
+            app.query_one("#library-hub-orientation", Static).renderable
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_landing_syncs_starter_to_expanded_without_stale_recents():
+    stale = LibraryLandingRecentItem("notes", "stale", "Stale note", "Note")
+    app = _LandingCanvasHarness(
+        _landing_state(LibraryLifecycle.STARTER, recent_items=(stale,))
+    )
+
+    async with app.run_test() as pilot:
+        landing = app.query_one("#library-landing-canvas", LibraryLandingCanvas)
+        assert not app.query(".library-hub-recent")
+
+        landing.sync_state(_landing_state(LibraryLifecycle.EXPANDED))
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.query_one("#library-hub-counts", Static)
+        assert app.query_one("#library-hub-action-search", Button)
+        assert not app.query("#library-hub-orientation")
+        assert not app.query(".library-hub-recent")
+
+
+@pytest.mark.asyncio
+async def test_library_landing_partial_failure_shows_one_retry():
+    app = _LandingCanvasHarness(
+        _landing_state(
+            LibraryLifecycle.UNKNOWN,
+            status="Some Library sources are unavailable.",
+            show_retry=True,
+        )
+    )
+
+    async with app.run_test():
+        retry = app.query("#library-hub-retry-evidence")
+        assert len(retry) == 1
+        assert str(app.query_one("#library-hub-lifecycle-status", Static).renderable) == (
+            "Some Library sources are unavailable."
+        )
+        assert not app.query("#library-hub-counts")
+        assert not app.query("#library-hub-action-search")
+
+
+@pytest.mark.asyncio
+async def test_library_landing_persistence_warning_keeps_actions_enabled():
+    warning = (
+        "Library view is updated for this session, but the choice may not be "
+        "remembered."
+    )
+    app = _LandingCanvasHarness(
+        _landing_state(LibraryLifecycle.STARTER, warning=warning)
+    )
+
+    async with app.run_test():
+        assert str(
+            app.query_one("#library-hub-persistence-warning", Static).renderable
+        ) == warning
+        assert app.query_one("#library-hub-action-import", Button).disabled is False
+        assert (
+            app.query_one("#library-hub-action-new-note", Button).disabled is False
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_landing_composes_explore_only_when_rail_action_is_absent():
+    app = _LandingCanvasHarness(
+        _landing_state(LibraryLifecycle.STARTER, show_explore=True)
+    )
+
+    async with app.run_test():
+        assert len(app.query("#library-hub-explore-all")) == 1
+
+
+@pytest.mark.asyncio
+async def test_library_landing_late_sync_cannot_replace_a_new_route_owner(
+):
+    app = _build_test_app()
+    _seed_conversations(app, [])
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        landing = screen.query_one("#library-landing-canvas", LibraryLandingCanvas)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_MEDIA)
+        await _wait_for_selector(screen, pilot, "#library-media-canvas")
+        replacement = screen.query_one("#library-media-canvas", LibraryMediaCanvas)
+
+        landing.sync_state(_landing_state(LibraryLifecycle.STARTER))
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen.query_one("#library-media-canvas") is replacement
+        assert not screen.query("#library-landing-canvas")
 
 
 def _wire_entry_prompt_service(app: Any, db_path: Path) -> int:

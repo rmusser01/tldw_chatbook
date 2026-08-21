@@ -16,6 +16,7 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_CREATE_NOTE,
     LIBRARY_ROW_INGEST_MEDIA,
 )
+from tldw_chatbook.Library.library_rail_state import LibraryLifecycle
 from tldw_chatbook.Widgets.Library.library_canvas_sync import PostRecomposeCallback
 
 
@@ -36,6 +37,11 @@ class LibraryLandingCanvasState:
     purpose: str
     counts_line: str
     recent_items: tuple[LibraryLandingRecentItem, ...] = ()
+    lifecycle: LibraryLifecycle = LibraryLifecycle.EXPANDED
+    lifecycle_status: str = ""
+    persistence_warning: str = ""
+    show_retry: bool = False
+    show_explore: bool = False
 
 
 @dataclass(frozen=True)
@@ -127,19 +133,62 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
         recent.record_id = item.record_id
         return recent
 
+    @staticmethod
+    def _is_get_started(state: LibraryLandingCanvasState) -> bool:
+        return state.lifecycle in (
+            LibraryLifecycle.UNKNOWN,
+            LibraryLifecycle.STARTER,
+        )
+
+    @classmethod
+    def _widget_set_key(cls, state: LibraryLandingCanvasState) -> tuple[bool, bool, bool]:
+        return (cls._is_get_started(state), state.show_retry, state.show_explore)
+
+    @staticmethod
+    def _status(value: str, widget_id: str) -> Static:
+        status = Static(value, id=widget_id, classes="library-hub-meta", markup=False)
+        status.display = bool(value)
+        return status
+
     def compose(self) -> ComposeResult:
+        get_started = self._is_get_started(self.state)
+        if get_started:
+            yield Static(
+                "Get started",
+                id="library-hub-heading",
+                classes="destination-section",
+                markup=False,
+            )
         yield Static(
             self.state.purpose,
             id="library-canvas-landing",
             classes="destination-purpose",
             markup=False,
         )
-        yield Static(
-            self.state.counts_line,
-            id="library-hub-counts",
-            classes="library-hub-meta",
-            markup=False,
+        yield self._status(
+            self.state.lifecycle_status,
+            "library-hub-lifecycle-status",
         )
+        yield self._status(
+            self.state.persistence_warning,
+            "library-hub-persistence-warning",
+        )
+        if get_started:
+            orientation = Static(
+                "1 Add · 2 Find · 3 Use",
+                id="library-hub-orientation",
+                classes="library-hub-meta",
+                markup=False,
+            )
+            orientation.display = self.state.lifecycle is LibraryLifecycle.STARTER
+            yield orientation
+        else:
+            yield Static(
+                self.state.counts_line,
+                id="library-hub-counts",
+                classes="library-hub-meta",
+                markup=False,
+            )
         with Horizontal(id="library-hub-actions", classes="ds-toolbar"):
             yield self._action_button(
                 "Import…",
@@ -148,13 +197,14 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
                 "ingest-media",
                 "library-hub-action-import",
             )
-            yield self._action_button(
-                "Search",
-                "Search everything in the Library.",
-                LIBRARY_ROW_BROWSE_SEARCH,
-                "search",
-                "library-hub-action-search",
-            )
+            if not get_started:
+                yield self._action_button(
+                    "Search",
+                    "Search everything in the Library.",
+                    LIBRARY_ROW_BROWSE_SEARCH,
+                    "search",
+                    "library-hub-action-search",
+                )
             yield self._action_button(
                 "New note",
                 "Create a new note.",
@@ -162,17 +212,39 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
                 LIBRARY_CANVAS_KIND_NOTES_CREATE,
                 "library-hub-action-new-note",
             )
-        recents = Vertical(id="library-hub-recents")
-        recents.styles.height = "auto"
-        with recents:
-            for item in self.state.recent_items:
-                yield self._recent_button(item)
+            if self.state.show_explore:
+                yield Button("Explore all tools", id="library-hub-explore-all")
+        if self.state.show_retry:
+            yield Button("Retry", id="library-hub-retry-evidence")
+        if not get_started:
+            recents = Vertical(id="library-hub-recents")
+            recents.styles.height = "auto"
+            with recents:
+                for item in self.state.recent_items:
+                    yield self._recent_button(item)
 
     def sync_state(self, state: LibraryLandingCanvasState) -> None:
-        """Patch counts and defer replacement of only the recent rows."""
+        """Patch stable fields, recomposing only when the widget set changes."""
+        previous_key = self._widget_set_key(self.state)
         self.state = state
-        self.query_one("#library-hub-counts", Static).update(state.counts_line)
         self._deferred_sync_serial += 1
+        if self._widget_set_key(state) != previous_key:
+            self.refresh(recompose=True)
+            return
+        purpose = self.query_one("#library-canvas-landing", Static)
+        purpose.update(state.purpose)
+        lifecycle_status = self.query_one("#library-hub-lifecycle-status", Static)
+        lifecycle_status.update(state.lifecycle_status)
+        lifecycle_status.display = bool(state.lifecycle_status)
+        warning = self.query_one("#library-hub-persistence-warning", Static)
+        warning.update(state.persistence_warning)
+        warning.display = bool(state.persistence_warning)
+        if self._is_get_started(state):
+            orientation = self.query_one("#library-hub-orientation", Static)
+            orientation.display = state.lifecycle is LibraryLifecycle.STARTER
+            self._complete_targeted_sync()
+            return
+        self.query_one("#library-hub-counts", Static).update(state.counts_line)
         self.call_later(self._replace_recent_rows, self._deferred_sync_serial)
 
     async def _replace_recent_rows(self, serial: int | None = None) -> None:

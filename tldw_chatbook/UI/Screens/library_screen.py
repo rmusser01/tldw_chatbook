@@ -2828,7 +2828,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_onboarding_generation = 0
         self._library_onboarding_all_empty = False
         self._library_onboarding_status = LibraryEvidenceStatus.LOADING
-        self._library_onboarding_status_copy = "Checking existing Library content…"
+        self._library_onboarding_status_copy = "Checking your Library…"
         self._library_onboarding_persistence_warning = ""
         self._library_lifecycle_pending_persist: LibraryLifecycle | None = None
         self._library_lifecycle_persist_worker: Worker | None = None
@@ -4675,6 +4675,12 @@ class LibraryScreen(BaseAppScreen):
 
     def _library_notes_compact_stage_applies(self) -> bool:
         """Scope single-stage behavior to Library entry and active Notes routes."""
+        if (
+            not self._library_selected_row_id
+            and self._library_lifecycle
+            in (LibraryLifecycle.UNKNOWN, LibraryLifecycle.STARTER)
+        ):
+            return False
         return (
             self._library_notes_stage == "rail"
             or self._library_notes_compact_workflow_active()
@@ -8828,9 +8834,22 @@ class LibraryScreen(BaseAppScreen):
 
     def _library_landing_canvas_state(self) -> LibraryLandingCanvasState:
         """Build the landing owner's display-only snapshot."""
+        get_started = self._library_lifecycle in (
+            LibraryLifecycle.UNKNOWN,
+            LibraryLifecycle.STARTER,
+        )
+        lifecycle_status = ""
+        if self._library_lifecycle is LibraryLifecycle.UNKNOWN:
+            lifecycle_status = self._library_onboarding_status_copy
+        elif self._library_lifecycle is LibraryLifecycle.GRADUATED:
+            lifecycle_status = "Library tools are now available."
         return LibraryLandingCanvasState(
-            purpose=LIBRARY_CANVAS_LANDING_COPY,
-            counts_line=self._hub_counts_line(),
+            purpose=(
+                "Add useful material now; find and use it as your Library grows."
+                if get_started
+                else LIBRARY_CANVAS_LANDING_COPY
+            ),
+            counts_line="" if get_started else self._hub_counts_line(),
             recent_items=tuple(
                 LibraryLandingRecentItem(
                     source_type=source_type,
@@ -8839,7 +8858,18 @@ class LibraryScreen(BaseAppScreen):
                     source_label=source_label,
                 )
                 for source_type, record_id, title, source_label in self._hub_recent_items()
+            )
+            if not get_started
+            else (),
+            lifecycle=self._library_lifecycle,
+            lifecycle_status=lifecycle_status,
+            persistence_warning=self._library_onboarding_persistence_warning,
+            show_retry=(
+                self._library_lifecycle is LibraryLifecycle.UNKNOWN
+                and self._library_onboarding_status
+                is LibraryEvidenceStatus.PARTIAL_FAILURE
             ),
+            show_explore=get_started and self._library_rail_collapsed,
         )
 
     def _library_study_handoff_canvas_state(
@@ -15116,7 +15146,7 @@ class LibraryScreen(BaseAppScreen):
     def _sync_library_onboarding_status_copy(self) -> None:
         """Keep the Task 4/5 presentation seam in sync with evidence status."""
         if self._library_onboarding_status is LibraryEvidenceStatus.LOADING:
-            self._library_onboarding_status_copy = "Checking existing Library content…"
+            self._library_onboarding_status_copy = "Checking your Library…"
         elif self._library_onboarding_status is LibraryEvidenceStatus.PARTIAL_FAILURE:
             self._library_onboarding_status_copy = (
                 "Some Library sources are unavailable."
@@ -15139,6 +15169,8 @@ class LibraryScreen(BaseAppScreen):
             return None
         if back_was_admitted:
             self._sync_library_rail_lifecycle_presentation()
+        elif self.is_mounted:
+            self._sync_library_landing_lifecycle_presentation()
         return self.run_worker(
             self._gather_library_onboarding_evidence(
                 generation,
@@ -15148,7 +15180,7 @@ class LibraryScreen(BaseAppScreen):
         )
 
     def _sync_library_rail_lifecycle_presentation(self) -> None:
-        """Recompose the retained rail and safely restore semantic rail focus."""
+        """Recompose lifecycle owners and safely restore semantic focus."""
         try:
             rail = self.query_one("#library-rail", LibraryRail)
         except (NoMatches, QueryError):
@@ -15173,7 +15205,36 @@ class LibraryScreen(BaseAppScreen):
             lifecycle=self._library_lifecycle,
             onboarding_all_empty=self._library_onboarding_all_empty,
         )
+        self._sync_library_landing_lifecycle_presentation()
         self._register_footer_shortcuts()
+
+    def _sync_library_landing_lifecycle_presentation(self) -> None:
+        """Sync the retained landing, preserving a still-current focused action."""
+        try:
+            landing = self.query_one(
+                "#library-landing-canvas", LibraryLandingCanvas
+            )
+        except (NoMatches, QueryError):
+            return
+        focused = self.focused
+        focus_selector = ""
+        if (
+            focused is not None
+            and landing in focused.ancestors_with_self
+            and focused.id
+        ):
+            focus_selector = f"#{focused.id}"
+            self.set_focus(None)
+        _sync_library_canvas(
+            self,
+            "landing",
+            then=(
+                partial(self._restore_library_lifecycle_focus, focus_selector)
+                if focus_selector
+                else None
+            ),
+            allow_screen_fallback=False,
+        )
 
     def _restore_library_lifecycle_focus(self, selector: str) -> None:
         """Restore settlement focus only while the user has not moved it."""
@@ -15302,6 +15363,7 @@ class LibraryScreen(BaseAppScreen):
         ):
             return
         previous_lifecycle = self._library_lifecycle
+        previous_status = self._library_onboarding_status
         previous_back_admitted = (
             previous_lifecycle is LibraryLifecycle.EXPANDED
             and self._library_onboarding_all_empty
@@ -15331,6 +15393,8 @@ class LibraryScreen(BaseAppScreen):
             or current_back_admitted != previous_back_admitted
         ):
             self._sync_library_rail_lifecycle_presentation()
+        elif self.is_mounted and self._library_onboarding_status is not previous_status:
+            self._sync_library_landing_lifecycle_presentation()
         if (
             previous_lifecycle is not LibraryLifecycle.GRADUATED
             and self._library_lifecycle is LibraryLifecycle.GRADUATED
@@ -15384,6 +15448,7 @@ class LibraryScreen(BaseAppScreen):
         while self._library_lifecycle_pending_persist is not None:
             lifecycle = self._library_lifecycle_pending_persist
             self._library_lifecycle_pending_persist = None
+            previous_warning = self._library_onboarding_persistence_warning
             try:
                 persisted = await asyncio.to_thread(
                     save_setting_to_cli_config,
@@ -15399,6 +15464,11 @@ class LibraryScreen(BaseAppScreen):
                     self._library_onboarding_persistence_warning = ""
                 else:
                     self._library_onboarding_persistence_warning = "Library view is updated for this session, but the choice may not be remembered."
+            if (
+                self.is_mounted
+                and previous_warning != self._library_onboarding_persistence_warning
+            ):
+                self._sync_library_landing_lifecycle_presentation()
 
     def _library_rail_preferences(self):
         """Read persisted Library rail section preferences, defensively.
@@ -15603,6 +15673,7 @@ class LibraryScreen(BaseAppScreen):
         )
         if not self.is_mounted or single_stage:
             return
+        self._sync_library_landing_lifecycle_presentation()
         if not collapsed:
             self._focus_library_rail_action("#library-search-input")
             return
@@ -15643,12 +15714,30 @@ class LibraryScreen(BaseAppScreen):
     async def _explore_library_rail(self, event: Button.Pressed) -> None:
         """Persist full disclosure, recompose once, and focus the full rail."""
         event.stop()
+        await self._explore_library_tools()
+
+    @on(Button.Pressed, "#library-hub-explore-all")
+    async def _explore_library_landing(self, event: Button.Pressed) -> None:
+        """Run the same disclosure transition from a rail-hidden landing."""
+        event.stop()
+        await self._explore_library_tools()
+
+    async def _explore_library_tools(self) -> None:
+        """Persist full disclosure, reveal the rail, and focus its search."""
         lifecycle = explore_library_lifecycle(self._library_lifecycle)
         if lifecycle is self._library_lifecycle:
             return
         self._set_library_lifecycle(lifecycle)
+        self._library_rail_collapsed = False
         await self.recompose()
         self._focus_library_rail_action("#library-search-input")
+
+    @on(Button.Pressed, "#library-hub-retry-evidence")
+    def _retry_library_onboarding_evidence(self, event: Button.Pressed) -> None:
+        """Start one fresh guarded evidence generation after partial failure."""
+        event.stop()
+        if self._library_onboarding_status is LibraryEvidenceStatus.PARTIAL_FAILURE:
+            self._refresh_library_onboarding_evidence()
 
     @on(Button.Pressed, "#library-rail-back-to-starter")
     async def _return_library_rail_to_starter(self, event: Button.Pressed) -> None:

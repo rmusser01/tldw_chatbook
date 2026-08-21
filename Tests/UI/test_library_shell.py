@@ -708,6 +708,12 @@ class LibraryHarness(ConsolidatedCSSApp):
         self.seen_contexts.append(dict(message.screen_context or {}))
 
 
+class LibraryProductionCSSHarness(LibraryHarness):
+    """Mount Library with the exact stylesheet sequence used by TldwCli."""
+
+    CSS_PATH = TldwCli.CSS_PATH
+
+
 class _AsyncLibraryEvidenceGate:
     """One independently released source-evidence call."""
 
@@ -970,6 +976,132 @@ async def test_library_onboarding_partial_failure_keeps_truthful_unknown_actions
             assert screen._library_onboarding_status_copy == (
                 "Some Library sources are unavailable."
             )
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+async def test_library_unknown_landing_is_truthful_and_actionable_while_loading() -> (
+    None
+):
+    gates = _LibraryEvidenceGates()
+    app = _new_library_onboarding_app(gates)
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = host.screen_stack[-1]
+            await _wait_for_evidence_round(pilot, gates)
+
+            assert "Get started" in _visible_text(screen)
+            assert str(
+                screen.query_one("#library-hub-lifecycle-status", Static).renderable
+            ) == "Checking your Library…"
+            assert screen.query_one("#library-hub-action-import", Button)
+            assert screen.query_one("#library-hub-action-new-note", Button)
+            assert not screen.query("#library-hub-counts")
+            assert not screen.query("#library-hub-action-search")
+            assert not screen.query(".library-hub-recent")
+            assert not screen.query("#library-hub-retry-evidence")
+            assert len(screen.query("#library-rail-explore-all")) == 1
+            assert not screen.query("#library-hub-explore-all")
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+async def test_library_starter_landing_orients_without_counts_or_search() -> None:
+    gates = _LibraryEvidenceGates()
+    app = _new_library_onboarding_app(gates)
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = host.screen_stack[-1]
+            await _wait_for_evidence_round(pilot, gates)
+            gates.release_round(0)
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_lifecycle is LibraryLifecycle.STARTER,
+                message="empty evidence did not settle Starter",
+            )
+            await pilot.pause()
+
+            assert "1 Add · 2 Find · 3 Use" in _visible_text(screen)
+            assert screen.query_one("#library-hub-action-import", Button)
+            assert screen.query_one("#library-hub-action-new-note", Button)
+            assert not screen.query("#library-hub-counts")
+            assert not screen.query("#library-hub-action-search")
+            assert not screen.query(".library-hub-recent")
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "lifecycle", [LibraryLifecycle.EXPANDED, LibraryLifecycle.GRADUATED]
+)
+async def test_library_full_lifecycle_landing_preserves_counts_search_and_recents(
+    lifecycle: LibraryLifecycle,
+) -> None:
+    gates = _LibraryEvidenceGates()
+    app = _new_library_onboarding_app(gates)
+    app.app_config["_first_run"] = False
+    app.app_config["library"]["rail_state"]["lifecycle"] = lifecycle.value
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = host.screen_stack[-1]
+            await _wait_for_evidence_round(pilot, gates)
+
+            assert screen.query_one("#library-hub-counts", Static)
+            assert screen.query_one("#library-hub-action-search", Button)
+            assert screen.query_one("#library-hub-recents")
+            assert not screen.query("#library-hub-orientation")
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+async def test_library_partial_failure_landing_offers_one_contextual_retry() -> None:
+    gates = _LibraryEvidenceGates(
+        rounds=2,
+        outcomes={
+            "prompts": [
+                RuntimeError("prompt evidence unavailable"),
+                LibraryContentEvidence.EMPTY,
+            ]
+        },
+    )
+    app = _new_library_onboarding_app(gates)
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = host.screen_stack[-1]
+            await _wait_for_evidence_round(pilot, gates, 0)
+            gates.release_round(0)
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen._library_onboarding_status
+                    is LibraryEvidenceStatus.PARTIAL_FAILURE
+                ),
+                message="partial failure did not settle",
+            )
+            await pilot.pause()
+
+            assert len(screen.query("#library-hub-retry-evidence")) == 1
+            assert str(
+                screen.query_one("#library-hub-lifecycle-status", Static).renderable
+            ) == "Some Library sources are unavailable."
+            screen.query_one("#library-hub-retry-evidence", Button).press()
+            await _wait_for_evidence_round(pilot, gates, 1)
+            await pilot.pause()
+
+            assert screen._library_onboarding_status is LibraryEvidenceStatus.LOADING
+            assert not screen.query("#library-hub-retry-evidence")
     finally:
         gates.release_all()
 
@@ -1569,6 +1701,9 @@ async def test_library_onboarding_graduation_preserves_rail_focus_and_announces(
                 "Library tools are now available.",
                 {"severity": "information"},
             )
+            assert str(
+                screen.query_one("#library-hub-lifecycle-status", Static).renderable
+            ) == "Library tools are now available."
     finally:
         gates.release_all()
 
@@ -1667,6 +1802,7 @@ async def test_library_starter_collapse_open_restores_import_and_action_order() 
         async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
             await _wait_for_evidence_round(pilot, gates)
             action_ids = {
+                "library-rail-collapse",
                 f"library-row-{LIBRARY_ROW_INGEST_MEDIA}",
                 f"library-row-{LIBRARY_ROW_CREATE_NOTE}",
                 "library-rail-explore-all",
@@ -1676,6 +1812,7 @@ async def test_library_starter_collapse_open_restores_import_and_action_order() 
                 for widget in screen.focus_chain
                 if widget.id in action_ids
             ] == [
+                "library-rail-collapse",
                 f"library-row-{LIBRARY_ROW_INGEST_MEDIA}",
                 f"library-row-{LIBRARY_ROW_CREATE_NOTE}",
                 "library-rail-explore-all",
@@ -1690,6 +1827,168 @@ async def test_library_starter_collapse_open_restores_import_and_action_order() 
             assert screen.query_one(
                 f"#library-row-{LIBRARY_ROW_INGEST_MEDIA}", Button
             ).has_focus
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+async def test_library_collapsed_starter_moves_explore_ownership_to_landing() -> None:
+    gates = _LibraryEvidenceGates()
+    app = _new_library_onboarding_app(gates)
+    app.app_config["_first_run"] = False
+    app.app_config["library"]["rail_state"]["lifecycle"] = "starter"
+    screen = LibraryScreen(app)
+    host = LibraryHarness(app, screen=screen)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            await _wait_for_evidence_round(pilot, gates)
+            screen.query_one("#library-rail-collapse", Button).press()
+            await pilot.pause()
+            await pilot.pause()
+
+            assert screen.query_one("#library-rail").display is False
+            assert len(
+                [
+                    widget
+                    for widget in screen.focus_chain
+                    if widget.id
+                    in {"library-rail-explore-all", "library-hub-explore-all"}
+                ]
+            ) == 1
+            assert screen.query_one("#library-hub-explore-all", Button)
+
+            screen.query_one("#library-hub-explore-all", Button).press()
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_lifecycle is LibraryLifecycle.EXPANDED,
+                message="landing-owned Explore did not expand Library",
+            )
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+async def test_library_graduation_late_restore_does_not_steal_newer_user_focus(
+    monkeypatch,
+) -> None:
+    """A landing recompose finishing late must respect a newer rail focus."""
+    gates = _LibraryEvidenceGates(
+        outcomes={"notes": [LibraryContentEvidence.HAS_USER_CONTENT]}
+    )
+    app = _new_library_onboarding_app(gates)
+    app.app_config["_first_run"] = False
+    app.app_config["library"]["rail_state"]["lifecycle"] = "starter"
+    screen = LibraryScreen(app)
+    host = LibraryHarness(app, screen=screen)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            await _wait_for_evidence_round(pilot, gates)
+            landing = screen.query_one(
+                "#library-landing-canvas", library_screen_module.LibraryLandingCanvas
+            )
+            original_recompose = landing.recompose
+            recompose_started = asyncio.Event()
+            release_recompose = asyncio.Event()
+
+            async def gated_recompose() -> None:
+                recompose_started.set()
+                await release_recompose.wait()
+                await original_recompose()
+
+            monkeypatch.setattr(landing, "recompose", gated_recompose)
+            screen.query_one("#library-hub-action-import", Button).focus()
+            gates.release_round(0, "notes")
+            await _wait_for_condition(
+                pilot,
+                recompose_started.is_set,
+                message="graduation did not start landing recompose",
+            )
+            await _wait_for_condition(
+                pilot,
+                lambda: bool(screen.query("#library-search-input")),
+                message="graduation did not expand the rail",
+            )
+            newer_target = screen.query_one("#library-search-input", Input)
+            newer_target.focus()
+            release_recompose.set()
+            await pilot.pause()
+            await pilot.pause()
+
+            assert newer_target.has_focus
+    finally:
+        release = locals().get("release_recompose")
+        if release is not None:
+            release.set()
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", ((100, 30), (170, 48)))
+async def test_library_starter_production_geometry_and_focus_order(size) -> None:
+    gates = _LibraryEvidenceGates()
+    app = _new_library_onboarding_app(gates)
+    host = LibraryProductionCSSHarness(app)
+
+    try:
+        async with host.run_test(size=size) as pilot:
+            assert host.CSS_PATH == TldwCli.CSS_PATH
+            screen = host.screen_stack[-1]
+            await _wait_for_evidence_round(pilot, gates)
+            await pilot.pause()
+
+            selectors = (
+                f"#library-row-{LIBRARY_ROW_INGEST_MEDIA}",
+                f"#library-row-{LIBRARY_ROW_CREATE_NOTE}",
+                "#library-rail-explore-all",
+                "#library-hub-lifecycle-status",
+            )
+            for selector in selectors:
+                widget = screen.query_one(selector)
+                assert widget.region.width > 0 and widget.region.height > 0
+            assert screen.query_one(
+                f"#library-row-{LIBRARY_ROW_INGEST_MEDIA}"
+            ).region.bottom <= size[1]
+            assert screen.query_one(
+                f"#library-row-{LIBRARY_ROW_CREATE_NOTE}"
+            ).region.bottom <= size[1]
+
+            focus_ids = {
+                "library-rail-collapse",
+                f"library-row-{LIBRARY_ROW_INGEST_MEDIA}",
+                f"library-row-{LIBRARY_ROW_CREATE_NOTE}",
+                "library-rail-explore-all",
+            }
+            assert [
+                widget.id for widget in screen.focus_chain if widget.id in focus_ids
+            ] == [
+                "library-rail-collapse",
+                f"library-row-{LIBRARY_ROW_INGEST_MEDIA}",
+                f"library-row-{LIBRARY_ROW_CREATE_NOTE}",
+                "library-rail-explore-all",
+            ]
+            assert len(screen.query("#library-rail-explore-all")) == 1
+            assert not screen.query("#library-hub-explore-all")
+            painted = "\n".join(
+                "".join(segment.text for segment in strip)
+                for strip in screen._compositor.render_strips()
+            )
+            assert "Media (0)" not in painted
+            assert "Page 0" not in painted
+            assert "No recent" not in painted
+            assert "Checking your Library…" in painted
+
+            screen.query_one("#library-rail-explore-all", Button).press()
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen._library_lifecycle is LibraryLifecycle.EXPANDED
+                    and bool(screen.query("#library-search-input"))
+                    and bool(screen.query("#library-hub-counts"))
+                ),
+                message="Explore did not restore the full rail and landing",
+            )
     finally:
         gates.release_all()
 
@@ -1923,6 +2222,17 @@ async def test_library_onboarding_persistence_failure_keeps_session_and_warns(
             assert screen._library_lifecycle is LibraryLifecycle.GRADUATED
             assert screen._library_onboarding_persistence_warning == (
                 "Library view is updated for this session, but the choice may not be remembered."
+            )
+            await pilot.pause()
+            assert str(
+                screen.query_one(
+                    "#library-hub-persistence-warning", Static
+                ).renderable
+            ) == screen._library_onboarding_persistence_warning
+            assert screen.query_one("#library-hub-action-import", Button).disabled is False
+            assert (
+                screen.query_one("#library-hub-action-new-note", Button).disabled
+                is False
             )
     finally:
         gates.release_all()
