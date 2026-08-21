@@ -17,12 +17,19 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, Sequence
 
 if TYPE_CHECKING:
     from tldw_chatbook.Workspaces.change_revert import (
         RevertOutcome,
         RevertPreflight,
+    )
+    from tldw_chatbook.Workspaces.git_workspace import (
+        CommitResult,
+        CurrentRootStatus,
+        GitWorkspaceInfo,
+        GitWorkspaceRefusal,
+        PushResult,
     )
 
 from loguru import logger
@@ -144,6 +151,34 @@ class AgentRunsChangeReviewProvider:
             return max(50, int(value))
         except Exception:  # noqa: BLE001 -- a bad config never breaks review
             return DEFAULT_DIFF_DISPLAY_MAX_LINES
+
+    @staticmethod
+    def git_actions_enabled() -> bool:
+        """Whether the git-modes kill switch (TASK-16801 arc B) is on.
+
+        Reads the flat ``[change_review] git_actions`` config key,
+        default True -- the feature ships ON. This is the ONE gate that
+        makes the whole `current` mode (pseudo-entry, detection, commit/
+        push/PR) disappear from the screen: :meth:`detect_git` returns
+        ``{}`` when this is False, and Task 6's screen offers the
+        pseudo-entry only when that dict is non-empty.
+
+        Same guard shape as :meth:`_configured_cap`: reading and
+        coercing the config value is wrapped in one broad
+        ``except Exception`` that falls back to the default -- a bad or
+        garbage config value must never break Change Review, and it
+        must never silently disable a feature that shipped ON either.
+
+        Returns:
+            True unless config explicitly disables git actions.
+        """
+        try:
+            from tldw_chatbook.config import get_cli_setting
+
+            value = get_cli_setting("change_review", "git_actions", True)
+            return bool(value)
+        except Exception:  # noqa: BLE001 -- a bad config never breaks review
+            return True
 
     def turns(self) -> list[ReviewTurn]:
         """Reviewable turns, NEWEST first (the screen opens on the latest).
@@ -516,6 +551,261 @@ class AgentRunsChangeReviewProvider:
         )
         entries = conversation_file_summary(rows_with_files, note_counts)
         return entries, pruned_rows
+
+    # -- Git modes (TASK-16801 arc B) -----------------------------------
+    #
+    # Thin wrappers over `Workspaces/git_workspace.py` -- no logic here
+    # beyond the kill-switch read, root resolution/dedupe, and straight
+    # delegation. Worker dispatch is the SCREEN's job (Task 6); every
+    # method below is synchronous.
+    #
+    # CONTRACT (binding for every caller -- Tasks 6-8): the wrapped
+    # engine functions have DELIBERATELY ASYMMETRIC error postures,
+    # preserved here exactly:
+    #   - `detect_git` NEVER raises (each entry is Info | Refusal | None).
+    #   - `current_status` / `current_diff_text` / `untracked_preview`
+    #     RAISE `GitWorkspaceError` on a git failure.
+    #   - `commit_selected` RAISES: `CommitRefusedError` (active run) and
+    #     `GitWorkspaceError` (empty files / blank message / git
+    #     failure). Do not wrap this in try/except here -- let it
+    #     propagate; the screen catches it.
+    #   - `push_current` RAISES `GitWorkspaceError` for detached HEAD and
+    #     no-remote; otherwise RETURNS a `PushResult` whose `state` can
+    #     be `"failed"` -- a failed push is a returned value, not an
+    #     exception.
+    #   - `pr_url` NEVER raises -- it returns `str` or
+    #     `GitWorkspaceRefusal`; callers use `isinstance`, never
+    #     try/except.
+
+    def detect_git(
+        self, roots: "Sequence[str]"
+    ) -> "dict[str, GitWorkspaceInfo | GitWorkspaceRefusal | None]":
+        """Detect real git repositories at ``roots``, keyed by resolved root.
+
+        Never raises -- delegates to
+        :func:`~tldw_chatbook.Workspaces.git_workspace.detect_git_workspace`,
+        which itself never raises.
+
+        Args:
+            roots: Candidate workspace roots, any spelling (relative,
+                symlinked, trailing slash, ...).
+
+        Returns:
+            ``{}`` when :meth:`git_actions_enabled` is False -- this
+            single check is what makes the whole `current` mode vanish
+            from the screen. Otherwise one entry per DISTINCT resolved
+            root (``str(Path(root).resolve())``), so two spellings of
+            the same directory dedupe to one detection call and one key.
+            Both :class:`~tldw_chatbook.Workspaces.git_workspace.GitWorkspaceInfo.root`
+            and :class:`~tldw_chatbook.Workspaces.git_workspace.CurrentRootStatus.root`
+            are always resolved paths -- keying by the resolved spelling
+            here means a caller that looks a root up by ITS resolved
+            spelling can never get a silent miss because this dict used
+            the raw input spelling instead (the exact bug class Task 2's
+            engine layer was fixed against, by construction).
+        """
+        if not self.git_actions_enabled():
+            return {}
+
+        from pathlib import Path
+
+        from tldw_chatbook.Workspaces.git_workspace import detect_git_workspace
+
+        result: "dict[str, GitWorkspaceInfo | GitWorkspaceRefusal | None]" = {}
+        for raw_root in roots:
+            resolved_key = str(Path(raw_root).resolve())
+            if resolved_key in result:
+                continue
+            result[resolved_key] = detect_git_workspace(Path(raw_root))
+        return result
+
+    def current_status(self, root: str) -> "CurrentRootStatus":
+        """The real working tree's status at ``root``, freshly detected.
+
+        Re-detects (fresh, not cached) before reading status -- spec §4:
+        the `current` mode's worker re-detects on every load, since the
+        repo's branch/upstream/ahead-behind can move between reloads.
+
+        Args:
+            root: Workspace root, any spelling.
+
+        Returns:
+            The root's :class:`~tldw_chatbook.Workspaces.git_workspace.CurrentRootStatus`.
+
+        Raises:
+            GitWorkspaceError: ``root`` is no longer a detectable git
+                repository (removed, or now refused -- e.g. it moved
+                inside another repo since the mode was offered), or the
+                underlying git invocation failed.
+        """
+        from pathlib import Path
+
+        from tldw_chatbook.Workspaces.git_workspace import (
+            GitWorkspaceError,
+            GitWorkspaceInfo,
+            detect_git_workspace,
+            working_tree_status,
+        )
+
+        path = Path(root)
+        info = detect_git_workspace(path)
+        if not isinstance(info, GitWorkspaceInfo):
+            reason = (
+                info.reason if info is not None else "not a git repository"
+            )
+            raise GitWorkspaceError(
+                f"git workspace detection failed for {root}: {reason}"
+            )
+        return working_tree_status(path, info)
+
+    def current_diff_text(self, root: str, change: "ChangedFile") -> str:
+        """One TRACKED file's unified diff, working tree vs HEAD.
+
+        Tracked-only: an untracked ``change`` (``change.path in
+        status.untracked``) must be routed by the SCREEN through
+        :meth:`untracked_preview` instead -- this method always calls
+        :func:`~tldw_chatbook.Workspaces.git_workspace.working_tree_diff`,
+        which is a fatal git error against an unborn HEAD or an
+        untracked path.
+
+        Args:
+            root: Workspace root.
+            change: The tracked changed file to diff.
+
+        Returns:
+            Unified diff text.
+
+        Raises:
+            GitWorkspaceError: The git invocation failed.
+        """
+        from pathlib import Path
+
+        from tldw_chatbook.Workspaces.git_workspace import working_tree_diff
+
+        return working_tree_diff(Path(root), change.path)
+
+    def untracked_preview(self, root: str, path: str) -> str:
+        """A bounded preview of one untracked file, capped at the screen's limit.
+
+        Args:
+            root: Workspace root.
+            path: Root-relative path of the untracked file.
+
+        Returns:
+            The preview text (see
+            :func:`~tldw_chatbook.Workspaces.git_workspace.untracked_preview`
+            for the exact rendering rules). Never raises -- I/O errors
+            render as an honest one-line message instead.
+        """
+        from pathlib import Path
+
+        from tldw_chatbook.Workspaces.git_workspace import (
+            untracked_preview as _untracked_preview,
+        )
+
+        return _untracked_preview(Path(root), path, self.diff_display_max_lines)
+
+    def commit_selected(
+        self,
+        root: str,
+        files: "Sequence[str]",
+        message: str,
+        new_branch: "str | None",
+    ) -> "CommitResult":
+        """Commit exactly ``files`` at ``root``, threading the run-active probe.
+
+        Passes :attr:`run_active` through as the keyword-only
+        ``run_active=`` argument -- exactly how :meth:`revert` threads it
+        into ``revert_paths``.
+
+        Args:
+            root: Workspace root (must be the repo toplevel).
+            files: Root-relative paths to stage and commit.
+            message: The commit message.
+            new_branch: When set, create and check out this branch
+                before committing. ``None``/empty commits to the current
+                branch.
+
+        Returns:
+            The engine's :class:`~tldw_chatbook.Workspaces.git_workspace.CommitResult`.
+
+        Raises:
+            CommitRefusedError: A run is active on this workspace --
+                this method does NOT catch it; the caller (screen) must.
+            GitWorkspaceError: ``files`` is empty, ``message`` is blank,
+                or a git step failed outside the returned per-step
+                outcomes (the engine still raises for these two
+                preconditions rather than returning a silent no-op).
+        """
+        from pathlib import Path
+
+        from tldw_chatbook.Workspaces.git_workspace import (
+            commit_selected as _commit_selected,
+        )
+
+        return _commit_selected(
+            Path(root), files, message, new_branch, run_active=self.run_active
+        )
+
+    def push_current(
+        self, root: str, info: "GitWorkspaceInfo", remote: "str | None"
+    ) -> "PushResult":
+        """Push the current branch at ``root``.
+
+        NOT gated on :attr:`run_active` -- push only ships already-
+        committed state; the working tree is untouched (spec §6
+        states this explicitly, in contrast to commit).
+
+        Args:
+            root: Workspace root (must be the repo toplevel).
+            info: The root's detected
+                :class:`~tldw_chatbook.Workspaces.git_workspace.GitWorkspaceInfo`.
+            remote: Explicit target remote name, or ``None`` to derive one.
+
+        Returns:
+            The engine's :class:`~tldw_chatbook.Workspaces.git_workspace.PushResult`.
+            **A failed push is a RETURNED result** (``state ==
+            "failed"``), never an exception -- callers must check
+            ``result.state``, not wrap this call in try/except for the
+            ordinary rejected-push case.
+
+        Raises:
+            GitWorkspaceError: HEAD is detached, or no remote could be
+                resolved. These are precondition failures, not push
+                outcomes, so they raise rather than returning a
+                ``PushResult``.
+        """
+        from pathlib import Path
+
+        from tldw_chatbook.Workspaces.git_workspace import (
+            push_current as _push_current,
+        )
+
+        return _push_current(Path(root), info, remote)
+
+    def pr_url(
+        self, root: str, info: "GitWorkspaceInfo"
+    ) -> "str | GitWorkspaceRefusal":
+        """Build the compare/merge-request URL for the current branch.
+
+        Args:
+            root: Workspace root (used only for the codeberg/Gitea-family
+                local default-branch lookup).
+            info: The root's detected
+                :class:`~tldw_chatbook.Workspaces.git_workspace.GitWorkspaceInfo`.
+
+        Returns:
+            The compare URL, or a
+            :class:`~tldw_chatbook.Workspaces.git_workspace.GitWorkspaceRefusal`
+            naming why one can't be built. **Never raises** -- callers
+            must use ``isinstance(result, GitWorkspaceRefusal)``, never
+            try/except.
+        """
+        from pathlib import Path
+
+        from tldw_chatbook.Workspaces.git_workspace import pr_compare_url
+
+        return pr_compare_url(Path(root), info)
 
 
 #: Cursor line background (TASK-18060 Task 6, review-rail spec §3) — an
