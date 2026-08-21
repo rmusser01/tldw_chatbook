@@ -978,6 +978,43 @@ def test_actual_application_private_root_is_rejected_by_default(
     connection.close()
 
 
+def test_actual_application_private_root_case_alias_is_rejected_by_identity(
+    tmp_path: Path,
+) -> None:
+    connection = _legacy_connection(tmp_path)
+    private_root = resolve_sensitive_context().user_data_dir
+    assert private_root is not None and private_root.is_dir()
+    alias = private_root.with_name(private_root.name.swapcase())
+    if not alias.exists() or not alias.samefile(private_root):
+        pytest.skip("filesystem is case-sensitive")
+
+    _snapshot, plan = _snapshot_and_plan(connection, _settings(alias))
+
+    assert plan.roots == ()
+    assert "private_path_overlap" in {item.reason_code for item in plan.report}
+    connection.close()
+
+
+def test_private_identity_comparison_failure_rejects_without_disclosure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = _legacy_connection(tmp_path)
+    root = tmp_path / "PRIVATE-root"
+    root.mkdir()
+    monkeypatch.setattr(
+        "tldw_chatbook.Notes.notes_sync_legacy._filesystem_paths_overlap",
+        lambda *_args: (_ for _ in ()).throw(OSError("PRIVATE comparison detail")),
+    )
+
+    _snapshot, plan = _snapshot_and_plan(connection, _settings(root))
+
+    assert plan.roots == ()
+    assert "comparison_root_unavailable" in {item.reason_code for item in plan.report}
+    assert "PRIVATE" not in repr(plan)
+    connection.close()
+
+
 def test_source_fingerprint_covers_file_presence_and_identity(
     tmp_path: Path,
 ) -> None:

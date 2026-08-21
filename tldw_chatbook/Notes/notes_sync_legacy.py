@@ -37,7 +37,10 @@ from tldw_chatbook.Notes.notes_sync_reconciler import (
     assert_review_current,
     plan_reconciliation,
 )
-from tldw_chatbook.Utils.sensitive_paths import find_root_binding_conflict
+from tldw_chatbook.Utils.sensitive_paths import (
+    find_root_binding_conflict,
+    resolve_sensitive_context,
+)
 
 
 LEGACY_MIGRATION_REPORT_LIMIT = 200
@@ -289,6 +292,26 @@ def _filesystem_paths_overlap(left: Path, right: Path) -> bool:
     )
 
 
+def _sensitive_root_identity_conflict(root: Path) -> bool:
+    context = resolve_sensitive_context()
+    if find_root_binding_conflict(root, context) is not None:
+        return True
+    protected = (
+        *context.dirs,
+        *context.direct_child_denied_dirs,
+        *context.files,
+        *context.db_paths,
+    )
+    for target in protected:
+        try:
+            target.lstat()
+        except FileNotFoundError:
+            continue
+        if _filesystem_paths_overlap(root, target):
+            return True
+    return False
+
+
 def _root_evidence(
     raw_path: object,
     *,
@@ -362,7 +385,7 @@ def _root_evidence(
                         ancestor_identity_digests=(),
                         reason_code=reason,
                     )
-        if find_root_binding_conflict(canonical) is not None:
+        if _sensitive_root_identity_conflict(canonical):
             return _LegacyRootEvidence(
                 source_kind=source_kind,
                 source_id=source_id,
