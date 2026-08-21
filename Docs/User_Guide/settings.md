@@ -389,7 +389,7 @@ followed by a chained import prompt for it — see
 | Control | What it does |
 |---|---|
 | **Rename** | Renames the selected workspace (the box above it is pre-filled). |
-| **Set active** | Makes it the active workspace; replaced by "This workspace is active." when it already is. |
+| **Set active** | Makes it the active workspace; replaced by "This workspace is active." when it already is. Console doesn't switch immediately, but picks up the change and switches its own session to match the next time you visit it. |
 | **Archive** | Confirms first: "Archive \<name\>? Its conversations stay saved and remain visible in Library; the workspace disappears from the switcher and the Console browser." |
 | **Unarchive** | Returns an archived workspace to the list. It does *not* activate it. |
 | **Add folder** / **Remove** | Bind a folder for agent file tools (new bindings are read-only), or unbind it. |
@@ -694,6 +694,11 @@ page's content unchanged from the prior stamp).*
 (task-18705: a bound folder containing `.SKILLS/` now annotates its row
 "— contains N project skill(s)" in the creation dialog, followed by a
 chained import prompt after Create; the rest of this page's content
+unchanged from the prior stamp).*
+*Verified against feat/task-18310-activation-seam @ c9892736f — 2026-08-20
+(task-18310: **Set active**'s row gained a one-sentence note that Console
+doesn't switch immediately but reconciles its own session against the
+registry the next time you visit it; the rest of this page's content
 unchanged from the prior stamp).*
 *Providers & Models — Moonshot Kimi / Z.ai GLM rows updated against
 TASK-19170 — 2026-08-20 (the reasoning-effort selector and the Preserved
