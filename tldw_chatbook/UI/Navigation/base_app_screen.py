@@ -407,6 +407,16 @@ class BaseAppScreen(Screen):
             )
         )
 
+    def is_persona_buddy_confirmed_unavailable(
+        self, controller: Any, snapshot: Any
+    ) -> bool:
+        """Query the app-owned marker for this exact controller authority."""
+
+        unavailable = getattr(
+            self.app_instance, "is_persona_buddy_confirmed_unavailable", None
+        )
+        return bool(callable(unavailable) and unavailable(controller, snapshot))
+
     def _schedule_persona_buddy_reconcile(self) -> None:
         """Schedule one idempotent mount reconciliation after screen paint."""
 
@@ -418,8 +428,8 @@ class BaseAppScreen(Screen):
             exclusive=True,
         )
 
-    async def reconcile_persona_buddy_view(self) -> None:
-        """Mount or remove one exact screen-local Buddy view generation."""
+    async def reconcile_persona_buddy_view(self) -> bool:
+        """Reconcile one generation; return whether no current view remains."""
 
         from ...Widgets.Persona_Widgets.persona_buddy_widget import (  # noqa: PLC0415
             PersonaBuddyWidget,
@@ -429,13 +439,9 @@ class BaseAppScreen(Screen):
             controller = getattr(self.app_instance, "persona_buddy_controller", None)
             active = self.is_attached and self.app.screen is self
             snapshot = controller.snapshot() if controller is not None else None
-            unavailable = getattr(
-                self.app_instance, "is_persona_buddy_confirmed_unavailable", None
-            )
             confirmed_unavailable = bool(
                 snapshot is not None
-                and callable(unavailable)
-                and unavailable(controller, snapshot)
+                and self.is_persona_buddy_confirmed_unavailable(controller, snapshot)
             )
             desired = bool(
                 active
@@ -458,11 +464,11 @@ class BaseAppScreen(Screen):
                     await current.remove()
                     if self._persona_buddy_view is current:
                         self._persona_buddy_view = None
-                return
+                return True
 
             if current is not None:
                 current.refresh_from_controller()
-                return
+                return False
 
             self._persona_buddy_view_generation += 1
             generation = self._persona_buddy_view_generation
@@ -499,4 +505,5 @@ class BaseAppScreen(Screen):
                     await view.remove()
                 if self._persona_buddy_view is view:
                     self._persona_buddy_view = None
-                return
+                return True
+            return False

@@ -8325,18 +8325,18 @@ class TldwCli(
         )
         return True
 
-    async def reconcile_persona_buddy_view(self) -> None:
-        """Reconcile Buddy only on the active ordinary application screen."""
+    async def reconcile_persona_buddy_view(self) -> bool:
+        """Reconcile the active screen and report whether its Buddy is absent."""
 
         from .UI.Navigation.base_app_screen import BaseAppScreen
 
         try:
             screen = self.screen
         except Exception:
-            return
+            return False
         if not isinstance(screen, BaseAppScreen) or not screen.is_active:
-            return
-        await screen.reconcile_persona_buddy_view()
+            return False
+        return await screen.reconcile_persona_buddy_view()
 
     def _create_navigation_screen(self, screen_name: str, screen_class: type):
         """Build a FRESH screen instance for every navigation.

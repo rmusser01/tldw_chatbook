@@ -253,13 +253,27 @@ class PersonaBuddyWidget(Widget, can_focus=True):
                         await asyncio.sleep(_POLL_SECONDS)
                         continue
                     pending = self._reconcile()
+                    removed = False
                     if inspect.isawaitable(pending):
-                        self.app.run_worker(
+                        reconcile_worker = self.app.run_worker(
                             pending,
                             group="persona-buddy-unavailable-reconcile",
                             exclusive=True,
                         )
-                    return
+                        removed = bool(await asyncio.shield(reconcile_worker.wait()))
+                    else:
+                        removed = bool(pending)
+                    if removed or not self._is_current_view():
+                        return
+                    current_snapshot = self._controller.snapshot()
+                    confirmed = getattr(
+                        self.screen, "is_persona_buddy_confirmed_unavailable", None
+                    )
+                    if callable(confirmed) and confirmed(
+                        self._controller, current_snapshot
+                    ):
+                        return
+                    continue
             await asyncio.sleep(_POLL_SECONDS)
 
     def on_resize(self, _event: events.Resize) -> None:

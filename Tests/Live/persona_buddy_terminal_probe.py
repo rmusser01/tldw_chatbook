@@ -31,6 +31,7 @@ def _child(preferences_path: Path, report_path: Path) -> int:
     from textual import events
     from textual.app import App, ComposeResult
     from textual.binding import Binding
+    from textual.errors import NoWidget
     from textual.screen import ModalScreen
     from textual.widgets import Input, Static
 
@@ -95,6 +96,22 @@ def _child(preferences_path: Path, report_path: Path) -> int:
         def compose(self) -> ComposeResult:
             yield ModalHitSurface("MODAL BLOCKER", id="terminal-modal-blocker")
 
+        def on_mount(self) -> None:
+            self.call_after_refresh(self._publish_ready)
+
+        def on_resize(self, _event: events.Resize) -> None:
+            self.call_after_refresh(self._publish_ready)
+
+        def _publish_ready(self) -> None:
+            surfaces = list(self.query(ModalHitSurface))
+            if not surfaces:
+                return
+            region = surfaces[0].region
+            if region.width <= 0 or region.height <= 0:
+                return
+            self.app.modal_ready = True
+            self.app._write_probe_report()
+
         def action_close_probe_modal(self) -> None:
             self.dismiss()
 
@@ -132,6 +149,7 @@ def _child(preferences_path: Path, report_path: Path) -> int:
             self.initial_geometry = loaded_geometry
             self.focus_guard_observed = False
             self.modal_timer_fired = False
+            self.modal_ready = False
 
         def _get_default_css(self):  # noqa: D102 - mirrors production CSS loading
             return (
@@ -165,6 +183,7 @@ def _child(preferences_path: Path, report_path: Path) -> int:
 
         async def action_probe_modal(self) -> None:
             self.modal_timer_fired = True
+            self.modal_ready = False
             await self.push_screen(BlockingModal())
 
         async def action_probe_navigate(self) -> None:
@@ -207,12 +226,19 @@ def _child(preferences_path: Path, report_path: Path) -> int:
                     }
             modal_surfaces = list(self.screen.query(ModalHitSurface))
             modal_region = modal_surfaces[0].region if modal_surfaces else None
+            if modal_region is not None and (
+                modal_region.width <= 0 or modal_region.height <= 0
+            ):
+                modal_region = None
             modal_target = None
             if modal_region is not None:
-                modal_target, _ = self.screen.get_widget_at(
-                    modal_region.x + max(0, modal_region.width // 2),
-                    modal_region.y + max(0, modal_region.height // 2),
-                )
+                try:
+                    modal_target, _ = self.screen.get_widget_at(
+                        modal_region.x + max(0, modal_region.width // 2),
+                        modal_region.y + max(0, modal_region.height // 2),
+                    )
+                except NoWidget:
+                    modal_region = None
             payload = {
                 "capture_released": self.mouse_captured is None,
                 "collapsed": preferences_now.collapsed,
@@ -233,6 +259,7 @@ def _child(preferences_path: Path, report_path: Path) -> int:
                     else None
                 ),
                 "modal_timer_fired": self.modal_timer_fired,
+                "modal_ready": self.modal_ready,
                 "navigation_count": self.navigation_count,
                 "open": preferences_now.open,
                 "painted": "Buddy"
@@ -365,12 +392,18 @@ def _run_child(
 
         def wait_for_report(predicate: Any, *, timeout: float = 2.0) -> dict[str, Any]:
             deadline = time.monotonic() + timeout
+            captured = bytearray()
+            payload = json.loads(report.read_text(encoding="utf-8"))
             while time.monotonic() < deadline and process.poll() is None:
                 payload = json.loads(report.read_text(encoding="utf-8"))
                 if predicate(payload):
                     return payload
-                _drain_for(master, 0.02)
-            raise RuntimeError("persona_buddy_terminal_report_predicate_timeout")
+                captured.extend(_drain_for(master, 0.02))
+            tail = bytes(captured[-2000:]).decode("utf-8", errors="replace")
+            raise RuntimeError(
+                "persona_buddy_terminal_report_predicate_timeout "
+                f"payload={payload!r} terminal_tail={tail!r}"
+            )
 
         initial = json.loads(report.read_text(encoding="utf-8"))
         observed = {
@@ -461,7 +494,9 @@ def _run_child(
 
             os.write(master, b"m")
             modal_report = wait_for_report(
-                lambda payload: payload["modal_region"] is not None
+                lambda payload: (
+                    payload["modal_ready"] and payload["modal_region"] is not None
+                )
             )
             modal_region = modal_report["modal_region"]
             modal_col = modal_region["x"] + max(1, modal_region["width"] // 2)

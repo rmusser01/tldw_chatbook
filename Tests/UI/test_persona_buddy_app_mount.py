@@ -326,6 +326,54 @@ async def test_confirmed_unavailable_authority_survives_fresh_screens():
 
 
 @pytest.mark.asyncio
+async def test_authority_change_during_unavailable_reconcile_restarts_resolution():
+    app = _BuddyApp(_enabled_preferences(), production_resolution=True)
+    controller = app.persona_buddy_controller
+    original_resolve = controller.resolve_current_visual
+    first_resolution_release = asyncio.Event()
+    second_resolution_started = asyncio.Event()
+    second_resolution_release = asyncio.Event()
+    reconcile_started = asyncio.Event()
+    reconcile_release = asyncio.Event()
+    calls = 0
+
+    async def controlled_resolve(*, cols: int, lines: int):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            await first_resolution_release.wait()
+        else:
+            second_resolution_started.set()
+            await second_resolution_release.wait()
+        return await original_resolve(cols=cols, lines=lines)
+
+    original_reconcile = app.reconcile_persona_buddy_view
+
+    async def blocked_reconcile():
+        reconcile_started.set()
+        await reconcile_release.wait()
+        return await original_reconcile()
+
+    controller.resolve_current_visual = controlled_resolve
+    app.reconcile_persona_buddy_view = blocked_reconcile
+    async with app.run_test(size=(100, 30)):
+        await _wait_until(lambda: calls == 1)
+        view = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: controller.snapshot().viewport_generation >= 1)
+        first_resolution_release.set()
+        await asyncio.wait_for(reconcile_started.wait(), timeout=1)
+
+        controller.invalidate_profile()
+        reconcile_release.set()
+        await asyncio.wait_for(second_resolution_started.wait(), timeout=1)
+        assert app.screen.query_one(PersonaBuddyWidget) is view
+        assert view.is_attached
+
+        second_resolution_release.set()
+        await _wait_until(lambda: not list(app.screen.query(PersonaBuddyWidget)))
+
+
+@pytest.mark.asyncio
 async def test_app_owned_preference_write_drains_once_before_new_owner_starts():
     app = _BuddyApp(_enabled_preferences())
     started = threading.Event()
