@@ -433,6 +433,11 @@ class BaseAppScreen(Screen):
             exclusive=True,
         )
 
+    def sync_persona_buddy_reconciled_state(self) -> None:
+        """Refresh screen-local Buddy affordances after view reconciliation."""
+
+        return None
+
     async def reconcile_persona_buddy_view(self) -> bool:
         """Reconcile one generation; return whether no current view remains."""
 
@@ -469,11 +474,14 @@ class BaseAppScreen(Screen):
                     await current.remove()
                     if self._persona_buddy_view is current:
                         self._persona_buddy_view = None
+                if self.is_attached and self.app.screen is self:
+                    self.sync_persona_buddy_reconciled_state()
                 return True
 
             if current is not None:
                 current.refresh_from_controller()
                 current.resume_resolution()
+                self.sync_persona_buddy_reconciled_state()
                 return False
 
             self._persona_buddy_view_generation += 1
@@ -512,4 +520,5 @@ class BaseAppScreen(Screen):
                 if self._persona_buddy_view is view:
                     self._persona_buddy_view = None
                 return True
+            self.sync_persona_buddy_reconciled_state()
             return False

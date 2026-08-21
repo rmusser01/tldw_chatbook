@@ -27,6 +27,7 @@ import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_m
 import tldw_chatbook.UI.Persona_Modules.personas_conversations_controller as conversations_controller_module
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 import tldw_chatbook.UI.Screens.personas_screen as personas_screen_module
+from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
     CharacterCardImportOutcome,
     CharacterCardTTSInspection,
@@ -75,6 +76,9 @@ from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
 from tldw_chatbook.UI.tts_profile_recovery import dependency_recovery_actions
+from tldw_chatbook.Widgets.Persona_Widgets.persona_buddy_widget import (
+    PersonaBuddyWidget,
+)
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Persona_Widgets.personas_messages import (
     PersonaActionRequested,
@@ -249,6 +253,21 @@ class StyledPersonasTestApp(PersonasTestApp):
         / "css"
         / "tldw_cli_modular.tcss"
     )
+
+
+class PersonaBuddyWorkbenchApp(PersonasTestApp):
+    """Workbench harness using the real app-to-screen Buddy reconciliation."""
+
+    reconcile_persona_buddy_view = TldwCli.reconcile_persona_buddy_view
+    _persona_buddy_authority = staticmethod(TldwCli._persona_buddy_authority)
+    is_persona_buddy_confirmed_unavailable = (
+        TldwCli.is_persona_buddy_confirmed_unavailable
+    )
+    confirm_persona_buddy_unavailable = TldwCli.confirm_persona_buddy_unavailable
+
+    def __init__(self, mock_app_instance) -> None:
+        super().__init__(mock_app_instance)
+        self._persona_buddy_unavailable_authority = None
 
 
 def _row_text(item) -> str:
@@ -11679,6 +11698,78 @@ async def test_workbench_highlight_never_retargets_buddy(
 
         assert controller.snapshot().selection == PersonaBuddySelection("local", "p-1")
         mock_app_instance.reconcile_persona_buddy_view.assert_not_awaited()
+
+
+async def test_floating_buddy_close_refreshes_active_personas_inspector(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    records = {"p-1": {**PROFILE, "version": 2, "is_active": True, "deleted": False}}
+    controller = _configure_persona_buddy(
+        mock_app_instance,
+        records,
+        preferences=PersonaBuddyPreferences(
+            enabled=True,
+            open=True,
+            selection=PersonaBuddySelection("local", "p-1"),
+        ),
+    )
+    persisted: list[PersonaBuddyPreferences] = []
+    controller._preference_writer = lambda preferences: (
+        persisted.append(preferences) or True
+    )
+
+    async def unresolved_until_closed(*, cols: int, lines: int):
+        return None
+
+    controller.resolve_current_visual = unresolved_until_closed
+    app = PersonaBuddyWorkbenchApp(mock_app_instance)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        screen = await _mounted(pilot)
+        await screen._apply_mode("personas")
+        await screen._select_profile("p-1", "Archivist")
+        await app.reconcile_persona_buddy_view()
+        await pilot.pause()
+
+        assert screen.query_one(PersonaBuddyWidget).is_attached
+        assert screen.query_one("#personas-buddy-close", Button).disabled is False
+        assert screen.query_one("#personas-buddy-show", Button).disabled is True
+
+        await pilot.click("#persona-buddy-close")
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert controller.current_preferences().open is False
+        assert persisted[-1].open is False
+        assert not list(screen.query(PersonaBuddyWidget))
+        show = screen.query_one("#personas-buddy-show", Button)
+        close = screen.query_one("#personas-buddy-close", Button)
+        assert show.disabled is False
+        assert close.disabled is True
+        assert close.tooltip == "Buddy is already closed."
+
+
+async def test_stale_personas_screen_reconcile_skips_screen_local_buddy_hook(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    _configure_persona_buddy(
+        mock_app_instance,
+        {},
+        preferences=PersonaBuddyPreferences(open=False),
+    )
+    app = PersonaBuddyWorkbenchApp(mock_app_instance)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        stale = await _mounted(pilot)
+        await app.switch_screen(PersonasScreen(app))
+        hook = Mock(wraps=stale.sync_persona_buddy_reconciled_state)
+        stale.sync_persona_buddy_reconciled_state = hook
+
+        await stale.reconcile_persona_buddy_view()
+
+        hook.assert_not_called()
 
 
 @pytest.mark.parametrize("compact", (False, True), ids=("normal", "compact"))

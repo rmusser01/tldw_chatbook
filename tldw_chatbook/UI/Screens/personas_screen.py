@@ -3965,9 +3965,7 @@ class PersonasScreen(BaseAppScreen):
         record, complete = await self._fetch_profile_record_checked(entity_id)
         if (
             session_generation != self._persona_buddy_session_generation
-            or getattr(
-                self.app_instance, "character_persona_scope_service", None
-            )
+            or getattr(self.app_instance, "character_persona_scope_service", None)
             is not scope_service
             or self.state.active_mode != "personas"
             or self.state.runtime_source != source
@@ -5750,6 +5748,13 @@ class PersonasScreen(BaseAppScreen):
             open=getattr(snapshot, "open", True) is True,
         )
 
+    def sync_persona_buddy_reconciled_state(self) -> None:
+        """Refresh Inspector affordances for this mounted active Workbench."""
+
+        if not self.is_mounted or not self.is_active:
+            return
+        self._sync_inspector_buddy_status()
+
     async def _selection_handoff_body(self) -> str | None:
         """Readable card summary for the selected item, or ``None`` when stale."""
         kind = self.state.selected_entity_kind
@@ -5861,8 +5866,7 @@ class PersonasScreen(BaseAppScreen):
             is authority.scope_service
             and getattr(self.app, "persona_buddy_controller", None)
             is authority.controller
-            and self._persona_buddy_session_generation
-            == authority.session_generation
+            and self._persona_buddy_session_generation == authority.session_generation
             and self.state.active_mode == "personas"
             and self.state.runtime_source == authority.source
             and self.persona_handler.current_mode() == authority.source
@@ -7283,9 +7287,7 @@ class PersonasScreen(BaseAppScreen):
         latest = controller.snapshot()
         if (
             getattr(self.app, "persona_buddy_controller", None) is not controller
-            or getattr(
-                self.app_instance, "character_persona_scope_service", None
-            )
+            or getattr(self.app_instance, "character_persona_scope_service", None)
             is not scope_service
             or latest.selection != selection
             or latest.generation != snapshot.generation
