@@ -246,7 +246,7 @@ git commit -m "feat(console): reconcile Context focus and mutations"
 
 **Step 1: Write failing ownership tests**
 
-Create a table-driven inventory that covers every currently emitted row label and action ID exactly once, plus the specialized cards and compact Scope/run-status rows. Assert the approved owners: Sources, Scope, Changed Files, run-status compact, Run, Source Readiness, Tools, Approvals, Artifacts, Selected Conversation, Session Defaults, Selected Message, Changes, Chat Dictionaries, World Books, Session Settings, and final Live Work. Specifically assert Send blocked/Recovery action under Run, RAG/source under Source Readiness, and Review Changes under Changes before dictionaries. Make the inventory fail when a new emitted `_ROW_IDS`, `_ROW_GROUPS`, `_ACTION_GROUPS`, dictionary, or World Book item lacks an explicit owner.
+Create a table-driven inventory that covers every currently emitted row label and action ID exactly once, plus the specialized cards and compact Project Instructions/Scope/run-status rows. Assert the approved owners: Project Instructions compact, Sources, Scope, Changed Files, run-status compact, Run, Source Readiness, Tools, Approvals, Artifacts, Selected Conversation, Session Defaults, Selected Message, Changes, Chat Dictionaries, World Books, Session Settings, and final Live Work. Specifically assert Send blocked/Recovery action under Run, RAG/source under Source Readiness, and Review Changes under Changes before dictionaries. Make the inventory fail when a new emitted `_ROW_IDS`, `_ROW_GROUPS`, `_ACTION_GROUPS`, dictionary, or World Book item lacks an explicit owner.
 
 Also test:
 

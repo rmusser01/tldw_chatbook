@@ -352,6 +352,7 @@ direct section boundary:
 
 | Direct boundary | Owned content |
 | --- | --- |
+| Project Instructions (compact row, not a section) | `ConsoleProjectInstructionStatusRow`; it remains a one-line interactive status before Sources and does not receive a bounded viewport. |
 | Sources | `ConsoleStagedContextTray`: summary, staged-source rows, empty state, and recovery. |
 | Scope (compact row, not a section) | `ConsoleRetrievalScopeRow`. |
 | Changed Files | `ConsoleChangedFilesSection` header/body/tails. |
