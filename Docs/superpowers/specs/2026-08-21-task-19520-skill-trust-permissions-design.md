@@ -1,8 +1,11 @@
 # TASK-19520: Skill Trust Material Permissions Design
 
-**Status:** Approved for planning  
-**Date:** 2026-08-21  
-**Task:** TASK-19520  
+**Status:** Approved for planning
+
+**Date:** 2026-08-21
+
+**Task:** TASK-19520
+
 **Governing decision:** [ADR-009: Local Skill Trust Boundary](../../../backlog/decisions/009-local-skill-trust-boundary.md)
 
 ## Context
@@ -116,8 +119,10 @@ The permission tests should be mutation-checked by temporarily disabling the sec
 
 ## Documentation and Decision Record
 
-ADR required: no  
-ADR path: `backlog/decisions/009-local-skill-trust-boundary.md`  
+ADR required: no
+
+ADR path: `backlog/decisions/009-local-skill-trust-boundary.md`
+
 Reason: TASK-19520 directly hardens the persistence boundary already selected by ADR-009. It does not change storage ownership, trust policy, cryptography, or a cross-module contract beyond an optional implementation detail on the existing atomic-write helper.
 
 The task implementation plan and notes will link this design and ADR-009. No user-facing configuration or workflow changes are introduced.
