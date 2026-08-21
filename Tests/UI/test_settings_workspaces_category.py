@@ -5,6 +5,14 @@ from __future__ import annotations
 import pytest
 
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+from tldw_chatbook.Workspaces import (
+    ChangeReviewCapability,
+    ChangeReviewConsent,
+    ChangeReviewState,
+    ChangeReviewStatus,
+    RootReadiness,
+    RootReadinessState,
+)
 from Tests.UI.test_settings_configuration_hub import (
     DestinationHarness,
     _active_destination_screen,
@@ -481,7 +489,7 @@ async def test_overview_pins_workspaces_recovery_copy() -> None:
 
 @pytest.mark.asyncio
 async def test_change_review_toggle_flips_and_persists(tmp_path) -> None:
-    """TASK-1979: the per-workspace change-review toggle round-trips."""
+    """A new workspace is opt-in and discloses retained file contents."""
     from textual.widgets import Button
 
     app = _build_test_app()
@@ -495,6 +503,18 @@ async def test_change_review_toggle_flips_and_persists(tmp_path) -> None:
         screen.query_one("#settings-workspace-row-ws-cr", Button).press()
         await pilot.pause(0.2)
 
+        text = _visible_text(screen)
+        assert registry.change_review_enabled("ws-cr") is False
+        assert "Tracking disabled" in text
+        assert "shadow Git history" in text
+        assert "application data" in text
+        assert "file contents" in text
+        assert "30 days" in text
+        assert "does not erase existing history" in text
+        screen.query_one(
+            "#settings-workspace-change-review-toggle", Button
+        ).press()
+        await pilot.pause(0.3)
         assert registry.change_review_enabled("ws-cr") is True
         assert "Tracking enabled" in _visible_text(screen)
         screen.query_one(
@@ -502,12 +522,150 @@ async def test_change_review_toggle_flips_and_persists(tmp_path) -> None:
         ).press()
         await pilot.pause(0.3)
         assert registry.change_review_enabled("ws-cr") is False
-        assert "Tracking disabled" in _visible_text(screen)
-        screen.query_one(
+
+
+@pytest.mark.asyncio
+async def test_change_review_stale_toggle_reports_conflict_and_refreshes() -> None:
+    """A stale rendered intent never inverts a newer external decision."""
+    from textual.widgets import Button
+
+    app = _build_test_app()
+    registry = app.workspace_registry_service
+    registry.create_workspace(workspace_id="ws-stale", name="Stale WS")
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_settings_category(pilot, "#settings-category-workspaces")
+        screen.query_one("#settings-workspace-row-ws-stale", Button).press()
+        await pilot.pause(0.2)
+
+        stale_button = screen.query_one(
             "#settings-workspace-change-review-toggle", Button
-        ).press()
+        )
+        registry.set_change_review_enabled("ws-stale", True)
+        stale_button.press()
         await pilot.pause(0.3)
-        assert registry.change_review_enabled("ws-cr") is True
+
+        assert registry.change_review_enabled("ws-stale") is True
+        text = _visible_text(screen)
+        assert "changed elsewhere" in text
+        assert "Tracking enabled" in text
+
+
+@pytest.mark.asyncio
+async def test_change_review_unavailable_consent_has_no_toggle() -> None:
+    """An unreadable registry state fails off with honest copy."""
+    from textual.widgets import Button
+
+    app = _build_test_app()
+    registry = app.workspace_registry_service
+    registry.create_workspace(workspace_id="ws-unavailable", name="Unavailable WS")
+
+    class UnavailableService:
+        def status(self, _workspace_id):
+            return ChangeReviewStatus(
+                ChangeReviewCapability(ChangeReviewState.ENABLED),
+                ChangeReviewConsent(ChangeReviewState.UNAVAILABLE),
+            )
+
+    app.change_review_consent_service = UnavailableService()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_settings_category(pilot, "#settings-category-workspaces")
+        screen.query_one(
+            "#settings-workspace-row-ws-unavailable", Button
+        ).press()
+        await pilot.pause(0.2)
+
+        assert "state could not be read" in _visible_text(screen)
+        assert not screen.query("#settings-workspace-change-review-toggle")
+
+
+@pytest.mark.asyncio
+async def test_change_review_failed_root_offers_one_retry_without_paths() -> None:
+    """Failed preparation stays non-blocking and exposes a bounded retry."""
+    from textual.widgets import Button
+
+    app = _build_test_app()
+    registry = app.workspace_registry_service
+    registry.create_workspace(workspace_id="ws-retry", name="Retry WS")
+    retries: list[str] = []
+
+    class FailedService:
+        def status(self, _workspace_id):
+            return ChangeReviewStatus(
+                ChangeReviewCapability(ChangeReviewState.ENABLED),
+                ChangeReviewConsent(ChangeReviewState.ENABLED, "rev-1"),
+                (
+                    RootReadiness(
+                        alias="folder-safe-alias",
+                        state=RootReadinessState.FAILED,
+                        reason="preparation failed at /private/secret/root",
+                    ),
+                ),
+            )
+
+        def retry_failed_roots(self, workspace_id):
+            retries.append(workspace_id)
+            return 1
+
+    app.change_review_consent_service = FailedService()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_settings_category(pilot, "#settings-category-workspaces")
+        screen.query_one("#settings-workspace-row-ws-retry", Button).press()
+        await pilot.pause(0.2)
+
+        text = _visible_text(screen)
+        assert "chat and tools continue" in text
+        assert "/private/secret/root" not in text
+        screen.query_one("#settings-workspace-change-review-retry", Button).press()
+        await pilot.pause(0.2)
+
+        assert retries == ["ws-retry"]
+
+
+@pytest.mark.asyncio
+async def test_change_review_preparing_is_explicitly_non_blocking() -> None:
+    """Preparation copy never implies that chat is waiting for the scan."""
+    from textual.widgets import Button
+
+    app = _build_test_app()
+    registry = app.workspace_registry_service
+    registry.create_workspace(workspace_id="ws-preparing", name="Preparing WS")
+
+    class PreparingService:
+        def status(self, _workspace_id):
+            return ChangeReviewStatus(
+                ChangeReviewCapability(ChangeReviewState.ENABLED),
+                ChangeReviewConsent(ChangeReviewState.ENABLED, "rev-1"),
+                (
+                    RootReadiness(
+                        alias="folder-safe-alias",
+                        state=RootReadinessState.PREPARING,
+                        reason="preparing",
+                    ),
+                ),
+            )
+
+    app.change_review_consent_service = PreparingService()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_settings_category(pilot, "#settings-category-workspaces")
+        screen.query_one("#settings-workspace-row-ws-preparing", Button).press()
+        await pilot.pause(0.2)
+
+        text = _visible_text(screen)
+        assert "Preparing change history" in text
+        assert "background; chat and tools continue" in text
+        assert not screen.query("#settings-workspace-change-review-retry")
 
 
 @pytest.mark.asyncio
