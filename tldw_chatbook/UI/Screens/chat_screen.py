@@ -1686,9 +1686,7 @@ def _build_console_inspector_exchanges_loader(
                 (capture, capture.run_tag in abandoned_tags)
                 for capture in message.exchanges
             ]
-        persisted_id = (
-            message.persisted_message_id if message is not None else None
-        )
+        persisted_id = message.persisted_message_id if message is not None else None
         if not persisted_id:
             return []
 
@@ -9641,7 +9639,9 @@ class ChatScreen(BaseAppScreen):
         supplies them, via ``project_instruction_ui.
         project_instruction_context_kwargs``.
         """
-        rows, totals, turns, exchanges_loader = self._build_console_inspector_cost_data()
+        rows, totals, turns, exchanges_loader = (
+            self._build_console_inspector_cost_data()
+        )
         self.app.push_screen(
             ConsoleConversationInspector(
                 rows=rows,
