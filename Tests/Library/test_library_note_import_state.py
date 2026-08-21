@@ -331,6 +331,9 @@ def test_unresolved_collision_blocks_approval_until_an_explicit_resolution() -> 
 
     assert state.can_approve is False
     assert state.approval_blocker == "Choose how to handle the folder name collision."
+    projected = project_library_note_import_snapshot(state)
+    assert projected.collision_rename_input == "Imported"
+    assert "already exists" in projected.collision_rename_error
 
     resolved = set_root_collision_resolution(
         state,
@@ -338,6 +341,19 @@ def test_unresolved_collision_blocks_approval_until_an_explicit_resolution() -> 
         resolved_label="Imported 2",
     )
     assert resolved.can_approve is True
+
+
+def test_update_only_progress_names_the_updated_count() -> None:
+    review = _file_review()
+    state = begin_importing(
+        set_approved_plan(review, approve_note_import_plan(review.plan))
+    )
+    state = apply_import_progress(
+        state,
+        _progress(completed=1, imported=0, updated=1),
+    )
+
+    assert "1 updated" in project_library_note_import_snapshot(state).progress_detail
 
 
 def test_uncertain_create_new_is_approvable_but_update_requires_confirmation() -> None:

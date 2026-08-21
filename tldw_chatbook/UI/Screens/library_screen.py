@@ -26389,12 +26389,14 @@ class LibraryScreen(BaseAppScreen):
         current = self._library_note_import_controller.snapshot.page.page_number
         self._library_note_import_controller.set_page(current + event.delta)
 
-    async def _run_library_note_import_execution(self, *, retry: bool) -> None:
+    async def _run_library_note_import_execution(
+        self, execution: asyncio.Task[None]
+    ) -> None:
         try:
-            if retry:
-                await self._library_note_import_controller.retry_failed()
-            else:
-                await self._library_note_import_controller.approve_and_execute()
+            try:
+                await asyncio.shield(execution)
+            except asyncio.CancelledError:
+                await execution
         except Exception as exc:  # noqa: BLE001 - controller publishes safe recovery
             logger.warning(
                 "Notes import execution failed; error_type={}", type(exc).__name__
@@ -26406,8 +26408,20 @@ class LibraryScreen(BaseAppScreen):
         self, event: LibraryNoteImportCanvas.ImportRequested
     ) -> None:
         event.stop()
+        try:
+            execution = self._library_note_import_controller.admit_execution(
+                retry=False
+            )
+        except Exception as exc:  # noqa: BLE001 - publish only bounded recovery
+            logger.warning(
+                "Notes import admission failed; error_type={}", type(exc).__name__
+            )
+            self._notify_library_note_import_failure()
+            return
+        if execution is None:
+            return
         self.run_worker(
-            self._run_library_note_import_execution(retry=False),
+            self._run_library_note_import_execution(execution),
             exclusive=True,
             group="library_note_import_execute",
         )
@@ -26417,8 +26431,19 @@ class LibraryScreen(BaseAppScreen):
         self, event: LibraryNoteImportCanvas.RetryRequested
     ) -> None:
         event.stop()
+        try:
+            execution = self._library_note_import_controller.admit_execution(retry=True)
+        except Exception as exc:  # noqa: BLE001 - publish only bounded recovery
+            logger.warning(
+                "Notes import retry admission failed; error_type={}",
+                type(exc).__name__,
+            )
+            self._notify_library_note_import_failure()
+            return
+        if execution is None:
+            return
         self.run_worker(
-            self._run_library_note_import_execution(retry=True),
+            self._run_library_note_import_execution(execution),
             exclusive=True,
             group="library_note_import_execute",
         )

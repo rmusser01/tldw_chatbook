@@ -33,6 +33,10 @@ from tldw_chatbook.Library.library_note_import_state import (
     show_review,
 )
 from tldw_chatbook.Notes.note_import_executor import LocalNoteImportTarget
+from tldw_chatbook.Notes.note_folder_models import (
+    FolderValidationError,
+    normalize_folder_name,
+)
 from tldw_chatbook.Notes.note_import_plan_models import (
     ImportAction,
     ImportBounds,
@@ -250,19 +254,44 @@ class LibraryNoteImportController:
         if not item.payloads:
             return ""
         payload = item.payloads[0]
-        before = f"Title: {note.title}\n\n{note.content}".splitlines()
-        after = f"Title: {payload.title}\n\n{payload.content}".splitlines()
-        diff = "\n".join(
-            difflib.unified_diff(
-                before,
-                after,
-                fromfile="Existing note",
-                tofile="Imported source",
-                n=2,
-                lineterm="",
-            )
-        )
-        return diff if len(diff) <= 1_600 else f"{diff[:1599]}…"
+        max_input_chars = 16_000
+        max_output_chars = 1_600
+        marker = "\n… Diff preview truncated."
+
+        def bounded_document(title: str, content: str) -> tuple[str, bool]:
+            prefix = "Title: "
+            total = len(prefix) + len(title) + 2 + len(content)
+            bounded = f"{prefix}{title[: max_input_chars - len(prefix)]}"
+            if len(bounded) < max_input_chars:
+                separator = "\n\n"[: max_input_chars - len(bounded)]
+                bounded += separator
+                bounded += content[: max_input_chars - len(bounded)]
+            return bounded, total > max_input_chars
+
+        before_text, before_truncated = bounded_document(note.title, note.content)
+        after_text, after_truncated = bounded_document(payload.title, payload.content)
+        truncated = before_truncated or after_truncated
+        before = before_text.splitlines()
+        after = after_text.splitlines()
+        chunks: list[str] = []
+        size = 0
+        budget = max_output_chars - len(marker)
+        for line in difflib.unified_diff(
+            before,
+            after,
+            fromfile="Existing note",
+            tofile="Imported source",
+            n=2,
+            lineterm="",
+        ):
+            chunk = line if not chunks else f"\n{line}"
+            if size + len(chunk) > budget:
+                truncated = True
+                break
+            chunks.append(chunk)
+            size += len(chunk)
+        preview = "".join(chunks)
+        return f"{preview}{marker}" if truncated else preview
 
     def _top_level_folder_names(self) -> tuple[str, ...]:
         repository = self._folder_repository()
@@ -285,16 +314,20 @@ class LibraryNoteImportController:
         self.publish()
 
     def _collision_rename_error(self, name: str) -> str:
-        if not name:
+        if not name or not name.strip():
             return "Enter a different folder name."
         if name != name.strip():
             return "Remove leading or trailing spaces from the folder name."
-        if name in {".", ".."}:
-            return "Use a folder name other than '.' or '..'."
-        if any(character in name for character in ("/", "\\", "\x00")):
-            return "Enter one folder name without separators."
-        existing = {value.casefold() for value in self._existing_top_level_names}
-        if name.casefold() in existing:
+        if len(name) > 255:
+            return "Use a folder name with 255 characters or fewer."
+        try:
+            normalized = normalize_folder_name(name)
+        except FolderValidationError:
+            return "Enter one valid folder name without path separators."
+        existing = {
+            normalize_folder_name(value).key for value in self._existing_top_level_names
+        }
+        if normalized.key in existing:
             return "That folder name already exists. Enter a different name."
         return ""
 
@@ -380,6 +413,13 @@ class LibraryNoteImportController:
         effects = self._state.review_effects
         rename_input = self._state.collision_rename_input
         rename_error = self._state.collision_rename_error
+        collision = plan.root_collision
+        if collision is not None and collision.choice in {
+            RootCollisionChoice.USE_EXISTING,
+            RootCollisionChoice.UNIQUE_SIBLING,
+        }:
+            rename_input = ""
+            rename_error = ""
         self._state = set_review_page(
             show_review(
                 begin_checking(self._state),
@@ -400,29 +440,97 @@ class LibraryNoteImportController:
         self._state = set_review_page(self._state, page_number)
         self.publish()
 
-    async def approve_and_execute(self) -> None:
-        """Approve the exact current review and execute only that object."""
-        plan = self._require_review_plan()
-        review_state = self._state
+    def admit_execution(self, *, retry: bool) -> asyncio.Task[None] | None:
+        """Synchronously admit one execution before a UI worker is scheduled."""
+        if self._state.phase is NoteImportPhase.IMPORTING:
+            return None
         self._error_message = ""
-        approved = self._approve(plan)
-        self._state = begin_importing(set_approved_plan(self._state, approved))
+        restore_state = self._state
+        if retry:
+            if not self._state.can_retry:
+                return None
+            self._state = begin_retry(self._state)
+            approved = self._state.approved_plan
+            if approved is None:
+                self._state = restore_state
+                return None
+        else:
+            if (
+                self._state.phase is not NoteImportPhase.REVIEW
+                or self._state.plan is None
+            ):
+                return None
+            approved = self._approve(self._state.plan)
+            self._state = begin_importing(set_approved_plan(self._state, approved))
         self._cancel_event = threading.Event()
         self.publish()
+        return asyncio.create_task(
+            self._execute_admitted(
+                approved,
+                restore_state=restore_state,
+                retry=retry,
+                cancel_event=self._cancel_event,
+            )
+        )
+
+    async def approve_and_execute(self) -> None:
+        """Admit and execute the exact current review once."""
+        execution = self.admit_execution(retry=False)
+        if execution is not None:
+            await execution
+
+    async def _execute_admitted(
+        self,
+        approved: Any,
+        *,
+        restore_state: NoteImportWorkflowSnapshot,
+        retry: bool,
+        cancel_event: threading.Event,
+    ) -> None:
+        loop = asyncio.get_running_loop()
+
+        def progress_callback(progress: Any) -> None:
+            loop.call_soon_threadsafe(self._apply_progress, progress)
+
+        operation: asyncio.Task[Any] | None = None
         try:
             executor = self._new_executor()
-            receipt = await executor.execute_async(
-                approved,
-                cancel_event=self._cancel_event,
-                progress_callback=self._apply_progress,
+            operation = asyncio.create_task(
+                asyncio.to_thread(
+                    executor.retry_failed,
+                    approved,
+                    cancel_event=cancel_event,
+                    progress_callback=progress_callback,
+                )
+                if retry
+                else executor.execute_async(
+                    approved,
+                    cancel_event=cancel_event,
+                    progress_callback=progress_callback,
+                )
             )
+            try:
+                receipt = await asyncio.shield(operation)
+            except asyncio.CancelledError:
+                cancel_event.set()
+                try:
+                    receipt = await operation
+                except asyncio.CancelledError:
+                    self._state = restore_state
+                    self.publish()
+                    return
         except Exception:
-            self._state = review_state
-            self._error_message = "Import could not start or finish safely. Review the plan and try again."
+            self._state = restore_state
+            self._error_message = (
+                "Retry could not finish safely. Review the receipt and try again."
+                if retry
+                else "Import could not start or finish safely. Review the plan and try again."
+            )
             self.publish()
             raise
         finally:
-            self._cancel_event = None
+            if self._cancel_event is cancel_event:
+                self._cancel_event = None
         self._state = settle_import(self._state, receipt)
         self.publish()
         await self._refresh()
@@ -452,39 +560,9 @@ class LibraryNoteImportController:
 
     async def retry_failed(self) -> None:
         """Retry only receipt-authorized work using retained exact authority."""
-        receipt_state = self._state
-        self._error_message = ""
-        self._state = begin_retry(self._state)
-        approved = self._state.approved_plan
-        if approved is None:  # Defensive; begin_retry already validates authority.
-            raise ValueError("The approved import is unavailable.")
-        self._cancel_event = threading.Event()
-        self.publish()
-        loop = asyncio.get_running_loop()
-
-        def progress_callback(progress: Any) -> None:
-            loop.call_soon_threadsafe(self._apply_progress, progress)
-
-        try:
-            executor = self._new_executor()
-            receipt = await asyncio.to_thread(
-                executor.retry_failed,
-                approved,
-                cancel_event=self._cancel_event,
-                progress_callback=progress_callback,
-            )
-        except Exception:
-            self._state = receipt_state
-            self._error_message = (
-                "Retry could not finish safely. Review the receipt and try again."
-            )
-            self.publish()
-            raise
-        finally:
-            self._cancel_event = None
-        self._state = settle_import(self._state, receipt)
-        self.publish()
-        await self._refresh()
+        execution = self.admit_execution(retry=True)
+        if execution is not None:
+            await execution
 
     def revisit_receipt(self) -> None:
         """Reopen the latest durable receipt retained in this app session."""

@@ -55,6 +55,8 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
     """Render one immutable import snapshot and post typed physical intents."""
 
     DEFAULT_CSS = """
+    $ds-status-error-readable: #ff8fa3;
+
     LibraryNoteImportCanvas {
         width: 1fr;
         min-width: 40;
@@ -91,6 +93,11 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
 
     LibraryNoteImportCanvas .note-import-quiet {
         color: $text-muted;
+    }
+
+    LibraryNoteImportCanvas .note-import-error {
+        color: $ds-status-error-readable;
+        text-style: bold;
     }
     """
 
@@ -187,7 +194,6 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
             snapshot.phase == "review"
             and previous.preview_items == snapshot.preview_items
             and previous.page == snapshot.page
-            and previous.collision_choice == snapshot.collision_choice
         )
         if collision_only:
             self._sync_collision_controls(snapshot)
@@ -215,6 +221,12 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
 
     def _sync_collision_controls(self, snapshot: LibraryNoteImportSnapshot) -> None:
         try:
+            self.query_one("#note-import-collision-heading", Static).update(
+                f"Folder collision: {snapshot.collision_name}"
+            )
+            self.query_one("#note-import-collision-reason", Static).update(
+                snapshot.collision_reason
+            )
             rename_input = self.query_one("#note-import-collision-name", Input)
             visible_name = snapshot.collision_rename_input or snapshot.collision_name
             if rename_input.value != visible_name:
@@ -224,6 +236,16 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
             )
             rename = self.query_one("#note-import-collision-rename", Button)
             rename.disabled = not snapshot.collision_rename_available
+            for choice, button_id, label in (
+                ("use_existing", "use-existing", "Use existing folder"),
+                ("unique_sibling", "unique", "Create a unique sibling"),
+                ("renamed_root", "rename", "Use another name"),
+            ):
+                button = self.query_one(f"#note-import-collision-{button_id}", Button)
+                button.label = _choice_label(
+                    selected=snapshot.collision_choice == choice,
+                    text=label,
+                )
             submit = self.query_one("#note-import-import", Button)
             submit.disabled = not snapshot.can_import
             submit.label = _disabled_action_label(
@@ -378,7 +400,7 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
             yield Static(
                 state.destination_error,
                 id="note-import-destination-error",
-                classes="note-import-quiet",
+                classes="note-import-error",
                 markup=False,
             )
 
@@ -421,7 +443,7 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
             yield Static(
                 state.collision_rename_error,
                 id="note-import-collision-rename-error",
-                classes="note-import-quiet",
+                classes="note-import-error",
                 markup=False,
             )
 

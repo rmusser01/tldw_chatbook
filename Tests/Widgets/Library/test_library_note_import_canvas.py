@@ -688,6 +688,71 @@ async def test_wrapper_handler_keeps_destination_input_mounted_during_burst_typi
         assert current.value == "research"
 
 
+async def test_wrapper_keeps_applied_collision_rename_focused_when_edit_clears_choice() -> (
+    None
+):
+    class WrapperApp(App[None]):
+        def __init__(self) -> None:
+            super().__init__()
+            self.snapshot = _snapshot(
+                phase="review",
+                collision_kind="root",
+                collision_name="Fresh",
+                collision_choice="renamed_root",
+                collision_rename_input="Fresh",
+                collision_rename_available=True,
+                can_import=True,
+                import_disabled_reason="",
+            )
+
+        def compose(self) -> ComposeResult:
+            yield LibraryNotesCanvas(mode="import", import_snapshot=self.snapshot)
+
+        def on_library_note_import_canvas_collision_name_changed(
+            self, message: LibraryNoteImportCanvas.CollisionNameChanged
+        ) -> None:
+            self.snapshot = replace(
+                self.snapshot,
+                collision_name="Inbox",
+                collision_choice="",
+                collision_rename_input=message.name,
+                collision_rename_available=True,
+                can_import=False,
+                import_disabled_reason="Choose how to handle the folder name collision.",
+            )
+            self.query_one(LibraryNotesCanvas).sync_state(
+                list_state=None,
+                sort_mode="newest",
+                filter_value="",
+                mode="import",
+                presentation_state=None,
+                sync_panel_state=None,
+                import_snapshot=self.snapshot,
+                import_receipt_available=False,
+                tree_projection=None,
+                tree_selected_placement_id="",
+                tree_deleted_folder_available=False,
+                title_placeholder_only=False,
+                compact=True,
+                create_running=False,
+                create_status="",
+                load_state="loading",
+                load_message="",
+            )
+
+    app = WrapperApp()
+    async with app.run_test(size=(60, 20)) as pilot:
+        field = app.query_one("#note-import-collision-name", Input)
+        field.focus()
+        await pilot.press("end", "space", "2")
+        await pilot.pause()
+
+        assert app.query_one("#note-import-collision-name", Input) is field
+        assert app.focused is field
+        assert field.value == "Fresh 2"
+        assert app.query_one("#note-import-import", Button).disabled is True
+
+
 async def test_collision_rename_is_disabled_with_specific_inline_error() -> None:
     app = _CanvasApp(
         _snapshot(
@@ -705,9 +770,14 @@ async def test_collision_rename_is_disabled_with_specific_inline_error() -> None
         await pilot.pause()
         rename = app.query_one("#note-import-collision-rename", Button)
         assert rename.disabled is True
-        assert "already exists" in _plain(
-            app.query_one("#note-import-collision-rename-error", Static)
+        error = app.query_one("#note-import-collision-rename-error", Static)
+        assert "already exists" in _plain(error)
+        assert error.has_class("note-import-error")
+        assert (
+            "LibraryNoteImportCanvas .note-import-error"
+            in LibraryNoteImportCanvas.DEFAULT_CSS
         )
+        assert "color: $ds-status-error-readable" in LibraryNoteImportCanvas.DEFAULT_CSS
 
 
 async def test_review_item_shows_source_target_membership_and_content_effect() -> None:

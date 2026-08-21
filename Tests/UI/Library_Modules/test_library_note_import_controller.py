@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import difflib
+import threading
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -29,6 +31,9 @@ from tldw_chatbook.Notes.note_import_plan_models import (
 )
 from tldw_chatbook.UI.Library_Modules.library_note_import_controller import (
     LibraryNoteImportController,
+)
+from tldw_chatbook.UI.Library_Modules import (
+    library_note_import_controller as controller_module,
 )
 
 
@@ -261,6 +266,62 @@ async def test_check_builds_bounded_existing_note_diff_and_effect_context(
 
 
 @pytest.mark.asyncio
+async def test_large_review_diff_bounds_inputs_and_marks_truncated_preview(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "one.md"
+    plan = _plan(source)
+    plan = replace(
+        plan,
+        items=(
+            replace(
+                plan.items[0],
+                payloads=(
+                    replace(plan.items[0].payloads[0], content="new\n" * 100_000),
+                ),
+                match=ImportMatch(
+                    kind=ImportMatchKind.EXACT,
+                    note_id="note-1",
+                    note_version=7,
+                ),
+                classification=ImportClassification.CHANGED_REPEAT,
+                allowed_actions=(
+                    ImportAction.SKIP,
+                    ImportAction.CREATE_NEW,
+                    ImportAction.UPDATE_EXISTING,
+                ),
+            ),
+        ),
+    )
+    observed: list[tuple[int, int]] = []
+    real_diff = difflib.unified_diff
+
+    def bounded_diff(before, after, *args, **kwargs):
+        observed.append((sum(map(len, before)), sum(map(len, after))))
+        return real_diff(before, after, *args, **kwargs)
+
+    monkeypatch.setattr(controller_module.difflib, "unified_diff", bounded_diff)
+    controller = _controller(
+        plan=plan,
+        calls=[],
+        repository=_FolderRepository(),
+        review_note_reader=lambda note_id: SimpleNamespace(
+            title="Existing", content="old\n" * 100_000, version=7
+        ),
+    )
+    controller.begin_selection()
+    controller.accept_selected_path(source, is_folder=False)
+    controller.set_destination("Inbox")
+
+    await controller.check()
+
+    preview = controller.presentation_snapshot.preview_items[0].content_diff
+    assert observed and max(observed[0]) <= 16_000
+    assert len(preview) <= 1_600
+    assert "Diff preview truncated" in preview
+
+
+@pytest.mark.asyncio
 async def test_collision_rename_requires_valid_non_colliding_name(
     tmp_path: Path,
 ) -> None:
@@ -284,6 +345,11 @@ async def test_collision_rename_requires_valid_non_colliding_name(
     controller.set_collision_name("Fresh")
     assert controller.presentation_snapshot.collision_rename_available is True
     assert controller.presentation_snapshot.collision_rename_error == ""
+
+    controller.set_collision_name("Ｉｎｂｏｘ")
+    assert "already exists" in controller.snapshot.collision_rename_error
+    controller.set_collision_name("x" * 256)
+    assert "255" in controller.snapshot.collision_rename_error
 
 
 @pytest.mark.asyncio
@@ -342,6 +408,45 @@ async def test_execution_crosses_approval_only_on_import_and_uses_exact_object(
     assert calls[-1] == "refresh"
 
 
+@pytest.mark.asyncio
+async def test_duplicate_execution_admission_runs_once_and_survives_outer_cancellation(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "one.md"
+    controller = _controller(
+        plan=_plan(source), calls=[], repository=_FolderRepository()
+    )
+    controller.begin_selection()
+    controller.accept_selected_path(source, is_folder=False)
+    controller.set_destination("Inbox")
+    await controller.check()
+    started = asyncio.Event()
+    release = asyncio.Event()
+    execute_count = 0
+
+    class GatedExecutor:
+        async def execute_async(self, approved, *, cancel_event, progress_callback):
+            nonlocal execute_count
+            execute_count += 1
+            started.set()
+            await release.wait()
+            return replace(_receipt(), approval_id=approved.approval_id)
+
+    controller._executor_factory = lambda *args: GatedExecutor()
+    admitted = controller.admit_execution(retry=False)
+    duplicate = controller.admit_execution(retry=False)
+
+    assert admitted is not None
+    assert duplicate is None
+    await started.wait()
+    admitted.cancel()
+    release.set()
+    await admitted
+
+    assert execute_count == 1
+    assert controller.snapshot.phase.value == "receipt"
+
+
 def test_file_accumulation_and_folder_selection_are_mutually_exclusive(
     tmp_path: Path,
 ) -> None:
@@ -394,6 +499,49 @@ async def test_retry_uses_retained_approved_plan_and_refreshes_again(
     )
     assert retried is executed
     assert calls.count("refresh") == 2
+
+
+@pytest.mark.asyncio
+async def test_duplicate_retry_admission_keeps_one_to_thread_call_running(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "one.md"
+    controller = _controller(
+        plan=_plan(source),
+        calls=[],
+        repository=_FolderRepository(),
+        receipt=_receipt(retryable=1),
+    )
+    controller.begin_selection()
+    controller.accept_selected_path(source, is_folder=False)
+    controller.set_destination("Inbox")
+    await controller.check()
+    await controller.approve_and_execute()
+    started = threading.Event()
+    release = threading.Event()
+    retry_count = 0
+
+    class GatedRetryExecutor:
+        def retry_failed(self, approved, *, cancel_event, progress_callback):
+            nonlocal retry_count
+            retry_count += 1
+            started.set()
+            release.wait()
+            return replace(_receipt(), approval_id=approved.approval_id)
+
+    controller._executor_factory = lambda *args: GatedRetryExecutor()
+    admitted = controller.admit_execution(retry=True)
+    duplicate = controller.admit_execution(retry=True)
+
+    assert admitted is not None
+    assert duplicate is None
+    await asyncio.to_thread(started.wait)
+    admitted.cancel()
+    release.set()
+    await admitted
+
+    assert retry_count == 1
+    assert controller.snapshot.phase.value == "receipt"
 
 
 @pytest.mark.asyncio

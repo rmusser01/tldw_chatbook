@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 import inspect
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from uuid import uuid4
 
@@ -38,6 +40,9 @@ from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library import LibraryNotesCanvas
+from tldw_chatbook.Widgets.Library.library_note_import_canvas import (
+    LibraryNoteImportCanvas,
+)
 
 
 pytestmark = pytest.mark.asyncio
@@ -212,6 +217,46 @@ async def test_screen_unmount_signals_import_cancel_before_owner_teardown() -> N
     assert source.index("_library_note_import_controller.cancel()") < source.index(
         "super().on_unmount()"
     )
+
+
+async def test_double_import_handler_activation_admits_only_one_worker() -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def admitted_execution() -> None:
+        started.set()
+        await release.wait()
+
+    admitted = admitted_execution()
+    controller = SimpleNamespace(
+        admit_execution=Mock(side_effect=(admitted, None)),
+    )
+    tasks: list[asyncio.Task[None]] = []
+
+    def run_worker(coroutine, **kwargs):
+        tasks.append(asyncio.create_task(coroutine))
+
+    screen = SimpleNamespace(
+        _library_note_import_controller=controller,
+        _run_library_note_import_execution=(
+            lambda execution: LibraryScreen._run_library_note_import_execution(
+                screen, execution
+            )
+        ),
+        _notify_library_note_import_failure=Mock(),
+        run_worker=run_worker,
+    )
+    first = LibraryNoteImportCanvas.ImportRequested()
+    second = LibraryNoteImportCanvas.ImportRequested()
+
+    LibraryScreen.handle_library_note_import_execute(screen, first)
+    LibraryScreen.handle_library_note_import_execute(screen, second)
+    await started.wait()
+
+    assert controller.admit_execution.call_count == 2
+    assert len(tasks) == 1
+    release.set()
+    await tasks[0]
 
 
 async def test_last_receipt_is_hidden_while_a_new_selection_is_active() -> None:

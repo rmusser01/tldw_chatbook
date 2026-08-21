@@ -426,6 +426,15 @@ def show_review(
         raise ValueError("Review may only follow checking.")
     if type(plan) is not NoteImportPlan:
         raise TypeError("plan must be a NoteImportPlan.")
+    collision = plan.root_collision
+    unresolved_collision = bool(
+        collision is not None and collision.collides and collision.choice is None
+    )
+    renamed_root = bool(
+        collision is not None
+        and collision.choice is RootCollisionChoice.RENAMED_ROOT
+        and collision.resolved_label
+    )
     return replace(
         state,
         phase=NoteImportPhase.REVIEW,
@@ -435,6 +444,18 @@ def show_review(
         approved_plan=None,
         cancel_requested=False,
         decision_item_ids=frozenset(),
+        collision_rename_input=(
+            collision.resolved_label
+            if renamed_root
+            else collision.proposed_label
+            if unresolved_collision
+            else ""
+        ),
+        collision_rename_error=(
+            "That folder name already exists. Enter a different name."
+            if unresolved_collision
+            else ""
+        ),
         revision=state.revision + 1,
     )
 
@@ -775,7 +796,8 @@ def project_library_note_import_snapshot(
         progress_completed=progress.completed if progress else 0,
         progress_total=progress.total if progress else 0,
         progress_detail=(
-            f"{progress.imported} imported · {progress.skipped} skipped · {progress.failed} failed"
+            f"{progress.imported} imported · {progress.updated} updated · "
+            f"{progress.skipped} skipped · {progress.failed} failed"
             if progress
             else ""
         ),
