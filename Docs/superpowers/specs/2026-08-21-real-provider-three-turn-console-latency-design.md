@@ -16,9 +16,13 @@ The user selected a real-provider comparison rather than a scripted gateway. The
 available provider is an OpenAI-compatible `llama-server` on
 `http://127.0.0.1:9099`, serving
 `gemma-4-26B-A4B-it-ultra-uncensored-heretic-Q4_K_M.gguf`. A one-token preflight
-completed successfully in 7.90 seconds. The benchmark therefore uses thirty balanced
-samples per arm despite an expected 50–70 minute inference run once the tool-call
-round trips and warmups are included.
+completed successfully in 7.90 seconds. Probes using the Console's actual fenced
+llama.cpp tool protocol consumed 90 completion tokens for `load_tools` and 211 for the
+longer `fs_write` turn; a 128-token cap is therefore insufficient, while a 512-token
+cap produced both exact fences. The benchmark pins the mounted Console resolution to
+512 output tokens for every provider request and uses thirty balanced samples per arm
+despite an expected 50–90 minute run for 450 measured provider requests plus warmups
+and snapshot work.
 
 ## Goals
 
@@ -55,16 +59,20 @@ the complete run; moving refs cannot change either target.
 
 Each measured sample is one fresh mounted Console conversation with three sends made
 through the real composer/send action. Turn three is not submitted after awaiting turn
-two. In tracked arms, a content-free, non-delaying observation wrapper at the real
-end-snapshot operation's entry schedules the third composer action on the Textual loop
-and immediately delegates to the real operation. In the disabled arm, which has no E
-operation, the terminal turn-two provider-round completion schedules the same action.
-The sample records `third_send_requested` and is valid only when
-`third_send_requested < turn_2_release`; tracked samples additionally require
-`review_e_started < third_send_requested < review_e_completed`. No harness barrier,
-sleep, or held event delays E or turn release to manufacture this ordering. A tracked
-sample in which the real E interval is too short to admit the composer action is
-invalid rather than silently converted to a sequential send.
+two. In every arm, the same content-free, non-delaying observation wrapper at the
+terminal turn-two provider-round completion schedules the third composer action on
+the Textual loop and immediately delegates to the real completion path. The sample
+records `third_send_requested` and is valid only when
+`third_send_requested < turn_2_release`. No harness barrier, sleep, or held event
+delays E or turn release to manufacture an overlap.
+
+Tracked arms record where the real E interval falls relative to the common stimulus:
+before the third send, across prompt admission, across the third worker/provider start,
+or after turn-two release. Those relations are descriptive evidence, not sample
+eligibility gates. This is deliberate: legacy E is synchronous on turn two's worker,
+whereas candidate E is intentionally detached and may begin after turn two releases.
+Scheduling from E-entry would compare different queue states across arms and could
+invalidate the fixed implementation by construction.
 
 1. **Control / legacy tracked mutation** — pinned dev, its legacy Change Review path,
    and the same turn-two workspace mutation used by the candidate.
@@ -75,9 +83,11 @@ invalid rather than silently converted to a sequential send.
    asynchronous finalization path.
 
 All arms begin from the same generated corpus manifest: 1,024 fixed 4 KiB files plus
-one fixed 8 MiB tracked blob. Before timing, both tracked arms complete and verify the
-same untimed initial snapshot. The disabled arm verifies that no snapshot repository or
-operation was created. Turn two then performs the one identical confined mutation.
+one fixed 8 MiB tracked blob. Before timing, both tracked arms complete an untimed
+initial snapshot and verify the same content-tree digest and corpus manifest; Git
+commit IDs are not compared because commit metadata can differ without a content
+difference. The disabled arm verifies that no snapshot repository or operation was
+created. Turn two then performs the one identical confined mutation.
 
 Every arm runs one untimed warmup and thirty measured samples. Arm order rotates by
 iteration (`control, disabled, enabled`; then `disabled, enabled, control`; then
@@ -90,7 +100,8 @@ The run begins with five fail-closed checks:
 
 1. `GET /v1/models` must identify the expected local model.
 2. A fixed temperature-zero short completion must succeed without credentials.
-3. The mounted product path must perform its real lazy-disclosure sequence: provider
+3. With a pinned 512-token output cap for every provider request, the mounted product
+   path must perform its real lazy-disclosure sequence: provider
    round one calls only `load_tools(local:fs_write)`, round two calls only `fs_write`,
    and round three is the terminal assistant follow-up consuming the successful tool
    result. `find_tools` and every other call are prohibited.
@@ -102,12 +113,12 @@ The run begins with five fail-closed checks:
    before timing; every arm must prove the same effective permission and must not open
    an approval flow.
 
-The tool-call turn may use a larger fixed output cap than the plain turns. Exact
-per-turn prompts, tool schemas, sampling values, output caps, response token counts,
-and model identity are recorded. Synthetic prompt fixtures are published in the runner
-source; raw evidence stores only fixture IDs and hashes. If the model cannot reliably
-complete this exact contract, the run stops as an invalid benchmark instead of
-substituting a fake tool call.
+Every request uses the same fixed 512-token output cap. Exact per-turn prompts, tool
+schemas, sampling values, output caps, response token counts, and model identity are
+recorded. Synthetic prompt fixtures are published in the runner source; raw evidence
+stores only fixture IDs and hashes. If the model cannot reliably complete this exact
+contract, the run stops as an invalid benchmark instead of substituting a fake tool
+call.
 
 ## Harness architecture
 
@@ -116,13 +127,15 @@ runner. Parent mode owns revision pinning, detached control-worktree lifecycle,
 balanced ordering, report validation, and summary construction. Child mode executes
 one sample in a fresh process.
 
-Before an interpreter imports any target module, the parent supplies a sanitized child
-environment with sample-scoped home/config/data/cache/temp paths and no inherited cloud
-credentials. The bootstrap asserts those values, then inserts the explicit target root
-before every other repository path on `sys.path`. It asserts that the imported
-`tldw_chatbook` package, Console screen, and test harness helpers all resolve below
-that target. This prevents candidate modules from contaminating control samples and
-prevents import-time settings from touching the user's profile.
+Before an interpreter imports any target module, the parent supplies an allowlisted
+child environment with sample-scoped home/config/data/cache/temp paths, proxy and cloud
+credential variables removed, and bytecode writes disabled. The bootstrap asserts
+those values and `sys.dont_write_bytecode`, then inserts the explicit target root before
+every other repository path on `sys.path`. It asserts that the imported `tldw_chatbook`
+package, Console screen, and test harness helpers all resolve below that target. This
+prevents candidate modules from contaminating control samples, prevents import-time
+settings from touching the user's profile, and keeps both immutable target worktrees
+free of generated `__pycache__` state.
 
 The child uses the target revision's production-shaped `ConsoleHarness` and test-app
 builder, but replaces only external ownership:
@@ -161,7 +174,8 @@ consumes the tool result. Each raw sample contains:
 - every provider request-round start;
 - every request-round first provider chunk;
 - every request-round stream completion;
-- the terminal assistant round (the disabled-arm third-send trigger);
+- the terminal assistant round and its provider-completion boundary (the common
+  third-send trigger in every arm);
 - assistant message made durable;
 - third composer send requested;
 - terminal result returned to the prompt coordinator;
@@ -185,8 +199,13 @@ Derived metrics are:
 - complete three-turn wall time.
 
 A 10 ms heartbeat runs on the Textual event loop from the first send through final
-settlement. Raw tick lateness is retained; median and p95 event-loop lag are derived
-without including process startup or the untimed warmup.
+settlement. Its integer tick-lateness values are appended to a preallocated,
+sample-local memory buffer and emitted once in the terminal sample record; the
+heartbeat never performs file I/O on the Textual loop. Raw tick lateness is retained;
+median and p95 event-loop lag are derived without including process startup or the
+untimed warmup. A sample killed before its heartbeat vector is emitted is incomplete
+and invalid, while its already-flushed boundary events still identify the last
+completed operation.
 
 ## Isolation and privacy
 
@@ -204,12 +223,15 @@ keys, headers, environment dumps, tool-result contents, or generated file conten
 Paths in exceptions and stacks are normalized to `$CONTROL`, `$CANDIDATE`, `$RUN`,
 `$VENV`, and `$HOME` before they are flushed.
 
-Each JSONL event is written and flushed immediately. Provider request rounds have a
-120-second deadline, turns a 300-second deadline, and a complete sample a 900-second
-deadline. The parent watchdog sends TERM to an overdue child, waits five seconds, then
-sends KILL and performs bounded descendant/worktree cleanup. A killed or timed-out run
-retains its last completed boundary and failure category. Summary generation refuses
-partial samples unless they are explicitly counted as failures.
+Each low-frequency boundary or failure JSONL event is written and flushed immediately.
+The high-frequency heartbeat vector is the sole exception and is emitted once at
+terminal sample settlement so evidence collection does not create the event-loop lag
+being measured. Provider request rounds have a 120-second deadline, turns a 300-second
+deadline, and a complete sample a 900-second deadline. The parent watchdog sends TERM
+to an overdue child, waits five seconds, then sends KILL and performs bounded
+descendant/worktree cleanup. A killed or timed-out run retains its last completed
+boundary and failure category. Summary generation refuses partial samples unless they
+are explicitly counted as failures.
 
 The run manifest records Python, Textual, pytest, OS, architecture, CPU count, load
 average, target hashes, model endpoint/model metadata, sanitized llama-server build and
@@ -229,8 +251,8 @@ as descriptive context.
 The result is valid only when:
 
 - all ninety samples reach the third provider and terminal third assistant;
-- every third send is requested before turn-two release, and in tracked arms its
-  timestamp falls strictly inside the real end-snapshot/finalization interval;
+- every third send is requested before turn-two release from the same terminal
+  provider-completion trigger in every arm;
 - every turn two has exactly three provider rounds, one allowed `load_tools` call, one
   allowed `fs_write`, one successful confined mutation, and one terminal model
   follow-up consuming its result;
@@ -248,13 +270,14 @@ values, so long provider responses cannot receive extra weight. Critical-path me
 likewise contribute one value per sample. The block bootstrap resamples complete
 iteration triples and never pools individual turns or ticks across samples.
 
-Both candidate arms pass the third-send-to-worker or event-loop-lag non-regression
-gate only when the paired confidence interval's upper bound for the p95 ratio is at
-most 1.10.
+Each candidate arm passes only when both the third-send-to-worker and event-loop-lag
+non-regression gates have paired confidence-interval upper bounds for their p95 ratios
+at or below 1.10.
 An arm is a measured regression only when the lower bound is above 1.10; otherwise the
 metric is `inconclusive`. The report may claim critical-path improvement only from
-application-owned intervals—assistant-durable to turn release and terminal to third
-worker/provider—and only when the paired ratio interval's upper bound is below 1.00.
+application-owned intervals—assistant-durable to turn release and terminal-provider-
+complete to third worker/provider—and only when the paired ratio interval's upper
+bound is below 1.00.
 Total conversation wall time is reported but cannot prove the app became faster
 because it is dominated by model inference.
 
@@ -273,10 +296,13 @@ Test-driven implementation begins with unit tests for:
 - deterministic paired block-bootstrap confidence bounds;
 - exact target-root import validation;
 - arm-specific required/prohibited boundaries, one/three/one provider-round
-  accounting, third-send overlap, selected-rw-binding/permission/tool contracts, and
-  ninety-sample completeness validation;
+  accounting, common-trigger third-send ordering, descriptive E relationships,
+  selected-rw-binding/permission/tool contracts, and ninety-sample completeness
+  validation;
 - per-sample gate reduction that prevents pooled turns or heartbeat ticks from
   reweighting long samples;
+- heartbeat buffering that performs no evidence I/O on the Textual loop and rejects a
+  sample whose terminal heartbeat vector is absent;
 - failure-preserving JSONL writes;
 - absolute-path and credential-field rejection;
 - fixed watchdog/termination behavior;
