@@ -108,7 +108,8 @@ from ...Persona_Visual.publication import (
     publish_persona_visual,
 )
 from ...Persona_Visual.repository import PersonaVisualIdentity, PersonaVisualRepository
-from ...Persona_Buddy import PersonaBuddySelection
+from ...Persona_Visual.runtime import PersonaVisualCacheIdentity
+from ...Persona_Buddy import PersonaBuddySelection, PersonaBuddyVisualSnapshot
 from ...TTS import (
     AssignedTTSProfileSnapshot,
     CharacterRef,
@@ -7241,23 +7242,43 @@ class PersonasScreen(BaseAppScreen):
             )
             is not scope_service
             or latest.selection != selection
+            or latest.generation != snapshot.generation
             or latest.preferences_generation != snapshot.preferences_generation
             or latest.profile_generation != snapshot.profile_generation
         ):
             return
         visual = latest.visual
-        if visual is not None:
+        if visual is not None and type(visual) is not PersonaBuddyVisualSnapshot:
+            return
+        if visual is not None and visual.available:
+            captured_visual = snapshot.visual
             if (
-                visual.source != "local"
+                type(captured_visual) is not PersonaBuddyVisualSnapshot
+                or not captured_visual.available
+                or visual.graph_identity != captured_visual.graph_identity
+                or visual.cache_identity != captured_visual.cache_identity
                 or visual.persona_id != selection.local_persona_id
                 or visual.persona_revision != revision
+                or type(visual.graph_identity) is not PersonaVisualIdentity
+                or visual.graph_identity not in actor_identities
+                or type(visual.cache_identity) is not PersonaVisualCacheIdentity
+                or visual.cache_identity.graph != visual.graph_identity
+                or visual.cache_identity.requested_state != visual.requested_state
+                or visual.cache_identity.resolved_state != visual.resolved_state
+                or visual.cache_identity.animation_id != visual.animation_id
             ):
                 return
+        elif visual is not None:
             if (
-                visual.graph_identity is not None
-                and visual.graph_identity not in actor_identities
+                visual != snapshot.visual
+                or visual.persona_id != selection.local_persona_id
+                or visual.persona_revision != revision
+                or visual.graph_identity is not None
+                or visual.cache_identity is not None
             ):
                 return
+        elif snapshot.visual is not None:
+            return
         controller.invalidate_profile()
         reconcile = getattr(self.app, "reconcile_persona_buddy_view", None)
         if callable(reconcile):

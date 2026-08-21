@@ -20,13 +20,19 @@ from Tests.UI.test_personas_workbench import (
     PersonasTestApp,
     _mounted,
 )
+from Tests.Persona_Buddy.test_persona_buddy_resolution import (
+    _runtime as _persona_buddy_runtime,
+)
 from tldw_chatbook.Persona_Visual.importer import PersonaVisualImportReview
 from tldw_chatbook.Persona_Visual.publication import (
     PersonaVisualPublicationError,
     PersonaVisualPublicationResult,
 )
-from tldw_chatbook.Persona_Visual.repository import PersonaVisualIdentity
-from tldw_chatbook.Persona_Buddy import PersonaBuddySelection
+from tldw_chatbook.Persona_Visual.repository import (
+    PersonaVisualIdentity,
+    PersonaVisualRepository,
+)
+from tldw_chatbook.Persona_Visual.runtime import PersonaVisualCacheIdentity
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
 from tldw_chatbook.Utils.paths import get_user_data_dir
 from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
@@ -80,15 +86,6 @@ def _identity(version: int = 1) -> PersonaVisualIdentity:
         pack_version_id=13,
         version_number=version,
         manifest_sha256="a" * 64,
-    )
-
-
-def _buddy_snapshot(*, visual, persona_id: str = "p-1"):
-    return SimpleNamespace(
-        selection=PersonaBuddySelection("local", persona_id),
-        preferences_generation=7,
-        profile_generation=11,
-        visual=visual,
     )
 
 
@@ -257,187 +254,245 @@ async def test_save_publishes_once_then_invalidates_exact_old_and_new(
 
 
 async def test_visual_publication_invalidates_bound_buddy_old_and_new_identity_only(
-    monkeypatch, mock_app_instance, stub_characters, local_scope
+    monkeypatch, mock_app_instance, stub_characters, local_scope, tmp_path
 ):
     monkeypatch.setattr(personas_screen_module, "PersonaVisualRepository", _Repository)
-    invalidate_profile = Mock()
     reconcile = AsyncMock(return_value=True)
-    buddy = SimpleNamespace(
-        snapshot=lambda: _buddy_snapshot(
-            visual=SimpleNamespace(
-                source="local",
-                persona_id="p-1",
-                persona_revision=2,
-                graph_identity=_identity(),
-            )
-        ),
-        invalidate_profile=invalidate_profile,
-    )
+    buddy, db, graph = _persona_buddy_runtime(tmp_path)
+    assert graph is not None
     app = PersonasTestApp(mock_app_instance)
 
-    async with app.run_test() as pilot:
-        screen = await _open_editor(pilot)
-        mock_app_instance.persona_buddy_controller = buddy
-        mock_app_instance.reconcile_persona_buddy_view = reconcile
-
-        await screen._invalidate_persona_visual_publication(
-            PersonaVisualPublicationResult(_identity(), _identity(2), None)
-        )
-        invalidate_profile.assert_called_once_with()
-        reconcile.assert_awaited_once_with()
-
-        invalidate_profile.reset_mock()
-        reconcile.reset_mock()
-        unrelated = replace(
-            _identity(3),
-            persona_id="p-other",
-            binding_id=91,
-            pack_id=92,
-            pack_version_id=93,
-        )
-        await screen._invalidate_persona_visual_publication(
-            PersonaVisualPublicationResult(unrelated, unrelated, None)
-        )
-        invalidate_profile.assert_not_called()
-        reconcile.assert_not_awaited()
-
-        buddy.snapshot = lambda: _buddy_snapshot(
-            visual=SimpleNamespace(
-                source="local",
-                persona_id="p-1",
-                persona_revision=2,
-                graph_identity=_identity(2),
+    try:
+        visual = await buddy.resolve_current_visual(cols=80, lines=24)
+        assert visual.available is True
+        assert type(visual.cache_identity) is PersonaVisualCacheIdentity
+        assert visual.cache_identity.graph == graph.identity
+        async with app.run_test() as pilot:
+            screen = await _open_editor(pilot)
+            local_scope.get_persona_profile = AsyncMock(
+                return_value={
+                    **PROFILE,
+                    "id": "persona-local-1",
+                    "version": 7,
+                    "is_active": True,
+                    "deleted": False,
+                }
             )
-        )
-        await screen._invalidate_persona_visual_publication(
-            PersonaVisualPublicationResult(_identity(), _identity(2), None)
-        )
-        invalidate_profile.assert_called_once_with()
-        reconcile.assert_awaited_once_with()
+            mock_app_instance.persona_buddy_controller = buddy
+            mock_app_instance.reconcile_persona_buddy_view = reconcile
+            before = buddy.snapshot().profile_generation
+
+            await screen._invalidate_persona_visual_publication(
+                PersonaVisualPublicationResult(graph.identity, graph.identity, None)
+            )
+            assert buddy.snapshot().profile_generation == before + 1
+            reconcile.assert_awaited_once_with()
+
+            reconcile.reset_mock()
+            unrelated = replace(
+                graph.identity,
+                persona_id="p-other",
+                binding_id=91,
+                pack_id=92,
+                pack_version_id=93,
+            )
+            await screen._invalidate_persona_visual_publication(
+                PersonaVisualPublicationResult(unrelated, unrelated, None)
+            )
+            assert buddy.snapshot().profile_generation == before + 1
+            reconcile.assert_not_awaited()
+    finally:
+        await buddy.shutdown()
+        db.close_connection()
 
 
-@pytest.mark.parametrize(
-    "visual",
-    (
-        None,
-        SimpleNamespace(
-            source="local",
-            persona_id="p-1",
-            persona_revision=2,
-            graph_identity=None,
-        ),
-    ),
-)
-async def test_visual_publication_remounts_exact_selected_unavailable_buddy(
-    visual,
+async def test_visual_publication_rebounds_real_unavailable_buddy_to_available(
     monkeypatch,
     mock_app_instance,
     stub_characters,
     local_scope,
+    tmp_path,
 ):
     monkeypatch.setattr(personas_screen_module, "PersonaVisualRepository", _Repository)
-    invalidate_profile = Mock()
-    reconcile = AsyncMock(return_value=True)
-    buddy = SimpleNamespace(
-        snapshot=lambda: _buddy_snapshot(visual=visual),
-        invalidate_profile=invalidate_profile,
-    )
+    buddy, db, graph = _persona_buddy_runtime(tmp_path)
+    assert graph is not None
+    published = False
+
+    class PublicationGate:
+        def __init__(self, profile_db):
+            self._repository = PersonaVisualRepository(profile_db)
+
+        def get_active_persona_pack(self, persona_id):
+            if not published:
+                return None
+            return self._repository.get_active_persona_pack(persona_id)
+
+        def __getattr__(self, name):
+            return getattr(self._repository, name)
+
+    # The controller owns the real resolution and cache snapshots; only the
+    # publication boundary is gated so the first resolve sees no binding.
+    buddy._repository_factory = PublicationGate
+    mounted = []
+
+    async def reconcile():
+        mounted.append(await buddy.resolve_current_visual(cols=80, lines=24))
+        return True
+
     app = PersonasTestApp(mock_app_instance)
+    try:
+        unavailable = await buddy.resolve_current_visual(cols=80, lines=24)
+        assert unavailable.available is False
+        assert unavailable.source == "unavailable"
+        assert unavailable.persona_id == "persona-local-1"
+        assert unavailable.persona_revision == 7
+        assert unavailable.graph_identity is None
+        assert unavailable.cache_identity is None
 
-    async with app.run_test() as pilot:
-        screen = await _open_editor(pilot)
-        mock_app_instance.persona_buddy_controller = buddy
-        mock_app_instance.reconcile_persona_buddy_view = reconcile
+        async with app.run_test() as pilot:
+            screen = await _open_editor(pilot)
+            local_scope.get_persona_profile = AsyncMock(
+                return_value={
+                    **PROFILE,
+                    "id": "persona-local-1",
+                    "version": 7,
+                    "is_active": True,
+                    "deleted": False,
+                }
+            )
+            mock_app_instance.persona_buddy_controller = buddy
+            mock_app_instance.reconcile_persona_buddy_view = AsyncMock(
+                side_effect=reconcile
+            )
+            before = buddy.snapshot().profile_generation
+            published = True
 
-        await screen._invalidate_persona_visual_publication(
-            PersonaVisualPublicationResult(_identity(), _identity(2), None)
-        )
+            await screen._invalidate_persona_visual_publication(
+                PersonaVisualPublicationResult(graph.identity, graph.identity, None)
+            )
 
-        invalidate_profile.assert_called_once_with()
-        reconcile.assert_awaited_once_with()
+            assert buddy.snapshot().profile_generation == before + 1
+            assert len(mounted) == 1
+            assert mounted[0].available is True
+            assert mounted[0].graph_identity == graph.identity
+            assert type(mounted[0].cache_identity) is PersonaVisualCacheIdentity
+            assert buddy.snapshot().visual == mounted[0]
+    finally:
+        await buddy.shutdown()
+        db.close_connection()
 
 
-async def test_visual_publication_rejects_stale_cached_actor_after_selection_change(
+async def test_visual_publication_rejects_real_same_graph_stale_cache_and_actor(
     monkeypatch,
     mock_app_instance,
     stub_characters,
     local_scope,
+    tmp_path,
 ):
     monkeypatch.setattr(personas_screen_module, "PersonaVisualRepository", _Repository)
-    invalidate_profile = Mock()
-    buddy = SimpleNamespace(
-        snapshot=lambda: _buddy_snapshot(
-            persona_id="p-2",
-            visual=SimpleNamespace(
-                source="local",
-                persona_id="p-1",
-                persona_revision=2,
-                graph_identity=_identity(),
-            ),
-        ),
-        invalidate_profile=invalidate_profile,
-    )
+    buddy, db, graph = _persona_buddy_runtime(tmp_path)
+    assert graph is not None
     app = PersonasTestApp(mock_app_instance)
+    reduced_motion = [False]
+    buddy._reduced_motion = lambda: reduced_motion[0]
+    try:
+        original = await buddy.resolve_current_visual(cols=80, lines=24)
+        assert original.available is True
+        assert type(original.cache_identity) is PersonaVisualCacheIdentity
 
-    async with app.run_test() as pilot:
-        screen = await _open_editor(pilot)
-        local_scope.get_persona_profile = AsyncMock(
-            return_value={
+        async def change_cache(persona_id: str, *, mode: str):
+            assert persona_id == "persona-local-1"
+            assert mode == "local"
+            reduced_motion[0] = True
+            changed = await buddy.resolve_current_visual(cols=80, lines=24)
+            assert changed.graph_identity == original.graph_identity
+            assert changed.cache_identity != original.cache_identity
+            assert changed.cache_identity.reduced_motion is True
+            assert original.cache_identity.reduced_motion is False
+            return {
                 **PROFILE,
-                "id": "p-2",
-                "version": 5,
+                "id": "persona-local-1",
+                "version": 7,
                 "is_active": True,
                 "deleted": False,
             }
-        )
-        mock_app_instance.persona_buddy_controller = buddy
-        mock_app_instance.reconcile_persona_buddy_view = AsyncMock(return_value=True)
 
-        await screen._invalidate_persona_visual_publication(
-            PersonaVisualPublicationResult(_identity(), _identity(2), None)
-        )
+        async with app.run_test() as pilot:
+            screen = await _open_editor(pilot)
+            local_scope.get_persona_profile = AsyncMock(side_effect=change_cache)
+            mock_app_instance.persona_buddy_controller = buddy
+            mock_app_instance.reconcile_persona_buddy_view = AsyncMock(
+                return_value=True
+            )
+            before = buddy.snapshot().profile_generation
 
-        invalidate_profile.assert_not_called()
-        mock_app_instance.reconcile_persona_buddy_view.assert_not_awaited()
+            await screen._invalidate_persona_visual_publication(
+                PersonaVisualPublicationResult(graph.identity, graph.identity, None)
+            )
+            assert buddy.snapshot().profile_generation == before
+            mock_app_instance.reconcile_persona_buddy_view.assert_not_awaited()
+
+            unrelated = replace(
+                graph.identity,
+                persona_id="p-other",
+                binding_id=91,
+                pack_id=92,
+                pack_version_id=93,
+            )
+            await screen._invalidate_persona_visual_publication(
+                PersonaVisualPublicationResult(unrelated, unrelated, None)
+            )
+            assert buddy.snapshot().profile_generation == before
+            mock_app_instance.reconcile_persona_buddy_view.assert_not_awaited()
+
+            buddy.select_local_persona("p-other")
+            after_selection = buddy.snapshot().profile_generation
+            await screen._invalidate_persona_visual_publication(
+                PersonaVisualPublicationResult(graph.identity, graph.identity, None)
+            )
+            assert buddy.snapshot().profile_generation == after_selection
+            mock_app_instance.reconcile_persona_buddy_view.assert_not_awaited()
+    finally:
+        await buddy.shutdown()
+        db.close_connection()
 
 
 async def test_failed_publication_keeps_draft_and_invalidates_nothing(
-    monkeypatch, mock_app_instance, stub_characters, local_scope
+    monkeypatch, mock_app_instance, stub_characters, local_scope, tmp_path
 ):
     monkeypatch.setattr(personas_screen_module, "PersonaVisualRepository", _Repository)
+    buddy, db, _graph = _persona_buddy_runtime(tmp_path)
     app = PersonasTestApp(mock_app_instance)
     invalidation = AsyncMock()
-    buddy_invalidation = Mock()
+    try:
+        async with app.run_test() as pilot:
+            screen = await _open_editor(pilot)
+            mock_app_instance.persona_buddy_controller = buddy
+            screen._session = SimpleNamespace(
+                invalidate_persona_visual_identities=invalidation
+            )
+            state = screen._persona_visual_authoring
+            assert state is not None
+            state.dirty = True
+            before = buddy.snapshot().profile_generation
+            monkeypatch.setattr(
+                personas_screen_module,
+                "persona_visual_draft_publication_snapshot",
+                lambda _draft: object(),
+            )
 
-    async with app.run_test() as pilot:
-        screen = await _open_editor(pilot)
-        mock_app_instance.persona_buddy_controller = SimpleNamespace(
-            snapshot=lambda: SimpleNamespace(
-                visual=SimpleNamespace(graph_identity=_identity())
-            ),
-            invalidate_profile=buddy_invalidation,
-        )
-        screen._session = SimpleNamespace(
-            invalidate_persona_visual_identities=invalidation
-        )
-        state = screen._persona_visual_authoring
-        assert state is not None
-        state.dirty = True
-        monkeypatch.setattr(
-            personas_screen_module,
-            "persona_visual_draft_publication_snapshot",
-            lambda _draft: object(),
-        )
+            def fail(*_args, **_kwargs):
+                raise PersonaVisualPublicationError("persona_visual_authority_changed")
 
-        def fail(*_args, **_kwargs):
-            raise PersonaVisualPublicationError("persona_visual_authority_changed")
+            monkeypatch.setattr(personas_screen_module, "publish_persona_visual", fail)
 
-        monkeypatch.setattr(personas_screen_module, "publish_persona_visual", fail)
-
-        assert await screen._save_persona_visual_pack() is False
-        assert screen._persona_visual_authoring is state
-        invalidation.assert_not_awaited()
-        buddy_invalidation.assert_not_called()
+            assert await screen._save_persona_visual_pack() is False
+            assert screen._persona_visual_authoring is state
+            invalidation.assert_not_awaited()
+            assert buddy.snapshot().profile_generation == before
+    finally:
+        await buddy.shutdown()
+        db.close_connection()
 
 
 async def test_persona_authority_guard_rejects_revision_and_eligibility_changes(
@@ -462,47 +517,41 @@ async def test_persona_authority_guard_rejects_revision_and_eligibility_changes(
 
 
 async def test_cancel_signals_active_operation_and_discards_only_draft(
-    monkeypatch, mock_app_instance, stub_characters, local_scope
+    monkeypatch, mock_app_instance, stub_characters, local_scope, tmp_path
 ):
     monkeypatch.setattr(personas_screen_module, "PersonaVisualRepository", _Repository)
-    buddy_invalidation = Mock()
+    buddy, db, _graph = _persona_buddy_runtime(tmp_path)
     app = PersonasTestApp(mock_app_instance)
+    try:
+        async with app.run_test() as pilot:
+            screen = await _open_editor(pilot)
+            mock_app_instance.persona_buddy_controller = buddy
+            state = screen._persona_visual_authoring
+            assert state is not None
+            state.dirty = True
+            before = buddy.snapshot().profile_generation
+            event = asyncio.Event()
 
-    async with app.run_test() as pilot:
-        screen = await _open_editor(pilot)
-        mock_app_instance.persona_buddy_controller = SimpleNamespace(
-            snapshot=lambda: _buddy_snapshot(
-                visual=SimpleNamespace(
-                    source="local",
-                    persona_id="p-1",
-                    persona_revision=2,
-                    graph_identity=_identity(),
-                )
-            ),
-            invalidate_profile=buddy_invalidation,
-        )
-        state = screen._persona_visual_authoring
-        assert state is not None
-        state.dirty = True
-        event = asyncio.Event()
+            async def blocked():
+                await event.wait()
 
-        async def blocked():
-            await event.wait()
+            task = asyncio.create_task(blocked())
+            screen._persona_visual_operation_task = task
+            screen._persona_visual_operation_event = threading.Event()
+            monkeypatch.setattr(screen, "_configure_persona_visual", AsyncMock())
 
-        task = asyncio.create_task(blocked())
-        screen._persona_visual_operation_task = task
-        screen._persona_visual_operation_event = threading.Event()
-        monkeypatch.setattr(screen, "_configure_persona_visual", AsyncMock())
+            cancel = asyncio.create_task(screen._cancel_persona_visual_authoring())
+            await asyncio.sleep(0)
+            assert screen._persona_visual_operation_event.is_set()
+            event.set()
+            await cancel
 
-        cancel = asyncio.create_task(screen._cancel_persona_visual_authoring())
-        await asyncio.sleep(0)
-        assert screen._persona_visual_operation_event.is_set()
-        event.set()
-        await cancel
-
-        assert screen._persona_visual_authoring is None
-        assert screen._configure_persona_visual.await_count == 1
-        buddy_invalidation.assert_not_called()
+            assert screen._persona_visual_authoring is None
+            assert screen._configure_persona_visual.await_count == 1
+            assert buddy.snapshot().profile_generation == before
+    finally:
+        await buddy.shutdown()
+        db.close_connection()
 
 
 async def test_stale_import_is_cleaned_and_cannot_repaint(
