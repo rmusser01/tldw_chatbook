@@ -6,6 +6,7 @@ from .controller import (
     PersonaBuddySnapshot,
 )
 from .preferences import (
+    PERSONA_BUDDY_UNPOSITIONED_COORDINATE,
     PersonaBuddyGeometry,
     PersonaBuddyPreferences,
     PersonaBuddySelection,
@@ -15,6 +16,7 @@ from .preferences import (
 )
 
 __all__ = (
+    "PERSONA_BUDDY_UNPOSITIONED_COORDINATE",
     "PersonaBuddyController",
     "PersonaBuddyGeometry",
     "PersonaBuddyLeaseToken",

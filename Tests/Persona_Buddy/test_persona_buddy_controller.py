@@ -141,6 +141,59 @@ def test_expiration_does_not_promote_operational_priority() -> None:
     assert controller.snapshot().state == "tool_running"
 
 
+def test_indefinite_explicit_custom_state_is_rejected() -> None:
+    controller = PersonaBuddyController(clock=lambda: 100.0)
+
+    with pytest.raises(ValueError, match="^persona_buddy_state_invalid$"):
+        controller.acquire_state(
+            source="explicit",
+            owner="preview",
+            state="mood_calm",
+        )
+
+
+def test_arbitrary_source_custom_state_is_rejected() -> None:
+    controller = PersonaBuddyController(clock=lambda: 100.0)
+
+    with pytest.raises(ValueError, match="^persona_buddy_state_invalid$"):
+        controller.acquire_state(
+            source="authroed",
+            owner="pack",
+            state="mood_calm",
+            expires_at=200.0,
+        )
+
+
+@pytest.mark.parametrize("expires_at", (float("nan"), float("inf"), 100.0, 99.0))
+def test_explicit_custom_state_requires_finite_future_expiry(
+    expires_at: float,
+) -> None:
+    controller = PersonaBuddyController(clock=lambda: 100.0)
+
+    with pytest.raises(ValueError, match="^persona_buddy_state_invalid$"):
+        controller.acquire_state(
+            source="explicit",
+            owner="preview",
+            state="mood_calm",
+            expires_at=expires_at,
+        )
+
+
+def test_authored_and_explicit_timed_custom_states_are_valid() -> None:
+    controller = PersonaBuddyController(clock=lambda: 100.0)
+    authored = controller.set_authored_trigger(owner="pack", state="mood_calm")
+    explicit = controller.acquire_state(
+        source="explicit",
+        owner="preview",
+        state="reaction:happy",
+        expires_at=101.0,
+    )
+
+    assert authored.state == "mood_calm"
+    assert explicit.state == "reaction:happy"
+    assert controller.snapshot().state == "reaction:happy"
+
+
 def test_selection_never_changes_from_observed_persona() -> None:
     controller = PersonaBuddyController()
     selected_generation = controller.select_local_persona("p-1")
@@ -155,3 +208,18 @@ def test_selection_never_changes_from_observed_persona() -> None:
         == selected_generation
     )
     assert controller.snapshot().selection == PersonaBuddySelection("local", "p-1")
+
+
+@pytest.mark.parametrize("contract_name", ("lease_token", "snapshot"))
+def test_controller_public_contracts_are_exactly_frozen_and_slotted(
+    contract_name: str,
+) -> None:
+    controller = PersonaBuddyController()
+    token = controller.acquire_state(source="tool", owner="call", state="tool_running")
+    value = token if contract_name == "lease_token" else controller.snapshot()
+
+    assert type(value).__dataclass_params__.frozen is True
+    assert "__slots__" in vars(type(value))
+    assert not hasattr(value, "__dict__")
+    with pytest.raises(FrozenInstanceError):
+        value.state = "idle"  # type: ignore[misc]

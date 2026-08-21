@@ -55,6 +55,7 @@ _UNSAFE_STATE_MARKERS = (
 )
 _LIVE_STATES = frozenset({"idle", "listening", "thinking", "speaking"})
 _TIMED_SOURCES = frozenset({"explicit", "timed"})
+_CUSTOM_STATE_SOURCES = frozenset({"authored", *_TIMED_SOURCES})
 _MAX_TTL_SECONDS = 3600.0
 
 _LeaseKind = Literal[
@@ -158,6 +159,19 @@ def _lease_kind(source: str, state: str) -> _LeaseKind:
     return "authored"
 
 
+def _validate_state_authority(
+    *,
+    source: str,
+    state: str,
+    expires_at: float | None,
+    now: float,
+) -> None:
+    if source in _TIMED_SOURCES and (expires_at is None or expires_at <= now):
+        raise PersonaBuddyStateError()
+    if state not in _BUILTIN_STATES and source not in _CUSTOM_STATE_SOURCES:
+        raise PersonaBuddyStateError()
+
+
 class PersonaBuddyController:
     """Own one explicit selection and source-scoped operational-state leases."""
 
@@ -231,6 +245,12 @@ class PersonaBuddyController:
         normalized_expiration = _require_expiration(expires_at)
         with self._lock:
             self._discard_expired_locked()
+            _validate_state_authority(
+                source=normalized_source,
+                state=normalized_state,
+                expires_at=normalized_expiration,
+                now=self._clock(),
+            )
             self._next_lease_id += 1
             token = PersonaBuddyLeaseToken(
                 source=normalized_source,

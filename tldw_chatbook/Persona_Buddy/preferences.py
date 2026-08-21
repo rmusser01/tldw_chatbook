@@ -12,6 +12,8 @@ from loguru import logger
 _PERSONA_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
 _MAX_POSITION = 1_000_000
 _MAX_DIMENSION = 10_000
+PERSONA_BUDDY_UNPOSITIONED_COORDINATE = _MAX_POSITION
+"""Never-positioned coordinate that viewport clamping places bottom-right."""
 
 
 def save_settings_to_cli_config(
@@ -52,10 +54,15 @@ class PersonaBuddySelection:
 
 @dataclass(frozen=True, slots=True)
 class PersonaBuddyGeometry:
-    """Persisted floating-window geometry before viewport clamping."""
+    """Persisted floating-window geometry before viewport clamping.
 
-    x: int = 0
-    y: int = 0
+    The maximum-coordinate sentinel represents a Buddy that has never been
+    positioned and therefore clamps to the bottom-right. Zero remains an exact,
+    intentionally persisted top-left coordinate.
+    """
+
+    x: int = PERSONA_BUDDY_UNPOSITIONED_COORDINATE
+    y: int = PERSONA_BUDDY_UNPOSITIONED_COORDINATE
     width: int = 28
     height: int = 12
 
