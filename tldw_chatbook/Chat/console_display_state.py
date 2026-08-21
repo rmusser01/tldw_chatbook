@@ -287,7 +287,7 @@ class ConsoleProjectInstructionSourceRow:
 
     relative_source: str
     scope: str
-    byte_count: int
+    byte_count: int | None
     outcome: str
     warning_code: str = ""
 
@@ -302,6 +302,7 @@ class ConsoleProjectInstructionState:
     locator_match: str
     sources: tuple[ConsoleProjectInstructionSourceRow, ...] = ()
     warning_codes: tuple[str, ...] = ()
+    recovery_actions: tuple[str, ...] = ()
 
 
 def build_console_project_instruction_state(
@@ -311,16 +312,38 @@ def build_console_project_instruction_state(
     locator_matches: bool | None = None,
     sources: tuple[ConsoleProjectInstructionSourceRow, ...] = (),
     warning_codes: tuple[str, ...] = (),
+    activation_events: tuple[Any, ...] = (),
 ) -> ConsoleProjectInstructionState:
     """Build the five-state project-instruction summary without source bodies."""
+    combined_sources = list(sources)
+    combined_warnings = [str(code) for code in warning_codes]
+    for event in activation_events:
+        event_outcomes = tuple(
+            str(code) for code in getattr(event, "outcome_codes", ()) if str(code)
+        )
+        combined_warnings.extend(event_outcomes)
+        for relative_source, scope in zip(
+            getattr(event, "relative_sources", ()),
+            getattr(event, "scopes", ()),
+        ):
+            combined_sources.append(
+                ConsoleProjectInstructionSourceRow(
+                    relative_source=str(relative_source),
+                    scope=str(scope),
+                    byte_count=None,
+                    outcome="active",
+                )
+            )
+    unique_sources = tuple(dict.fromkeys(combined_sources))
+    unique_warnings = tuple(dict.fromkeys(combined_warnings))
     if not control.project_instructions_enabled:
         status = "Off"
-    elif warning_codes or locator_matches is False:
+    elif unique_warnings or locator_matches is False:
         status = "Warning"
     elif not control.working_folder_binding_id:
         status = "Choose folder"
-    elif sources:
-        loaded = sum(row.outcome == "active" for row in sources)
+    elif unique_sources:
+        loaded = sum(row.outcome == "active" for row in unique_sources)
         status = f"{loaded} loaded"
     else:
         status = "None"
@@ -331,13 +354,40 @@ def build_console_project_instruction_state(
         if locator_matches is False
         else "not checked"
     )
+    recovery_actions = (
+        ("enable",)
+        if status == "Off"
+        else ("choose", "disable")
+        if status in {"Choose folder", "Warning"}
+        else ()
+    )
     return ConsoleProjectInstructionState(
         status=status,
         enabled=control.project_instructions_enabled,
         binding_label=str(binding_label or ""),
         locator_match=locator_match,
-        sources=tuple(sources),
-        warning_codes=tuple(str(code) for code in warning_codes),
+        sources=unique_sources,
+        warning_codes=unique_warnings,
+        recovery_actions=recovery_actions,
+    )
+
+
+def merge_console_project_instruction_activations(
+    state: ConsoleProjectInstructionState,
+    control: ProjectInstructionControlState,
+    activation_events: tuple[Any, ...],
+) -> ConsoleProjectInstructionState:
+    """Merge one run's content-free activation events into cached UI state."""
+    if not activation_events:
+        return state
+    locator_matches = {"match": True, "mismatch": False}.get(state.locator_match)
+    return build_console_project_instruction_state(
+        control,
+        binding_label=state.binding_label,
+        locator_matches=locator_matches,
+        sources=state.sources,
+        warning_codes=state.warning_codes,
+        activation_events=activation_events,
     )
 
 

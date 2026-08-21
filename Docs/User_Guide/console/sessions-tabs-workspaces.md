@@ -139,6 +139,23 @@ directly — but the next time you visit Console, it picks up the change and
 switches its own session to match, the same as if you had switched with
 Alt+W.
 
+### Session project folders
+
+Project instructions are local per-session state. A new session starts
+enabled and asks you to choose when more than one eligible local-filesystem
+binding exists; exactly one eligible binding may be selected. That binding is
+both the instruction authority root and the working directory for local and
+built-in file/git tools. Chatbook never searches global or personal
+instruction files and never ascends above the selected root.
+
+Legacy sessions and sessions where project instructions are disabled keep the
+older local-tool behavior: `[console] workspace_root` is the confinement root,
+or the app's startup working directory when it is empty. A selected
+project-instruction binding takes precedence over that fallback only while the
+feature is enabled for that session. Bindings marked read-only expose only
+read-capable tools. Folder names and instruction contents are not synchronized;
+the local control fields stay with the local conversation record.
+
 ### Details
 
 Open the "Details" header in the left rail to see where your chats live:
@@ -220,6 +237,8 @@ nothing is created, no matter what you had typed or added.
 - [Agent runs & tools](agent-runs-and-tools.md) — what the ● ◆ ✓ ✗ markers
   mean in detail, approvals, and the run log.
 - [Context & RAG](context-and-rag.md) — RAG scope and staged context.
+- [Context & RAG: Project instructions](context-and-rag.md#project-instructions)
+  — discovery, consent, status, budgets, and warnings.
 - [Guide index](../index.md) — global keys and navigation.
 
 ## Quirks & troubleshooting

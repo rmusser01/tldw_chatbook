@@ -2,22 +2,34 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Awaitable, Callable
+import copy
 from dataclasses import dataclass, replace
-from typing import Literal, Sequence
+from functools import partial
+from typing import Any, Literal, Sequence
 
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widget import Widget
 from textual.widgets import Button, Footer, Static
+from textual.css.query import QueryError
 
-from ...Chat.console_chat_controller import ProjectInstructionDispatchNotice
+from ...Chat.console_chat_controller import (
+    ProjectInstructionBindingRecovery,
+    ProjectInstructionDispatchNotice,
+    commit_project_instruction_setup_decision,
+    list_project_instruction_bindings,
+)
 from ...Chat.console_chat_models import ProjectInstructionPreview
 from ...Chat.console_display_state import (
     ConsoleProjectInstructionSourceRow,
     ConsoleProjectInstructionState,
+    merge_console_project_instruction_activations,
 )
 
 
@@ -37,6 +49,172 @@ class ProjectInstructionSetupResult:
 
     action: Literal["select", "disable", "cancel"]
     binding_id: str | None = None
+
+
+async def recover_console_project_instruction_session(
+    session_id: str | None,
+    action: str,
+    *,
+    store: Any,
+    registry: Any,
+    select_binding: Callable[
+        [str, tuple[Any, ...], str], Awaitable[tuple[str, str | None]]
+    ],
+    refresh_state: Callable[[str], Awaitable[ConsoleProjectInstructionState]],
+    clear_delivery: Callable[[str], None],
+    activation_controller: Any = None,
+) -> ConsoleProjectInstructionState | None:
+    """Apply one race-safe recovery decision to the captured session."""
+    if session_id is None or action not in {"enable", "choose", "disable"}:
+        return None
+    session = next((item for item in store.sessions() if item.id == session_id), None)
+    if session is None:
+        return None
+    expected_state = session.project_instruction_state
+    options = ()
+    decision = action
+    binding_id = None
+    if action != "disable":
+        recovery_code = "no_eligible_binding"
+        try:
+            options = await asyncio.to_thread(
+                list_project_instruction_bindings, session, registry
+            )
+        except ProjectInstructionBindingRecovery as exc:
+            recovery_code = str(exc) or "binding_unavailable"
+        decision, binding_id = await select_binding(
+            session_id, options, recovery_code
+        )
+    def validate_decision():
+        session_snapshot = copy.copy(session)
+        pending_state = []
+
+        class StoreSnapshot:
+            def sessions(self):
+                return (session_snapshot,)
+
+            def set_session_project_instruction_state(self, _session_id, state):
+                pending_state.append(state)
+                session_snapshot.project_instruction_state = state
+
+        outcome, selection = commit_project_instruction_setup_decision(
+            store=StoreSnapshot(),
+            session_id=session_id,
+            registry=registry,
+            expected_state=expected_state,
+            expected_options=options,
+            action=decision,
+            binding_id=binding_id,
+        )
+        return outcome, selection, pending_state[0] if pending_state else None
+
+    outcome, _selection, pending_state = await asyncio.to_thread(validate_decision)
+    current = next((item for item in store.sessions() if item.id == session_id), None)
+    if current is None or current.project_instruction_state != expected_state:
+        outcome = "cancel"
+    elif pending_state is not None:
+        store.set_session_project_instruction_state(session_id, pending_state)
+    if outcome != "cancel":
+        clear_delivery(session_id)
+    state = await refresh_state(session_id)
+    return project_instruction_ui_state(
+        state,
+        store=store,
+        controller=activation_controller,
+        session_id=session_id,
+    )
+
+
+def project_instruction_ui_state(
+    state: ConsoleProjectInstructionState,
+    *,
+    store: Any,
+    controller: Any,
+    session_id: str | None = None,
+) -> ConsoleProjectInstructionState:
+    """Add one captured session's content-free activation events to UI state."""
+    target_id = session_id or store.active_session_id
+    events = (
+        controller.project_instruction_activation_events(target_id)
+        if controller is not None and target_id is not None
+        else ()
+    )
+    if not events or target_id is None:
+        return state
+    session = next((item for item in store.sessions() if item.id == target_id), None)
+    if session is None:
+        return state
+    return merge_console_project_instruction_activations(
+        state, session.project_instruction_state, events
+    )
+
+
+def sync_project_instruction_status_row(screen: Any, state: Any) -> None:
+    """Refresh the mounted rail row without leaking DOM work into the screen."""
+    try:
+        row = screen.query_one(
+            "#console-project-instruction-status", ConsoleProjectInstructionStatusRow
+        )
+    except QueryError:
+        return
+    row.sync_state(state)
+
+
+def project_instruction_context_kwargs(
+    screen: Any, controller: Any, session_id: str
+) -> dict[str, Any]:
+    """Bind captured-session project state and recovery for Context."""
+    session_controller = screen._session
+    def project_state(state):
+        return project_instruction_ui_state(
+            state,
+            store=controller.store,
+            controller=controller,
+            session_id=session_id,
+        )
+
+    async def state_factory():
+        state = await session_controller._refresh_console_project_instruction_display_state(
+            session_id
+        )
+        return project_state(state)
+
+    return {
+        "project_instruction_state": project_state(
+            session_controller._build_console_project_instruction_display_state(session_id)
+        ),
+        "project_instruction_state_factory": state_factory,
+        "project_instruction_session_id": session_id,
+        "project_instruction_recovery": partial(
+            recover_console_project_instruction_session,
+            store=controller.store,
+            registry=getattr(screen.app_instance, "workspace_registry_service", None),
+            select_binding=session_controller._select_project_instruction_binding,
+            refresh_state=session_controller._refresh_console_project_instruction_display_state,
+            clear_delivery=controller._clear_project_instruction_delivery,
+            activation_controller=controller,
+        ),
+    }
+
+
+def project_instruction_ui_state_for_screen(
+    screen: Any, state: ConsoleProjectInstructionState | None = None
+) -> ConsoleProjectInstructionState:
+    """Bind active-session activation metadata without growing ChatScreen."""
+    if state is None:
+        state = screen._session._build_console_project_instruction_display_state()
+    return project_instruction_ui_state(
+        state,
+        store=screen._ensure_console_chat_store(),
+        controller=getattr(screen, "_console_chat_controller", None),
+    )
+
+
+def sync_project_instruction_status_for_screen(screen: Any) -> None:
+    """Publish active-session activation state into the mounted rail row."""
+    sync_project_instruction_status_row(
+        screen, project_instruction_ui_state_for_screen(screen)
+    )
 
 
 class ConsoleProjectInstructionStatusRow(Widget):
@@ -86,22 +264,47 @@ class ConsoleProjectInstructionStatusRow(Widget):
         self.screen.action_view_chat_context()
 
 
-class ConsoleProjectInstructionContextPanel(Widget):
+class ConsoleProjectInstructionContextPanel(VerticalScroll):
     """Metadata-only Project Instructions section for Context."""
 
     DEFAULT_CSS = """
     ConsoleProjectInstructionContextPanel {
         width: 100%;
         height: auto;
+        max-height: 9;
         padding: 0 1;
         background: $surface;
     }
     .console-project-instruction-meta { height: auto; color: $text-muted; }
+    #console-project-instruction-recovery-actions { height: 1; margin-top: 1; }
+    .console-project-instruction-recovery-action {
+        width: auto;
+        min-width: 10;
+        height: 1;
+        min-height: 1;
+        border: none;
+        padding: 0 1;
+    }
     """
 
-    def __init__(self, state: ConsoleProjectInstructionState, **kwargs) -> None:
+    class RecoveryRequested(Message):
+        """Request one captured session's relevant recovery action."""
+
+        def __init__(self, session_id: str | None, action: str) -> None:
+            super().__init__()
+            self.session_id = session_id
+            self.action = action
+
+    def __init__(
+        self,
+        state: ConsoleProjectInstructionState,
+        *,
+        session_id: str | None = None,
+        **kwargs,
+    ) -> None:
         super().__init__(**kwargs)
         self._state = state
+        self._session_id = session_id
 
     def compose(self) -> ComposeResult:
         state = self._state
@@ -118,9 +321,18 @@ class ConsoleProjectInstructionContextPanel(Widget):
         )
         for source in state.sources:
             warning = f" · warning {source.warning_code}" if source.warning_code else ""
+            byte_copy = (
+                f" · {source.byte_count} bytes"
+                if source.byte_count is not None
+                else ""
+            )
+            basename = source.relative_source.rsplit("/", 1)[-1]
+            precedence = (
+                "override" if basename == "AGENTS.override.md" else "standard"
+            )
             yield Static(
-                f"{source.relative_source} · scope {source.scope} · "
-                f"{source.byte_count} bytes · {source.outcome}{warning}",
+                f"{source.relative_source} · Precedence: {precedence} · "
+                f"scope {source.scope}{byte_copy} · {source.outcome}{warning}",
                 classes="console-project-instruction-meta",
                 markup=False,
             )
@@ -130,37 +342,70 @@ class ConsoleProjectInstructionContextPanel(Widget):
                 classes="console-project-instruction-meta",
                 markup=False,
             )
+        if state.recovery_actions:
+            labels = {
+                "enable": "Enable",
+                "choose": "Choose folder",
+                "disable": "Disable",
+            }
+            with Horizontal(id="console-project-instruction-recovery-actions"):
+                for action in state.recovery_actions:
+                    yield Button(
+                        labels[action],
+                        id=f"console-project-instruction-{action}",
+                        classes="console-project-instruction-recovery-action",
+                        compact=True,
+                    )
+
+    @on(Button.Pressed, ".console-project-instruction-recovery-action")
+    def _request_recovery(self, event: Button.Pressed) -> None:
+        event.stop()
+        action = event.button.id.rsplit("-", 1)[-1]
+        self.post_message(self.RecoveryRequested(self._session_id, action))
 
     def sync_preview(self, preview: ProjectInstructionPreview | None) -> None:
         """Refresh content-free source metadata from a disposable preview."""
         if preview is None:
             return
-        sources = ()
+        sources_by_scope = {
+            (source.relative_source, source.scope): source
+            for source in self._state.sources
+        }
         if preview.relative_source is not None:
-            sources = (
-                ConsoleProjectInstructionSourceRow(
-                    relative_source=preview.relative_source,
-                    scope=preview.scope,
-                    byte_count=preview.byte_count,
-                    outcome=preview.outcomes[0] if preview.outcomes else "active",
-                    warning_code=(
-                        preview.warning_codes[0] if preview.warning_codes else ""
-                    ),
+            source = ConsoleProjectInstructionSourceRow(
+                relative_source=preview.relative_source,
+                scope=preview.scope,
+                byte_count=preview.byte_count,
+                outcome=preview.outcomes[0] if preview.outcomes else "active",
+                warning_code=(
+                    preview.warning_codes[0] if preview.warning_codes else ""
                 ),
             )
-        status = "Warning" if preview.warning_codes else f"{len(sources)} loaded"
+            sources_by_scope[(source.relative_source, source.scope)] = source
+        sources = tuple(sources_by_scope.values())
+        warning_codes = tuple(
+            dict.fromkeys((*self._state.warning_codes, *preview.warning_codes))
+        )
+        status = (
+            "Warning"
+            if warning_codes
+            else f"{sum(source.outcome == 'active' for source in sources)} loaded"
+        )
         if not sources and not preview.warning_codes:
             status = "None"
         self._state = replace(
             self._state,
             status=status,
             sources=sources,
-            warning_codes=preview.warning_codes,
+            warning_codes=warning_codes,
+            recovery_actions=("choose", "disable") if status == "Warning" else (),
         )
         self.refresh(recompose=True)
 
     def sync_state(self, state: ConsoleProjectInstructionState) -> None:
         """Replace the complete content-free state for a modal refresh."""
+        if state == self._state:
+            return
         self._state = state
         self.refresh(recompose=True)
 
@@ -186,6 +431,7 @@ class ProjectInstructionSetupModal(ModalScreen[ProjectInstructionSetupResult]):
     """
 
     BINDINGS = [
+        ("escape", "cancel", "Cancel"),
         ("d", "disable", "Disable"),
         ("c", "cancel", "Cancel"),
     ]
@@ -228,7 +474,8 @@ class ProjectInstructionSetupModal(ModalScreen[ProjectInstructionSetupResult]):
         for button in self.query("Button.console-project-binding-option"):
             if not button.disabled:
                 button.focus()
-                break
+                return
+        self.query_one("#console-project-setup-disable", Button).focus()
 
     @on(Button.Pressed, ".console-project-binding-option")
     def _select(self, event: Button.Pressed) -> None:
@@ -274,6 +521,7 @@ class ProjectInstructionNoticeModal(ModalScreen[str]):
     """
 
     BINDINGS = [
+        ("escape", "cancel", "Cancel"),
         ("p", "proceed", "Proceed"),
         ("c", "cancel", "Cancel"),
         ("d", "disable", "Disable"),

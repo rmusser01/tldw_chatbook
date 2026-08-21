@@ -163,6 +163,83 @@ def test_display_states_are_metadata_only():
         assert all("body" not in item.__dataclass_fields__ for item in state.sources)
 
 
+def test_display_state_deduplicates_nested_activation_and_warning_pairs():
+    display = importlib.import_module("tldw_chatbook.Chat.console_display_state")
+    control = ProjectInstructionControlState(True, "binding", "f" * 64, None)
+    root = display.ConsoleProjectInstructionSourceRow(
+        relative_source="AGENTS.md",
+        scope=".",
+        byte_count=12,
+        outcome="active",
+    )
+    activation = SimpleNamespace(
+        relative_sources=("pkg/AGENTS.md",),
+        scopes=("pkg",),
+        outcome_codes=("omitted_token_budget",),
+    )
+    warning_rows = (
+        display.ConsoleProjectInstructionSourceRow(
+            "pkg-a/AGENTS.md",
+            "pkg-a",
+            None,
+            "omitted_token_budget",
+            "omitted_token_budget",
+        ),
+        display.ConsoleProjectInstructionSourceRow(
+            "pkg-b/AGENTS.md",
+            "pkg-b",
+            None,
+            "omitted_token_budget",
+            "omitted_token_budget",
+        ),
+    )
+
+    state = display.build_console_project_instruction_state(
+        control,
+        binding_label="Repo",
+        locator_matches=True,
+        sources=(root, root, *warning_rows, *warning_rows),
+        warning_codes=("resolver_failed", "resolver_failed"),
+        activation_events=(activation, activation),
+    )
+
+    assert state.status == "Warning"
+    assert state.warning_codes == ("resolver_failed", "omitted_token_budget")
+    assert [(row.relative_source, row.outcome) for row in state.sources] == [
+        ("AGENTS.md", "active"),
+        ("pkg-a/AGENTS.md", "omitted_token_budget"),
+        ("pkg-b/AGENTS.md", "omitted_token_budget"),
+        ("pkg/AGENTS.md", "active"),
+    ]
+    assert state.recovery_actions == ("choose", "disable")
+
+
+@pytest.mark.parametrize(
+    ("control", "kwargs", "expected_actions"),
+    [
+        (ProjectInstructionControlState.legacy_disabled(), {}, ("enable",)),
+        (
+            ProjectInstructionControlState.new_session(),
+            {},
+            ("choose", "disable"),
+        ),
+        (
+            ProjectInstructionControlState(True, "binding", "f" * 64, None),
+            {"binding_label": "Repo", "locator_matches": True},
+            (),
+        ),
+    ],
+)
+def test_display_state_exposes_only_relevant_recovery_actions(
+    control, kwargs, expected_actions
+):
+    display = importlib.import_module("tldw_chatbook.Chat.console_display_state")
+
+    state = display.build_console_project_instruction_state(control, **kwargs)
+
+    assert state.recovery_actions == expected_actions
+
+
 @pytest.mark.asyncio
 async def test_display_revalidates_binding_and_drops_stale_loaded_metadata(tmp_path):
     original = tmp_path / "original"
@@ -1737,6 +1814,31 @@ async def test_setup_modal_disable_and_cancel_bindings_are_exact(key, action):
 
 
 @pytest.mark.asyncio
+async def test_setup_modal_without_eligible_binding_focuses_disable_and_escape_cancels():
+    ui = _ui_module()
+    app = _ModalHarness()
+    results = []
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.push_screen(
+            ui.ProjectInstructionSetupModal(
+                (
+                    ui.ProjectInstructionBindingOption(
+                        "stale", "[stale] repo", False, "binding_retargeted"
+                    ),
+                )
+            ),
+            results.append,
+        )
+        await pilot.pause()
+        assert app.focused is app.screen.query_one(
+            "#console-project-setup-disable", Button
+        )
+        await pilot.press("escape")
+        await pilot.pause()
+    assert results == [ui.ProjectInstructionSetupResult("cancel")]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(80, 24), (100, 30), (140, 40)])
 async def test_notice_modal_is_usable_at_supported_sizes(size):
     ui = _ui_module()
@@ -1790,3 +1892,25 @@ async def test_notice_modal_cancel_and_disable_bindings_match_actions():
             await pilot.press(key)
             await pilot.pause()
         assert decisions == [expected]
+
+
+@pytest.mark.asyncio
+async def test_notice_modal_escape_cancels_without_acknowledging():
+    ui = _ui_module()
+    notice = ProjectInstructionDispatchNotice(
+        session_id="session-a",
+        destination_label="Provider",
+        relative_source=None,
+        scope=".",
+        byte_count=0,
+        outcomes=(),
+        warning_codes=(),
+    )
+    app = _ModalHarness()
+    decisions = []
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.push_screen(ui.ProjectInstructionNoticeModal(notice), decisions.append)
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+    assert decisions == ["cancel"]

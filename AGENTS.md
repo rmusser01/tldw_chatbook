@@ -166,7 +166,13 @@ Key sections:
 - `Agents/tool_catalog.py` is the provider seam: builtin/local/skill/MCP providers register with one `ToolCatalogRegistry`
 - Local fs_* tools (fs_list/fs_read/fs_write/fs_edit/fs_glob/fs_grep) in `Tools/local_tool_impls.py`, exposed via `Agents/local_tool_provider.py`
 - Approvals flow through the MCP permission store; local tools sit under the `local:__local__` hub
-- Config: `[console] local_tools_enabled` / `workspace_root` (confinement root for fs_*; empty = app cwd)
+- Config: `[console] local_tools_enabled` / `workspace_root` (fallback confinement root for disabled/legacy project-instruction sessions; empty = app cwd). An enabled session's selected project-instruction binding takes precedence as the tool and instruction authority root.
+
+### Console Project Instructions
+- `AGENTS.override.md` / `AGENTS.md` startup and lazy nested guidance is untrusted, ephemeral user context bounded by one selected local-filesystem binding; it never grants tool permission.
+- Registry ownership and path targets feed one shared activation ledger before normal tool review; read-only bindings do not advertise mutating tools.
+- UI, persistence, and logs keep automatic bodies out of metadata surfaces; the explicit disposable Context **Next Send** preview is the only automatic UI body view.
+- Governance: `backlog/decisions/069-console-project-instruction-local-state-and-preflight.md` and `Docs/superpowers/specs/2026-08-20-agents-md-support-design.md`.
 
 ### Config Encryption
 - AES-256 with PBKDF2

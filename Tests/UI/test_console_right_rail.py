@@ -24,12 +24,16 @@ and byte-identical afterwards (task-4 brief, global constraint 3).
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import threading
 
 import pytest
 from textual.containers import Horizontal
 from textual.widgets import Button
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_project_instructions import (
+    ProjectInstructionControlState,
+)
 from tldw_chatbook.Widgets.Console.console_context_modal import ConsoleContextModal
 
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
@@ -239,6 +243,7 @@ async def test_context_modal_refresh_factory_keeps_opening_session_after_switch(
         await pilot.pause()
         modal = pilot.app.screen
         assert isinstance(modal, ConsoleContextModal)
+        assert modal._project_instruction_session_id == captured.id
 
         active = store.create_session(title="Active")
         store.append_message(
@@ -251,6 +256,28 @@ async def test_context_modal_refresh_factory_keeps_opening_session_after_switch(
         assert [message.content for message in snapshot.current_messages] == [
             "captured transcript"
         ]
+
+        assert modal._project_instruction_recovery is not None
+        main_thread_id = threading.get_ident()
+        setter_threads = []
+        original_setter = store.set_session_project_instruction_state
+
+        def record_setter(session_id, state):
+            setter_threads.append(threading.get_ident())
+            return original_setter(session_id, state)
+
+        store.set_session_project_instruction_state = record_setter
+        state = await modal._project_instruction_recovery(captured.id, "disable")
+        assert state.status == "Off"
+        assert setter_threads == [main_thread_id]
+        captured_after = next(item for item in store.sessions() if item.id == captured.id)
+        active_after = next(item for item in store.sessions() if item.id == active.id)
+        assert captured_after.project_instruction_state == (
+            ProjectInstructionControlState.legacy_disabled()
+        )
+        assert active_after.project_instruction_state != (
+            ProjectInstructionControlState.legacy_disabled()
+        )
 
 
 @pytest.mark.asyncio

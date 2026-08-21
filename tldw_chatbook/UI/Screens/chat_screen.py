@@ -460,6 +460,7 @@ from ...Widgets.Console.console_selection_menu import (
 )
 from ...Widgets.Console.console_side_chat_modal import ConsoleSideChatModal
 from ...Widgets.Console.console_context_modal import ConsoleContextModal
+from ...Widgets.Console import console_project_instructions as project_instruction_ui
 from ...Widgets.Console.console_cost_modal import ConsoleCostModal
 from ...Widgets.Console.console_citation_sources_modal import (
     selected_valid_evidence_ordinals,
@@ -3299,11 +3300,6 @@ class ChatScreen(BaseAppScreen):
         def _estimate_factory() -> int | None:
             return self._estimate_tokens({"draft": _captured_draft()})
 
-        async def _project_instruction_state_factory():
-            return await self._session._refresh_console_project_instruction_display_state(
-                session_id
-            )
-
         token_estimate = _estimate_factory()
         in_progress = controller.run_state.status in CONSOLE_ACTIVE_RUN_STATUSES
         self.app.push_screen(
@@ -3313,10 +3309,9 @@ class ChatScreen(BaseAppScreen):
                 estimate_factory=_estimate_factory,
                 in_progress=in_progress,
                 ephemeral=self._console_active_session_is_ephemeral(),
-                project_instruction_state=self._session._build_console_project_instruction_display_state(
-                    session_id
+                **project_instruction_ui.project_instruction_context_kwargs(
+                    self, controller, session_id
                 ),
-                project_instruction_state_factory=_project_instruction_state_factory,
             )
         )
 
@@ -13256,7 +13251,9 @@ class ChatScreen(BaseAppScreen):
                     retrieval_scope_state=retrieval_scope_state,
                     inspector_state=inspector_state,
                     changed_files_state=self._build_console_changed_files_state(),
-                    project_instruction_state=self._session._build_console_project_instruction_display_state(),
+                    project_instruction_state=project_instruction_ui.project_instruction_ui_state_for_screen(
+                        self
+                    ),
                     settings_summary_state=self._build_console_settings_summary_state(),
                     live_work_card_builder=(
                         lambda: (
@@ -15258,7 +15255,7 @@ class ChatScreen(BaseAppScreen):
             await self._sync_console_native_session_tabs()
             self._dispatch_active_console_roleplay_refresh()
             self._sync_console_workspace_context()
-            self._session._sync_console_project_instruction_status_row()
+            project_instruction_ui.sync_project_instruction_status_for_screen(self)
             await self._sync_native_console_transcript()
             self._sync_console_rail_visibility_if_changed(
                 self._current_console_rail_state()
