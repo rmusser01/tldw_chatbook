@@ -161,3 +161,22 @@ def test_preference_failure_is_path_free(
     rendered = "".join(messages)
     assert rendered.strip() == "persona_buddy_preferences_save_failed"
     assert "/private/" not in rendered
+
+
+def test_preferences_require_exact_string_local_source() -> None:
+    class SpoofedLocal:
+        def __eq__(self, other: object) -> bool:
+            return other == "local"
+
+        def __repr__(self) -> str:
+            return "/private/profile/spoofed-source"
+
+    source = SpoofedLocal()
+
+    preferences = parse_persona_buddy_preferences(
+        {"source": source, "local_persona_id": "p-1"}
+    )
+
+    assert preferences.selection is None
+    with pytest.raises(ValueError, match="^persona_buddy_preferences_invalid$"):
+        PersonaBuddySelection(source, "p-1")  # type: ignore[arg-type]

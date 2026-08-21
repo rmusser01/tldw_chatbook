@@ -120,6 +120,27 @@ def test_timed_custom_state_expires() -> None:
         )
 
 
+def test_expiration_does_not_promote_operational_priority() -> None:
+    controller = PersonaBuddyController(clock=lambda: 100.0)
+    authored = controller.set_authored_trigger(owner="pack", state="mood_calm")
+    controller.acquire_state(
+        source="tool",
+        owner="call",
+        state="tool_running",
+        expires_at=200.0,
+    )
+    controller.acquire_state(
+        source="network",
+        owner="profile",
+        state="offline",
+        expires_at=200.0,
+    )
+
+    assert controller.snapshot().state == "mood_calm"
+    assert controller.release_state(token=authored) is True
+    assert controller.snapshot().state == "tool_running"
+
+
 def test_selection_never_changes_from_observed_persona() -> None:
     controller = PersonaBuddyController()
     selected_generation = controller.select_local_persona("p-1")

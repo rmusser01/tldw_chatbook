@@ -54,6 +54,7 @@ _UNSAFE_STATE_MARKERS = (
     "secret_key",
 )
 _LIVE_STATES = frozenset({"idle", "listening", "thinking", "speaking"})
+_TIMED_SOURCES = frozenset({"explicit", "timed"})
 _MAX_TTL_SECONDS = 3600.0
 
 _LeaseKind = Literal[
@@ -137,12 +138,12 @@ def _require_expiration(value: object) -> float | None:
     return expiration
 
 
-def _lease_kind(source: str, state: str, expires_at: float | None) -> _LeaseKind:
+def _lease_kind(source: str, state: str) -> _LeaseKind:
     if state == "error":
         return "error"
     if state == "approval_needed":
         return "approval"
-    if source == "timed" or expires_at is not None:
+    if source in _TIMED_SOURCES:
         return "timed"
     if source == "authored":
         return "authored"
@@ -240,11 +241,7 @@ class PersonaBuddyController:
             )
             self._leases[(normalized_source, normalized_owner)] = _StateLease(
                 token=token,
-                kind=_lease_kind(
-                    normalized_source,
-                    normalized_state,
-                    normalized_expiration,
-                ),
+                kind=_lease_kind(normalized_source, normalized_state),
             )
             self._generation += 1
             return token

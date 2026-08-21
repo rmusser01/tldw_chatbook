@@ -42,7 +42,11 @@ class PersonaBuddySelection:
     local_persona_id: str
 
     def __post_init__(self) -> None:
-        if self.source != "local" or not _valid_persona_id(self.local_persona_id):
+        if (
+            type(self.source) is not str
+            or self.source != "local"
+            or not _valid_persona_id(self.local_persona_id)
+        ):
             raise PersonaBuddyPreferenceError()
 
 
@@ -129,7 +133,7 @@ def parse_persona_buddy_preferences(
     source = section.get("source")
     persona_id = section.get("local_persona_id")
     selection = None
-    if source == "local" and _valid_persona_id(persona_id):
+    if type(source) is str and source == "local" and _valid_persona_id(persona_id):
         selection = PersonaBuddySelection("local", persona_id)
 
     default_geometry = defaults.geometry
