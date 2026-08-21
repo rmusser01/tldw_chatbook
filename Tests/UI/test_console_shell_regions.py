@@ -151,7 +151,8 @@ def _assert_workspace_state_is_contained(
             f"child={child.region}, grid={grid.content_region}"
         )
         assert screen.region.contains_region(child.region), (
-            f"{child.id} escapes the 100x30 viewport: "
+            f"{child.id} escapes the {screen.region.width}x"
+            f"{screen.region.height} viewport: "
             f"child={child.region}, screen={screen.region}"
         )
         point = (
