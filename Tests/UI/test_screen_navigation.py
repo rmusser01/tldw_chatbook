@@ -2592,6 +2592,11 @@ def test_action_library_media_viewer_back_returns_to_list_and_refocuses_it():
     reset sequence as the "‹ Back to list" button
     (``_exit_library_media_viewer``) and then re-focuses the list's first
     row, one seam for both exits."""
+    from tldw_chatbook.Library.library_media_state import (
+        LIBRARY_MEDIA_BROWSE_PAGE_SIZE,
+        MediaBrowseResult,
+        MediaBrowseScope,
+    )
     from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_MEDIA
     from tldw_chatbook.UI.Screens.library_screen import (
         LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS,
@@ -2605,16 +2610,53 @@ def test_action_library_media_viewer_back_returns_to_list_and_refocuses_it():
     screen._library_media_editing = False
     screen._library_media_confirming_delete = False
     screen._library_media_editing_analysis = False
+    # The Escape-from-viewer flow this test pins starts from a BROWSED
+    # list: the user loaded a Media page, opened an item, and Escape
+    # returns to that same applied page. Seed the browse controller with
+    # that applied page (task-19193). Without it the controller reports
+    # the DEEP-LINK entry state (no page ever applied), and since
+    # f86c636af ("fix(library): close media lifecycle authority gaps")
+    # ``_exit_library_media_viewer`` closes that gap by requesting a real
+    # page+facet load (``_load_library_media_list_if_needed`` ->
+    # ``run_worker``) -- app-context work this synchronous harness cannot
+    # host (``self.app`` raised NoActiveAppError). The deep-link exit flow
+    # is covered live in ``Tests/UI/test_library_shell.py::
+    # test_library_media_deep_link_back_loads_exact_page_and_facets``.
+    applied_scope = MediaBrowseScope()
+    screen._library_media_browse_controller.applied_result = MediaBrowseResult(
+        scope=applied_scope,
+        items=(
+            {
+                "id": "local:media:1",
+                "backing_media_id": 1,
+                "title": "Clip",
+                "media_type": "video",
+                "updated_at": "2026-08-20T00:00:00Z",
+            },
+        ),
+        total=1,
+        limit=LIBRARY_MEDIA_BROWSE_PAGE_SIZE,
+        offset=0,
+    )
 
     refresh_calls = []
     focus_calls = []
     timer_calls = []
+    worker_requests = []
     screen.refresh = lambda recompose=False: refresh_calls.append(recompose)
     screen.call_after_refresh = lambda callback: focus_calls.append(callback)
     # ``_arm_library_list_entry_focus`` also arms a settle-window timer
     # (task-2856) -- stub it out, a real ``set_timer`` needs a running
     # event loop this synchronous test has none of.
     screen.set_timer = lambda delay, callback: timer_calls.append((delay, callback))
+
+    def _capture_worker(work, **kwargs):
+        # Close a captured coroutine so it never warns as never-awaited.
+        if hasattr(work, "close"):
+            work.close()
+        worker_requests.append(kwargs)
+
+    screen.run_worker = _capture_worker
 
     screen.action_library_media_viewer_back()
 
@@ -2624,6 +2666,11 @@ def test_action_library_media_viewer_back_returns_to_list_and_refocuses_it():
         (LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS, screen._disarm_library_list_entry_focus)
     ]
     assert focus_calls == [screen._focus_library_list_entry]
+    # With a page already applied, the exit must NOT re-request it:
+    # ``_load_library_media_list_if_needed`` is for deep-link entries that
+    # never applied a page (f86c636af). A worker request here would mean
+    # the exit path started reloading the list the user is returning to.
+    assert worker_requests == []
 
 
 @pytest.mark.parametrize(
