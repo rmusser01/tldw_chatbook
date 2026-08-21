@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import stat
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -91,6 +91,14 @@ class InstructionSnapshot:
     primary_delivery: InstructionChainDelivery
     warning_codes: tuple[str, ...]
     startup_source_metadata: InstructionSourceMetadata | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class NestedResolutionBatch:
+    """Pinned nested sources and content-free terminal outcomes for one batch."""
+
+    sources: tuple[InstructionSource, ...]
+    outcomes: tuple[InstructionOutcome, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,6 +198,139 @@ class ProjectInstructionResolver:
             outcomes=(result.outcome,) if result.outcome else (),
         )
 
+    def resolve_targets(
+        self,
+        binding_root: Path,
+        targets: Sequence[Path],
+        *,
+        max_bytes: int,
+        dispatch_started_wall_ns: int,
+        pinned_by_canonical_path: Mapping[Path, InstructionSource],
+        terminal_scopes: frozenset[str] = frozenset(),
+    ) -> NestedResolutionBatch:
+        """Resolve effective files on the union of root-to-target chains.
+
+        ``targets`` are already-normalized directory scopes supplied by the
+        path-aware tool owner. The binding root itself is excluded because its
+        startup source is already pinned separately.
+
+        Args:
+            binding_root: Canonical selected instruction authority root.
+            targets: Validated directory scopes required by the tool batch.
+            max_bytes: Maximum raw bytes admitted across newly found sources.
+            dispatch_started_wall_ns: Dispatch cutoff for stale-file checks.
+            pinned_by_canonical_path: Sources already frozen for this dispatch.
+            terminal_scopes: Scopes with a prior terminal no-content outcome.
+
+        Returns:
+            Sources in broad-to-specific order plus content-free outcomes.
+
+        Raises:
+            ValueError: If ``max_bytes`` is negative.
+        """
+        if max_bytes < 0:
+            raise ValueError("max_bytes must be non-negative")
+        root, expected_root = _canonical_binding_root(binding_root)
+        if expected_root is None:
+            return NestedResolutionBatch(
+                (), (InstructionOutcome(".", ".", "resolution_failed"),)
+            )
+
+        directories: set[Path] = set()
+        outcomes: list[InstructionOutcome] = []
+        for target in targets:
+            lexical = _safe_absolute(target)
+            if lexical is None or not lexical.is_relative_to(root):
+                outcomes.append(InstructionOutcome(".", ".", "resolution_failed"))
+                continue
+            current = root
+            for part in lexical.relative_to(root).parts:
+                current /= part
+                try:
+                    value = os.lstat(current)
+                    if (
+                        not stat.S_ISDIR(value.st_mode)
+                        or stat.S_ISLNK(value.st_mode)
+                        or _is_reparse(value)
+                    ):
+                        raise _UnsafeMetadata
+                except FileNotFoundError:
+                    break
+                except (OSError, _UnsafeMetadata):
+                    scope = current.relative_to(root).as_posix()
+                    outcomes.append(
+                        InstructionOutcome(
+                            f"{scope}/AGENTS.md", scope, "resolution_failed"
+                        )
+                    )
+                    break
+                directories.add(current)
+
+        found: list[tuple[InstructionSource, bool]] = []
+        for directory in sorted(
+            directories,
+            key=lambda path: (len(path.relative_to(root).parts), path.as_posix()),
+        ):
+            scope = directory.relative_to(root).as_posix()
+            if scope in terminal_scopes:
+                continue
+            result, was_pinned = _resolve_nested_directory(
+                root=root,
+                directory=directory,
+                max_bytes=max_bytes,
+                dispatch_started_wall_ns=dispatch_started_wall_ns,
+                pinned_by_canonical_path=pinned_by_canonical_path,
+                expected_binding_ancestors=expected_root,
+            )
+            if result.source is not None:
+                found.append((result.source, was_pinned))
+            elif result.outcome is not None:
+                outcomes.append(result.outcome)
+
+        remaining = max_bytes
+        admitted: set[int] = {
+            index for index, (_source, pinned) in enumerate(found) if pinned
+        }
+        new_indexes = [
+            index for index, (_source, pinned) in enumerate(found) if not pinned
+        ]
+        for index in sorted(
+            new_indexes,
+            key=lambda item: (
+                -len(Path(found[item][0].scope).parts),
+                found[item][0].relative_path,
+            ),
+        ):
+            source = found[index][0]
+            if source.byte_count <= remaining:
+                admitted.add(index)
+                remaining -= source.byte_count
+            else:
+                outcomes.append(
+                    InstructionOutcome(
+                        source.relative_path,
+                        source.scope,
+                        "omitted_byte_budget",
+                    )
+                )
+
+        sources = tuple(
+            source for index, (source, _pinned) in enumerate(found) if index in admitted
+        )
+        return NestedResolutionBatch(
+            sources=sources,
+            outcomes=tuple(
+                sorted(
+                    dict.fromkeys(outcomes),
+                    key=lambda item: (
+                        len(Path(item.scope).parts),
+                        item.relative_path,
+                        item.code,
+                    ),
+                )
+            ),
+        )
+
 
 def admit_sources(
     sources: Sequence[InstructionSource],
@@ -268,11 +409,14 @@ def _read_candidate(
     max_bytes: int,
     dispatch_started_wall_ns: int,
     expected_ancestors: tuple[tuple[int, int, int], ...],
+    relative_path: str | None = None,
+    scope: str = ".",
 ) -> _ReadResult:
     path = root / filename
+    displayed_path = relative_path or filename
 
     def outcome(code: InstructionOutcomeCode) -> InstructionOutcome:
-        return InstructionOutcome(filename, ".", code)
+        return InstructionOutcome(displayed_path, scope, code)
 
     try:
         if _capture_ancestor_identities(root) != expected_ancestors:
@@ -349,8 +493,8 @@ def _read_candidate(
     return _ReadResult(
         source=InstructionSource(
             canonical_path=path,
-            relative_path=filename,
-            scope=".",
+            relative_path=displayed_path,
+            scope=scope,
             kind=kind,
             body=body,
             byte_count=len(raw),
@@ -359,11 +503,90 @@ def _read_candidate(
     )
 
 
-def _fallback_changed_result(rechecked: _ReadResult) -> _ReadResult:
+def _resolve_nested_directory(
+    *,
+    root: Path,
+    directory: Path,
+    max_bytes: int,
+    dispatch_started_wall_ns: int,
+    pinned_by_canonical_path: Mapping[Path, InstructionSource],
+    expected_binding_ancestors: tuple[tuple[int, int, int], ...],
+) -> tuple[_ReadResult, bool]:
+    scope = directory.relative_to(root).as_posix()
+    override_path = directory / "AGENTS.override.md"
+    standard_path = directory / "AGENTS.md"
+    pinned = pinned_by_canonical_path.get(override_path)
+    if pinned is None:
+        pinned = pinned_by_canonical_path.get(standard_path)
+    if pinned is not None:
+        return _ReadResult(source=pinned), True
+
+    try:
+        expected_ancestors = _capture_ancestor_identities(directory)
+        depth = len(directory.relative_to(root).parts)
+        if expected_ancestors[depth:] != expected_binding_ancestors:
+            raise _UnsafeMetadata
+    except (OSError, RuntimeError, ValueError, _UnsafeMetadata):
+        return (
+            _ReadResult(
+                outcome=InstructionOutcome(
+                    f"{scope}/AGENTS.md", scope, "resolution_failed"
+                )
+            ),
+            False,
+        )
+    override_relative = f"{scope}/AGENTS.override.md"
+    override = _read_candidate(
+        root=directory,
+        filename="AGENTS.override.md",
+        kind="override",
+        max_bytes=max_bytes,
+        dispatch_started_wall_ns=dispatch_started_wall_ns,
+        expected_ancestors=expected_ancestors,
+        relative_path=override_relative,
+        scope=scope,
+    )
+    result = override
+    if override.fallback_condition is not None:
+        result = _read_candidate(
+            root=directory,
+            filename="AGENTS.md",
+            kind="standard",
+            max_bytes=max_bytes,
+            dispatch_started_wall_ns=dispatch_started_wall_ns,
+            expected_ancestors=expected_ancestors,
+            relative_path=f"{scope}/AGENTS.md",
+            scope=scope,
+        )
+        rechecked_override = _read_candidate(
+            root=directory,
+            filename="AGENTS.override.md",
+            kind="override",
+            max_bytes=max_bytes,
+            dispatch_started_wall_ns=dispatch_started_wall_ns,
+            expected_ancestors=expected_ancestors,
+            relative_path=override_relative,
+            scope=scope,
+        )
+        if rechecked_override.fallback_condition != override.fallback_condition:
+            result = _fallback_changed_result(
+                rechecked_override,
+                relative_path=override_relative,
+                scope=scope,
+            )
+    return result, False
+
+
+def _fallback_changed_result(
+    rechecked: _ReadResult,
+    *,
+    relative_path: str = "AGENTS.override.md",
+    scope: str = ".",
+) -> _ReadResult:
     if rechecked.outcome is not None:
         return rechecked
     return _ReadResult(
-        outcome=InstructionOutcome("AGENTS.override.md", ".", "resolution_failed")
+        outcome=InstructionOutcome(relative_path, scope, "resolution_failed")
     )
 
 
