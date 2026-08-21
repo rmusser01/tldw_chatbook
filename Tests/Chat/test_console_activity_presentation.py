@@ -313,6 +313,43 @@ def test_safe_intermediate_thinking_summary_flattens_controls_and_lines() -> Non
     assert all(ord(char) >= 0x20 and not 0x7F <= ord(char) <= 0x9F for char in safe)
 
 
+@pytest.mark.parametrize(
+    "separator",
+    ["\r", "\r\n", "\v", "\f", "\x85", "\u2028", "\u2029"],
+    ids=["cr", "crlf", "vt", "ff", "nel", "line-separator", "paragraph-separator"],
+)
+@pytest.mark.parametrize("header", ["Thinking", "Analysis", "Reasoning"])
+def test_safe_intermediate_thinking_summary_rejects_private_headers_after_any_splitline(
+    separator: str,
+    header: str,
+) -> None:
+    summary = f"Safe preamble{separator}{header}: PRIVATE"
+
+    assert bridge_module.safe_intermediate_thinking_summary(summary) is None
+
+
+@pytest.mark.parametrize(
+    "summary",
+    [
+        '<tool_call>{"name":"fs_read","parameters":{"path":"PRIVATE"}}</tool_call>',
+        '<FUNCTION_CALL>{"name":"fs_read","parameters":{}}</FUNCTION_CALL>',
+        '[tool_call] {"name":"fs_read","parameters":{}} [/tool_call]',
+        'Calling function fs_read({"path":"PRIVATE"})',
+        'invoking tool fs_write with {"path":"PRIVATE"}',
+    ],
+)
+def test_safe_intermediate_thinking_summary_rejects_explicit_call_shapes(
+    summary: str,
+) -> None:
+    assert bridge_module.safe_intermediate_thinking_summary(summary) is None
+
+
+def test_safe_intermediate_thinking_summary_allows_non_call_shaped_tool_prose() -> None:
+    summary = "I will use the fs_read tool after checking the path."
+
+    assert bridge_module.safe_intermediate_thinking_summary(summary) == summary
+
+
 def test_thinking_marker_without_safe_summary_has_no_expandable_detail() -> None:
     marker = bridge_module.build_intermediate_thinking_marker(
         "<thinking>private chain</thinking>"

@@ -45,6 +45,9 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_chat_controller import (
+    USER_DENIED_REFUSAL as CONTROLLER_USER_DENIED_REFUSAL,
+)
 from tldw_chatbook.Chat.console_display_state import format_diff_feedback_disclosure
 from tldw_chatbook.Chat.console_history_budget import ProviderContinuationSidecar
 from tldw_chatbook.Chat.console_prepared_request import PreparedProviderRequest
@@ -439,6 +442,35 @@ def _run(bridge, store, session, assistant_id, **over):
     # run_reply returns (run_id, outcome); these tests assert on the outcome.
     _run_id, outcome = bridge.run_reply(**kwargs)
     return outcome
+
+
+def _tool_messages(store, session_id: str) -> list[ConsoleChatMessage]:
+    return [
+        message
+        for message in store.messages_for_session(session_id)
+        if message.role is ConsoleMessageRole.TOOL
+    ]
+
+
+def _resume_tool_messages(
+    db: AgentRunsDB, conversation_id: str = "conv-1"
+) -> list[ConsoleChatMessage]:
+    return [
+        message
+        for _anchor, block in ConsoleAgentBridge(
+            agent_runs_db=db, store=None, provider_gateway=None
+        ).resume_marker_messages(conversation_id)
+        for message in block
+    ]
+
+
+def _activity_marker_signature(
+    messages: list[ConsoleChatMessage],
+) -> list[tuple[str, ConsoleActivityPresentation | None, str | None]]:
+    return [
+        (message.content, message.activity_presentation, message.tool_output_full)
+        for message in messages
+    ]
 
 
 def test_nested_project_instructions_defer_whole_batch_before_review_and_execution(
@@ -1339,6 +1371,78 @@ def test_native_tool_call_round_trip_streams_final_answer(tmp_path):
     ]
     assert tool_rows, "a native tool turn must drop a TOOL marker too"
     assert any("get_current_datetime" in marker.content for marker in tool_rows)
+
+
+def test_native_multi_call_round_emits_one_thinking_marker_with_resume_parity(
+    tmp_path,
+) -> None:
+    calls = ProviderToolCalls(
+        tool_calls=(
+            {
+                "id": "calc-1",
+                "type": "function",
+                "function": {
+                    "name": "calculator",
+                    "arguments": json.dumps({"expression": "6*7"}),
+                },
+            },
+            {
+                "id": "calc-2",
+                "type": "function",
+                "function": {
+                    "name": "calculator",
+                    "arguments": json.dumps({"expression": "7*8"}),
+                },
+            },
+        )
+    )
+    bridge, db, store, session, aid = _bridge(
+        tmp_path,
+        [[calls], ["done."]],
+    )
+
+    outcome = _run(bridge, store, session, aid, resolution=_native_resolution())
+    live = _tool_messages(store, session.id)
+    resumed = _resume_tool_messages(db)
+
+    assert outcome.status == "done"
+    assert [marker.activity_presentation.kind for marker in live] == [
+        "thinking",
+        "tool",
+        "tool",
+    ]
+    assert sum(
+        marker.activity_presentation.kind == "thinking" for marker in live
+    ) == 1
+    assert _activity_marker_signature(resumed) == _activity_marker_signature(live)
+
+
+def test_unsafe_model_summary_emits_detail_free_thinking_with_resume_parity(
+    tmp_path,
+) -> None:
+    scripts = [
+        [
+            "<analysis>PRIVATE_REASONING_CANARY</analysis>\n",
+            _fence("calculator", {"expression": "6*7"}),
+        ],
+        ["done."],
+    ]
+    bridge, db, store, session, aid = _bridge(tmp_path, scripts)
+
+    outcome = _run(bridge, store, session, aid)
+    live = _tool_messages(store, session.id)
+    resumed = _resume_tool_messages(db)
+    thinking = live[0]
+
+    assert outcome.status == "done"
+    assert thinking.activity_presentation == ConsoleActivityPresentation(
+        "thinking", "Thinking", "done"
+    )
+    assert thinking.content == ""
+    assert thinking.tool_output_full is None
+    assert _activity_marker_signature(resumed) == _activity_marker_signature(live)
+    assert "PRIVATE_REASONING_CANARY" not in repr(_activity_marker_signature(live))
+    assert "PRIVATE_REASONING_CANARY" not in repr(_activity_marker_signature(resumed))
 
 
 def test_native_leaked_prose_is_reset_before_final_answer(tmp_path):
@@ -2421,12 +2525,23 @@ def test_spawn_renders_marker_and_persists_linked_subagent(tmp_path):
     _join_fleet_threads()
     assert outcome.status == "done"
     assert db.count_subagent_runs("conv-1") == 1
+    live_markers = _tool_messages(store, session.id)
+    resumed_markers = _resume_tool_messages(db)
     spawn_markers = [
-        m
-        for m in store.messages_for_session(session.id)
-        if m.role is ConsoleMessageRole.TOOL and "sub-agent" in m.content.lower()
+        marker for marker in live_markers if "sub-agent" in marker.content.lower()
     ]
     assert spawn_markers
+    assert [marker.activity_presentation.kind for marker in live_markers] == [
+        "thinking",
+        "spawn",
+        "tool",
+    ]
+    assert sum(
+        marker.activity_presentation.kind == "thinking" for marker in live_markers
+    ) == 1
+    assert _activity_marker_signature(resumed_markers) == _activity_marker_signature(
+        live_markers
+    )
     snap = bridge.live_snapshot("conv-1")
     assert any(s.text for s in snap.subagents)
 
@@ -3045,6 +3160,85 @@ def test_subagent_steps_do_not_flush_or_clear_pending_primary_thinking() -> None
     markers = _thinking_markers_for_attributed_steps(events)
 
     assert [marker.content for marker in markers] == ["Primary preamble."]
+
+
+def test_live_callback_interleaving_preserves_primary_thinking_and_resume_sequence(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    primary_steps = [
+        AgentStep(0, STEP_MODEL, summary="Primary preamble."),
+        AgentStep(1, STEP_TOOL_CALL, tool_name="primary_tool"),
+        AgentStep(
+            2,
+            STEP_TOOL_RESULT,
+            tool_name="primary_tool",
+            result="primary result",
+        ),
+        AgentStep(3, STEP_MODEL, summary="Final answer."),
+    ]
+    callback_events = [
+        (primary_steps[0], "primary", "primary-run"),
+        (
+            AgentStep(0, STEP_MODEL, summary="Child internal turn."),
+            "subagent",
+            "child-run",
+        ),
+        (
+            AgentStep(1, STEP_TOOL_CALL, tool_name="child_tool"),
+            "subagent",
+            "child-run",
+        ),
+        (
+            AgentStep(2, STEP_TOOL_RESULT, tool_name="child_tool", result="child"),
+            "subagent",
+            "child-run",
+        ),
+        (primary_steps[1], "primary", "primary-run"),
+        (primary_steps[2], "primary", "primary-run"),
+        (primary_steps[3], "primary", "primary-run"),
+    ]
+
+    class _InterleavingAgentService:
+        def __init__(self, db, _registry, *, on_step, **_kwargs):
+            self._db = db
+            self._on_step = on_step
+
+        def run_turn(self, *, conversation_id, **_kwargs):
+            run_id = self._db.create_run(
+                conversation_id=conversation_id,
+                agent_kind="primary",
+            )
+            for step, agent_kind, attributed_run_id in callback_events:
+                self._on_step(step, agent_kind, attributed_run_id)
+            # Child steps belong to their own run and are intentionally absent
+            # from the persisted primary sequence. Resume therefore performs
+            # primary-only look-ahead while live receives the interleaving.
+            self._db.append_steps(run_id, [vars(step) for step in primary_steps])
+            self._db.set_status(run_id, "done", result="Final answer.")
+            return run_id, RunOutcome("done", primary_steps, final_text="Final answer.")
+
+        def fleet_snapshot(self):
+            return []
+
+        def live_subagent_handles(self):
+            return []
+
+    monkeypatch.setattr(bridge_module, "AgentService", _InterleavingAgentService)
+    bridge, db, store, session, aid = _bridge(tmp_path, [])
+
+    outcome = _run(bridge, store, session, aid)
+    live = _tool_messages(store, session.id)
+    resumed = _resume_tool_messages(db)
+
+    assert outcome.status == "done"
+    assert [marker.activity_presentation.kind for marker in live] == [
+        "thinking",
+        "tool",
+    ]
+    assert live[0].content == "Primary preamble."
+    assert not any("child" in marker.content.lower() for marker in live)
+    assert _activity_marker_signature(resumed) == _activity_marker_signature(live)
 
 
 def test_thinking_live_resume_marker_order_content_and_presentation_parity(
@@ -5296,27 +5490,37 @@ def test_run_reply_forwards_review_tool_calls_hook_to_agent_service(tmp_path):
     verdict other than "proceed" skips dispatch and becomes the tool
     result, exactly like the T4 hook contract documents."""
     scripts = [
-        [_fence("calculator", {"expression": "6*7"})],
+        [
+            "I will request approval for this calculation.\n",
+            _fence("calculator", {"expression": "6*7"}),
+        ],
         ["done."],
     ]
-    bridge, _db, store, session, aid = _bridge(tmp_path, scripts)
+    bridge, db, store, session, aid = _bridge(tmp_path, scripts)
     captured_batches = []
 
     # PR2a Task 5: an AgentService-wired hook takes `(calls, run_id)`.
     def hook(calls, run_id):
         captured_batches.append(list(calls))
-        return {"calculator": "blocked by test hook"}
+        return {
+            "calculator": CONTROLLER_USER_DENIED_REFUSAL.format(name="calculator")
+        }
 
     outcome = _run(bridge, store, session, aid, review_tool_calls=hook)
 
     assert outcome.status == "done"
     assert captured_batches and captured_batches[0][0].name == "calculator"
-    tool_rows = [
-        m
-        for m in store.messages_for_session(session.id)
-        if m.role is ConsoleMessageRole.TOOL
+    live = _tool_messages(store, session.id)
+    resumed = _resume_tool_messages(db)
+    assert not any(step.kind == STEP_TOOL_CALL for step in outcome.steps)
+    assert [marker.activity_presentation.kind for marker in live] == [
+        "thinking",
+        "tool",
     ]
-    assert any("blocked by test hook" in row.content for row in tool_rows)
+    assert live[0].content == "I will request approval for this calculation."
+    assert any("denied" in row.content.lower() for row in live)
+    assert live[1].activity_presentation.status == "blocked"
+    assert _activity_marker_signature(resumed) == _activity_marker_signature(live)
 
 
 def test_run_reply_still_wires_stamp_scope_for_the_inline_kill_switch_path(

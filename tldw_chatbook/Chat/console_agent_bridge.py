@@ -988,6 +988,20 @@ _TOOL_PAYLOAD_KEY_RE = re.compile(
     r"(?i)(?:[\"']?\b(?:tool_calls?|function_call|arguments)\b[\"']?\s*:)"
 )
 
+_TOOL_CALL_SHAPE_RE = re.compile(
+    r"""
+    (?:
+        <\s*/?\s*(?:tool_calls?|function_call)\b[^>]*>
+        |
+        \[\s*/?\s*(?:tool_calls?|function_call)\s*\]
+        |
+        \b(?:calling|invoking)\s+(?:the\s+)?(?:tool|function)\s+
+        [A-Za-z_][\w.-]*\s*(?:\(\s*\{|with\s*\{)
+    )
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
 _THINKING_PROVING_STEP_KINDS = frozenset(
     {STEP_TOOL_CALL, STEP_SPAWN, STEP_TOOL_RESULT}
 )
@@ -1003,10 +1017,16 @@ def safe_intermediate_thinking_summary(summary: str | None) -> str | None:
     No redaction copy is returned because that would create fake detail.
     """
     raw = str(summary or "")
-    if _PRIVATE_REASONING_TAG_RE.search(raw):
+    # The terminal-safe helper below uses str.splitlines(), whose boundary
+    # vocabulary is wider than just LF. Normalize through that exact seam
+    # before matching line-anchored private headers so CR, VT, FF, NEL, and
+    # Unicode line/paragraph separators cannot become visible only after the
+    # privacy check has already missed them.
+    normalized = "\n".join(raw.splitlines())
+    if _PRIVATE_REASONING_TAG_RE.search(normalized):
         return None
-    visible = raw.split("```", 1)[0]
-    if _TOOL_PAYLOAD_KEY_RE.search(visible):
+    visible = normalized.split("```", 1)[0]
+    if _TOOL_PAYLOAD_KEY_RE.search(visible) or _TOOL_CALL_SHAPE_RE.search(visible):
         return None
     safe = _sanitize_task_marker_label(visible).strip()
     if not safe:
