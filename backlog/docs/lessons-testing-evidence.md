@@ -6180,3 +6180,18 @@ Claim authority synchronously before scheduling, reject duplicates instead of
 using cancellation as admission control, and shield/join admitted thread work
 when an outer UI task is cancelled. Cancelling the awaitable is not evidence the
 thread stopped.
+
+## `CREATE IF NOT EXISTS` can adopt foreign schema objects (TASK-19004, 2026-08-21)
+
+The first lasting-sync migration validated its required tables after running
+`CREATE TABLE IF NOT EXISTS`. A nonempty v0 database was therefore silently
+adopted, and a pinned v1 database could carry an unrelated trigger into v2.
+Both cases passed shape checks while preserving behavior the private owner had
+never authorized.
+
+Before migrating or reopening an owner-exclusive SQLite database, census all
+user tables, indexes, and triggers. Reject unexpected objects before any DDL;
+allow only explicitly repairable omissions and SQLite-owned internals. Tests
+must assert the rejected database is unchanged. Post-migration shape checks
+alone cannot prove provenance, because idempotent DDL preserves whatever was
+already using the requested names.
