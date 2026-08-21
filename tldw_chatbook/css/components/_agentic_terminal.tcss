@@ -3574,7 +3574,42 @@ with stray left-edge border fragments), and padding 0 1 so the full
 .console-rail-section-body {
     height: auto;
     min-height: 0;
-    padding: 0 1 1 1;
+    padding: 0 1;
+    margin-bottom: 1;
+}
+
+/* Shared direct-section body. The owner applies the measured content-row
+   allocation inline; no CSS ceiling may override a smaller Context grant. */
+ConsoleBoundedSection {
+    height: auto;
+    min-height: 0;
+}
+
+.console-bounded-section-viewport {
+    height: auto;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+    scrollbar-size: 1 1;
+    scrollbar-background: $ds-surface-panel;
+    scrollbar-color: $ds-grid-line;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
+}
+
+.console-bounded-section-viewport:focus,
+.console-bounded-section-viewport:focus-within {
+    background: $ds-action-focus 12%;
+}
+
+.console-bounded-section-hint {
+    display: none;
+    height: 1;
+    min-height: 1;
+    color: $ds-text-muted;
+    background: $ds-surface-panel;
+    text-style: italic;
 }
 
 /* TASK-15110 (owner ruling: cap sections, scroll inside). With every
