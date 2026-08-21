@@ -342,6 +342,20 @@ class _ProjectInstructionContextSpy:
         )
 
 
+def _warning_ledger(tmp_path) -> InstructionActivationLedger:
+    snapshot = InstructionSnapshot(
+        binding_id="binding",
+        binding_root=tmp_path,
+        locator_fingerprint="fingerprint",
+        dispatch_started_wall_ns=time.time_ns(),
+        startup_source=None,
+        global_outcomes=(InstructionOutcome("AGENTS.md", ".", "resolution_failed"),),
+        primary_delivery=InstructionChainDelivery((), ()),
+        warning_codes=("resolution_failed",),
+    )
+    return InstructionActivationLedger(snapshot, nested_max_bytes=0)
+
+
 CFG = AgentConfig(
     model="test-model",
     system_prompt="You are helpful.",
@@ -414,31 +428,22 @@ def test_bounding_that_drops_pending_instruction_row_stops_without_send_or_mark(
     assert outcome.steps[0].summary == "project instruction context could not fit"
 
 
-def test_real_ledger_zero_final_headroom_warning_stops_without_mark_or_send(
+def test_real_ledger_one_over_final_limit_stops_without_mark_or_send(
     db, monkeypatch, tmp_path
 ):
-    snapshot = InstructionSnapshot(
-        binding_id="binding",
-        binding_root=tmp_path,
-        locator_fingerprint="fingerprint",
-        dispatch_started_wall_ns=time.time_ns(),
-        startup_source=None,
-        global_outcomes=(InstructionOutcome("AGENTS.md", ".", "resolution_failed"),),
-        primary_delivery=InstructionChainDelivery((), ()),
-        warning_codes=("resolution_failed",),
-    )
-    ledger = InstructionActivationLedger(snapshot, nested_max_bytes=0)
+    ledger = _warning_ledger(tmp_path)
     service, chat = make_service(db, ["must not send"])
     service.project_instruction_context = ledger
 
     monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_args: 100)
+    monkeypatch.setattr(agent_service, "estimate_tokens", lambda *_args, **_kwargs: 5)
 
-    def count_exact(messages, *_args, **_kwargs):
+    def count_one_over(messages, *_args, **_kwargs):
         if any(row.get("role") == "system" for row in messages):
-            return 90 if any(PROJECT_INSTRUCTION_ROW_KEY in row for row in messages) else 80
-        return 10
+            return 86 if any(PROJECT_INSTRUCTION_ROW_KEY in row for row in messages) else 85
+        return 1
 
-    monkeypatch.setattr(agent_service, "count_tokens_messages", count_exact)
+    monkeypatch.setattr(agent_service, "count_tokens_messages", count_one_over)
     config = AgentConfig(
         model="m",
         system_prompt="s",
@@ -465,6 +470,98 @@ def test_real_ledger_zero_final_headroom_warning_stops_without_mark_or_send(
         ),
     )
     assert pending.status == "retry_with_context"
+
+
+def test_real_ledger_exact_final_limit_marks_and_sends(db, monkeypatch, tmp_path):
+    ledger = _warning_ledger(tmp_path)
+    service, chat = make_service(db, ["done"])
+    service.project_instruction_context = ledger
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_args: 100)
+    monkeypatch.setattr(agent_service, "estimate_tokens", lambda *_args, **_kwargs: 5)
+
+    def count_exact_fit(messages, *_args, **_kwargs):
+        if any(row.get("role") == "system" for row in messages):
+            return 85 if any(PROJECT_INSTRUCTION_ROW_KEY in row for row in messages) else 84
+        return 1
+
+    monkeypatch.setattr(agent_service, "count_tokens_messages", count_exact_fit)
+    config = AgentConfig(
+        model="m",
+        system_prompt="s",
+        allowed_tools=(),
+        response_reserve_tokens=10,
+    )
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="c-project-exact-fit",
+        messages=[{"role": "user", "content": "go"}],
+        config=config,
+        api_endpoint="openai",
+    )
+
+    assert outcome.status == RUN_DONE
+    assert len(chat.calls) == 1
+    payload = chat.calls[0]["messages_payload"]
+    assert sum(PROJECT_INSTRUCTION_ROW_KEY in row for row in payload) == 1
+    state = agent_service.InstructionChainPayloadState(
+        request_builder=lambda messages, schemas: (messages, schemas),
+        safe_token_allowance=lambda request, rows: 100,
+        count_tokens=lambda rows: 1,
+    )
+    state.capture([], (), ())
+    assert ledger.initial_context_for_chain("primary", state).status == "proceed"
+
+
+@pytest.mark.parametrize(
+    ("limit_value", "count_value"),
+    [
+        (None, 1),
+        (0, 1),
+        (-1, 1),
+        (RuntimeError("limit"), 1),
+        (100, 0),
+        (100, -1),
+        (100, RuntimeError("count")),
+    ],
+)
+def test_real_ledger_unknown_or_invalid_final_budget_fails_closed(
+    db, monkeypatch, tmp_path, limit_value, count_value
+):
+    ledger = _warning_ledger(tmp_path)
+    service, chat = make_service(db, ["must not send"])
+    service.project_instruction_context = ledger
+
+    def model_limit(*_args):
+        if isinstance(limit_value, Exception):
+            raise limit_value
+        return limit_value
+
+    def count_invalid(messages, *_args, **_kwargs):
+        if isinstance(count_value, Exception):
+            raise count_value
+        if any(row.get("role") == "system" for row in messages):
+            return count_value
+        return 1
+
+    monkeypatch.setattr(agent_service, "get_model_token_limit", model_limit)
+    monkeypatch.setattr(agent_service, "count_tokens_messages", count_invalid)
+    config = AgentConfig(
+        model="m",
+        system_prompt="s",
+        allowed_tools=(),
+        response_reserve_tokens=10,
+    )
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="c-project-invalid-final-budget",
+        messages=[{"role": "user", "content": "go"}],
+        config=config,
+        api_endpoint="openai",
+    )
+
+    assert outcome.status == RUN_ERROR
+    assert outcome.steps[0].summary == "project instruction context could not fit"
+    assert chat.calls == []
 
 
 @pytest.mark.parametrize("failing_callback", ["initial", "mark"])

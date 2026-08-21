@@ -1281,6 +1281,45 @@ class AgentService:
             return 0
         return max(0, limit - reserve - used)
 
+    def _project_instruction_request_fits(
+        self,
+        config: AgentConfig,
+        api_endpoint: str,
+        request: ModelRequest,
+    ) -> bool:
+        """Return whether an exact staged request fits its raw input budget."""
+        try:
+            limit = get_model_token_limit(config.model, api_endpoint)
+            reserve = config.response_reserve_tokens
+            if (
+                type(limit) is not int
+                or limit <= 0
+                or type(reserve) is not int
+                or reserve < 0
+            ):
+                return False
+            used = count_tokens_messages(
+                list(request.messages), config.model, provider=api_endpoint
+            )
+            if type(used) is not int or used <= 0:
+                return False
+            if request.tools:
+                schema_tokens = estimate_tokens(
+                    json.dumps(
+                        list(request.tools),
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    config.model,
+                    provider=api_endpoint,
+                )
+                if type(schema_tokens) is not int or schema_tokens <= 0:
+                    return False
+                used += schema_tokens
+        except Exception:
+            return False
+        return used <= limit - reserve
+
     def _startup_delivery_for_request(
         self,
         candidate: StartupInstructionCandidate,
@@ -1575,15 +1614,15 @@ class AgentService:
                 call_kwargs["continuation_groups"] = effective_groups
             receipt = staged.get("receipt")
             if receipt is not None:
-                final_headroom = self.safe_project_instruction_tokens(
-                    config, api_endpoint, request, []
+                request_fits = self._project_instruction_request_fits(
+                    config, api_endpoint, request
                 )
                 row_keys = tuple(
                     row.get(PROJECT_INSTRUCTION_ROW_KEY)
                     for row in payload
                     if row.get(PROJECT_INSTRUCTION_ROW_KEY) in receipt.row_keys
                 )
-                if final_headroom <= 0 or row_keys != receipt.row_keys:
+                if not request_fits or row_keys != receipt.row_keys:
                     raise _ProjectInstructionPayloadError(
                         "project instruction context could not fit"
                     )
