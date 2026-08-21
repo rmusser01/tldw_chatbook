@@ -247,15 +247,15 @@ Tasks 19006, 19007, and 19008 may run concurrently after their prerequisites bec
 - Create: `Tests/Notes/test_notes_sync_runtime.py`
 - Create: `Tests/ProductionApp/test_notes_sync_runtime_lifecycle.py`
 
-- [ ] Write RED hint-only watcher tests.
+- [x] Write RED hint-only watcher tests.
 
   `PollingNotesSyncWatcher` emits root IDs, coalesces duplicate hints, handles a missing root, and never imports or calls the planner/executor/filesystem. Use an injected clock/interval in tests; production uses one simple interval, not a scheduler framework.
 
-- [ ] Write RED inert-startup, post-cutover, manual, and shutdown tests.
+- [x] Write RED inert-startup, post-cutover, manual, and shutdown tests.
 
   Before cutover, test that construction/start publishes `Awaiting cutover` but acquires no root lease, starts no watcher, plans nothing, executes nothing, and rejects activation/manual apply. Seed a marker while the code-owned gate remains false and prove it is still inert. Only when both an injected code-owned admission and marker are true may tests exercise passive/offline/paused/attention gates, complete startup reconciliation, manual reviewed check token validation, safe automatic one-sided apply, stale-plan supersession, durable state publication, and cancellation-resistant shutdown.
 
-- [ ] Implement one app-owned runtime facade.
+- [x] Implement one app-owned runtime facade.
 
   Add `NotesSyncRuntimeOwner` and `build_notes_sync_runtime_owner`. The builder receives one private code-owned `cutover_admitted` value; `app.py` passes `False` in this task and TASK-19011 removes/flips that temporary gate only after legacy production paths are deleted. This is not user configuration. UI-facing methods structurally satisfy TASK-19010's narrow port: `snapshot`, `check_root`, `apply_reviewed`, `request_sync_now`, `pause_root`, `resume_root`, `activate_root`, `retarget_root`, `disconnect_root`, and `shutdown`. Watcher callbacks call `schedule_hint(root_id)` only.
 
@@ -265,11 +265,11 @@ Tasks 19006, 19007, and 19008 may run concurrently after their prerequisites bec
 
   Shutdown: close admission -> stop hints -> settle/journal current stage -> release leases -> close resources.
 
-- [ ] Wire `TldwCli` lifecycle without Library ownership.
+- [x] Wire `TldwCli` lifecycle without Library ownership.
 
   Construct the runtime once after `notes_scope_service`; start it from app mount. Add `_shutdown_notes_sync_runtime()` and call it from `_shutdown_app_owned_lifecycles()` before generic teardown and before File Notes owner release. The Library screen must not construct, start, own, or directly orchestrate it. Starting the object before cutover is safe because its RED contract forbids every mutation-capable action until the marker exists.
 
-- [ ] Run and commit.
+- [x] Run and commit.
 
   ```bash
   ../../.venv/bin/python -B -m pytest -q -p no:cacheprovider -o addopts="" Tests/Notes/test_notes_sync_watcher.py Tests/Notes/test_notes_sync_runtime.py Tests/ProductionApp/test_notes_sync_runtime_lifecycle.py Tests/App/test_app_lifecycle_events.py
@@ -280,11 +280,11 @@ Tasks 19006, 19007, and 19008 may run concurrently after their prerequisites bec
 
 ## Foundation integration gate
 
-- [ ] Run all foundation suites together using only temporary databases and roots.
+- [x] Run all foundation suites together using only temporary databases and roots.
 
   ```bash
   ../../.venv/bin/python -B -m pytest -q -p no:cacheprovider -o addopts="" Tests/Notes/test_notes_device_state_store.py Tests/Notes/test_notes_sync_models.py Tests/Notes/test_sync_containment.py Tests/Notes/test_notes_sync_filesystem.py Tests/Notes/test_notes_sync_reconciler.py Tests/Notes/test_notes_sync_coordinator.py Tests/Notes/test_notes_sync_coordinator_process.py Tests/Notes/test_notes_sync_authority.py Tests/Notes/test_notes_sync_executor.py Tests/Notes/test_notes_sync_watcher.py Tests/Notes/test_notes_sync_runtime.py Tests/Notes/test_notes_sync_legacy_migration.py Tests/ProductionApp/test_notes_sync_runtime_lifecycle.py
   git diff --check
   ```
 
-- [ ] Confirm no code in this plan replaces the toolbar, deletes legacy modules, activates a migrated root, or enables server-backed sync. Close each Backlog task independently with exact evidence and ADR-059/073 notes.
+- [x] Confirm no code in this plan replaces the toolbar, deletes legacy modules, activates a migrated root, or enables server-backed sync. Close each Backlog task independently with exact evidence and ADR-059/073 notes.

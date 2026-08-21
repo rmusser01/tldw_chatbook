@@ -6262,3 +6262,20 @@ a fresh store and executor, enumerate incomplete operations, reconstruct only
 from durable intent plus fresh authority observations, and then exercise every
 advertised Resume, Restore, and Disconnect path. Reopening SQLite alone proves
 storage durability; it does not prove process-durable reconstruction.
+
+## A green lifecycle matrix can still miss the transitions between its states (TASK-19009, 2026-08-21)
+
+The first gated lasting-sync runtime passed its inert, active, recovery, watcher,
+and shutdown tests independently. Adversarial overlap probes still found that a
+hint arriving during reconciliation was lost, a dead watcher continued admitting
+automatic work, shutdown could race startup and reopen admission, and persisted
+Failed/Partial status could be ignored or suppress the operation ID of an
+incomplete journal. Each state looked correct in isolation; the broken behavior
+lived in the handoff between two correct-looking states.
+
+For an application-owned durable runtime, test transitions as overlapping event
+pairs: hint-during-reconcile, shutdown-during-start, watcher-death-then-hint,
+status-plus-incomplete-journal on reopen, and explicit-check-while-recovery-is
+unresolved. Assert both authorities after each interleaving: the in-memory
+admission/next action and the durable journal/status. A state matrix is necessary,
+but it is not concurrency or restart evidence until the edges are executed.
