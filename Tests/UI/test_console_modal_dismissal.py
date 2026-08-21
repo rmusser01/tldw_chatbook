@@ -3114,8 +3114,8 @@ def test_launch_walk_reports_every_mismatch_not_just_the_first() -> None:
     )
     sources = {
         first_path: """
-from tldw_chatbook.Widgets.Console.console_cost_modal import ConsoleCostModal as First
-First([], None)
+from tldw_chatbook.Widgets.Console.console_image_viewer_modal import ConsoleImageViewerModal as First
+First(image_bytes=b"", mime_type="image/png")
 """,
         second_path: """
 from tldw_chatbook.Widgets.Console.console_run_log_modal import ConsoleRunLogModal as Second
@@ -3131,7 +3131,7 @@ Second(run_id='extra', log_text='extra')
     )
 
     message = "\n".join(result.mismatches)
-    assert "ConsoleCostModal" in message, message
+    assert "ConsoleImageViewerModal" in message, message
     assert "ConsoleRunLogModal" in message, message
 
 

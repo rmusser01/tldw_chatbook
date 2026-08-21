@@ -66,7 +66,6 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostRowTotals
 from tldw_chatbook.TTS.audiobook_generator import Chapter
 from tldw_chatbook.UI.Watchlists_Modules.overview_pane import OverviewPane
-from tldw_chatbook.Widgets.collections_tag_window import CollectionsTagWindow
 from tldw_chatbook.Widgets.Console.console_conversation_inspector import (
     ConsoleConversationInspector,
 )
