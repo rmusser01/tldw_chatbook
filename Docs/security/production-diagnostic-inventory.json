@@ -447,7 +447,7 @@
     },
     {
       "call_count": 49,
-      "diagnostic_digest": "fae786d5d91b387794b3",
+      "diagnostic_digest": "4703a3a31544d0a4ae94",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Chunking/engine/chunker.py",
       "reason": "remaining Chatbook production diagnostic owner"

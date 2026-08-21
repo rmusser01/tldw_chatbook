@@ -36,6 +36,7 @@ excluded = ["__init__.py", "README.md", "SECURITY.md", "templates.py",
 # loudly when upstream drifts under a patch anchor. Hand-edits remain
 # forbidden — a patch lands here and in ENGINE_PATCHES, nowhere else.
 "chunker.py" = "task-19321 / ADR-029: chunk_file_stream diagnostics identify the file by a stable path hash and the exception type instead of the user path / raw exception text"
+"strategies/tokens.py" = "task-19322 / ADR-029: the offset-reconstruction fallback records the token piece's length, position and short digest instead of the decoded document text (repair merged in PR #1890, before this table existed)"
 
 [licence]
 spdx = "GPL-3.0-only"

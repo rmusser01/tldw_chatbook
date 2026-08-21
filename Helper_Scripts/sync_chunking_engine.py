@@ -445,8 +445,43 @@ def _patch_chunker_stream_diagnostics(text: str) -> str:
     return text
 
 
+def _patch_tokens_offset_diagnostics(text: str) -> str:
+    """TASK-19322 (ADR-029): the offset-reconstruction fallback logged the
+    decoded token piece — user document text — at debug. The repaired record
+    keeps the length, the scan position, and a short stable digest so the
+    fallback stays debuggable without carrying content.
+
+    Shipped as a patch here because the repair landed (PR #1890) before this
+    table existed; a shim cannot unship the leaky bytes."""
+    name = "strategies/tokens.py"
+    text = _replace_once(
+        text,
+        "import threading\n",
+        "import hashlib\nimport threading\n",
+        name,
+    )
+    text = _replace_once(
+        text,
+        "                logger.debug(\n"
+        '                    f"Token piece not found in text during offset reconstruction: "\n'
+        "                    f\"piece={repr(piece[:50] + '...' if len(piece) > 50 else piece)}, pos={pos}\"\n"
+        "                )\n",
+        "                # TASK-19322 (ADR-029): the piece is decoded user document\n"
+        "                # text, so the diagnostic records only its length, the scan\n"
+        "                # position, and a short stable digest for correlation.\n"
+        '                piece_digest = hashlib.sha256(piece.encode("utf-8")).hexdigest()[:10]\n'
+        "                logger.debug(\n"
+        '                    "Token piece not found in text during offset reconstruction: "\n'
+        '                    f"piece_len={len(piece)}, piece_sha256={piece_digest}, pos={pos}"\n'
+        "                )\n",
+        name,
+    )
+    return text
+
+
 ENGINE_PATCHES = {
     "chunker.py": _patch_chunker_stream_diagnostics,
+    "strategies/tokens.py": _patch_tokens_offset_diagnostics,
 }
 
 
