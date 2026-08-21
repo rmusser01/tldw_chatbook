@@ -259,3 +259,62 @@ def test_tokens_chunk_preserves_trailing_newlines(monkeypatch):
 
     assert "".join(chunks) == text
     assert chunks[-1].endswith("\n")
+
+
+def test_offset_reconstruction_fallback_logs_no_document_text():
+    """TASK-19322 (ADR-029): the unlocatable piece is decoded user document
+    text, so the fallback diagnostic must not echo its characters at any log
+    level. It stays useful via piece length, scan position, and a short
+    stable digest -- and the reconstruction behavior itself is unchanged."""
+    from loguru import logger
+
+    from tldw_chatbook.Chunking.engine.strategies.tokens import (
+        TokenChunkingStrategy,
+    )
+
+    secret = "SECRET-DOCUMENT-CONTENT-19322"
+    text = "The visible body shares nothing with the decoded token piece."
+
+    class StubTokenizer:
+        model_name = "stub-19322"
+        available = True
+
+        def encode(self, text: str):
+            return [0]
+
+        def decode(self, token_ids, skip_special_tokens: bool = True):
+            # decoded_all != text forces the tolerant forward scan; the
+            # single-token piece is absent from `text`, so the not-found
+            # fallback (and its diagnostic) must fire.
+            return secret
+
+    strat = TokenChunkingStrategy(tokenizer_name="stub-19322")
+    strat._tokenizer = StubTokenizer()  # type: ignore[attr-defined]
+
+    messages: list[str] = []
+    sink_id = logger.add(lambda m: messages.append(str(m)), level="DEBUG")
+    try:
+        offsets = strat._reconstruct_offsets_by_decoding([0], text)
+    finally:
+        logger.remove(sink_id)
+
+    # Behavior unchanged: the piece anchors at the current position.
+    assert offsets == [(0, min(len(text), len(secret)))]
+
+    fallback_messages = [
+        m
+        for m in messages
+        if "Token piece not found in text during offset reconstruction" in m
+    ]
+    assert fallback_messages, (
+        f"the not-found fallback must leave a debug trace: {messages}"
+    )
+    assert not any(secret in m for m in messages), (
+        f"document text must not be echoed in any log record: {messages}"
+    )
+    # De-identified metadata keeps the diagnostic useful: length, position,
+    # and a stable digest prefix for cross-record correlation.
+    assert any(
+        f"piece_len={len(secret)}" in m and "pos=0" in m and "piece_sha256=" in m
+        for m in fallback_messages
+    ), f"the diagnostic must keep piece_len/pos/piece_sha256: {fallback_messages}"
