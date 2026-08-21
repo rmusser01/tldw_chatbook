@@ -855,11 +855,27 @@ def test_migration_failure_rolls_back_schema_context_and_version(
         assert not (PROVENANCE_TABLES & _table_names(connection))
 
 
-def test_citation_failure_after_dev_migrations_leaves_clean_v26(
+def test_citation_failure_after_dev_migrations_leaves_clean_v24(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The sequential v24→v27 path must keep the final migration atomic."""
+    """A failed sequential v24→v27 run rewinds the WHOLE run, then replays.
+
+    Rewritten in task-19553. This test previously asserted the database was
+    left at v26 with v24→v25's and v25→v26's artifacts still present: that was
+    an artifact of ``conn.executescript``, which COMMITTED each intermediate
+    step before the failing one ran. Those steps now execute one statement at
+    a time inside ``_initialize_schema``'s transaction, so the run is
+    all-or-nothing and rewinds to its ENTRY version (24) with none of the
+    intermediate DDL applied.
+
+    That is the stronger guarantee, not a weaker one -- a half-upgraded
+    database is unusable by current code either way, and the old
+    partial-commit behaviour is precisely what could strand a database with
+    committed DDL and a stale version stamp. The final assertion proves the
+    point that matters to a user: the rewound database still opens and
+    migrates on the next attempt.
+    """
 
     path = tmp_path / "sequential-rollback.sqlite"
     _minimal_v24(path)
@@ -875,16 +891,26 @@ def test_citation_failure_after_dev_migrations_leaves_clean_v26(
         _fresh_db(path)
 
     with sqlite3.connect(path) as connection:
-        assert _version(connection) == 26
-        assert "message_generation_metadata" in _table_names(connection)
+        assert _version(connection) == 24
+        assert "message_generation_metadata" not in _table_names(connection)
         conversation_columns = {
             row[1]
             for row in connection.execute("PRAGMA table_info(conversations)").fetchall()
         }
-        assert {"context_summary", "summary_boundary_message_id"} <= (
-            conversation_columns
+        assert not (
+            {"context_summary", "summary_boundary_message_id"} & conversation_columns
         )
         assert not (PROVENANCE_TABLES & _table_names(connection))
+
+    # Re-enterable: with the forced failure removed, the same file migrates.
+    monkeypatch.undo()
+    db = _fresh_db(path)
+    try:
+        assert (
+            _version(db.get_connection()) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
+        )
+    finally:
+        db.close_connection()
 
 
 def test_migration_sql_is_ddl_only_and_provenance_is_not_indexed_or_synced(

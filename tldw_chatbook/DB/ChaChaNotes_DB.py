@@ -184,6 +184,111 @@ class ConflictError(CharactersRAGDBError):
 # never stored in character_expression_images.
 _EXPRESSION_IMAGE_STATE_IDS = frozenset({"thinking", "speaking", "error"})
 
+# --- Migration script runner primitives (task-19553) ------------------------
+#
+# ``sqlite3.Connection.executescript`` COMMITS whatever transaction is open and
+# then autocommits each statement in the script individually. A migration step
+# driven that way is neither atomic nor re-enterable: task-19553 reproduced the
+# failure on a genuine v11 database with one of the v11->v12 ``ADD COLUMN``s
+# already present (the shape an interrupted script leaves behind) -- three
+# ``ALTER``s stayed COMMITTED while the schema version stamp stayed at 11, so
+# every subsequent launch re-entered the step, re-raised ``duplicate column
+# name``, and ``CharactersRAGDB.__init__`` failed permanently with no in-app
+# recovery. The migration steps now run their scripts one statement at a time
+# through ``CharactersRAGDB._execute_migration_statements``, inside the
+# caller's transaction, mirroring ``_migrate_from_v37_to_v38``.
+
+#: A SQLite identifier as the migration scripts actually spell them: a bare
+#: word, or one wrapped in double quotes / backticks / square brackets.
+_SQL_IDENTIFIER_PATTERN = r"(?:[A-Za-z_][A-Za-z0-9_]*|\"[^\"]+\"|`[^`]+`|\[[^\]]+\])"
+
+#: Head of an ``ALTER TABLE <table> ADD [COLUMN] <column> ...`` statement.
+_MIGRATION_ADD_COLUMN_RE = re.compile(
+    rf"\AALTER\s+TABLE\s+(?P<table>{_SQL_IDENTIFIER_PATTERN})"
+    rf"\s+ADD\s+(?:COLUMN\s+)?(?P<column>{_SQL_IDENTIFIER_PATTERN})",
+    re.IGNORECASE,
+)
+
+#: Head of a ``CREATE [TEMP] TRIGGER [IF NOT EXISTS] <name> ...`` statement.
+_MIGRATION_CREATE_TRIGGER_RE = re.compile(
+    rf"\ACREATE\s+(?:TEMP(?:ORARY)?\s+)?TRIGGER\s+"
+    rf"(?P<if_not_exists>IF\s+NOT\s+EXISTS\s+)?"
+    rf"(?P<name>{_SQL_IDENTIFIER_PATTERN})",
+    re.IGNORECASE,
+)
+
+#: Only plain identifiers are ever interpolated into generated SQL.
+_PLAIN_SQL_IDENTIFIER_RE = re.compile(r"\A[A-Za-z_][A-Za-z0-9_]*\Z")
+
+
+def _unquote_sql_identifier(token: str) -> str:
+    """Return ``token`` with one layer of SQLite identifier quoting removed."""
+    if len(token) >= 2 and token[0] in {'"', "`", "["}:
+        return token[1:-1]
+    return token
+
+
+def _strip_leading_sql_noise(statement: str) -> str:
+    """Return ``statement`` without its leading whitespace and comments.
+
+    The migration scripts attach a header comment to the statement that
+    follows it, so the raw chunk cannot be pattern-matched directly. Only the
+    HEAD is trimmed; the statement handed to SQLite is always the original
+    text, so ``sqlite_master.sql`` is unaffected.
+
+    Args:
+        statement: One complete statement, possibly comment-prefixed.
+
+    Returns:
+        The statement text starting at its first SQL token, or ``""`` when the
+        chunk carries no SQL at all.
+    """
+    text = statement
+    while True:
+        text = text.lstrip()
+        if text.startswith("--"):
+            newline = text.find("\n")
+            if newline == -1:
+                return ""
+            text = text[newline + 1 :]
+            continue
+        if text.startswith("/*"):
+            end = text.find("*/")
+            if end == -1:
+                return ""
+            text = text[end + 2 :]
+            continue
+        return text
+
+
+def _split_sql_statements(script: str) -> List[str]:
+    """Split a migration script into complete statements.
+
+    Uses ``sqlite3.complete_statement`` over accumulated lines -- the same
+    splitter the new-style migration steps already use for their on-disk
+    ``.sql`` files -- so trigger bodies containing ``;`` stay intact.
+
+    Args:
+        script: The full migration script text.
+
+    Returns:
+        The statements in source order, each keeping its original text
+        (leading comments included).
+
+    Raises:
+        SchemaError: If the script ends with an incomplete statement.
+    """
+    statements: List[str] = []
+    pending = ""
+    for line in script.splitlines(keepends=True):
+        pending += line
+        if sqlite3.complete_statement(pending):
+            statements.append(pending)
+            pending = ""
+    if pending.strip():
+        raise SchemaError("Migration script contains an incomplete SQL statement")
+    return statements
+
 
 def _table_check_references_console_project_context(create_sql: str) -> bool:
     """Return whether a CHECK expression references the local-only column."""
@@ -3413,6 +3518,148 @@ UPDATE db_schema_version
                 f"Could not determine schema version for '{self._SCHEMA_NAME}': {e}"
             ) from e
 
+    def _require_migration_entry_version(
+        self,
+        conn: sqlite3.Connection,
+        expected: int,
+        label: str,
+    ) -> None:
+        """Refuse to run a migration step against the wrong schema version.
+
+        Mirrors the guard the new-style steps carry (e.g.
+        ``_migrate_from_v37_to_v38``). Without it a step could be re-entered
+        against an already-advanced database and re-apply its DDL.
+
+        Args:
+            conn: The active connection.
+            expected: The schema version the step is written against.
+            label: Human-readable step label, e.g. ``"V4→V5"``.
+
+        Raises:
+            SchemaError: If the database is not at ``expected``.
+        """
+        actual = self._get_db_version(conn)
+        if actual != expected:
+            raise SchemaError(
+                f"[{self._SCHEMA_NAME} {label}] Migration requires schema "
+                f"version {expected}, found {actual}"
+            )
+
+    def _skip_already_applied_add_column(
+        self,
+        cursor: sqlite3.Cursor,
+        head: str,
+        label: str,
+    ) -> bool:
+        """Return whether an ``ADD COLUMN`` statement is already satisfied.
+
+        SQLite has no ``ADD COLUMN IF NOT EXISTS``, so a database left with a
+        column from a half-applied historical run (the task-19553 brick shape)
+        would abort the whole upgrade with ``duplicate column name``. Skipping
+        exactly that statement lands such a database where a clean one lands.
+        On a healthy chain the column never pre-exists, so this is a no-op and
+        the statement stream is unchanged.
+
+        Args:
+            cursor: Cursor inside the step's transaction.
+            head: The statement with leading comments stripped.
+            label: Human-readable step label, for logging.
+
+        Returns:
+            True when the column already exists and the ``ALTER`` must be
+            skipped.
+        """
+        match = _MIGRATION_ADD_COLUMN_RE.match(head)
+        if match is None:
+            return False
+        table = _unquote_sql_identifier(match.group("table"))
+        column = _unquote_sql_identifier(match.group("column"))
+        existing = {
+            row[0]
+            for row in cursor.execute(
+                "SELECT name FROM pragma_table_info(?)", (table,)
+            ).fetchall()
+        }
+        if column not in existing:
+            return False
+        logger.info(
+            f"[{self._SCHEMA_NAME} {label}] {table}.{column} already present; "
+            "skipping the ADD COLUMN (idempotent replay)."
+        )
+        return True
+
+    def _drop_superseded_trigger(
+        self,
+        cursor: sqlite3.Cursor,
+        head: str,
+        label: str,
+    ) -> None:
+        """Drop a same-named trigger before a bare ``CREATE TRIGGER``.
+
+        Several historical steps (V7→V8, V8→V9) create triggers without
+        ``IF NOT EXISTS`` and without a preceding ``DROP``; replaying such a
+        step over a half-applied database would raise ``trigger ... already
+        exists``. Dropping first makes the step re-enterable and leaves the
+        exact same ``sqlite_master`` row the step intended. Statements that
+        already say ``IF NOT EXISTS`` are left alone -- SQLite's own
+        keep-the-existing-one semantics are not overridden.
+
+        Args:
+            cursor: Cursor inside the step's transaction.
+            head: The statement with leading comments stripped.
+            label: Human-readable step label, for logging.
+        """
+        match = _MIGRATION_CREATE_TRIGGER_RE.match(head)
+        if match is None or match.group("if_not_exists"):
+            return
+        name = _unquote_sql_identifier(match.group("name"))
+        if not _PLAIN_SQL_IDENTIFIER_RE.match(name):
+            # Never interpolate anything but a plain identifier; an exotic
+            # name simply keeps the historical (non-idempotent) behaviour.
+            return
+        exists = cursor.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = ? LIMIT 1",
+            (name,),
+        ).fetchone()
+        if exists is None:
+            return
+        logger.info(
+            f"[{self._SCHEMA_NAME} {label}] trigger {name} already present; "
+            "dropping it so the step's definition is re-applied."
+        )
+        cursor.execute(f'DROP TRIGGER IF EXISTS "{name}"')
+
+    def _execute_migration_statements(
+        self,
+        cursor: sqlite3.Cursor,
+        script: str,
+        label: str,
+    ) -> None:
+        """Run a migration script statement-by-statement, atomically.
+
+        The rollback-safe replacement for ``conn.executescript`` (task-19553):
+        every statement runs through ``cursor``, so it participates in the
+        caller's transaction and a failure part-way through rolls the whole
+        step back to its entry state instead of leaving committed DDL behind.
+
+        Args:
+            cursor: Cursor inside the step's transaction.
+            script: The migration script text.
+            label: Human-readable step label, e.g. ``"V12→V13"``.
+
+        Raises:
+            SchemaError: If the script ends with an incomplete statement.
+            sqlite3.Error: Propagated from a failing statement.
+        """
+        for statement in _split_sql_statements(script):
+            head = _strip_leading_sql_noise(statement)
+            if not head:
+                continue
+            if self._skip_already_applied_add_column(cursor, head, label):
+                continue
+            self._drop_superseded_trigger(cursor, head, label)
+            cursor.execute(statement)
+
     def _apply_schema_v4(self, conn: sqlite3.Connection):
         """
         Applies the full SQL schema for version 4.
@@ -3433,8 +3680,27 @@ UPDATE db_schema_version
             f"Applying schema Version 4 for '{self._SCHEMA_NAME}' to DB: {self.db_path_str}..."
         )
         try:
-            # Using conn.executescript directly as it manages its own transaction
-            conn.executescript(self._FULL_SCHEMA_SQL_V4)
+            # task-19553: this used to run through ``conn.executescript``,
+            # which COMMITS the caller's transaction and autocommits each
+            # statement. An interrupted base-schema apply therefore left a
+            # half-built database that the next launch could not finish -- the
+            # 42 bare ``CREATE TRIGGER`` statements here have no
+            # ``IF NOT EXISTS``, so a retry died on "trigger already exists".
+            # Running through the shared statement runner keeps the whole
+            # apply inside ``_initialize_schema``'s transaction and makes a
+            # retry safe.
+            #
+            # The ONE statement that cannot participate: the script's leading
+            # ``PRAGMA foreign_keys = ON``. SQLite silently IGNORES that pragma
+            # inside a transaction, so it is deliberately left to
+            # ``_get_thread_connection``, which already issues it on every
+            # connection before this runs (see the PRAGMA block there). The
+            # statement stays in the script -- harmless, and the script remains
+            # the readable definition of the v4 schema.
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, self._FULL_SCHEMA_SQL_V4, "V4 base"
+                )
             logger.debug(f"[{self._SCHEMA_NAME} V4] Full schema script executed.")
 
             final_version = self._get_db_version(conn)
@@ -3724,12 +3990,17 @@ UPDATE db_schema_version
             SchemaError: If the migration fails or the version is not correctly
                          updated to 5 in db_schema_version.
         """
+        self._require_migration_entry_version(conn, 4, "V4→V5")
         logger.info(
             f"Migrating schema from V4 to V5 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
         )
         try:
-            # Execute the migration script
-            conn.executescript(self._MIGRATE_V4_TO_V5_SQL)
+            # Execute the migration script (task-19553: one statement per
+            # ``cursor.execute`` inside the transaction, never executescript).
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, self._MIGRATE_V4_TO_V5_SQL, "V4→V5"
+                )
             logger.debug(f"[{self._SCHEMA_NAME} V4→V5] Migration script executed.")
 
             # Verify the migration was successful
@@ -3772,12 +4043,15 @@ UPDATE db_schema_version
             SchemaError: If the migration fails or the version is not correctly
                          updated to 6 in db_schema_version.
         """
+        self._require_migration_entry_version(conn, 5, "V5→V6")
         logger.info(
             f"Migrating schema from V5 to V6 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
         )
         try:
-            # Execute the migration script
-            conn.executescript(self._MIGRATE_V5_TO_V6_SQL)
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, self._MIGRATE_V5_TO_V6_SQL, "V5→V6"
+                )
             logger.debug(f"[{self._SCHEMA_NAME} V5→V6] Migration script executed.")
 
             # Verify the migration was successful
@@ -3820,12 +4094,15 @@ UPDATE db_schema_version
             SchemaError: If the migration fails or the version is not correctly
                          updated to 7 in db_schema_version.
         """
+        self._require_migration_entry_version(conn, 6, "V6→V7")
         logger.info(
             f"Migrating schema from V6 to V7 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
         )
         try:
-            # Execute the migration script
-            conn.executescript(self._MIGRATE_V6_TO_V7_SQL)
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, self._MIGRATE_V6_TO_V7_SQL, "V6→V7"
+                )
             logger.debug(f"[{self._SCHEMA_NAME} V6→V7] Migration script executed.")
 
             # Verify the migration was successful
@@ -3868,12 +4145,15 @@ UPDATE db_schema_version
             SchemaError: If the migration fails or the version is not correctly
                          updated to 9 in db_schema_version.
         """
+        self._require_migration_entry_version(conn, 8, "V8→V9")
         logger.info(
             f"Migrating schema from V8 to V9 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
         )
         try:
-            # Execute the migration script
-            conn.executescript(self._MIGRATE_V8_TO_V9_SQL)
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, self._MIGRATE_V8_TO_V9_SQL, "V8→V9"
+                )
             logger.debug(f"[{self._SCHEMA_NAME} V8→V9] Migration script executed.")
 
             # Verify the migration was successful
@@ -3916,12 +4196,15 @@ UPDATE db_schema_version
             SchemaError: If the migration fails or the version is not correctly
                          updated to 10 in db_schema_version.
         """
+        self._require_migration_entry_version(conn, 9, "V9→V10")
         logger.info(
             f"Migrating schema from V9 to V10 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
         )
         try:
-            # Execute the migration script
-            conn.executescript(self._MIGRATE_V9_TO_V10_SQL)
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, self._MIGRATE_V9_TO_V10_SQL, "V9→V10"
+                )
             logger.debug(f"[{self._SCHEMA_NAME} V9→V10] Migration script executed.")
 
             # Verify the migration was successful
@@ -3964,12 +4247,15 @@ UPDATE db_schema_version
             SchemaError: If the migration fails or the version is not correctly
                          updated to 11 in db_schema_version.
         """
+        self._require_migration_entry_version(conn, 10, "V10→V11")
         logger.info(
             f"Migrating schema from V10 to V11 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
         )
         try:
-            # Execute the migration script
-            conn.executescript(self._MIGRATE_V10_TO_V11_SQL)
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, self._MIGRATE_V10_TO_V11_SQL, "V10→V11"
+                )
             logger.debug(f"[{self._SCHEMA_NAME} V10→V11] Migration script executed.")
 
             # Verify the migration was successful
@@ -4012,12 +4298,15 @@ UPDATE db_schema_version
             SchemaError: If the migration fails or the version is not correctly
                          updated to 12 in db_schema_version.
         """
+        self._require_migration_entry_version(conn, 11, "V11→V12")
         logger.info(
             f"Migrating schema from V11 to V12 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
         )
         try:
-            # Execute the migration script
-            conn.executescript(self._MIGRATE_V11_TO_V12_SQL)
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, self._MIGRATE_V11_TO_V12_SQL, "V11→V12"
+                )
             logger.debug(f"[{self._SCHEMA_NAME} V11→V12] Migration script executed.")
 
             # Verify the migration was successful
@@ -4052,11 +4341,15 @@ UPDATE db_schema_version
         This migration adds conversation metadata fields needed for local/server
         conversation parity and backfills legacy rows with safe defaults.
         """
+        self._require_migration_entry_version(conn, 12, "V12→V13")
         logger.info(
             f"Migrating schema from V12 to V13 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
         )
         try:
-            conn.executescript(self._MIGRATE_V12_TO_V13_SQL)
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, self._MIGRATE_V12_TO_V13_SQL, "V12→V13"
+                )
             logger.debug(f"[{self._SCHEMA_NAME} V12→V13] Migration script executed.")
 
             final_version = self._get_db_version(conn)
@@ -4089,11 +4382,15 @@ UPDATE db_schema_version
 
         This migration adds runtime/discovery metadata fields and backfills legacy rows with safe defaults.
         """
+        self._require_migration_entry_version(conn, 13, "V13→V14")
         logger.info(
             f"Migrating schema from V13 to V14 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
         )
         try:
-            conn.executescript(self._MIGRATE_V13_TO_V14_SQL)
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, self._MIGRATE_V13_TO_V14_SQL, "V13→V14"
+                )
             logger.debug(f"[{self._SCHEMA_NAME} V13→V14] Migration script executed.")
 
             final_version = self._get_db_version(conn)
@@ -4126,11 +4423,15 @@ UPDATE db_schema_version
 
         This migration adds local quiz parity tables for quizzes, questions, and attempts.
         """
+        self._require_migration_entry_version(conn, 14, "V14→V15")
         logger.info(
             f"Migrating schema from V14 to V15 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
         )
         try:
-            conn.executescript(self._MIGRATE_V14_TO_V15_SQL)
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, self._MIGRATE_V14_TO_V15_SQL, "V14→V15"
+                )
             logger.debug(f"[{self._SCHEMA_NAME} V14→V15] Migration script executed.")
 
             final_version = self._get_db_version(conn)
@@ -4164,47 +4465,53 @@ UPDATE db_schema_version
         This migration repairs flashcard FTS5 triggers and rebuilds the local
         flashcard FTS index so multi-token flashcard updates remain searchable.
         """
+        self._require_migration_entry_version(conn, 15, "V15→V16")
         logger.info(
             f"Migrating schema from V15 to V16 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
         )
         try:
-            existing_flashcard_tables = {
-                row[0]
-                for row in conn.execute(
-                    """
-                    SELECT name
-                    FROM sqlite_master
-                    WHERE type IN ('table', 'virtual table')
-                      AND name IN ('flashcards', 'flashcards_fts')
-                    """
-                ).fetchall()
-            }
-            if "flashcards" not in existing_flashcard_tables:
-                logger.info(
-                    f"[{self._SCHEMA_NAME} V15→V16] No flashcards table present; skipping FTS repair."
-                )
-                conn.execute(
-                    """
-                    UPDATE db_schema_version
-                       SET version = 16
-                     WHERE schema_name = ?
-                       AND version = 15
-                    """,
-                    (self._SCHEMA_NAME,),
-                )
-            else:
-                if "flashcards_fts" not in existing_flashcard_tables:
-                    conn.execute(
+            # task-19553: the probe AND the script share one transaction, so a
+            # failure anywhere leaves the database at v15 with no partial DDL.
+            with self.transaction() as cursor:
+                existing_flashcard_tables = {
+                    row[0]
+                    for row in cursor.execute(
                         """
-                        CREATE VIRTUAL TABLE IF NOT EXISTS flashcards_fts USING fts5(
-                            front, back, tags, content=flashcards, content_rowid=rowid
-                        )
+                        SELECT name
+                        FROM sqlite_master
+                        WHERE type IN ('table', 'virtual table')
+                          AND name IN ('flashcards', 'flashcards_fts')
                         """
+                    ).fetchall()
+                }
+                if "flashcards" not in existing_flashcard_tables:
+                    logger.info(
+                        f"[{self._SCHEMA_NAME} V15→V16] No flashcards table present; skipping FTS repair."
                     )
-                conn.executescript(self._MIGRATE_V15_TO_V16_SQL)
-                logger.debug(
-                    f"[{self._SCHEMA_NAME} V15→V16] Migration script executed."
-                )
+                    cursor.execute(
+                        """
+                        UPDATE db_schema_version
+                           SET version = 16
+                         WHERE schema_name = ?
+                           AND version = 15
+                        """,
+                        (self._SCHEMA_NAME,),
+                    )
+                else:
+                    if "flashcards_fts" not in existing_flashcard_tables:
+                        cursor.execute(
+                            """
+                            CREATE VIRTUAL TABLE IF NOT EXISTS flashcards_fts USING fts5(
+                                front, back, tags, content=flashcards, content_rowid=rowid
+                            )
+                            """
+                        )
+                    self._execute_migration_statements(
+                        cursor, self._MIGRATE_V15_TO_V16_SQL, "V15→V16"
+                    )
+                    logger.debug(
+                        f"[{self._SCHEMA_NAME} V15→V16] Migration script executed."
+                    )
 
             final_version = self._get_db_version(conn)
             if final_version != 16:
@@ -4237,11 +4544,15 @@ UPDATE db_schema_version
         This migration adds durable local-only conversation marks without adding
         sync triggers or changing normalized conversation metadata.
         """
+        self._require_migration_entry_version(conn, 16, "V16→V17")
         logger.info(
             f"Migrating schema from V16 to V17 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
         )
         try:
-            conn.executescript(self._MIGRATE_V16_TO_V17_SQL)
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, self._MIGRATE_V16_TO_V17_SQL, "V16→V17"
+                )
             logger.debug(f"[{self._SCHEMA_NAME} V16→V17] Migration script executed.")
 
             final_version = self._get_db_version(conn)
@@ -4277,11 +4588,15 @@ UPDATE db_schema_version
         feature, and redefines the ``conversations_sync_*`` triggers so edits
         to the new column are reflected in ``sync_log``.
         """
+        self._require_migration_entry_version(conn, 17, "V17→V18")
         logger.info(
             f"Migrating schema from V17 to V18 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
         )
         try:
-            conn.executescript(self._MIGRATE_V17_TO_V18_SQL)
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, self._MIGRATE_V17_TO_V18_SQL, "V17→V18"
+                )
             logger.debug(f"[{self._SCHEMA_NAME} V17→V18] Migration script executed.")
 
             final_version = self._get_db_version(conn)
@@ -4317,20 +4632,26 @@ UPDATE db_schema_version
         (e.g., active_dictionaries), and redefines the ``conversations_sync_*``
         triggers so edits to the new column are reflected in ``sync_log``.
         """
+        self._require_migration_entry_version(conn, 19, "V19→V20")
         logger.info(
             f"Migrating schema from V19 to V20 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
         )
         try:
-            # Idempotent column add: SQLite has no ``ADD COLUMN IF NOT EXISTS``, so
-            # skip the ALTER when a replayed/partial migration already left the
-            # column in place (mirrors the v18->v19 ``CREATE TABLE IF NOT EXISTS``).
-            existing_columns = {
-                row[1]
-                for row in conn.execute("PRAGMA table_info(conversations)").fetchall()
-            }
-            if "metadata" not in existing_columns:
-                conn.execute("ALTER TABLE conversations ADD COLUMN metadata TEXT")
-            conn.executescript(self._MIGRATE_V19_TO_V20_SQL)
+            with self.transaction() as cursor:
+                # Idempotent column add: SQLite has no ``ADD COLUMN IF NOT EXISTS``, so
+                # skip the ALTER when a replayed/partial migration already left the
+                # column in place (mirrors the v18->v19 ``CREATE TABLE IF NOT EXISTS``).
+                existing_columns = {
+                    row[1]
+                    for row in cursor.execute(
+                        "PRAGMA table_info(conversations)"
+                    ).fetchall()
+                }
+                if "metadata" not in existing_columns:
+                    cursor.execute("ALTER TABLE conversations ADD COLUMN metadata TEXT")
+                self._execute_migration_statements(
+                    cursor, self._MIGRATE_V19_TO_V20_SQL, "V19→V20"
+                )
             logger.debug(f"[{self._SCHEMA_NAME} V19→V20] Migration script executed.")
 
             final_version = self._get_db_version(conn)
@@ -4366,24 +4687,28 @@ UPDATE db_schema_version
         the ``world_book_entries_sync_*`` triggers so edits to the new
         column are reflected in ``sync_log``.
         """
+        self._require_migration_entry_version(conn, 20, "V20→V21")
         logger.info(
             f"Migrating schema from V20 to V21 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
         )
         try:
-            # Idempotent column add: SQLite has no ``ADD COLUMN IF NOT EXISTS``, so
-            # skip the ALTER when a replayed/partial migration already left the
-            # column in place (mirrors the v19->v20 ``metadata`` column guard).
-            existing_columns = {
-                row[1]
-                for row in conn.execute(
-                    "PRAGMA table_info(world_book_entries)"
-                ).fetchall()
-            }
-            if "priority" not in existing_columns:
-                conn.execute(
-                    "ALTER TABLE world_book_entries ADD COLUMN priority INTEGER DEFAULT 0"
+            with self.transaction() as cursor:
+                # Idempotent column add: SQLite has no ``ADD COLUMN IF NOT EXISTS``, so
+                # skip the ALTER when a replayed/partial migration already left the
+                # column in place (mirrors the v19->v20 ``metadata`` column guard).
+                existing_columns = {
+                    row[1]
+                    for row in cursor.execute(
+                        "PRAGMA table_info(world_book_entries)"
+                    ).fetchall()
+                }
+                if "priority" not in existing_columns:
+                    cursor.execute(
+                        "ALTER TABLE world_book_entries ADD COLUMN priority INTEGER DEFAULT 0"
+                    )
+                self._execute_migration_statements(
+                    cursor, self._MIGRATE_V20_TO_V21_SQL, "V20→V21"
                 )
-            conn.executescript(self._MIGRATE_V20_TO_V21_SQL)
             logger.debug(f"[{self._SCHEMA_NAME} V20→V21] Migration script executed.")
 
             final_version = self._get_db_version(conn)
@@ -4413,14 +4738,18 @@ UPDATE db_schema_version
     def _migrate_from_v21_to_v22(self, conn: sqlite3.Connection):
         """Migrate schema V21→V22: add ``regex`` to ``world_book_entries`` and
         redefine the sync triggers so edits to it reach ``sync_log``."""
+        self._require_migration_entry_version(conn, 21, "V21→V22")
         logger.info(f"Migrating schema from V21 to V22 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
         try:
-            existing_columns = {
-                row[1] for row in conn.execute("PRAGMA table_info(world_book_entries)").fetchall()
-            }
-            if "regex" not in existing_columns:
-                conn.execute("ALTER TABLE world_book_entries ADD COLUMN regex BOOLEAN DEFAULT 0")
-            conn.executescript(self._MIGRATE_V21_TO_V22_SQL)
+            with self.transaction() as cursor:
+                existing_columns = {
+                    row[1] for row in cursor.execute("PRAGMA table_info(world_book_entries)").fetchall()
+                }
+                if "regex" not in existing_columns:
+                    cursor.execute("ALTER TABLE world_book_entries ADD COLUMN regex BOOLEAN DEFAULT 0")
+                self._execute_migration_statements(
+                    cursor, self._MIGRATE_V21_TO_V22_SQL, "V21→V22"
+                )
             logger.debug(f"[{self._SCHEMA_NAME} V21→V22] Migration script executed.")
             final_version = self._get_db_version(conn)
             if final_version != 22:
@@ -4438,9 +4767,13 @@ UPDATE db_schema_version
     def _migrate_from_v22_to_v23(self, conn: sqlite3.Connection):
         """Migrate schema V22→V23: add the local ``character_expression_images``
         BLOB table (per-state reaction avatars; idle reuses character_cards.image)."""
+        self._require_migration_entry_version(conn, 22, "V22→V23")
         logger.info(f"Migrating schema from V22 to V23 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
         try:
-            conn.executescript(self._MIGRATE_V22_TO_V23_SQL)
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, self._MIGRATE_V22_TO_V23_SQL, "V22→V23"
+                )
             logger.debug(f"[{self._SCHEMA_NAME} V22→V23] Migration script executed.")
             final_version = self._get_db_version(conn)
             if final_version != 23:
@@ -4459,14 +4792,18 @@ UPDATE db_schema_version
         """Migrate schema V23→V24: add the local-only ``active_leaf_message_id``
         pointer column to ``conversations``. No triggers change — the column is
         never synced (see ``set_conversation_active_leaf``)."""
+        self._require_migration_entry_version(conn, 23, "V23→V24")
         logger.info(f"Migrating schema from V23 to V24 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
         try:
-            existing_columns = {
-                row[1] for row in conn.execute("PRAGMA table_info(conversations)").fetchall()
-            }
-            if "active_leaf_message_id" not in existing_columns:
-                conn.execute("ALTER TABLE conversations ADD COLUMN active_leaf_message_id TEXT")
-            conn.executescript(self._MIGRATE_V23_TO_V24_SQL)
+            with self.transaction() as cursor:
+                existing_columns = {
+                    row[1] for row in cursor.execute("PRAGMA table_info(conversations)").fetchall()
+                }
+                if "active_leaf_message_id" not in existing_columns:
+                    cursor.execute("ALTER TABLE conversations ADD COLUMN active_leaf_message_id TEXT")
+                self._execute_migration_statements(
+                    cursor, self._MIGRATE_V23_TO_V24_SQL, "V23→V24"
+                )
             logger.debug(f"[{self._SCHEMA_NAME} V23→V24] Migration script executed.")
             final_version = self._get_db_version(conn)
             if final_version != 24:
@@ -4485,9 +4822,13 @@ UPDATE db_schema_version
         """Migrate schema V24→V25: add the ``message_generation_metadata`` sidecar
         table for storing image generation metadata (prompts, backend, model, etc.).
         No sync triggers are added; this table is local-only (v19/v24 precedent)."""
+        self._require_migration_entry_version(conn, 24, "V24→V25")
         logger.info(f"Migrating schema from V24 to V25 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
         try:
-            conn.executescript(self._MIGRATE_V24_TO_V25_SQL)
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, self._MIGRATE_V24_TO_V25_SQL, "V24→V25"
+                )
             logger.debug(f"[{self._SCHEMA_NAME} V24→V25] Migration script executed.")
             final_version = self._get_db_version(conn)
             if final_version != 25:
@@ -4507,16 +4848,20 @@ UPDATE db_schema_version
         ``summary_boundary_message_id`` columns to ``conversations`` (Console
         `/rewind` "summarize up to here"). No triggers change -- the columns
         are never synced (see ``set_conversation_context_summary``)."""
+        self._require_migration_entry_version(conn, 25, "V25→V26")
         logger.info(f"Migrating schema from V25 to V26 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
         try:
-            existing_columns = {
-                row[1] for row in conn.execute("PRAGMA table_info(conversations)").fetchall()
-            }
-            if "context_summary" not in existing_columns:
-                conn.execute("ALTER TABLE conversations ADD COLUMN context_summary TEXT")
-            if "summary_boundary_message_id" not in existing_columns:
-                conn.execute("ALTER TABLE conversations ADD COLUMN summary_boundary_message_id TEXT")
-            conn.executescript(self._MIGRATE_V25_TO_V26_SQL)
+            with self.transaction() as cursor:
+                existing_columns = {
+                    row[1] for row in cursor.execute("PRAGMA table_info(conversations)").fetchall()
+                }
+                if "context_summary" not in existing_columns:
+                    cursor.execute("ALTER TABLE conversations ADD COLUMN context_summary TEXT")
+                if "summary_boundary_message_id" not in existing_columns:
+                    cursor.execute("ALTER TABLE conversations ADD COLUMN summary_boundary_message_id TEXT")
+                self._execute_migration_statements(
+                    cursor, self._MIGRATE_V25_TO_V26_SQL, "V25→V26"
+                )
             logger.debug(f"[{self._SCHEMA_NAME} V25→V26] Migration script executed.")
             final_version = self._get_db_version(conn)
             if final_version != 26:
@@ -4713,11 +5058,15 @@ UPDATE db_schema_version
         no backfill needed since these tables have no prior rows. No sync
         triggers are added; this is a deliberate, local-only divergence (see
         the migration file's header comment)."""
+        self._require_migration_entry_version(conn, 28, "V28→V29")
         logger.info(
             f"Migrating schema from V28 to V29 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
         )
         try:
-            conn.executescript(self._MIGRATE_V28_TO_V29_SQL)
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, self._MIGRATE_V28_TO_V29_SQL, "V28→V29"
+                )
             logger.debug(f"[{self._SCHEMA_NAME} V28→V29] Migration script executed.")
 
             final_version = self._get_db_version(conn)
@@ -4765,33 +5114,39 @@ UPDATE db_schema_version
             # would abort the whole upgrade with "duplicate column name".
             # Skipping just the DDL (never the version bump) lands such a
             # database at v30 exactly like a clean one.
-            existing_columns = {
-                row[1] for row in conn.execute("PRAGMA table_info(messages)").fetchall()
-            }
-            if "usage_json" in existing_columns:
-                logger.info(
-                    f"[{self._SCHEMA_NAME} V29→V30] messages.usage_json already present; "
-                    "skipping the ALTER and applying the version bump only."
-                )
-            else:
-                conn.executescript(self._MIGRATE_V29_TO_V30_SQL)
-                logger.debug(
-                    f"[{self._SCHEMA_NAME} V29→V30] Migration script executed."
-                )
+            with self.transaction() as cursor:
+                existing_columns = {
+                    row[1]
+                    for row in cursor.execute(
+                        "PRAGMA table_info(messages)"
+                    ).fetchall()
+                }
+                if "usage_json" in existing_columns:
+                    logger.info(
+                        f"[{self._SCHEMA_NAME} V29→V30] messages.usage_json already present; "
+                        "skipping the ALTER and applying the version bump only."
+                    )
+                else:
+                    self._execute_migration_statements(
+                        cursor, self._MIGRATE_V29_TO_V30_SQL, "V29→V30"
+                    )
+                    logger.debug(
+                        f"[{self._SCHEMA_NAME} V29→V30] Migration script executed."
+                    )
 
-            version_cursor = conn.execute(
-                """
-                UPDATE db_schema_version
-                   SET version = 30
-                 WHERE schema_name = ?
-                   AND version = 29
-                """,
-                (self._SCHEMA_NAME,),
-            )
-            if version_cursor.rowcount != 1:
-                raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V29→V30] Migration version update was not applied"
+                cursor.execute(
+                    """
+                    UPDATE db_schema_version
+                       SET version = 30
+                     WHERE schema_name = ?
+                       AND version = 29
+                    """,
+                    (self._SCHEMA_NAME,),
                 )
+                if cursor.rowcount != 1:
+                    raise SchemaError(
+                        f"[{self._SCHEMA_NAME} V29→V30] Migration version update was not applied"
+                    )
 
             final_version = self._get_db_version(conn)
             if final_version != 30:
@@ -4838,33 +5193,39 @@ UPDATE db_schema_version
             # -- would abort the whole upgrade with "duplicate column name".
             # Skipping just the DDL (never the version bump) lands such a
             # database at v31 exactly like a clean one.
-            existing_columns = {
-                row[1] for row in conn.execute("PRAGMA table_info(messages)").fetchall()
-            }
-            if "metadata_json" in existing_columns:
-                logger.info(
-                    f"[{self._SCHEMA_NAME} V30→V31] messages.metadata_json already present; "
-                    "skipping the ALTER and applying the version bump only."
-                )
-            else:
-                conn.executescript(self._MIGRATE_V30_TO_V31_SQL)
-                logger.debug(
-                    f"[{self._SCHEMA_NAME} V30→V31] Migration script executed."
-                )
+            with self.transaction() as cursor:
+                existing_columns = {
+                    row[1]
+                    for row in cursor.execute(
+                        "PRAGMA table_info(messages)"
+                    ).fetchall()
+                }
+                if "metadata_json" in existing_columns:
+                    logger.info(
+                        f"[{self._SCHEMA_NAME} V30→V31] messages.metadata_json already present; "
+                        "skipping the ALTER and applying the version bump only."
+                    )
+                else:
+                    self._execute_migration_statements(
+                        cursor, self._MIGRATE_V30_TO_V31_SQL, "V30→V31"
+                    )
+                    logger.debug(
+                        f"[{self._SCHEMA_NAME} V30→V31] Migration script executed."
+                    )
 
-            version_cursor = conn.execute(
-                """
-                UPDATE db_schema_version
-                   SET version = 31
-                 WHERE schema_name = ?
-                   AND version = 30
-                """,
-                (self._SCHEMA_NAME,),
-            )
-            if version_cursor.rowcount != 1:
-                raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V30→V31] Migration version update was not applied"
+                cursor.execute(
+                    """
+                    UPDATE db_schema_version
+                       SET version = 31
+                     WHERE schema_name = ?
+                       AND version = 30
+                    """,
+                    (self._SCHEMA_NAME,),
                 )
+                if cursor.rowcount != 1:
+                    raise SchemaError(
+                        f"[{self._SCHEMA_NAME} V30→V31] Migration version update was not applied"
+                    )
 
             final_version = self._get_db_version(conn)
             if final_version != 31:
@@ -5533,11 +5894,15 @@ UPDATE db_schema_version
         triggers are added here; sync wiring is tracked separately
         (TASK-220).
         """
+        self._require_migration_entry_version(conn, 18, "V18→V19")
         logger.info(
             f"Migrating schema from V18 to V19 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
         )
         try:
-            conn.executescript(self._MIGRATE_V18_TO_V19_SQL)
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, self._MIGRATE_V18_TO_V19_SQL, "V18→V19"
+                )
             logger.debug(f"[{self._SCHEMA_NAME} V18→V19] Migration script executed.")
 
             final_version = self._get_db_version(conn)
@@ -5579,12 +5944,15 @@ UPDATE db_schema_version
             SchemaError: If the migration fails or the version is not correctly
                          updated to 8 in db_schema_version.
         """
+        self._require_migration_entry_version(conn, 7, "V7→V8")
         logger.info(
             f"Migrating schema from V7 to V8 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
         )
         try:
-            # Execute the migration script
-            conn.executescript(self._MIGRATE_V7_TO_V8_SQL)
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, self._MIGRATE_V7_TO_V8_SQL, "V7→V8"
+                )
             logger.debug(f"[{self._SCHEMA_NAME} V7→V8] Migration script executed.")
 
             # Verify the migration was successful
@@ -5710,12 +6078,16 @@ UPDATE db_schema_version
                             f"Migration path undefined for '{self._SCHEMA_NAME}' from version {current_initial_version} to {target_version}. "
                             f"Manual migration or a new database may be required."
                         )
+                    # Defensive backstop. This existed because
                     # ``Connection.executescript`` commits any active
-                    # transaction before running a script. Several historical
-                    # migrations use it, while the transaction context's
-                    # logical nesting depth remains active. Restore the real
-                    # SQLite transaction before every step so the next
-                    # cursor-driven migration remains rollback-safe.
+                    # transaction before running a script, and the historical
+                    # migration steps used it -- leaving the context manager's
+                    # logical nesting depth active over no real SQLite
+                    # transaction. task-19553 removed the last
+                    # ``executescript`` from the migration path, so on the
+                    # supported paths this branch no longer fires; it stays so
+                    # that any future step which does commit cannot silently
+                    # make the following steps non-rollback-safe.
                     if not conn.in_transaction:
                         conn.execute("BEGIN")
                     migration(conn)

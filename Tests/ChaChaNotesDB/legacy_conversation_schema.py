@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -194,6 +195,16 @@ def migrated_legacy_conversations_db(
     connection.row_factory = sqlite3.Row
     db = CharactersRAGDB.__new__(CharactersRAGDB)
     db.db_path_str = str(db_path)
+    # task-19553: migration steps now run their DDL through
+    # ``self.transaction()`` (one ``cursor.execute`` per statement) instead of
+    # ``conn.executescript``, so this __new__-built stand-in has to expose the
+    # thread-local connection the transaction manager reaches for. Pointing it
+    # at the SAME raw connection keeps the fixture's "one migration, no
+    # unrelated schema init" property while giving the step a real,
+    # rollback-capable transaction.
+    db._local = threading.local()
+    db._local.conn = connection
+    db._local.transaction_depth = 0
     try:
         migration(db, connection)
         yield connection
