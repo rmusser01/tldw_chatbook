@@ -476,11 +476,10 @@ class ConsoleAgentController:
            `_ensure_console_agent_bridge` only ever `getattr`s off it.
         3. Every **app-level dependency** is a named keyword-only callable,
            wired at the call site as a late-binding lambda -- never a bound
-           method, which would freeze the screen's CURRENT method and stop
-           observing a later `monkeypatch.setattr` on the instance. Two of
-           these are patched by name in the pre-existing suite
-           (`_current_console_rail_conversation_id` and
-           `_current_console_rail_state`, both in
+           method, which would freeze the current target and stop observing
+           a later `monkeypatch.setattr`. The pre-existing suite patches
+           `_current_console_rail_conversation_id` on `screen._character`
+           and `_current_console_rail_state` on the screen (both in
            `Tests/UI/test_console_agent_rail.py`), so this is load-bearing,
            not ceremony.
 
@@ -592,7 +591,7 @@ class ConsoleAgentController:
 
     @property
     def _current_console_rail_conversation_id(self) -> Any:
-        """`ChatScreen._current_console_rail_conversation_id`, by name."""
+        """The character controller's rail-conversation accessor, by name."""
         return self._current_rail_conversation_id
 
     @property

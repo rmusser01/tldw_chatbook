@@ -908,9 +908,10 @@ def build_console_controllers(
         native_tool_calls_enabled_accessor=(
             lambda: screen._console_native_tool_calls_enabled
         ),
-        # Both of these are replaced by name on the screen instance in
-        # `Tests/UI/test_console_agent_rail.py` (5 and 3 sites), so a bound
-        # method captured here would silently stop observing those patches.
+        # These targets are replaced by name in
+        # `Tests/UI/test_console_agent_rail.py`: the conversation accessor
+        # on `screen._character` and the rail-state accessor on `screen`.
+        # Bound methods captured here would stop observing those patches.
         current_rail_conversation_id=(
             lambda: screen._character._current_console_rail_conversation_id()
         ),

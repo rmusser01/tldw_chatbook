@@ -11523,7 +11523,9 @@ class ChatScreen(BaseAppScreen):
         self._console_changed_files_pruned_rows = pruned_rows
         self._sync_console_changed_files_section()
 
-    def _land_console_changed_files_empty(self, conversation_id: "str | None") -> None:
+    def _land_console_changed_files_empty(
+        self, conversation_id: "str | None"
+    ) -> None:
         """The no-provider variant of `_land_console_changed_files`.
 
         Same stale-conversation guard (Fix 4c) -- see that method's
@@ -11665,7 +11667,6 @@ class ChatScreen(BaseAppScreen):
             self._console_changed_files_row_cache = {}
             self._sync_console_changed_files_section()
         self._dispatch_console_changed_files_worker(scope[0])
-
     async def _console_dictionary_attach_worker(self) -> None:
         """Pick and attach a chat dictionary to the active Console conversation.
 
