@@ -5593,3 +5593,39 @@ check the exit code) — never `tail -1`. The habit of tailing to keep output
 small is exactly what makes a per-item check unreadable. Note the exit code
 alone was also insufficient here: the script printed `::error::` and still
 exited 0 under the shell pipeline used.
+
+## A contract whose enforcer list lives only in a docstring cannot notice a second implementation (TASK-19551, 2026-08-21)
+
+`Utils/sensitive_paths.py` is the denylist that keeps agent file tools out of
+`~/.ssh`, `~/.aws`, this app's `config.toml`, `mcp_permissions.json` and its
+databases. Its module docstring named its enforcers precisely — the five tools
+in `Tools/file_operation_tools.py` — and every one of them really did call
+`is_sensitive_path`. Tests covered them thoroughly (`Tests/Tools/
+test_file_tool_sandbox.py`). All of that was true and none of it helped: the
+`fs_*` family (`Tools/local_tool_impls.py`, ADR-032) was added LATER as a
+second, independent file-tool family, confined paths to `[console]
+workspace_root`, and never joined the contract. `grep is_sensitive_path` over
+`Tools/`+`Agents/` returned nine hits, all in the file that was already
+correct, and zero in the three modules that were not. With the shipped default
+root (the app's cwd at startup), launching from `$HOME` made `fs_read` return
+`~/.ssh/id_rsa` and let `fs_write`/`fs_patch` rewrite `mcp_permissions.json` —
+a one-step disarm of the permission gate that authorized the call.
+
+The tell was structural, not behavioural: the docstring listed enforcers by
+NAME, so it could only ever describe the implementations that existed when it
+was written. Nothing in the test suite asked "do all families agree?", so the
+second family's silence was indistinguishable from its absence.
+
+**What to do.** When a security primitive is enforced by callers rather than
+by the primitive itself, the coverage that matters is a CROSS-IMPLEMENTATION
+agreement test: take a list of inputs the primitive is supposed to refuse and
+drive every family through it in one test, so a new family is either wired in
+or visibly red. Pair it with a structural tripwire (an AST check that every
+path-taking entry point resolves through the one choke point) — a source-text
+`grep`-style check is not enough, and in this task's first draft a literal
+`"mkdir" not in source` assertion failed on the word `mkdir` appearing in a
+DOCSTRING. Also worth knowing when writing the agreement test: two families
+can refuse the same path for different REASONS (here the older family rejects
+a dotted base directory at confinement, before the denylist runs), so assert
+the denylist-sourced message only where the denylist is genuinely what fires,
+rather than papering the difference over with a bare "is refused".

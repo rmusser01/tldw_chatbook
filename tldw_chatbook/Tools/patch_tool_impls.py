@@ -47,6 +47,7 @@ from pathlib import Path
 from typing import Literal
 
 from tldw_chatbook.Tools.local_tool_impls import LocalToolError, resolve_workspace_path
+from tldw_chatbook.Utils.sensitive_paths import resolve_sensitive_context
 
 PATCH_MAX_BYTES = 256 * 1024
 PATCH_MAX_FILES = 20
@@ -380,12 +381,20 @@ def _line_has_trailing_newline(line: str) -> bool:
 def patch_files(diff_text: str, *, workspace_root: Path, dry_run: bool = False) -> str:
     """Parse and apply a unified diff to workspace files.
 
-    Every target is confined via resolve_workspace_path. Modify targets must
-    exist; create targets must not. dry_run validates and reports without
-    writing. Returns a per-file summary ("patched X", "would patch X").
-    Files are applied sequentially; if a later file fails, earlier files stay
-    patched — the error names the failed file so the model can recover
-    (atomic multi-file apply is a documented non-goal for this phase).
+    Every target is confined AND denylist-checked via
+    ``resolve_workspace_path`` — this tool owns no path resolution of its
+    own, so it inherits the sensitive-path guard from that one choke point
+    (TASK-19551; without it, a diff against ``mcp_permissions.json`` was a
+    one-step permission-gate bypass). ``dry_run`` is checked identically:
+    it still reads the target, and reporting "would patch
+    mcp_permissions.json" is itself a disclosure.
+
+    Modify targets must exist; create targets must not. dry_run validates
+    and reports without writing. Returns a per-file summary ("patched X",
+    "would patch X"). Files are applied sequentially; if a later file
+    fails, earlier files stay patched — the error names the failed file so
+    the model can recover (atomic multi-file apply is a documented non-goal
+    for this phase).
     """
 
     try:
@@ -393,12 +402,20 @@ def patch_files(diff_text: str, *, workspace_root: Path, dry_run: bool = False) 
     except FilesystemPatchError as exc:
         raise LocalToolError(f"fs_patch failed [{exc.reason_code}]") from exc
 
+    # One sensitive-path resolution for the whole multi-file apply, threaded
+    # into every target's check (see Utils.sensitive_paths.
+    # resolve_sensitive_context) instead of re-resolving ~11 config
+    # accessors per file in the diff.
+    sensitive_ctx = resolve_sensitive_context()
+
     summaries: list[str] = []
     for patch_file in parsed:
         rel_path = patch_file.new_path
         assert rel_path is not None  # guaranteed by parse_unified_diff
         try:
-            root = resolve_workspace_path(rel_path, workspace_root)
+            root = resolve_workspace_path(
+                rel_path, workspace_root, intent="write", context=sensitive_ctx
+            )
             if patch_file.action == "modify":
                 if not root.is_file():
                     raise LocalToolError(f"file not found: {rel_path}")
