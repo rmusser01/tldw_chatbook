@@ -372,6 +372,10 @@ from .Character_Chat.server_chat_dictionary_service import ServerChatDictionaryS
 from .Character_Chat.server_character_persona_service import (
     ServerCharacterPersonaService,
 )
+from .Persona_Buddy import (
+    PersonaBuddyController,
+    parse_persona_buddy_preferences,
+)
 from .RAG_Admin.local_rag_admin_service import LocalRAGAdminService
 from .RAG_Admin.rag_admin_scope_service import RAGAdminScopeService
 from .RAG_Admin.server_rag_admin_service import ServerRAGAdminService
@@ -5772,6 +5776,17 @@ class TldwCli(
         self._wire_study_services()
         self._wire_research_services()
         self._wire_character_persona_services()
+        self.persona_buddy_controller = PersonaBuddyController(
+            preferences=parse_persona_buddy_preferences(
+                self.app_config.get("persona_buddy", {})
+            ),
+            local_persona_service=self.local_character_persona_service,
+            profile_db=self.chachanotes_db,
+            profile_root=get_user_data_dir(),
+            reduced_motion=bool(get_cli_setting("appearance", "reduce_motion", False)),
+            scheduler=self.call_after_refresh,
+        )
+        self._persona_buddy_shutdown_task: asyncio.Task[None] | None = None
 
         # --- Initialize worker handler registry ---
         self._init_worker_handlers()
@@ -11580,6 +11595,17 @@ class TldwCli(
             self._console_image_edit_shutdown_task = task
         await asyncio.shield(task)
 
+    async def _shutdown_persona_buddy(self) -> None:
+        """Drain the app-owned Buddy before profile database teardown."""
+        task = self._persona_buddy_shutdown_task
+        if task is None:
+            task = asyncio.create_task(
+                self.persona_buddy_controller.shutdown(),
+                name="shutdown_persona_buddy",
+            )
+            self._persona_buddy_shutdown_task = task
+        await asyncio.shield(task)
+
     async def _shutdown_console_runtime(self) -> None:
         """Destroy the app-owned Console runtime exactly once, at exit.
 
@@ -11601,6 +11627,7 @@ class TldwCli(
 
     async def _shutdown_app_owned_lifecycles(self) -> None:
         """Drain durable app-owned work before Textual closes screen state."""
+        await self._shutdown_persona_buddy()
         coordinator = getattr(self, "_audio_cpp_artifact_lease_coordinator", None)
         if coordinator is not None:
             await coordinator.shutdown()

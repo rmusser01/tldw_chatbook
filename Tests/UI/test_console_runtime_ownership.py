@@ -404,3 +404,25 @@ def test_the_runtime_is_disposed_by_the_apps_shutdown_lifecycles():
     assert "_shutdown_console_runtime" in source, source
     disposer = inspect.getsource(TldwCli._shutdown_console_runtime)
     assert "dispose_console_runtime" in disposer, disposer
+
+
+@pytest.mark.unit
+def test_persona_buddy_is_app_owned_and_shutdown_before_other_lifecycles():
+    """Buddy survives navigation and drains before profile-backed teardown."""
+    import inspect
+
+    from tldw_chatbook.app import TldwCli
+
+    initializer = inspect.getsource(TldwCli.__init__)
+    wiring = initializer.index("self._wire_character_persona_services()")
+    construction = initializer.index("PersonaBuddyController(")
+    assert "PersonaBuddyController" in initializer, initializer
+    assert "self.persona_buddy_controller" in initializer, initializer
+    assert wiring < construction, initializer
+
+    source = inspect.getsource(TldwCli._shutdown_app_owned_lifecycles)
+    buddy = source.index("_shutdown_persona_buddy")
+    console = source.index("_shutdown_console_runtime")
+    assert buddy < console, source
+    disposer = inspect.getsource(TldwCli._shutdown_persona_buddy)
+    assert "persona_buddy_controller.shutdown" in disposer, disposer
