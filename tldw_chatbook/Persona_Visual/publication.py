@@ -27,6 +27,7 @@ from .repository import (
     PersonaVisualIdentity,
     PersonaVisualRepository,
 )
+from .validation import validate_persona_visual_manifest
 
 
 _ERROR_PREFIX = "persona_visual_"
@@ -102,6 +103,16 @@ class _PinnedSource:
     directory_links: tuple[tuple[int, str, int], ...]
 
 
+@dataclass(slots=True)
+class _PinnedPublicationFile:
+    parent_fd: int
+    name: str
+    file_fd: int
+    identity: tuple[int, int, int, int, int]
+    byte_count: int
+    sha256: str
+
+
 def publish_persona_visual(
     repository: PersonaVisualRepository,
     snapshot: PersonaVisualPublicationSnapshot,
@@ -143,6 +154,8 @@ def publish_persona_visual(
     profile_chain: list[tuple[Path, int]] = []
     versions_fd = -1
     staging_fd = -1
+    materialized_assets_fd = -1
+    materialized_files: list[_PinnedPublicationFile] = []
     renamed = False
     staging_cleanup_attempted = False
 
@@ -223,6 +236,19 @@ def publish_persona_visual(
         manifest_raw = snapshot.manifest_json.encode("utf-8")
         _write_private_file(staging_fd, "manifest.json", manifest_raw)
         _sync_directory(staging_fd)
+        materialized_assets_fd = os.open(
+            "assets",
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+            dir_fd=staging_fd,
+        )
+        materialized_files.append(
+            _pin_publication_file(staging_fd, "manifest.json", manifest_raw)
+        )
+        for index, pinned in enumerate(pinned_sources):
+            filename = f"{index:03d}{_SUFFIXES[assets[index][1].mime_type]}"
+            materialized_files.append(
+                _pin_publication_file(materialized_assets_fd, filename, pinned.data)
+            )
         if not _all_source_entries_current(
             source_path, source_chain[-1], pinned_sources
         ):
@@ -256,6 +282,8 @@ def publish_persona_visual(
                 )
                 and _directory_chain_current(profile_chain)
                 and _entry_matches_fd(versions_fd, final_name, staging_fd)
+                and _entry_matches_fd(staging_fd, "assets", materialized_assets_fd)
+                and _publication_files_current(materialized_files)
             )
             guard_failure = (
                 None
@@ -335,6 +363,13 @@ def publish_persona_visual(
             _delete_pinned_directory(versions_fd, staging_name, staging_fd)
         if staging_fd >= 0:
             os.close(staging_fd)
+        for pinned in materialized_files:
+            try:
+                os.close(pinned.file_fd)
+            except OSError:
+                pass
+        if materialized_assets_fd >= 0:
+            os.close(materialized_assets_fd)
         for pinned in reversed(pinned_sources):
             _close_pinned_source(pinned)
         _close_descriptors(source_chain)
@@ -491,6 +526,15 @@ def _validate_snapshot(
             ):
                 raise ValueError
             value.encode("utf-8")
+            stripped = value.strip()
+            if (
+                "/" in value
+                or "\\" in value
+                or any(ord(character) < 32 for character in value)
+                or stripped in {".", ".."}
+                or stripped.startswith(("{", "[", "~"))
+            ):
+                raise ValueError
             context[key] = value
         sources: list[tuple[str, PersonaVisualAssetMetadata]] = []
         metadata_items: list[PersonaVisualAssetMetadata] = []
@@ -511,6 +555,13 @@ def _validate_snapshot(
         normalized = validate_persona_visual_asset_set(tuple(metadata_items))
         if tuple(metadata_items) != normalized:
             raise ValueError
+        validate_persona_visual_manifest(
+            snapshot.manifest_json,
+            {
+                metadata.asset_key: (metadata.width, metadata.height)
+                for metadata in normalized
+            },
+        )
         return manifest, context, tuple(sources)
     except PersonaVisualPublicationError:
         raise
@@ -849,6 +900,73 @@ def _file_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int]:
         metadata.st_mtime_ns,
         metadata.st_ctime_ns,
     )
+
+
+def _pin_publication_file(
+    parent_fd: int, name: str, expected: bytes
+) -> _PinnedPublicationFile:
+    file_fd = os.open(
+        name,
+        os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0),
+        dir_fd=parent_fd,
+    )
+    try:
+        opened = os.fstat(file_fd)
+        named = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        identity = _file_identity(opened)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or _file_identity(named) != identity
+            or opened.st_size != len(expected)
+            or _read_bounded(file_fd, len(expected)) != expected
+        ):
+            raise ValueError
+        os.lseek(file_fd, 0, os.SEEK_SET)
+        return _PinnedPublicationFile(
+            parent_fd=parent_fd,
+            name=name,
+            file_fd=file_fd,
+            identity=identity,
+            byte_count=len(expected),
+            sha256=hashlib.sha256(expected).hexdigest(),
+        )
+    except BaseException:
+        os.close(file_fd)
+        raise
+
+
+def _publication_files_current(files: list[_PinnedPublicationFile]) -> bool:
+    try:
+        for pinned in files:
+            named = os.stat(
+                pinned.name,
+                dir_fd=pinned.parent_fd,
+                follow_symlinks=False,
+            )
+            opened = os.fstat(pinned.file_fd)
+            if (
+                not stat.S_ISREG(named.st_mode)
+                or _file_identity(named) != pinned.identity
+                or _file_identity(opened) != pinned.identity
+            ):
+                return False
+            os.lseek(pinned.file_fd, 0, os.SEEK_SET)
+            data = _read_bounded(pinned.file_fd, pinned.byte_count)
+            after = os.fstat(pinned.file_fd)
+            final = os.stat(
+                pinned.name,
+                dir_fd=pinned.parent_fd,
+                follow_symlinks=False,
+            )
+            if (
+                hashlib.sha256(data).hexdigest() != pinned.sha256
+                or _file_identity(after) != pinned.identity
+                or _file_identity(final) != pinned.identity
+            ):
+                return False
+        return True
+    except (OSError, ValueError):
+        return False
 
 
 def _read_bounded(descriptor: int, expected_bytes: int) -> bytes:

@@ -328,6 +328,38 @@ def test_final_inode_swap_inside_authority_guard_is_rejected(environment) -> Non
     assert repository.get_active_persona_pack(snapshot.persona_id) is None
 
 
+@pytest.mark.parametrize("target_kind", ("manifest", "asset"))
+def test_final_file_content_mutation_inside_authority_guard_is_rejected(
+    environment, target_kind: str
+) -> None:
+    repository, source_root, profile_root = environment
+    snapshot = _snapshot(source_root)
+
+    def mutate_final_file() -> bool:
+        if target_kind == "manifest":
+            target = next(profile_root.rglob("manifest.json"))
+            raw = target.read_bytes()
+            changed = raw.replace(b'"frame_rate":1', b'"frame_rate":9')
+            assert len(changed) == len(raw) and changed != raw
+        else:
+            target = next(profile_root.rglob("000.png"))
+            changed = _png_bytes((9, 8, 7))
+            assert len(changed) == target.stat().st_size
+        with target.open("r+b") as stream:
+            stream.seek(0)
+            stream.write(changed)
+            stream.flush()
+            os.fsync(stream.fileno())
+        return True
+
+    with pytest.raises(PersonaVisualPublicationError) as caught:
+        _publish(environment, snapshot, guard=mutate_final_file)
+
+    assert caught.value.category == "persona_visual_publication_denied"
+    assert caught.value.cleanup_candidate is not None
+    assert repository.get_active_persona_pack(snapshot.persona_id) is None
+
+
 @pytest.mark.parametrize(
     "layout", ("same", "profile_inside_source", "source_inside_profile")
 )
@@ -378,6 +410,63 @@ def test_materialization_budget_is_checked_before_profile_mutation(environment) 
         )
 
     assert not (profile_root / "persona_visual").exists()
+
+
+def test_missing_required_state_manifest_is_rejected_before_profile_mutation(
+    environment,
+) -> None:
+    repository, source_root, profile_root = environment
+    snapshot = _snapshot(source_root)
+    manifest = json.loads(snapshot.manifest_json)
+    del manifest["states"]["error"]
+    invalid = replace(
+        snapshot,
+        manifest_json=json.dumps(
+            manifest,
+            allow_nan=False,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+    )
+
+    with pytest.raises(PersonaVisualPublicationError) as caught:
+        _publish(environment, invalid)
+
+    assert caught.value.category == "persona_visual_candidate_invalid"
+    assert caught.value.cleanup_candidate is None
+    assert not (profile_root / "persona_visual").exists()
+    assert repository.get_active_persona_pack(snapshot.persona_id) is None
+
+
+@pytest.mark.parametrize(
+    "private_context",
+    (
+        "../private",
+        "C:\\private",
+        "\x01private",
+        "..",
+        "{private",
+        "[private",
+        "~private",
+    ),
+)
+def test_source_context_matches_repository_boundary_before_profile_mutation(
+    environment, private_context: str
+) -> None:
+    repository, source_root, profile_root = environment
+    snapshot = replace(
+        _snapshot(source_root),
+        source_context=(("provenance", private_context),),
+    )
+
+    with pytest.raises(PersonaVisualPublicationError) as caught:
+        _publish(environment, snapshot)
+
+    assert caught.value.category == "persona_visual_candidate_invalid"
+    assert caught.value.cleanup_candidate is None
+    assert not (profile_root / "persona_visual").exists()
+    assert repository.get_active_persona_pack(snapshot.persona_id) is None
 
 
 def test_database_failure_after_atomic_publish_returns_cleanup_candidate(
