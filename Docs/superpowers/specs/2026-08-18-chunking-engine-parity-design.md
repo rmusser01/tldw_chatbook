@@ -219,6 +219,16 @@ shim or a subclass, or goes upstream first and comes back through a re-sync. Lat
 sub-projects extend the manifest rather than re-deriving the port. The script must be
 idempotent and must fail loudly if a vendored file has local modifications.
 
+> **Amendment (2026-08-20, task-19321).** Reviewed diagnostic-privacy repairs
+> (ADR-029) may ship as chatbook-side *scripted* patches: `ENGINE_PATCHES` in
+> `sync_chunking_engine.py`, recorded in the manifest's `[patches]` table. The
+> canonical vendored state becomes upstream-at-pin + rewrite + patches; the
+> sync stays idempotent, still fails loudly on hand-edits (the modification
+> check compares against the patched state), and fails loudly when upstream
+> drifts under a patch anchor (`_replace_once`). Hand-edits remain forbidden,
+> and anything beyond log-record content still goes upstream or into a
+> shim/subclass.
+
 ### 5.3 Shim inventory
 
 Derived by tracing which **file** needs each import, not by counting grep hits. Most
