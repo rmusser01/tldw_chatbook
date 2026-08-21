@@ -1,5 +1,5 @@
 ---
-id: TASK-18913
+id: TASK-19639
 title: Keep Console workspace geometry inside the viewport at exactly 100 columns
 status: In Progress
 assignee: []
@@ -65,3 +65,14 @@ Reason: direct defect correction within ADR-043's existing minimum-width-waiver 
 - ADR required: no. Reused ADR-043 (`backlog/decisions/043-console-rail-compact-collapse-yields-to-explicit-toggle.md`) because the correction stays inside its responsive-priority and persistence boundary. No new reusable incident was produced beyond existing testing/backlog lessons, so no lessons entry was added.
 - Verification was intentionally limited to changed functionality at user direction; repository-wide governance, architecture, and full-suite gates are not part of this evidence. Status remains **In Progress** despite all acceptance criteria being supported because the repository Definition of Done requires green linter/formatter gates, and the exact scoped Ruff commands still reproduce the baselines above.
 <!-- SECTION:NOTES:END -->
+
+## Renumbering provenance
+
+This task previously held id TASK-18913, colliding with the older
+"Keep-Console-workspace-geometry-inside-the-viewport-at-exactly-100-columns" task that arrived on dev first.
+Per the owner rule decided 2026-08-21 in TASK-19601 (**older id keeps it;
+the younger task renumbers with a provenance note, regardless of Done
+status**), it renumbered to TASK-19639. Citations to TASK-18913
+in already-merged commit messages, ADRs, or code comments written before
+2026-08-21 refer to THIS task; the other TASK-18913 holder is the
+older arrival and keeps the id.

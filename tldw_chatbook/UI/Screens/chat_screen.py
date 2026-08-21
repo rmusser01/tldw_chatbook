@@ -13476,7 +13476,7 @@ class ChatScreen(BaseAppScreen):
                 )
                 left_rail.can_focus = True
                 left_rail.styles.width = "3fr"
-                # TASK-18913 compact contract: at exactly 100 columns the
+                # TASK-19639 (formerly TASK-18913) compact contract: at exactly 100 columns the
                 # workspace grid has 96 content columns after two border and
                 # two horizontal-padding cells. Default horizontal-label
                 # geometry resolves as Context 30 + main outer 55 + collapsed
@@ -13526,7 +13526,7 @@ class ChatScreen(BaseAppScreen):
                 # 70/74 floors through 83 via compact override. At 84, default
                 # horizontal handles (13 + 11), main 56, two borders, and two
                 # padding cells fit exactly; stacked handles are 3 columns each.
-                # TASK-2154.2/TASK-18913: ``compact_override`` is only
+                # TASK-2154.2/TASK-19639 (formerly TASK-18913): ``compact_override`` is only
                 # layout-minimum-waiver authority. It covers eligible explicit
                 # opens below the thresholds, default Context at exactly 100,
                 # and Inspector priority; it is not preference or user intent.

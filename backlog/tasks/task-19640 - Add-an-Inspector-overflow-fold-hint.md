@@ -1,5 +1,5 @@
 ---
-id: TASK-18915
+id: TASK-19640
 title: Add an Inspector overflow fold hint
 status: To Do
 assignee: []
@@ -27,3 +27,14 @@ Make hidden Inspector content discoverable by showing the Console product's stan
 - [ ] #4 Production-CSS Textual compositor tests cover representative 235x52, 120x30, and 80x24 states, including overflow and no-overflow cases.
 - [ ] #5 Keyboard scrolling, pointer scrolling, focus order, rail badges, collapse/reopen behavior, and existing product-standard fold-hint consumers do not regress.
 <!-- AC:END -->
+
+## Renumbering provenance
+
+This task previously held id TASK-18915, colliding with the older
+"Add-an-Inspector-overflow-fold-hint" task that arrived on dev first.
+Per the owner rule decided 2026-08-21 in TASK-19601 (**older id keeps it;
+the younger task renumbers with a provenance note, regardless of Done
+status**), it renumbered to TASK-19640. Citations to TASK-18915
+in already-merged commit messages, ADRs, or code comments written before
+2026-08-21 refer to THIS task; the other TASK-18915 holder is the
+older arrival and keeps the id.
