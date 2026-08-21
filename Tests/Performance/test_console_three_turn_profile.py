@@ -1057,6 +1057,28 @@ def test_child_mode_preserves_async_cancellation_as_terminal_failure(
     assert [row["event"] for row in rows] == ["child_start", "child_failure"]
     assert rows[-1]["error_type"] == "CancelledError"
     assert rows[-1]["error_code"] == "unclassified"
+    assert rows[-1]["error_origin"] == "cancelled"
+
+
+def test_owned_cleanup_suppresses_child_cancellation_but_not_task_cancellation() -> None:
+    await_owned_cleanup = getattr(profile, "await_owned_cleanup", None)
+
+    assert callable(await_owned_cleanup)
+
+    async def child_cancelled() -> None:
+        raise asyncio.CancelledError
+
+    asyncio.run(await_owned_cleanup(child_cancelled()))
+
+    async def externally_cancelled() -> None:
+        never = asyncio.Event()
+        task = asyncio.create_task(await_owned_cleanup(never.wait()))
+        await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(externally_cancelled())
 
 
 def test_main_dispatches_nonpreflight_modes(

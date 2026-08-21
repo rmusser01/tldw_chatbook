@@ -17,6 +17,7 @@ import statistics
 import subprocess
 import sys
 import time
+import traceback
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace as dataclass_replace
 from pathlib import Path
@@ -838,6 +839,25 @@ def safe_error_code(error: BaseException) -> str:
     """Retain a stable machine code only; discard arbitrary exception copy."""
     value = str(error).strip()
     return value if re.fullmatch(r"[a-z0-9_.:-]{1,120}", value) else "unclassified"
+
+
+def safe_error_origin(error: BaseException) -> str:
+    """Return only the terminal traceback function name, never a file path."""
+    frames = traceback.extract_tb(error.__traceback__)
+    value = frames[-1].name if frames else "unknown"
+    return value if re.fullmatch(r"[A-Za-z0-9_<>.-]{1,120}", value) else "unknown"
+
+
+async def await_owned_cleanup(awaitable: Any) -> None:
+    """Ignore child-operation cancellation while preserving caller cancellation."""
+    import asyncio
+
+    try:
+        await awaitable
+    except asyncio.CancelledError:
+        current = asyncio.current_task()
+        if current is not None and current.cancelling():
+            raise
 
 
 def write_boundary_event(destination: IO[str], event: Mapping[str, Any]) -> None:
@@ -1870,11 +1890,11 @@ async def run_scripted_mounted_sample(
                     f"{[(message.role.value, message.status, len(message.content)) for message in rows]!r}"
                 )
             console_runtime = console._console_runtime()
-            await console_runtime.dispose()
+            await await_owned_cleanup(console_runtime.dispose())
             console_runtime = None
     finally:
         if console_runtime is not None:
-            await console_runtime.dispose()
+            await await_owned_cleanup(console_runtime.dispose())
         close_chat_db = getattr(chat_db, "close_connection", None)
         if callable(close_chat_db):
             close_chat_db()
@@ -2493,7 +2513,7 @@ async def run_mounted_sample(
             )
             prompt_loss_count = abs(3 - user_count) + queue_snapshot.total_count
             console_runtime = console._console_runtime()
-            await console_runtime.dispose()
+            await await_owned_cleanup(console_runtime.dispose())
             console_runtime = None
 
         heartbeat_stop.set()
@@ -2600,7 +2620,7 @@ async def run_mounted_sample(
             await heartbeat_task
         if console_runtime is not None:
             try:
-                await console_runtime.dispose()
+                await await_owned_cleanup(console_runtime.dispose())
             except Exception:
                 pass
         if gateway is not None:
@@ -2743,6 +2763,7 @@ def run_child_mode(args: argparse.Namespace) -> int:
                     "arm": spec["arm"],
                     "error_type": type(exc).__name__,
                     "error_code": safe_error_code(exc),
+                    "error_origin": safe_error_origin(exc),
                 },
             )
             return 1
