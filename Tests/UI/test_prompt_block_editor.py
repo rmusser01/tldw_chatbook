@@ -88,11 +88,13 @@ class BlockEditorHarness(App[None]):
         *,
         can_update_original: bool = False,
         embedded: bool = False,
+        host_owned_lifecycle: bool = False,
     ) -> None:
         super().__init__()
         self.state = state
         self.can_update_original = can_update_original
         self.embedded = embedded
+        self.host_owned_lifecycle = host_owned_lifecycle
         self.messages: list[object] = []
 
     def compose(self) -> ComposeResult:
@@ -100,6 +102,7 @@ class BlockEditorHarness(App[None]):
             self.state,
             can_update_original=self.can_update_original,
             embedded=self.embedded,
+            host_owned_lifecycle=self.host_owned_lifecycle,
             id="editor",
         )
 
@@ -208,6 +211,29 @@ async def test_genuinely_wide_editor_keeps_readable_single_row_footer() -> None:
         await pilot.pause()
         assert footer.has_class("two-row") is False
         assert lane_options.region.y == actions.region.y
+
+
+@pytest.mark.asyncio
+async def test_embedded_host_owned_lifecycle_keeps_only_structured_save_actions():
+    app = BlockEditorHarness(
+        _state(),
+        embedded=True,
+        host_owned_lifecycle=True,
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        editor = app.query_one("#editor", PromptBlockEditor)
+
+        assert editor.query_one("#prompt-editor-save-prompt", Button).display
+        assert editor.query_one("#prompt-editor-save-recipe", Button).display
+        for selector in (
+            "#prompt-editor-back",
+            "#prompt-editor-update-original",
+            "#prompt-editor-apply",
+            "#prompt-editor-lane-options",
+        ):
+            assert editor.query_one(selector).display is False
 
 
 @pytest.mark.asyncio

@@ -9,16 +9,23 @@ from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.events import Focus, Key, MouseDown, Resize
 from textual.widget import Widget
 from textual.widgets import Button, Input, Static
 
-from tldw_chatbook.Library.library_rail_state import LibraryRailPreferences
+from tldw_chatbook.Library.library_rail_state import (
+    LibraryLifecycle,
+    LibraryRailPreferences,
+)
 from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_ROW_CREATE_NOTE,
+    LIBRARY_ROW_INGEST_MEDIA,
     LibraryRailRow,
     LibraryRailSectionState,
     LibraryShellState,
 )
+from tldw_chatbook.Widgets.Library.library_canvas_sync import PostRecomposeCallback
 from tldw_chatbook.Widgets.destination_rail import (
     DestinationRailHandle,
     DestinationRailSectionHeader,
@@ -290,7 +297,7 @@ class LibraryNavigationRailHandle(DestinationRailHandle):
         return "N\na\nv"
 
 
-class LibraryRail(RecomposeCaptureGuard, Vertical):
+class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
     """Render the Library shell rail: search, source sections, and Details.
 
     Attributes:
@@ -312,6 +319,8 @@ class LibraryRail(RecomposeCaptureGuard, Vertical):
         search_placeholder: str = "Search conversations…",
         workspaces_body_factory: Callable[[], Iterable[Widget]] | None = None,
         top_action_factory: Callable[[], Iterable[Widget]] | None = None,
+        lifecycle: LibraryLifecycle = LibraryLifecycle.EXPANDED,
+        onboarding_all_empty: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -321,6 +330,8 @@ class LibraryRail(RecomposeCaptureGuard, Vertical):
         self.search_placeholder = search_placeholder
         self.workspaces_body_factory = workspaces_body_factory
         self.top_action_factory = top_action_factory
+        self.lifecycle = lifecycle
+        self.onboarding_all_empty = onboarding_all_empty
         self.styles.width = "3fr"
         self.styles.min_width = 24
 
@@ -330,6 +341,8 @@ class LibraryRail(RecomposeCaptureGuard, Vertical):
         preferences: LibraryRailPreferences,
         *,
         query: str = "",
+        lifecycle: LibraryLifecycle = LibraryLifecycle.EXPANDED,
+        onboarding_all_empty: bool = False,
     ) -> None:
         """Refresh the rail from new state.
 
@@ -343,6 +356,8 @@ class LibraryRail(RecomposeCaptureGuard, Vertical):
             shell: Latest Library shell display state.
             preferences: Latest section preferences.
             query: Latest search box text.
+            lifecycle: Current progressive-disclosure lifecycle.
+            onboarding_all_empty: Whether one fresh evidence generation was empty.
 
         Returns:
             None.
@@ -350,9 +365,17 @@ class LibraryRail(RecomposeCaptureGuard, Vertical):
         self.shell = shell
         self.preferences = preferences
         self.query = query
+        self.lifecycle = lifecycle
+        self.onboarding_all_empty = onboarding_all_empty
         self.refresh(recompose=True)
 
-    def apply_selection(self, shell: LibraryShellState) -> None:
+    def apply_selection(
+        self,
+        shell: LibraryShellState,
+        *,
+        lifecycle: LibraryLifecycle | None = None,
+        onboarding_all_empty: bool | None = None,
+    ) -> None:
         """Update route selection without recomposing the whole rail.
 
         Route selection changes only the leading marker and selected class;
@@ -362,12 +385,18 @@ class LibraryRail(RecomposeCaptureGuard, Vertical):
 
         Args:
             shell: Latest shell state carrying the new selected row.
+            lifecycle: Current progressive-disclosure lifecycle, when supplied.
+            onboarding_all_empty: Latest fresh all-empty evidence, when supplied.
 
         Returns:
             None.
         """
         previous_row_id = self.shell.selected_row_id
         self.shell = shell
+        if lifecycle is not None:
+            self.lifecycle = lifecycle
+        if onboarding_all_empty is not None:
+            self.onboarding_all_empty = onboarding_all_empty
         changed_row_ids = {previous_row_id, shell.selected_row_id} - {""}
         rows = {
             row.row_id: row
@@ -376,9 +405,12 @@ class LibraryRail(RecomposeCaptureGuard, Vertical):
             if row.row_id in changed_row_ids
         }
         for row_id, row in rows.items():
-            button = self.query_one(
-                f"#{LIBRARY_RAIL_ROW_PREFIX}{row_id}", LibraryRailRowButton
-            )
+            try:
+                button = self.query_one(
+                    f"#{LIBRARY_RAIL_ROW_PREFIX}{row_id}", LibraryRailRowButton
+                )
+            except NoMatches:
+                continue
             selected = row_id == shell.selected_row_id
             button.library_row = row
             button.label = self._row_label(
@@ -522,6 +554,11 @@ class LibraryRail(RecomposeCaptureGuard, Vertical):
             collapse.styles.padding = (0, 1)
             collapse.styles.border = ("none", "transparent")
             yield collapse
+        if self.lifecycle in (LibraryLifecycle.UNKNOWN, LibraryLifecycle.STARTER):
+            for row_id in (LIBRARY_ROW_INGEST_MEDIA, LIBRARY_ROW_CREATE_NOTE):
+                yield self._compose_row_button(self._row(row_id))
+            yield Button("Explore all tools", id="library-rail-explore-all")
+            return
         if self.top_action_factory is not None:
             yield from self.top_action_factory()
         yield LibraryRailSearchInput(
@@ -579,6 +616,46 @@ class LibraryRail(RecomposeCaptureGuard, Vertical):
                 )
             if self.workspaces_body_factory is not None:
                 yield from self.workspaces_body_factory()
+        if self.lifecycle is LibraryLifecycle.EXPANDED and self.onboarding_all_empty:
+            yield Button(
+                "Back to Get started",
+                id="library-rail-back-to-starter",
+                compact=True,
+            )
+
+    def _row(self, row_id: str) -> LibraryRailRow:
+        """Return one canonical row from the full shell state."""
+        return next(
+            row
+            for section in self.shell.sections
+            for row in section.rows
+            if row.row_id == row_id
+        )
+
+    def _compose_row_button(self, row: LibraryRailRow) -> LibraryRailRowButton:
+        """Build one production Library rail row button."""
+        selected = row.row_id == self.shell.selected_row_id
+        is_handoff = row.target_kind == "handoff"
+        button = LibraryRailRowButton(
+            self._row_label(row, selected),
+            id=f"{LIBRARY_RAIL_ROW_PREFIX}{row.row_id}",
+            classes="library-rail-row",
+            compact=True,
+            disabled=row.disabled,
+        )
+        button.row_id = row.row_id
+        button.target_kind = row.target_kind
+        button.target_id = row.target_id
+        button.library_row = row
+        button.tooltip = (
+            row.disabled_tooltip if row.disabled and row.disabled_tooltip else row.title
+        )
+        button.set_class(selected, "library-rail-row-selected")
+        if row.count_emphasis:
+            button.add_class(f"library-rail-row-due-{row.count_emphasis}")
+        button.styles.height = 2 if is_handoff else 1
+        button.styles.min_height = 2 if is_handoff else 1
+        return button
 
     def _compose_section(self, section: LibraryRailSectionState) -> ComposeResult:
         open_state = self._section_open(section.section_id)
@@ -596,39 +673,4 @@ class LibraryRail(RecomposeCaptureGuard, Vertical):
         body.display = open_state
         with body:
             for row in section.rows:
-                selected = row.row_id == self.shell.selected_row_id
-                # F-011: one-line rows by default -- the old blanket second
-                # line ("in Library" on all ~11 rows) was pure stutter and
-                # the reason the Create section was unreachable at 100x30
-                # and Details clipped even at 170x50 (2-line rows + 1-line
-                # bottom margin = 3 terminal lines per row). A meta line
-                # survives ONLY where it discriminates: handoff rows leave
-                # the Library entirely for the Study screen family.
-                # Label construction lives in `_row_label` (count policy
-                # F-014, width-fitting F-015); compose renders the unfitted
-                # label and `_refit_row_labels` fits it post-layout.
-                is_handoff = row.target_kind == "handoff"
-                button = LibraryRailRowButton(
-                    self._row_label(row, selected),
-                    id=f"{LIBRARY_RAIL_ROW_PREFIX}{row.row_id}",
-                    classes="library-rail-row",
-                    compact=True,
-                    disabled=row.disabled,
-                )
-                button.row_id = row.row_id
-                button.target_kind = row.target_kind
-                button.target_id = row.target_id
-                # Read by the button's own on_resize to rebuild the label
-                # whenever its width changes (F-015).
-                button.library_row = row
-                button.tooltip = (
-                    row.disabled_tooltip
-                    if row.disabled and row.disabled_tooltip
-                    else row.title
-                )
-                button.set_class(selected, "library-rail-row-selected")
-                if row.count_emphasis:
-                    button.add_class(f"library-rail-row-due-{row.count_emphasis}")
-                button.styles.height = 2 if is_handoff else 1
-                button.styles.min_height = 2 if is_handoff else 1
-                yield button
+                yield self._compose_row_button(row)

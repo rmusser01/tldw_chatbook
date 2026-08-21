@@ -985,6 +985,16 @@ class LocalSkillsService:
         payload["blocked_skills"] = blocked
         return payload
 
+    def get_library_user_content_evidence_context(self) -> dict[str, Any]:
+        """Return trusted records from the profile-owned managed Skills store."""
+        self._enforce("skills.context.list.local")
+        available = []
+        for _, record in sorted(self._load_index().items()):
+            summary = self._summary_for_record(record)
+            if not summary.get("trust_blocked"):
+                available.append(summary)
+        return {"available_skills": available}
+
     async def count_skills(self) -> int:
         """Return the total managed skills count, trusted plus needs-review.
 

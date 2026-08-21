@@ -107,6 +107,7 @@ from tldw_chatbook.Metrics.Otel_Metrics import init_metrics as init_otel_metrics
 # --- Local API library Imports ---
 from .config import (
     get_cli_setting,
+    first_profile_created_this_session,
     get_library_collections_db_path,
     get_library_ingest_jobs_db_path,
     get_media_db_path,
@@ -5446,6 +5447,7 @@ class TldwCli(
         phase_start = time.perf_counter()
         self.MediaDatabase = MediaDatabase
         self.app_config = load_settings()
+        self.library_new_profile_admission = first_profile_created_this_session()
         self.console_image_edit_operations = ImageEditOperationRegistry()
         self._console_image_edit_shutdown_task: asyncio.Task[None] | None = None
         # task-15860 (headless wake): the Console runtime -- chat store,

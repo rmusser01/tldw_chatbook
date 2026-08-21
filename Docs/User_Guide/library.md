@@ -35,13 +35,56 @@ pages:
   The palette also offers "Tab Navigation: Library — Skills", which lands
   directly on the Skills row.
 
+## Get started on a new profile
+
+A new profile starts with a compact rail: **Import…**, **New note**, and
+**Explore all tools**. While Library checks its sources, it says
+**Checking existing Library content…** instead of claiming that the Library is
+empty. If a source is unavailable, the same actions stay enabled and one
+**Retry source check** action appears.
+
+```text
+new profile
+    |
+    v
+checking sources -- usable content found --> full Library (permanent)
+    |
+    +-- all sources authoritatively empty --> Get started
+                                                |  Import...
+                                                |  New note
+                                                +  Explore all tools
+                                                       |
+                                                       v
+                                                full Library (remembered)
+```
+
+**Explore all tools** reveals the complete rail immediately and remembers that
+choice independently of which rail sections are open. While the expanded
+Library is still authoritatively empty, **Back to Get started** is available.
+Adding any usable content permanently graduates the profile to the full
+Library; deleting that content later does not hide tools again.
+
+Compact presentation never blocks navigation. Deep links and command-palette
+routes, including **Tab Navigation: Library — Skills**, can open a tool that is
+not shown in the Get started rail. Existing profiles without this preference
+open the full Library.
+
 ## Layout tour
 
-![Library overview](images/library/overview.svg)
+```text
++----------------------+------------------------------------------+
+| Library rail         | Canvas                                   |
+| navigation and tools | landing, list, viewer, editor, or import |
++----------------------+------------------------------------------+
+| context-sensitive keyboard hints and status                    |
++-----------------------------------------------------------------+
+```
 
 - **Header line** — reads **Library | Local**, or **Library | Server:
   \<label\>** when a server runtime is configured.
-- **Left rail**, top to bottom:
+- **Left rail**, top to bottom. A new empty profile first sees the compact
+  Get started controls above; the complete rail below appears after Explore or
+  graduation:
   - a **Navigation** heading with **Collapse** at the opposite edge. Collapse
     hides the rail without changing the selected destination, search query,
     section disclosures, or canvas. The slim **Nav** handle expands it again;
@@ -83,8 +126,9 @@ pages:
   clickable row per recent item that jumps straight into it, under
   the guidance line "Search everything, pick a section, or
   add something new."
-- **Footer** — shows the keys that work where you are: "/ focus search"
-  and "F6 next pane" on every canvas; the landing adds "i import content"
+- **Footer** — shows the keys that work where you are. The full rail offers
+  "/ focus search"; Get started keeps focus on its visible actions. The
+  landing adds "i import content"
   and "n new note" (single-letter accelerators for the hub actions);
   the Search / RAG canvas adds "u use Library
   context in Console", "enter select evidence", and "o open evidence";
@@ -112,10 +156,42 @@ on-screen. Escape (or the **Database** link) returns to the notes list — see
 | **Collapse** | Hides the wide navigation rail in place and gives the canvas the reclaimed width. The choice lasts for the current Library screen session. |
 | **Nav** | Expands a manually collapsed rail and returns focus to **Search Library…**. On compact terminals, Library's existing one-pane routing takes precedence and the manual collapse returns when the terminal is wide again. |
 | **Import…** | Opens the Import media canvas — see [Import & export](library/import-and-export.md). |
+| **New note** | Opens the production note-creation canvas. It is shown directly in the Get started rail. |
+| **Explore all tools** | Reveals and remembers the complete Library without changing section disclosures. |
+| **Back to Get started** | Returns an explicitly expanded, still-empty Library to the Get started landing and compact rail, with focus on **Import…**. It is never offered after graduation. |
 | **Search Library…** | Type a query and press Enter: lands on the Search / RAG canvas and runs it (empty submit just opens the canvas) — see [Search & RAG](library/search-and-rag.md). |
 | **▾** / **▸** (section headers) | Open or collapse that rail section. |
 
 ### Browse rows
+
+Media, Conversations, and Prompts replace an empty page's disabled paging and
+selection controls with a useful next step. The exact total remains visible in
+the title, but there is no meaningless “page 1 of 1” or “nothing to select”
+mechanic.
+
+```text
+source really has no items          active filter has no matches
+--------------------------          ----------------------------
+Media (0)                           Media (0)
+No media in your Library yet.       No media of type 'video'.
+Import something to see it here.
+[ Import media ]                    [ Show all types ]
+
+Conversations (0)                   Conversations (0)
+No conversations yet. Chat in      No conversations match 'draft'.
+Console and it appears here.
+[ Start in Console ]                [ Clear filter ]
+
+Prompts (0)                         Prompts (0)
+No prompts yet. Create or import    No prompts match "draft".
+a prompt to begin.
+[ New prompt ] [ Import... ]        [ Clear filter ]
+```
+
+A filtered empty page keeps its submitted type, query, or collection visible
+until you choose the reset action. Loading and failed refreshes do not use this
+empty presentation: they keep their status, pager authority, and **Retry** so a
+previously empty page cannot hide an in-progress or recoverable request.
 
 | Row | Opens | Details on |
 |---|---|---|
@@ -232,7 +308,7 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 
 | Key | Action |
 |---|---|
-| / | Focus the **Search Library…** box, from anywhere on the screen (unless a text field already has focus) |
+| / | Focus the **Search Library…** box when the full rail is visible (unless a text field already has focus). Get started has no hidden search target; use **Explore all tools** or a direct route. |
 | u | Use Library context in Console — only while the Search / RAG row is selected (the footer hint appears only there) |
 | ↑ / ↓ | Inside a Media, Notes, Prompts, or Skills list, move to the previous/next row (stops at the first/last row — it does not wrap) |
 | Enter | Open the focused list row (same as clicking it) |
@@ -244,8 +320,8 @@ immediately without tabbing to find it. Escape then reads the surface
 you're on:
 
 - **On the plain list** — Escape moves focus to the rail's **Search
-  Library…** box (the same target `/` and F6 use); it never leaves the
-  canvas or changes what's shown.
+  Library…** box in the full Library, or **Import…** in Get started; it never
+  leaves the canvas or changes what's shown.
 - **A pending bulk-delete confirmation on the Media list** (Select mode's
   "Delete selected", which swaps the list's toolbar for "Delete N
   selected items? This moves them to trash.") — Escape cancels it in
@@ -413,3 +489,10 @@ optional validated folder bindings, Browse… picker, and default-on
 (task-18705: a bound folder containing `.SKILLS/` now annotates its row
 "— contains N project skill(s)" and a chained import prompt follows
 Create).*
+*Verified against codex/library-top-level-pagination @ 937dfa393 —
+2026-08-20 (TASK-19022: compact Get started rail, truthful unresolved and
+recovery states, remembered Explore/Back disclosure, permanent graduation,
+deep-link and palette bypass, and keyboard/compositor UAT with the production
+stylesheet at 100x30 and 170x48). Per user direction, repository-wide pytest
+was not run; only modified/touched Library component and direct-owner gates are
+claimed.*

@@ -1841,6 +1841,7 @@ class MediaDatabase:
         fts_match_query: Optional[str] = None,
         offset: Optional[int] = None,
         library_summary: bool = False,
+        chunking_status: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """
         Searches media items based on a variety of criteria, supporting text search,
@@ -1902,6 +1903,7 @@ class MediaDatabase:
                 the legacy ``page`` coordinate determines the offset.
             library_summary (bool): Select only the four fields required by the
                 Library browse surface. Generic callers retain the broad row.
+            chunking_status (Optional[str]): Exact Media chunking status to include.
 
         Returns:
             Tuple[List[Dict[str, Any]], int]: A tuple containing:
@@ -1994,6 +1996,11 @@ class MediaDatabase:
             conditions.append("m.deleted = 0")
         if not include_trash:
             conditions.append("m.is_trash = 0")
+        if chunking_status is not None:
+            if not isinstance(chunking_status, str) or not chunking_status:
+                raise ValueError("chunking_status must be a non-empty string")
+            conditions.append("m.chunking_status = ?")
+            params.append(chunking_status)
 
         # Media IDs Filter
         if media_ids_filter:
@@ -2282,15 +2289,24 @@ class MediaDatabase:
             )
             raise DatabaseError("Media search failed.") from None
 
-        logger.info(
-            "Media search completed (mode={}, limit={}, offset={}, result_count={}, total={}, sort={}).",
-            "fts" if fts_search_active else "browse",
-            results_per_page,
-            resolved_offset,
-            len(results_list),
-            total_matches,
-            resolved_sort_by,
-        )
+        if library_summary:
+            logger.info(
+                "Media search completed (mode={}, limit={}, offset={}, sort={}, summary=true).",
+                "fts" if fts_search_active else "browse",
+                results_per_page,
+                resolved_offset,
+                resolved_sort_by,
+            )
+        else:
+            logger.info(
+                "Media search completed (mode={}, limit={}, offset={}, result_count={}, total={}, sort={}).",
+                "fts" if fts_search_active else "browse",
+                results_per_page,
+                resolved_offset,
+                len(results_list),
+                total_matches,
+                resolved_sort_by,
+            )
         return results_list, total_matches
 
     # --- Public Mutating Methods (Modified for Python Sync/FTS Logging) ---

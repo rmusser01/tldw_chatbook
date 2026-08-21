@@ -12,6 +12,7 @@ from typing import Any, NoReturn, Optional
 
 from loguru import logger
 
+from tldw_chatbook.Library.library_content_evidence import LibraryContentEvidence
 from tldw_chatbook.Notes.note_folder_models import (
     FolderCapabilityError,
     FolderCapabilityName,
@@ -987,7 +988,9 @@ class NotesScopeService:
         """
         normalized_scope = self._normalize_scope(scope)
         if normalized_scope != ScopeType.LOCAL_NOTE:
-            raise ValueError("Note restore is currently supported for local notes only.")
+            raise ValueError(
+                "Note restore is currently supported for local notes only."
+            )
         self._enforce_policy(self._note_action_id(normalized_scope, "update"))
         local_user_id = self._require_user_id(user_id)
         restored = self.local_notes_service.restore_note(
@@ -1255,7 +1258,10 @@ class NotesScopeService:
         normalized_scope = self._normalize_scope(scope)
         self._enforce_policy(self._note_action_id(normalized_scope, "list"))
         if normalized_scope == ScopeType.LOCAL_NOTE:
-            return self.local_notes_service.count_notes(self._require_user_id(user_id))
+            return await asyncio.to_thread(
+                self.local_notes_service.count_notes,
+                self._require_user_id(user_id),
+            )
         # Neither the server nor workspace note backends expose a dedicated
         # count-only seam today: ``server_service.list_server_notes`` only
         # surfaces a total as a side effect of fetching a page of notes
@@ -1266,6 +1272,68 @@ class NotesScopeService:
         # branch above) and make the gap explicit.
         raise ValueError(
             "Server and workspace note counts are not supported; use list_notes for a scoped total."
+        )
+
+    async def get_library_user_content_evidence(
+        self,
+        *,
+        scope: ScopeType | str,
+        user_id: Optional[str] = None,
+    ) -> LibraryContentEvidence:
+        """Return tri-state evidence for accessible active user notes.
+
+        Args:
+            scope: Notes authority to inspect.
+            user_id: Local note owner identifier. Required for local notes.
+
+        Returns:
+            Evidence that the selected authority has eligible user notes,
+            is authoritatively empty, or cannot be determined.
+        """
+        normalized_scope = self._normalize_scope(scope)
+        if normalized_scope == ScopeType.WORKSPACE:
+            return LibraryContentEvidence.UNKNOWN
+        if normalized_scope == ScopeType.LOCAL_NOTE:
+            total = await self.count_notes(scope=normalized_scope, user_id=user_id)
+            return (
+                LibraryContentEvidence.HAS_USER_CONTENT
+                if total > 0
+                else LibraryContentEvidence.EMPTY
+            )
+
+        self._enforce_policy(self._note_action_id(normalized_scope, "list"))
+        payload = await self.server_service.list_server_notes(limit=1, offset=0)
+        if not isinstance(payload, Mapping):
+            return LibraryContentEvidence.UNKNOWN
+        if payload.get("count_exact") is not True:
+            return LibraryContentEvidence.UNKNOWN
+        items = payload.get("items")
+        total = payload.get("count")
+        if (
+            type(total) is not int
+            or total < 0
+            or not isinstance(items, list)
+            or len(items) > 1
+        ):
+            return LibraryContentEvidence.UNKNOWN
+        if total == 0:
+            return (
+                LibraryContentEvidence.EMPTY
+                if not items
+                else LibraryContentEvidence.UNKNOWN
+            )
+        if items and isinstance(items[0], Mapping):
+            record = items[0]
+            if record.get("deleted") or record.get("accessible") is False:
+                return (
+                    LibraryContentEvidence.EMPTY
+                    if total == 1
+                    else LibraryContentEvidence.UNKNOWN
+                )
+        return (
+            LibraryContentEvidence.HAS_USER_CONTENT
+            if items
+            else LibraryContentEvidence.UNKNOWN
         )
 
     async def list_workspaces(self) -> Any:

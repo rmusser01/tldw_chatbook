@@ -4662,6 +4662,17 @@ except tomllib.TOMLDecodeError as e:
 # --- Primary Configuration Loading Logic for the CLI ---
 _CONFIG_CACHE: Optional[Dict[str, Any]] = None
 _CONFIG_CACHE_SOURCE: Optional[Path] = None
+_FIRST_PROFILE_CREATED_THIS_SESSION = False
+
+
+def first_profile_created_this_session() -> bool:
+    """Return whether this process created the active profile config.
+
+    Returns:
+        ``True`` when this process created the active profile configuration;
+        otherwise ``False``.
+    """
+    return _FIRST_PROFILE_CREATED_THIS_SESSION
 
 
 class ConfigLoadFailure(NamedTuple):
@@ -4712,6 +4723,7 @@ def _load_cli_config_bootstrap_unlocked(
     force_reload: bool = False,
 ) -> _ConfigBootstrapResult:
     global _CONFIG_CACHE, _CONFIG_CACHE_SOURCE, _LAST_CONFIG_LOAD_FAILURE
+    global _FIRST_PROFILE_CREATED_THIS_SESSION
     config_path = _get_effective_config_path()
     if (
         _CONFIG_CACHE is not None
@@ -4759,6 +4771,7 @@ def _load_cli_config_bootstrap_unlocked(
         _report_config_path_posture(created)
         logger.info(f"Created default CLI config file at {config_path}")
         loaded_config["_first_run"] = True
+        _FIRST_PROFILE_CREATED_THIS_SESSION = True
         bootstrap_succeeded = True
     except PrivatePathError as exc:
         if application_directory is not None and exc.result.reason == "missing_parent":
@@ -4773,6 +4786,7 @@ def _load_cli_config_bootstrap_unlocked(
             _report_config_path_posture(created)
             logger.info(f"Created default CLI config file at {config_path}")
             loaded_config["_first_run"] = True
+            _FIRST_PROFILE_CREATED_THIS_SESSION = True
             bootstrap_succeeded = True
         else:
             raise

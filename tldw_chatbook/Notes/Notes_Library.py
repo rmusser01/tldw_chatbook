@@ -283,7 +283,7 @@ class NotesInteropService:
 
         duration = time.time() - start_time
         log_histogram("notes_library_count_notes_duration", duration)
-        log_counter("notes_library_count_notes_success", labels={"count": str(result)})
+        log_counter("notes_library_count_notes_success")
 
         return result
 

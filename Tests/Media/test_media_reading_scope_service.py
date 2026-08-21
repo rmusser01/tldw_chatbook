@@ -3,6 +3,7 @@ import asyncio
 
 import pytest
 
+import tldw_chatbook.DB.Client_Media_DB_v2 as media_db_module
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase as Database
 from tldw_chatbook.Media.media_reading_scope_service import (
     ALLOWED_SERVER_CREATE_SOURCE_TYPES,
@@ -10,6 +11,8 @@ from tldw_chatbook.Media.media_reading_scope_service import (
     MediaReadingScopeService,
 )
 from tldw_chatbook.Media.local_media_reading_service import LocalMediaReadingService
+from tldw_chatbook.Library.library_content_evidence import LibraryContentEvidence
+from tldw_chatbook.Media.server_media_reading_service import ServerMediaReadingService
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 from tldw_chatbook.tldw_api import (
     AddMediaRequest,
@@ -2785,6 +2788,240 @@ async def test_scope_service_library_media_summary_preserves_envelope_and_five_k
         "offset": 40,
         "limit": 20,
     }
+
+
+@pytest.mark.asyncio
+async def test_media_user_content_evidence_uses_active_complete_local_summary():
+    class LocalEvidenceService:
+        def __init__(self, payload):
+            self.payload = payload
+            self.calls = []
+
+        def search_media(self, **kwargs):
+            self.calls.append(kwargs)
+            return self.payload
+
+    local = LocalEvidenceService(
+        {
+            "items": [
+                {
+                    "id": 41,
+                    "title": "Summary title",
+                    "type": "article",
+                    "last_modified": "2026-08-20T00:00:00Z",
+                }
+            ],
+            "total": 1,
+            "offset": 0,
+            "limit": 1,
+        }
+    )
+    scope_service = MediaReadingScopeService(local_service=local, server_service=None)
+
+    evidence = await scope_service.get_library_user_content_evidence(mode="local")
+
+    assert type(evidence) is LibraryContentEvidence
+    assert evidence is LibraryContentEvidence.HAS_USER_CONTENT
+    assert local.calls == [
+        {
+            "query": None,
+            "limit": 1,
+            "offset": 0,
+            "library_summary": True,
+            "include_deleted": False,
+            "include_trash": False,
+            "chunking_status": "completed",
+        }
+    ]
+
+    excluded = LocalEvidenceService({"items": [], "total": 0, "offset": 0, "limit": 1})
+    scope_service = MediaReadingScopeService(
+        local_service=excluded, server_service=None
+    )
+    assert (
+        await scope_service.get_library_user_content_evidence(mode="local")
+        is LibraryContentEvidence.EMPTY
+    )
+
+
+@pytest.mark.asyncio
+async def test_media_user_content_evidence_filters_completed_real_local_population():
+    db = Database(db_path=":memory:", client_id="library-evidence")
+    try:
+        completed_id, _, _ = db.add_media_with_keywords(
+            title="Older completed",
+            content="completed body",
+            media_type="article",
+            keywords=[],
+            chunks=[],
+        )
+        db.add_media_with_keywords(
+            title="Newer pending",
+            content="pending body",
+            media_type="article",
+            keywords=[],
+        )
+        scope_service = MediaReadingScopeService(
+            local_service=LocalMediaReadingService(db), server_service=None
+        )
+
+        assert (
+            await scope_service.get_library_user_content_evidence(mode="local")
+            is LibraryContentEvidence.HAS_USER_CONTENT
+        )
+
+        assert db.soft_delete_media(completed_id)
+        assert (
+            await scope_service.get_library_user_content_evidence(mode="local")
+            is LibraryContentEvidence.EMPTY
+        )
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_media_evidence_uses_bounded_summary_without_private_enrichment_or_logs(
+    tmp_path, monkeypatch
+):
+    db = Database(db_path=tmp_path / "media.db", client_id="private-client-sentinel")
+    private_title = "PRIVATE_TITLE_SENTINEL"
+    db.add_media_with_keywords(
+        title=private_title,
+        content="PRIVATE_BODY_SENTINEL",
+        media_type="article",
+        keywords=[],
+        chunks=[],
+    )
+    local = LocalMediaReadingService(db)
+    enriched = []
+    monkeypatch.setattr(
+        local,
+        "_enrich_rows_with_read_it_later_state",
+        lambda rows: (enriched.append(rows), rows)[1],
+    )
+    logs = []
+    monkeypatch.setattr(
+        media_db_module.logger,
+        "info",
+        lambda template, *args, **_kwargs: logs.append((template, args)),
+    )
+    service = MediaReadingScopeService(local_service=local, server_service=None)
+    try:
+        assert (
+            await service.get_library_user_content_evidence(mode="local")
+            is LibraryContentEvidence.HAS_USER_CONTENT
+        )
+        assert enriched == []
+        rendered_logs = repr(logs)
+        for private_value in (
+            private_title,
+            "PRIVATE_BODY_SENTINEL",
+            "private-client-sentinel",
+            str(tmp_path),
+            "result_count",
+            "total=",
+        ):
+            assert private_value not in rendered_logs
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_media_user_content_evidence_accepts_exact_server_summary_only():
+    class StrictReadingClient:
+        def __init__(self, payload):
+            self.payload = payload
+            self.calls = []
+
+        async def list_reading_items(
+            self,
+            *,
+            status=None,
+            tags=None,
+            q=None,
+            domain=None,
+            favorite=None,
+            date_from=None,
+            date_to=None,
+            page=1,
+            size=20,
+            offset=None,
+            limit=None,
+            sort=None,
+        ):
+            self.calls.append({"q": q, "limit": limit, "offset": offset})
+            return self.payload
+
+    client = StrictReadingClient(
+        {
+            "items": [{"id": 41, "processing_status": "completed"}],
+            "total": 1,
+            "offset": 0,
+            "limit": 1,
+        }
+    )
+    server = ServerMediaReadingService(client=client)
+    scope_service = MediaReadingScopeService(local_service=None, server_service=server)
+    assert (
+        await scope_service.get_library_user_content_evidence(mode="server")
+        is LibraryContentEvidence.HAS_USER_CONTENT
+    )
+    assert client.calls == [{"q": None, "limit": 1, "offset": 0}]
+
+    client = StrictReadingClient(
+        {
+            "items": [{"id": 42, "processing_status": "incomplete"}],
+            "total": 1,
+            "offset": 0,
+            "limit": 1,
+        }
+    )
+    scope_service = MediaReadingScopeService(
+        local_service=None, server_service=ServerMediaReadingService(client=client)
+    )
+    assert (
+        await scope_service.get_library_user_content_evidence(mode="server")
+        is LibraryContentEvidence.UNKNOWN
+    )
+
+    client = StrictReadingClient(
+        {
+            "items": [{"id": 43, "processing_status": "future-state"}],
+            "total": 1,
+            "offset": 0,
+            "limit": 1,
+        }
+    )
+    scope_service = MediaReadingScopeService(
+        local_service=None, server_service=ServerMediaReadingService(client=client)
+    )
+    assert (
+        await scope_service.get_library_user_content_evidence(mode="server")
+        is LibraryContentEvidence.UNKNOWN
+    )
+
+    client = StrictReadingClient(
+        {"items": [{"id": 44}], "total": 1, "offset": 0, "limit": 1}
+    )
+    scope_service = MediaReadingScopeService(
+        local_service=None, server_service=ServerMediaReadingService(client=client)
+    )
+    assert (
+        await scope_service.get_library_user_content_evidence(mode="server")
+        is LibraryContentEvidence.UNKNOWN
+    )
+
+    class AmbiguousServer:
+        async def search_media(self, **kwargs):
+            return {"items": []}
+
+    scope_service = MediaReadingScopeService(
+        local_service=None, server_service=AmbiguousServer()
+    )
+    assert (
+        await scope_service.get_library_user_content_evidence(mode="server")
+        is LibraryContentEvidence.UNKNOWN
+    )
 
 
 @pytest.mark.asyncio

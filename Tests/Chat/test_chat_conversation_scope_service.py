@@ -2,12 +2,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
 from tldw_chatbook.Chat.chat_conversation_scope_service import (
     ChatConversationScopeService,
 )
+from tldw_chatbook.Chat.server_chat_conversation_service import (
+    ServerChatConversationService,
+)
+from tldw_chatbook.Library.library_content_evidence import LibraryContentEvidence
+from tldw_chatbook.tldw_api.client import TLDWAPIClient
 
 
 @dataclass
@@ -251,6 +257,114 @@ async def test_scope_service_routes_local_and_server_conversation_reads_with_pol
             {"limit": 10, "offset": 2, "max_depth": 3},
         ),
     ]
+
+
+@pytest.mark.asyncio
+async def test_conversations_user_content_evidence_requires_exact_saved_total():
+    local = FakeConversationService()
+    service = ChatConversationScopeService(local_service=local, server_service=None)
+
+    result = await service.get_library_user_content_evidence(mode="local")
+
+    assert type(result) is LibraryContentEvidence
+    assert result is LibraryContentEvidence.HAS_USER_CONTENT
+    assert local.calls == [
+        (
+            "list_conversations",
+            (),
+            {"scope_type": "all", "limit": 1, "offset": 0},
+        )
+    ]
+
+    class WorkspaceOnlyConversation:
+        def list_conversations(self, **kwargs):
+            if kwargs.get("scope_type") != "all":
+                return {"items": [], "pagination": {"total": 0}}
+            return {
+                "items": [{"id": "workspace-conversation"}],
+                "pagination": {"total": 1},
+            }
+
+    service = ChatConversationScopeService(
+        local_service=WorkspaceOnlyConversation(), server_service=None
+    )
+    assert (
+        await service.get_library_user_content_evidence(mode="local")
+        is LibraryContentEvidence.HAS_USER_CONTENT
+    )
+
+    class MissingOrFailedSave:
+        def list_conversations(self, **kwargs):
+            return {"items": [], "pagination": {"total": 0}}
+
+    service = ChatConversationScopeService(
+        local_service=MissingOrFailedSave(), server_service=None
+    )
+    assert (
+        await service.get_library_user_content_evidence(mode="local")
+        is LibraryContentEvidence.EMPTY
+    )
+
+
+@pytest.mark.asyncio
+async def test_conversations_user_content_evidence_uses_supported_server_global_scope(
+    monkeypatch,
+):
+    client = TLDWAPIClient("http://localhost:8000")
+    request = AsyncMock(
+        return_value={
+            "items": [{"id": "server-conv", "scope_type": "global"}],
+            "pagination": {"limit": 1, "offset": 0, "total": 1, "has_more": False},
+        }
+    )
+    monkeypatch.setattr(client, "_request", request)
+    server = ServerChatConversationService(client=client)
+    service = ChatConversationScopeService(local_service=None, server_service=server)
+
+    assert (
+        await service.get_library_user_content_evidence(mode="server")
+        is LibraryContentEvidence.HAS_USER_CONTENT
+    )
+    assert request.await_args.kwargs["params"]["scope_type"] == "global"
+    assert request.await_args.kwargs["params"]["limit"] == 1
+    assert request.await_args.kwargs["params"]["offset"] == 0
+
+
+@pytest.mark.asyncio
+async def test_conversations_user_content_evidence_does_not_settle_empty_from_global_server_page(
+    monkeypatch,
+):
+    client = TLDWAPIClient("http://localhost:8000")
+    request = AsyncMock(
+        return_value={
+            "items": [],
+            "pagination": {"limit": 1, "offset": 0, "total": 0, "has_more": False},
+        }
+    )
+    monkeypatch.setattr(client, "_request", request)
+    server = ServerChatConversationService(client=client)
+    service = ChatConversationScopeService(local_service=None, server_service=server)
+
+    assert (
+        await service.get_library_user_content_evidence(mode="server")
+        is LibraryContentEvidence.UNKNOWN
+    )
+
+
+@pytest.mark.asyncio
+async def test_conversations_user_content_evidence_rejects_ambiguous_server_page():
+
+    class AmbiguousServer:
+        async def list_conversations(self, **kwargs):
+            return {"items": []}
+
+    service = ChatConversationScopeService(
+        local_service=None, server_service=AmbiguousServer()
+    )
+    assert (
+        await service.get_library_user_content_evidence(mode="server")
+        is LibraryContentEvidence.UNKNOWN
+    )
 
 
 @pytest.mark.asyncio

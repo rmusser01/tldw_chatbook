@@ -11,8 +11,9 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from textual.app import App, ComposeResult
 from textual.widget import Widget
-from textual.widgets import Input
+from textual.widgets import Button, Input, Static
 from textual.widgets._input import Selection
 
 from tldw_chatbook.Constants import (
@@ -47,6 +48,7 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_CREATE_STUDY,
     LIBRARY_ROW_INGEST_EXPORT,
 )
+from tldw_chatbook.Library.library_rail_state import LibraryLifecycle
 from tldw_chatbook.Widgets.Library import (
     LibraryCollectionsPanel,
     LibraryConversationsCanvas,
@@ -73,7 +75,7 @@ from Tests.UI.test_library_shell import (
     LibraryHarness,
     _FakeSkillsScopeService,
     _active_library_screen,
-    _build_test_app,
+    _build_test_app as _build_library_test_app,
     _seed_conversations,
     _two_conversations,
     _two_media_items,
@@ -82,6 +84,13 @@ from Tests.UI.test_library_shell import (
     _wait_for_library_shell,
     _wait_for_selector,
 )
+
+
+def _build_test_app():
+    """Build the legacy-profile app assumed by retained-entry owner tests."""
+    app = _build_library_test_app()
+    app.library_new_profile_admission = False
+    return app
 
 
 @dataclasses.dataclass(frozen=True)
@@ -132,6 +141,303 @@ _ENTRY_WORKER_CASES = (
         owner_replaced=True,
     ),
 )
+
+
+class _LandingCanvasHarness(App):
+    """Mount one retained landing owner without the surrounding screen."""
+
+    def __init__(self, state: LibraryLandingCanvasState) -> None:
+        super().__init__()
+        self.state = state
+
+    def compose(self) -> ComposeResult:
+        yield LibraryLandingCanvas(self.state, id="library-landing-canvas")
+
+
+def _landing_state(
+    lifecycle: LibraryLifecycle,
+    *,
+    status: str = "",
+    show_retry: bool = False,
+    show_explore: bool = False,
+    recent_items: tuple[LibraryLandingRecentItem, ...] = (),
+) -> LibraryLandingCanvasState:
+    """Build one explicit lifecycle presentation state for retained-owner tests."""
+    return LibraryLandingCanvasState(
+        purpose="Add something useful, then use it in Console or Study.",
+        counts_line="Notes (3) · Media (2) · Conversations (1)",
+        recent_items=recent_items,
+        lifecycle=lifecycle,
+        lifecycle_status=status,
+        show_retry=show_retry,
+        show_explore=show_explore,
+    )
+
+
+@pytest.mark.asyncio
+async def test_library_landing_syncs_unknown_to_starter_without_duplicate_actions():
+    app = _LandingCanvasHarness(
+        _landing_state(
+            LibraryLifecycle.UNKNOWN,
+            status="Checking existing Library content…",
+        )
+    )
+
+    async with app.run_test() as pilot:
+        landing = app.query_one("#library-landing-canvas", LibraryLandingCanvas)
+        import_action = app.query_one("#library-hub-action-import", Button)
+        note_action = app.query_one("#library-hub-action-new-note", Button)
+        assert not app.query("#library-hub-counts")
+        assert not app.query("#library-hub-action-search")
+        assert not app.query(".library-hub-recent")
+        assert str(
+            app.query_one("#library-hub-lifecycle-status", Static).renderable
+        ) == "Checking existing Library content…"
+        assert str(
+            app.query_one("#library-canvas-landing", Static).renderable
+        ) == "Add something useful, then use it in Console or Study."
+
+        landing.sync_state(_landing_state(LibraryLifecycle.STARTER))
+        await pilot.pause()
+
+        assert app.query_one("#library-hub-action-import", Button) is import_action
+        assert app.query_one("#library-hub-action-new-note", Button) is note_action
+        assert len(app.query("#library-hub-action-import")) == 1
+        assert len(app.query("#library-hub-action-new-note")) == 1
+        assert "1 Add · 2 Find · 3 Use" in str(
+            app.query_one("#library-hub-orientation", Static).renderable
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_landing_syncs_starter_to_expanded_without_stale_recents():
+    stale = LibraryLandingRecentItem("notes", "stale", "Stale note", "Note")
+    app = _LandingCanvasHarness(
+        _landing_state(LibraryLifecycle.STARTER, recent_items=(stale,))
+    )
+
+    async with app.run_test() as pilot:
+        landing = app.query_one("#library-landing-canvas", LibraryLandingCanvas)
+        assert not app.query(".library-hub-recent")
+
+        landing.sync_state(_landing_state(LibraryLifecycle.EXPANDED))
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.query_one("#library-hub-counts", Static)
+        assert app.query_one("#library-hub-action-search", Button)
+        assert not app.query("#library-hub-orientation")
+        assert not app.query(".library-hub-recent")
+
+
+@pytest.mark.asyncio
+async def test_library_landing_partial_failure_shows_one_retry():
+    app = _LandingCanvasHarness(
+        _landing_state(
+            LibraryLifecycle.UNKNOWN,
+            status="Some Library sources are unavailable.",
+            show_retry=True,
+        )
+    )
+
+    async with app.run_test():
+        retry = app.query("#library-hub-retry-evidence")
+        assert len(retry) == 1
+        assert str(retry.first().label) == "Retry source check"
+        assert str(app.query_one("#library-hub-lifecycle-status", Static).renderable) == (
+            "Some Library sources are unavailable."
+        )
+        assert not app.query("#library-hub-counts")
+        assert not app.query("#library-hub-action-search")
+
+
+@pytest.mark.asyncio
+async def test_library_landing_does_not_duplicate_screen_persistence_warning():
+    app = _LandingCanvasHarness(_landing_state(LibraryLifecycle.STARTER))
+
+    async with app.run_test():
+        assert not app.query("#library-hub-persistence-warning")
+        assert app.query_one("#library-hub-action-import", Button).disabled is False
+        assert (
+            app.query_one("#library-hub-action-new-note", Button).disabled is False
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_landing_composes_explore_only_when_rail_action_is_absent():
+    app = _LandingCanvasHarness(
+        _landing_state(LibraryLifecycle.STARTER, show_explore=True)
+    )
+
+    async with app.run_test():
+        assert len(app.query("#library-hub-explore-all")) == 1
+
+
+@pytest.mark.asyncio
+async def test_library_landing_late_sync_cannot_replace_a_new_route_owner(
+):
+    app = _build_test_app()
+    _seed_conversations(app, [])
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        landing = screen.query_one("#library-landing-canvas", LibraryLandingCanvas)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_MEDIA)
+        await _wait_for_selector(screen, pilot, "#library-media-canvas")
+        replacement = screen.query_one("#library-media-canvas", LibraryMediaCanvas)
+
+        landing.sync_state(_landing_state(LibraryLifecycle.STARTER))
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen.query_one("#library-media-canvas") is replacement
+        assert not screen.query("#library-landing-canvas")
+
+
+@pytest.mark.asyncio
+async def test_library_graduation_announcement_survives_reconcile_and_same_route_replace():
+    app = _build_test_app()
+    _seed_conversations(app, [], notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        await _wait_for_selector(screen, pilot, "#library-notes-canvas")
+
+        screen._set_library_lifecycle(LibraryLifecycle.GRADUATED)
+        screen._sync_library_rail_lifecycle_presentation()
+        await pilot.pause()
+        focus = await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        focus.focus()
+        await pilot.pause()
+        assert screen.focused is not None
+        assert screen.focused.id == focus.id
+
+        assert "Library tools are now available." in str(
+            screen.query_one("#library-lifecycle-status", Static).renderable
+        )
+
+        generation = screen._library_snapshot_state_generation
+        route_key = screen._library_entry_route_key()
+        screen._library_entry_reconcile_dirty = True
+        screen._library_entry_reconcile_pending = (generation, route_key)
+        reconciled = await screen._reconcile_library_entry_state(
+            generation, route_key
+        )
+        await pilot.pause()
+
+        assert reconciled is LibraryEntryReconcileResult.APPLIED
+        assert "Library tools are now available." in str(
+            screen.query_one("#library-lifecycle-status", Static).renderable
+        )
+        assert screen.focused is not None
+        assert screen.focused.id == focus.id
+
+        replacement = screen._build_library_entry_active_child()
+        assert replacement is not None
+        child_replaced = await screen._replace_library_canvas_child(
+            replacement,
+            generation=generation,
+            route_key=route_key,
+        )
+        await pilot.pause()
+
+        assert child_replaced is LibraryEntryReconcileResult.APPLIED
+        assert "Library tools are now available." in str(
+            screen.query_one("#library-lifecycle-status", Static).renderable
+        )
+        assert screen.focused is not None
+        assert screen.focused.id == focus.id
+
+        shell = library_screen_module.build_library_shell_state(
+            screen._build_library_shell_input(),
+            selected_row_id=screen._library_selected_row_id,
+        )
+        replaced = await screen._replace_library_browse_canvas(shell)
+        await pilot.pause()
+
+        assert replaced is True
+        assert "Library tools are now available." in str(
+            screen.query_one("#library-lifecycle-status", Static).renderable
+        )
+        assert screen.focused is not None
+        assert screen.focused.id == focus.id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ("reconcile", "replace"))
+async def test_library_notes_recompose_does_not_steal_newer_focus(
+    monkeypatch, operation
+):
+    app = _build_test_app()
+    _seed_conversations(app, [], notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        await _wait_for_selector(screen, pilot, "#library-notes-canvas")
+
+        screen._set_library_lifecycle(LibraryLifecycle.GRADUATED)
+        screen._sync_library_rail_lifecycle_presentation()
+        await pilot.pause()
+        row = await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        row.focus()
+        await pilot.pause()
+
+        generation = screen._library_snapshot_state_generation
+        route_key = screen._library_entry_route_key()
+        original_recompose = LibraryNotesCanvas.recompose
+        recompose_started = asyncio.Event()
+        release_recompose = asyncio.Event()
+
+        async def gated_recompose(canvas):
+            recompose_started.set()
+            await release_recompose.wait()
+            await original_recompose(canvas)
+
+        try:
+            monkeypatch.setattr(LibraryNotesCanvas, "recompose", gated_recompose)
+            if operation == "reconcile":
+                screen._library_entry_reconcile_dirty = True
+                screen._library_entry_reconcile_pending = (generation, route_key)
+                operation_task = asyncio.create_task(
+                    screen._reconcile_library_entry_state(generation, route_key)
+                )
+            else:
+                replacement = screen._build_library_entry_active_child()
+                assert isinstance(replacement, LibraryNotesCanvas)
+                operation_task = asyncio.create_task(
+                    screen._replace_library_canvas_child(
+                        replacement,
+                        generation=generation,
+                        route_key=route_key,
+                    )
+                )
+            await _wait_for_condition(
+                pilot,
+                recompose_started.is_set,
+                message="Notes canvas did not start its recompose",
+            )
+            newer_target = screen.query_one("#library-rail-collapse", Button)
+            newer_target.focus()
+            release_recompose.set()
+
+            assert await operation_task is LibraryEntryReconcileResult.APPLIED
+            await pilot.pause()
+            await pilot.pause()
+
+            assert newer_target.has_focus
+            assert "Library tools are now available." in str(
+                screen.query_one("#library-lifecycle-status", Static).renderable
+            )
+        finally:
+            release_recompose.set()
 
 
 def _wire_entry_prompt_service(app: Any, db_path: Path) -> int:

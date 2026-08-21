@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from dataclasses import replace
 from pathlib import Path
 from time import perf_counter
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from rich.cells import cell_len
@@ -858,16 +858,10 @@ async def test_empty_root_prompt_and_choose_button_render_adjacent() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(170, 50), (100, 30), (40, 20)])
-async def test_files_mode_keeps_library_rail_and_canvas_frame_mounted(
+async def test_files_mode_uses_focused_canvas_and_keeps_shell_mounted(
     size: tuple[int, int],
 ) -> None:
-    """task-2850 AC1/AC4: entering Notes > Files must not blank the rest of
-    the Library screen. Before the fix, ``compose_content`` returned early
-    with just the source-toggle strip and the workspace as direct screen
-    children, so the rail and the ``#library-canvas`` frame around it never
-    mounted at all. Compact widths keep both mounted but show one stage at a
-    time, matching the Database Notes workbench contract.
-    """
+    """Files keeps the shell mounted but owns the focused workbench width."""
     replica = FileNotesReplica(":memory:")
     workspace = LibraryFileNotesWorkspace(root=None, replica=replica)
     async with _production_workspace_context(workspace, size=size) as pilot:
@@ -875,11 +869,18 @@ async def test_files_mode_keeps_library_rail_and_canvas_frame_mounted(
         rail = screen.query_one("#library-rail")
         canvas_host = screen.query_one("#library-canvas")
         assert canvas_host.display
-        assert rail.display is (size[0] >= 120), (
+        assert rail.display is False, (
             f"size={screen.size!r}, grid={screen.query_one('#library-shell-grid').region!r}, "
             f"compact={screen._library_notes_compact!r}, "
             f"stage={screen._library_notes_stage!r}"
         )
+        if size[0] >= 120:
+            task_return = screen.query_one("#library-notes-task-return", Button)
+            assert task_return.display
+            assert str(task_return.label) == "‹ Library / Notes"
+        else:
+            task_returns = screen.query("#library-notes-task-return")
+            assert not task_returns or task_returns.first().display is False
         # The workspace renders inside the retained canvas pane, not as a
         # full-screen replacement of the whole shell.
         assert workspace.parent is canvas_host
@@ -913,6 +914,138 @@ async def test_escape_in_files_mode_returns_to_database_notes(
         assert screen.query_one("#library-notes-source-database", Button)
         assert not screen.query("#library-file-notes-workspace")
     replica.close()
+
+
+@pytest.mark.asyncio
+async def test_wide_files_task_return_reuses_the_existing_leave_guard() -> None:
+    """The wide cue cannot bypass the Files flush/conflict admission seam."""
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(root=None, replica=replica)
+    async with _production_workspace_context(workspace, size=(170, 48)) as pilot:
+        screen = pilot.app.screen
+        blocked_flush = AsyncMock(return_value=False)
+        screen._flush_active_file_notes = blocked_flush
+
+        screen.query_one("#library-notes-task-return", Button).press()
+        await pilot.pause()
+
+        blocked_flush.assert_awaited_once_with()
+        assert screen._library_notes_source == "files"
+        assert screen.query_one("#library-file-notes-workspace") is workspace
+
+        blocked_flush.reset_mock()
+        blocked_flush.return_value = True
+        screen.query_one("#library-notes-task-return", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: screen._library_notes_source == "database",
+            "Wide task return did not reopen Database Notes after admission.",
+        )
+        for _ in range(10):
+            await pilot.pause()
+
+        blocked_flush.assert_awaited_once_with()
+        assert screen.query_one("#library-notes-source-database", Button)
+        assert screen.query_one("#library-rail").display is True
+
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_wide_files_task_return_restores_database_browse_receipt() -> None:
+    """Files returns to the prior Database row and both independent scroll owners."""
+    notes = [
+        {
+            "id": f"note-{index:02d}",
+            "title": f"Browse note {index:02d}",
+            "content": f"body {index}",
+            "last_modified": f"2026-07-{(index % 28) + 1:02d}T12:00:00+00:00",
+            "version": 1,
+            "keywords": [],
+        }
+        for index in range(32)
+    ]
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(root=None, replica=replica)
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=notes)
+    screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
+
+    async with LibraryHarness(app, screen=screen).run_test(size=(170, 24)) as pilot:
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        await _wait_until(
+            pilot,
+            lambda: len(screen.query(".library-notes-row")) >= 20,
+            "Database Notes did not render the browse rows.",
+        )
+        screen.query_one("#library-notes-sort", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: bool(screen.query("#library-notes-sort-title")),
+            "Notes sort choices did not open.",
+        )
+        screen.query_one("#library-notes-sort-title", Button).press()
+        await pilot.pause()
+
+        row = list(screen.query(".library-notes-row"))[18]
+        note_id = str(row.note_id)
+        notes_list = screen.query_one("#library-notes-list")
+        rail = screen.query_one("#library-rail")
+        notes_list.scroll_to(y=7, animate=False, force=True, immediate=True)
+        rail.scroll_to(y=2, animate=False, force=True, immediate=True)
+        screen._mark_library_notes_user_interaction()
+        row.focus(scroll_visible=False)
+        await pilot.pause()
+        before_list_scroll = int(notes_list.scroll_y)
+        before_rail_scroll = int(rail.scroll_y)
+        row.press()
+        await _wait_until(
+            pilot,
+            lambda: bool(screen.query("#library-note-body")),
+            "Database note editor did not open.",
+        )
+        browse_receipt = screen._library_notes_browse_return_receipt
+        assert browse_receipt is not None
+        await pilot.resize_terminal(100, 30)
+        await _wait_until(
+            pilot,
+            lambda: screen._library_notes_compact,
+            "Notes did not enter the compact presentation.",
+        )
+
+        screen.query_one("#library-notes-source-files", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: workspace.is_mounted,
+            "Files workspace did not mount.",
+        )
+        assert screen._library_notes_browse_return_receipt is browse_receipt
+        await pilot.resize_terminal(170, 24)
+        await _wait_until(
+            pilot,
+            lambda: not screen._library_notes_compact,
+            "Notes did not return to the wide presentation.",
+        )
+        screen.query_one("#library-notes-task-return", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: (
+                screen._library_notes_source == "database"
+                and getattr(screen.focused, "note_id", None) == note_id
+            ),
+            "Files return did not restore the prior Database note row.",
+        )
+        await pilot.pause()
+
+        assert screen._library_notes_sort == "title"
+        assert (
+            int(screen.query_one("#library-notes-list").scroll_y) == before_list_scroll
+        )
+        assert int(screen.query_one("#library-rail").scroll_y) == before_rail_scroll
+        assert screen.query_one("#library-rail").display is True
+
+    await workspace.shutdown()
 
 
 @pytest.mark.asyncio
@@ -3708,6 +3841,9 @@ async def test_file_notes_production_shell_preserves_canvas_across_breakpoints(
         )
         assert await workspace.open_path("library.md")
         editor = workspace.query_one("#file-notes-editor", TextArea)
+        _replace_editor_text(editor, "retained file draft")
+        editor.move_cursor((0, 4))
+        selection = editor.selection
         screen.set_focus(editor)
         await pilot.pause()
 
@@ -3730,7 +3866,8 @@ async def test_file_notes_production_shell_preserves_canvas_across_breakpoints(
             assert workspace is screen.query_one("#library-file-notes-workspace")
             assert workspace.query_one("#file-notes-editor", TextArea) is editor
             assert workspace.current_path == "library.md"
-            assert editor.text == "library file"
+            assert editor.text == "retained file draft"
+            assert editor.selection == selection
             assert workspace.region.x >= 0
             assert workspace.region.right <= screen.size.width
             assert workspace.region.bottom <= screen.size.height
@@ -3741,8 +3878,15 @@ async def test_file_notes_production_shell_preserves_canvas_across_breakpoints(
             if width < 120:
                 assert screen._library_notes_stage == "notes"
                 assert rail.display is False
+                assert (
+                    screen.query_one("#library-notes-task-return", Button).display
+                    is False
+                )
             else:
-                assert rail.display is True
+                assert rail.display is False
+                task_return = screen.query_one("#library-notes-task-return", Button)
+                assert task_return.display is True
+                assert str(task_return.label) == "‹ Library / Notes"
 
     await workspace.shutdown()
 

@@ -446,11 +446,12 @@ class ServerNotesWorkspaceService:
         items = [
             self.normalize_server_note(item) for item in self._coerce_items(response)
         ]
+        has_count = isinstance(response, Mapping) and "count" in response
+        raw_count = response["count"] if has_count else len(items)
         return {
             "items": items,
-            "count": int(response.get("count", len(items)))
-            if isinstance(response, Mapping)
-            else len(items),
+            "count": int(raw_count),
+            "count_exact": has_count and type(raw_count) is int and raw_count >= 0,
         }
 
     async def search_server_notes(

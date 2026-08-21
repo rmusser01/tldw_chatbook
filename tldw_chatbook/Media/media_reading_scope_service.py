@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Awaitable, Mapping, Optional, Sequence
 
+from tldw_chatbook.Library.library_content_evidence import LibraryContentEvidence
+
 from .media_reading_normalizers import (
     normalize_file_artifact,
     normalize_ingestion_source,
@@ -784,6 +786,75 @@ class MediaReadingScopeService:
             if isinstance(payload, Mapping)
             else limit,
         }
+
+    async def get_library_user_content_evidence(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+    ) -> LibraryContentEvidence:
+        """Return tri-state evidence for active, non-Trash media."""
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._reading_action_id(normalized_mode, "list"))
+        service = self._service_for_mode(normalized_mode)
+        filters = (
+            {
+                "include_deleted": False,
+                "include_trash": False,
+                "chunking_status": "completed",
+            }
+            if normalized_mode == MediaReadingBackend.LOCAL
+            else {}
+        )
+        payload = await self._call_local_leaf(
+            normalized_mode,
+            service,
+            "search_media",
+            query=None,
+            limit=1,
+            offset=0,
+            **(
+                {"library_summary": True}
+                if normalized_mode == MediaReadingBackend.LOCAL
+                else {}
+            ),
+            **filters,
+        )
+        if not isinstance(payload, Mapping):
+            return LibraryContentEvidence.UNKNOWN
+        items = payload.get("items")
+        total = payload.get("total")
+        if (
+            type(total) is not int
+            or total < 0
+            or not isinstance(items, list)
+            or len(items) > 1
+        ):
+            return LibraryContentEvidence.UNKNOWN
+        if total == 0:
+            return (
+                LibraryContentEvidence.EMPTY
+                if not items
+                else LibraryContentEvidence.UNKNOWN
+            )
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            return (
+                LibraryContentEvidence.HAS_USER_CONTENT
+                if len(items) == 1 and isinstance(items[0], Mapping)
+                else LibraryContentEvidence.UNKNOWN
+            )
+        if items and isinstance(items[0], Mapping):
+            record = items[0]
+            if record.get("deleted") or record.get("is_trash"):
+                return (
+                    LibraryContentEvidence.EMPTY
+                    if total == 1
+                    else LibraryContentEvidence.UNKNOWN
+                )
+            status_field = "processing_status"
+            status = str(record.get(status_field) or "").strip().lower()
+            if status == "completed":
+                return LibraryContentEvidence.HAS_USER_CONTENT
+        return LibraryContentEvidence.UNKNOWN
 
     async def list_library_media_types(
         self,

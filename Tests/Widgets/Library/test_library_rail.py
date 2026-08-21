@@ -1,16 +1,26 @@
 """Tests for the LibraryRail widget."""
 
+# Pytest injects the imported fixture into same-named test parameters.
+# ruff: noqa: F811
+
 from __future__ import annotations
 
 import pytest
 from textual.widgets import Button, Input, Static
 
-from Tests.textual_test_utils import widget_pilot
-from tldw_chatbook.Library.library_rail_state import LibraryRailPreferences
+from Tests.textual_test_utils import widget_pilot  # noqa: F401
+from tldw_chatbook.Library.library_rail_state import (
+    LibraryLifecycle,
+    LibraryRailPreferences,
+)
 from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_ROW_CREATE_NOTE,
+    LIBRARY_ROW_INGEST_MEDIA,
     LibraryRailRow,
     LibraryRailSectionState,
+    LibraryShellInput,
     LibraryShellState,
+    build_library_shell_state,
 )
 from tldw_chatbook.Widgets.Library.library_rail import (
     LibraryRail,
@@ -34,9 +44,127 @@ def _make_shell() -> LibraryShellState:
     )
 
 
+def _make_full_shell() -> LibraryShellState:
+    """Return the production Library shell row table."""
+    return build_library_shell_state(LibraryShellInput())
+
+
+@pytest.mark.parametrize(
+    "lifecycle",
+    [LibraryLifecycle.STARTER, LibraryLifecycle.UNKNOWN],
+)
+async def test_library_starter_and_unknown_rail_render_only_safe_actions(
+    widget_pilot,
+    lifecycle,
+):
+    """Starter and unresolved profiles share one compact production action set."""
+    async with await widget_pilot(
+        LibraryRail,
+        shell=_make_full_shell(),
+        preferences=LibraryRailPreferences(),
+        lifecycle=lifecycle,
+    ) as pilot:
+        await pilot.pause()
+        rail = pilot.app.test_widget
+
+        assert rail.query_one("#library-rail-heading-label", Static).renderable == (
+            "Navigation"
+        )
+        assert rail.query_one("#library-rail-collapse", Button)
+        assert [button.id for button in pilot.app.query(".library-rail-row")] == [
+            f"library-row-{LIBRARY_ROW_INGEST_MEDIA}",
+            f"library-row-{LIBRARY_ROW_CREATE_NOTE}",
+        ]
+        assert rail.query_one(
+            f"#library-row-{LIBRARY_ROW_INGEST_MEDIA}", Button
+        ).row_id == LIBRARY_ROW_INGEST_MEDIA
+        assert rail.query_one(
+            f"#library-row-{LIBRARY_ROW_CREATE_NOTE}", Button
+        ).row_id == LIBRARY_ROW_CREATE_NOTE
+        assert rail.query_one("#library-rail-explore-all", Button).label.plain == (
+            "Explore all tools"
+        )
+        assert len(pilot.app.query("#library-rail-explore-all")) == 1
+        assert not pilot.app.query("#library-search-input")
+        assert not pilot.app.query(".destination-rail-section-header")
+        assert not pilot.app.query("#library-rail-section-header-details")
+        assert not pilot.app.query("#library-ingest-top-button")
+
+
+@pytest.mark.parametrize(
+    ("lifecycle", "all_empty", "shows_back"),
+    [
+        (LibraryLifecycle.EXPANDED, True, True),
+        (LibraryLifecycle.EXPANDED, False, False),
+        (LibraryLifecycle.GRADUATED, True, False),
+    ],
+)
+async def test_library_expanded_and_graduated_rails_render_full_shell(
+    widget_pilot,
+    lifecycle,
+    all_empty,
+    shows_back,
+):
+    """Only a freshly empty expanded profile can return to Starter."""
+    shell = _make_full_shell()
+    async with await widget_pilot(
+        LibraryRail,
+        shell=shell,
+        preferences=LibraryRailPreferences(),
+        lifecycle=lifecycle,
+        onboarding_all_empty=all_empty,
+    ) as pilot:
+        await pilot.pause()
+        rail = pilot.app.test_widget
+
+        assert rail.query_one("#library-search-input", Input)
+        assert [
+            button.row_id for button in pilot.app.query(".library-rail-row")
+        ] == [
+            row.row_id for section in shell.sections for row in section.rows
+        ]
+        assert (
+            bool(pilot.app.query("#library-rail-back-to-starter")) is shows_back
+        )
+
+
+async def test_library_starter_rail_tab_order_and_labels_are_text_complete(
+    widget_pilot,
+):
+    """Compact actions are keyboard ordered and understandable without color."""
+    async with await widget_pilot(
+        LibraryRail,
+        shell=_make_full_shell(),
+        preferences=LibraryRailPreferences(),
+        lifecycle=LibraryLifecycle.STARTER,
+    ) as pilot:
+        await pilot.pause()
+        action_ids = {
+            f"library-row-{LIBRARY_ROW_INGEST_MEDIA}",
+            f"library-row-{LIBRARY_ROW_CREATE_NOTE}",
+            "library-rail-explore-all",
+        }
+        focus_order = [
+            widget.id
+            for widget in pilot.app.screen.focus_chain
+            if widget.id in action_ids
+        ]
+        assert focus_order == [
+            f"library-row-{LIBRARY_ROW_INGEST_MEDIA}",
+            f"library-row-{LIBRARY_ROW_CREATE_NOTE}",
+            "library-rail-explore-all",
+        ]
+        assert [
+            button.label.plain.strip().lstrip("▸").strip()
+            for button in pilot.app.query("Button")
+            if button.id in action_ids
+        ] == ["Import…", "New note", "Explore all tools"]
+
+
 async def test_library_rail_top_action_factory(widget_pilot):
     """The top_action_factory is stored and its widgets are rendered first."""
-    factory = lambda: [Button("Ingest", id="library-top-action")]
+    def factory():
+        return [Button("Ingest", id="library-top-action")]
     preferences = LibraryRailPreferences()
 
     async with await widget_pilot(
