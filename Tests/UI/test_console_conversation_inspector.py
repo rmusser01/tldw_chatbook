@@ -1101,6 +1101,95 @@ async def test_save_exchange_capture_direct_call_still_blocked_when_ephemeral(
 
 
 @pytest.mark.asyncio
+async def test_save_exchange_capture_rejected_destination_does_not_write(
+    monkeypatch,
+) -> None:
+    """Qodo PR #1883 finding 2: ``_save_exchange_capture`` (like its Next
+    Send-tab sibling ``_save_json``) now runs its Downloads-bound
+    destination through ``path_validation.validate_path`` before
+    ``mkdir``/``write_text``. When that check rejects the destination,
+    the capture must not be written -- ``mkdir``/``write_text`` below
+    raise ``AssertionError`` if ever reached, proving the short-circuit
+    -- and the toast must surface only the failure class + path, never
+    the raw ``path_validation`` exception body."""
+    cap = _capture("r1", 0, "t", "m")
+
+    async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
+        return [(cap, False)]
+
+    app = InspectorHarness(
+        **_default_kwargs(exchanges_loader=loader, initial_tab=TAB_EXCHANGE)
+    )
+
+    async with app.run_test(size=(120, 44)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+
+        turn = modal.query_one("#console-inspector-exchange-turn-0", Collapsible)
+        turn.collapsed = False
+        await _wait_until(pilot, lambda: bool(turn.query(Collapsible)))
+
+        call = turn.query_one("#console-inspector-exchange-call-0-0", Collapsible)
+        call.collapsed = False
+        await _wait_until(pilot, lambda: bool(call.query(Button)))
+
+        import tldw_chatbook.Widgets.Console.console_conversation_inspector as inspector_module
+
+        class _RejectedSaveGuardPath:
+            """``home()``/``__truediv__`` succeed (so path construction
+            reaches the validation call); ``mkdir``/``write_text`` must
+            never be reached once ``validate_path`` (patched below)
+            rejects."""
+
+            def __str__(self) -> str:
+                return "/guard/Downloads/rejected.json"
+
+            @classmethod
+            def home(cls) -> "_RejectedSaveGuardPath":
+                return cls()
+
+            def __truediv__(self, other: str) -> "_RejectedSaveGuardPath":
+                return self
+
+            def mkdir(self, **kwargs: object) -> None:
+                raise AssertionError(
+                    "must not mkdir when destination is rejected"
+                )
+
+            def write_text(self, *args: object, **kwargs: object) -> None:
+                raise AssertionError(
+                    "must not write when destination is rejected"
+                )
+
+        monkeypatch.setattr(inspector_module, "Path", _RejectedSaveGuardPath)
+
+        sentinel = "SENTINEL-VALIDATE-boom-must-not-leak-71ab"
+
+        def _reject(*_args: object, **_kwargs: object) -> None:
+            raise ValueError(sentinel)
+
+        monkeypatch.setattr(inspector_module, "validate_path", _reject)
+
+        notifications: list[tuple[str, str | None]] = []
+        monkeypatch.setattr(
+            modal,
+            "notify",
+            lambda message, *a, **k: notifications.append(
+                (str(message), k.get("severity"))
+            ),
+        )
+
+        modal._save_exchange_capture("0-0")  # must not raise, must not write
+
+        assert notifications, "expected a rejection toast"
+        message, severity = notifications[-1]
+        assert severity == "error"
+        assert sentinel not in message
+        assert "ValueError" in message
+        assert "/guard/Downloads/rejected.json" in message
+
+
+@pytest.mark.asyncio
 async def test_per_message_collapsible_mounts_its_json_body() -> None:
     """Finding 4 (task-9 review): the fourth lazy level (per-message,
     nested inside the Messages section) was never exercised by any test --

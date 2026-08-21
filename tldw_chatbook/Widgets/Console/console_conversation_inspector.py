@@ -101,6 +101,7 @@ from tldw_chatbook.Chat.console_exchange_capture import ExchangeCapture
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.LLM_Calls.pricing_catalog import get_pricing_catalog
+from tldw_chatbook.Utils.path_validation import validate_path
 from tldw_chatbook.Utils.token_counter import estimate_tokens
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 from tldw_chatbook.Widgets.Console.console_project_instructions import (
@@ -1319,6 +1320,43 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             )
             self.notify("Copy failed: pyperclip unavailable.", severity="warning")
 
+    def _validated_export_destination(self, path: Path) -> Path | None:
+        """Validate a Downloads-bound export path through the repo's
+        centralized ``path_validation`` module before any write.
+
+        Both Save-to-file actions in this modal (``_save_json`` for the
+        Next Send tab, ``_save_exchange_capture`` for the Exchange tab)
+        build ``Path.home() / "Downloads" / filename`` themselves; this
+        confirms that resolved destination actually stays inside Downloads
+        (Qodo PR #1883 finding 2 -- repo rule: file paths go through
+        ``path_validation.py``) before ``mkdir``/``write_text`` run,
+        catching e.g. a symlinked Downloads directory or a future change
+        that makes the filename component non-literal. Deliberately
+        returns the ORIGINAL ``path`` argument on success (not
+        ``validate_path``'s own return value, which is always a real
+        ``pathlib.Path`` freshly re-resolved from it) so the object this
+        modal's own ``Path`` name constructed keeps flowing to
+        ``mkdir``/``write_text`` unchanged -- this module's tests
+        legitimately swap that name for a redirecting/failing stand-in,
+        and this check must stay a pure guard, not a silent path swap. On
+        rejection, notifies with the failure class and the attempted path
+        only -- never the raw exception body, matching this file's
+        existing no-payload-in-error-surface contract -- and returns
+        ``None`` so the caller does not write.
+        """
+        downloads_dir = Path.home() / "Downloads"
+        try:
+            validate_path(path, downloads_dir)
+            return path
+        except ValueError as exc:
+            logger.error(
+                f"Rejected export destination {path}: {type(exc).__name__}"
+            )
+            self.notify(
+                f"Save failed ({type(exc).__name__}): {path}", severity="error"
+            )
+            return None
+
     def _save_exchange_capture(self, call_key: str) -> None:
         """Verbatim idiom from the retired standalone context modal's own
         ``_save_json``, applied to one call's ``ExchangeCapture``.
@@ -1336,6 +1374,10 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         text = json.dumps(asdict(capture), indent=2, default=str)
         filename = f"chatbook_exchange_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         path = Path.home() / "Downloads" / filename
+        validated_path = self._validated_export_destination(path)
+        if validated_path is None:
+            return
+        path = validated_path
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text, encoding="utf-8")
@@ -1698,6 +1740,10 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         text = self._format_export_text()
         filename = f"chatbook_context_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         path = Path.home() / "Downloads" / filename
+        validated_path = self._validated_export_destination(path)
+        if validated_path is None:
+            return
+        path = validated_path
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text, encoding="utf-8")

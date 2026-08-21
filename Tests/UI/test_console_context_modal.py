@@ -645,7 +645,14 @@ async def test_context_modal_save_to_file(tmp_path, monkeypatch):
     expected_text = json.dumps(SNAPSHOT.next_send_payload, indent=2, default=str)
 
     class FakePath:
-        """Redirect filesystem operations under ``tmp_path`` for hermetic tests."""
+        """Redirect filesystem operations under ``tmp_path`` for hermetic tests.
+
+        ``__fspath__`` (task-18300 Qodo PR #1883 finding 2): the Save
+        actions now run the destination through
+        ``path_validation.validate_path`` first, which wraps its argument
+        in a real ``pathlib.Path`` -- an os.PathLike-less stand-in raises
+        ``TypeError`` there and would make every save look "rejected".
+        """
 
         def __init__(self, *parts: str | Path) -> None:
             self._path = tmp_path.joinpath(*parts)
@@ -656,6 +663,9 @@ async def test_context_modal_save_to_file(tmp_path, monkeypatch):
 
         def __truediv__(self, other: str) -> "FakePath":
             return FakePath(self._path, other)
+
+        def __fspath__(self) -> str:
+            return str(self._path)
 
         def __getattr__(self, name: str):
             return getattr(self._path, name)
@@ -701,6 +711,9 @@ async def test_context_modal_save_omits_automatic_project_instruction_body(
         return snapshot
 
     class FakePath:
+        """See the first ``test_context_modal_save_to_file``'s ``FakePath``
+        docstring for why ``__fspath__`` is required here."""
+
         def __init__(self, *parts: str | Path) -> None:
             self._path = tmp_path.joinpath(*parts)
 
@@ -710,6 +723,9 @@ async def test_context_modal_save_omits_automatic_project_instruction_body(
 
         def __truediv__(self, other: str) -> "FakePath":
             return FakePath(self._path, other)
+
+        def __fspath__(self) -> str:
+            return str(self._path)
 
         def __getattr__(self, name: str):
             return getattr(self._path, name)
@@ -733,7 +749,20 @@ async def test_context_modal_save_to_file_failure(monkeypatch):
     app = ActionHarness()
 
     class FailingPath:
-        """Path stand-in whose ``write_text`` always raises ``OSError``."""
+        """Path stand-in whose ``write_text`` always raises ``OSError``.
+
+        ``__str__``/``__fspath__`` (task-18300 Qodo PR #1883 finding 2):
+        the Save action now runs the destination through
+        ``path_validation.validate_path`` first (constant string so the
+        wrapped-in-a-real-``Path`` user-path/base-directory pair it builds
+        still validate as "identical, therefore inside" -- see the sibling
+        ``FailingPath`` in ``test_save_json_failure_log_and_toast_
+        include_class_and_path_not_message`` below for the full
+        reasoning) so this double's own ``write_text`` failure keeps
+        firing instead of the check rejecting it first.
+        """
+
+        _FAKE_STR = "/fake/Downloads/chatbook_write_failure.json"
 
         @classmethod
         def home(cls):
@@ -741,6 +770,12 @@ async def test_context_modal_save_to_file_failure(monkeypatch):
 
         def __truediv__(self, other: str) -> "FailingPath":
             return self
+
+        def __str__(self) -> str:
+            return self._FAKE_STR
+
+        def __fspath__(self) -> str:
+            return self._FAKE_STR
 
         def mkdir(self, **kwargs: object) -> None:
             return None
@@ -827,9 +862,28 @@ async def test_save_json_failure_log_and_toast_include_class_and_path_not_messag
     class FailingPath:
         """Path stand-in whose ``write_text`` always raises ``OSError``
         with a distinctive sentinel message, and whose ``str()`` is a
-        stable, recognizable fake path."""
+        stable, recognizable fake path.
+
+        ``__fspath__`` (task-18300 Qodo PR #1883 finding 2): the Save
+        action now runs the destination through ``path_validation.
+        validate_path`` first. That wraps its arguments in a real
+        ``pathlib.Path`` via ``os.fspath()``, which needs ``__fspath__``
+        specifically (``__str__`` alone is not enough) -- without it the
+        wrap itself raises ``TypeError`` and the check rejects the save
+        before ``write_text`` ever runs, which would defeat this test's
+        whole point. Every ``Path.home()`` call here returns a *new*
+        ``FailingPath`` instance, but ``__truediv__`` always returns
+        ``self`` and every instance's ``__fspath__``/``__str__`` return
+        the SAME constant string -- so the check's own
+        ``user_path``/``base_directory`` pair are textually identical
+        (i.e. "inside" by construction) and the validation step is a
+        no-op here, leaving this double's own ``write_text`` failure to
+        fire exactly as before."""
 
         def __str__(self) -> str:
+            return fake_path_str
+
+        def __fspath__(self) -> str:
             return fake_path_str
 
         @classmethod
@@ -889,6 +943,68 @@ async def test_save_json_failure_log_and_toast_include_class_and_path_not_messag
     assert all(sentinel not in toast for toast in toasts), toasts
     assert any("OSError" in toast for toast in toasts), toasts
     assert any(fake_path_str in toast for toast in toasts), toasts
+
+
+@pytest.mark.asyncio
+async def test_save_json_rejected_destination_does_not_write(monkeypatch):
+    """Qodo PR #1883 finding 2: ``_save_json`` (like its Exchange-tab
+    sibling ``_save_exchange_capture``) now runs its Downloads-bound
+    destination through ``path_validation.validate_path`` before
+    ``mkdir``/``write_text``. When that check rejects the destination,
+    the payload must not be written -- ``mkdir``/``write_text`` below
+    raise ``AssertionError`` if ever reached, proving the short-circuit
+    -- and the toast must surface only the failure class + path, never
+    the raw ``path_validation`` exception body."""
+
+    class _RejectedSaveGuardPath:
+        """``home()``/``__truediv__`` succeed (so path construction
+        reaches the validation call); ``mkdir``/``write_text`` must never
+        be reached once ``validate_path`` (patched below) rejects."""
+
+        def __str__(self) -> str:
+            return "/guard/Downloads/rejected.json"
+
+        @classmethod
+        def home(cls) -> "_RejectedSaveGuardPath":
+            return cls()
+
+        def __truediv__(self, other: str) -> "_RejectedSaveGuardPath":
+            return self
+
+        def mkdir(self, **kwargs: object) -> None:
+            raise AssertionError("must not mkdir when destination is rejected")
+
+        def write_text(self, *args: object, **kwargs: object) -> None:
+            raise AssertionError("must not write when destination is rejected")
+
+    monkeypatch.setattr(console_conversation_inspector, "Path", _RejectedSaveGuardPath)
+
+    sentinel = "SENTINEL-VALIDATE-boom-must-not-leak-71ab"
+
+    def _reject(*_args: object, **_kwargs: object) -> None:
+        raise ValueError(sentinel)
+
+    monkeypatch.setattr(console_conversation_inspector, "validate_path", _reject)
+
+    app = ActionHarness()
+    async with app.run_test(size=(120, 44)) as pilot:
+        app.push_screen(_inspector())
+        await pilot.pause()
+
+        toasts: list[str] = []
+        monkeypatch.setattr(
+            app.screen,
+            "notify",
+            lambda message, *a, **k: toasts.append(str(message)),
+        )
+
+        await pilot.click("#console-inspector-next-send-save")
+        await pilot.pause()
+
+    assert toasts, "expected a rejection toast"
+    assert all(sentinel not in toast for toast in toasts), toasts
+    assert any("ValueError" in toast for toast in toasts), toasts
+    assert any("/guard/Downloads/rejected.json" in toast for toast in toasts), toasts
 
 
 PREFILL_SNAPSHOT = ConsoleContextSnapshot(
