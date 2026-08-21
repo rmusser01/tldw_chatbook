@@ -560,9 +560,10 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         self.call_after_refresh(self._focus_initial_control)
 
     def _focus_initial_control(self) -> None:
-        """Focus the most relevant available action (task-18300, ported from
-        the retired standalone context modal's own ``_focus_initial_
-        control``, adapted to this widget's own button ids).
+        """Focus the most relevant available Next Send action (task-18300,
+        ported from the retired standalone context modal's own
+        ``_focus_initial_control``, adapted to this widget's own button ids;
+        I1 review finding narrowed it to the Next Send tab only -- see below).
 
         Tried in order: a project-instruction recovery action (the panel is
         only mounted -- and only ever offers one -- when
@@ -571,29 +572,40 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         Refresh button, then the modal's shared Close button. The first
         available (focusable, not disabled) control wins.
 
-        The first two selectors are scoped to when the Next Send tab is
-        the ACTIVE one: they live inside ``#console-inspector-next-send-
-        pane``, a ``VerticalScroll`` nested inside the OUTER Costs/
-        Exchange/Next-Send ``TabbedContent`` -- and ``scroll_visible()``
-        below walks every scrollable ancestor, including that outer
-        TabbedContent, to bring its target into view. Left unscoped, a
-        Costs-tab open (the cost-chip entry point, which always has a
-        mounted-but-inactive Next Send Refresh button since all three tabs'
-        widgets exist up front) would get its OWN active tab silently
-        yanked to Next Send by this method's own focus/scroll call -- a
-        real bug this branch shipped and caught via
-        ``test_cost_chip_press_opens_the_breakdown_modal``. Close is tried
-        regardless of which tab is active: it lives OUTSIDE the
-        TabbedContent (in ``#console-inspector-actions``), so focusing/
-        scrolling to it can never drag the active tab away.
+        I1: this method is scheduled from ``on_mount`` AND from
+        ``_load_snapshot``'s tail -- and the latter fires on EVERY tab,
+        because the Next Send snapshot prefetch itself starts
+        unconditionally in ``on_mount`` regardless of ``initial_tab``. Doing
+        nothing at all when the Next Send tab is not the ACTIVE one (checked
+        fresh, at call time, not at schedule time) is therefore load-bearing
+        in two ways, not just one:
 
-        Unlike the retired modal (which always had enough of its own
-        95x40 frame that every control was already on screen), this pane
-        can be shorter than its own content at the smallest supported
-        viewport -- ``#console-inspector-next-send-pane`` is a
-        ``VerticalScroll`` for exactly that reason. ``.focus()`` alone
-        does not reliably scroll a widget into view here: it only does so
-        as an incidental side effect, and a SECOND focus call on an
+          - Opening the cost-chip entry point (``initial_tab=TAB_COSTS``)
+            used to still fall through to focusing Close -- the one
+            selector that was NOT gated on ``next_send_active`` -- making
+            Enter dismiss the modal and breaking immediate arrow-key tab
+            switching on open.
+          - A real ``snapshot_factory`` is slow (resolves the provider,
+            reads ``AGENTS.md`` off-thread): a user already drilled into a
+            Costs-tab row could have focus silently yanked to Close the
+            moment that background load completed, even though they never
+            touched the Next Send tab at all.
+
+        Close now shares the same gate as the recovery action and Refresh
+        button -- all three live only inside ``#console-inspector-next-send-
+        pane`` semantics (Close is DOM-outside that pane, in
+        ``#console-inspector-actions``, but is meaningless to (re)focus
+        unless a Next Send interaction is what triggered this call). Off the
+        Next Send tab, this method now does nothing: Textual's own
+        App-level ``AUTO_FOCUS="*"`` fallback (see ``AUTO_FOCUS = None``
+        above) still lands first-DOM-order focus on initial mount, and
+        nothing here re-steals it later.
+
+        The remaining scroll-visibility rationale is unchanged from the
+        ported original: ``#console-inspector-next-send-pane`` is a
+        ``VerticalScroll`` that can be shorter than its own content at the
+        smallest supported viewport, so ``.focus()`` alone does not
+        reliably scroll a widget into view -- and a SECOND focus call on an
         already-focused control (this method runs again after every
         snapshot reload and after every recovery decision) is a no-op that
         skips it entirely. ``scroll_visible()`` is called explicitly so the
@@ -606,15 +618,13 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             )
         except NoMatches:
             next_send_active = False
-        next_send_selectors = (
-            (
-                ".console-project-instruction-recovery-action",
-                "#console-inspector-next-send-refresh",
-            )
-            if next_send_active
-            else ()
-        )
-        for selector in (*next_send_selectors, f"#{CLOSE_BUTTON_ID}"):
+        if not next_send_active:
+            return
+        for selector in (
+            ".console-project-instruction-recovery-action",
+            "#console-inspector-next-send-refresh",
+            f"#{CLOSE_BUTTON_ID}",
+        ):
             controls = list(self.query(selector))
             available = [
                 control

@@ -13,8 +13,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 from textual.app import App, ComposeResult
@@ -39,9 +42,13 @@ from tldw_chatbook.Chat.console_cost_tracker import (
 from tldw_chatbook.Chat.console_exchange_capture import (
     CAPTURE_REQUEST_ALLOWLIST,
     ExchangeCapture,
+    build_request_capture,
 )
+from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Widgets.Console.console_conversation_inspector import (
+    CLOSE_BUTTON_ID,
+    TAB_COSTS,
     TAB_EXCHANGE,
     TAB_NEXT_SEND,
     ConsoleConversationInspector,
@@ -1189,6 +1196,135 @@ async def test_save_exchange_capture_rejected_destination_does_not_write(
         assert "/guard/Downloads/rejected.json" in message
 
 
+# ---------------------------------------------------------------------------
+# C1 (CRITICAL): the Exchange tab's per-call Copy JSON / Save to File must
+# never carry an automatically-injected project-instruction body. The fix
+# lives one layer down, in ``build_request_capture`` (``console_exchange_
+# capture.py``) -- these two tests exercise the REAL function to build the
+# capture's ``request``, then drive the REAL ``_copy_exchange_capture``/
+# ``_save_exchange_capture`` methods end-to-end, proving the redaction
+# survives being loaded into the Inspector and serialized back out, not
+# just that the standalone unit test passes in isolation.
+# ---------------------------------------------------------------------------
+
+_EXCHANGE_EXPORT_SENTINEL = (
+    "SENTINEL-EXCHANGE-EXPORT: automatic project instruction body must "
+    "never reach the Exchange tab's Copy JSON or Save to File output."
+)
+
+
+def _capture_with_project_instruction_row() -> ExchangeCapture:
+    request, omitted = build_request_capture(
+        {
+            "model": "gpt-4",
+            "messages_payload": [
+                {"role": "user", "content": "ordinary message"},
+                {
+                    "role": "user",
+                    "content": _EXCHANGE_EXPORT_SENTINEL,
+                    EPHEMERAL_ORIGIN_KEY: "project_instructions",
+                },
+            ],
+        }
+    )
+    return _capture("r1", 0, "t", "gpt-4", request=request, omitted_keys=omitted)
+
+
+async def _expand_first_exchange_call(pilot, modal) -> None:
+    turn = modal.query_one("#console-inspector-exchange-turn-0", Collapsible)
+    turn.collapsed = False
+    await _wait_until(pilot, lambda: bool(turn.query(Collapsible)))
+
+    call = turn.query_one("#console-inspector-exchange-call-0-0", Collapsible)
+    call.collapsed = False
+    await _wait_until(pilot, lambda: bool(call.query(Button)))
+
+
+@pytest.mark.asyncio
+async def test_exchange_copy_json_omits_project_instruction_body(monkeypatch) -> None:
+    cap = _capture_with_project_instruction_row()
+
+    async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
+        return [(cap, False)]
+
+    fake_copy = SimpleNamespace(copy=Mock())
+    monkeypatch.setitem(sys.modules, "pyperclip", fake_copy)
+
+    app = InspectorHarness(
+        **_default_kwargs(exchanges_loader=loader, initial_tab=TAB_EXCHANGE)
+    )
+
+    async with app.run_test(size=(120, 44)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        await _expand_first_exchange_call(pilot, modal)
+
+        await pilot.click("#console-inspector-exchange-copy-0-0")
+        await pilot.pause()
+
+    fake_copy.copy.assert_called_once()
+    exported = fake_copy.copy.call_args.args[0]
+    assert _EXCHANGE_EXPORT_SENTINEL not in exported
+    assert "ordinary message" in exported
+    assert "omitted by capture policy" in exported
+
+
+@pytest.mark.asyncio
+async def test_exchange_save_to_file_omits_project_instruction_body(
+    tmp_path, monkeypatch
+) -> None:
+    cap = _capture_with_project_instruction_row()
+
+    async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
+        return [(cap, False)]
+
+    import tldw_chatbook.Widgets.Console.console_conversation_inspector as inspector_module
+
+    class FakePath:
+        """See ``test_console_context_modal.py``'s ``FakePath`` -- real
+        ``path_validation.validate_path`` needs ``os.PathLike`` support
+        (``__fspath__``), so a bare stand-in raises ``TypeError`` there and
+        would make this save look "rejected" instead of exercising the
+        happy path this test is pinning."""
+
+        def __init__(self, *parts: str | Path) -> None:
+            self._path = tmp_path.joinpath(*parts)
+
+        @classmethod
+        def home(cls) -> "FakePath":
+            return cls(tmp_path)
+
+        def __truediv__(self, other: str) -> "FakePath":
+            return FakePath(self._path, other)
+
+        def __fspath__(self) -> str:
+            return str(self._path)
+
+        def __getattr__(self, name: str):
+            return getattr(self._path, name)
+
+    monkeypatch.setattr(inspector_module, "Path", FakePath)
+
+    app = InspectorHarness(
+        **_default_kwargs(exchanges_loader=loader, initial_tab=TAB_EXCHANGE)
+    )
+
+    async with app.run_test(size=(120, 44)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        await _expand_first_exchange_call(pilot, modal)
+
+        await pilot.click("#console-inspector-exchange-save-0-0")
+        await pilot.pause()
+
+    saved_files = list((tmp_path / "Downloads").glob("chatbook_exchange_*.json"))
+    assert len(saved_files) == 1
+    saved = saved_files[0].read_text(encoding="utf-8")
+    assert _EXCHANGE_EXPORT_SENTINEL not in saved
+    assert "ordinary message" in saved
+    assert "omitted by capture policy" in saved
+
+
 @pytest.mark.asyncio
 async def test_per_message_collapsible_mounts_its_json_body() -> None:
     """Finding 4 (task-9 review): the fourth lazy level (per-message,
@@ -1480,3 +1616,68 @@ async def test_refresh_shows_the_refreshed_estimate_in_the_same_refresh() -> Non
         await pilot.click("#console-inspector-next-send-refresh")
         await _wait_until(pilot, lambda: "~222 tokens" in str(header.renderable))
         assert "~111" not in str(header.renderable)
+
+
+# ---------------------------------------------------------------------------
+# I1: ``_focus_initial_control`` runs from ``on_mount`` AND from
+# ``_load_snapshot``'s tail on EVERY tab (the Next Send prefetch itself
+# starts unconditionally in ``on_mount``, regardless of ``initial_tab``) --
+# not just while the Next Send tab is active. Both call sites must now do
+# nothing unless the Next Send tab is the ACTIVE one at the moment the
+# callback actually fires.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_opening_on_costs_tab_does_not_focus_close() -> None:
+    """Before the fix, Close was the one selector NOT gated on
+    ``next_send_active`` -- opening the cost-chip entry point (starts on
+    the Costs tab) still fell through to focusing it, so Enter dismissed
+    the modal and arrow-key tab switching was no longer immediate."""
+    app = InspectorHarness(**_default_kwargs(initial_tab=TAB_COSTS))
+
+    async with app.run_test(size=(120, 44)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        assert modal.query_one("#console-inspector-tabs").active == TAB_COSTS
+        close_button = modal.query_one(f"#{CLOSE_BUTTON_ID}", Button)
+        assert app.focused is not close_button
+
+
+@pytest.mark.asyncio
+async def test_late_snapshot_completion_does_not_steal_focus_from_costs_tab() -> None:
+    """The real ``snapshot_factory`` is slow (resolves the provider, reads
+    ``AGENTS.md`` off-thread) -- a user already drilled into a Costs-tab
+    row must not have focus yanked to Close (or anywhere else) when that
+    background Next Send load completes after the fact."""
+    still_loading = asyncio.Event()
+
+    async def slow_snapshot() -> ConsoleContextSnapshot:
+        await still_loading.wait()
+        return ConsoleContextSnapshot(current_messages=[], next_send_payload={})
+
+    app = InspectorHarness(
+        **_default_kwargs(snapshot_factory=slow_snapshot, initial_tab=TAB_COSTS)
+    )
+
+    async with app.run_test(size=(120, 44)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        assert modal.query_one("#console-inspector-tabs").active == TAB_COSTS
+
+        row_title = modal.query_one(
+            "#console-inspector-cost-row-0", Collapsible
+        ).query_one(CollapsibleTitle)
+        row_title.focus()
+        await pilot.pause()
+        assert app.focused is row_title
+
+        # Let the still-in-flight Next Send snapshot (started unconditionally
+        # from on_mount) resolve and run its focus-scheduling tail.
+        still_loading.set()
+        await pilot.pause()
+        await pilot.pause()
+
+        close_button = modal.query_one(f"#{CLOSE_BUTTON_ID}", Button)
+        assert app.focused is not close_button
+        assert app.focused is row_title
