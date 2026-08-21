@@ -125,9 +125,10 @@ TOK_USEFIXTURES = (
 
 def _fail(anchor: str, name: str) -> None:
     sys.exit(
-        f"FATAL: ported-test patch anchor not found in {name}: {anchor[:60]!r}…\n"
-        f"Upstream test content drifted from the pinned expectations; update the\n"
-        f"patch table in sync_chunking_engine.py before re-syncing."
+        f"FATAL: patch anchor not found in {name}: {anchor[:60]!r}…\n"
+        f"Upstream content drifted from the pinned expectations; update the\n"
+        f"matching patch table (TEST_PATCHES / ENGINE_PATCHES) in\n"
+        f"sync_chunking_engine.py before re-syncing."
     )
 
 
@@ -369,6 +370,129 @@ def patch_ported_test(name: str, text: str) -> str:
     return text
 
 
+# ---------------------------------------------------------------------------
+# Chatbook-side ENGINE patches (ADR-029 diagnostic privacy).
+#
+# Same idempotency contract as TEST_PATCHES: sync copies upstream at the pin,
+# applies these named patches, and the local-modification check in main()
+# compares the working tree against the PATCHED text — so the patched files
+# are the canonical vendored state, a re-sync reproduces them exactly, and an
+# upstream drift under a patch anchor fails loudly (_replace_once) instead of
+# silently dropping a privacy repair. Keep each patch scoped to reviewed
+# diagnostic call sites; behavior changes belong upstream (spec §5.2's
+# shim/subclass rule still applies to anything beyond log-record content).
+# ---------------------------------------------------------------------------
+
+def _patch_chunker_stream_diagnostics(text: str) -> str:
+    """TASK-19321 (ADR-029): chunk_file_stream diagnostics must not record
+    user file paths — directly or through exception text (an OSError
+    stringifies with the filename embedded; a UnicodeDecodeError's message
+    carries byte context from the file). The repaired records identify the
+    file by a stable content-free handle plus safe metadata."""
+    name = "chunker.py"
+    text = _replace_once(
+        text,
+        '        logger.info(f"Stream processing file: {file_path} ({file_size} bytes)")\n',
+        "        # ADR-029 / TASK-19321: a user file path is private data, so streaming\n"
+        "        # diagnostics identify the file by a stable content-free handle instead\n"
+        "        # of the path. An operator can recompute the handle for a candidate\n"
+        "        # file with:\n"
+        "        #   hashlib.sha256(\n"
+        '        #       str(Path(candidate).resolve()).encode("utf-8", "surrogatepass")\n'
+        "        #   ).hexdigest()[:12]\n"
+        "        # to confirm which file a record refers to.\n"
+        "        path_ref = hashlib.sha256(\n"
+        '            str(file_path.resolve()).encode("utf-8", "surrogatepass")\n'
+        "        ).hexdigest()[:12]\n"
+        "\n"
+        '        logger.info(f"Stream processing file: path_sha256={path_ref} ({file_size} bytes)")\n',
+        name,
+    )
+    text = _replace_once(
+        text,
+        "        except UnicodeDecodeError as e:\n"
+        '            logger.error(f"File stream decoding failed for {file_path}: {e}")\n'
+        "            raise InvalidInputError(\n"
+        "                f\"Failed to decode file {file_path} using encoding '{encoding_name}'\"\n"
+        "            ) from e\n"
+        "        except _CHUNKER_NONCRITICAL_EXCEPTIONS as e:\n"
+        '            logger.error(f"File stream processing failed: {e}")\n'
+        '            raise ChunkingError(f"Failed to process file stream: {str(e)}") from e\n',
+        "        except UnicodeDecodeError as e:\n"
+        "            # ADR-029 / TASK-19321: no path, and no raw exception text — a\n"
+        "            # UnicodeDecodeError's message carries byte context from the file.\n"
+        "            # The codec name and byte offset are content-free and keep the\n"
+        "            # failure debuggable.\n"
+        "            logger.error(\n"
+        '                f"File stream decoding failed for path_sha256={path_ref}: "\n'
+        "                f\"{type(e).__name__} (encoding '{encoding_name}', byte offset {e.start})\"\n"
+        "            )\n"
+        "            raise InvalidInputError(\n"
+        "                f\"Failed to decode file {file_path} using encoding '{encoding_name}'\"\n"
+        "            ) from e\n"
+        "        except _CHUNKER_NONCRITICAL_EXCEPTIONS as e:\n"
+        "            # ADR-029 / TASK-19321: an OSError here stringifies with the\n"
+        "            # filename embedded, so the record keeps the exception TYPE and\n"
+        "            # drops the message; the raised ChunkingError still carries the\n"
+        "            # full detail to the caller.\n"
+        "            logger.error(\n"
+        '                f"File stream processing failed for path_sha256={path_ref}: "\n'
+        '                f"{type(e).__name__}"\n'
+        "            )\n"
+        '            raise ChunkingError(f"Failed to process file stream: {str(e)}") from e\n',
+        name,
+    )
+    return text
+
+
+def _patch_tokens_offset_diagnostics(text: str) -> str:
+    """TASK-19322 (ADR-029): the offset-reconstruction fallback logged the
+    decoded token piece — user document text — at debug. The repaired record
+    keeps the length, the scan position, and a short stable digest so the
+    fallback stays debuggable without carrying content.
+
+    Shipped as a patch here because the repair landed (PR #1890) before this
+    table existed; a shim cannot unship the leaky bytes."""
+    name = "strategies/tokens.py"
+    text = _replace_once(
+        text,
+        "import threading\n",
+        "import hashlib\nimport threading\n",
+        name,
+    )
+    text = _replace_once(
+        text,
+        "                logger.debug(\n"
+        '                    f"Token piece not found in text during offset reconstruction: "\n'
+        "                    f\"piece={repr(piece[:50] + '...' if len(piece) > 50 else piece)}, pos={pos}\"\n"
+        "                )\n",
+        "                # TASK-19322 (ADR-029): the piece is decoded user document\n"
+        "                # text, so the diagnostic records only its length, the scan\n"
+        "                # position, and a short stable digest for correlation.\n"
+        '                piece_digest = hashlib.sha256(piece.encode("utf-8")).hexdigest()[:10]\n'
+        "                logger.debug(\n"
+        '                    "Token piece not found in text during offset reconstruction: "\n'
+        '                    f"piece_len={len(piece)}, piece_sha256={piece_digest}, pos={pos}"\n'
+        "                )\n",
+        name,
+    )
+    return text
+
+
+ENGINE_PATCHES = {
+    "chunker.py": _patch_chunker_stream_diagnostics,
+    "strategies/tokens.py": _patch_tokens_offset_diagnostics,
+}
+
+
+def patch_vendored_file(rel: str, text: str) -> str:
+    """Apply chatbook-side patches to one freshly rewritten vendored file."""
+    patcher = ENGINE_PATCHES.get(rel)
+    if patcher is not None:
+        return patcher(text)
+    return text
+
+
 def rewrite_imports(src: str) -> str:
     # Mechanical, order matters: the Chunking-specific rule first.
     src = src.replace("tldw_Server_API.app.core.Chunking",
@@ -417,22 +541,24 @@ def main() -> int:
         subprocess.run(["git", "clone", "--no-checkout", REPO, str(worktree)], check=True)
         subprocess.run(["git", "-C", str(worktree), "checkout", PIN], check=True)
 
-    # 1. Refuse to overwrite local modifications (loud, spec §5.2)
+    # 1. Refuse to overwrite local modifications (loud, spec §5.2). The
+    # canonical vendored state is upstream-at-pin + rewrite + ENGINE_PATCHES,
+    # so anything else in the tree is a local modification.
     for rel in VENDORED + ["__init__.py"]:
         dst = TARGET_ROOT / rel
         if dst.exists():
-            upstream = rewrite_imports(git_show(worktree, rel)) if rel != "__init__.py" else dst.read_text()
             if rel == "__init__.py":
                 continue  # chatbook-authored, never touched by sync
-            if dst.read_text() != upstream:
+            expected = patch_vendored_file(rel, rewrite_imports(git_show(worktree, rel)))
+            if dst.read_text() != expected:
                 sys.exit(f"FATAL: local modification to vendored file {rel}; "
                          f"revert it or move the change to a shim/subclass")
 
-    # 2. Copy + rewrite
+    # 2. Copy + rewrite + chatbook-side engine patches
     for rel in VENDORED:
         dst = TARGET_ROOT / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
-        dst.write_text(rewrite_imports(git_show(worktree, rel)))
+        dst.write_text(patch_vendored_file(rel, rewrite_imports(git_show(worktree, rel))))
 
     # 3. Manifest + licence (GPLv3 §4: licence text ships in-subtree)
     for rel in EXTRA_FILES:

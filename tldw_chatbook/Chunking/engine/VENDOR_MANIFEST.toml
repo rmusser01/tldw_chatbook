@@ -28,6 +28,16 @@ excluded = ["__init__.py", "README.md", "SECURITY.md", "templates.py",
             "async_chunker.py", "auto_boundary_assistant.py",
             "strategies/propositions.py", "utils/proposition_eval.py"]
 
+[patches]
+# Chatbook-side scripted patches applied by sync_chunking_engine.py after the
+# copy+rewrite step (ENGINE_PATCHES, spec §5.2 amendment / task-19321). The
+# canonical vendored state is upstream-at-pin + rewrite + these patches; the
+# sync's local-modification check compares against that state and fails
+# loudly when upstream drifts under a patch anchor. Hand-edits remain
+# forbidden — a patch lands here and in ENGINE_PATCHES, nowhere else.
+"chunker.py" = "task-19321 / ADR-029: chunk_file_stream diagnostics identify the file by a stable path hash and the exception type instead of the user path / raw exception text"
+"strategies/tokens.py" = "task-19322 / ADR-029: the offset-reconstruction fallback records the token piece's length, position and short digest instead of the decoded document text (repair merged in PR #1890, before this table existed)"
+
 [licence]
 spdx = "GPL-3.0-only"
 obligations = "preserve upstream headers; LICENSE + LICENSES/GPL-3.0-only.txt shipped in-subtree (GPLv3 §4); recorded here and in pyproject license-files"
