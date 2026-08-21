@@ -992,8 +992,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 139,
-      "diagnostic_digest": "3f36dc36f8d1f0ed0bfa",
+      "call_count": 140,
+      "diagnostic_digest": "9f344fad707f28908851",
       "owner": "TASK-492",
       "path": "tldw_chatbook/LLM_Calls/LLM_API_Calls.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -3811,7 +3811,7 @@
   "summary": {
     "owner_files": 517,
     "persistent_sink_files": 7,
-    "task_492_calls": 1209,
+    "task_492_calls": 1210,
     "task_494_calls": 7128
   }
 }
