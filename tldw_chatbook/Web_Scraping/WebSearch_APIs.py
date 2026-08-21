@@ -83,6 +83,7 @@ from tldw_chatbook.config import load_settings
 from tldw_chatbook.Internal_Prompts import render_internal_prompt
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 from tldw_chatbook.Utils.egress import is_public_http_url
+from tldw_chatbook.Utils.log_sanitizer import sanitize_string
 from tldw_chatbook.Web_Scraping import deep_search_citations
 from tldw_chatbook.Web_Scraping.Article_Extractor_Lib import scrape_article
 
@@ -3314,6 +3315,31 @@ def test_parse_duckduckgo_results():
 ######################### Google Search #########################
 #
 # https://developers.google.com/custom-search/v1/reference/rest/v1/cse/list
+
+# task-19552: allowlist of the Google Custom Search `params` keys that are
+# safe to write to a log record at any level. This is an ALLOWLIST, not a
+# denylist -- Utils/sensitive_llm_logging.py documents why a denylist has
+# already failed twice on the analogous LLM-request logging path in this
+# repo (new content-bearing keys kept slipping through unrecognized).
+# `key` -- the Google CSE API credential written into `params` below -- is
+# deliberately absent: any key not listed here, now or added in the future,
+# is dropped from the logged view instead of exposed by default.
+SAFE_GOOGLE_SEARCH_PARAM_KEYS: frozenset = frozenset({
+    "q", "c2coff", "cr", "cx", "num", "dateRestrict", "exactTerms",
+    "excludeTerms", "filter", "gl", "hl", "lr", "safe", "sort",
+})
+
+
+def _safe_search_params_for_log(params: Dict[str, Any], safe_keys: frozenset) -> Dict[str, Any]:
+    """Return an allowlisted, credential-free view of a request params dict.
+
+    Only keys present in ``safe_keys`` are copied through; everything else
+    (including a credential like Google's ``key``) is silently dropped so
+    the diagnostic stays useful without ever formatting a secret.
+    """
+    return {k: v for k, v in params.items() if k in safe_keys}
+
+
 def search_web_google(
     search_query: str,
     google_search_api_key: Optional[str] = None,
@@ -3425,7 +3451,13 @@ def search_web_google(
         if sort_results_by:
             params["sort"] = sort_results_by
 
-        logger.info(f"Prepared parameters for Google Search: {params}")
+        # task-19552: never format the raw `params` dict -- it carries the
+        # API key set above (`params["key"]`). Log only the allowlisted,
+        # credential-free view.
+        logger.info(
+            f"Prepared parameters for Google Search: "
+            f"{_safe_search_params_for_log(params, SAFE_GOOGLE_SEARCH_PARAM_KEYS)}"
+        )
 
         # Make the API call
         # task-3060: bound worst-case latency -- an unresponsive Google CSE
@@ -3441,15 +3473,25 @@ def search_web_google(
         return google_search_results
 
     except ValueError as ve:
-        logger.error(f"Configuration error: {str(ve)}")
+        # task-19552: this function's own config-error ValueErrors never
+        # embed the key, but `requests.exceptions.JSONDecodeError` (raised
+        # by `response.json()` above) is ALSO a ValueError and is caught
+        # here rather than below -- sanitize defensively so nothing that
+        # lands in this branch, now or later, can carry the credential.
+        logger.error(f"Configuration error: {sanitize_string(str(ve))}")
         raise
 
     except RequestException as re:
-        logger.error(f"Error during API request: {str(re)}")
+        # task-19552: `key` travels as a URL query param for this engine
+        # (unlike every other engine here, which sends it as a header), so
+        # `requests`'s own HTTPError/ConnectionError text embeds the full
+        # request URL -- including the key -- via `response.url`. Redact at
+        # the formatting point rather than trust the exception's shape.
+        logger.error(f"Error during API request: {sanitize_string(str(re))}")
         raise
 
     except Exception as e:
-        logger.error(f"Unexpected error occurred: {str(e)}")
+        logger.error(f"Unexpected error occurred: {sanitize_string(str(e))}")
         raise
 
 
