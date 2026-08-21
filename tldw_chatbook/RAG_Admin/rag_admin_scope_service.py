@@ -10,6 +10,7 @@ from .rag_admin_normalizers import (
     normalize_collection_record,
     normalize_template_record,
 )
+from .template_validation import validate_template
 
 
 class RAGAdminBackend(str, Enum):
@@ -303,6 +304,12 @@ class RAGAdminScopeService:
         template_config: dict[str, Any],
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == RAGAdminBackend.LOCAL:
+            # Local mode validates with the server-parity validator (spec §7)
+            # instead of hard-requiring the server backend. create/update
+            # refusing invalid templates lands with the CRUD rewrite (PR B).
+            self._enforce_policy(self._admin_action_id(normalized_mode, "configure"))
+            return validate_template(template_config)
         if normalized_mode != RAGAdminBackend.SERVER:
             raise ValueError(
                 "Server retrieval-admin backend is required for this RAG admin operation."
