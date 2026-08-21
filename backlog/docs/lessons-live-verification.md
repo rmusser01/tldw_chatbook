@@ -231,6 +231,28 @@ confirm `git diff | grep -c "<key-fragment>"` is `0`. Advise rotation afterwards
 
 ---
 
+## Validate the multimodal fixture before blaming the request path (2026-08-21)
+
+**What happened.** Console AGENTS.md native-provider UAT reached OpenAI with the
+expected model, message roles, native tool schemas, and redacted credential logging,
+but the first request returned HTTP 400 before any model output. The application
+surface intentionally converted that into content-free provider failure copy, so the
+response body was not available there. A minimal authenticated control request using
+the same inline one-pixel PNG exposed the actual provider error:
+`image_parse_error` / "unsupported image." Replacing only that fixture with a
+synthetic 32x32 checkerboard PNG made the control return HTTP 200 and the unchanged
+full native tool UAT pass. The original feature path was correct; the supposedly
+convenient test image was not accepted by the real provider.
+
+**What to do.** Before diagnosing a multimodal live failure as an adapter or message
+conversion defect, send the exact image through a minimal provider control request.
+Use a synthetic scratch image rather than repository/user content, require an HTTP
+success from that control, and only then add tools, project context, and persistence
+assertions. Tiny base64 fixtures that satisfy local shape tests are not proof that a
+provider will decode them.
+
+---
+
 ## SGR click columns from `awk index()` are byte offsets, not terminal columns
 
 **What happened.** A Watchlists UAT drove the TUI with injected SGR mouse clicks,

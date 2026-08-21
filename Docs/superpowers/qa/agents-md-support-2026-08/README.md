@@ -131,19 +131,77 @@ resolved inside that boundary.
 
 ## Live UAT status
 
-Credentialed live provider UAT remains open and is required for final task completion;
-it is not claimed as passed:
+The fenced/local-model half of live UAT passed on 2026-08-20 against the actual
+`llama_cpp` listener at `127.0.0.1:9099`, using
+`gemma-4-26B-A4B-it-ultra-uncensored-heretic-Q4_K_M.gguf` and an isolated profile
+rooted at `/private/tmp/chatbook-agents-md-uat`:
 
-- No user-supplied cloud credential was present.
-- A local llama listener existed, but sandbox loopback access failed and the approval
-  service denied escalation; no bypass was attempted.
+- consent accepted one root `AGENTS.md` source;
+- the first `fs_read` call was atomically deferred before review/execution when
+  `pkg/AGENTS.md` activated;
+- the retry was reviewed once, executed once, and returned the explicit file body;
+- the fenced tool-results block closed before the nested project-context block;
+- three live provider calls completed with final text `UAT_LOCAL_SUCCESS`;
+- the automatic root and nested sentinels appeared only in the provider-wire capture,
+  not AgentRunsDB, the transcript, activation/review metadata, application logs, or
+  the SQLite dump; and
+- the explicit user-requested file body retained normal durable tool-result behavior.
 
-Native/fenced wire grammar, nested deferral/retry ordering, multimodal token fallback,
-consent, recovery, and sentinel handling are covered by the focused automated suites.
-When credentials and loopback permission are available, the remaining live checklist
-is: consent, root rider, nested deferral, reconsidered tool success, warning/recovery,
-multimodal input where supported, fenced-close ordering, and a scratch-profile body
-audit.
+The live run summary was:
+
+```json
+{
+  "status": "done",
+  "final_text": "UAT_LOCAL_SUCCESS",
+  "provider_calls": 3,
+  "nested_request_index": 1,
+  "reviews": [["fs_read"]],
+  "activation_sources": ["pkg/AGENTS.md"],
+  "activation_scopes": ["pkg"]
+}
+```
+
+The related user-visible Console checks also passed at 80x24, 100x30, and 140x40:
+Context containment, warning/recovery metadata and focus, consent usability, and the
+30-column rail status row (`11 passed`).
+
+Credentialed native-cloud UAT also passed on 2026-08-21 against OpenAI
+`gpt-4.1-mini`. The user-supplied folder credential was read only by the launch shell,
+injected as `OPENAI_API_KEY`, and never written to Chatbook config or evidence. The
+request used a synthetic 32x32 checkerboard PNG generated inside the scratch profile:
+
+- the native streaming tool path completed three provider calls;
+- the multimodal request retained the image through the actual provider boundary;
+- root instructions reached the first request and `pkg/AGENTS.md` activated before
+  the first `fs_read` could be reviewed or executed;
+- the reconsidered native tool call was reviewed once, executed once, and returned
+  the explicit file body;
+- the model completed with exact text `UAT_CLOUD_SUCCESS`; and
+- a second three-call run replaced the nested override with an invalid directory,
+  delivered content-free outcome `invalid`, then recovered and completed the same
+  reviewed tool call and final response without transmitting the nested body.
+
+The successful native run summary was:
+
+```json
+{
+  "status": "done",
+  "final_text": "UAT_CLOUD_SUCCESS",
+  "provider_calls": 3,
+  "nested_request_index": 1,
+  "reviews": [["fs_read"]],
+  "activation_sources": ["pkg/AGENTS.md"],
+  "activation_scopes": ["pkg"]
+}
+```
+
+The warning/recovery run had the same status, final text, provider-call count, and
+single reviewed `fs_read`, with `activation_outcomes: ["invalid"]` and no activated
+nested source. The final combined sentinel audit found automatic root/nested bodies
+only in the local/native provider request captures. They were absent from AgentRunsDB,
+the Console transcript, activation/review metadata, application logs, and SQLite
+dumps. The explicit file-read result remained durable by design. An exact-value scan
+also found no OpenAI key in any evidence file or git diff.
 
 ## Scope decision
 
