@@ -146,6 +146,7 @@ EMPTY_TRANSCRIPT_PROVIDER_ACTION_LABEL = "Choose model"
 EMPTY_TRANSCRIPT_PROVIDER_ACTION_TOOLTIP = (
     "Choose the provider and model for this Console session."
 )
+_SESSION_ID_UNSET = object()
 # TASK-362 AC#2: the guide names the single-key shortcuts (j/k/c/e/r/Esc), which
 # were otherwise undiscoverable anywhere in the app, alongside the icon meanings.
 # task-2154.14 (DS-01): the static line was replaced by `action_row_guide()`,
@@ -839,12 +840,23 @@ def _annotation_marker_content(notes: tuple[str, ...]) -> Content:
     return Content.assemble(*segments)
 
 
-def _activity_is_expandable(message: ConsoleChatMessage) -> bool:
+def _activity_is_expandable(
+    message: ConsoleChatMessage,
+    owned_rows: Iterable["_TranscriptRow"] = (),
+) -> bool:
     """Return whether one TOOL marker owns any disclosure detail."""
-    return message.role is ConsoleMessageRole.TOOL and bool(
-        message.content.strip()
-        or message.tool_output_full
-        or message.tool_diff is not None
+    if message.role is not ConsoleMessageRole.TOOL:
+        return False
+    if message.content.strip() or message.tool_output_full or message.tool_diff is not None:
+        return True
+    return any(
+        row.kind not in {"actions", "action-help", "message"}
+        or (
+            row.kind == "message"
+            and row.message is not None
+            and bool(row.message.content.strip())
+        )
+        for row in owned_rows
     )
 
 
@@ -882,6 +894,17 @@ class _TranscriptRow:
     activity_rows: tuple[tuple["_TranscriptRow", ...], ...] = ()
     activity_signature: tuple = ()
     adjunct_signature: tuple = ()
+
+
+@dataclass(frozen=True)
+class _ActivityComponents:
+    """One activity disclosure's render children and reconciliation tokens."""
+
+    presentation: ConsoleActivityPresentation
+    action_widgets: tuple[Widget, ...]
+    detail_widgets: tuple[Widget, ...]
+    action_signature: tuple
+    detail_signature: tuple
 
 
 def get_console_assistant_markdown(app_config: Mapping[str, object] | None) -> bool:
@@ -2581,6 +2604,10 @@ class ConsoleTranscript(VerticalScroll):
         #: deliberately dropped when the transcript is rebuilt for another
         #: session rather than following the user across conversations.
         self._expanded_tool_output_ids: set[str] = set()
+        # Optional session-boundary identity supplied by the owning screen.
+        # The sentinel preserves the historical id-intersection behavior for
+        # direct/legacy callers that do not know about sessions.
+        self._session_identity: object = _SESSION_ID_UNSET
         #: This poll tick's live turn-activity line ("⚙ read_file · 4s"),
         #: or "" when no turn is in flight. Pure view state, re-supplied by
         #: the screen on every 0.2s sync tick via `apply_turn_activity`;
@@ -3579,13 +3606,22 @@ class ConsoleTranscript(VerticalScroll):
             states.pop(message_id, None)
             self._message_signature_cache.pop(message_id, None)
 
-    def set_messages(self, messages: Iterable[ConsoleChatMessage]) -> None:
+    def set_messages(
+        self,
+        messages: Iterable[ConsoleChatMessage],
+        *,
+        session_id: object = _SESSION_ID_UNSET,
+    ) -> None:
         """Replace transcript messages and refresh mounted rows when possible.
 
         Args:
             messages: New transcript messages in display order. Signature
                 cache entries for messages no longer present are pruned here
                 (delete correctness for the TASK-259 per-message cache).
+            session_id: Optional owning-session identity. A change between
+                explicit identities clears disclosure expansion even when a
+                new session recycles message ids. Omitting it preserves the
+                legacy id-intersection behavior.
         """
         previous_visible_ids = [
             message.id
@@ -3596,6 +3632,13 @@ class ConsoleTranscript(VerticalScroll):
         previous_hidden_tail_ids = self._hidden_tail_ids
         self._messages = list(messages)
         message_ids = {message.id for message in self._messages}
+        if session_id is not _SESSION_ID_UNSET:
+            if (
+                self._session_identity is not _SESSION_ID_UNSET
+                and self._session_identity != session_id
+            ):
+                self._expanded_tool_output_ids.clear()
+            self._session_identity = session_id
         # Expansion is per message id, so ids that left the transcript (a
         # session switch, a deleted branch) must go with them -- otherwise the
         # set grows for the life of the widget and a recycled id would come
@@ -4614,6 +4657,9 @@ class ConsoleTranscript(VerticalScroll):
         """
         message_id = self.selected_message_id
         if not message_id:
+            return
+        if action_id == "tool-output" and self._activity_can_expand(message_id):
+            self.toggle_tool_output(message_id)
             return
         if self._press_selected_action_button(message_id, action_id):
             return
@@ -5912,8 +5958,7 @@ class ConsoleTranscript(VerticalScroll):
             getattr(widget, "_console_activity_signature", None)
             != row.activity_signature
         ):
-            self._cancel_selection_if_row_removed(widget.activity_stack)
-            await widget.replace_activity_widgets(self._build_activity_widgets(row))
+            await self._sync_activity_widgets(widget, row)
             widget._console_activity_signature = row.activity_signature
         if getattr(widget, "_console_adjunct_signature", None) != row.adjunct_signature:
             adjuncts = tuple(
@@ -6040,57 +6085,134 @@ class ConsoleTranscript(VerticalScroll):
             show_header=show_header,
         )
 
+    def _activity_components(
+        self,
+        activity: ConsoleChatMessage,
+        owned_rows: tuple[_TranscriptRow, ...],
+    ) -> _ActivityComponents:
+        """Build one disclosure's children through the shared transcript builders."""
+        presentation = activity.activity_presentation or ConsoleActivityPresentation(
+            "activity", "Activity", "done"
+        )
+        action_widgets: list[Widget] = []
+        detail_widgets: list[Widget] = []
+        action_signature: list[tuple] = []
+        detail_signature: list[tuple] = []
+        for owned_row in owned_rows:
+            if owned_row.kind in {"actions", "action-help"}:
+                action_widgets.append(self._build_row_widget(owned_row, track=False))
+                action_signature.append(owned_row.signature)
+                continue
+            if owned_row.kind == "message":
+                if owned_row.message is not None and owned_row.message.content.strip():
+                    detail_widgets.append(
+                        self._build_message_widget(
+                            owned_row.message,
+                            selected=False,
+                            show_header=False,
+                        )
+                    )
+                    detail_signature.append(owned_row.signature)
+                continue
+            detail_widgets.append(self._build_row_widget(owned_row, track=False))
+            detail_signature.append(owned_row.signature)
+        if not detail_widgets and _activity_is_expandable(activity, owned_rows):
+            # Preserve lazy collapsed rendering while telling the disclosure
+            # that hidden full output or a diff exists. The expanded refresh
+            # replaces this sentinel with the real shared message/diff rows.
+            detail_widgets.append(
+                Static("", classes="console-activity-detail-placeholder")
+            )
+            detail_signature.append(("activity-detail-placeholder", activity.id))
+        return _ActivityComponents(
+            presentation=presentation,
+            action_widgets=tuple(action_widgets),
+            detail_widgets=tuple(detail_widgets),
+            action_signature=tuple(action_signature),
+            detail_signature=tuple(detail_signature),
+        )
+
+    def _build_activity_disclosure(
+        self,
+        activity: ConsoleChatMessage,
+        owned_rows: tuple[_TranscriptRow, ...],
+    ) -> ConsoleActivityDisclosure:
+        """Build and stamp one disclosure for later same-id reconciliation."""
+        components = self._activity_components(activity, owned_rows)
+        disclosure = ConsoleActivityDisclosure(
+            activity.id,
+            components.presentation.label,
+            components.presentation.status,
+            expanded=activity.id in self._expanded_tool_output_ids,
+            selected=activity.id == self.selected_message_id,
+            action_widgets=components.action_widgets,
+            detail_widgets=components.detail_widgets,
+        )
+        disclosure._console_action_signature = components.action_signature
+        disclosure._console_detail_signature = components.detail_signature
+        return disclosure
+
     def _build_activity_widgets(self, row: _TranscriptRow) -> tuple[Widget, ...]:
         """Build owned disclosures from the same rows used by standalone messages."""
         turn = row.assistant_turn
         assert turn is not None
-        disclosures: list[Widget] = []
-        for activity, owned_rows in zip(turn.activities, row.activity_rows):
-            presentation = (
-                activity.activity_presentation
-                or ConsoleActivityPresentation("activity", "Activity", "done")
+        return tuple(
+            self._build_activity_disclosure(activity, owned_rows)
+            for activity, owned_rows in zip(turn.activities, row.activity_rows)
+        )
+
+    async def _sync_activity_widgets(
+        self,
+        widget: ConsoleAssistantTurnWidget,
+        row: _TranscriptRow,
+    ) -> None:
+        """Reconcile same-id disclosures without detaching their focused headers."""
+        turn = row.assistant_turn
+        assert turn is not None
+        disclosures = list(widget.activity_stack.children)
+        current_ids = tuple(
+            disclosure.activity_message_id
+            for disclosure in disclosures
+            if isinstance(disclosure, ConsoleActivityDisclosure)
+        )
+        next_ids = tuple(activity.id for activity in turn.activities)
+        if len(disclosures) != len(current_ids) or current_ids != next_ids:
+            self._cancel_selection_if_row_removed(widget.activity_stack)
+            await widget.replace_activity_widgets(self._build_activity_widgets(row))
+            return
+
+        for disclosure, activity, owned_rows in zip(
+            disclosures, turn.activities, row.activity_rows
+        ):
+            assert isinstance(disclosure, ConsoleActivityDisclosure)
+            components = self._activity_components(activity, owned_rows)
+            if (
+                getattr(disclosure, "_console_action_signature", None)
+                != components.action_signature
+            ):
+                if disclosure.action_stack.children:
+                    await disclosure.action_stack.remove_children()
+                if components.action_widgets:
+                    await disclosure.action_stack.mount(*components.action_widgets)
+                disclosure._console_action_signature = components.action_signature
+            if (
+                getattr(disclosure, "_console_detail_signature", None)
+                != components.detail_signature
+            ):
+                self._cancel_selection_if_row_removed(disclosure.detail_stack)
+                if disclosure.detail_stack.children:
+                    await disclosure.detail_stack.remove_children()
+                if components.detail_widgets:
+                    await disclosure.detail_stack.mount(*components.detail_widgets)
+                disclosure._console_detail_signature = components.detail_signature
+            disclosure._has_actions = bool(components.action_widgets)
+            disclosure._has_detail = bool(components.detail_widgets)
+            disclosure.sync_activity(
+                components.presentation.label,
+                components.presentation.status,
+                expanded=activity.id in self._expanded_tool_output_ids,
+                selected=activity.id == self.selected_message_id,
             )
-            action_widgets: list[Widget] = []
-            detail_widgets: list[Widget] = []
-            for owned_row in owned_rows:
-                if owned_row.kind in {"actions", "action-help"}:
-                    action_widgets.append(
-                        self._build_row_widget(owned_row, track=False)
-                    )
-                    continue
-                if owned_row.kind == "message":
-                    if (
-                        owned_row.message is not None
-                        and owned_row.message.content.strip()
-                    ):
-                        detail_widgets.append(
-                            self._build_message_widget(
-                                owned_row.message,
-                                selected=False,
-                                show_header=False,
-                            )
-                        )
-                    continue
-                detail_widgets.append(self._build_row_widget(owned_row, track=False))
-            if not detail_widgets and _activity_is_expandable(activity):
-                # Preserve lazy collapsed rendering while telling the disclosure
-                # that hidden full output or a diff exists. The expanded refresh
-                # replaces this sentinel with the real shared message/diff rows.
-                detail_widgets.append(
-                    Static("", classes="console-activity-detail-placeholder")
-                )
-            disclosures.append(
-                ConsoleActivityDisclosure(
-                    activity.id,
-                    presentation.label,
-                    presentation.status,
-                    expanded=activity.id in self._expanded_tool_output_ids,
-                    selected=activity.id == self.selected_message_id,
-                    action_widgets=action_widgets,
-                    detail_widgets=detail_widgets,
-                )
-            )
-        return tuple(disclosures)
 
     def _build_assistant_turn_widget(self, row: _TranscriptRow) -> Widget:
         """Build one Assistant-owned surface from a composite transcript row."""
@@ -6461,17 +6583,37 @@ class ConsoleTranscript(VerticalScroll):
                 harmless -- the row simply renders collapsed, and
                 ``set_messages`` prunes ids that leave the transcript.
         """
-        message = next(
-            (candidate for candidate in self._messages if candidate.id == message_id),
-            None,
-        )
-        if message is None or not _activity_is_expandable(message):
+        if not self._activity_can_expand(message_id):
             return
         if message_id in self._expanded_tool_output_ids:
             self._expanded_tool_output_ids.discard(message_id)
         else:
             self._expanded_tool_output_ids.add(message_id)
         self.call_later(self.refresh_messages)
+
+    def _owned_activity_rows(
+        self, message_id: str
+    ) -> tuple[_TranscriptRow, ...]:
+        """Return planned nested rows for an owned activity marker."""
+        for row in self._transcript_rows():
+            turn = row.assistant_turn
+            if row.kind != "assistant-turn" or turn is None:
+                continue
+            for activity, owned_rows in zip(turn.activities, row.activity_rows):
+                if activity.id == message_id:
+                    return owned_rows
+        return ()
+
+    def _activity_can_expand(self, message_id: str) -> bool:
+        """Resolve the one disclosure-detail fact used by click, keys, and `o`."""
+        message = next(
+            (candidate for candidate in self._messages if candidate.id == message_id),
+            None,
+        )
+        return message is not None and _activity_is_expandable(
+            message,
+            self._owned_activity_rows(message_id),
+        )
 
     def _message_row_signature(
         self, message: ConsoleChatMessage, *, selected: bool

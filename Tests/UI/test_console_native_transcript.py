@@ -590,6 +590,146 @@ async def test_activity_stack_replacement_cancels_finished_nested_selection() ->
         assert transcript.selection_manager.state.selection is None
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("adjunct_kind", ["image", "citations"])
+async def test_adjunct_only_activity_is_expandable_through_click_enter_and_o(
+    adjunct_kind: str,
+) -> None:
+    """Derived activity adjuncts use the same disclosure truth as every toggle."""
+    app = MutableTranscriptHarness()
+    assistant = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="answer",
+        id=f"adjunct-answer-{adjunct_kind}",
+    )
+    activity = ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL,
+        content="",
+        id=f"adjunct-activity-{adjunct_kind}",
+        activity_presentation=ConsoleActivityPresentation(
+            "activity", f"{adjunct_kind} adjunct", "done"
+        ),
+    )
+
+    async with app.run_test(size=(100, 28)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_messages([assistant, activity])
+        if adjunct_kind == "image":
+            transcript.set_image_specs(
+                {activity.id: _image_row_spec(activity.id, "pixels")}
+            )
+        else:
+            transcript.set_citation_counts({activity.id: 2})
+        await transcript.refresh_messages()
+        header = transcript.query_one(f"#console-activity-header-{activity.id}")
+        disclosure = transcript.query_one(
+            f"#console-activity-disclosure-{activity.id}",
+            ConsoleActivityDisclosure,
+        )
+
+        assert header.has_class("console-activity-header-expandable")
+        assert not disclosure.detail_stack.display
+
+        header.on_click(SimpleNamespace(stop=lambda: None))
+        await pilot.pause()
+        assert activity.id in transcript._expanded_tool_output_ids
+        detail_selector = (
+            f"#console-image-{activity.id}"
+            if adjunct_kind == "image"
+            else f"#console-citation-sources-{activity.id}"
+        )
+        assert len(transcript.query(detail_selector)) == 1
+
+        header = transcript.query_one(f"#console-activity-header-{activity.id}")
+        header.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert activity.id not in transcript._expanded_tool_output_ids
+
+        transcript.focus()
+        await pilot.press("o")
+        await pilot.pause()
+        assert activity.id in transcript._expanded_tool_output_ids
+
+
+@pytest.mark.asyncio
+async def test_activity_keyboard_toggle_preserves_header_identity_and_focus() -> None:
+    """Enter/Space reconcile same-id disclosure state without detaching focus."""
+    app = MutableTranscriptHarness()
+    user, assistant, _thinking, tool = _assistant_turn_messages()
+
+    async with app.run_test(size=(100, 28)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_messages([user, assistant, tool])
+        await transcript.refresh_messages()
+        disclosure = transcript.query_one(
+            f"#console-activity-disclosure-{tool.id}", ConsoleActivityDisclosure
+        )
+        header = transcript.query_one(f"#console-activity-header-{tool.id}")
+        header.focus()
+        await pilot.pause()
+        assert header.has_focus
+
+        await pilot.press("enter")
+        await pilot.pause()
+        assert transcript.query_one(f"#console-activity-header-{tool.id}") is header
+        assert transcript.query_one(
+            f"#console-activity-disclosure-{tool.id}"
+        ) is disclosure
+        assert header.has_focus
+        assert tool.id in transcript._expanded_tool_output_ids
+
+        await pilot.press("space")
+        await pilot.pause()
+        assert transcript.query_one(f"#console-activity-header-{tool.id}") is header
+        assert transcript.query_one(
+            f"#console-activity-disclosure-{tool.id}"
+        ) is disclosure
+        assert header.has_focus
+        assert tool.id not in transcript._expanded_tool_output_ids
+
+
+def test_session_identity_change_clears_same_id_activity_expansion() -> None:
+    """A real session boundary clears disclosure state even for recycled ids."""
+    transcript = ConsoleTranscript()
+    _user, assistant, _thinking, activity = _assistant_turn_messages()
+    messages = [assistant, activity]
+
+    transcript.set_messages(messages, session_id="session-a")
+    transcript.toggle_tool_output(activity.id)
+    assert activity.id in transcript._expanded_tool_output_ids
+
+    transcript.set_messages(messages, session_id="session-b")
+
+    assert activity.id not in transcript._expanded_tool_output_ids
+
+
+def test_same_session_update_preserves_activity_expansion() -> None:
+    """Ordinary refreshes in one session keep the user's disclosure state."""
+    transcript = ConsoleTranscript()
+    _user, assistant, _thinking, activity = _assistant_turn_messages()
+    messages = [assistant, activity]
+
+    transcript.set_messages(messages, session_id="session-a")
+    transcript.toggle_tool_output(activity.id)
+    transcript.set_messages(messages, session_id="session-a")
+
+    assert activity.id in transcript._expanded_tool_output_ids
+
+
+def test_legacy_set_messages_preserves_same_id_activity_expansion() -> None:
+    """Callers that omit session identity retain the existing id-based behavior."""
+    transcript = ConsoleTranscript()
+    _user, assistant, _thinking, activity = _assistant_turn_messages()
+    messages = [assistant, activity]
+
+    transcript.set_messages(messages)
+    transcript.toggle_tool_output(activity.id)
+    transcript.set_messages(messages)
+
+    assert activity.id in transcript._expanded_tool_output_ids
+
+
 class StyledRoleplayTranscriptHarness(ConsolidatedCSSApp):
     CSS_PATH = str(_BUNDLE)
 
