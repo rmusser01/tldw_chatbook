@@ -295,6 +295,78 @@ async def test_library_landing_late_sync_cannot_replace_a_new_route_owner(
         assert not screen.query("#library-landing-canvas")
 
 
+@pytest.mark.asyncio
+async def test_library_graduation_header_survives_reconcile_and_same_route_replace():
+    app = _build_test_app()
+    _seed_conversations(app, [], notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        await _wait_for_selector(screen, pilot, "#library-notes-canvas")
+
+        screen._set_library_lifecycle(LibraryLifecycle.GRADUATED)
+        screen._sync_library_rail_lifecycle_presentation()
+        await pilot.pause()
+        focus = await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        focus.focus()
+        await pilot.pause()
+        assert screen.focused is not None
+        assert screen.focused.id == focus.id
+
+        assert "Library tools are now available." in str(
+            screen.query_one("#library-header-line", Static).renderable
+        )
+
+        generation = screen._library_snapshot_state_generation
+        route_key = screen._library_entry_route_key()
+        screen._library_entry_reconcile_dirty = True
+        screen._library_entry_reconcile_pending = (generation, route_key)
+        reconciled = await screen._reconcile_library_entry_state(
+            generation, route_key
+        )
+        await pilot.pause()
+
+        assert reconciled is LibraryEntryReconcileResult.APPLIED
+        assert "Library tools are now available." in str(
+            screen.query_one("#library-header-line", Static).renderable
+        )
+        assert screen.focused is not None
+        assert screen.focused.id == focus.id
+
+        replacement = screen._build_library_entry_active_child()
+        assert replacement is not None
+        child_replaced = await screen._replace_library_canvas_child(
+            replacement,
+            generation=generation,
+            route_key=route_key,
+        )
+        await pilot.pause()
+
+        assert child_replaced is LibraryEntryReconcileResult.APPLIED
+        assert "Library tools are now available." in str(
+            screen.query_one("#library-header-line", Static).renderable
+        )
+        assert screen.focused is not None
+        assert screen.focused.id == focus.id
+
+        shell = library_screen_module.build_library_shell_state(
+            screen._build_library_shell_input(),
+            selected_row_id=screen._library_selected_row_id,
+        )
+        replaced = await screen._replace_library_browse_canvas(shell)
+        await pilot.pause()
+
+        assert replaced is True
+        assert "Library tools are now available." in str(
+            screen.query_one("#library-header-line", Static).renderable
+        )
+        assert screen.focused is not None
+        assert screen.focused.id == focus.id
+
+
 def _wire_entry_prompt_service(app: Any, db_path: Path) -> int:
     """Wire one real Prompt record through the production scope service."""
     prompts_db = PromptsDatabase(db_path, client_id=f"entry-{db_path.stem}")

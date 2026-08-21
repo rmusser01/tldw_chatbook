@@ -7537,6 +7537,17 @@ class LibraryScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             return LibraryEntryReconcileResult.FAILED
 
+        focus_identity = self._capture_library_entry_focus()
+        restore_focus = (
+            partial(
+                self._restore_library_entry_focus,
+                focus_identity,
+                generation=generation,
+                route_key=route_key,
+            )
+            if focus_identity is not None
+            else None
+        )
         try:
             rail.sync_state(
                 shell,
@@ -7547,20 +7558,22 @@ class LibraryScreen(BaseAppScreen):
             )
             header_renderable = header.renderable
             header_text = getattr(header_renderable, "plain", str(header_renderable))
-            if header_text != shell.header_line:
-                header.update(shell.header_line)
+            expected_header = self._library_header_line(shell.header_line)
+            if header_text != expected_header:
+                header.update(expected_header)
             if self.is_running:
                 self.app.capture_mouse(None)
         except Exception:
             logger.debug(
                 "Strict Library entry shell synchronization failed."
             )
+            if restore_focus is not None:
+                restore_focus()
             return LibraryEntryReconcileResult.FAILED
 
         if not self._library_entry_reconcile_is_current(generation, route_key):
             return LibraryEntryReconcileResult.SUPERSEDED
 
-        focus_identity = self._capture_library_entry_focus()
         outgoing = tuple(canvas_host.children)
         try:
             for child in outgoing:
@@ -7619,21 +7632,17 @@ class LibraryScreen(BaseAppScreen):
             )
 
         if sync_kind is not None:
-            follow_up = (
-                partial(
-                    self._restore_library_entry_focus,
-                    focus_identity,
-                    generation=generation,
-                    route_key=route_key,
-                )
-                if focus_identity is not None
-                else None
-            )
+            capture = self._library_entry_focus_capture
             if not _sync_library_canvas(
                 self,
                 sync_kind,
-                then=follow_up,
+                then=restore_focus,
                 allow_screen_fallback=False,
+                notes_focus_identity=(
+                    capture.notes_identity
+                    if capture is not None and capture.identity is focus_identity
+                    else None
+                ),
             ):
                 return LibraryEntryReconcileResult.FAILED
         self._apply_library_notes_stage_visibility()
@@ -7672,6 +7681,17 @@ class LibraryScreen(BaseAppScreen):
                 generation, route_key
             )
 
+        identity = self._capture_library_entry_focus()
+        restore_focus = (
+            partial(
+                self._restore_library_entry_focus,
+                identity,
+                generation=generation,
+                route_key=route_key,
+            )
+            if identity is not None
+            else None
+        )
         try:
             rail.sync_state(
                 shell,
@@ -7682,12 +7702,15 @@ class LibraryScreen(BaseAppScreen):
             )
             header_renderable = header.renderable
             header_text = getattr(header_renderable, "plain", str(header_renderable))
-            if header_text != shell.header_line:
-                header.update(shell.header_line)
+            expected_header = self._library_header_line(shell.header_line)
+            if header_text != expected_header:
+                header.update(expected_header)
         except Exception:
             logger.debug(
                 "Library snapshot shell reconciliation failed."
             )
+            if restore_focus is not None:
+                restore_focus()
             return self._fail_library_entry_reconcile(generation, route_key)
 
         sync_kind: str | None = None
@@ -7741,9 +7764,10 @@ class LibraryScreen(BaseAppScreen):
 
         if expected_selector and self.query(expected_selector):
             if sync_kind is None:
+                if restore_focus is not None:
+                    restore_focus()
                 self._complete_library_entry_reconcile(generation, route_key)
                 return LibraryEntryReconcileResult.APPLIED
-            identity = self._capture_library_entry_focus()
             capture = self._library_entry_focus_capture
             finish = partial(
                 self._finish_library_entry_canvas_sync,
@@ -7769,6 +7793,8 @@ class LibraryScreen(BaseAppScreen):
             ):
                 self._library_entry_reconcile_retry_generation = None
                 return LibraryEntryReconcileResult.APPLIED
+            if restore_focus is not None:
+                restore_focus()
             return self._retry_or_fail_library_entry_reconcile(
                 generation, route_key
             )
@@ -7810,7 +7836,6 @@ class LibraryScreen(BaseAppScreen):
                     generation, route_key
                 )
             if sync_kind is not None:
-                identity = self._capture_library_entry_focus()
                 capture = self._library_entry_focus_capture
                 finish = partial(
                     self._finish_library_entry_canvas_sync,
@@ -7838,10 +7863,14 @@ class LibraryScreen(BaseAppScreen):
                         generation, route_key
                     )
             else:
+                if restore_focus is not None:
+                    restore_focus()
                 self._complete_library_entry_reconcile(generation, route_key)
             return LibraryEntryReconcileResult.APPLIED
 
         if expected_selector:
+            if restore_focus is not None:
+                restore_focus()
             return self._retry_or_fail_library_entry_reconcile(
                 generation, route_key
             )
@@ -7853,10 +7882,14 @@ class LibraryScreen(BaseAppScreen):
                 logger.debug(
                     "Library Search/RAG snapshot sync failed."
                 )
+                if restore_focus is not None:
+                    restore_focus()
                 return self._retry_or_fail_library_entry_reconcile(
                     generation, route_key
                 )
 
+        if restore_focus is not None:
+            restore_focus()
         self._complete_library_entry_reconcile(generation, route_key)
         return LibraryEntryReconcileResult.APPLIED
 
@@ -15985,6 +16018,9 @@ class LibraryScreen(BaseAppScreen):
             header = self.query_one("#library-header-line", Static)
             rail = self.query_one("#library-rail", LibraryRail)
             canvas_host = self.query_one("#library-canvas", Vertical)
+            generation = self._library_snapshot_state_generation
+            route_key = self._library_entry_route_key()
+            focus_identity = self._capture_library_entry_focus()
             if self.is_running:
                 try:
                     self.app.capture_mouse(None)
@@ -15993,7 +16029,7 @@ class LibraryScreen(BaseAppScreen):
                         "Mouse-capture release before Library route update skipped.",
                         exc_info=True,
                     )
-            header.update(shell.header_line)
+            header.update(self._library_header_line(shell.header_line))
             rail.apply_selection(
                 shell,
                 lifecycle=self._library_lifecycle,
@@ -16013,6 +16049,12 @@ class LibraryScreen(BaseAppScreen):
             await canvas_host.mount(canvas)
             self._apply_library_notes_stage_visibility()
             self._apply_library_notes_footer_context()
+            if focus_identity is not None:
+                self._restore_library_entry_focus(
+                    focus_identity,
+                    generation=generation,
+                    route_key=route_key,
+                )
             return True
         except Exception:
             logger.debug(
