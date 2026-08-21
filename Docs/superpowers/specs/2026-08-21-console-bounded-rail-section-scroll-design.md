@@ -163,6 +163,14 @@ and viewport receive the same dimensionally stable active treatment: existing fo
 background plus underlined header text. When the outer body owns focus, the rail title
 is underlined instead. These non-color signals make the active scroll owner visible.
 
+Outer overflow is measured counterfactually so the hint cannot create its own overflow.
+Let `R` be the outer body viewport height if the hint slot were absent, and `D_outer`
+the laid-out outer virtual content height. The slot exists iff `D_outer > R`; when it
+exists, the actual outer viewport is `R - 1`. Measurement never uses the already reduced
+`R - 1` viewport to decide whether the slot should remain. Thus a 10-row viewport follows
+`10 rows -> no slot`, `11 rows -> slot`, `10 rows -> slot removed` without a sticky
+feedback state.
+
 ## Shared bounded-section body
 
 A reusable Console widget owns the common behavior. Its public inputs are:
@@ -214,9 +222,10 @@ ancestor resize observation is not sufficient. Each owning mutation path must ca
 - Inspector Sources, Changed Files, Run groups/actions, dictionaries, World Books,
   Session Settings, and live-work card swaps.
 
-Every Inspector section reconciliation also invalidates the outer Inspector fold state
-through the supplied outer owner. This preserves one coalesced refresh boundary even
-when multiple sections update in the same synchronization tick.
+Every Inspector section reconciliation and every Inspector outer-body/rail resize also
+invalidates the outer Inspector fold state through the supplied outer owner. This
+preserves one coalesced refresh boundary even when multiple sections update in the same
+synchronization tick or terminal resize.
 
 ## Context height allocation
 
@@ -311,12 +320,13 @@ The Inspector outer rail remains:
 2. the scrollable Inspector body containing direct sections in existing order;
 3. a separate pinned outer fold hint.
 
-The outer hint uses the exact `▼ more sections — scroll` copy and the outer body's own
-`scroll_y` and `max_scroll_y`. It communicates that any outer content remains below,
-including the remainder of a partially visible section, and is independent of all
-local `▼ more — scroll` hints. Its pinned slot remains one row high while the outer
-body overflows, becomes blank at scroll end, and leaves layout only when outer overflow
-disappears.
+The outer hint uses the exact `▼ more sections — scroll` copy. Its slot is controlled
+by the counterfactual `D_outer > R` predicate above, while visible text still uses the
+actual outer body's `scroll_y < max_scroll_y`. It communicates that any outer content
+remains below, including the remainder of a partially visible section, and is
+independent of local `▼ more — scroll` hints. The slot remains one row high while
+counterfactual overflow exists, becomes blank at scroll end, and leaves layout as soon
+as `D_outer <= R`. Slot removal/growth clamps outer scroll before fold state is painted.
 
 `ConsoleRunInspector` currently emits flat headings followed by rows and actions. It
 will group each existing `_ROW_GROUPS` entry into a stable heading plus bounded body.
@@ -489,6 +499,8 @@ handle label, stored intent, or exact-100 minimum waiver changes in this task.
 - Each named descendant mutation seam explicitly requests reconciliation; no contract
   depends on non-bubbling descendant layout events reaching an ancestor.
 - Content shrink clamps scroll offsets before hint visibility is asserted.
+- Outer hints use counterfactual no-slot viewport height and reconcile on outer-body
+  resize, preventing their reserved row from sustaining false overflow.
 - A normal-mode allocator receiving too few usable body rows marks unfunded sections
   `· no room` and supports transient reprioritization rather than silently appearing
   empty. If header chrome itself does not fit, it switches to the outer fallback.
@@ -531,7 +543,11 @@ handle label, stored intent, or exact-100 minimum waiver changes in this task.
   exact DOM order; descendant auto-reveal, active-owner non-color styling, and the
   next-then-previous focused-descendant removal fallback.
 - Coalesced reconciliation from every named Context/Inspector mutation owner, including
-  invalidation of the outer Inspector hint.
+  invalidation of the outer Inspector hint and direct Inspector outer-body resize.
+- Counterfactual outer-hint sequence at an available height of 10: 10 content rows have
+  no slot, 11 add the slot, and shrink back to 10 removes it and clamps scroll.
+- Terminal grow/shrink with fixed-height children recomputes Context/Inspector outer
+  overflow even when no child emits Resize, removing and restoring the slot correctly.
 - Atomic `ConsoleLeftRail` allocation reconciliation from same-tick multi-section
   updates, outer resize, section toggle, Character remount, and fleet-summary
   visibility; no mixed old/new measurement set and no equality-loop.

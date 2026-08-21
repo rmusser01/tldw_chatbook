@@ -42,6 +42,11 @@ distinct pinned `▼ more sections — scroll` cue while local sections retain t
 Nested subsections do not create additional scroll owners: only direct section bodies
 of each rail receive this contract.
 
+Outer-hint existence is derived counterfactually from content height versus the outer
+viewport height with no hint slot. The actual one-row slot never participates in its
+own existence predicate, preventing sticky overflow when content shrinks or the
+terminal grows. Section changes and outer-body resize both invalidate this measurement.
+
 Only overflowing section viewports enter keyboard focus order. Traversal proceeds from
 the viewport through its enabled descendants in DOM order, reverses with Shift+Tab,
 and fully reveals focused descendants. Arrow keys scroll by line; Page Up and Page
