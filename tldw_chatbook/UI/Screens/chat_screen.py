@@ -5010,15 +5010,6 @@ class ChatScreen(BaseAppScreen):
             return
         left_rail.request_allocation_reconcile()
 
-    def _request_console_inspector_outer_reconcile(self) -> None:
-        """Safely invalidate Inspector ownership after descendant layout."""
-
-        try:
-            right_rail = self.query_one("#console-right-rail", ConsoleInspectorRail)
-        except (NoMatches, QueryError):
-            return
-        right_rail.request_outer_reconcile()
-
     def _request_console_live_work_reconcile(self) -> None:
         """Settle the swapped Live Work body before its Inspector owner."""
 
@@ -5042,10 +5033,8 @@ class ChatScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             pass
         else:
-            summary_changed = summary.state != summary_state
+            # The child owns its bounded-body and rail invalidation.
             summary.sync_state(summary_state)
-            if summary_changed:
-                self.call_after_refresh(self._request_console_inspector_outer_reconcile)
         provider_value = _summary_row_value(summary_state.provider_row) or "—"
         model_value = _summary_row_value(summary_state.model_row) or "—"
         temperature_match = re.search(r"T ([\d.]+)", summary_state.sampling_row or "")
@@ -11560,10 +11549,8 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             return
         state = self._build_console_changed_files_state()
-        changed = section.state != state
+        # The child owns its bounded-body and rail invalidation.
         section.update_state(state)
-        if changed:
-            self.call_after_refresh(self._request_console_inspector_outer_reconcile)
 
     def _land_console_changed_files(
         self, conversation_id: "str | None", entries: list, pruned_rows: int
@@ -13141,10 +13128,8 @@ class ChatScreen(BaseAppScreen):
         state = self._build_console_staged_context_state(
             self._pending_console_launch_context
         )
-        changed = tray.state != state
+        # The child owns its bounded-body and rail invalidation.
         tray.sync_state(state)
-        if changed:
-            self.call_after_refresh(self._request_console_inspector_outer_reconcile)
 
     @work(exclusive=True, group="console-library-rag-search")
     async def _execute_console_library_rag_search(
@@ -17784,10 +17769,8 @@ class ChatScreen(BaseAppScreen):
             self._pending_console_launch_context
         )
         if inspector is not None:
-            inspector_changed = inspector.state != inspector_state
+            # The child owns all group-body and rail invalidation.
             inspector.sync_state(inspector_state)
-            if inspector_changed:
-                self.call_after_refresh(self._request_console_inspector_outer_reconcile)
         # TASK-18060 Task 5: same in-place sync shape as the run inspector
         # immediately above -- reads only the cached summary, never the
         # DB/git (the guard-gated recompute lives in

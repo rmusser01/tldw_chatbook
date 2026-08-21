@@ -97,6 +97,22 @@ def _handle_visible(pilot) -> bool:
     return bool(handle.display) and handle.styles.display != "none"
 
 
+async def _wait_for_right_rail_condition(
+    pilot,
+    predicate,
+    *,
+    description: str,
+    attempts: int = 30,
+) -> None:
+    """Bound asynchronous rail reconciliation by observable state."""
+
+    for _ in range(attempts):
+        if predicate():
+            return
+        await pilot.pause()
+    pytest.fail(f"Timed out waiting for {description}")
+
+
 _EXPECTED_BOUNDARY_ANCHORS = (
     ("console-project-instruction-status", "Project Instructions"),
     ("console-staged-context-tray", "Sources"),
@@ -442,7 +458,7 @@ async def test_sources_use_exact_twenty_line_content_ceiling():
     ),
 )
 @pytest.mark.asyncio
-async def test_live_work_production_swaps_cover_real_twenty_twenty_one_geometry(
+async def test_live_work_widget_swaps_cover_real_twenty_twenty_one_geometry(
     monkeypatch,
     direction,
     terminal_width,
@@ -453,9 +469,6 @@ async def test_live_work_production_swaps_cover_real_twenty_twenty_one_geometry(
 ):
     async with make_console_pilot(size=(terminal_width, 52)) as pilot:
         await pilot.click("#console-inspector-rail-open")
-        for _ in range(6):
-            await pilot.pause()
-
         screen = pilot.app.screen
         rail = screen.query_one("#console-right-rail")
         live_root = rail.query_one("#console-live-work-section")
@@ -482,8 +495,23 @@ async def test_live_work_production_swaps_cover_real_twenty_twenty_one_geometry(
         else:
             screen._pending_console_launch_context = None
             await screen._apply_console_live_work_card_swap()
-        for _ in range(6):
-            await pilot.pause()
+
+        def initial_geometry_is_stable() -> bool:
+            return (
+                not bounded._reconcile_scheduled
+                and not rail._outer_reconcile_scheduled
+                and bounded.desired_content_lines == before_demand
+                and bounded.viewport.content_region.height == 20
+                and bounded.hint.display is False
+            )
+
+        await _wait_for_right_rail_condition(
+            pilot,
+            initial_geometry_is_stable,
+            description="initial Live Work widget geometry",
+        )
+        await pilot.pause()
+        assert initial_geometry_is_stable()
 
         assert bounded.desired_content_lines == before_demand
         assert bounded.viewport.content_region.height == 20
@@ -509,8 +537,29 @@ async def test_live_work_production_swaps_cover_real_twenty_twenty_one_geometry(
             None if direction == "pending-to-readiness" else pending
         )
         await screen._apply_console_live_work_card_swap()
-        for _ in range(8):
-            await pilot.pause()
+
+        def swapped_geometry_is_stable() -> bool:
+            return (
+                order == ["local", "outer"]
+                and not bounded._reconcile_scheduled
+                and not rail._outer_reconcile_scheduled
+                and bounded.desired_content_lines == after_demand
+                and bounded.viewport.content_region.height == 20
+                and bounded.hint.display is True
+                and rail.query_one("#console-live-work-section") is live_root
+                and rail.query_one("#console-live-work-header") is header
+                and rail.query_one("#console-bounded-section-live-work") is bounded
+                and bounded.viewport is viewport
+                and bounded.hint is hint
+            )
+
+        await _wait_for_right_rail_condition(
+            pilot,
+            swapped_geometry_is_stable,
+            description="swapped Live Work widget geometry",
+        )
+        await pilot.pause()
+        assert swapped_geometry_is_stable()
 
         assert order == ["local", "outer"]
         assert rail.query_one("#console-live-work-section") is live_root

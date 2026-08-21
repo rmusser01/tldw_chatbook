@@ -1132,7 +1132,7 @@ async def test_inspector_descendant_owners_reconcile_local_then_outer(
     "mutation_path", ("sources", "changed-files", "settings", "run")
 )
 @pytest.mark.asyncio
-async def test_chat_screen_inspector_mutation_paths_coalesce_owner_and_screen_requests(
+async def test_chat_screen_inspector_mutation_paths_delegate_one_owner_request(
     monkeypatch: pytest.MonkeyPatch,
     mutation_path: str,
 ) -> None:
@@ -1224,7 +1224,7 @@ async def test_chat_screen_inspector_mutation_paths_coalesce_owner_and_screen_re
 
         assert "local" in events
         assert events.index("local") < events.index("outer")
-        assert events.count("outer") == 2
+        assert events.count("outer") == 1
         assert rail._outer_reconcile_count == baseline + 1
         assert rail._outer_reconcile_scheduled is False
         assert not any(
