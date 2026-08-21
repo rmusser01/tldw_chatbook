@@ -59,6 +59,7 @@ from ...config import (
     TLDW_API_PLACEHOLDER_BASE_URL,
     coerce_bool_setting,
     get_cli_setting,
+    get_notes_sync_state_db_path,
     resolve_tldw_api_config,
     save_setting_to_cli_config,
     save_settings_to_cli_config,
@@ -73,7 +74,7 @@ from ...Constants import (
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
 )
-from ...DB.ChaChaNotes_DB import ConflictError
+from ...DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
 from ...DB.Prompts_DB import ConflictError as PromptConflictError
 from ...Library.export_progress import (
     ExportProgressThrottle,
@@ -180,6 +181,24 @@ from ...Library.library_notes_state import (
     sort_notes_records,
     validate_database_note_draft,
 )
+from ...Library.library_note_import_state import (
+    LibraryNoteImportSnapshot,
+    NoteImportPhase,
+)
+from ...Notes.note_folder_repository import LocalNoteFolderRepository
+from ...Notes.note_import_discovery import discover_import_sources
+from ...Notes.note_import_execution_models import approve_note_import_plan
+from ...Notes.note_import_executor import LocalNoteImportTarget, NoteImportExecutor
+from ...Notes.note_import_parsers import parse_import_sources
+from ...Notes.note_import_plan_models import ImportBounds
+from ...Notes.note_import_planner import (
+    analyze_root_collision,
+    apply_item_override,
+    classify_import_batch,
+    confirm_uncertain_match,
+    resolve_root_collision,
+)
+from ...Notes.note_import_receipts import NoteImportReceiptRepository
 from ...Library.library_notes_session import (
     ConflictAction,
     ConflictOutcomeKind,
@@ -458,6 +477,7 @@ from ...Widgets.Library.library_note_folder_dialog import (
 )
 from ...Widgets.Library.library_canvas_sync import PostRecomposeCallback
 from ...Widgets.Library.library_notes_canvas import LibraryNotePresentationState
+from ...Widgets.Library.library_note_import_canvas import LibraryNoteImportCanvas
 from ...Widgets.ModelArtifacts import (
     InstallProgressed,
     ModelInstallModal,
@@ -473,6 +493,9 @@ from ..Library_Modules import (
 )
 from ..Library_Modules.library_media_browse_controller import (
     LibraryMediaBrowseController,
+)
+from ..Library_Modules.library_note_import_controller import (
+    LibraryNoteImportController,
 )
 from ..Library_Modules.library_snapshot_cache import (
     clone_library_source_snapshot,
@@ -3224,6 +3247,33 @@ class LibraryScreen(BaseAppScreen):
         self._library_note_delete_receipt: LibraryNoteDeleteReceipt | None = None
         self._library_notes_operation_counter: int = 0
         self._library_notes_operation: LibraryNotesOperationState | None = None
+        self._library_note_import_controller = LibraryNoteImportController(
+            bounds=ImportBounds(
+                max_files=1_000,
+                max_file_bytes=16 * 1024 * 1024,
+                max_total_bytes=256 * 1024 * 1024,
+                max_depth=32,
+            ),
+            database=self._library_note_import_database,
+            folder_repository=self._library_note_import_folder_repository,
+            receipt_repository=lambda: NoteImportReceiptRepository(
+                get_notes_sync_state_db_path()
+            ),
+            discover_import_sources=discover_import_sources,
+            parse_import_sources=parse_import_sources,
+            classify_import_batch=classify_import_batch,
+            analyze_root_collision=analyze_root_collision,
+            resolve_root_collision=resolve_root_collision,
+            confirm_uncertain_match=confirm_uncertain_match,
+            apply_item_override=apply_item_override,
+            approve_note_import_plan=approve_note_import_plan,
+            executor_factory=self._build_library_note_import_executor,
+            publish_snapshot=self._publish_library_note_import_snapshot,
+            refresh_after_settlement=self._refresh_after_library_note_import,
+        )
+        self._library_note_import_snapshot: LibraryNoteImportSnapshot = (
+            self._library_note_import_controller.presentation_snapshot
+        )
         self._library_prompts_debounce_timer: Timer | None = None
         self._library_prompts_filter_cursor_context: tuple[int, int] | None = None
         self._library_prompt_select_mode = False
@@ -4249,7 +4299,9 @@ class LibraryScreen(BaseAppScreen):
 
     def _library_notes_focus_region(
         self,
-    ) -> Literal["", "navigator", "editor", "preview", "context", "create", "sync"]:
+    ) -> Literal[
+        "", "navigator", "editor", "preview", "context", "create", "sync", "import"
+    ]:
         """Return the semantic Notes region currently presented by the host."""
         if self._library_selected_row_id == LIBRARY_ROW_CREATE_NOTE:
             return "create"
@@ -4257,6 +4309,8 @@ class LibraryScreen(BaseAppScreen):
             return ""
         if self._library_notes_view == "sync":
             return "sync"
+        if self._library_notes_view == "import":
+            return "import"
         if self._library_notes_view == "list":
             return "navigator"
         if self._library_note_context:
@@ -4349,6 +4403,13 @@ class LibraryScreen(BaseAppScreen):
             "library-notes-sync-folder": "sync-folder",
             "library-notes-sync-auto": "sync-auto",
             "library-notes-sync-run": "sync-run",
+            "note-import-add-source": "import-add-source",
+            "note-import-destination": "import-destination",
+            "note-import-check": "import-check",
+            "note-import-import": "import-execute",
+            "note-import-cancel": "import-cancel",
+            "note-import-retry": "import-retry",
+            "library-notes-import-back": "import-back",
             "library-notes-create-blank": "create-template:blank",
         }
         if widget_id in direct_roles:
@@ -4426,6 +4487,7 @@ class LibraryScreen(BaseAppScreen):
             "context": "#library-note-context-region",
             "create": "#library-notes-create-viewport",
             "sync": "#library-notes-sync-viewport",
+            "import": "#library-note-import-canvas",
         }.get(region)
         if selector is None:
             return None
@@ -4619,6 +4681,13 @@ class LibraryScreen(BaseAppScreen):
             "sync-folder": "#library-notes-sync-folder",
             "sync-auto": "#library-notes-sync-auto",
             "sync-run": "#library-notes-sync-run",
+            "import-add-source": "#note-import-add-source",
+            "import-destination": "#note-import-destination",
+            "import-check": "#note-import-check",
+            "import-execute": "#note-import-import",
+            "import-cancel": "#note-import-cancel",
+            "import-retry": "#note-import-retry",
+            "import-back": "#library-notes-import-back",
             "create-template:blank": "#library-notes-create-blank",
         }.get(role)
         if role.startswith("context-action:"):
@@ -4747,6 +4816,21 @@ class LibraryScreen(BaseAppScreen):
         if region == "sync":
             return self._library_notes_role_target(
                 dataclasses.replace(identity, semantic_role="sync-folder")
+            )
+        if region == "import":
+            phase = self._library_note_import_controller.snapshot.phase
+            role = {
+                NoteImportPhase.SELECT: "import-add-source",
+                NoteImportPhase.DESTINATION: "import-destination",
+                NoteImportPhase.CHECKING: "import-cancel",
+                NoteImportPhase.REVIEW: "import-execute",
+                NoteImportPhase.IMPORTING: "import-cancel",
+                NoteImportPhase.RECEIPT: "import-retry",
+            }[phase]
+            return self._library_notes_role_target(
+                dataclasses.replace(identity, semantic_role=role)
+            ) or self._library_notes_role_target(
+                dataclasses.replace(identity, semantic_role="import-back")
             )
         return None
 
@@ -5581,6 +5665,11 @@ class LibraryScreen(BaseAppScreen):
                 (("enter", "run action"), ("esc", "back to notes")),
                 (("enter", "act"), ("esc", "notes")),
             )
+        if region == "import":
+            phase = self._library_note_import_controller.snapshot.phase
+            if phase in {NoteImportPhase.CHECKING, NoteImportPhase.IMPORTING}:
+                return (("esc", "cancel"),)
+            return (("esc", "back to notes"),)
         return self._library_footer_shortcuts_for_current_state()
 
     def _apply_library_notes_footer_context(self) -> None:
@@ -5823,6 +5912,16 @@ class LibraryScreen(BaseAppScreen):
             self._supersede_library_notes_navigation()
             self._library_notes_view = "list"
             self._reset_library_notes_sync_transient_state()
+            _sync_library_canvas(
+                self, "notes", then=self._focus_library_notes_filter_input
+            )
+            return
+        if self._library_notes_view == "import":
+            phase = self._library_note_import_controller.snapshot.phase
+            if phase in {NoteImportPhase.CHECKING, NoteImportPhase.IMPORTING}:
+                self._library_note_import_controller.cancel()
+                return
+            self._library_notes_view = "list"
             _sync_library_canvas(
                 self, "notes", then=self._focus_library_notes_filter_input
             )
@@ -6184,6 +6283,7 @@ class LibraryScreen(BaseAppScreen):
                 )
         if self._library_lifecycle_pending_persist is not None:
             await self._drain_library_lifecycle_persistence()
+        self._library_note_import_controller.cancel()
         workspace = self._library_file_notes_workspace
         if workspace is not None:
             await workspace.shutdown()
@@ -12188,6 +12288,7 @@ class LibraryScreen(BaseAppScreen):
             self._local_source_counts.get("notes", 0) + 1
         )
         return True
+
     def _library_notes_canvas_kwargs(self) -> dict[str, Any]:
         """Return every compose input for the mounted Database Notes canvas."""
         values: dict[str, Any] = {
@@ -12197,6 +12298,10 @@ class LibraryScreen(BaseAppScreen):
             "mode": "list",
             "presentation_state": None,
             "sync_panel_state": None,
+            "import_snapshot": self._library_note_import_snapshot,
+            "import_receipt_available": (
+                self._library_note_import_controller.snapshot.can_revisit_receipt
+            ),
             "tree_projection": self._build_library_notes_tree_projection(),
             "tree_selected_placement_id": getattr(
                 self, "_library_notes_tree_selected_placement_id", ""
@@ -12217,6 +12322,8 @@ class LibraryScreen(BaseAppScreen):
         elif self._library_notes_view == "sync":
             values["mode"] = "sync"
             values["sync_panel_state"] = self._build_library_notes_sync_state()
+        elif self._library_notes_view == "import":
+            values["mode"] = "import"
         elif self._library_notes_view == "editor":
             presentation_state = self._library_note_editor_state()
             if presentation_state is None:
@@ -13241,7 +13348,8 @@ class LibraryScreen(BaseAppScreen):
         conflict tracking in a clean ``idle`` state for the next note.
         """
         self._library_note_session.close_session()
-        self._library_notes_view = "list"
+        if self._library_notes_view != "import":
+            self._library_notes_view = "list"
         self._selected_note_id = ""
         self._library_note_load_state = "idle"
         self._library_note_load_message = ""
@@ -26045,161 +26153,257 @@ class LibraryScreen(BaseAppScreen):
             group="library_prompt_save",
         )
 
-    _LIBRARY_NOTE_IMPORT_TITLE_MAX_CHARS = 300
+    def _library_note_import_database(self) -> CharactersRAGDB:
+        """Return the current local Database Notes authority or fail closed."""
+        database = getattr(self.app_instance, "chachanotes_db", None)
+        if not isinstance(database, CharactersRAGDB):
+            raise RuntimeError("Local Database Notes are unavailable.")
+        return database
 
-    @on(Button.Pressed, "#library-notes-import")
-    def handle_library_notes_import(self, event: Button.Pressed) -> None:
-        """Push a ``FileOpen`` dialog to import a local file as a new note.
+    def _library_note_import_folder_repository(self) -> LocalNoteFolderRepository:
+        """Return the current app-owned local folder repository."""
+        service = getattr(self.app_instance, "notes_scope_service", None)
+        repository = getattr(service, "folder_repository", None)
+        if not isinstance(repository, LocalNoteFolderRepository):
+            raise RuntimeError("Local Database Notes folders are unavailable.")
+        if repository.db is not self._library_note_import_database():
+            raise RuntimeError("Local Database Notes authority changed.")
+        return repository
 
-        Mirrors the retired standalone Notes screen's import dialog flow
-        exactly (the working ``FileOpen`` reference -- unlike ``FileSave``,
-        whose constructor only accepts ``location``/``title``/``default_file``,
-        ``FileOpen`` here is invoked the same simple ``title=``-only way the
-        standalone screen already relied on). The callback resolves the
-        chosen path (or ``None`` on cancel) through
-        ``_import_library_note_from_path``, which validates, reads, parses,
-        and hands off to the existing ``_create_library_note`` seam -- so a
-        successful import lands in the editor with the snapshot/count
-        refresh that seam already performs.
+    @staticmethod
+    def _build_library_note_import_executor(
+        database: CharactersRAGDB,
+        repository: LocalNoteFolderRepository,
+        receipts: NoteImportReceiptRepository,
+    ) -> NoteImportExecutor:
+        """Build one executor from exact current local authorities."""
+        return NoteImportExecutor(
+            target=LocalNoteImportTarget(db=database, folder_repository=repository),
+            receipt_repository=receipts,
+        )
 
-        Args:
-            event: Button press event emitted by the "Import note" action.
-        """
-        event.stop()
-        operation = self._begin_library_notes_operation("import")
-        if operation is None:
-            return
+    def _publish_library_note_import_snapshot(
+        self, snapshot: LibraryNoteImportSnapshot
+    ) -> None:
+        """Retain completion while patching the DOM only on its visible route."""
+        self._library_note_import_snapshot = snapshot
+        if (
+            self.is_mounted
+            and self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
+            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+            and self._library_notes_view == "import"
+        ):
+            _sync_library_canvas(self, "notes")
 
+    def _refresh_after_library_note_import(self) -> None:
+        """Refresh local list/count and folder tree after execution settles."""
+        self._refresh_local_source_snapshot()
+        self._request_library_notes_tree_refresh(refresh_root=True)
+
+    def _notify_library_note_import_failure(self) -> None:
+        """Show one bounded recovery notification without leaking backend detail."""
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(
+                "Notes import needs attention. Review the import panel and try again.",
+                severity="warning",
+            )
+
+    def _push_library_note_import_picker(self) -> None:
+        """Select one file at a time or the current folder through FileOpen."""
         async def import_callback(selected_path: Path | None) -> None:
-            await self._import_library_note_from_path(selected_path, operation)
+            if selected_path is None:
+                return
+            try:
+                self._library_note_import_controller.accept_selected_path(
+                    selected_path,
+                    is_folder=selected_path.is_dir(),
+                )
+            except (OSError, TypeError, ValueError):
+                self._notify_library_note_import_failure()
 
         self.app.push_screen(
-            FileOpen(title="Import Note (TXT, MD, JSON, YAML)"),
+            FileOpen(
+                title="Import once (files or one folder)",
+                offer_select_folder=True,
+            ),
             import_callback,
         )
 
-    async def _import_library_note_from_path(
-        self,
-        selected_path: Path | None,
-        operation: LibraryNotesOperationState,
+    @on(Button.Pressed, "#library-notes-import")
+    def handle_library_notes_import(self, event: Button.Pressed) -> None:
+        """Enter reviewed import selection and open the existing picker."""
+        event.stop()
+        snapshot = self._library_note_import_controller.snapshot
+        if snapshot.phase in {
+            NoteImportPhase.DESTINATION,
+            NoteImportPhase.CHECKING,
+            NoteImportPhase.REVIEW,
+            NoteImportPhase.IMPORTING,
+        } or (snapshot.phase is NoteImportPhase.SELECT and snapshot.selected_paths):
+            self._library_notes_view = "import"
+            self._apply_library_notes_footer_context()
+            _sync_library_canvas(self, "notes")
+            return
+        self._library_note_import_controller.begin_selection()
+        self._library_notes_view = "import"
+        self._apply_library_notes_footer_context()
+        _sync_library_canvas(self, "notes")
+        self._push_library_note_import_picker()
+
+    @on(Button.Pressed, "#library-notes-import-receipt")
+    def handle_library_notes_import_receipt(self, event: Button.Pressed) -> None:
+        """Reopen the latest import receipt retained in this app session."""
+        event.stop()
+        self._library_note_import_controller.revisit_receipt()
+        self._library_notes_view = "import"
+        _sync_library_canvas(self, "notes")
+
+    @on(Button.Pressed, "#library-notes-import-back")
+    def handle_library_notes_import_back(self, event: Button.Pressed) -> None:
+        """Return to Notes while any running import continues off-canvas."""
+        event.stop()
+        self._library_notes_view = "list"
+        _sync_library_canvas(
+            self, "notes", then=self._focus_library_notes_filter_input
+        )
+
+    @on(LibraryNoteImportCanvas.AddSourceRequested)
+    def handle_library_note_import_add_source(
+        self, event: LibraryNoteImportCanvas.AddSourceRequested
     ) -> None:
-        """Validate, read, and parse a chosen file, then create a note from it.
+        event.stop()
+        self._push_library_note_import_picker()
 
-        Cancelling the dialog or encountering a path/read/size failure creates
-        no note and leaves an actionable failure line in Navigator. The file
-        read is offloaded to a thread (mirroring the
-        retired standalone Notes screen's import) and is memory-bounded by a
-        pre-read ``st_size`` guard: UTF-8 chars are at most 4 bytes, so any
-        file over ``4 * LIBRARY_NOTE_CONTENT_MAX_CHARS`` bytes is guaranteed
-        over the char cap and is rejected without reading it at all (no
-        false rejections: a file that passes could still fail the exact
-        char-level check after decoding, which stays in place).
+    @on(LibraryNoteImportCanvas.DestinationChanged)
+    def handle_library_note_import_destination(
+        self, event: LibraryNoteImportCanvas.DestinationChanged
+    ) -> None:
+        event.stop()
+        try:
+            self._library_note_import_controller.set_destination(event.destination)
+        except (TypeError, ValueError):
+            self._notify_library_note_import_failure()
 
-        Args:
-            selected_path: The path chosen via the ``FileOpen`` dialog, or
-                ``None`` if the dialog was cancelled.
-        """
-        if selected_path is None:
-            self._finish_library_notes_operation(
-                operation,
-                success=False,
-                failure_next_action="choose a file and try again",
+    async def _run_library_note_import_check(self) -> None:
+        try:
+            await self._library_note_import_controller.check()
+        except Exception as exc:  # noqa: BLE001 - controller publishes safe recovery
+            logger.warning(
+                "Notes import check failed; error_type={}", type(exc).__name__
             )
-            return
+            self._notify_library_note_import_failure()
 
-        from tldw_chatbook.Event_Handlers.notes_events import (
-            _parse_note_from_file_content,
+    @on(LibraryNoteImportCanvas.CheckRequested)
+    def handle_library_note_import_check(
+        self, event: LibraryNoteImportCanvas.CheckRequested
+    ) -> None:
+        event.stop()
+        self.run_worker(
+            self._run_library_note_import_check(),
+            exclusive=True,
+            group="library_note_import_check",
         )
 
+    @on(LibraryNoteImportCanvas.CollisionNameChanged)
+    def handle_library_note_import_collision_name(
+        self, event: LibraryNoteImportCanvas.CollisionNameChanged
+    ) -> None:
+        event.stop()
+        self._library_note_import_controller.set_collision_name(event.name)
+
+    @on(LibraryNoteImportCanvas.CollisionChoiceRequested)
+    def handle_library_note_import_collision_choice(
+        self, event: LibraryNoteImportCanvas.CollisionChoiceRequested
+    ) -> None:
+        event.stop()
         try:
-            note_path = validate_path_simple(str(selected_path), require_exists=True)
-        except ValueError:
-            logger.opt(exception=True).warning(
-                f"Rejected Library note import path {selected_path!r}."
-            )
-            self._fail_library_note_import(operation)
-            return
+            self._library_note_import_controller.set_collision_choice(event.choice)
+        except (TypeError, ValueError):
+            self._notify_library_note_import_failure()
 
+    @on(LibraryNoteImportCanvas.UncertainMatchConfirmed)
+    def handle_library_note_import_confirm_match(
+        self, event: LibraryNoteImportCanvas.UncertainMatchConfirmed
+    ) -> None:
+        event.stop()
         try:
-            file_size = note_path.stat().st_size
-        except OSError:
-            logger.opt(exception=True).warning(
-                f"Could not stat Library note import file '{note_path}'."
-            )
-            self._fail_library_note_import(operation)
-            return
-        if file_size > LIBRARY_NOTE_CONTENT_MAX_CHARS * 4:
-            # See docstring: st_size > 4x the char cap proves the decoded
-            # text exceeds the cap (UTF-8 is <= 4 bytes/char), so reject
-            # BEFORE reading -- the char check below would otherwise slurp
-            # an arbitrarily large file into memory first.
-            self._fail_library_note_import(operation)
-            return
+            self._library_note_import_controller.confirm_uncertain(event.item_id)
+        except (TypeError, ValueError):
+            self._notify_library_note_import_failure()
 
+    @on(LibraryNoteImportCanvas.ItemActionRequested)
+    def handle_library_note_import_item_action(
+        self, event: LibraryNoteImportCanvas.ItemActionRequested
+    ) -> None:
+        event.stop()
         try:
-            file_content = await asyncio.to_thread(
-                note_path.read_text, encoding="utf-8", errors="strict"
+            self._library_note_import_controller.set_item_action(
+                event.item_id, event.action
             )
-        except (OSError, UnicodeDecodeError):
-            logger.opt(exception=True).warning(
-                f"Could not read Library note import file '{note_path}'."
+        except (TypeError, ValueError):
+            self._notify_library_note_import_failure()
+
+    @on(LibraryNoteImportCanvas.ItemChoiceRequested)
+    def handle_library_note_import_item_choice(
+        self, event: LibraryNoteImportCanvas.ItemChoiceRequested
+    ) -> None:
+        event.stop()
+        try:
+            self._library_note_import_controller.set_item_choice(
+                event.item_id, event.choice, event.enabled
             )
-            self._fail_library_note_import(operation)
-            return
+        except (TypeError, ValueError):
+            self._notify_library_note_import_failure()
 
-        if len(file_content) > LIBRARY_NOTE_CONTENT_MAX_CHARS:
-            self._fail_library_note_import(operation)
-            return
+    @on(LibraryNoteImportCanvas.PageRequested)
+    def handle_library_note_import_page(
+        self, event: LibraryNoteImportCanvas.PageRequested
+    ) -> None:
+        event.stop()
+        current = self._library_note_import_controller.snapshot.page.page_number
+        self._library_note_import_controller.set_page(current + event.delta)
 
-        title, content = _parse_note_from_file_content(note_path, file_content)
-        title = sanitize_string(
-            title or "", max_length=self._LIBRARY_NOTE_IMPORT_TITLE_MAX_CHARS
+    async def _run_library_note_import_execution(self, *, retry: bool) -> None:
+        try:
+            if retry:
+                await self._library_note_import_controller.retry_failed()
+            else:
+                await self._library_note_import_controller.approve_and_execute()
+        except Exception as exc:  # noqa: BLE001 - controller publishes safe recovery
+            logger.warning(
+                "Notes import execution failed; error_type={}", type(exc).__name__
+            )
+            self._notify_library_note_import_failure()
+
+    @on(LibraryNoteImportCanvas.ImportRequested)
+    def handle_library_note_import_execute(
+        self, event: LibraryNoteImportCanvas.ImportRequested
+    ) -> None:
+        event.stop()
+        self.run_worker(
+            self._run_library_note_import_execution(retry=False),
+            exclusive=True,
+            group="library_note_import_execute",
         )
-        if not title:
-            title = note_path.stem or "Imported note"
-        content = (content or "").replace("\x00", "")
 
-        if not self._library_notes_operation_is_current_and_active(operation):
-            # Reading is reversible; creating the parsed note is not. A user
-            # who left Navigator while the read was in flight has withdrawn
-            # this operation's authority to cross the persistence boundary.
-            self._finish_library_notes_operation(
-                operation,
-                success=False,
-                failure_next_action="return to Notes and try again",
-            )
-            return
-
-        create_outcome = await self._create_library_note(title=title, content=content)
-        if create_outcome.kind == "failed":
-            self._fail_library_note_import(operation)
-            return
-        if create_outcome.kind == "created_not_opened":
-            recovery = "select the new note below to open"
-            self._library_notes_notice = f"Import complete — {recovery}."
-            notify = getattr(self.app_instance, "notify", None)
-            if callable(notify):
-                notify(
-                    "Note imported. Select it from Notes to open.",
-                    severity="information",
-                )
-            self._finish_library_notes_operation(
-                operation,
-                success=True,
-                completion_next_action=recovery,
-            )
-            return
-        self._move_library_notes_operation(operation.token, "editor")
-        self._finish_library_notes_operation(operation, success=True)
-
-    def _fail_library_note_import(self, operation: LibraryNotesOperationState) -> None:
-        """Keep import failure visible in Navigator with one recovery step."""
-        self._notify_library_note_create_warning("Could not import that file.")
-        self._finish_library_notes_operation(
-            operation,
-            success=False,
-            failure_next_action="choose a valid UTF-8 note file and try again",
+    @on(LibraryNoteImportCanvas.RetryRequested)
+    def handle_library_note_import_retry(
+        self, event: LibraryNoteImportCanvas.RetryRequested
+    ) -> None:
+        event.stop()
+        self.run_worker(
+            self._run_library_note_import_execution(retry=True),
+            exclusive=True,
+            group="library_note_import_execute",
         )
+
+    @on(LibraryNoteImportCanvas.CancelRequested)
+    def handle_library_note_import_cancel(
+        self, event: LibraryNoteImportCanvas.CancelRequested
+    ) -> None:
+        event.stop()
+        self._library_note_import_controller.cancel()
 
     # ----- Notes sync panel ------------------------------------------------
 

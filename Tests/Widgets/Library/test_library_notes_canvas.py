@@ -5,14 +5,20 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
+from textual.app import ComposeResult
 from textual.widgets import Button, Static
 
 from Tests.textual_test_utils import widget_pilot  # noqa: F401
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Library.library_notes_state import (
     DatabaseNoteDraft,
     LibraryNoteSessionSnapshot,
     LibraryNotesListState,
     NormalizedDatabaseNote,
+)
+from tldw_chatbook.Library.library_note_import_state import (
+    initial_note_import_snapshot,
+    project_library_note_import_snapshot,
 )
 from tldw_chatbook.Library.library_notes_sync_state import LibraryNotesSyncState
 from tldw_chatbook.Library.library_notes_tree_state import (
@@ -165,6 +171,15 @@ def _tree_projection() -> LibraryNotesTreeProjection:
             "Could not create note.",
         ),
         ("sync", {"sync_panel_state": _sync_state()}, "Sync idle"),
+        (
+            "import",
+            {
+                "import_snapshot": project_library_note_import_snapshot(
+                    initial_note_import_snapshot()
+                )
+            },
+            "Import once",
+        ),
     ),
 )
 async def test_authority_row_is_first_plain_child_in_every_notes_mode(
@@ -189,6 +204,84 @@ async def test_authority_row_is_first_plain_child_in_every_notes_mode(
         assert "Library database" in text
         assert status_fragment in text
         assert "Next:" in text
+
+
+async def test_completed_import_receipt_has_focusable_back_action_at_60_columns():
+    snapshot = replace(
+        project_library_note_import_snapshot(initial_note_import_snapshot()),
+        phase="receipt",
+        status_line="Import finished.",
+        receipt_line="1 imported · 0 updated · 0 skipped · 0 failed",
+        receipt_detail="All planned items settled.",
+    )
+
+    class ImportReceiptApp(ConsolidatedCSSApp):
+        def compose(self) -> ComposeResult:
+            yield LibraryNotesCanvas(mode="import", import_snapshot=snapshot)
+
+    app = ImportReceiptApp()
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        back = app.query_one("#library-notes-import-back", Button)
+        back.focus()
+        await pilot.pause()
+
+        assert app.focused is back
+        assert str(back.label) == "Back to Notes"
+        assert back.disabled is False
+
+
+async def test_cancelled_partial_import_offers_retry_without_calling_it_a_failure(
+    widget_pilot,  # noqa: F811
+):
+    snapshot = replace(
+        project_library_note_import_snapshot(initial_note_import_snapshot()),
+        phase="receipt",
+        status_line="Import stopped after the current item.",
+        receipt_line="1 imported · 0 updated · 0 skipped · 0 failed",
+        receipt_detail="Partial completion. Finished items were not rolled back.",
+        retry_available=True,
+        retry_label="Retry unfinished items",
+    )
+
+    async with await widget_pilot(
+        LibraryNotesCanvas,
+        mode="import",
+        import_snapshot=snapshot,
+    ) as pilot:
+        await pilot.pause()
+        retry = pilot.app.query_one("#note-import-retry", Button)
+
+        assert str(retry.label) == "Retry unfinished items"
+        assert "failure" not in str(retry.label).casefold()
+
+
+async def test_import_selection_summary_bounds_many_long_names(widget_pilot):  # noqa: F811
+    names = tuple(f"[draft]-{'x' * 80}-{number}.md" for number in range(10))
+    snapshot = replace(
+        project_library_note_import_snapshot(initial_note_import_snapshot()),
+        phase="destination",
+        selected_names=names,
+        selection_kind="files",
+        status_line="10 files selected.",
+    )
+
+    async with await widget_pilot(
+        LibraryNotesCanvas,
+        mode="import",
+        import_snapshot=snapshot,
+    ) as pilot:
+        await pilot.pause()
+        summary = pilot.app.query_one("#note-import-source-summary", Static)
+        text = str(summary.renderable)
+
+        assert names[0][:40] in text
+        assert names[2][:40] in text
+        assert names[0] not in text
+        assert names[3] not in text
+        assert "and 7 more" in text
+        assert len(text) < 200
+        assert summary._render_markup is False
 
 
 async def test_list_authority_running_without_status_uses_updating_fallback(

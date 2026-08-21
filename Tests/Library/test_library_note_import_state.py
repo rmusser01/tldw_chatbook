@@ -501,8 +501,12 @@ def test_latest_receipt_can_be_revisited_during_the_same_session() -> None:
         ),
         _PRIVATE_ROOT / "next.md",
     )
-    assert selecting.can_revisit_receipt is True
-    revisited = revisit_latest_receipt(selecting)
+    assert selecting.can_revisit_receipt is False
+    revisited = revisit_latest_receipt(
+        initial_note_import_snapshot(
+            latest_receipt=receipt_state.latest_receipt,
+        )
+    )
     assert revisited.phase is NoteImportPhase.RECEIPT
     assert revisited.receipt is receipt_state.latest_receipt
 

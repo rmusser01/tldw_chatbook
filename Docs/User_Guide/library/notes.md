@@ -59,7 +59,7 @@ editor's own Back control returns to its list.
 - **Source strip** — a "Library notes | Folder files" toggle above the canvas.
   This page covers the Library notes side; see below for Folder files.
 - **Notes list** — the default view: a "Notes (N)" header, the
-  "Filter notes… (Enter)" field, a toolbar (sort / Sync / Import note /
+  "Filter notes… (Enter)" field, a toolbar (sort / Sync / Import /
   Export… / Select), and one row per note showing its title and age.
 - **Editor** — opens when you click a note: title, body, keywords, a meta
   line with the autosave status, and an action row. On wide terminals the
@@ -67,7 +67,11 @@ editor's own Back control returns to its list.
   scroll positions; on compact terminals use `‹ Back to list`.
 - **New note view** — opens from the rail's "New note": a "Blank note"
   button plus a "From a template" list.
-- **Notes sync panel** — opens from the toolbar's "Sync" button: folder,
+- **Import once** — opens from the toolbar's "Import" button and keeps
+  selection, read-only checking, review, progress, and the final receipt in
+  the retained Notes canvas.
+- **Notes sync panel** — remains a separate mode opened from the toolbar's
+  "Sync" button: folder,
   direction, conflict policy, auto-sync, and an activity log.
 
 ### Library notes vs. Folder files vs. Sync
@@ -92,7 +96,8 @@ directly without mirroring it in.
 | "Filter notes… (Enter)" | Type and press Enter to filter; the status line then reads "filter: \<text\> · N results". |
 | "Sort: Newest" | Opens a one-row strip of Newest / Oldest / Title (✓ on the active one) in place of the action row; pick one directly, or press Escape to cancel. |
 | "Sync" | Opens the Notes sync panel (below). |
-| "Import note" | Opens a file picker, "Import Note (TXT, MD, JSON, YAML)". The imported file becomes a new note. |
+| "Import" | Opens **Import once**. Select one or more files, one at a time, or select one folder. Nothing is added until you check the selection, review every proposed action, and choose **Import selected items**. |
+| "Last import" | Reopens the latest import receipt from this app session after you return to the Notes list. |
 | "Export…" | Opens the "Export bundle (.zip)" canvas scoped to notes — bundle notes into a .zip. |
 | "Select" / "Done" | Toggles select mode: rows grow ☑/☐ checkboxes, and a row appears with "N selected", "Select all N shown", "Clear", and "Export selected". "Export…" hides while selecting. |
 
@@ -192,6 +197,35 @@ The activity log tells you which happened: "1 conflict resolved (Disk
 wins)" and "Replaced copy saved as …", or "1 conflict left unresolved —
 both copies kept as they are" when the run did not change either side.
 
+### Import once
+
+**Import once** copies supported note files into local Database Notes. It is
+not the same as **Sync**: the import ends after this reviewed batch, while Sync
+continues mirroring a configured folder.
+
+Choose files one at a time with **Add another file**, or choose one folder.
+A folder is exclusive; it cannot be combined with selected files. Selected
+files also need an existing-or-new destination path such as
+`Research / Interviews`. The destination is only a proposal during checking;
+no folder or note is created yet.
+
+Choose **Check selection** to build a read-only review. Review groups explain
+whether each source is new, an unchanged or changed repeat, an uncertain
+match, unsupported, or failed. You can skip an item, create a new note, or,
+when an existing match is authorized, update its content and/or add its folder
+placement. Uncertain matches must be confirmed. If the imported top-level
+folder already exists, choose whether to use it, create a unique sibling, or
+enter another name.
+
+Only **Import selected items** approves and executes the exact choices shown.
+Progress remains visible and **Cancel import** stops cooperatively after the
+current item; completed items are not rolled back. A partial receipt states
+what finished. Retryable failures show **Retry N failures**; a cancelled batch
+with unfinished items shows **Retry unfinished items**. **Back to Notes** may
+hide a running import without stopping it; the list then offers **View import**
+or **Continue import** until it settles. **Last import** reopens the same-session
+receipt afterward.
+
 ## Common tasks
 
 ### Create a note from a template
@@ -200,10 +234,15 @@ both copies kept as they are" when the run did not change either side.
 3. The editor opens pre-filled; just start typing — autosave handles the
    rest.
 
-### Import a Markdown file as a note
-1. In the notes list, click **Import note**.
-2. Pick the file in the "Import Note (TXT, MD, JSON, YAML)" dialog.
-3. The new note appears at the top of the list; open it to edit.
+### Import Markdown files or a folder
+
+1. In the notes list, click **Import** and pick the first file or one folder.
+2. For files, click **Add another file** as needed and enter the Database Notes
+   destination. A folder already supplies its proposed hierarchy.
+3. Click **Check selection** and review classifications, actions, matches, and
+   any top-level folder collision.
+4. Click **Import selected items**. You can cancel cooperatively, retry work
+   identified by the receipt, or return to Notes and reopen **Last import**.
 
 ### Set up folder sync
 1. In the notes list, click **Sync**.
@@ -253,10 +292,12 @@ click-driven. Global navigation keys live in the [guide index](../index.md).
 
 ## Quirks & troubleshooting
 
-- **Import failures are deliberately unspecific** — whatever goes wrong
-  (unreadable file, unsupported content, a file over the ~8 MB guard),
-  the message is always "Could not import that file." Check the file's
-  type and size if it keeps failing.
+- **Checking does not change Notes** — source discovery, parsing, prior-receipt
+  lookup, and collision analysis are read-only. If checking fails, review the
+  selected paths and destination and try again.
+- **Cancellation is partial, not undo** — work already completed remains in
+  Database Notes and is reported honestly in the receipt. Retry resumes only
+  unfinished or explicitly retryable work from that same app session.
 - **Sync never asks about conflicts** — there is no "ask me" policy by
   design; conflicts are always resolved by the "conflicts" setting, and
   the count is reported in the status line afterwards. The copy that

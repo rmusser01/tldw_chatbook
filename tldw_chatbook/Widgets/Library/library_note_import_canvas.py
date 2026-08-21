@@ -40,6 +40,11 @@ def _disabled_action_label(text: str, *, disabled: bool) -> str:
     return f"{text} unavailable" if disabled else text
 
 
+def _bounded_source_name(name: str) -> str:
+    """Keep one selected filename useful without dominating compact layouts."""
+    return name if len(name) <= 48 else f"{name[:47]}…"
+
+
 class LibraryNoteImportCanvas(PostRecomposeCallback, VerticalScroll):
     """Render one immutable import snapshot and post typed physical intents."""
 
@@ -169,10 +174,11 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, VerticalScroll):
             yield from self._compose_selection(state)
         elif state.phase == "checking":
             yield Button(
-                "Cancel check",
+                "Cancel check" if state.can_cancel else "Stopping…",
                 id="note-import-cancel",
                 classes="library-canvas-action",
                 compact=True,
+                disabled=not state.can_cancel,
             )
         elif state.phase == "review":
             yield from self._compose_review(state)
@@ -186,10 +192,17 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, VerticalScroll):
         if not count:
             source_copy = "No source selected."
         elif state.selection_kind == "folder":
-            source_copy = f"1 folder selected: {state.selected_names[0]}"
+            source_copy = (
+                f"1 folder selected: {_bounded_source_name(state.selected_names[0])}"
+            )
         else:
             noun = "file" if count == 1 else "files"
-            source_copy = f"{count} {noun} selected: {', '.join(state.selected_names)}"
+            visible_names = tuple(
+                _bounded_source_name(name) for name in state.selected_names[:3]
+            )
+            remainder = count - len(visible_names)
+            more = f"; and {remainder} more" if remainder else ""
+            source_copy = f"{count} {noun} selected: {', '.join(visible_names)}{more}"
         yield Static(
             source_copy,
             id="note-import-source-summary",
@@ -408,10 +421,11 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, VerticalScroll):
             markup=False,
         )
         yield Button(
-            "Cancel import",
+            "Cancel import" if state.can_cancel else "Stopping…",
             id="note-import-cancel",
             classes="library-canvas-action",
             compact=True,
+            disabled=not state.can_cancel,
         )
 
     def _compose_receipt(self, state: LibraryNoteImportSnapshot) -> ComposeResult:
@@ -426,10 +440,10 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, VerticalScroll):
             classes="note-import-quiet",
             markup=False,
         )
-        if state.retryable_failures:
+        if state.retry_available or state.retryable_failures:
             noun = "failure" if state.retryable_failures == 1 else "failures"
             yield Button(
-                f"Retry {state.retryable_failures} {noun}",
+                state.retry_label or f"Retry {state.retryable_failures} {noun}",
                 id="note-import-retry",
                 classes="library-canvas-action",
                 compact=True,

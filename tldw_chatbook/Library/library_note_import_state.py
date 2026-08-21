@@ -150,9 +150,12 @@ class NoteImportWorkflowSnapshot:
 
     @property
     def can_revisit_receipt(self) -> bool:
-        return (
+        return bool(
             self.latest_receipt is not None
-            and self.phase is not NoteImportPhase.RECEIPT
+            and (
+                self.phase is NoteImportPhase.RECEIPT
+                or (self.phase is NoteImportPhase.SELECT and not self.selected_paths)
+            )
         )
 
     def to_diagnostic(self) -> NoteImportWorkflowDiagnostic:
@@ -207,6 +210,9 @@ class LibraryNoteImportSnapshot:
     receipt_line: str = ""
     receipt_detail: str = ""
     retryable_failures: int = 0
+    retry_available: bool = False
+    retry_label: str = ""
+    can_cancel: bool = False
 
 
 def _page(
@@ -657,4 +663,14 @@ def project_library_note_import_snapshot(
             else ""
         ),
         retryable_failures=receipt.retryable if receipt else 0,
+        retry_available=state.can_retry,
+        retry_label=(
+            f"Retry {receipt.retryable} "
+            f"{'failure' if receipt.retryable == 1 else 'failures'}"
+            if receipt and receipt.retryable
+            else "Retry unfinished items"
+            if receipt and receipt.completed < receipt.total
+            else ""
+        ),
+        can_cancel=state.can_cancel,
     )

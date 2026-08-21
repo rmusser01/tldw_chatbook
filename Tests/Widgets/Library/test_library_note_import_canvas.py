@@ -209,6 +209,7 @@ async def test_checking_state_names_work_and_offers_cancel() -> None:
         _snapshot(
             phase="checking",
             status_line="◌ Checking 18 selected files…",
+            can_cancel=True,
         )
     )
 
@@ -429,6 +430,7 @@ async def test_importing_shows_bounded_progress_and_cooperative_cancel() -> None
             progress_completed=7,
             progress_total=12,
             progress_detail="7 imported · 1 skipped · 0 failed",
+            can_cancel=True,
         )
     )
 
@@ -439,6 +441,23 @@ async def test_importing_shows_bounded_progress_and_cooperative_cancel() -> None
         )
         assert await pilot.click("#note-import-cancel")
         await pilot.pause()
+
+        canvas = app.query_one("#import-canvas", LibraryNoteImportCanvas)
+        canvas.sync_state(
+            replace(
+                canvas.snapshot,
+                status_line="Stopping after the current item…",
+                can_cancel=False,
+            )
+        )
+        await pilot.pause()
+        cancel = app.query_one("#note-import-cancel", Button)
+        assert cancel.disabled is True
+        assert cancel.label.plain == "Stopping…"
+        message_count = len(app.messages)
+        await pilot.click("#note-import-cancel")
+        await pilot.pause()
+        assert len(app.messages) == message_count
 
     assert isinstance(app.messages[-1], LibraryNoteImportCanvas.CancelRequested)
 

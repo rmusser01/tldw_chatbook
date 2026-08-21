@@ -3,7 +3,6 @@
 import ast
 import asyncio
 import dataclasses
-import json
 import queue
 import re
 import statistics
@@ -20611,12 +20610,7 @@ async def test_library_shell_create_from_template_uses_template_fields():
 
 
 def _fake_import_dialog_result(screen, selected_path):
-    """Monkeypatch ``screen.app.push_screen`` so the Import note dialog's
-    callback fires immediately with ``selected_path`` instead of driving
-    the real ``FileOpen`` file-browser UI (which needs keystrokes into a
-    path input and is unrelated to what this handler contract tests: that
-    a *resolved* dialog result reaches ``_import_library_note_from_path``).
-    """
+    """Resolve a picker callback immediately for cross-surface shell tests."""
     calls = []
 
     def _fake_push_screen(dialog, callback=None):
@@ -20630,273 +20624,8 @@ def _fake_import_dialog_result(screen, selected_path):
 
 
 @pytest.mark.asyncio
-async def test_library_shell_import_note_lands_in_editor(tmp_path):
-    """Pressing Import note, with the dialog resolving to a real file, reads
-    that file's title/content and creates a note through the same
-    ``_create_library_note`` seam the Blank note/template rows use --
-    landing in the editor with the snapshot/count refresh that seam already
-    performs."""
-    app = _build_test_app()
-    _seed_conversations(app, _two_conversations(), notes=_two_notes())
-    host = LibraryHarness(app)
-
-    note_file = tmp_path / "imported.json"
-    note_file.write_text(
-        json.dumps({"title": "Imported from disk", "content": "body from disk"}),
-        encoding="utf-8",
-    )
-
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-import")
-
-        push_calls = _fake_import_dialog_result(screen, note_file)
-
-        screen.query_one("#library-notes-import").press()
-        await _wait_for_selector(screen, pilot, "#library-note-title")
-
-        assert push_calls and isinstance(push_calls[0], FileOpen)
-
-        service = app.notes_scope_service
-        assert service.save_calls, "Import never called the create seam."
-        call = service.save_calls[-1]
-        assert call["note_id"] is None
-        assert call["title"] == "Imported from disk"
-        assert call["content"] == "body from disk"
-
-        assert screen._library_notes_view == "editor"
-        created_note = next(
-            n for n in service.notes if n["title"] == "Imported from disk"
-        )
-        assert screen._selected_note_id == created_note["id"]
-        assert (
-            str(screen.query_one("#library-note-transfer-status", Static).renderable)
-            == "Import complete."
-        )
-
-        for _ in range(150):
-            if screen._local_source_counts.get("notes") == 3:
-                break
-            await pilot.pause(0.02)
-        else:
-            raise AssertionError(
-                "The notes snapshot/rail count never refreshed after import."
-            )
-
-
-@pytest.mark.asyncio
-async def test_library_shell_import_created_but_not_opened_has_persistent_recovery(
-    tmp_path,
-):
-    app = _build_test_app()
-    service = _CreateThenFailFirstOpenLibraryNotesScopeService(_two_notes())
-    app.notes_scope_service = service
-    app.notes_service = StaticLibraryNotesKeywordsService({})
-    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
-    app.chat_conversation_scope_service = StaticLibraryConversationScopeService(
-        _two_conversations()
-    )
-    host = LibraryHarness(app)
-    note_file = tmp_path / "committed.md"
-    note_file.write_text("imported body", encoding="utf-8")
-
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-import")
-        _fake_import_dialog_result(screen, note_file)
-
-        screen.query_one("#library-notes-import").press()
-        await _wait_for_condition(
-            pilot,
-            lambda: any(
-                "Import complete" in str(status.renderable)
-                for status in screen.query("#library-notes-status")
-            ),
-            message="Committed import never reached persistent Navigator status.",
-        )
-
-        assert len(service.save_calls) == 1
-        assert screen._library_notes_view == "list"
-        assert (
-            str(screen.query_one("#library-notes-status", Static).renderable)
-            == "Import complete — select the new note below to open."
-        )
-
-
-@pytest.mark.asyncio
-async def test_library_shell_new_create_clears_stale_import_create_status(tmp_path):
-    app = _build_test_app()
-    service = _FailingCreateLibraryNotesScopeService(_two_notes())
-    app.notes_scope_service = service
-    app.notes_service = StaticLibraryNotesKeywordsService({})
-    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
-    app.chat_conversation_scope_service = StaticLibraryConversationScopeService(
-        _two_conversations()
-    )
-    host = LibraryHarness(app)
-    note_file = tmp_path / "failed.md"
-    note_file.write_text("imported body", encoding="utf-8")
-
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-import")
-        _fake_import_dialog_result(screen, note_file)
-        screen.query_one("#library-notes-import").press()
-        await _wait_for_condition(
-            pilot,
-            lambda: any(
-                "Import failed" in str(status.renderable)
-                for status in screen.query("#library-notes-status")
-            ),
-            message="Import service failure never reached Navigator status.",
-        )
-        assert "Create failed" in screen._library_note_create_status
-
-        await _wait_for_selector(screen, pilot, "#library-notes-new")
-        screen.query_one("#library-notes-new").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-create-status")
-
-        assert (
-            str(screen.query_one("#library-notes-create-status", Static).renderable)
-            == ""
-        )
-
-
-@pytest.mark.asyncio
-async def test_library_shell_import_note_oversize_file_rejected(tmp_path, monkeypatch):
-    """A file larger than ``LIBRARY_NOTE_CONTENT_MAX_CHARS`` is rejected with
-    a quiet warning notice -- no note is created."""
-    app = _build_test_app()
-    _seed_conversations(app, _two_conversations(), notes=_two_notes())
-    app.notify = Mock()
-    host = LibraryHarness(app)
-
-    monkeypatch.setattr(library_screen_module, "LIBRARY_NOTE_CONTENT_MAX_CHARS", 10)
-    note_file = tmp_path / "too_big.txt"
-    note_file.write_text("x" * 50, encoding="utf-8")
-
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-import")
-
-        _fake_import_dialog_result(screen, note_file)
-
-        service = app.notes_scope_service
-        screen.query_one("#library-notes-import").press()
-        for _ in range(60):
-            await pilot.pause(0.02)
-
-        assert not service.save_calls, "Oversize import must not create a note."
-        assert screen._library_notes_view != "editor"
-        app.notify.assert_called()
-        args, kwargs = app.notify.call_args
-        assert "import" in args[0].lower()
-        assert kwargs.get("severity") == "warning"
-        rendered_status = str(
-            screen.query_one("#library-notes-status", Static).renderable
-        )
-        assert rendered_status.startswith("Import failed — choose a valid UTF-8")
-        assert rendered_status.endswith("…")
-        assert screen._library_notes_operation.status_line == (
-            "Import failed — choose a valid UTF-8 note file and try again."
-        )
-
-
-@pytest.mark.asyncio
-async def test_library_shell_import_note_huge_file_rejected_without_reading(
-    tmp_path, monkeypatch
-):
-    """A file whose on-disk SIZE already proves it exceeds the char cap
-    (UTF-8 chars are at most 4 bytes, so ``st_size > 4 * cap`` guarantees
-    over-cap) must be rejected before ``read_text`` is ever called -- the
-    char-level check alone would first slurp an arbitrarily large file into
-    memory (the PR reviewer's OOM finding).
-    """
-    import pathlib
-
-    app = _build_test_app()
-    _seed_conversations(app, _two_conversations(), notes=_two_notes())
-    app.notify = Mock()
-    host = LibraryHarness(app)
-
-    monkeypatch.setattr(library_screen_module, "LIBRARY_NOTE_CONTENT_MAX_CHARS", 10)
-    note_file = tmp_path / "way_too_big.txt"
-    note_file.write_text("x" * 50, encoding="utf-8")  # 50 bytes > 4 * 10
-
-    read_calls: list[pathlib.Path] = []
-    real_read_text = pathlib.Path.read_text
-
-    def _recording_read_text(self, *args, **kwargs):
-        read_calls.append(self)
-        return real_read_text(self, *args, **kwargs)
-
-    monkeypatch.setattr(pathlib.Path, "read_text", _recording_read_text)
-
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-import")
-
-        _fake_import_dialog_result(screen, note_file)
-
-        service = app.notes_scope_service
-        screen.query_one("#library-notes-import").press()
-        for _ in range(60):
-            await pilot.pause(0.02)
-
-        assert not any(p.name == "way_too_big.txt" for p in read_calls), (
-            "The oversized file must be rejected by the pre-read size guard, "
-            f"not read into memory first (read_text calls: {read_calls!r})."
-        )
-        assert not service.save_calls, "Huge import must not create a note."
-        assert screen._library_notes_view != "editor"
-        app.notify.assert_called()
-        args, kwargs = app.notify.call_args
-        assert "import" in args[0].lower()
-        assert kwargs.get("severity") == "warning"
-
-
-@pytest.mark.asyncio
-async def test_library_shell_import_note_md_without_title_uses_filename_stem(tmp_path):
-    """A ``.md`` file (which never carries a JSON/YAML "title" key in this
-    parser's contract) falls back to the filename stem as the note title."""
-    app = _build_test_app()
-    _seed_conversations(app, _two_conversations(), notes=_two_notes())
-    host = LibraryHarness(app)
-
-    note_file = tmp_path / "My Great Notes.md"
-    note_file.write_text("# Just a heading\n\nSome body text.", encoding="utf-8")
-
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-import")
-
-        _fake_import_dialog_result(screen, note_file)
-
-        screen.query_one("#library-notes-import").press()
-        await _wait_for_selector(screen, pilot, "#library-note-title")
-
-        service = app.notes_scope_service
-        call = service.save_calls[-1]
-        assert call["title"] == "My Great Notes"
-        assert call["content"] == "# Just a heading\n\nSome body text."
-
-
-@pytest.mark.asyncio
-async def test_library_shell_import_note_cancelled_dialog_is_noop():
-    """Cancelling the ``FileOpen`` dialog (callback fired with ``None``)
-    creates no note and does not crash."""
+async def test_library_shell_import_once_picker_accepts_files_or_one_folder():
+    """Import once reuses the existing picker with explicit folder selection."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
     host = LibraryHarness(app)
@@ -20907,207 +20636,16 @@ async def test_library_shell_import_note_cancelled_dialog_is_noop():
         screen.query_one("#library-row-browse-notes").press()
         await _wait_for_selector(screen, pilot, "#library-notes-import")
 
-        _fake_import_dialog_result(screen, None)
-
-        service = app.notes_scope_service
-        screen.query_one("#library-notes-import").press()
-        for _ in range(30):
-            await pilot.pause(0.02)
-
-        assert not service.save_calls
-        assert screen._library_notes_view != "editor"
-
-
-@pytest.mark.asyncio
-async def test_library_shell_late_import_failure_after_navigation_releases_transfer(
-    tmp_path, monkeypatch
-):
-    """A hidden late completion cannot leave Navigator permanently gated."""
-    app = _build_test_app()
-    _seed_conversations(app, _two_conversations(), notes=_two_notes())
-    host = LibraryHarness(app)
-    note_file = tmp_path / "unreadable.md"
-    note_file.write_text("body", encoding="utf-8")
-    read_started = threading.Event()
-    read_release = threading.Event()
-    real_read_text = Path.read_text
-
-    def _gated_failed_read(path, *args, **kwargs):
-        if path == note_file:
-            read_started.set()
-            read_release.wait(_GATED_RELEASE_TIMEOUT_SECONDS)
-            raise OSError("file disappeared")
-        return real_read_text(path, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "read_text", _gated_failed_read)
-
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-import")
-        _fake_import_dialog_result(screen, note_file)
+        dialogs = []
+        screen.app.push_screen = lambda dialog, callback=None: dialogs.append(dialog)
 
         screen.query_one("#library-notes-import").press()
-        try:
-            await _wait_for_condition(
-                pilot,
-                read_started.is_set,
-                message="Import never entered its gated read.",
-            )
-            await _wait_for_selector(screen, pilot, "#library-row-browse-conversations")
-            screen.query_one("#library-row-browse-conversations").press()
-            await _wait_for_condition(
-                pilot,
-                lambda: (
-                    screen._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
-                ),
-                message="Navigation did not leave Notes during import.",
-            )
-        finally:
-            read_release.set()
+        await pilot.pause()
 
-        await _wait_for_condition(
-            pilot,
-            lambda: (
-                not (
-                    screen._library_notes_operation
-                    and screen._library_notes_operation.running
-                )
-            ),
-            message="Late import completion retained an invisible running claim.",
-        )
-        await _wait_for_selector(screen, pilot, "#library-row-browse-notes")
-        screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-import")
-        assert screen.query_one("#library-notes-import", Button).disabled is False
-
-
-@pytest.mark.asyncio
-async def test_library_shell_late_valid_import_after_navigation_has_no_side_effect(
-    tmp_path, monkeypatch
-):
-    """Leaving the initiating region invalidates import before persistence."""
-    app = _build_test_app()
-    _seed_conversations(app, _two_conversations(), notes=_two_notes())
-    host = LibraryHarness(app)
-    note_file = tmp_path / "slow.md"
-    note_file.write_text("valid imported body", encoding="utf-8")
-    read_started = threading.Event()
-    read_release = threading.Event()
-    real_read_text = Path.read_text
-
-    def _gated_read(path, *args, **kwargs):
-        if path == note_file:
-            read_started.set()
-            read_release.wait(_GATED_RELEASE_TIMEOUT_SECONDS)
-        return real_read_text(path, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "read_text", _gated_read)
-
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-import")
-        _fake_import_dialog_result(screen, note_file)
-
-        screen.query_one("#library-notes-import").press()
-        try:
-            await _wait_for_condition(
-                pilot,
-                read_started.is_set,
-                message="Import never entered its gated read.",
-            )
-            await _wait_for_selector(screen, pilot, "#library-row-browse-conversations")
-            screen.query_one("#library-row-browse-conversations").press()
-            await _wait_for_condition(
-                pilot,
-                lambda: (
-                    screen._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
-                ),
-                message="Navigation did not leave Notes during import.",
-            )
-        finally:
-            read_release.set()
-
-        await _wait_for_condition(
-            pilot,
-            lambda: (
-                not (
-                    screen._library_notes_operation
-                    and screen._library_notes_operation.running
-                )
-            ),
-            message="Late valid import did not terminalize its claim.",
-        )
-        assert app.notes_scope_service.save_calls == []
-        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
-
-
-@pytest.mark.asyncio
-async def test_library_shell_import_leave_and_return_does_not_restore_authority(
-    tmp_path, monkeypatch
-):
-    """Returning to Navigator cannot revive an import invalidated on exit."""
-    app = _build_test_app()
-    _seed_conversations(app, _two_conversations(), notes=_two_notes())
-    host = LibraryHarness(app)
-    note_file = tmp_path / "aba.md"
-    note_file.write_text("valid imported body", encoding="utf-8")
-    read_started = threading.Event()
-    read_release = threading.Event()
-    real_read_text = Path.read_text
-
-    def _gated_read(path, *args, **kwargs):
-        if path == note_file:
-            read_started.set()
-            read_release.wait(_GATED_RELEASE_TIMEOUT_SECONDS)
-        return real_read_text(path, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "read_text", _gated_read)
-
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-import")
-        _fake_import_dialog_result(screen, note_file)
-        screen.query_one("#library-notes-import").press()
-        try:
-            await _wait_for_condition(
-                pilot,
-                read_started.is_set,
-                message="Import never entered its gated read.",
-            )
-            await _wait_for_selector(screen, pilot, "#library-row-browse-conversations")
-            screen.query_one("#library-row-browse-conversations").press()
-            await _wait_for_condition(
-                pilot,
-                lambda: (
-                    screen._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
-                ),
-                message="Navigation did not leave Notes during import.",
-            )
-            await _wait_for_selector(screen, pilot, "#library-row-browse-notes")
-            screen.query_one("#library-row-browse-notes").press()
-            await _wait_for_selector(screen, pilot, "#library-notes-import")
-        finally:
-            read_release.set()
-
-        await _wait_for_condition(
-            pilot,
-            lambda: (
-                not (
-                    screen._library_notes_operation
-                    and screen._library_notes_operation.running
-                )
-            ),
-            message="Invalidated import retained a running claim.",
-        )
-        assert app.notes_scope_service.save_calls == []
-        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
-        assert screen._library_notes_view == "list"
+        assert len(dialogs) == 1
+        dialog = dialogs[0]
+        assert isinstance(dialog, FileOpen)
+        assert dialog._offer_select_folder is True
 
 
 @pytest.mark.asyncio
@@ -31181,23 +30719,23 @@ async def test_library_note_keyboard_capability_matrix(
                 lambda: isinstance(host.screen_stack[-1], FileOpen),
                 message="Keyboard Import never opened FileOpen.",
             )
-            operation = screen._library_notes_operation
-            assert operation is not None and operation.kind == "import"
+            assert screen._library_notes_view == "import"
+            assert (
+                screen._library_note_import_controller.snapshot.phase.value
+                == "select"
+            )
             await pilot.press("escape")
             await _wait_for_condition(
                 pilot,
-                lambda: (
-                    host.screen_stack[-1] is screen
-                    and screen._library_notes_operation is not None
-                    and not screen._library_notes_operation.running
-                ),
+                lambda: host.screen_stack[-1] is screen,
                 message="FileOpen Escape did not cancel the import callback.",
             )
-            assert screen._library_notes_operation.token == operation.token
-            assert screen._library_notes_operation.status_line == (
-                "Import failed — choose a file and try again."
-            )
             assert not app.notes_scope_service.save_calls
+            await _wait_for_selector(screen, pilot, "#library-notes-import-back")
+            await _task10_activate_with_keyboard(
+                screen, pilot, "#library-notes-import-back"
+            )
+            await _wait_for_selector(screen, pilot, "#library-notes-export")
             await _task10_activate_with_keyboard(screen, pilot, "#library-notes-export")
             await _wait_for_selector(screen, pilot, "#library-export-destination")
             assert screen._library_export_scope == ExportScope(kind="notes")

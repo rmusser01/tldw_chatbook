@@ -17,6 +17,7 @@ from tldw_chatbook.Library.library_notes_state import (
     build_library_note_template_rows,
     ellipsize_note_title_cells,
 )
+from tldw_chatbook.Library.library_note_import_state import LibraryNoteImportSnapshot
 from tldw_chatbook.Library.library_notes_sync_state import (
     LibraryNotesSyncState,
     auto_sync_label,
@@ -36,6 +37,9 @@ from tldw_chatbook.Library.library_shell_state import (
 from tldw_chatbook.Widgets.Library.library_canvas_sync import PostRecomposeCallback
 from tldw_chatbook.Widgets.Library.library_choice_strip import (
     compose_library_choice_strip,
+)
+from tldw_chatbook.Widgets.Library.library_note_import_canvas import (
+    LibraryNoteImportCanvas,
 )
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
@@ -99,6 +103,10 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             ``mode == "sync"``. This deliberately does not use the name
             ``sync_state`` because that name belongs to the mounted canvas's
             targeted update hook.
+        import_snapshot: Reviewed one-time import presentation state. Required
+            when ``mode == "import"``.
+        import_receipt_available: Whether the latest same-session receipt can
+            reopen from list mode.
         title_placeholder_only: When ``True`` (editor mode only), the title
             ``Input`` renders empty with an "Untitled" placeholder instead
             of a literal editable "Untitled" value -- LIB-14's fix for a
@@ -127,6 +135,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         mode: str = "list",
         presentation_state: LibraryNotePresentationState | None = None,
         sync_panel_state: LibraryNotesSyncState | None = None,
+        import_snapshot: LibraryNoteImportSnapshot | None = None,
+        import_receipt_available: bool = False,
         tree_projection: LibraryNotesTreeProjection | None = None,
         tree_selected_placement_id: str = "",
         tree_deleted_folder_available: bool = False,
@@ -138,7 +148,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         load_message: str = "",
         **kwargs: Any,
     ) -> None:
-        """Initialize one list, editor, create, or sync canvas.
+        """Initialize one list, editor, create, sync, or import canvas.
 
         Args:
             list_state: List-mode rows, counts, selection, and empty-state copy.
@@ -148,6 +158,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 or sync.
             presentation_state: Canonical editor snapshot and UI-only flags.
             sync_panel_state: Display state for the sync surface.
+            import_snapshot: Display state for the one-time import surface.
             tree_projection: Placement-aware folder rows for list mode.
             tree_selected_placement_id: Context row for folder actions.
             tree_deleted_folder_available: Whether Undo folder removal is available.
@@ -167,6 +178,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.mode = mode
         self.presentation_state = presentation_state
         self.sync_panel_state = sync_panel_state
+        self.import_snapshot = import_snapshot
+        self.import_receipt_available = import_receipt_available
         self.tree_projection = tree_projection
         self.tree_selected_placement_id = tree_selected_placement_id
         self.tree_deleted_folder_available = tree_deleted_folder_available
@@ -213,6 +226,19 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             return
         if self.mode == "sync":
             yield from self._compose_sync()
+            return
+        if self.mode == "import":
+            if self.import_snapshot is not None:
+                yield LibraryNoteImportCanvas(
+                    self.import_snapshot,
+                    id="library-note-import-canvas",
+                )
+            yield Button(
+                "Back to Notes",
+                id="library-notes-import-back",
+                classes="library-canvas-action",
+                compact=True,
+            )
             return
         yield from self._compose_list()
 
@@ -265,6 +291,13 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             else:
                 next_action = "Choose a folder, then Sync now."
             return f"{prefix} · {status} · Next: {next_action}"
+        if self.mode == "import":
+            state = self.import_snapshot
+            status = "Import unavailable" if state is None else state.status_line
+            return (
+                f"{prefix} · Import once · {status} · "
+                "Next: Review the import workflow."
+            )
         state = self.list_state
         status = state.operation_status if state is not None else ""
         running = state is not None and state.operation_running
@@ -285,6 +318,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         mode: str,
         presentation_state: LibraryNotePresentationState | None,
         sync_panel_state: LibraryNotesSyncState | None,
+        import_snapshot: LibraryNoteImportSnapshot | None = None,
+        import_receipt_available: bool = False,
         tree_projection: LibraryNotesTreeProjection | None,
         tree_selected_placement_id: str,
         tree_deleted_folder_available: bool,
@@ -310,6 +345,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             mode: Canvas surface to render.
             presentation_state: Note editor/create presentation snapshot.
             sync_panel_state: Notes folder-sync panel snapshot.
+            import_snapshot: Reviewed one-time import presentation snapshot.
+            import_receipt_available: Whether the latest same-session receipt can reopen.
             tree_projection: Placement-aware folder rows for list mode.
             tree_selected_placement_id: Context row for folder actions.
             tree_deleted_folder_available: Whether Undo folder removal is available.
@@ -327,6 +364,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.mode = mode
         self.presentation_state = presentation_state
         self.sync_panel_state = sync_panel_state
+        self.import_snapshot = import_snapshot
+        self.import_receipt_available = import_receipt_available
         self.tree_projection = tree_projection
         self.tree_selected_placement_id = tree_selected_placement_id
         self.tree_deleted_folder_available = tree_deleted_folder_available
@@ -542,6 +581,20 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     ),
                     active_value=self.sort_mode,
                 )
+            import_phase = (
+                self.import_snapshot.phase if self.import_snapshot is not None else ""
+            )
+            import_label = (
+                "View import"
+                if import_phase == "importing"
+                else "Continue import"
+                if import_phase in {"destination", "checking", "review"}
+                or (
+                    import_phase == "select"
+                    and bool(self.import_snapshot and self.import_snapshot.selected_names)
+                )
+                else "Import"
+            )
             transfer_actions = Horizontal(
                 id="library-notes-transfer-actions", classes="ds-toolbar"
             )
@@ -549,12 +602,20 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             with transfer_actions:
                 for label, button_id in (
                     ("Sync", "library-notes-sync-open"),
-                    ("Import", "library-notes-import"),
+                    (import_label, "library-notes-import"),
                     ("Export", "library-notes-export"),
                 ):
                     yield Button(
                         label,
                         id=button_id,
+                        classes="library-canvas-action",
+                        compact=True,
+                        disabled=list_state.operation_running,
+                    )
+                if self.import_receipt_available:
+                    yield Button(
+                        "Last import",
+                        id="library-notes-import-receipt",
                         classes="library-canvas-action",
                         compact=True,
                         disabled=list_state.operation_running,

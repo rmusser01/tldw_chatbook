@@ -1,0 +1,431 @@
+"""Focused coordinator for the reviewed one-time Database Notes import."""
+
+from __future__ import annotations
+
+import asyncio
+import inspect
+import re
+import threading
+from collections.abc import Callable
+from dataclasses import replace
+from pathlib import Path
+from typing import Any
+
+from tldw_chatbook.Library.library_note_import_state import (
+    NoteImportPhase,
+    NoteImportWorkflowSnapshot,
+    add_selected_file,
+    apply_import_progress,
+    begin_checking,
+    begin_importing,
+    begin_retry,
+    initial_note_import_snapshot,
+    project_library_note_import_snapshot,
+    request_import_cancellation,
+    revisit_latest_receipt,
+    select_folder,
+    set_approved_plan,
+    set_destination_segments,
+    set_review_page,
+    settle_import,
+    show_review,
+)
+from tldw_chatbook.Notes.note_import_plan_models import (
+    ImportAction,
+    ImportBounds,
+    RootCollisionChoice,
+)
+
+
+class LibraryNoteImportController:
+    """Own one import workflow while keeping Textual and storage late-bound."""
+
+    def __init__(
+        self,
+        *,
+        bounds: ImportBounds,
+        database: Callable[[], Any],
+        folder_repository: Callable[[], Any],
+        receipt_repository: Callable[[], Any],
+        discover_import_sources: Callable[..., Any],
+        parse_import_sources: Callable[..., Any],
+        classify_import_batch: Callable[..., Any],
+        analyze_root_collision: Callable[..., Any],
+        resolve_root_collision: Callable[..., Any],
+        confirm_uncertain_match: Callable[..., Any],
+        apply_item_override: Callable[..., Any],
+        approve_note_import_plan: Callable[..., Any],
+        executor_factory: Callable[[Any, Any, Any], Any],
+        publish_snapshot: Callable[[Any], None],
+        refresh_after_settlement: Callable[[], Any],
+    ) -> None:
+        """Bind the narrow planning/execution seams used by this workflow."""
+        if not isinstance(bounds, ImportBounds):
+            raise TypeError("bounds must be ImportBounds.")
+        dependencies = (
+            folder_repository,
+            database,
+            receipt_repository,
+            discover_import_sources,
+            parse_import_sources,
+            classify_import_batch,
+            analyze_root_collision,
+            resolve_root_collision,
+            confirm_uncertain_match,
+            apply_item_override,
+            approve_note_import_plan,
+            executor_factory,
+            publish_snapshot,
+            refresh_after_settlement,
+        )
+        if not all(callable(dependency) for dependency in dependencies):
+            raise TypeError("Import controller dependencies must be callable.")
+
+        self._bounds = bounds
+        self._database = database
+        self._folder_repository = folder_repository
+        self._receipt_repository = receipt_repository
+        self._discover = discover_import_sources
+        self._parse = parse_import_sources
+        self._classify = classify_import_batch
+        self._analyze_collision = analyze_root_collision
+        self._resolve_collision = resolve_root_collision
+        self._confirm_match = confirm_uncertain_match
+        self._apply_override = apply_item_override
+        self._approve = approve_note_import_plan
+        self._executor_factory = executor_factory
+        self._publish_snapshot = publish_snapshot
+        self._refresh_after_settlement = refresh_after_settlement
+
+        self._state = initial_note_import_snapshot()
+        self._before_check: NoteImportWorkflowSnapshot | None = None
+        self._check_task: asyncio.Task[Any] | None = None
+        self._cancel_event: threading.Event | None = None
+        self._existing_top_level_names: tuple[str, ...] = ()
+        self._collision_rename = ""
+        self._error_message = ""
+
+    @property
+    def snapshot(self) -> NoteImportWorkflowSnapshot:
+        """Return the current frozen authority-bearing workflow snapshot."""
+        return self._state
+
+    @property
+    def presentation_snapshot(self) -> Any:
+        """Return the frozen redacted canvas projection."""
+        projected = project_library_note_import_snapshot(self._state)
+        return (
+            replace(projected, status_line=self._error_message)
+            if self._error_message
+            else projected
+        )
+
+    def publish(self) -> None:
+        """Publish the current redacted projection to the screen owner."""
+        self._publish_snapshot(self.presentation_snapshot)
+
+    def begin_selection(self) -> None:
+        """Start a new selection while retaining the latest session receipt."""
+        self._state = initial_note_import_snapshot(
+            latest_receipt=self._state.latest_receipt
+        )
+        self._existing_top_level_names = ()
+        self._collision_rename = ""
+        self._error_message = ""
+        self.publish()
+
+    def accept_selected_path(
+        self,
+        path: Path,
+        *,
+        is_folder: bool | None = None,
+    ) -> None:
+        """Admit one picker result as a file or the exclusive folder source."""
+        if not isinstance(path, Path):
+            raise TypeError("path must be a Path.")
+        folder = path.is_dir() if is_folder is None else is_folder
+        if type(folder) is not bool:
+            raise TypeError("is_folder must be a boolean when provided.")
+        self._state = (
+            select_folder(self._state, path)
+            if folder
+            else add_selected_file(self._state, path)
+        )
+        self._error_message = ""
+        self.publish()
+
+    def set_destination(self, value: str) -> None:
+        """Set mutation-free destination segments for selected files."""
+        if not isinstance(value, str):
+            raise TypeError("destination must be text.")
+        stripped = value.strip()
+        segments = (
+            tuple(part.strip() for part in re.split(r"[/\\]", stripped))
+            if stripped
+            else ()
+        )
+        if any(not segment for segment in segments):
+            raise ValueError("destination contains an empty folder segment.")
+        self._state = set_destination_segments(self._state, segments)
+        self._error_message = ""
+        self.publish()
+
+    async def check(self) -> None:
+        """Build a read-only review in the exact approved planner sequence."""
+        before = self._state
+        self._error_message = ""
+        self._before_check = before
+        self._state = begin_checking(before)
+        self.publish()
+        self._check_task = asyncio.current_task()
+        try:
+            plan, names = await asyncio.to_thread(self._plan_selection, before)
+        except asyncio.CancelledError:
+            self._state = before
+            self.publish()
+            raise
+        except Exception:
+            self._state = before
+            self._error_message = (
+                "Could not check these sources. Review the selection and try again."
+            )
+            self.publish()
+            raise
+        finally:
+            self._check_task = None
+            self._before_check = None
+        self._existing_top_level_names = names
+        self._state = show_review(self._state, plan)
+        self.publish()
+
+    def _plan_selection(
+        self, selected: NoteImportWorkflowSnapshot
+    ) -> tuple[Any, tuple[str, ...]]:
+        discovery = self._discover(selected.selected_paths, self._bounds)
+        destination = (
+            selected.destination_segments if selected.requires_destination else None
+        )
+        batch = self._parse(
+            discovery,
+            self._bounds,
+            destination_folder_segments=destination,
+        )
+        preliminary = self._classify(batch, self._bounds)
+        observations = self._receipt_repository().prior_observations_for_plan_read_only(
+            preliminary
+        )
+        plan = self._classify(
+            batch,
+            self._bounds,
+            prior_observations=observations,
+        )
+        names = self._top_level_folder_names()
+        return self._analyze_collision(plan, names), names
+
+    def _top_level_folder_names(self) -> tuple[str, ...]:
+        repository = self._folder_repository()
+        names: list[str] = []
+        offset = 0
+        while True:
+            page = repository.list_children(parent_id=None, limit=500, offset=offset)
+            names.extend(folder.name for folder in page.folders)
+            next_offset = page.next_folder_offset
+            if next_offset is None:
+                return tuple(names)
+            offset = next_offset
+
+    def set_collision_name(self, name: str) -> None:
+        """Retain a proposed collision rename until the explicit choice."""
+        if not isinstance(name, str):
+            raise TypeError("name must be text.")
+        self._collision_rename = name.strip()
+
+    def set_collision_choice(self, choice: str) -> None:
+        """Apply one explicit folder-root collision resolution."""
+        plan = self._require_review_plan()
+        collision_choice = RootCollisionChoice(choice)
+        renamed = (
+            self._collision_rename
+            if collision_choice is RootCollisionChoice.RENAMED_ROOT
+            else None
+        )
+        updated = self._resolve_collision(
+            plan,
+            collision_choice,
+            existing_top_level_names=self._existing_top_level_names,
+            renamed_root=renamed,
+        )
+        self._replace_review_plan(updated)
+
+    def confirm_uncertain(self, item_id: str) -> None:
+        """Confirm one uncertain match through the injected planner transform."""
+        self._replace_review_plan(
+            self._confirm_match(self._require_review_plan(), item_id)
+        )
+
+    def set_item_action(self, item_id: str, action: str) -> None:
+        """Apply one item action, choosing a valid update effect by default."""
+        plan = self._require_review_plan()
+        item = next((entry for entry in plan.items if entry.item_id == item_id), None)
+        if item is None:
+            raise ValueError("The review item is unavailable.")
+        selected = ImportAction(action)
+        replace_content = item.replace_content
+        add_membership = item.add_membership
+        if selected is ImportAction.UPDATE_EXISTING and not (
+            replace_content or add_membership
+        ):
+            replace_content = True
+        updated = self._apply_override(
+            plan,
+            item_id,
+            selected,
+            replace_content=replace_content,
+            add_membership=add_membership,
+        )
+        self._replace_review_plan(updated)
+
+    def set_item_choice(self, item_id: str, choice: str, enabled: bool) -> None:
+        """Apply one independent update-content or folder-membership choice."""
+        if type(enabled) is not bool:
+            raise TypeError("enabled must be a boolean.")
+        plan = self._require_review_plan()
+        item = next((entry for entry in plan.items if entry.item_id == item_id), None)
+        if item is None:
+            raise ValueError("The review item is unavailable.")
+        if choice not in {"replace_content", "add_membership"}:
+            raise ValueError("The review choice is unavailable.")
+        kwargs = {
+            "replace_content": item.replace_content,
+            "add_membership": item.add_membership,
+        }
+        kwargs[choice] = enabled
+        updated = self._apply_override(
+            plan,
+            item_id,
+            item.selected_action,
+            **kwargs,
+        )
+        self._replace_review_plan(updated)
+
+    def _require_review_plan(self) -> Any:
+        if self._state.phase is not NoteImportPhase.REVIEW or self._state.plan is None:
+            raise ValueError("Import review is not active.")
+        return self._state.plan
+
+    def _replace_review_plan(self, plan: Any) -> None:
+        page_number = self._state.page.page_number
+        self._state = set_review_page(
+            show_review(begin_checking(self._state), plan),
+            page_number,
+        )
+        self.publish()
+
+    def set_page(self, page_number: int) -> None:
+        """Move the bounded review page."""
+        self._state = set_review_page(self._state, page_number)
+        self.publish()
+
+    async def approve_and_execute(self) -> None:
+        """Approve the exact current review and execute only that object."""
+        plan = self._require_review_plan()
+        review_state = self._state
+        self._error_message = ""
+        approved = self._approve(plan)
+        self._state = begin_importing(set_approved_plan(self._state, approved))
+        self._cancel_event = threading.Event()
+        self.publish()
+        try:
+            executor = self._new_executor()
+            receipt = await executor.execute_async(
+                approved,
+                cancel_event=self._cancel_event,
+                progress_callback=self._apply_progress,
+            )
+        except Exception:
+            self._state = review_state
+            self._error_message = "Import could not start or finish safely. Review the plan and try again."
+            self.publish()
+            raise
+        finally:
+            self._cancel_event = None
+        self._state = settle_import(self._state, receipt)
+        self.publish()
+        await self._refresh()
+
+    def _apply_progress(self, progress: Any) -> None:
+        if self._state.phase is not NoteImportPhase.IMPORTING:
+            return
+        self._state = apply_import_progress(self._state, progress)
+        self.publish()
+
+    def cancel(self) -> None:
+        """Request cooperative cancellation of checking or execution."""
+        if self._state.phase is NoteImportPhase.CHECKING:
+            task = self._check_task
+            if task is not None:
+                task.cancel()
+            if self._before_check is not None:
+                self._state = self._before_check
+                self.publish()
+            return
+        if self._state.phase is not NoteImportPhase.IMPORTING:
+            return
+        if self._cancel_event is not None:
+            self._cancel_event.set()
+        self._state = request_import_cancellation(self._state)
+        self.publish()
+
+    async def retry_failed(self) -> None:
+        """Retry only receipt-authorized work using retained exact authority."""
+        receipt_state = self._state
+        self._error_message = ""
+        self._state = begin_retry(self._state)
+        approved = self._state.approved_plan
+        if approved is None:  # Defensive; begin_retry already validates authority.
+            raise ValueError("The approved import is unavailable.")
+        self._cancel_event = threading.Event()
+        self.publish()
+        loop = asyncio.get_running_loop()
+
+        def progress_callback(progress: Any) -> None:
+            loop.call_soon_threadsafe(self._apply_progress, progress)
+
+        try:
+            executor = self._new_executor()
+            receipt = await asyncio.to_thread(
+                executor.retry_failed,
+                approved,
+                cancel_event=self._cancel_event,
+                progress_callback=progress_callback,
+            )
+        except Exception:
+            self._state = receipt_state
+            self._error_message = (
+                "Retry could not finish safely. Review the receipt and try again."
+            )
+            self.publish()
+            raise
+        finally:
+            self._cancel_event = None
+        self._state = settle_import(self._state, receipt)
+        self.publish()
+        await self._refresh()
+
+    def revisit_receipt(self) -> None:
+        """Reopen the latest durable receipt retained in this app session."""
+        self._state = revisit_latest_receipt(self._state)
+        self.publish()
+
+    async def _refresh(self) -> None:
+        result = self._refresh_after_settlement()
+        if inspect.isawaitable(result):
+            await result
+
+    def _new_executor(self) -> Any:
+        """Build an executor from the current app-owned local authorities."""
+        return self._executor_factory(
+            self._database(),
+            self._folder_repository(),
+            self._receipt_repository(),
+        )

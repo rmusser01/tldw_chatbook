@@ -606,7 +606,7 @@ LIBRARY_MODAL_LAUNCH_EDGES = (
     _edge(
         _LIBRARY_SCREEN_FILE,
         "LibraryScreen",
-        "handle_library_notes_import",
+        "_push_library_note_import_picker",
         FileOpen,
     ),
     _edge(
