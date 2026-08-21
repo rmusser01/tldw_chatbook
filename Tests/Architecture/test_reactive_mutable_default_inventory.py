@@ -48,9 +48,11 @@ is *also* ``frozen=True``, but its ``current_messages: list`` and
 ``next_send_payload: dict`` fields are mutable containers frozen only
 blocks *reassigning* — so it was converted to a lambda factory instead of
 allowlisted. See ``Tests/Widgets/test_reactive_default_aliasing.py::
-test_console_context_modal_snapshots_do_not_leak_across_instances`` for the
-cross-instance leak this shape allows when a class is wrongly allowlisted
-(or never fixed).
+test_console_conversation_inspector_snapshots_do_not_leak_across_instances``
+(task-10 retired the standalone modal this test originally targeted; the
+regression it pins carried over to the shared inspector's Next Send tab)
+for the cross-instance leak this shape allows when a class is wrongly
+allowlisted (or never fixed).
 
 Born red three times: against the pre-fix tree (27 sites), again after the
 task-15771 review taught ``_call_name`` the ``ast.Subscript`` form the first

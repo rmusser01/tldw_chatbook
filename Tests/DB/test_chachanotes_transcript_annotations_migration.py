@@ -47,11 +47,14 @@ def _conversation(db: CharactersRAGDB) -> str:
     return conv_id
 
 
-def test_fresh_db_lands_on_v40_with_the_annotations_table(tmp_path: Path) -> None:
+def test_fresh_db_lands_on_v41_with_the_annotations_table(tmp_path: Path) -> None:
     db = CharactersRAGDB(tmp_path / "test.db", client_id="test")
     try:
         connection = db.get_connection()
-        assert _version(connection) == 40
+        # The DB now migrates on past v40 to the current schema version
+        # (v41, message_exchanges -- task-5); the annotations table this
+        # test checks was added at v40 and remains present.
+        assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
         cols = {
             row["name"]
             for row in connection.execute("PRAGMA table_info(transcript_annotations)")

@@ -2965,6 +2965,9 @@ agent_max_tool_call_seconds = 3600.0  # Ceiling on ONE tool call; 0 = unlimited
 # Ephemeral side chat (selection menu) — empty model = session model
 sidechat_model = ""  # e.g. "openai/gpt-5-mini"; empty = follow the current session's model
 sidechat_prompt_template = "Give me more details about: {selection}"  # {selection} = the quoted text
+# Conversation Inspector: capture each provider exchange (request/response)
+# locally per turn. Local-only; never synced. Set false to disable.
+exchange_capture = true
 
 [console.background_effects]
 enabled = false  # Optional Console ambience. Off by default for readability.

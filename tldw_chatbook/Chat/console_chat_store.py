@@ -9,7 +9,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
-from typing import Any, Callable, Iterable, Mapping, Protocol, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Mapping, Protocol, Sequence
 from uuid import uuid4
 
 from loguru import logger
@@ -46,6 +46,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     MessageAttachment,
 )
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
+from tldw_chatbook.Chat.console_exchange_capture import capture_to_blob
 from tldw_chatbook.Chat.console_roleplay_identity import (
     ConsolePresentationContext,
     effective_user_display_name,
@@ -80,6 +81,13 @@ from tldw_chatbook.TTS.profile_errors import ProfileValidationError
 from tldw_chatbook.TTS.profile_types import CharacterRef
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 from tldw_chatbook.Video_Generation.video_store import video_content_marker
+
+if TYPE_CHECKING:
+    # Annotation-only: ``from __future__ import annotations`` (top of file)
+    # defers evaluation of every type hint below, so this class never needs
+    # to exist at runtime here -- only ``capture_to_blob`` (imported above)
+    # is actually called.
+    from tldw_chatbook.Chat.console_exchange_capture import ExchangeCapture
 
 #: Maximum number of attachments a Console session may stage before send.
 MAX_PENDING_ATTACHMENTS = 5
@@ -316,6 +324,21 @@ class ConsoleChatPersistence(Protocol):
         can ever carry ``metadata_json``), and entirely optional -- the
         store probes for it and falls back to the content-carrying update
         path when an adapter does not provide it.
+        """
+
+    def append_message_exchanges(
+        self, *, message_id: str, rows: Sequence[Mapping[str, Any]]
+    ) -> bool:
+        """Upsert captured provider exchanges for a message (local-only).
+
+        The Conversation Inspector sibling of ``update_message_usage`` --
+        each row carries its own ``run_tag``/``seq`` identity, so this is an
+        upsert rather than a single-column write. Entirely optional, probed
+        the same hasattr+callable way as ``update_message_usage``: a
+        persistence adapter that does not implement it simply never
+        receives an exchange flush (``ConsoleChatStore._persist_exchanges_
+        only`` bails silently rather than falling back to the content path
+        -- captures have no content-carrying fallback to ride).
         """
 
     def get_message_version(self, message_id: str) -> int | None:
@@ -753,6 +776,40 @@ class ConsoleChatStore:
         # original's own record. Cleared the moment a new generation starts
         # on the message (`begin_variant_stream`/`prepare_message_retry`).
         self._variant_restored_message_ids: set[str] = set()
+        # Run tags whose captures were attached AFTER a variant-restore --
+        # the traffic really happened, so (unlike usage) it is kept rather
+        # than dropped, but flagged ``abandoned`` on the durable row so a
+        # viewer can tell it apart from the answer actually shown. Keyed by
+        # message id; a run_tag once marked abandoned here stays abandoned
+        # for every later flush of that message (see
+        # ``attach_message_exchanges``/``_persist_exchanges_only``).
+        self._abandoned_exchange_run_tags: dict[str, set[str]] = {}
+        # Qodo PR #1883 finding 4: memoizes ``capture_to_blob``'s
+        # zlib-compressed JSON per (message, run_tag, seq, status) so
+        # ``_persist_exchanges_only`` -- called on EVERY flush of a
+        # message with exchanges, e.g. once per tool call in a long agent
+        # turn -- does not re-compress every still-unchanged capture on
+        # every call. Keyed by message id (outer) then (run_tag, seq,
+        # status) (inner) so one message's blobs can never serve another's
+        # lookup. ``status`` is part of the inner key because a "stopped"
+        # snapshot can legitimately be superseded by a later non-"stopped"
+        # capture for the same (run_tag, seq) (see
+        # ``attach_message_exchanges``'s merge rule) -- that status change
+        # naturally misses this cache and recompresses the new bytes.
+        # ``_persist_exchanges_only`` prunes each message's inner dict down
+        # to exactly its current capture keys on every flush, so a
+        # superseded status's stale blob does not linger past its own
+        # message's next persist. M2 (softened -- this used to read as an
+        # unqualified "cannot grow past what is actually live" bound, which
+        # was not true of every path a message can disappear by):
+        # ``delete_message`` and session-close both drop a message's
+        # entire entry outright when the message itself goes away, and
+        # ``restore_state`` clears this cache wholesale on a full state
+        # replacement (session switch / restart replay) -- but only those
+        # three sites do the dropping; an in-memory message id that
+        # disappears some OTHER way is not itself proof this cache's entry
+        # for it goes away too.
+        self._exchange_blob_cache: dict[str, dict[tuple[str, int, str], bytes]] = {}
         # Ephemeral fence for issued speech snapshots. It deliberately lives
         # outside ConsoleChatMessage so it is neither persisted nor restored.
         self._message_speech_revisions: dict[str, int] = {}
@@ -1639,6 +1696,7 @@ class ConsoleChatStore:
             self._message_completion_generations.pop(message_id, None)
             self._native_parent_by_message.pop(message_id, None)
             self._roleplay_message_projection_candidates.pop(message_id, None)
+            self._exchange_blob_cache.pop(message_id, None)
 
         self._messages_by_session.pop(session_id, None)
         self._tool_markers_by_session.pop(session_id, None)
@@ -2095,6 +2153,14 @@ class ConsoleChatStore:
         self._failed_retry_message_ids.clear()
         self._message_speech_revisions.clear()
         self._message_completion_generations.clear()
+        # M2: both keyed by message id, same as the caches immediately
+        # above -- previously left uncleared here, so a restore (session
+        # switch / app restart replay, distinct from delete_message and
+        # session-close, the only two call sites that used to drop entries)
+        # could leave stale entries keyed by message ids that no longer
+        # exist in the replaced state.
+        self._abandoned_exchange_run_tags.clear()
+        self._exchange_blob_cache.clear()
         self._payload_revisions.clear()
         self._conversation_context_epochs.clear()
         self._speech_preference_epochs.clear()
@@ -3187,6 +3253,7 @@ class ConsoleChatStore:
             self._variant_restored_message_ids.discard(node_id)
             self._failed_retry_message_ids.discard(node_id)
             self._message_speech_revisions.pop(node_id, None)
+            self._exchange_blob_cache.pop(node_id, None)
         self._purge_tool_markers(session_id, removed)
         if self._active_leaf_by_session.get(session_id) in removed:
             self._active_leaf_by_session[session_id] = owner_id
@@ -4045,6 +4112,7 @@ class ConsoleChatStore:
             self._failed_retry_message_ids.discard(node_id)
             self._message_speech_revisions.pop(node_id, None)
             self._message_completion_generations.pop(node_id, None)
+            self._exchange_blob_cache.pop(node_id, None)
         # Only when the deleted branch was on the active path does the leaf move
         # (up to the deleted node's parent); an off-path delete leaves it alone.
         self._purge_tool_markers(session_id, set(subtree_ids))
@@ -4873,6 +4941,60 @@ class ConsoleChatStore:
             self._persist_usage_only(message)
         return self._snapshot(message)
 
+    def attach_message_exchanges(
+        self, message_id: str, captures: Sequence["ExchangeCapture"]
+    ) -> None:
+        """Attach captured exchanges; flush now if the message is terminal.
+
+        Mirrors ``set_message_usage``'s stop-path contract (terminal mark
+        first, late attach flushes itself) with ONE deliberate divergence: a
+        variant-restored message KEEPS incoming captures, marked abandoned
+        (spec owner decision 6) -- the traffic really happened; usage drops
+        here because it would misprice the restored answer, but captures
+        carry their own ``run_tag`` and cannot misattribute.
+
+        Dedup is by ``(run_tag, seq)`` within this merge: a capture whose
+        key already exists on the message is normally dropped in favor of
+        the FIRST-attached capture for that key, EXCEPT that a "stopped"
+        snapshot is replaced by a later, non-"stopped" capture for the same
+        key -- a stop-time partial snapshot superseded by the run's actual
+        closed outcome. The DB upsert (``append_message_exchanges_local``)
+        is keyed the same way, so a repeat flush of the same key is always
+        harmless.
+        """
+        message = self._message_or_raise(message_id)
+        abandoned = message.id in self._variant_restored_message_ids
+        merged = {(c.run_tag, c.seq): c for c in message.exchanges}
+        for capture in captures:
+            key = (capture.run_tag, capture.seq)
+            existing = merged.get(key)
+            if existing is None or (
+                existing.status == "stopped" and capture.status != "stopped"
+            ):
+                merged[key] = capture
+        message.exchanges = tuple(
+            sorted(merged.values(), key=lambda c: (c.run_tag, c.seq))
+        )
+        if abandoned:
+            self._abandoned_exchange_run_tags.setdefault(message.id, set()).update(
+                c.run_tag for c in captures
+            )
+        if message.status not in {"pending", "streaming"}:
+            self._persist_exchanges_only(message)
+
+    def abandoned_exchange_run_tags(self, message_id: str) -> frozenset[str]:
+        """Public read of ``_abandoned_exchange_run_tags`` for one message.
+
+        task-9: the Conversation Inspector's Exchange tab needs to render
+        the "abandoned regeneration" badge for a NATIVE (in-memory, not-yet
+        -persisted) capture too, not just a DB-sourced one -- this closes
+        the "known gap" ``_build_console_inspector_exchanges_loader``'s
+        docstring used to describe (a native capture always reporting
+        ``abandoned=False``). Returns an immutable snapshot -- the caller
+        gets no handle on the private mutable set.
+        """
+        return frozenset(self._abandoned_exchange_run_tags.get(message_id, ()))
+
     def set_message_metadata(
         self, message_id: str, metadata: MessageMetadata
     ) -> ConsoleChatMessage:
@@ -4936,6 +5058,15 @@ class ConsoleChatStore:
                 self._persist_existing_message(
                     message, preserve_provider_continuation=True
                 )
+                # ``_persist_existing_message`` only reaches its own
+                # exchanges hook when the message ALREADY had a
+                # persisted_message_id -- an empty-content deferred message
+                # never gets one there (no content to create a row for), so
+                # this call is normally a silent no-op via
+                # ``_persist_exchanges_only``'s own guard. It stays here for
+                # the rare case where the row already existed.
+                if message.exchanges:
+                    self._persist_exchanges_only(message)
                 self._record_message_completed(session_id, message.id)
                 return self._snapshot(message)
 
@@ -4957,6 +5088,13 @@ class ConsoleChatStore:
                     force_stable_message_id=True,
                     terminal_persistence=True,
                 )
+                # This branch creates the durable row directly via
+                # ``_persist_new_message`` rather than
+                # ``_persist_existing_message``, so it never passes through
+                # that method's own exchanges hook -- flush explicitly here,
+                # mirroring it, now that ``persisted_message_id`` exists.
+                if message.exchanges:
+                    self._persist_exchanges_only(message)
             except Exception:
                 self._pending_persistence_message_ids.discard(message.id)
                 logger.warning("terminal_citation_persistence_abandoned")
@@ -6147,6 +6285,75 @@ class ConsoleChatStore:
             return
         self._persist_existing_message(message)
 
+    def _persist_exchanges_only(self, message: ConsoleChatMessage) -> None:
+        """Flush captured provider exchanges without a version bump.
+
+        The exchanges twin of ``_persist_usage_only``: the
+        ``message_exchanges`` table carries no sync trigger at all (see the
+        v40->v41 migration), so this never rides the general-purpose
+        content path. Unlike usage, there is no content-carrying fallback
+        to degrade to -- captures only ever reach the DB through this
+        dedicated path, so a caller with no adapter, no persisted row yet,
+        or nothing to write bails out silently rather than falling back to
+        ``_persist_existing_message``.
+        """
+        if self.persistence is None:
+            return
+        if message.persisted_message_id is None or not message.exchanges:
+            return
+        writer = getattr(self.persistence, "append_message_exchanges", None)
+        if not callable(writer):
+            return
+        # Row-building (including ``capture_to_blob``'s JSON serialization)
+        # lives INSIDE the try, not just the writer call: a malformed
+        # capture (non-str-keyed nested dict, a circular reference in
+        # ``request``/``response``) can raise during serialization, and the
+        # never-raise contract here covers the whole flush, not just the
+        # network/DB half of it -- a serialization error must degrade to
+        # the same warning log as a write failure, never unwind past this
+        # method into an already-committed terminal mark.
+        try:
+            abandoned_tags = self._abandoned_exchange_run_tags.get(message.id, set())
+            # Qodo PR #1883 finding 4: this method runs on EVERY flush of a
+            # message with exchanges (e.g. once per tool call in a long
+            # agent turn), but a capture's compressed blob only needs
+            # computing once per (run_tag, seq, status) -- captures are
+            # frozen and, per ``attach_message_exchanges``'s merge rule,
+            # the ONLY legitimate content change for an existing key is a
+            # "stopped" snapshot superseded by a later non-"stopped"
+            # capture, which is a STATUS change and so is naturally a cache
+            # miss (a different key) rather than a stale hit.
+            blob_cache = self._exchange_blob_cache.setdefault(message.id, {})
+            current_keys: set[tuple[str, int, str]] = set()
+            rows = []
+            for c in message.exchanges:
+                cache_key = (c.run_tag, c.seq, c.status)
+                current_keys.add(cache_key)
+                blob = blob_cache.get(cache_key)
+                if blob is None:
+                    blob = capture_to_blob(c)
+                    blob_cache[cache_key] = blob
+                rows.append(
+                    {
+                        "run_tag": c.run_tag,
+                        "seq": c.seq,
+                        "status": c.status,
+                        "abandoned": c.run_tag in abandoned_tags,
+                        "capture_blob": blob,
+                        "created_at": c.created_at,
+                    }
+                )
+            # Prune keys no longer on the message (e.g. a superseded
+            # "stopped" blob) so this message's cache entry cannot outgrow
+            # its current capture count.
+            for stale_key in blob_cache.keys() - current_keys:
+                del blob_cache[stale_key]
+            writer(message_id=message.persisted_message_id, rows=rows)
+        except Exception as exc:
+            logger.bind(message_id=message.id, error=repr(exc)).warning(
+                "exchange_flush_failed"
+            )
+
     def _persist_metadata_only(self, message: ConsoleChatMessage) -> None:
         """Flush a persisted message's metadata without a version bump.
 
@@ -6259,6 +6466,8 @@ class ConsoleChatStore:
         had_provider_continuation = message.provider_continuation is not None
         if not self.persistence.update_message_content(**update_kwargs):
             return False
+        if message.exchanges:
+            self._persist_exchanges_only(message)
         if had_provider_continuation:
             self._refresh_and_project_provider_continuation(message)
             return True

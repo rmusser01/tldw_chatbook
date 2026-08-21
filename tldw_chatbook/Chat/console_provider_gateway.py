@@ -7,11 +7,13 @@ import contextlib
 import json
 import math
 import threading
+import uuid
 import weakref
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from contextvars import copy_context
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from types import GeneratorType, MappingProxyType
 from typing import Any, AsyncIterator, Callable, Literal, cast
 from urllib.parse import urlparse, urlunparse
@@ -28,6 +30,11 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatRateLimitError,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
+from tldw_chatbook.Chat.console_exchange_capture import (
+    ExchangeCapture,
+    build_request_capture,
+    stub_binary_strings,
+)
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.console_provider_endpoints import (
     effective_provider_endpoint,
@@ -232,6 +239,90 @@ class ConsoleProviderStreamSignals:
             self._active_usage_payloads.pop(token, None)
             self.completed_usage_payloads.append(dict(payload))
 
+    run_tag: str = field(default_factory=lambda: uuid.uuid4().hex)
+    # Fail-safe default: OFF. A bare `ConsoleProviderStreamSignals()` (every
+    # construction site that does not explicitly opt in -- visual
+    # evaluation, the agent-bridge fallback) must never capture. Only
+    # `_new_run_stream_signals()` (console_chat_controller.py) opts in,
+    # reading the actual `[console] exchange_capture` config gate (review
+    # finding I1: the two bare-construction sites used to inherit `True`
+    # and capture unconditionally, for output nobody ever reads).
+    exchange_capture_enabled: bool = False
+    completed_exchanges: list["ExchangeCapture"] = field(default_factory=list, repr=False)
+    _active_exchanges: dict[object, dict[str, Any]] = field(
+        default_factory=dict, init=False, repr=False)
+    _exchange_lock: threading.Lock = field(
+        default_factory=threading.Lock, init=False, repr=False)
+
+    def _begin_scoped_exchange(self, token: object, flight: dict[str, Any]) -> None:
+        with self._exchange_lock:
+            self._active_exchanges[token] = flight
+
+    def _mutate_scoped_exchange(self, token: object, key: str, items: list) -> None:
+        """Never raises (review finding M4): capture is diagnostic tooling
+        layered over the real send path -- the gateway's own call sites
+        (record_exchange_content/record_exchange_tool_calls) are NOT all
+        wrapped in their own try/except, and three of them sit inside
+        ``_stream_generic_chat``'s worker ``try``, whose ``except
+        BaseException`` would otherwise convert a capture-bookkeeping bug
+        into a fabricated provider error, turning a good turn into a failed
+        one. No exception text/traceback logged -- ``items`` can hold raw
+        captured request/response content."""
+        try:
+            with self._exchange_lock:
+                flight = self._active_exchanges.get(token)
+                if flight is not None:
+                    flight[key].extend(items)
+        except Exception as exc:
+            logger.warning(f"exchange_capture_mutate_failed: {type(exc).__name__}")
+
+    def _mark_scoped_exchange_synthetic(self, token: object) -> None:
+        """Stamp one call's in-flight record as carrying locally
+        synthesized fallback UI copy, not provider output (review finding
+        M3). Never raises -- same M4 contract as ``_mutate_scoped_
+        exchange``."""
+        try:
+            with self._exchange_lock:
+                flight = self._active_exchanges.get(token)
+                if flight is not None:
+                    flight["synthetic_fallback"] = True
+        except Exception as exc:
+            logger.warning(f"exchange_capture_mark_synthetic_failed: {type(exc).__name__}")
+
+    def _complete_scoped_exchange(
+        self, token: object, status: str,
+        usage_payload: dict[str, Any] | None,
+    ) -> None:
+        """Never raises (review finding M4) -- same "never break send"
+        contract as ``_mutate_scoped_exchange``: this is the ``close_
+        exchange`` call site's own implementation, called at both a
+        `finally` (stream_chat) and inside ``_stream_generic_chat``'s
+        worker `try`/`except` (twice), where an uncaught raise here would
+        either mask the real cleanup or itself be relabeled a provider
+        error. No exception text/traceback logged -- ``flight`` holds raw
+        captured request/response content."""
+        try:
+            with self._exchange_lock:
+                flight = self._active_exchanges.pop(token, None)
+                if flight is None:
+                    return
+                self.completed_exchanges.append(_flight_capture(
+                    self.run_tag, len(self.completed_exchanges), flight,
+                    status, usage_payload))
+        except Exception as exc:
+            logger.warning(f"exchange_capture_complete_failed: {type(exc).__name__}")
+
+    def exchange_captures(self) -> list["ExchangeCapture"]:
+        """Completed calls + in-flight tails (as "stopped") — tails cover
+        aborted streams whose generator never reached its own close-out,
+        mirroring usage_payloads()."""
+        with self._exchange_lock:
+            captures = list(self.completed_exchanges)
+            for flight in self._active_exchanges.values():
+                captures.append(_flight_capture(
+                    self.run_tag, len(captures), flight, "stopped", None))
+            return captures
+
 
 @dataclass(slots=True)
 class ConsoleProviderCallSignals:
@@ -246,15 +337,45 @@ class ConsoleProviderCallSignals:
         init=False,
         repr=False,
     )
+    # Review finding M3: set by mark_synthetic_fallback(), consumed by the
+    # very next record_exchange_content() call in the generic stream loop --
+    # NOT the aggregate's own sticky Event (that one never resets, and is
+    # shared across every call this signals object ever makes; this one is
+    # per-call and self-clearing, so only the ONE chunk actually generated
+    # as fallback UI copy gets labeled, never a later real answer).
+    _synthetic_pending: bool = field(default=False, init=False, repr=False)
 
     @property
     def synthetic_fallback_emitted(self) -> bool:
         """Return whether the aggregate emitted synthetic fallback usage."""
         return self._aggregate.synthetic_fallback_emitted
 
+    @property
+    def exchange_capture_enabled(self) -> bool:
+        """Return whether the aggregate has exchange capture enabled.
+
+        Callers check this BEFORE doing any capture-building work (allowlist
+        filtering, ``json.dumps``, ``stub_binary_strings``'s recursive
+        walk) -- ``begin_exchange`` below also checks it, but only after
+        that work is already done, so it cannot save the cost on its own
+        (review finding I1).
+        """
+        return self._aggregate.exchange_capture_enabled
+
     def mark_synthetic_fallback(self) -> None:
-        """Mark synthetic fallback usage on the aggregate signal."""
+        """Mark synthetic fallback usage on the aggregate signal, and flag
+        this call's NEXT recorded content chunk as synthetic (review
+        finding M3 -- consumed once by ``take_synthetic_pending()``)."""
+        self._synthetic_pending = True
         self._aggregate.mark_synthetic_fallback()
+
+    def take_synthetic_pending(self) -> bool:
+        """Consume (and clear) whether ``mark_synthetic_fallback()`` fired
+        for the chunk about to be recorded. Self-clearing so only the one
+        chunk actually generated as fallback UI copy is ever labeled."""
+        pending = self._synthetic_pending
+        self._synthetic_pending = False
+        return pending
 
     def record_usage_payload(self, payload: Mapping[str, Any]) -> None:
         """Merge a provider usage payload into this call's snapshot.
@@ -293,6 +414,55 @@ class ConsoleProviderCallSignals:
                 dict(self._usage_payload) if self._usage_payload is not None else None
             )
 
+    def begin_exchange(self, *, provider: str, model: str, endpoint: str | None,
+                       request: dict, omitted_keys: tuple[str, ...]) -> None:
+        """Open this call's capture. ONE stream_chat invocation == one
+        exchange; close_exchange in stream_chat's finally is the close site.
+
+        ``request`` must be a freshly built, allowlisted dict -- i.e.
+        ``build_request_capture``'s output -- never raw ``chat_api_call``
+        kwargs, which would alias live state and re-admit credentials.
+        """
+        if not self._aggregate.exchange_capture_enabled:
+            return
+        self._aggregate._begin_scoped_exchange(self._token, {
+            "provider": provider, "model": model, "endpoint": endpoint,
+            "request": request, "omitted_keys": omitted_keys,
+            "content": [], "tool_calls": [], "synthetic_fallback": False,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+
+    def record_exchange_content(self, text: str, *, synthetic: bool = False) -> None:
+        """Append one content chunk to this call's in-flight capture.
+
+        Args:
+            synthetic: True when ``text`` is locally synthesized fallback
+                UI copy (``NO_PROVIDER_CONTENT_COPY``/``UNSUPPORTED_
+                PROVIDER_RESPONSE_COPY``), never actual provider output --
+                stamped into the capture's response so the Exchange tab can
+                label it instead of presenting UI copy as a model answer
+                (review finding M3).
+        """
+        if text:
+            self._aggregate._mutate_scoped_exchange(self._token, "content", [text])
+            if synthetic:
+                self._aggregate._mark_scoped_exchange_synthetic(self._token)
+
+    def record_exchange_tool_calls(self, calls: "Sequence[Mapping[str, Any]]") -> None:
+        # Review finding M9: `dict(c)` is a SHALLOW copy -- the nested
+        # `function` dict (and any other nested mapping/list) stays aliased
+        # to the live object the caller passed in until this flush reaches
+        # `close_exchange`/`_flight_capture`, seconds later on a real turn.
+        # `deepcopy` closes that window permanently.
+        self._aggregate._mutate_scoped_exchange(
+            self._token, "tool_calls", [deepcopy(dict(c)) for c in calls])
+
+    def close_exchange(self, status: str = "complete") -> None:
+        """Publish this call's capture exactly once (token pop = move
+        semantics; a second close finds nothing)."""
+        self._aggregate._complete_scoped_exchange(
+            self._token, status, self.usage_snapshot())
+
 
 _ProviderStreamSignals = ConsoleProviderStreamSignals | ConsoleProviderCallSignals
 
@@ -322,6 +492,33 @@ def safe_provider_error_copy(provider: str, exc: BaseException) -> str:
     status_code = getattr(exc, "status_code", None)
     status_copy = f" Status: {status_code}." if isinstance(status_code, int) else ""
     return f"Provider error from {provider or 'unknown'}: {category}.{status_copy}"
+
+
+def _flight_capture(run_tag: str, seq: int, flight: dict[str, Any],
+                    status: str, usage_payload: dict[str, Any] | None) -> ExchangeCapture:
+    """Build the immutable capture for one call's in-flight record.
+
+    Normalizes THIS call's usage payload on its own (never a cross-call
+    merge — the same disjoint-buckets rule the aggregate documents).
+    """
+    usage_json = None
+    if usage_payload:
+        try:
+            usage = ProviderUsage.from_provider_payload(
+                usage_payload, provider=flight["provider"], model=flight["model"])
+            usage_json = usage.to_json() if usage is not None else None
+        except Exception:
+            usage_json = None
+    return ExchangeCapture(
+        run_tag=run_tag, seq=seq, created_at=flight["created_at"],
+        provider=flight["provider"], model=flight["model"],
+        endpoint=flight["endpoint"], request=flight["request"],
+        response={"content": "".join(flight["content"]),
+                  "tool_calls": list(flight["tool_calls"]),
+                  "synthetic_fallback": bool(flight.get("synthetic_fallback", False))},
+        status=status, usage_json=usage_json,
+        omitted_keys=flight["omitted_keys"],
+    )
 
 
 def _provider_error_copy_with_model_recovery(
@@ -2246,6 +2443,14 @@ class ConsoleProviderGateway:
             if signals is not None
             else None
         )
+        # Tracks whether the generator drained a provider call normally, vs.
+        # being torn down early (consumer Stop/cancel -> GeneratorExit /
+        # CancelledError thrown into a suspended `yield`). Read only in the
+        # `finally` below to pick the exchange's terminal status -- an
+        # in-flight worker error already closed its own exchange as "error"
+        # before enqueueing (token-pop move semantics make the second close
+        # here a no-op), so this flag only decides "complete" vs "stopped".
+        completed = False
         try:
             if not resolution.ready or not resolution.model:
                 return
@@ -2278,8 +2483,71 @@ class ConsoleProviderGateway:
             )
             if resolution.provider in {"llama_cpp", "local_llamacpp"}:
                 wire_messages = [thaw_json(item) for item in prepared.messages]
+                # This branch builds its own HTTP body -- the one place
+                # capture IS the literal wire payload (spec Non-goals).
+                # `api_key` never enters `build_llamacpp_chat_payload`'s
+                # signature, so it structurally cannot leak into the
+                # captured request even though it rides `stream_llamacpp_
+                # chat`/`complete_llamacpp_chat`'s kwargs as auth headers.
+                if call_signals is not None and call_signals.exchange_capture_enabled:
+                    try:
+                        wire = build_llamacpp_chat_payload(
+                            model=resolution.model,
+                            messages=wire_messages,
+                            stream=resolution.streaming,
+                            temperature=resolution.temperature,
+                            top_p=resolution.top_p,
+                            min_p=resolution.min_p,
+                            top_k=resolution.top_k,
+                            max_tokens=effective_resolution.max_tokens,
+                            reasoning_effort=resolution.reasoning_effort,
+                            thinking_budget_tokens=resolution.thinking_budget_tokens,
+                        )
+                        capture_request, omitted = build_request_capture(
+                            {"model": resolution.model}
+                        )
+                        capture_request["wire_payload"] = stub_binary_strings(wire)
+                        call_signals.begin_exchange(
+                            provider=str(resolution.provider or ""),
+                            model=str(resolution.model or ""),
+                            endpoint=normalize_llamacpp_base_url(resolution.base_url),
+                            request=capture_request, omitted_keys=omitted,
+                        )
+                    except Exception:
+                        logger.opt(exception=True).warning("exchange_capture_begin_failed")
                 if not resolution.streaming:
-                    completion = await self.complete_llamacpp_chat(
+                    # M1: an HTTP failure here must close the exchange as
+                    # "error" -- left to the outer `finally` below, it would
+                    # see `completed` still False and close as "stopped"
+                    # (a real send failure misreported as a user-initiated
+                    # stop), unlike the generic path's own explicit
+                    # close_exchange(status="error") before it re-raises.
+                    try:
+                        completion = await self.complete_llamacpp_chat(
+                            base_url=resolution.base_url,
+                            model=resolution.model,
+                            messages=wire_messages,
+                            temperature=resolution.temperature,
+                            top_p=resolution.top_p,
+                            min_p=resolution.min_p,
+                            top_k=resolution.top_k,
+                            max_tokens=effective_resolution.max_tokens,
+                            reasoning_effort=resolution.reasoning_effort,
+                            thinking_budget_tokens=resolution.thinking_budget_tokens,
+                            api_key=resolution.api_key,
+                        )
+                    except Exception:
+                        if call_signals is not None:
+                            call_signals.close_exchange(status="error")
+                        raise
+                    if call_signals is not None:
+                        call_signals.record_exchange_content(completion)
+                    if completion:
+                        yield completion
+                    completed = True
+                    return
+                try:
+                    async for chunk in self.stream_llamacpp_chat(
                         base_url=resolution.base_url,
                         model=resolution.model,
                         messages=wire_messages,
@@ -2291,33 +2559,31 @@ class ConsoleProviderGateway:
                         reasoning_effort=resolution.reasoning_effort,
                         thinking_budget_tokens=resolution.thinking_budget_tokens,
                         api_key=resolution.api_key,
-                    )
-                    if completion:
-                        yield completion
-                    return
-                async for chunk in self.stream_llamacpp_chat(
-                    base_url=resolution.base_url,
-                    model=resolution.model,
-                    messages=wire_messages,
-                    temperature=resolution.temperature,
-                    top_p=resolution.top_p,
-                    min_p=resolution.min_p,
-                    top_k=resolution.top_k,
-                    max_tokens=effective_resolution.max_tokens,
-                    reasoning_effort=resolution.reasoning_effort,
-                    thinking_budget_tokens=resolution.thinking_budget_tokens,
-                    api_key=resolution.api_key,
-                ):
-                    yield chunk
+                    ):
+                        if call_signals is not None:
+                            call_signals.record_exchange_content(chunk)
+                        yield chunk
+                except Exception:
+                    # Only real provider/HTTP failures land here -- a
+                    # consumer abort throws GeneratorExit/CancelledError
+                    # (BaseException, not Exception) into this suspended
+                    # `yield`, so it still falls through to the outer
+                    # `finally`'s "stopped" close, unchanged.
+                    if call_signals is not None:
+                        call_signals.close_exchange(status="error")
+                    raise
+                completed = True
                 return
             if resolution.execution_key:
                 async for chunk in self._stream_generic_chat(
                     effective_resolution, prepared, signals=call_signals
                 ):
                     yield chunk
+                completed = True
                 return
         finally:
             if call_signals is not None:
+                call_signals.close_exchange(status="complete" if completed else "stopped")
                 call_signals.close_usage_call()
 
     async def _stream_generic_chat(
@@ -2370,6 +2636,17 @@ class ConsoleProviderGateway:
         def worker() -> None:
             try:
                 kwargs = self._chat_api_kwargs_from_prepared(resolution, request)
+                if signals is not None and signals.exchange_capture_enabled:
+                    try:
+                        capture_request, omitted = build_request_capture(kwargs)
+                        signals.begin_exchange(
+                            provider=str(resolution.provider or ""),
+                            model=str(resolution.model or ""),
+                            endpoint=getattr(resolution, "base_url", None),
+                            request=capture_request, omitted_keys=omitted,
+                        )
+                    except Exception:
+                        logger.opt(exception=True).warning("exchange_capture_begin_failed")
                 response = self._chat_api_call(**kwargs)
                 provider_response = response
                 accumulator = _ToolCallAccumulator() if request.tools else None
@@ -2394,11 +2671,26 @@ class ConsoleProviderGateway:
                         break
                     if text:
                         emitted_content = True
+                    if signals is not None and text:
+                        # M3: the fallback UI copy this loop can receive
+                        # from `normalize_provider_response` (NO_PROVIDER_
+                        # CONTENT_COPY / UNSUPPORTED_PROVIDER_RESPONSE_COPY)
+                        # is locally synthesized, never provider output --
+                        # take_synthetic_pending() reports whether THIS
+                        # specific chunk was one (set by mark_synthetic_
+                        # fallback() just before that generator's yield),
+                        # so the capture records it as such instead of
+                        # presenting UI copy as a model answer.
+                        signals.record_exchange_content(
+                            text, synthetic=signals.take_synthetic_pending()
+                        )
                     enqueue(_QueueItem.content(text))
                 if stop_event.is_set():
                     return
                 if accumulator is not None:
                     calls = accumulator.calls()
+                    if signals is not None and calls:
+                        signals.record_exchange_tool_calls(calls)
                     metadata = _provider_turn_metadata(provider_response)
                     if calls or metadata is not None:
                         enqueue(_QueueItem.native_tool_calls(calls, metadata))
@@ -2414,6 +2706,8 @@ class ConsoleProviderGateway:
                             "Provider returned no content and no tool calls.",
                             provider=resolution.provider,
                         )
+                        if signals is not None:
+                            signals.close_exchange(status="error")
                         enqueue(
                             _QueueItem.error(
                                 self._safe_error_copy(
@@ -2430,6 +2724,8 @@ class ConsoleProviderGateway:
                     model=resolution.model,
                     status_code=status_code,
                 )
+                if signals is not None:
+                    signals.close_exchange(status="error")
                 enqueue(
                     _QueueItem.error(
                         error_copy,

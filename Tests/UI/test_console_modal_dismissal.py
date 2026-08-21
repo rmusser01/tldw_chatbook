@@ -92,8 +92,9 @@ from tldw_chatbook.Widgets.Console.console_character_picker_modal import (
 from tldw_chatbook.Widgets.Console.console_citation_sources_modal import (
     ConsoleCitationSourcesModal,
 )
-from tldw_chatbook.Widgets.Console.console_context_modal import ConsoleContextModal
-from tldw_chatbook.Widgets.Console.console_cost_modal import ConsoleCostModal
+from tldw_chatbook.Widgets.Console.console_conversation_inspector import (
+    ConsoleConversationInspector,
+)
 from tldw_chatbook.Widgets.Console.console_image_viewer_modal import (
     ConsoleImageViewerModal,
 )
@@ -221,6 +222,24 @@ _RESTORE_OPENER = "restore opener or Console composer fallback"
 
 async def _empty_context_snapshot() -> ConsoleContextSnapshot:
     return ConsoleContextSnapshot(current_messages=[], next_send_payload={})
+
+
+async def _empty_exchanges_loader(_native_message_id: str) -> list[tuple[Any, bool]]:
+    return []
+
+
+def _inspector_factory() -> ConsoleConversationInspector:
+    """task-8: the Conversation Inspector replaced the two standalone
+    modals it superseded (retired in task-10) as the Console root's actual
+    launch target -- both entry points now push this instead (see
+    ``chat_screen.py``'s ``_push_console_inspector``)."""
+    return ConsoleConversationInspector(
+        rows=[],
+        totals=ConsoleCostRowTotals(0, 0.0, False, 0),
+        turns=[],
+        exchanges_loader=_empty_exchanges_loader,
+        snapshot_factory=_empty_context_snapshot,
+    )
 
 
 async def _empty_records(_query: str) -> list[dict[str, object]]:
@@ -386,21 +405,11 @@ TASK2_MODAL_CONTRACTS = (
         _RESTORE_OPENER,
     ),
     _Task2ModalContract(
-        ConsoleContextModal,
-        lambda: ConsoleContextModal(_empty_context_snapshot),
-        "#console-context-modal",
+        ConsoleConversationInspector,
+        _inspector_factory,
+        "#console-inspector-modal",
         None,
-        "Console context action",
-        None,
-        "none",
-        _RESTORE_OPENER,
-    ),
-    _Task2ModalContract(
-        ConsoleCostModal,
-        lambda: ConsoleCostModal([], ConsoleCostRowTotals(0, 0.0, False, 0)),
-        "#console-cost-modal",
-        None,
-        "Console cost action",
+        "Console cost chip / Console context action",
         None,
         "none",
         _RESTORE_OPENER,
@@ -1215,13 +1224,25 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
         )
     }
     discovered_console_types = _discover_console_modal_types()
-    # task-18515 review-note management, task 3: ConsoleReviewNotesModal is
-    # now wired into the `n`/marker-click flow (see
-    # ChatScreen.on_console_review_notes_requested) and lives in
-    # TASK2_MODAL_CONTRACTS, so the inventory-only escape hatch is empty
-    # again -- kept in place (same escape hatch ConsoleReactionPickerModal
-    # used before it was wired) for the next modal that ships ahead of its
-    # launch site.
+    # task-8 replaced both of the Console root's original standalone
+    # launch targets with ConsoleConversationInspector (chat_screen.py no
+    # longer constructs either); task-10 deleted the two now-orphaned
+    # module files outright.
+    #
+    # I2 (task-18300 review; NOT this branch's to fix): this carried set
+    # is NOT actually empty -- ``ProjectInstructionNoticeModal`` and
+    # ``ProjectInstructionSetupModal`` (dev's project-instructions feature,
+    # ``console_project_instructions.py``) are real ``ModalScreen``
+    # subclasses under the scanned Console root that
+    # ``_discover_console_modal_types`` DOES pick up, and neither is
+    # declared in TASK2_MODAL_CONTRACTS/TASK3_MODAL_CONTRACTS/
+    # TASK567_MODAL_CONTRACTS. This is reproducible on a clean
+    # ``origin/dev`` checkout -- dev introduced the gap, not this branch --
+    # so it is tracked separately rather than fixed here; this test
+    # currently fails on that mismatch (left un-widened deliberately: an
+    # empty ``inventory_only_types`` keeps the assertion honest about what
+    # SHOULD be true once the upstream declarations are added, rather than
+    # quietly widening the contract to paper over the gap).
     inventory_only_types: set[type[ModalScreen[Any]]] = set()
 
     assert discovered_console_types - console_contract_types == inventory_only_types
@@ -1239,9 +1260,10 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
         for node in reachable
         if inspect.isclass(node) and issubclass(node, ModalScreen)
     }
-    # 43 after TASK-3070.6 removed the unreachable Console skill picker;
-    # task-18810's WorkspaceCreateModal/SelectDirectory launches remain.
-    assert len(reachable_modal_types) == 43
+    # dev baseline 43, minus the two Console modals this task unwires
+    # (ConsoleCostModal/ConsoleContextModal), plus the inspector that
+    # replaced them.
+    assert len(reachable_modal_types) == 42
     all_contract_types = console_contract_types | {
         contract.modal_type for contract in TASK4_MODAL_CONTRACTS
     } | {TrajectoryScreen}
@@ -1257,12 +1279,17 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
 
 def test_launch_inventory_rejects_an_uncontracted_constructed_modal() -> None:
     synthetic_path = "synthetic_console_launch.py"
+    # ConsoleSideChatModal stands in here as "some other real, importable
+    # modal" -- this test is only exercising ``_constructed_modal_types``'s
+    # own AST resolution (never actually instantiates either class; the
+    # source below is parsed, not executed), so which concrete modal it
+    # names is arbitrary.
     source = """
 def launch():
-    from tldw_chatbook.Widgets.Console.console_cost_modal import ConsoleCostModal as Cost
+    from tldw_chatbook.Widgets.Console.console_side_chat_modal import ConsoleSideChatModal as Extra
     import tldw_chatbook.Widgets.Console.console_run_log_modal as run_log
 
-    Cost([], None)
+    Extra()
     run_log.ConsoleRunLogModal(run_id='extra', log_text='extra')
 """
 
@@ -1270,9 +1297,9 @@ def launch():
         (synthetic_path,), source_overrides={synthetic_path: source}
     )
 
-    assert actual == {ConsoleCostModal, ConsoleRunLogModal}
+    assert actual == {ConsoleSideChatModal, ConsoleRunLogModal}
     with pytest.raises(AssertionError):
-        assert actual == {ConsoleCostModal}
+        assert actual == {ConsoleSideChatModal}
 
 
 def test_modal_dismissal_uses_a_public_monotonic_clock() -> None:
@@ -1341,15 +1368,17 @@ def test_launch_inventory_unions_declared_helpers_with_owner_class_body() -> Non
         ),
         _ModalLaunchEdge(
             _SyntheticDeclaredOwner,
-            (ConsoleCostModal,),
+            (ConsoleSideChatModal,),
             (helper_path,),
         ),
     )
     sources = {
         root_path: "",
+        # ConsoleSideChatModal again stands in as "some other real,
+        # importable modal" -- see the sibling test above.
         helper_path: """
-from tldw_chatbook.Widgets.Console.console_cost_modal import ConsoleCostModal as Expected
-Expected([], None)
+from tldw_chatbook.Widgets.Console.console_side_chat_modal import ConsoleSideChatModal as Expected
+Expected()
 """,
         owner_path: """
 class _SyntheticDeclaredOwner:
@@ -1371,14 +1400,13 @@ class _SyntheticDeclaredOwner:
 
 
 def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
-    assert len(TASK2_MODAL_CONTRACTS) == 15
+    assert len(TASK2_MODAL_CONTRACTS) == 14
     assert {contract.modal_type.__name__ for contract in TASK2_MODAL_CONTRACTS} == {
         "AutoSpeakConsentModal",
         "ConsoleCharacterPickerModal",
         "ConsoleReactionPickerModal",
         "ConsoleCitationSourcesModal",
-        "ConsoleContextModal",
-        "ConsoleCostModal",
+        "ConsoleConversationInspector",
         "ConsoleImageViewerModal",
         "ConsoleModelPopover",
         "ConsolePromptPickerModal",
@@ -3096,8 +3124,8 @@ def test_launch_walk_reports_every_mismatch_not_just_the_first() -> None:
     )
     sources = {
         first_path: """
-from tldw_chatbook.Widgets.Console.console_cost_modal import ConsoleCostModal as First
-First([], None)
+from tldw_chatbook.Widgets.Console.console_image_viewer_modal import ConsoleImageViewerModal as First
+First(image_bytes=b"", mime_type="image/png")
 """,
         second_path: """
 from tldw_chatbook.Widgets.Console.console_run_log_modal import ConsoleRunLogModal as Second
@@ -3113,7 +3141,7 @@ Second(run_id='extra', log_text='extra')
     )
 
     message = "\n".join(result.mismatches)
-    assert "ConsoleCostModal" in message, message
+    assert "ConsoleImageViewerModal" in message, message
     assert "ConsoleRunLogModal" in message, message
 
 

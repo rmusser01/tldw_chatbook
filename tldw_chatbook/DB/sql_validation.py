@@ -61,6 +61,7 @@ VALID_TABLES = {
         "keywords",
         "learning_paths",
         "message_attachments",
+        "message_exchanges",
         "message_generation_metadata",
         "message_trajectory_metadata",
         "transcript_annotations",

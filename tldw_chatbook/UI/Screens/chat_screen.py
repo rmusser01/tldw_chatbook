@@ -1,6 +1,7 @@
 """Chat screen implementation with comprehensive state management."""
 
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Set as AbstractSet
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 import asyncio
@@ -129,6 +130,7 @@ from ...Chat.console_roleplay_identity import (
 from ...Chat.prompt_history import PromptHistory
 from ...Chat.console_cost_tracker import (
     ConsoleCacheState,
+    ConsoleCostRow,
     ConsoleCostRowTotals,
     ConsoleCostState,
     TokenEstimateCache,
@@ -139,6 +141,7 @@ from ...Chat.console_cost_tracker import (
     fingerprint_break_reason,
     token_estimate_signature,
 )
+from ...Chat.console_exchange_capture import ExchangeCapture, capture_from_blob
 from ...Chat.message_metadata import MessageMetadata
 from ...Chat.provider_usage import ProviderUsage, as_seconds
 from ...Chat.trajectory import TrajectorySnapshot, derive_trajectory
@@ -287,6 +290,7 @@ from ...Chat.console_display_state import (
     ConsoleControlState,
     ConsoleDisplayRow,
     ConsoleInspectorState,
+    ConsoleProjectInstructionState,
     ConsoleRetrievalScopeState,
     ConsoleStagedContextState,
     ConsoleStagedEvidenceStripState,
@@ -459,9 +463,13 @@ from ...Widgets.Console.console_selection_menu import (
     ConsoleSideChatRequested,
 )
 from ...Widgets.Console.console_side_chat_modal import ConsoleSideChatModal
-from ...Widgets.Console.console_context_modal import ConsoleContextModal
 from ...Widgets.Console import console_project_instructions as project_instruction_ui
-from ...Widgets.Console.console_cost_modal import ConsoleCostModal
+from ...Widgets.Console.console_conversation_inspector import (
+    TAB_COSTS,
+    TAB_NEXT_SEND,
+    ConsoleConversationInspector,
+    InspectorTurn,
+)
 from ...Widgets.Console.console_citation_sources_modal import (
     selected_valid_evidence_ordinals,
 )
@@ -1590,6 +1598,140 @@ def _console_screen_is_torn_down(screen: Any) -> bool:
     return bool(
         getattr(screen, "_closing", False) or getattr(screen, "_closed", False)
     )
+
+
+def _console_inspector_turn_preview(content: Any) -> str:
+    """Best-effort short text preview for one Conversation Inspector
+    Costs-tab turn row (task-8 review finding 5).
+
+    ``ConsoleChatMessage.content`` is declared ``str``, but a multimodal
+    (structured, OpenAI-style content-block list) message is not
+    guaranteed to have been coerced to text by the time it reaches here --
+    several other modules in this codebase (``Chat/Chat_Functions.py``,
+    ``console_provider_gateway.py``) carry their own ``isinstance(content,
+    str)`` guards for exactly this reason. Slicing a list with ``[:60]``
+    would silently yield up to 60 LIST ELEMENTS, not characters -- not a
+    preview, and not obviously wrong-looking in a diff either. Falls back
+    to the first text block's text (bounded to 60 chars, matching the str
+    path), or ``""`` when nothing text-shaped is found -- never a
+    fabricated summary.
+    """
+    if isinstance(content, str):
+        return content[:60]
+    if isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                text = block.get("text")
+                if isinstance(text, str):
+                    return text[:60]
+    return ""
+
+
+def _build_console_inspector_exchanges_loader(
+    messages_by_native_id: Mapping[str, Any],
+    db_accessor: Callable[[], Any],
+    abandoned_run_tags_for: Callable[[str], AbstractSet[str]] | None = None,
+) -> Callable[[str], Awaitable[list[tuple[ExchangeCapture, bool]]]]:
+    """Build the Costs-tab ``exchanges_loader`` for
+    ``ConsoleConversationInspector`` (task-8, extended task-9).
+
+    A standalone function rather than a method-local closure specifically
+    so it is unit-testable without mounting a ``ChatScreen`` (review
+    finding 6) -- pure extraction, no behavior change from the closure
+    this replaced in ``ChatScreen._build_console_inspector_cost_data``.
+
+    Args:
+        messages_by_native_id: ``ConsoleChatMessage.id`` -> the matching
+            in-memory message, for the native-first check.
+        db_accessor: Zero-arg callable returning the ChaChaNotes DB handle
+            (or ``None``). Called lazily -- only on the DB-fallback path,
+            never for a message resolved natively or with no persisted id
+            -- so an ephemeral session never touches the DB at all.
+        abandoned_run_tags_for: Optional ``native_message_id ->
+            {run_tag, ...}`` lookup (task-9; ``ConsoleChatStore.
+            abandoned_exchange_run_tags`` in production) used ONLY on the
+            native-capture path to resolve each capture's real
+            ``abandoned`` flag. Defaults to ``None``, which preserves the
+            task-8 behavior of reporting ``abandoned=False`` for every
+            native capture -- kept optional (rather than required) so the
+            existing unit tests in
+            ``Tests/UI/test_chat_screen_console_inspector_loader.py``,
+            which construct this loader with just the first two
+            positional args, are unaffected.
+
+    Returns:
+        An async ``native_message_id -> [(capture, abandoned), ...]``
+        callable (see ``console_conversation_inspector``'s module
+        docstring for the pair contract and the ordering caveat -- callers
+        must NOT trust the returned order, only ``(created_at, seq)``).
+        Prefers ``message.exchanges`` (native, in-memory captures resolve
+        ``abandoned`` via ``abandoned_run_tags_for`` when supplied, else
+        always ``False``) and only falls back to a threaded
+        ``get_message_exchanges`` + ``capture_from_blob`` read when there
+        is no native capture AND the message has a
+        ``persisted_message_id`` (an ephemeral session has neither, so it
+        returns ``[]`` without any DB call). A single corrupt/undecodable
+        blob is logged and skipped -- not fatal to the rest of the turn's
+        captures.
+    """
+
+    async def _exchanges_loader(
+        native_message_id: str,
+    ) -> list[tuple[ExchangeCapture, bool]]:
+        message = messages_by_native_id.get(native_message_id)
+        if message is not None and message.exchanges:
+            # Native captures win when present -- they are fresher than
+            # whatever was last flushed to the DB.
+            abandoned_tags: AbstractSet[str] = (
+                abandoned_run_tags_for(native_message_id)
+                if abandoned_run_tags_for is not None
+                else frozenset()
+            )
+            return [
+                (capture, capture.run_tag in abandoned_tags)
+                for capture in message.exchanges
+            ]
+        persisted_id = (
+            message.persisted_message_id if message is not None else None
+        )
+        if not persisted_id:
+            return []
+
+        def _read() -> list[tuple[ExchangeCapture, bool]]:
+            db = db_accessor()
+            if db is None:
+                return []
+            out: list[tuple[ExchangeCapture, bool]] = []
+            for db_row in db.get_message_exchanges(persisted_id):
+                try:
+                    out.append(
+                        (
+                            capture_from_blob(db_row["capture_blob"]),
+                            bool(db_row.get("abandoned", False)),
+                        )
+                    )
+                except Exception as exc:
+                    # No traceback (review finding M8): this frame holds
+                    # `capture_blob` (raw compressed bytes) and, mid-loop,
+                    # already-decoded ExchangeCapture payloads in `out` --
+                    # loguru's diagnose formatter would annotate the
+                    # failing source line's names with their values across
+                    # the whole frame chain. The Exchange tab's own
+                    # handlers (console_conversation_inspector.py's
+                    # ``_load_turn_captures``) deliberately refuse
+                    # tracebacks for the identical reason; this brings the
+                    # loader's own decode failure to the same standard.
+                    # type(exc).__name__ plus the message id is enough to
+                    # diagnose and retry.
+                    logger.warning(
+                        f"exchange_blob_decode_failed: persisted_id="
+                        f"{persisted_id!r}: {type(exc).__name__}"
+                    )
+            return out
+
+        return await asyncio.to_thread(_read)
+
+    return _exchanges_loader
 
 
 class _ControllerState:
@@ -3253,7 +3395,16 @@ class ChatScreen(BaseAppScreen):
         self.run_worker(self._open_console_system_prompt_editor(), exclusive=False)
 
     def action_view_chat_context(self) -> None:
-        """Open the Console context viewer modal (Ctrl+Shift+P)."""
+        """Open the Conversation Inspector's Next Send tab (Ctrl+Shift+P).
+
+        task-8: this used to push a standalone modal (retired in task-10);
+        it now pushes the shared ``ConsoleConversationInspector`` instead
+        (same modal the cost chip opens, just starting on a different
+        tab) -- the command-palette "view context" entry
+        (``UI/console_command_provider.py``) follows automatically since
+        it calls this same action. task-10 wired the Next Send tab to the
+        factories built below, so opening from here renders real content.
+        """
         if self._console_setup_modal_blocking():
             return
         controller = self._ensure_console_chat_controller()
@@ -3261,6 +3412,44 @@ class ChatScreen(BaseAppScreen):
         if not session_id:
             self.notify("No active conversation.", severity="warning")
             return
+
+        factory, estimate_factory, token_estimate, in_progress = (
+            self._console_inspector_next_send_factories(controller, session_id)
+        )
+        self._push_console_inspector(
+            initial_tab=TAB_NEXT_SEND,
+            snapshot_factory=factory,
+            estimate_factory=estimate_factory,
+            token_estimate=token_estimate,
+            in_progress=in_progress,
+            **project_instruction_ui.project_instruction_context_kwargs(
+                self, controller, session_id
+            ),
+        )
+
+    def _console_inspector_next_send_factories(
+        self, controller: Any, session_id: str
+    ) -> tuple[
+        Callable[[], Awaitable[ConsoleContextSnapshot]],
+        Callable[[], int | None],
+        int | None,
+        bool,
+    ]:
+        """Build the Next Send tab's snapshot/estimate factories (task-18300).
+
+        Shared by BOTH ``ConsoleConversationInspector`` entry points (the
+        cost chip and Ctrl+Shift+P) -- the two push the SAME modal
+        instance, and the user can switch to the Next Send tab regardless
+        of which tab it opened on, so a caller that skipped this would
+        leave the tab showing nothing. Building the closures themselves is
+        cheap (no I/O happens until one is actually CALLED); the Next Send
+        pane calls ``snapshot_factory`` once on mount regardless of
+        ``initial_tab`` (see ``ConsoleConversationInspector.on_mount``).
+
+        ``session_id`` is threaded in rather than re-read from the store
+        because the composer only reflects the ACTIVE session; see
+        ``_captured_draft``.
+        """
 
         def _captured_draft() -> str:
             if controller.store.active_session_id == session_id:
@@ -3302,18 +3491,7 @@ class ChatScreen(BaseAppScreen):
 
         token_estimate = _estimate_factory()
         in_progress = controller.run_state.status in CONSOLE_ACTIVE_RUN_STATUSES
-        self.app.push_screen(
-            ConsoleContextModal(
-                _factory,
-                token_estimate=token_estimate,
-                estimate_factory=_estimate_factory,
-                in_progress=in_progress,
-                ephemeral=self._console_active_session_is_ephemeral(),
-                **project_instruction_ui.project_instruction_context_kwargs(
-                    self, controller, session_id
-                ),
-            )
-        )
+        return _factory, _estimate_factory, token_estimate, in_progress
 
     def _estimate_tokens(self, payload: dict[str, Any]) -> int | None:
         """Return a token estimate for the current draft text."""
@@ -9408,18 +9586,128 @@ class ChatScreen(BaseAppScreen):
     def _console_cost_chip_activated(
         self, event: ConsoleCostChip.ConsoleCostChipPressed
     ) -> None:
-        """Open the per-message cost breakdown modal from the cost chip (task-5)."""
+        """Open the Conversation Inspector's Costs tab from the cost chip (task-5/8)."""
         event.stop()
         self._open_console_cost_breakdown()
 
     def _open_console_cost_breakdown(self) -> None:
-        """Push the cost breakdown modal for the active native session (task-5).
+        """Push the Conversation Inspector on the Costs tab for the active
+        native session (task-5/8).
+
+        task-8: this used to push a standalone modal (retired in task-10);
+        it now pushes the shared ``ConsoleConversationInspector`` (same
+        modal Ctrl+Shift+P opens, just starting on a different tab). The
+        Next Send factories are built too (via ``_console_inspector_next_
+        send_factories``) so switching to that tab after opening from the
+        chip renders real content, not stale/empty data.
+        """
+        controller = self._ensure_console_chat_controller()
+        session_id = controller.store.active_session_id
+        if not session_id:
+            self.notify("No active conversation.", severity="warning")
+            return
+        factory, estimate_factory, token_estimate, in_progress = (
+            self._console_inspector_next_send_factories(controller, session_id)
+        )
+        self._push_console_inspector(
+            initial_tab=TAB_COSTS,
+            snapshot_factory=factory,
+            estimate_factory=estimate_factory,
+            token_estimate=token_estimate,
+            in_progress=in_progress,
+        )
+
+    def _push_console_inspector(
+        self,
+        *,
+        initial_tab: str,
+        snapshot_factory: Callable[[], Awaitable[ConsoleContextSnapshot]],
+        estimate_factory: Callable[[], int | None] | None = None,
+        token_estimate: int | None = None,
+        in_progress: bool = False,
+        project_instruction_state: ConsoleProjectInstructionState | None = None,
+        project_instruction_state_factory: Callable[
+            [], Awaitable[ConsoleProjectInstructionState]
+        ]
+        | None = None,
+        project_instruction_session_id: str | None = None,
+        project_instruction_recovery: Callable[
+            [str | None, str], Awaitable[ConsoleProjectInstructionState | None]
+        ]
+        | None = None,
+    ) -> None:
+        """Build the Costs-tab inputs and push the shared inspector (task-8).
 
         Rows/totals are computed once here (``build_cost_rows``/
         ``build_cost_rows_totals`` are already best-effort and never raise
         on their own) and handed to the modal at construction -- the modal
-        itself never queries the store, matching ``ConsoleRunLogModal``'s
-        "already computed, just render it" shape.
+        itself never queries the store directly, the same "already
+        computed, just render it" shape the standalone modal it replaced
+        (pre-task-8) used.
+
+        The ``project_instruction_*`` kwargs (task-18300) all default to
+        ``None`` -- ``_open_console_cost_breakdown`` (the cost-chip entry
+        point) never passes them, so its Next Send tab simply mounts no
+        project-instructions panel; only ``action_view_chat_context``
+        supplies them, via ``project_instruction_ui.
+        project_instruction_context_kwargs``.
+        """
+        rows, totals, turns, exchanges_loader = self._build_console_inspector_cost_data()
+        self.app.push_screen(
+            ConsoleConversationInspector(
+                rows=rows,
+                totals=totals,
+                turns=turns,
+                exchanges_loader=exchanges_loader,
+                snapshot_factory=snapshot_factory,
+                token_estimate=token_estimate,
+                estimate_factory=estimate_factory,
+                in_progress=in_progress,
+                ephemeral=self._console_active_session_is_ephemeral(),
+                initial_tab=initial_tab,
+                project_instruction_state=project_instruction_state,
+                project_instruction_state_factory=project_instruction_state_factory,
+                project_instruction_session_id=project_instruction_session_id,
+                project_instruction_recovery=project_instruction_recovery,
+            )
+        )
+
+    def _build_console_inspector_cost_data(
+        self,
+    ) -> tuple[
+        list[ConsoleCostRow],
+        ConsoleCostRowTotals,
+        list[InspectorTurn],
+        Callable[[str], Awaitable[list[tuple[ExchangeCapture, bool]]]],
+    ]:
+        """Shared Costs-tab inputs for ``ConsoleConversationInspector``
+        (task-8, extended task-9 for the Exchange tab).
+
+        Returns:
+            ``(rows, totals, turns, exchanges_loader)`` -- ``rows``/
+            ``totals`` are ``build_cost_rows``/``build_cost_rows_totals``'s
+            output; ``turns`` is one :class:`InspectorTurn` per transcript
+            message (NOT filtered to contributing ones -- the
+            contributing-only property is enforced downstream, in
+            ``ConsoleConversationInspector``); ``exchanges_loader`` is
+            called by the modal with one turn's ``native_message_id`` and
+            returns ``(capture, abandoned)`` pairs (see
+            ``console_conversation_inspector``'s module docstring for the
+            pair contract and the ordering caveat -- callers must NOT trust
+            the returned order, only ``(created_at, seq)``).
+
+            The loader checks the NATIVE (in-memory) store first --
+            ``message.exchanges`` on the matching ``ConsoleChatMessage`` --
+            and only falls back to a DB read when there is none, so an
+            EPHEMERAL session (no ``persisted_message_id``, no DB row at
+            all) still resolves its captures; a native capture wins over a
+            DB one when both exist (the native copy is fresher -- see
+            ``ConsoleChatStore.attach_message_exchanges``). task-9 closed
+            the former "known gap" here: a native capture's ``abandoned``
+            flag is now resolved through ``store.abandoned_exchange_run_
+            tags`` (the store's new public accessor over its private
+            ``_abandoned_exchange_run_tags`` bookkeeping) rather than
+            always reporting ``False``.
         """
         store = self._console_chat_store
         messages: list[Any] = []
@@ -9435,7 +9723,29 @@ class ChatScreen(BaseAppScreen):
             logger.opt(exception=True).warning("cost_breakdown_rows_failed")
             rows = []
         totals: ConsoleCostRowTotals = build_cost_rows_totals(rows)
-        self.app.push_screen(ConsoleCostModal(rows, totals))
+
+        turns = [
+            InspectorTurn(
+                message_id=message.persisted_message_id or "",
+                native_message_id=message.id,
+                index=index,
+                role=(
+                    message.role.value
+                    if isinstance(message.role, ConsoleMessageRole)
+                    else str(message.role)
+                ),
+                preview=_console_inspector_turn_preview(message.content),
+            )
+            for index, message in enumerate(messages)
+        ]
+        messages_by_native_id = {message.id: message for message in messages}
+        exchanges_loader = _build_console_inspector_exchanges_loader(
+            messages_by_native_id,
+            lambda: getattr(self.app_instance, "chachanotes_db", None),
+            store.abandoned_exchange_run_tags if store is not None else None,
+        )
+
+        return rows, totals, turns, exchanges_loader
 
     def _open_console_rag_settings(self) -> None:
         """Open the Library search settings modal, prefilled with the best query.

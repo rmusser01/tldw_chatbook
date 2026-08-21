@@ -10468,7 +10468,7 @@ class ConsoleChatController:
         # passed `signals=` to the gateway and NOTHING was ever captured for
         # the path virtually every real send takes. Cost is not an opt-in
         # feature of one repair mode; every run needs its own signals object.
-        stream_signals = ConsoleProviderStreamSignals()
+        stream_signals = self._new_run_stream_signals()
         # Trajectory sidecar (schema v38): arm this turn's timing capture at
         # the single dispatch choke point covering BOTH the direct-provider
         # and agent paths, BEFORE the provider call. First-token is stamped
@@ -10562,6 +10562,30 @@ class ConsoleChatController:
         # the getattr-based resolution reads in `_attach_stream_usage`.
         single = getattr(stream_signals, "usage_payload", None)
         return [single] if single else []
+
+    def _new_run_stream_signals(self) -> ConsoleProviderStreamSignals:
+        """One run's signals object, with exchange capture gated by config.
+
+        ``get_cli_setting`` reads the RESOLVED settings layer -- never raw
+        TOML top-level, which nests under COMPREHENSIVE_CONFIG_RAW and
+        silently never fires (cost-ticker PR2 Qodo F4 was exactly that
+        bug). Both signals-creation call sites (the dispatch site and the
+        defensive belt inside the direct-provider stream method) route
+        through this one helper so the kill-switch reaches every run.
+
+        ``get_cli_setting`` also returns the RAW TOML value, never coerced
+        -- a hand-typed ``exchange_capture = "false"`` is a non-empty
+        string and therefore truthy under bare ``bool()``, which would
+        silently defeat the only escape hatch for this privacy-sensitive
+        feature. ``coerce_bool_setting`` (already imported at module scope)
+        is the arc's sixth site with this exact trap -- see the
+        ``local_tools_enabled`` read a few hundred lines up for the first.
+        """
+        return ConsoleProviderStreamSignals(
+            exchange_capture_enabled=coerce_bool_setting(
+                get_cli_setting("console", "exchange_capture", True), True
+            )
+        )
 
     def _watch_post_turn_usage(
         self,
@@ -10863,6 +10887,20 @@ class ConsoleChatController:
             )
         if stream_signals is None:
             return
+        # Conversation Inspector (task-7): attach captured exchanges at the
+        # same call sites usage attaches, on the SAME never-fail posture --
+        # deliberately unconditional on the usage total below (a turn can
+        # capture an exchange with no billable usage payload at all), so
+        # this sits ahead of the usage-total early returns rather than
+        # nested inside them.
+        try:
+            captures = list(stream_signals.exchange_captures())
+            if captures:
+                self.store.attach_message_exchanges(assistant_message_id, captures)
+        except Exception as exc:
+            logger.bind(
+                message_id=assistant_message_id, error=repr(exc)
+            ).warning("exchange_attach_failed")
         payloads = self._usage_payloads(stream_signals)
         provider = str(getattr(resolution, "provider", "") or "")
         model = str(getattr(resolution, "model", "") or "")
@@ -10991,7 +11029,7 @@ class ConsoleChatController:
         # object. `_stream_assistant_response_inner` always supplies one;
         # this belt keeps direct callers (tests) working.
         if stream_signals is None:
-            stream_signals = ConsoleProviderStreamSignals()
+            stream_signals = self._new_run_stream_signals()
         if variant_mode:
             self.store.begin_variant_stream(assistant_message_id)
         if prefill and not prepare_retry:

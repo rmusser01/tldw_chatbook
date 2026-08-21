@@ -11,19 +11,25 @@ reply back to its citations.
 
 ## Getting there
 
-Open Console with **Ctrl+2**. This page's surfaces: the **Chat Context**
-viewer (**Ctrl+Shift+P**), the **Inspector** rail on the right (click its
-handle to expand), the composer for `/prompt`, `/system`, and `/prefill`,
-and the status chips above the composer.
+Open Console with **Ctrl+2**. This page's surfaces: the **Conversation
+Inspector** (the token/cost chip, **Ctrl+Shift+P**, or the command
+palette's **Console: View chat context** entry), the **Inspector** rail on
+the right (click its handle to expand — a separate surface from the
+Conversation Inspector modal, despite the similar name), the composer for
+`/prompt`, `/system`, and `/prefill`, and the status chips above the
+composer.
 
 ## Layout tour
 
-![The Chat Context viewer](../images/console/context-modal.svg)
+![The Conversation Inspector's Next Send tab](../images/console/context-modal.svg)
 
 Where this page's controls live:
 
-- **The "Chat Context" viewer** (captured above) — a window over the
-  screen, opened with **Ctrl+Shift+P**.
+- **The Conversation Inspector** — a window over the screen with three
+  tabs (**Costs**, **Exchange**, **Next Send**), opened from the token/cost
+  chip, **Ctrl+Shift+P**, or the command palette. The screenshot above
+  shows its **Next Send** tab, carried over from the former standalone
+  "Chat Context" viewer this modal replaced.
 - **The Inspector rail** (right edge) — the "Sources" tray at the top, the
   retrieval-scope row beneath it, the "Prefill" rows when one is armed, the
   "Live work sources" card, and the "Chat Dictionaries" / "World Books"
@@ -38,13 +44,62 @@ Where this page's controls live:
 
 ## Features & controls
 
-### The "Chat Context" viewer (Ctrl+Shift+P)
+### The Conversation Inspector
 
-Press **Ctrl+Shift+P** to open **Chat Context** — a read-only snapshot of
-what the model has seen and is about to see. The header carries an
-approximate token count (e.g. `(~1234 tokens)`) when a draft-based
-estimate exists; mid-stream a warning reads "A response is in progress;
-snapshot may change." Two tabs:
+Click the status row's cost chip, press **Ctrl+Shift+P**, or run
+**Console: View chat context** from the command palette to open the
+**Conversation Inspector** — one modal, three tabs, replacing the older
+separate cost breakdown and "Chat Context" viewer. The chip opens on
+**Costs**; Ctrl+Shift+P and the palette entry open on **Next Send**; once
+open you can switch tabs freely. `Escape` closes it from any tab.
+
+#### Costs
+
+Today's per-message token/dollar rows and totals — unchanged ground
+truth. Each row expands into that turn's individually captured provider
+calls (one per agent tool-loop iteration, or one for a direct send), each
+shown with its status and its own cost. Where a turn's per-call costs and
+its message-level total disagree (rounding, or a call with no priced
+usage), both figures are shown rather than silently reconciled; a call
+with no usable usage reads **unpriced**.
+
+#### Exchange
+
+The per-turn, per-call detail behind those numbers. Expand a turn, then a
+call, to reach collapsible sections: **System prompt**, **Messages**,
+**Tools**, **Response**, **Tool calls** (only shown when the response made
+any), and **Sampling & routing** (temperature, max tokens, seed, and
+similar parameters). Each call's title carries a status badge —
+`[stopped]`, `[error]`, or the normal `[complete]` — and a call captured
+during an abandoned regenerate additionally reads `[abandoned
+regeneration]`: regenerating keeps the earlier answer's captures rather
+than discarding them (see the response-variants section of
+[Branching & rewind](branching-and-rewind.md)). A call whose request had a
+value that isn't on the capture allowlist — this is how credentials like
+API keys are kept out of storage; see **Kill-switch & privacy** below —
+shows a line naming exactly what was dropped: "Omitted by capture policy:
+api_key".
+
+Per-piece token counts inside a call (e.g. "System prompt (~412 tokens
+est.)") are **estimates**, computed the same way the composer estimates
+your draft — they will never disagree with what the composer shows for
+the same text, but they are not what you were billed. Sitting alongside
+them, a **Reported usage** line (`in:… cache_r:… cache_w:… out:…`) carries
+the provider's own usage numbers where the provider sent any, with no `~`
+— that line is authoritative. Each call has its own **Copy JSON** and
+**Save to File** buttons (a temporary/ephemeral session blocks Save, same
+as elsewhere in Console).
+
+A turn with nothing captured — recorded before this feature existed, with
+capture disabled, or where capture itself failed — shows a plain row
+instead of a blank space: "No capture recorded for this turn (recorded
+before capture existed, capture disabled, or capture failed)."
+
+#### Next Send
+
+The former Ctrl+Shift+P "Chat Context" viewer, carried over intact: a
+read-only snapshot of what the model has seen and is about to see. Two
+sub-tabs:
 
 - **Current** — one collapsed section per transcript message, titled with
   its role and status; expand any to read the exact stored text. Empty
@@ -56,10 +111,12 @@ snapshot may change." Two tabs:
   will continue from this prefill; the agent loop (tools/MCP) is skipped
   for this send."), **Tools**, and **Staged Sources**.
 
-Footer controls: a **Raw JSON** checkbox, **Refresh** (also the `r` key),
-**Copy JSON**, **Save to File** (writes the payload to disk and shows the
-path), and **Close** (also `Escape`). Payloads over 1 MiB are not
-rendered inline — the viewer shows "Context exceeds 1 MiB. Use Save to
+The header carries an approximate token count (e.g. `(~1234 tokens)`) when
+a draft-based estimate exists; mid-stream a warning reads "A response is
+in progress; snapshot may change." Footer controls: a **Raw JSON**
+checkbox, **Refresh** (also the `r` key), **Copy JSON**, **Save to File**
+(writes the payload to disk and shows the path). Payloads over 1 MiB are
+not rendered inline — the viewer shows "Context exceeds 1 MiB. Use Save to
 File to view the full payload."
 
 ### Project instructions
@@ -98,6 +155,35 @@ and broad-to-specific composition. Claude Code inspired lazy path-sensitive
 loading, but its native project file is `CLAUDE.md`, not `AGENTS.md`. Chatbook
 adds its own selected-binding authority boundary and delivers automatic text
 as ephemeral user context rather than privileged policy.
+
+#### Kill-switch & privacy
+
+Every provider call Console makes is captured (request and response) and
+stored locally, per turn, so the Exchange tab has something to show —
+this is `config.toml`'s `[console] exchange_capture` setting, **on by
+default**. Set `exchange_capture = false` to turn capturing off; turns
+sent while it's off show the Exchange tab's "No capture recorded" row
+instead of call detail. Captures are local-only — compressed at rest, never
+synced to another device — and a temporary/ephemeral conversation's
+captures live only in memory for that session and are never written to
+disk. A stopped send keeps its partial content, marked `[stopped]`; an
+abandoned regenerate keeps its captures too, marked `[abandoned
+regeneration]`, rather than being dropped.
+
+Two honesty limits worth knowing before you treat a capture as "the exact
+bytes that went over the wire":
+
+- **Adapter-boundary capture.** Capture happens where Console hands a
+  request to the provider adapter, not at the raw HTTP layer — so
+  provider-internal framing and any prompt-caching markers an adapter
+  injects on its own are not visible in what you see here. The one
+  exception is a **llama.cpp** (local server) send: that branch builds its
+  own HTTP payload directly, so for llama.cpp its capture *is* the literal
+  wire payload.
+- **No fabricated history.** A turn that predates this feature, was sent
+  with capturing off, or hit a capture failure never shows fake or
+  guessed content — it shows the explicit "No capture recorded" row
+  described above.
 
 ### System prompt
 
@@ -353,18 +439,22 @@ Inspector shows what's in play:
 
 1. **Check exactly what the next send contains** — type your draft, press
    **Ctrl+Shift+P**, open **Next Send**, expand the folds; `r` refreshes.
-2. **Set a system prompt for this session** — type `/system`, write the
+2. **See exactly what a past turn sent and received** — open the
+   Conversation Inspector (chip or Ctrl+Shift+P), switch to **Exchange**,
+   expand the turn, then a call, then the section you want (System prompt,
+   Messages, Tools, Response, Tool calls, Sampling & routing).
+3. **Set a system prompt for this session** — type `/system`, write the
    prompt, press **Apply**; the rail's `System:` line now previews it.
    Name it and press **Save to Library** first to reuse it later.
-3. **Make the reply start with a fixed opening** — type
+4. **Make the reply start with a fixed opening** — type
    `/prefill Here is the summary:` and send; the reply continues from the
    last character. `/prefill pin …` keeps it; `/prefill clear` when done.
-4. **Narrow RAG to two documents** — expand the Inspector, press
+5. **Narrow RAG to two documents** — expand the Inspector, press
    **Narrow…** on the scope row, pick the **Media** tab, filter by title,
    click the two items, press **Save**. The strip shows **Scope: 2**.
-5. **Open a citation's source in Library** — click **Sources (N)** under
+6. **Open a citation's source in Library** — click **Sources (N)** under
    the reply, select an `[S1]` row, press **Open in Library**.
-6. **Have every send ground itself automatically** — click the **RAG**
+7. **Have every send ground itself automatically** — click the **RAG**
    chip (or **Run Library RAG**) to open **Library RAG** settings, turn on
    **Auto-retrieve on send**, close the modal. It stays on across sends
    until you flip it off; it's off by default.
@@ -373,8 +463,8 @@ Inspector shows what's in play:
 
 | Key / command | Action |
 |---|---|
-| Ctrl+Shift+P | Open the Chat Context viewer |
-| r / Escape (in the viewer) | Refresh the snapshot / close |
+| Ctrl+Shift+P | Open the Conversation Inspector on **Next Send** |
+| r (on **Next Send**) / Escape | Refresh the snapshot / close the Inspector |
 | `/prompt [name]` | Replace the draft with a saved prompt (picker when ambiguous) |
 | `/system [name]` | Edit the session system prompt, or apply a saved prompt's system part |
 | `/prefill [pin\|clear] [text]` | Set, pin, clear, or report the start of the assistant's reply |
@@ -392,6 +482,9 @@ Enter again to send as text."
 - `config.toml` `[chat_defaults] rag_auto_retrieve_on_send` — the
   persisted **Auto-retrieve on send** value (default `false`); the modal
   is the supported way to change it.
+- `config.toml` `[console] exchange_capture` — the Conversation Inspector's
+  capture kill-switch (default `true`); set `false` to stop recording
+  per-call request/response detail for the Exchange tab.
 - [Settings ▸ RAG](../settings/rag.md) — the profile that both auto- and
   manual Library RAG retrieval read for search mode and result depth.
 - [Library ▸ Prompts](../library/prompts.md) — where saved prompts are
@@ -412,8 +505,18 @@ Enter again to send as text."
   `clear`) — those parse as subcommands. Rephrase, or pin then clear.
 - **"Scope: no sources" means zero-result retrieval.** The alert-styled
   state warns before you send into it — **Clear** or **Edit** the scope.
-- **The viewer's token count is a draft-derived estimate** — a guide, not
-  a billing meter.
+- **The Next Send viewer's token count is a draft-derived estimate** — a
+  guide, not a billing meter. The same is true of every per-piece token
+  count inside the Exchange tab's calls; only that tab's **Reported
+  usage** line comes from the provider itself.
+- **A capture is not a byte-for-byte wire log.** It's taken where Console
+  hands the request to the provider adapter, so adapter-internal HTTP
+  framing and any prompt-caching markers an adapter injects are not
+  visible — except on a llama.cpp (local server) send, where the capture
+  is the literal payload that went out.
+- **Turns before this feature (or with capture off) show "No capture
+  recorded"** on the Exchange tab rather than any reconstructed guess at
+  what was sent.
 - **Auto-retrieve fires on every plain-text send while it's on**,
   including repeated sends in the same conversation — there's no
   once-per-conversation memory yet, so an empty resolved scope re-shows
@@ -450,3 +553,13 @@ no chip flip, no evidence line.*
 *Chip and strip positions re-verified against dev @ b6036515e — 2026-08-18
 (task-17662, after the bottom-stack programme moved the status chips above
 the composer and the staged-evidence strip above the status chips).*
+
+*Verified against dd4921901 — 2026-08-20 (task-18300 Task 11a, Conversation
+Inspector programme): the token/cost chip, Ctrl+Shift+P, and the palette's
+"Console: View chat context" entry now all open one Conversation Inspector
+modal (Costs / Exchange / Next Send tabs) in place of the former separate
+cost breakdown and "Chat Context" viewer; the retired viewer's content
+lives on unchanged as the Next Send tab. Docs pass against shipped
+code/tests (`console_conversation_inspector.py`, `console_exchange_
+capture.py`, the design spec's UI and Risks sections); live verification of
+the Exchange tab against a real provider is a separate, later pass.*

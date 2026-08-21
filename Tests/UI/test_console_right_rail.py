@@ -34,7 +34,9 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
 )
-from tldw_chatbook.Widgets.Console.console_context_modal import ConsoleContextModal
+from tldw_chatbook.Widgets.Console.console_conversation_inspector import (
+    ConsoleConversationInspector,
+)
 
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -139,7 +141,7 @@ async def test_clicking_open_then_collapse_toggles_visibility_and_persists():
 
         await pilot.click("#console-project-instruction-status-button")
         await pilot.pause()
-        assert isinstance(pilot.app.screen, ConsoleContextModal)
+        assert isinstance(pilot.app.screen, ConsoleConversationInspector)
         await pilot.press("escape")
         await pilot.pause()
 
@@ -242,7 +244,7 @@ async def test_context_modal_refresh_factory_keeps_opening_session_after_switch(
         await pilot.click("#console-project-instruction-status-button")
         await pilot.pause()
         modal = pilot.app.screen
-        assert isinstance(modal, ConsoleContextModal)
+        assert isinstance(modal, ConsoleConversationInspector)
         assert modal._project_instruction_session_id == captured.id
 
         active = store.create_session(title="Active")

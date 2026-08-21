@@ -342,7 +342,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 42  # Local-only Console project context.
+    _CURRENT_SCHEMA_VERSION = 43  # Local message_exchanges captures (task-18300, Console Conversation Inspector).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -5455,6 +5455,74 @@ UPDATE db_schema_version
                 f"Unexpected error migrating from V41 to V42 for '{self._SCHEMA_NAME}': {exc}"
             ) from exc
 
+    def _migrate_from_v42_to_v43(self, conn: sqlite3.Connection) -> None:
+        """Add the local-only ``message_exchanges`` table (task-18300, Console
+        Conversation Inspector): per-message provider-exchange capture rows.
+        No sync triggers, no FTS -- local-only precedent (v29->v30
+        usage_json)."""
+        if self._get_db_version(conn) != 42:
+            raise SchemaError(
+                f"[{self._SCHEMA_NAME} V42→V43] Migration requires schema version 42"
+            )
+        logger.info(
+            f"Migrating schema from V42 to V43 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
+        )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v42_to_v43_message_exchanges.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                pending = ""
+                for line in migration_path.read_text(encoding="utf-8").splitlines(
+                    keepends=True
+                ):
+                    pending += line
+                    if not sqlite3.complete_statement(pending):
+                        continue
+                    cursor.execute(pending)
+                    pending = ""
+                if pending.strip():
+                    raise SchemaError(
+                        "Message exchanges migration contains incomplete SQL"
+                    )
+
+                # The migration file is DDL-only (see its header); the
+                # version bump is a separate, rowcount-guarded UPDATE here
+                # -- matching the v29->v30 usage_json shape -- rather than
+                # embedded in the script like the v32-v39 migrations do.
+                version_cursor = cursor.execute(
+                    """
+                    UPDATE db_schema_version
+                       SET version = 43
+                     WHERE schema_name = ?
+                       AND version = 42
+                    """,
+                    (self._SCHEMA_NAME,),
+                )
+                if version_cursor.rowcount != 1:
+                    raise SchemaError(
+                        f"[{self._SCHEMA_NAME} V42→V43] Migration version update was not applied"
+                    )
+
+            final_version = self._get_db_version(conn)
+            if final_version != 43:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V42→V43] Migration version check failed. "
+                    f"Expected 43, got: {final_version}"
+                )
+            logger.info(
+                f"[{self._SCHEMA_NAME} V42→V43] Migration completed successfully for DB: {self.db_path_str}."
+            )
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V42→V43] Migration failed: {exc}"
+            )
+            raise SchemaError(
+                f"Migration from V42 to V43 failed for '{self._SCHEMA_NAME}': {exc}"
+            ) from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -5628,6 +5696,7 @@ UPDATE db_schema_version
                     39: self._migrate_from_v39_to_v40,
                     40: self._migrate_from_v40_to_v41,
                     41: self._migrate_from_v41_to_v42,
+                    42: self._migrate_from_v42_to_v43,
                 }
 
                 if current_db_version == 0:
@@ -10556,6 +10625,122 @@ UPDATE db_schema_version
             )
             raise CharactersRAGDBError(
                 f"Database error writing local metadata: {e}"
+            ) from e
+
+    def append_message_exchanges_local(
+        self, message_id: str, rows: Sequence[Dict[str, Any]]
+    ) -> int:
+        """Upsert exchange captures for a message (task-5, Console
+        Conversation Inspector).
+
+        Local-only by design, exactly like ``update_message_usage_local``
+        above: this never touches ``sync_log`` and never bumps the parent
+        message's ``version``/``last_modified`` (the ``message_exchanges``
+        table carries no sync trigger at all -- see the v40->v41 migration).
+        Each captured run (raw request/response bytes) is keyed by
+        ``(message_id, run_tag, seq)``; re-appending the same key updates
+        the row in place instead of duplicating it, so a caller can safely
+        re-submit the same run without first checking whether it already
+        exists.
+
+        Args:
+            message_id: The UUID of the owning message row.
+            rows: Each mapping must carry ``run_tag`` (str), ``seq`` (int),
+                ``status`` (str), ``abandoned`` (bool), ``capture_blob``
+                (bytes), and ``created_at`` (str).
+
+        Returns:
+            The number of rows written (inserted or updated in place).
+
+        Raises:
+            CharactersRAGDBError: For database integrity or other database
+                errors while performing the write.
+        """
+        written = 0
+        try:
+            with self.transaction() as cursor:
+                for row in rows:
+                    cursor.execute(
+                        """
+                        INSERT INTO message_exchanges
+                            (message_id, run_tag, seq, status, abandoned,
+                             capture_blob, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(message_id, run_tag, seq) DO UPDATE SET
+                            status = excluded.status,
+                            abandoned = excluded.abandoned,
+                            capture_blob = excluded.capture_blob
+                        """,
+                        (
+                            message_id,
+                            row["run_tag"],
+                            int(row["seq"]),
+                            row["status"],
+                            1 if row.get("abandoned") else 0,
+                            bytes(row["capture_blob"]),
+                            row["created_at"],
+                        ),
+                    )
+                    written += 1
+        except sqlite3.IntegrityError as e:
+            logger.opt(exception=True).error(
+                f"SQLite integrity error writing message exchanges for message ID {message_id}: {e}"
+            )
+            raise CharactersRAGDBError(
+                f"Database integrity error writing message exchanges: {e}"
+            ) from e
+        except sqlite3.Error as e:
+            logger.opt(exception=True).error(
+                f"Database error writing message exchanges for message ID {message_id}: {e}"
+            )
+            raise CharactersRAGDBError(
+                f"Database error writing message exchanges: {e}"
+            ) from e
+        return written
+
+    def get_message_exchanges(self, message_id: str) -> List[Dict[str, Any]]:
+        """Ordered exchange captures for one message (task-5, Console
+        Conversation Inspector).
+
+        Args:
+            message_id: The UUID of the owning message row.
+
+        Returns:
+            Rows ordered by ``(run_tag, seq)``, each a dict with keys
+            ``run_tag``, ``seq``, ``status``, ``abandoned`` (bool),
+            ``capture_blob`` (bytes), and ``created_at``.
+
+        Raises:
+            CharactersRAGDBError: For database errors while reading.
+        """
+        try:
+            with self.transaction() as cursor:
+                cursor.execute(
+                    """
+                    SELECT run_tag, seq, status, abandoned, capture_blob, created_at
+                      FROM message_exchanges
+                     WHERE message_id = ?
+                     ORDER BY run_tag, seq
+                    """,
+                    (message_id,),
+                )
+                return [
+                    {
+                        "run_tag": r[0],
+                        "seq": r[1],
+                        "status": r[2],
+                        "abandoned": bool(r[3]),
+                        "capture_blob": r[4],
+                        "created_at": r[5],
+                    }
+                    for r in cursor.fetchall()
+                ]
+        except sqlite3.Error as e:
+            logger.opt(exception=True).error(
+                f"Database error reading message exchanges for message ID {message_id}: {e}"
+            )
+            raise CharactersRAGDBError(
+                f"Database error reading message exchanges: {e}"
             ) from e
 
     def get_next_trajectory_seq(self, conversation_id: str) -> int:

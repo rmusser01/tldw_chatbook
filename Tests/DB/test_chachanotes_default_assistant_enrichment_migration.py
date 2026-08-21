@@ -455,8 +455,11 @@ def test_conversation_and_message_against_character_id_1_still_works(tmp_path):
 # --------------------------------------------------------------------------
 
 
-def test_current_schema_version_is_40():
-    assert CharactersRAGDB._CURRENT_SCHEMA_VERSION == 40
+def test_current_schema_version_is_current():
+    # Pinned dynamically: this sibling test exists to catch an accidental
+    # DOWNGRADE, not to be re-edited on every legitimate bump (it has been
+    # re-hardcoded at 35, 39, 40, 41 ...).
+    assert CharactersRAGDB._CURRENT_SCHEMA_VERSION >= 41
 
 
 def test_migrate_from_v31_to_v32_requires_version_31(tmp_path):
