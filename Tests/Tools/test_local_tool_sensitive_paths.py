@@ -485,11 +485,46 @@ def test_every_workspace_rooted_function_uses_the_choke_point():
     leaks committed file CONTENT for denylisted paths -- see TASK-19632.
     """
     import ast
+    import importlib
 
-    from tldw_chatbook.Tools import git_tool_impls, local_tool_impls, patch_tool_impls
+    import tldw_chatbook.Tools as tools_pkg
+
+    # DERIVED, not hand-listed. A hardcoded module tuple is the same shape as
+    # the bug this task fixed (an enforcer list that can only name what existed
+    # when it was written) -- a fourth module joining the family would silently
+    # get zero coverage. Discover the family instead: any Tools/ module with a
+    # module-level function taking ``workspace_root`` is in it by definition.
+    tools_dir = Path(tools_pkg.__file__).parent
+    modules = []
+    for source in sorted(tools_dir.glob("*.py")):
+        if source.name == "__init__.py":
+            continue
+        text = source.read_text()
+        if "workspace_root" not in text:
+            continue
+        candidate = ast.parse(text)
+        takes_root = any(
+            "workspace_root"
+            in {
+                a.arg
+                for a in node.args.args + node.args.kwonlyargs + node.args.posonlyargs
+            }
+            for node in candidate.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        )
+        if takes_root:
+            modules.append(importlib.import_module(f"tldw_chatbook.Tools.{source.stem}"))
+
+    # The three known members must be present; discovery may only ADD.
+    discovered = {m.__name__.rsplit(".", 1)[-1] for m in modules}
+    assert {"local_tool_impls", "patch_tool_impls", "git_tool_impls"} <= discovered, (
+        "the workspace-rooted tool family lost a known member -- discovery found "
+        f"{sorted(discovered)}; if a module was renamed or retired, say so here"
+    )
 
     offenders: list[str] = []
-    for module in (local_tool_impls, patch_tool_impls, git_tool_impls):
+    verified_resolvers: set[str] = set()
+    for module in modules:
         tree = ast.parse(Path(module.__file__).read_text())
         for node in tree.body:
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -512,12 +547,29 @@ def test_every_workspace_rooted_function_uses_the_choke_point():
                 accepted |= _INDIRECT_CHOKE_POINT_RESOLVERS
             if not (calls & accepted):
                 offenders.append(f"{module.__name__}.{node.name}")
+            if node.name in _INDIRECT_CHOKE_POINT_RESOLVERS:
+                verified_resolvers.add(node.name)
 
     assert not offenders, (
         "these workspace-rooted functions never reach resolve_workspace_path "
         "(directly or via one of "
         f"{sorted(_INDIRECT_CHOKE_POINT_RESOLVERS)}), so they bypass the "
         f"sensitive-path denylist: {offenders}"
+    )
+
+    # Every accepted resolver must itself have been VISITED and verified above.
+    # Without this, the accept-set is a hole rather than a delegation: the loop
+    # only inspects functions that take a parameter literally named
+    # ``workspace_root``, so a resolver spelling it differently is added to the
+    # accept-set, never checked itself, and silently launders its callers past
+    # the choke point (demonstrated in review with a `root`-named resolver).
+    unverified = set(_INDIRECT_CHOKE_POINT_RESOLVERS) - verified_resolvers
+    assert not unverified, (
+        "these names are trusted in _INDIRECT_CHOKE_POINT_RESOLVERS but were "
+        "never themselves inspected by the scan above -- they are an unchecked "
+        "hole, not a verified delegation. A resolver must live in one of the "
+        "scanned modules and take a `workspace_root` parameter so that its own "
+        f"call to the choke point is proven: {sorted(unverified)}"
     )
 
 
