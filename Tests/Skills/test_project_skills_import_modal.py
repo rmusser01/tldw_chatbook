@@ -1,11 +1,12 @@
 import asyncio
 import os
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
 from textual import on
 from textual.app import App
-from textual.widgets import Checkbox
+from textual.widgets import Checkbox, Static
 
 from tldw_chatbook.Skills_Interop.project_skills_discovery import (
     discover_project_skills,
@@ -220,6 +221,83 @@ async def test_escape_on_results_phase_dismisses_as_imported(tmp_path):
     decision, outcomes = app.result
     assert decision == "imported"
     assert outcomes is not None and len(outcomes) == 2
+
+
+# ---------------------------------------------------------------------------
+# TASK-17964 follow-ups
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_offer_footer_renders_skipped_and_truncated_lines(tmp_path):
+    """``_offer_footer_lines``'s two branches -- neither exercised by any
+    existing test before now: a discovery with ``skipped`` entries renders
+    ``Skipped: <names>``, and ``truncated > 0`` renders "N more not shown".
+    """
+    base_discovery = _discovery(tmp_path, names=("alpha-skill",))
+    discovery = replace(
+        base_discovery,
+        skipped=(("weird-file", "no SKILL.md"), ("sneaky", "symlink")),
+        truncated=4,
+    )
+
+    async def _importer(entry):
+        raise AssertionError("importer should not run in this footer-only test")
+
+    modal = ProjectSkillsImportModal(
+        discovery=discovery, installed_names=frozenset(), importer=_importer
+    )
+    app = _HarnessApp(modal)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        footer = modal.query_one("#project-skills-footer", Static)
+        text = str(footer.renderable)
+
+    assert "Skipped: weird-file, sneaky" in text
+    assert "4 more not shown" in text
+
+
+@pytest.mark.asyncio
+async def test_offer_phase_checkbox_label_escapes_markup_literally(tmp_path):
+    """A markup-hostile skill ``description`` must render as literal text
+    in the Checkbox label -- ``escape_markup()`` at the
+    ``_compose_offer_phase`` call site is the only thing defending this,
+    with no assertion pinning it before now.
+
+    The description must be YAML-quoted: unquoted brackets break the
+    frontmatter's YAML grammar and degrade to an EMPTY description
+    entirely (this file's shared ``_discovery()`` helper's unquoted
+    ``[red]desc[/red] for {name}`` hits exactly that, so it can't be
+    reused here) -- see the discovery-layer fixtures already covering this
+    in ``Tests/Skills/test_project_skills_discovery.py``
+    (``test_hostile_description_survives_as_plain_data``,
+    ``test_unparseable_frontmatter_degrades_to_empty_description``).
+    """
+    skill_dir = tmp_path / ".SKILLS" / "alpha-skill"
+    skill_dir.mkdir(parents=True)
+    skill_dir.joinpath("SKILL.md").write_text(
+        '---\ndescription: "[red]evil[/red]"\n---\nBody\n', encoding="utf-8"
+    )
+    discovery = discover_project_skills(tmp_path)
+    assert discovery is not None
+    assert discovery.entries[0].description == "[red]evil[/red]"  # sanity
+
+    async def _importer(entry):
+        raise AssertionError("importer should not run in this test")
+
+    modal = ProjectSkillsImportModal(
+        discovery=discovery, installed_names=frozenset(), importer=_importer
+    )
+    app = _HarnessApp(modal)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        checkbox = modal.query_one("#project-skill-row-0", Checkbox)
+        label = checkbox.label
+
+    assert "[red]evil[/red]" in label.plain
+    # No "red" style span was produced -- the brackets were never
+    # interpreted as a markup tag.
+    assert not any(span.style == "red" for span in label.spans)
 
 
 class _StubSkillsScopeService:

@@ -15,7 +15,7 @@ from pathlib import Path
 import re
 import threading
 import tomllib
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from rich.cells import cell_len
@@ -345,6 +345,11 @@ from ..Navigation.pending_handoff_store import (
     HandoffValueError,
     PendingHandoffStore,
 )
+
+if TYPE_CHECKING:
+    # Type-only: the create dialog is a shared modal imported locally at its
+    # one call site (handle_workspace_create) to avoid a real import cycle.
+    from ...Widgets.workspace_create_modal import WorkspaceCreateResult
 
 
 logger = logging.getLogger(__name__)
@@ -18501,7 +18506,7 @@ class SettingsScreen(BaseAppScreen):
             return
         from tldw_chatbook.Widgets.workspace_create_modal import WorkspaceCreateModal
 
-        def _done(result) -> None:
+        def _done(result: "WorkspaceCreateResult | None") -> None:
             if result is None:
                 return
             status_parts = [message for _folder, message in result.failed_folders]
@@ -18519,7 +18524,13 @@ class SettingsScreen(BaseAppScreen):
 
                 maybe_offer_project_skills_import(self.app, result.project_skills)
 
-        self.app.push_screen(WorkspaceCreateModal(registry_service=registry), _done)
+        self.app.push_screen(
+            WorkspaceCreateModal(
+                registry_service=registry,
+                description="Local workspace created from Settings.",
+            ),
+            _done,
+        )
 
     @on(Button.Pressed, "#settings-workspace-rename-apply")
     def handle_workspace_rename_apply(self, event: Button.Pressed) -> None:

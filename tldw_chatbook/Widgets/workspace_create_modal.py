@@ -117,9 +117,29 @@ class WorkspaceCreateModal(
     BINDINGS = [("escape", "request_safe_cancel", "Cancel")]
     AUTO_FOCUS = "#workspace-create-name"
 
-    def __init__(self, *, registry_service: LocalWorkspaceRegistryService) -> None:
+    def __init__(
+        self,
+        *,
+        registry_service: LocalWorkspaceRegistryService,
+        description: str = "Created from the workspace setup dialog.",
+    ) -> None:
+        """Build the dialog against a registry, with per-surface provenance.
+
+        Args:
+            registry_service: Local workspace registry the dialog reads the
+                next free identity from and writes the new workspace to.
+            description: Provenance stored on the created ``WorkspaceRecord``
+                (TASK-17962). Each surface passes its own wording; the
+                default covers callers that do not care.
+        """
         super().__init__()
         self._registry = registry_service
+        #: Provenance stored on the created ``WorkspaceRecord`` (TASK-17962):
+        #: each surface (Console/Settings/Library) passes its own wording so
+        #: a workspace's origin is still visible after creation -- restoring
+        #: the per-surface description the surfaces used before they shared
+        #: this one modal.
+        self._description = description
         self._folders: list[str] = []
         #: Folder locator -> its project-skills discovery, populated only
         #: for folders whose root contains a non-empty .SKILLS/ (spec §5.5
@@ -196,10 +216,12 @@ class WorkspaceCreateModal(
                 for index, folder in enumerate(self._folders):
                     discovery = self._folder_discoveries.get(folder)
                     if discovery is not None and discovery.entries:
-                        label = (
-                            f"{folder} — contains "
-                            f"{len(discovery.entries)} project skill(s)"
-                        )
+                        # TASK-17964: grammatically correct singular/plural
+                        # rather than the literal "1 project skill(s)"
+                        # live-verified during TASK-18705's Step 4.
+                        count = len(discovery.entries)
+                        noun = "project skill" if count == 1 else "project skills"
+                        label = f"{folder} — contains {count} {noun}"
                     else:
                         label = folder
                     with Horizontal(classes="workspace-create-folder-item"):
@@ -321,13 +343,30 @@ class WorkspaceCreateModal(
         resolved_locator = str(resolved)
         self._folders.append(resolved_locator)
         # Pure filesystem scan (no side effects, no trust decisions) so the
-        # row can flag "contains N project skill(s)" up front; only stored
+        # row can flag "contains N project skills" up front; only stored
         # when there's something to offer later (spec §5.5). Skipped
         # entirely when the kill-switch is off (Finding 1, final review
         # 2026-08-17): the feature's "no scanning" promise must be
         # literally true, not merely "no offer" once the flag was already
         # set. Imported locally (like app.py's startup discovery worker
         # does) rather than at module import time.
+        #
+        # TASK-17964 (off-thread discovery, decided and NOT implemented):
+        # this is a synchronous, blocking filesystem walk on the UI thread.
+        # It stays that way. The scan itself is hard-bounded (500 scanned
+        # children / 50 recognized entries / 64 KiB frontmatter reads per
+        # entry, non-recursive -- see project_skills_discovery.py), so it
+        # cannot run away on an ordinary project. The real risk named by
+        # the task -- a `.SKILLS/` that resolves onto a slow or hung
+        # network mount -- is NOT fixed by moving only this call off-
+        # thread: `validate_folder_binding_path` above (line ~330) already
+        # did a synchronous `Path.resolve()`/`is_dir()` stat on the exact
+        # same filesystem before this line ever runs, on the same UI
+        # thread, with no bound at all. A dead mount hangs the modal at
+        # validation regardless of what this discovery call does. Moving
+        # validation AND discovery off the main thread is a materially
+        # different (and separately sized) change; if the hang is ever hit
+        # in practice, that's the fix to file, not this one call site.
         from tldw_chatbook.config import get_cli_setting
 
         if get_cli_setting("skills", "project_skills_prompt_enabled", True):
@@ -485,7 +524,7 @@ class WorkspaceCreateModal(
             self._registry.create_workspace(
                 workspace_id=workspace_id,
                 name=name or generated_name,
-                description="Created from the workspace setup dialog.",
+                description=self._description,
             )
         except WorkspaceRegistryServiceError as exc:
             # Nothing was committed -- let the user fix the name/folder and

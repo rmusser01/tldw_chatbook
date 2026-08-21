@@ -55,7 +55,7 @@ class _FlakyBindRegistry:
 
 
 class _HarnessApp(App[None]):
-    def __init__(self, registry):
+    def __init__(self, registry, *, description: str | None = None):
         super().__init__()
         # NOTE: `App.__init__` already defines `self._registry` (a WeakSet of
         # mounted DOM nodes, consulted at shutdown in `_close_all`). Naming
@@ -63,15 +63,20 @@ class _HarnessApp(App[None]):
         # teardown with `TypeError: '...' object is not iterable`, so the
         # harness's own workspace registry gets a non-colliding name.
         self._workspace_registry = registry
+        # Optional per-test override of the modal's ``description`` kwarg
+        # (TASK-17962 provenance test) -- ``None`` means "don't pass it",
+        # exercising the modal's own default instead.
+        self._modal_description = description
         self.result = "unset"
 
     def on_mount(self) -> None:
         def _done(result):
             self.result = result
 
-        self.push_screen(
-            WorkspaceCreateModal(registry_service=self._workspace_registry), _done
-        )
+        kwargs: dict = {"registry_service": self._workspace_registry}
+        if self._modal_description is not None:
+            kwargs["description"] = self._modal_description
+        self.push_screen(WorkspaceCreateModal(**kwargs), _done)
 
 
 @pytest.mark.asyncio
@@ -432,7 +437,11 @@ async def test_folder_with_skills_annotated_and_carried_on_result(tmp_path):
         await pilot.click("#workspace-create-folder-add")
         await pilot.pause()
         rows = [str(s.renderable) for s in modal.query(".workspace-create-folder-locator")]
-        assert any("1 project skill" in row for row in rows)
+        # TASK-17964: exact grammar, not merely a substring -- must read
+        # "1 project skill", never the old literal "1 project skill(s)".
+        assert any(
+            row == f"{project.resolve()} — contains 1 project skill" for row in rows
+        ), rows
         await pilot.click("#workspace-create-confirm")
         await pilot.pause()
     assert len(app.result.project_skills) == 1
@@ -500,7 +509,9 @@ async def test_removed_and_rescanned_folder_clears_stale_discovery(tmp_path):
         rows = [
             str(s.renderable) for s in modal.query(".workspace-create-folder-locator")
         ]
-        assert any("1 project skill" in row for row in rows)
+        assert any(
+            row == f"{project.resolve()} — contains 1 project skill" for row in rows
+        ), rows
 
         # Remove the folder -- its discovery must be popped, not left stale.
         modal.query_one("#workspace-create-folder-remove-0", Button).press()
@@ -521,3 +532,153 @@ async def test_removed_and_rescanned_folder_clears_stale_discovery(tmp_path):
         await pilot.click("#workspace-create-confirm")
         await pilot.pause()
     assert app.result.project_skills == ()
+
+
+# ---------------------------------------------------------------------------
+# TASK-17962 follow-ups
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_enter_key_on_name_input_submits_via_real_keypress(tmp_path):
+    """The Enter-submit fast path (``Input.Submitted`` on
+    ``#workspace-create-name`` -> ``_create``) driven by a REAL keypress,
+    not a direct ``modal._create()`` call or a Button press -- the
+    task-17961 blind-spot lesson: a synthetic call can pass while the real
+    focus/keypress path is broken.
+    """
+    registry = _registry(tmp_path)
+    app = _HarnessApp(registry)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        modal = app.screen
+        assert isinstance(modal, WorkspaceCreateModal)
+        name_input = modal.query_one("#workspace-create-name", Input)
+        # AUTO_FOCUS already targets this input on mount, but assert the
+        # precondition explicitly -- the keypress must land where the user
+        # would actually be typing.
+        assert modal.focused is name_input
+        name_input.value = "Video Tool"
+        await pilot.press("enter")
+        await pilot.pause()
+    result = app.result
+    assert isinstance(result, WorkspaceCreateResult)
+    assert result.name == "Video Tool"
+    assert len(registry.list_workspaces()) == 1
+
+
+@pytest.mark.asyncio
+async def test_real_toctou_folder_deleted_before_create_shows_inline_failure(tmp_path):
+    """A real TOCTOU race: the folder validates and is added at Add time,
+    then is deleted from disk before Create actually attempts the binding
+    -- ``failed_folders`` must come from the real ``add_folder_binding()``
+    call raising, not a synthetic result object or a stubbed registry.
+    """
+    registry = _registry(tmp_path)
+    project = tmp_path / "project"
+    project.mkdir()
+    app = _HarnessApp(registry)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        modal = app.screen
+        modal.query_one("#workspace-create-name", Input).value = "Video Tool"
+        modal.query_one("#workspace-create-folder-path", Input).value = str(project)
+        await pilot.click("#workspace-create-folder-add")
+        await pilot.pause()
+
+        # The race: the bound folder disappears between Add and Create.
+        shutil.rmtree(project)
+
+        await pilot.click("#workspace-create-confirm")
+        await pilot.pause()
+
+        assert app.screen is modal
+        assert app.result == "unset"  # still open -- Finding 7's retry state
+        error = modal.query_one("#workspace-create-error", Static)
+        assert str(project.resolve()) in str(error.renderable)
+        assert "does not exist" in str(error.renderable)
+
+    # The workspace itself was created -- only the folder binding failed.
+    created = registry.list_workspaces()
+    assert len(created) == 1
+    assert created[0].name == "Video Tool"
+    assert registry.list_folder_bindings(created[0].workspace_id) == ()
+
+
+@pytest.mark.asyncio
+async def test_make_active_checkbox_survives_folder_add_recompose(tmp_path):
+    """Unchecking "Switch to this workspace" via a REAL click, then adding a
+    folder (which triggers ``refresh(recompose=True)``), must not silently
+    reset the checkbox back to checked -- ``_stash_form_state`` is what
+    preserves it across the rebuild.
+    """
+    registry = _registry(tmp_path)
+    project = tmp_path / "project"
+    project.mkdir()
+    app = _HarnessApp(registry)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        modal = app.screen
+        await pilot.click("#workspace-create-make-active")
+        await pilot.pause()
+        assert (
+            modal.query_one("#workspace-create-make-active", Checkbox).value is False
+        )
+
+        modal.query_one("#workspace-create-folder-path", Input).value = str(project)
+        await pilot.click("#workspace-create-folder-add")
+        await pilot.pause()
+
+        # compose() re-ran (a new folder row now exists) -- the checkbox
+        # widget was rebuilt too, and must still read unchecked.
+        assert modal.query(".workspace-create-folder-item")
+        assert (
+            modal.query_one("#workspace-create-make-active", Checkbox).value is False
+        )
+
+
+@pytest.mark.asyncio
+async def test_surface_description_is_carried_onto_created_record(tmp_path):
+    """TASK-17962 controller ruling: per-surface ``description`` provenance
+    is restored -- a caller-supplied ``description`` reaches
+    ``create_workspace`` verbatim, so the created record still says which
+    surface it came from (the wording Console/Settings/Library each pass
+    is pinned in their own handler tests / by inspection; this test pins
+    the modal's own plumbing all three share).
+    """
+    registry = _registry(tmp_path)
+    # Mirrors what Console's _create_console_workspace passes into the
+    # shared modal's constructor.
+    app = _HarnessApp(registry, description="Local workspace created from Console.")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        modal = app.screen
+        modal.query_one("#workspace-create-name", Input).value = "Video Tool"
+        await pilot.click("#workspace-create-confirm")
+        await pilot.pause()
+
+    result = app.result
+    assert isinstance(result, WorkspaceCreateResult)
+    stored = registry.get_workspace(result.workspace_id)
+    assert stored is not None
+    assert stored.description == "Local workspace created from Console."
+
+
+@pytest.mark.asyncio
+async def test_default_description_used_when_surface_passes_none(tmp_path):
+    """Without an explicit ``description``, the modal falls back to its own
+    generic wording rather than an empty string."""
+    registry = _registry(tmp_path)
+    app = _HarnessApp(registry)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        modal = app.screen
+        modal.query_one("#workspace-create-name", Input).value = "Video Tool"
+        await pilot.click("#workspace-create-confirm")
+        await pilot.pause()
+
+    result = app.result
+    assert isinstance(result, WorkspaceCreateResult)
+    stored = registry.get_workspace(result.workspace_id)
+    assert stored is not None
+    assert stored.description == "Created from the workspace setup dialog."
