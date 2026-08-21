@@ -13,6 +13,10 @@ from tldw_chatbook.Notes.note_import_execution_models import (
     ImportExecutionReceipt,
     ImportSessionState,
 )
+from tldw_chatbook.Notes.note_folder_models import (
+    FolderValidationError,
+    normalize_folder_name,
+)
 from tldw_chatbook.Notes.note_import_plan_models import (
     ImportAction,
     ImportMatchKind,
@@ -345,22 +349,34 @@ def _folder_name_error(value: str) -> str:
         return "Enter a Notes destination."
     if value != value.strip():
         return "Remove leading or trailing spaces from each folder name."
-    if value in {".", ".."}:
-        return "Use a folder name other than '.' or '..'."
-    if "\x00" in value:
-        return "Remove the unsupported character from the folder name."
+    if len(value) > 255:
+        return "Use folder names with 255 characters or fewer."
+    try:
+        normalized = normalize_folder_name(value)
+    except FolderValidationError:
+        return "Enter a valid folder name without path separators."
+    if normalized.display != value:
+        return "Use each folder name exactly as it will appear in Notes."
     return ""
 
 
-def parse_note_import_destination(value: str) -> tuple[tuple[str, ...], str]:
+def parse_note_import_destination(
+    value: str,
+    *,
+    max_segments: int | None = None,
+) -> tuple[tuple[str, ...], str]:
     """Return safe destination segments and one inline correction message."""
     if not isinstance(value, str):
         raise TypeError("destination must be text.")
+    if max_segments is not None and (type(max_segments) is not int or max_segments < 1):
+        raise ValueError("max_segments must be a positive integer.")
     if not value:
         return (), "Enter a Notes destination."
     parts = tuple(re.split(r"[/\\]", value))
     if any(not part for part in parts):
         return (), "Remove the empty folder between separators."
+    if max_segments is not None and len(parts) > max_segments:
+        return (), f"Use a destination with {max_segments} folder levels or fewer."
     for part in parts:
         error = _folder_name_error(part)
         if error:
@@ -369,10 +385,16 @@ def parse_note_import_destination(value: str) -> tuple[tuple[str, ...], str]:
 
 
 def set_destination_input(
-    state: NoteImportWorkflowSnapshot, value: str
+    state: NoteImportWorkflowSnapshot,
+    value: str,
+    *,
+    max_segments: int | None = None,
 ) -> NoteImportWorkflowSnapshot:
     """Retain exact typed destination text with parsed, mutation-free authority."""
-    segments, error = parse_note_import_destination(value)
+    segments, error = parse_note_import_destination(
+        value,
+        max_segments=max_segments,
+    )
     changed = (
         value != state.destination_input
         or segments != state.destination_segments

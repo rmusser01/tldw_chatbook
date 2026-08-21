@@ -140,6 +140,7 @@ def _controller(
     executor_error: Exception | None = None,
     planning_error: Exception | None = None,
     review_note_reader=None,
+    bounds: ImportBounds = BOUNDS,
 ) -> LibraryNoteImportController:
     published: list[object] = []
     executor = _Executor(calls, receipt or _receipt(), executor_error)
@@ -175,7 +176,7 @@ def _controller(
         return approved
 
     controller = LibraryNoteImportController(
-        bounds=BOUNDS,
+        bounds=bounds,
         database=lambda: "database",
         folder_repository=lambda: repository,
         receipt_repository=lambda: Receipts(),
@@ -214,6 +215,28 @@ def test_destination_input_keeps_raw_authority_and_publishes_inline_error(
         "Remove the empty folder between separators."
     )
     assert controller.presentation_snapshot.can_check is False
+
+
+def test_destination_depth_uses_controller_import_bounds_inline(tmp_path: Path) -> None:
+    bounds = replace(BOUNDS, max_depth=32)
+    controller = _controller(
+        plan=_plan(tmp_path / "one.md"),
+        calls=[],
+        repository=_FolderRepository(),
+        bounds=bounds,
+    )
+    controller.begin_selection()
+    controller.accept_selected_path(tmp_path / "one.md", is_folder=False)
+
+    controller.set_destination("/".join(f"folder-{index}" for index in range(34)))
+
+    snapshot = controller.presentation_snapshot
+    assert snapshot.can_check is False
+    assert snapshot.destination_error == (
+        "Use a destination with 33 folder levels or fewer."
+    )
+    assert snapshot.check_disabled_reason == snapshot.destination_error
+    assert "Could not check" not in snapshot.status_line
 
 
 @pytest.mark.asyncio

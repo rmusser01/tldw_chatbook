@@ -308,6 +308,14 @@ def test_destination_input_retains_raw_text_and_exposes_inline_validation() -> N
     assert invalid.destination_error == "Remove the empty folder between separators."
     assert invalid.can_check is False
 
+    too_long = set_destination_input(state, "x" * 256)
+    assert "255" in too_long.destination_error
+    assert too_long.can_check is False
+
+    nfkc_separator = set_destination_input(state, "Inbox／Archive")
+    assert "valid folder name" in nfkc_separator.destination_error
+    assert nfkc_separator.can_check is False
+
 
 def test_review_page_is_bounded_and_clamps_after_plan_changes() -> None:
     plan = _plan(*(_item(number) for number in range(1, 58)))

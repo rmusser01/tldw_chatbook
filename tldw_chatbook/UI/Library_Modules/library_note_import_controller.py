@@ -163,7 +163,11 @@ class LibraryNoteImportController:
 
     def set_destination(self, value: str) -> None:
         """Retain exact destination input and its mutation-free validation."""
-        self._state = set_destination_input(self._state, value)
+        self._state = set_destination_input(
+            self._state,
+            value,
+            max_segments=self._bounds.max_depth + 1,
+        )
         self._error_message = ""
         self.publish()
 
