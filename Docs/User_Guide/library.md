@@ -69,6 +69,44 @@ routes, including **Tab Navigation: Library — Skills**, can open a tool that i
 not shown in the Get started rail. Existing profiles without this preference
 open the full Library.
 
+## Returning to a populated Library
+
+At 120 columns and wider, the landing helps you resume without pretending it
+knows more than the source owners do:
+
+```text
++----------------------+-----------------------------------------------+
+| full Library rail    | Continue                                     |
+|                      |   [ Return to the last applied source scope ] |
+| Browse / Create /    | Needs attention                              |
+| Study / Import       |   current recoverable problem       [Retry]  |
+|                      | From your Library                            |
+|                      |   Database note / Media / Conversation       |
+|                      | Quick actions                                |
+|                      |   [Import…] [New note] [Search]              |
++----------------------+-----------------------------------------------+
+```
+
+- **Continue** remembers the last eligible source list separately from the
+  currently open route. It appears only after that source's full scope was
+  authoritatively applied. Returning from an item or detail view resumes the
+  list scope, not a guessed item selection; the source read reports any page
+  clamp or deleted content.
+- **Needs attention** shows at most one current, recoverable problem from this
+  Library screen and reuses its existing **Review** or **Retry** action. It is
+  session state, not a promise that the warning survives restart.
+- **From your Library** uses cached summaries in the fixed order **Database
+  Notes → Media → Conversations**. Missing or unresolved sources are omitted;
+  the order does not imply that items were ranked against each other.
+- **Quick actions** are **Import…**, **New note**, then **Search**. They use the
+  same guarded destinations as the rail.
+
+At compact widths the landing canvas is hidden and the rail remains the
+navigation owner. If focus was on Continue, recovery, a cached summary, or a
+quick action when the terminal became compact, focus moves to that action's
+matching rail destination. Widening restores the landing control only if you
+did not choose a newer rail target in the meantime.
+
 ## Layout tour
 
 ```text
@@ -120,12 +158,9 @@ open the full Library.
   - a **Details** section, collapsed by default (see below). Section
     headers toggle open (**▾**) and closed (**▸**).
 - **Canvas** (the right pane) — there are no tabs here: the canvas swaps
-  to match whichever rail row is selected. Before you pick one it shows
-  the landing hub: per-source counts, quick actions (Import… /
-  Search / New note, also reachable with **i** and **n**), and one
-  clickable row per recent item that jumps straight into it, under
-  the guidance line "Search everything, pick a section, or
-  add something new."
+  to match whichever rail row is selected. Before you pick one, a populated
+  profile sees the returning landing described above. Import… and New note
+  remain reachable with **i** and **n**.
 - **Footer** — shows the keys that work where you are. The full rail offers
   "/ focus search"; Get started keeps focus on its visible actions. The
   landing adds "i import content"
