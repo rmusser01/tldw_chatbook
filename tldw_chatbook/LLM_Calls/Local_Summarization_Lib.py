@@ -30,7 +30,7 @@ from urllib3 import Retry
 # Import Local Libraries
 from tldw_chatbook.Utils.Utils import extract_text_from_segments, logging
 from tldw_chatbook.Utils.persistent_diagnostics import safe_metadata_token
-from tldw_chatbook.config import load_settings
+from tldw_chatbook.config import get_cli_setting, load_settings
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
 
 #
@@ -85,6 +85,9 @@ def summarize_with_local_llm(
             "http://127.0.0.1:8080/v1/chat/completions",
             headers=headers,
             json=data,
+            # task-19560: unbounded before this. A local server that accepts
+            # the connection and then stalls hung the caller forever.
+            timeout=int(get_cli_setting("local_llm", "api_timeout", 120)),
         )
 
         if response.status_code == 200:
