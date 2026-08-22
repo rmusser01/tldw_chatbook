@@ -588,15 +588,17 @@ def test_campaign_state_bearing_namespace_mutations_fsync_parents_in_order(
     )
     profile.release_campaign_lock(campaign, owner)
 
-    assert synced == [
+    assert synced[:4] == [
         tmp_path,
         campaign,
         campaign / "attempts",
         campaign,
+    ]
+    owner_stage = synced[4]
+    assert owner_stage.parent == campaign
+    assert owner_stage.name.startswith(".campaign-owner-")
+    assert synced[5:] == [
         campaign,
-        campaign,
-        campaign,
-        campaign / ".campaign-lock",
         campaign,
         campaign,
         campaign / ".campaign-release",
@@ -1001,39 +1003,33 @@ def _acquire_attempt(campaign_root: Path, *, pid: int = 123):
     )
 
 
-def _write_campaign_acquire_marker(
-    campaign_root: Path, owner: profile.CampaignLockOwner
-) -> None:
-    (campaign_root / ".campaign-acquire").write_text(
-        json.dumps(
-            {
-                "owner_token": owner.owner_token,
-                "pid": owner.pid,
-                "process_start_sha256": owner.process_start_sha256,
-            },
-            sort_keys=True,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-
-
-def test_campaign_lock_uses_atomic_mkdir_and_exact_private_owner_record(
+def test_campaign_lock_uses_atomic_staged_directory_and_exact_private_owner_record(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     lock_mkdir_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+    published: list[tuple[str, profile.CampaignLockOwner]] = []
     real_mkdir = Path.mkdir
+    real_rename = profile._rename_namespace
 
     def recording_mkdir(path: Path, *args, **kwargs):
         if path.name == ".campaign-lock":
             lock_mkdir_calls.append((args, kwargs))
         return real_mkdir(path, *args, **kwargs)
 
+    def recording_rename(source: Path, target: Path) -> None:
+        if target == tmp_path / ".campaign-lock":
+            published.append((source.name, profile._read_lock_owner(source)))
+        real_rename(source, target)
+
     monkeypatch.setattr(Path, "mkdir", recording_mkdir)
+    monkeypatch.setattr(profile, "_rename_namespace", recording_rename)
 
     owner = _acquire_lock(tmp_path)
 
-    assert lock_mkdir_calls == [((), {})]
+    assert lock_mkdir_calls == []
+    assert len(published) == 1
+    assert published[0][0].startswith(".campaign-owner-")
+    assert published[0][1] == owner
     assert owner.pid == 123
     assert json.loads((tmp_path / ".campaign-lock" / "owner.json").read_bytes()) == {
         "owner_token": _OWNER_TOKEN,
@@ -1049,59 +1045,72 @@ def test_campaign_lock_uses_atomic_mkdir_and_exact_private_owner_record(
     )
 
 
-def test_campaign_fixed_acquire_marker_blocks_competing_owner(tmp_path: Path) -> None:
-    owner = profile.CampaignLockOwner(123, _OWNER_START, _OWNER_TOKEN)
-    _write_campaign_acquire_marker(tmp_path, owner)
-
-    with pytest.raises(RuntimeError, match="^campaign_lock_held$"):
-        _acquire_lock(tmp_path, pid=456)
-
-    assert not (tmp_path / ".campaign-lock").exists()
-    assert (tmp_path / ".campaign-acquire").is_file()
-
-
-def test_campaign_recovery_resumes_complete_acquire_marker_and_empty_lock(
+def test_campaign_owner_stage_rename_cannot_replace_complete_lock(
     tmp_path: Path,
 ) -> None:
-    owner = profile.CampaignLockOwner(123, _OWNER_START, _OWNER_TOKEN)
-    _write_campaign_acquire_marker(tmp_path, owner)
-    (tmp_path / ".campaign-lock").mkdir()
+    staged_owner = profile.CampaignLockOwner(111, _OWNER_START, "a" * 64)
+    canonical_owner = profile.CampaignLockOwner(222, _OWNER_START, "b" * 64)
+    stage = tmp_path / ".campaign-owner-proof"
+    canonical = tmp_path / ".campaign-lock"
+    _write_campaign_owner(stage, staged_owner)
+    _write_campaign_owner(canonical, canonical_owner)
 
-    event = profile.recover_interrupted_attempt(
-        tmp_path, process_start_probe=lambda _pid: None
-    )
+    with pytest.raises(OSError):
+        profile._rename_namespace(stage, canonical)
 
-    assert event == {"state": "failed", "reason_category": "interrupted"}
-    assert not (tmp_path / ".campaign-acquire").exists()
-    assert not (tmp_path / ".campaign-lock").exists()
-    assert not (tmp_path / "attempts.jsonl").exists()
+    assert profile._read_lock_owner(stage) == staged_owner
+    assert profile._read_lock_owner(canonical) == canonical_owner
 
 
-def test_campaign_owner_publish_link_failure_never_exposes_canonical_lock(
+def test_campaign_lock_owner_read_namespace_race_has_stable_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def fail_link(_source: Path, _target: Path) -> None:
-        raise OSError("injected owner publication failure")
+    _acquire_lock(tmp_path)
+    canonical = tmp_path / ".campaign-lock"
+    recovery = tmp_path / ".campaign-recovery"
+    real_iterdir = Path.iterdir
 
-    monkeypatch.setattr(profile.os, "link", fail_link)
+    def move_before_iterdir(path: Path):
+        if path == canonical:
+            path.rename(recovery)
+        return real_iterdir(path)
 
-    with pytest.raises(OSError, match="injected owner publication failure"):
+    monkeypatch.setattr(Path, "iterdir", move_before_iterdir)
+
+    with pytest.raises(RuntimeError, match="^campaign_lock_owner_invalid$"):
+        profile._read_lock_owner(canonical)
+
+
+def test_campaign_owner_publish_rename_failure_never_exposes_canonical_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_rename = profile._rename_namespace
+
+    def fail_publish(source: Path, target: Path) -> None:
+        if target.name == ".campaign-lock":
+            raise OSError("injected owner publication failure")
+        real_rename(source, target)
+
+    monkeypatch.setattr(profile, "_rename_namespace", fail_publish)
+
+    with pytest.raises(RuntimeError, match="^campaign_lock_publish_failed$"):
         _acquire_lock(tmp_path)
 
     assert not (tmp_path / ".campaign-lock").exists()
-    assert not (tmp_path / ".campaign-acquire").exists()
+    assert not tuple(tmp_path.glob(".campaign-owner-*"))
 
 
 def test_campaign_owner_publish_preserves_unrelated_partial_temp(
     tmp_path: Path,
 ) -> None:
     unrelated = tmp_path / ".campaign-owner-unrelated"
-    unrelated.write_bytes(b'{"pid":')
+    unrelated.mkdir()
+    (unrelated / "owner.json").write_bytes(b'{"pid":')
 
     owner = _acquire_lock(tmp_path)
 
     assert profile._read_lock_owner(tmp_path / ".campaign-lock") == owner
-    assert unrelated.read_bytes() == b'{"pid":'
+    assert (unrelated / "owner.json").read_bytes() == b'{"pid":'
 
 
 def test_campaign_competing_acquirer_cannot_lose_its_owner_temp(
@@ -1109,17 +1118,19 @@ def test_campaign_competing_acquirer_cannot_lose_its_owner_temp(
 ) -> None:
     loser_ready = threading.Event()
     winner_done = threading.Event()
-    real_link = profile.os.link
+    real_rename = profile._rename_namespace
     results: dict[str, object] = {}
 
-    def coordinated_link(source: Path, target: Path) -> None:
-        token = json.loads(Path(source).read_text(encoding="utf-8"))["owner_token"]
-        if token == "b" * 64:
+    def coordinated_rename(source: Path, target: Path) -> None:
+        if (
+            threading.current_thread().name == "campaign-owner-loser"
+            and target.name == ".campaign-lock"
+        ):
             loser_ready.set()
             assert winner_done.wait(5)
-        real_link(source, target)
+        real_rename(source, target)
 
-    monkeypatch.setattr(profile.os, "link", coordinated_link)
+    monkeypatch.setattr(profile, "_rename_namespace", coordinated_rename)
 
     def acquire(label: str, pid: int, token: str) -> None:
         try:
@@ -1136,10 +1147,14 @@ def test_campaign_competing_acquirer_cannot_lose_its_owner_temp(
                 winner_done.set()
 
     loser = threading.Thread(
-        target=acquire, args=("loser", 222, "b" * 64)
+        target=acquire,
+        args=("loser", 111, "a" * 64),
+        name="campaign-owner-loser",
     )
     winner = threading.Thread(
-        target=acquire, args=("winner", 111, "a" * 64)
+        target=acquire,
+        args=("winner", 111, "a" * 64),
+        name="campaign-owner-winner",
     )
     loser.start()
     assert loser_ready.wait(5)
@@ -1155,56 +1170,87 @@ def test_campaign_competing_acquirer_cannot_lose_its_owner_temp(
     assert not tuple(tmp_path.glob(".campaign-owner-*"))
 
 
-def test_campaign_acquirer_and_recovery_finalize_same_owner_idempotently(
+def test_campaign_owner_publication_has_no_fixed_marker_aba(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    acquirer_read_marker = threading.Event()
-    recovery_done = threading.Event()
-    real_read_owner_file = profile._read_owner_file
+    publish_ready = {
+        "campaign-owner-a": threading.Event(),
+        "campaign-owner-b": threading.Event(),
+    }
+    allow_publish = {
+        "campaign-owner-a": threading.Event(),
+        "campaign-owner-b": threading.Event(),
+    }
+    real_rename = profile._rename_namespace
     results: dict[str, object] = {}
 
-    def coordinated_read_owner_file(path: Path):
-        owner = real_read_owner_file(path)
-        if (
-            threading.current_thread().name == "campaign-acquirer"
-            and path.name == ".campaign-acquire"
-        ):
-            acquirer_read_marker.set()
-            assert recovery_done.wait(5)
-        return owner
+    def coordinated_rename(source: Path, target: Path) -> None:
+        thread_name = threading.current_thread().name
+        is_owner_publication = target.name == ".campaign-lock" or (
+            target.name == "owner.json"
+            and target.parent.name == ".campaign-lock"
+        )
+        if thread_name in publish_ready and is_owner_publication:
+            publish_ready[thread_name].set()
+            assert allow_publish[thread_name].wait(5)
+        real_rename(source, target)
 
-    monkeypatch.setattr(profile, "_read_owner_file", coordinated_read_owner_file)
+    monkeypatch.setattr(profile, "_rename_namespace", coordinated_rename)
 
-    def acquire() -> None:
+    def acquire(label: str, pid: int, token: str) -> None:
         try:
-            results["acquire"] = _acquire_lock(tmp_path)
-        except BaseException as exc:
-            results["acquire"] = exc
-
-    def recover() -> None:
-        try:
-            results["recover"] = profile.recover_interrupted_attempt(
-                tmp_path, process_start_probe=lambda _pid: _OWNER_START
+            results[label] = profile.acquire_campaign_lock(
+                tmp_path,
+                pid=pid,
+                process_start_probe=lambda _pid: _OWNER_START,
+                owner_token_factory=lambda: token,
             )
         except BaseException as exc:
-            results["recover"] = exc
-        finally:
-            recovery_done.set()
+            results[label] = exc
 
-    acquirer = threading.Thread(target=acquire, name="campaign-acquirer")
-    acquirer.start()
-    assert acquirer_read_marker.wait(5)
-    recovery = threading.Thread(target=recover, name="campaign-recovery")
-    recovery.start()
-    recovery.join(5)
-    acquirer.join(5)
+    owner_a = threading.Thread(
+        target=acquire,
+        args=("a", 111, "a" * 64),
+        name="campaign-owner-a",
+    )
+    owner_a.start()
+    assert publish_ready["campaign-owner-a"].wait(5)
 
-    assert not recovery.is_alive()
-    assert not acquirer.is_alive()
-    assert isinstance(results["acquire"], profile.CampaignLockOwner)
-    assert isinstance(results["recover"], RuntimeError)
-    assert str(results["recover"]) == "campaign_lock_owner_live"
-    assert profile._read_lock_owner(tmp_path / ".campaign-lock") == results["acquire"]
+    try:
+        results["recovery"] = profile.recover_interrupted_attempt(
+            tmp_path, process_start_probe=lambda _pid: None
+        )
+    except BaseException as exc:
+        results["recovery"] = exc
+
+    owner_b = threading.Thread(
+        target=acquire,
+        args=("b", 222, "b" * 64),
+        name="campaign-owner-b",
+    )
+    owner_b.start()
+    assert publish_ready["campaign-owner-b"].wait(5)
+
+    allow_publish["campaign-owner-a"].set()
+    owner_a.join(5)
+    allow_publish["campaign-owner-b"].set()
+    owner_b.join(5)
+
+    assert not owner_a.is_alive()
+    assert not owner_b.is_alive()
+    successes = [
+        result
+        for result in (results["a"], results["b"])
+        if isinstance(result, profile.CampaignLockOwner)
+    ]
+    refusals = [
+        result
+        for result in (results["a"], results["b"])
+        if isinstance(result, RuntimeError)
+    ]
+    assert len(successes) == 1
+    assert [str(error) for error in refusals] == ["campaign_lock_held"]
+    assert profile._read_lock_owner(tmp_path / ".campaign-lock") == successes[0]
 
 
 def test_campaign_lock_refuses_second_owner_and_releases_only_exact_token(
@@ -1938,7 +1984,11 @@ def test_campaign_recovery_rollback_owner_publication_is_resumable(
 
     def interrupted_owner_publish(source: Path, target: Path) -> None:
         nonlocal interrupted
-        if source.name == ".campaign-acquire" and not interrupted:
+        if (
+            source.name.startswith(".campaign-owner-")
+            and target.name == ".campaign-lock"
+            and not interrupted
+        ):
             interrupted = True
             raise OSError("simulated owner publication interruption")
         original_rename(source, target)
@@ -1949,9 +1999,9 @@ def test_campaign_recovery_rollback_owner_publication_is_resumable(
         profile.recover_interrupted_attempt(tmp_path, process_start_probe=probe)
 
     canonical = tmp_path / ".campaign-lock"
-    assert profile._is_empty_private_directory(canonical)
-    assert profile._read_owner_file(tmp_path / ".campaign-acquire") == attempt.owner
+    assert not canonical.exists()
     assert profile._read_lock_owner(tmp_path / ".campaign-recovery") == attempt.owner
+    assert not tuple(tmp_path.glob(".campaign-owner-*"))
     assert (tmp_path / "attempts.jsonl").read_bytes() == before
 
     with pytest.raises(RuntimeError, match="^campaign_lock_owner_live$"):
@@ -1960,7 +2010,6 @@ def test_campaign_recovery_rollback_owner_publication_is_resumable(
         )
 
     assert profile._read_lock_owner(canonical) == attempt.owner
-    assert not (tmp_path / ".campaign-acquire").exists()
     assert not (tmp_path / ".campaign-recovery").exists()
     assert not (tmp_path / ".campaign-rollback").exists()
 

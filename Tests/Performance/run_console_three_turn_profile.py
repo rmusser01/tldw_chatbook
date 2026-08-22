@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import importlib
 import importlib.metadata as importlib_metadata
@@ -1881,15 +1882,18 @@ def _validate_lock_owner(record: Mapping[str, Any]) -> CampaignLockOwner:
 
 def _read_lock_owner(lock_root: Path) -> CampaignLockOwner:
     owner_path = lock_root / "owner.json"
-    if (
-        not lock_root.is_dir()
-        or lock_root.is_symlink()
-        or {path.name for path in lock_root.iterdir()} != {"owner.json"}
-        or not owner_path.is_file()
-        or owner_path.is_symlink()
-    ):
-        raise RuntimeError("campaign_lock_owner_invalid")
-    return _read_owner_file(owner_path)
+    try:
+        if (
+            not lock_root.is_dir()
+            or lock_root.is_symlink()
+            or {path.name for path in lock_root.iterdir()} != {"owner.json"}
+            or not owner_path.is_file()
+            or owner_path.is_symlink()
+        ):
+            raise RuntimeError("campaign_lock_owner_invalid")
+        return _read_owner_file(owner_path)
+    except OSError as exc:
+        raise RuntimeError("campaign_lock_owner_invalid") from exc
 
 
 def _read_owner_file(owner_path: Path) -> CampaignLockOwner:
@@ -1911,10 +1915,6 @@ def _read_owner_file(owner_path: Path) -> CampaignLockOwner:
 
 
 def _campaign_marker_error(campaign_root: Path) -> str | None:
-    if (campaign_root / ".campaign-acquire").exists() or (
-        campaign_root / ".campaign-acquire"
-    ).is_symlink():
-        return "campaign_lock_held"
     if (campaign_root / ".campaign-release").exists() or (
         campaign_root / ".campaign-release"
     ).is_symlink():
@@ -1960,78 +1960,49 @@ def _owner_payload(owner: CampaignLockOwner) -> str:
     )
 
 
-def _write_acquire_marker(
+def _cleanup_owner_stage(stage: Path) -> None:
+    try:
+        owner_path = stage / "owner.json"
+        if owner_path.is_file() and not owner_path.is_symlink():
+            _unlink_namespace(owner_path)
+        if _is_empty_private_directory(stage):
+            _rmdir_namespace(stage)
+    except OSError:
+        pass
+
+
+def _create_owner_stage(
     campaign_root: Path, owner: CampaignLockOwner
 ) -> Path:
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=".campaign-owner-", dir=campaign_root
-    )
-    temporary = Path(temporary_name)
-    marker = campaign_root / ".campaign-acquire"
+    stage = Path(tempfile.mkdtemp(prefix=".campaign-owner-", dir=campaign_root))
     try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        _fsync_directory(campaign_root)
+        with (stage / "owner.json").open("x", encoding="utf-8") as stream:
             stream.write(_owner_payload(owner))
             stream.flush()
             os.fsync(stream.fileno())
-        os.link(temporary, marker)
-        _fsync_directory(campaign_root)
-        try:
-            _unlink_namespace(temporary)
-        except FileNotFoundError:
-            pass
+        _fsync_directory(stage)
     except BaseException:
-        try:
-            if temporary.exists():
-                _unlink_namespace(temporary)
-        except BaseException:
-            pass
+        _cleanup_owner_stage(stage)
         raise
-    return marker
+    return stage
 
 
-def _finish_acquire_marker(
-    campaign_root: Path,
-    *,
-    expected_owner: CampaignLockOwner | None = None,
+def _publish_campaign_lock(
+    campaign_root: Path, owner: CampaignLockOwner
 ) -> CampaignLockOwner:
-    marker = campaign_root / ".campaign-acquire"
+    stage = _create_owner_stage(campaign_root, owner)
     lock_root = campaign_root / ".campaign-lock"
     try:
-        owner = _read_owner_file(marker)
-    except RuntimeError:
-        if marker.exists() or marker.is_symlink():
-            raise
-        owner = _read_lock_owner(lock_root)
-        if expected_owner is not None and owner != expected_owner:
-            raise RuntimeError("campaign_lock_owner_mismatch")
-        return owner
-    if expected_owner is not None and owner != expected_owner:
-        raise RuntimeError("campaign_lock_owner_mismatch")
-    while True:
-        if lock_root.exists() or lock_root.is_symlink():
-            if _is_empty_private_directory(lock_root):
-                break
-            if _read_lock_owner(lock_root) != owner:
-                raise RuntimeError("campaign_lock_owner_mismatch")
-            try:
-                _unlink_namespace(marker)
-            except FileNotFoundError:
-                pass
-            return owner
         try:
-            _mkdir_namespace(lock_root)
-        except FileExistsError:
-            continue
-        break
-    try:
-        _rename_namespace(marker, lock_root / "owner.json")
-    except FileNotFoundError:
-        marker_error = _campaign_marker_error(campaign_root)
-        if marker_error is not None:
-            raise RuntimeError(marker_error) from None
-        if _read_lock_owner(lock_root) != owner:
-            raise RuntimeError("campaign_lock_owner_mismatch") from None
-    return owner
+            _rename_namespace(stage, lock_root)
+        except OSError as exc:
+            if exc.errno in {errno.EEXIST, errno.ENOTEMPTY}:
+                raise RuntimeError("campaign_lock_held") from exc
+            raise RuntimeError("campaign_lock_publish_failed") from exc
+        return owner
+    finally:
+        _cleanup_owner_stage(stage)
 
 
 def _restore_marker_to_canonical(
@@ -2049,30 +2020,18 @@ def _restore_marker_to_canonical(
     if lock_root.exists() or lock_root.is_symlink():
         try:
             if _is_empty_private_directory(lock_root):
-                if not (campaign_root / ".campaign-acquire").exists():
-                    return False
-                if (
-                    _finish_acquire_marker(
-                        campaign_root, expected_owner=owner
-                    )
-                    != owner
-                ):
-                    return False
+                _rmdir_namespace(lock_root)
             elif _read_lock_owner(lock_root) != owner:
                 return False
-            _delete_exact_lock_root(marker_root, owner)
+            else:
+                _delete_exact_lock_root(marker_root, owner)
+                return True
         except BaseException:
             return False
-        return True
     try:
         if _read_lock_owner(marker_root) != owner:
             raise RuntimeError("campaign_lock_owner_mismatch")
-        _write_acquire_marker(campaign_root, owner)
-        if (
-            _finish_acquire_marker(campaign_root, expected_owner=owner)
-            != owner
-        ):
-            raise RuntimeError("campaign_lock_owner_mismatch")
+        _publish_campaign_lock(campaign_root, owner)
         _delete_exact_lock_root(marker_root, owner)
     except BaseException:
         return False
@@ -2087,13 +2046,16 @@ def _preserve_recovery_rollback(
     """Restore the owner, or preserve its marker when another lock won."""
     if _restore_marker_to_canonical(campaign_root, recovery_root, owner):
         return
-    acquire_root = campaign_root / ".campaign-acquire"
-    if (
-        acquire_root.exists()
-        or acquire_root.is_symlink()
-        or _is_empty_private_directory(campaign_root / ".campaign-lock")
+    lock_root = campaign_root / ".campaign-lock"
+    if not (lock_root.exists() or lock_root.is_symlink()) or (
+        _is_empty_private_directory(lock_root)
     ):
         return
+    try:
+        if _read_lock_owner(lock_root) == owner:
+            return
+    except RuntimeError:
+        pass
     try:
         _rename_namespace(recovery_root, campaign_root / ".campaign-rollback")
     except OSError:
@@ -2129,11 +2091,8 @@ def acquire_campaign_lock(
         raise RuntimeError("campaign_root_invalid")
     _mkdir_namespace(campaign_root, parents=True, exist_ok=True)
     lock_root = campaign_root / ".campaign-lock"
-    acquire_root = campaign_root / ".campaign-acquire"
     release_root = campaign_root / ".campaign-release"
     recovery_root = campaign_root / ".campaign-recovery"
-    if acquire_root.exists() or acquire_root.is_symlink():
-        raise RuntimeError("campaign_lock_held")
     if _is_empty_private_directory(release_root) and not lock_root.exists():
         _rmdir_namespace(release_root)
     if _is_empty_private_directory(recovery_root) and not lock_root.exists():
@@ -2186,21 +2145,7 @@ def acquire_campaign_lock(
             "owner_token": owner_token,
         }
     )
-    try:
-        _write_acquire_marker(campaign_root, owner)
-    except FileExistsError as exc:
-        raise RuntimeError("campaign_lock_held") from exc
-    try:
-        _finish_acquire_marker(campaign_root, expected_owner=owner)
-    except RuntimeError as exc:
-        if str(exc) == "campaign_lock_owner_mismatch":
-            try:
-                if _read_owner_file(acquire_root) == owner:
-                    _unlink_namespace(acquire_root)
-            except BaseException:
-                pass
-            raise RuntimeError("campaign_lock_held") from exc
-        raise
+    _publish_campaign_lock(campaign_root, owner)
     marker_error = _campaign_marker_error(campaign_root)
     if marker_error is not None:
         _delete_exact_lock_root(lock_root, owner)
@@ -2320,9 +2265,6 @@ def recover_interrupted_attempt(
     lineage = attempt_lineage(ledger)
     latest = lineage[-1] if lineage else None
     orphan_id = _legacy_orphan_attempt_id(campaign_root, lineage)
-    acquire_root = campaign_root / ".campaign-acquire"
-    if acquire_root.exists() or acquire_root.is_symlink():
-        _finish_acquire_marker(campaign_root)
     owner: CampaignLockOwner | None = None
     if recovery_root.exists() or recovery_root.is_symlink():
         if lineage and lineage[-1] == {
