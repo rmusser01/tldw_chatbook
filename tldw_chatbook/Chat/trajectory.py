@@ -911,7 +911,7 @@ def _records_from_agent_steps(steps: Iterable[Any]) -> list[TrajectoryRecord]:
             default_states[key] = "not_available"
             if value not in (None, ""):
                 default_states[key] = (
-                    "omitted_sensitive" if key in {"args", "result"} else "observed"
+                    "omitted" if key in {"args", "result"} else "observed"
                 )
         records.append(
             TrajectoryRecord(

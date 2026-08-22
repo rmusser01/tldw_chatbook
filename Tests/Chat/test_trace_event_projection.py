@@ -561,8 +561,8 @@ def test_real_agent_owner_shapes_preserve_actor_tool_metadata_and_outcome() -> N
     assert record.status == "success"
     assert record.field_states == {
         "summary": "observed",
-        "args": "omitted_sensitive",
-        "result": "omitted_sensitive",
+        "args": "omitted",
+        "result": "omitted",
         "tool_outcome": "observed",
     }
     assert record.sensitivity == "tool_content"
