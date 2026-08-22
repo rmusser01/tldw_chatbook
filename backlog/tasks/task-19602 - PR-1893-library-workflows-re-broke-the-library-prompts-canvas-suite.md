@@ -116,3 +116,22 @@ gate were the same two root causes). AC#1/AC#4 remain open on the 30
 above. CI note: org-wide runner congestion prevented guard/test checks
 from starting on PRs #1900/#1906/#1909; all merged on exact-expression
 local verification.
+
+## Fix progress tranche 2 (2026-08-21 night, PR #1912 merged)
+
+Eleven more failures cleared (7 library_shell + 4 prompts/kwargs), incl.
+ONE real product bug: _library_prompt_write_worker_is_active (355de75da)
+crashed headless callers with NoActiveAppError because it touched the
+screen-owned worker manager that only exists on a mounted screen; the
+guard now keeps the app-owned half of the scan. The other ten were
+test-side drift to current contracts (a24a2202f's raw-content previews,
+3aef9bcd1's distilled empty states, c9ac43eff's scope-era restore,
+11b2fa700's lifecycle reader). Methodology note recorded: fixing the
+compiled-preview drift on the production side first BROKE 10 newer
+tests -- the full-suite differential caught it and inverted the
+direction. Deterministic totals: shell 7 -> 0; prompts+file_notes
+23 -> 18.
+
+Remaining open: prompts_canvas x17 + file_notes x1 deterministic, plus
+the shell's 3 order-flakes (media pager size0 / initial-error /
+page-error) and 2 file_notes order-flakes.
