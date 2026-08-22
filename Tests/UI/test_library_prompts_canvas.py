@@ -11505,7 +11505,13 @@ async def test_library_prompt_copy_uses_live_unsaved_legacy_lane_markdown(tmp_pa
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await _open_prompt_editor(screen, pilot, prompt_id)
+        # TASK-19602: each programmatic lane write fires the basic-lane
+        # publish whose preview sync reloads BOTH lanes -- writing both
+        # back-to-back makes the second publish revert the first. Settle
+        # each lane's publish before writing the next (the same pacing a
+        # user typing in one field at a time produces).
         screen.query_one("#library-prompt-system", TextArea).text = "Edited system"
+        await pilot.pause()
         screen.query_one("#library-prompt-user", TextArea).text = "Edited user"
         await pilot.pause()
 
@@ -12574,7 +12580,10 @@ async def test_library_prompt_copy_uses_unsaved_legacy_create_working_copy(tmp_p
         screen.query_one("#library-prompt-name", Input).value = "Unsaved create"
         screen.query_one("#library-prompt-author", Input).value = "Draft author"
         screen.query_one("#library-prompt-details", Input).value = "Draft details"
+        # TASK-19602: settle each lane's publish before the next (see the
+        # sibling copy test -- back-to-back writes race the preview sync).
         screen.query_one("#library-prompt-system", TextArea).text = "Draft system"
+        await pilot.pause()
         screen.query_one("#library-prompt-user", TextArea).text = "Draft user"
         screen.query_one("#library-prompt-keywords", Input).value = "draft, live"
         await pilot.pause()
