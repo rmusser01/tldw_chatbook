@@ -249,7 +249,7 @@ class ConsoleWorkspaceController:
         self._conversation_browser_collapse_preferences_fn = (
             conversation_browser_collapse_preferences
         )
-        #: task-15864 AC#2: `ChatScreen._poke_console_wake_retry` -- resume
+        #: task-15864 AC#2: `ConsoleFleetLifecycleController._poke_console_wake_retry` -- resume
         #: is the one loader of persisted conversations into sessions, so
         #: session-open becomes a wake retry trigger here. Optional so the
         #: pre-existing direct-construction tests need no new kwarg.
