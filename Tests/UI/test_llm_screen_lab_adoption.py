@@ -611,6 +611,50 @@ async def test_empty_models_recovery_routes_hold_at_80_columns(
 
 
 @pytest.mark.asyncio
+async def test_remote_two_pane_install_action_stays_inside_real_models_body_at_80_columns():
+    """Remote's panes must fit the actual Lab body, not a full-width harness."""
+    from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
+
+    app = _app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        screen = await _models_screen(app)
+        assert await _wait_for(lambda: bool(screen.query("#remote-models-view")), pilot)
+
+        remote_row = next(
+            row for row in _rail_rows(screen) if row.lab_view_key == "remote"
+        )
+        remote_row.press()
+        await pilot.pause()
+
+        window = screen.query_one(LLMManagementWindow)
+        remote = window.query_one("#remote-models-view", RemoteView)
+        resolved = _resolved_remote_model()
+        query = remote.query_one("#remote-model-query", Input)
+        query.value = resolved.repository
+        remote._resolve_generation = 1
+        remote._apply_resolve_result(
+            1,
+            resolved.repository,
+            resolved.repository,
+            resolved,
+            None,
+        )
+        await pilot.pause()
+        remote.query_one(".remote-candidate", Button).press()
+        await pilot.pause()
+
+        parent = window.query_one("#llm-view-remote")
+        results_pane = remote.query_one(".remote-results-pane")
+        detail_pane = remote.query_one(".remote-detail-pane")
+        install = remote.query_one("#remote-model-install", Button)
+
+        _assert_painted_inside(app, results_pane, parent)
+        _assert_painted_inside(app, detail_pane, parent)
+        _assert_painted_inside(app, install, parent)
+        assert results_pane.region.right <= detail_pane.region.x
+
+
+@pytest.mark.asyncio
 async def test_the_window_no_longer_carries_nav_buttons():
     app = _app()
     async with app.run_test(size=(120, 40)) as pilot:
@@ -2525,7 +2569,9 @@ async def test_remote_install_progress_survives_a_screen_level_recompose(monkeyp
         ModelInstallProgress,
     )
 
+    resolved = _resolved_remote_model()
     catalog = _remote_catalog()
+    candidate = resolved.candidates[0]
     reference = catalog.artifact.reference
     first_progress = AcquisitionProgress(
         "fetch", reference, "model-part-1.gguf", 100, 1024
@@ -2583,12 +2629,22 @@ async def test_remote_install_progress_survives_a_screen_level_recompose(monkeyp
         window = screen.query_one(LLMManagementWindow)
         remote = window.query_one(RemoteView)
 
+        # Match the selected-model context the real RemoteView posts with
+        # InstallRequested before LLMScreen takes ownership of the worker.
+        remote._resolved = resolved
+        remote._selected_repository = resolved.repository
+        remote._selected_candidate = candidate
+        remote._operation_reference = reference
+        remote._refresh_with_status("Preparing the managed install plan…")
+        await pilot.pause()
+
         # State lives on the SCREEN now (TASK-1914), not on the RemoteView
         # instance -- it must survive the instance being torn down below.
         screen._model_install_kind = "remote"
         screen._model_install_reference = reference
         screen._model_install_service = MagicMock()
         screen._model_install_catalog = catalog
+        screen._model_install_candidate = candidate
         screen._model_install_credential_resolver = MagicMock()
         fake_report = MagicMock(root=reference)
 
@@ -2619,6 +2675,12 @@ async def test_remote_install_progress_survives_a_screen_level_recompose(monkeyp
 
         # Half 1 of the fix: hydration.
         assert "model-part-1.gguf" in _progress_text(fresh_remote)
+        fresh_text = "\n".join(
+            str(item.renderable) for item in fresh_remote.query(Static)
+        )
+        assert resolved.repository in fresh_text
+        assert candidate.label in fresh_text
+        assert fresh_remote.query_one("#remote-model-install", Button).disabled
 
         # Half 2 of the fix: still updating, via this screen's own
         # still-running worker -- never owned by the RemoteView instance
@@ -2629,6 +2691,123 @@ async def test_remote_install_progress_survives_a_screen_level_recompose(monkeyp
         await pilot.pause()
 
         assert "model-part-2.gguf" in _progress_text(fresh_remote)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("lifecycle_phase", "expected_status"),
+    (
+        ("preflight", "Preparing the managed install plan…"),
+        ("pending-consent", "Awaiting review; no download has started."),
+    ),
+)
+async def test_remote_context_survives_recompose_before_the_first_progress_tick(
+    lifecycle_phase: str,
+    expected_status: str,
+    monkeypatch,
+):
+    """Remote context stays truthful throughout preflight and consent.
+
+    This catches gating remount hydration on ``_model_install_active``: that
+    flag is false until consent/progress, while ``_model_install_kind`` owns
+    the full accepted-request lifecycle.
+    """
+    from unittest.mock import MagicMock
+
+    from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
+
+    resolved = _resolved_remote_model()
+    catalog = _remote_catalog()
+    candidate = resolved.candidates[0]
+    reference = catalog.artifact.reference
+    # This test owns the recompose timing; suppress the unrelated managed-GGUF
+    # startup read so its thread callback cannot target the deliberately removed
+    # old window. Inventory behavior is covered by its own adoption tests.
+    monkeypatch.setattr(
+        LLMManagementWindow,
+        "_refresh_managed_gguf_inventory",
+        lambda _self: None,
+    )
+    app = _app()
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _models_screen(app)
+        assert await _wait_for(lambda: bool(screen.query(RemoteView)), pilot)
+
+        screen._model_install_kind = "remote"
+        screen._model_install_reference = reference
+        screen._model_install_service = MagicMock()
+        screen._model_install_catalog = catalog
+        screen._model_install_candidate = candidate
+        screen._model_install_credential_resolver = MagicMock()
+        screen._model_install_active = False
+        screen._model_install_worker = (
+            MagicMock() if lifecycle_phase == "preflight" else None
+        )
+        screen._model_install_pending_report = (
+            None if lifecycle_phase == "preflight" else MagicMock(root=reference)
+        )
+
+        old_remote = screen.query_one(RemoteView)
+        screen.refresh(recompose=True)
+        assert await _wait_for(
+            lambda: (
+                bool(screen.query(RemoteView))
+                and screen.query_one(RemoteView) is not old_remote
+            ),
+            pilot,
+        )
+        fresh_remote = screen.query_one(RemoteView)
+        detail_text = "\n".join(
+            str(item.renderable) for item in fresh_remote.query(Static)
+        )
+
+        assert resolved.repository in detail_text
+        assert candidate.label in detail_text
+        assert fresh_remote.query_one("#remote-model-install", Button).disabled
+        assert fresh_remote.query_one("#remote-model-search", Button).disabled
+        assert (
+            str(fresh_remote.query_one("#remote-model-status", Static).renderable)
+            == expected_status
+        )
+
+
+@pytest.mark.asyncio
+async def test_restored_remote_context_updates_phase_copy_without_another_recompose(
+    monkeypatch,
+):
+    """An identical retained context still accepts later lifecycle copy."""
+    from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
+
+    monkeypatch.setattr(
+        LLMManagementWindow,
+        "_refresh_managed_gguf_inventory",
+        lambda _self: None,
+    )
+    catalog = _remote_catalog()
+    candidate = _resolved_remote_model().candidates[0]
+    app = _app()
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _models_screen(app)
+        assert await _wait_for(lambda: bool(screen.query(RemoteView)), pilot)
+        remote = screen.query_one(RemoteView)
+
+        for expected_status in (
+            "Preparing the managed install plan…",
+            "Awaiting review; no download has started.",
+            "Installing the selected GGUF variant…",
+        ):
+            assert remote.restore_install_context(
+                catalog,
+                candidate,
+                status_message=expected_status,
+            )
+            await pilot.pause()
+            assert (
+                str(remote.query_one("#remote-model-status", Static).renderable)
+                == expected_status
+            )
 
 
 @pytest.mark.asyncio
@@ -2782,7 +2961,7 @@ async def test_remote_install_progress_renders_exactly_once_per_tick_and_never_r
 
 @pytest.mark.asyncio
 async def test_remote_install_click_reaches_the_shared_consent_modal(monkeypatch):
-    """A real candidate click -- not a direct call to an internal method --
+    """Real candidate selection plus the contextual install action
     posts ``RemoteView.InstallRequested``, which ``LLMScreen`` resolves
     (through a stubbed acquisition service, so this stays network-free)
     into the exact shared ``ModelInstallModal``. Mirrors ``test_curated_
@@ -2843,8 +3022,13 @@ async def test_remote_install_click_reaches_the_shared_consent_modal(monkeypatch
             await pilot.pause()
         assert remote._resolved is not None, "Remote view never finished resolving"
 
-        button = remote.query_one(".remote-candidate")
-        await pilot.click(button)
+        candidate = remote.query_one(".remote-candidate")
+        candidate.press()
+        await pilot.pause()
+        assert app.push_screen.called is False
+
+        install = remote.query_one("#remote-model-install")
+        install.press()
         await pilot.pause()
         await pilot.pause()
 
@@ -2852,7 +3036,7 @@ async def test_remote_install_click_reaches_the_shared_consent_modal(monkeypatch
             if app.push_screen.called:
                 break
             await pilot.pause()
-        assert app.push_screen.called, "clicking a candidate never reached push_screen"
+        assert app.push_screen.called, "install action never reached push_screen"
 
         modal, callback = app.push_screen.call_args[0]
         assert isinstance(modal, ModelInstallModal)
@@ -2892,6 +3076,7 @@ def test_apply_remote_preflight_result_requires_acknowledgment_only_for_unknown_
     monkeypatch.setattr(module.LLMScreen, "app", property(lambda self: fake_app))
 
     screen = module.LLMScreen.__new__(module.LLMScreen)
+    screen._remote_view = MagicMock(return_value=None)
     screen._model_install_worker = MagicMock()
     screen._model_install_catalog = catalog
     screen._model_install_candidate = candidate
@@ -2916,6 +3101,74 @@ def test_apply_remote_preflight_result_requires_acknowledgment_only_for_unknown_
     )
     assert callback == screen._confirm_remote_install
     assert screen._model_install_pending_report is report
+
+
+def test_remote_phase_copy_tracks_preflight_consent_and_active_transitions(
+    tmp_path, monkeypatch
+):
+    """Mounted Remote detail follows the host-owned install lifecycle."""
+    from unittest.mock import MagicMock, call
+
+    from tldw_chatbook.UI.Screens import llm_screen as module
+
+    catalog = _remote_catalog()
+    candidate = _resolved_remote_model().candidates[0]
+    report = _remote_report_for(catalog, tmp_path / "managed")
+    fake_app = MagicMock()
+    monkeypatch.setattr(module.LLMScreen, "app", property(lambda self: fake_app))
+
+    view = MagicMock()
+    view.is_mounted = True
+    screen = module.LLMScreen.__new__(module.LLMScreen)
+    screen._remote_view = MagicMock(return_value=view)
+    screen.refresh_lab_status = MagicMock()
+    screen._model_install_worker = MagicMock()
+    screen._model_install_catalog = catalog
+    screen._model_install_candidate = candidate
+    screen._model_install_pending_report = None
+    screen._model_install_active = False
+    screen._model_install_succeeded = None
+    screen._model_install_phase = None
+    screen._model_install_kind = "remote"
+
+    module.LLMScreen._apply_remote_preflight_result(screen, report, None)
+    module.LLMScreen._model_install_status_changed(
+        screen,
+        module.InstallStatusChanged(catalog.artifact.reference, active=True),
+    )
+
+    assert view.restore_install_context.call_args_list == [
+        call(
+            catalog,
+            candidate,
+            status_message="Awaiting review; no download has started.",
+        ),
+        call(
+            catalog,
+            candidate,
+            status_message="Installing the selected GGUF variant…",
+        ),
+    ]
+
+
+def test_remote_terminal_action_literals_have_one_named_definition_each():
+    """Terminal action values stay centralized instead of becoming magic strings."""
+    import ast
+    from collections import Counter
+    import inspect
+
+    from tldw_chatbook.UI.Screens import llm_screen as module
+
+    tree = ast.parse(inspect.getsource(module))
+    action_literals = Counter(
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and node.value in {"finish", "cancel"}
+    )
+
+    assert action_literals == Counter({"finish": 1, "cancel": 1})
+    assert module._REMOTE_INSTALL_TERMINAL_FINISH == "finish"
+    assert module._REMOTE_INSTALL_TERMINAL_CANCEL == "cancel"
 
 
 @pytest.mark.parametrize("operation", ("preflight", "installation"))
@@ -3360,6 +3613,72 @@ def test_apply_remote_provision_result_notifies_mirrors_and_resets_state(
     assert delivered.succeeded == (error is None)
 
     view.finish_install.assert_called_once_with(expected_message)
+
+
+@pytest.mark.parametrize(
+    ("terminal_path", "error", "expected_method", "expected_message"),
+    (
+        (
+            "provision",
+            None,
+            "finish_install",
+            "Model downloaded and managed. Runtime compatibility has not been verified.",
+        ),
+        ("provision", "download failed", "finish_install", "download failed"),
+        ("preflight", "plan failed", "cancel_pending_install", "plan failed"),
+    ),
+)
+def test_remote_terminal_outcome_crosses_the_recompose_gap(
+    terminal_path,
+    error,
+    expected_method,
+    expected_message,
+    monkeypatch,
+):
+    """A terminal result is retained until a mounted RemoteView consumes it.
+
+    This deterministically models the teardown/remount gap by returning no
+    view at the terminal call, then a fresh mounted view at hydration time.
+    Clearing the only catalog/candidate copy before that second step makes
+    the observable outcome call disappear and fails this test.
+    """
+    from unittest.mock import MagicMock
+
+    from tldw_chatbook.UI.Screens import llm_screen as module
+
+    fake_app = MagicMock()
+    monkeypatch.setattr(module.LLMScreen, "app", property(lambda self: fake_app))
+    catalog = _remote_catalog()
+    candidate = _resolved_remote_model().candidates[0]
+    screen = module.LLMScreen.__new__(module.LLMScreen)
+    screen.notify = MagicMock()
+    screen._deliver_curated = MagicMock()
+    screen._remote_view = MagicMock(return_value=None)
+    screen._installed_view = MagicMock(return_value=None)
+    screen._model_install_worker = MagicMock()
+    screen._model_install_reference = catalog.artifact.reference
+    screen._model_install_service = MagicMock()
+    screen._model_install_catalog = catalog
+    screen._model_install_candidate = candidate
+    screen._model_install_credential_resolver = MagicMock()
+    screen._model_install_pending_report = object()
+    screen._model_install_kind = "remote"
+    screen._model_install_active = False
+    screen._model_install_last_progress = None
+
+    if terminal_path == "provision":
+        module.LLMScreen._apply_remote_provision_result(screen, error)
+    else:
+        module.LLMScreen._clear_remote_install_state(screen, error)
+
+    fresh_view = MagicMock()
+    fresh_view.is_mounted = True
+    fresh_view.restore_install_context.return_value = True
+    screen._remote_view.return_value = fresh_view
+    module.LLMScreen._hydrate_model_install_progress(screen)
+
+    fresh_view.restore_install_context.assert_called_once_with(catalog, candidate)
+    getattr(fresh_view, expected_method).assert_called_once_with(expected_message)
 
 
 @pytest.mark.asyncio

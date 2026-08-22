@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from datetime import datetime
 from typing import TYPE_CHECKING
 
-from textual import on, work
+from loguru import logger
+from textual import events, on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
@@ -29,6 +31,7 @@ from tldw_chatbook.Model_Artifacts.service import (
     ModelArtifactService,
 )
 from tldw_chatbook.Model_Artifacts.store import managed_service
+from tldw_chatbook.UI.Screens.model_browser_state import format_mib
 from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallProgress
 
 if TYPE_CHECKING:
@@ -36,6 +39,9 @@ if TYPE_CHECKING:
         AcquisitionProgress,
         CredentialResolver,
     )
+
+
+_NARROW_WIDTH = 64
 
 
 def _default_credential_resolver() -> "CredentialResolver":
@@ -68,8 +74,9 @@ class RemoteView(Widget):
     ``CuratedView._load_curated`` and ``InstalledView``'s own inventory
     load, neither of which TASK-1803 moved either. Only acquisition --
     preflight, provision, and the consent modal in between -- crosses the
-    browser's screen-owns-worker boundary: reviewing a candidate posts
-    :class:`InstallRequested` and waits to be told what happened via
+    browser's screen-owns-worker boundary: confirming the selected candidate
+    with the contextual install action posts :class:`InstallRequested` and
+    waits to be told what happened via
     :meth:`apply_progress`, :meth:`cancel_pending_install`, or
     :meth:`finish_install`. ``LLMScreen`` owns the actual preflight/
     provision workers (mirroring ``LibraryScreen``'s Parakeet v2 flow and
@@ -97,7 +104,7 @@ class RemoteView(Widget):
     """
 
     class InstallRequested(Message):
-        """Posted when a reviewed remote GGUF candidate is selected for install."""
+        """Posted when a reviewed remote GGUF candidate is confirmed for install."""
 
         def __init__(
             self,
@@ -137,10 +144,13 @@ class RemoteView(Widget):
     BUNDLED_CSS = """
     RemoteView {
         height: 100%;
+        background: $background;
     }
 
     RemoteView .remote-header {
         height: 3;
+        padding: 0 1;
+        background: $panel;
     }
 
     RemoteView #remote-model-query {
@@ -151,19 +161,146 @@ class RemoteView(Widget):
         width: auto;
     }
 
-    RemoteView .remote-list {
+    RemoteView .remote-workspace {
         height: 1fr;
     }
 
-    RemoteView .remote-row {
+    RemoteView .remote-results-pane {
+        width: 2fr;
+        min-width: 24;
+        border-right: solid $surface-lighten-1;
+        background: $panel;
+    }
+
+    RemoteView .remote-detail-pane {
+        width: 3fr;
+        min-width: 32;
+        background: $background;
+    }
+
+    RemoteView .remote-pane-title {
+        height: 2;
+        padding: 0 1;
+        text-style: bold;
+        background: $surface;
+        color: $text;
+    }
+
+    RemoteView #remote-model-results,
+    RemoteView #remote-model-details {
+        height: 1fr;
+    }
+
+    RemoteView #remote-model-results {
+        padding: 0 1;
+    }
+
+    RemoteView #remote-model-details {
+        padding: 1 2;
+    }
+
+    RemoteView .remote-result-row {
         height: auto;
-        padding: 1;
-        margin-bottom: 1;
-        border: solid $surface-lighten-1;
+        padding: 1 0;
+        border-bottom: solid $surface-lighten-1;
     }
 
     RemoteView .remote-title {
         text-style: bold;
+    }
+
+    RemoteView .remote-muted {
+        color: $text-muted;
+    }
+
+    RemoteView .remote-result,
+    RemoteView .remote-candidate {
+        width: 100%;
+        margin-top: 1;
+    }
+
+    RemoteView .remote-candidate-row {
+        height: auto;
+        padding: 1 0;
+        border-bottom: solid $surface-lighten-1;
+    }
+
+    RemoteView .remote-compatibility {
+        height: auto;
+        margin-bottom: 1;
+        padding: 1;
+        background: $warning 12%;
+        color: $text;
+        text-style: bold;
+    }
+
+    RemoteView .remote-detail-section {
+        height: auto;
+        margin-top: 1;
+        text-style: bold;
+        color: $accent;
+    }
+
+    RemoteView #remote-model-status {
+        height: auto;
+        min-height: 2;
+        padding: 0 1;
+        color: $text-muted;
+    }
+
+    RemoteView #remote-model-install-progress {
+        height: auto;
+        margin: 0 1;
+        padding: 1;
+        background: $surface;
+    }
+
+    RemoteView .remote-action-bar {
+        height: auto;
+        min-height: 4;
+        padding: 1;
+        border-top: solid $surface-lighten-1;
+        background: $panel;
+    }
+
+    RemoteView #remote-model-selection {
+        width: 1fr;
+        height: auto;
+        color: $text-muted;
+    }
+
+    RemoteView #remote-model-install {
+        width: auto;
+        min-width: 22;
+    }
+
+    RemoteView.-narrow .remote-results-pane {
+        width: 2fr;
+        min-width: 0;
+    }
+
+    RemoteView.-narrow .remote-detail-pane {
+        width: 3fr;
+        min-width: 0;
+    }
+
+    RemoteView.-narrow .remote-header {
+        padding: 0;
+    }
+
+    RemoteView.-narrow #remote-model-details {
+        padding: 0 1;
+    }
+
+    RemoteView.-narrow .remote-action-bar {
+        layout: vertical;
+        min-height: 6;
+    }
+
+    RemoteView.-narrow #remote-model-selection,
+    RemoteView.-narrow #remote-model-install {
+        width: 100%;
+        min-width: 0;
     }
 
     """
@@ -195,6 +332,8 @@ class RemoteView(Widget):
         self._resolve_generation = 0
         self._results: tuple[RemoteModelSummary, ...] = ()
         self._resolved: ResolvedRemoteModel | None = None
+        self._selected_repository: str | None = None
+        self._selected_candidate: RemoteGGUFCandidate | None = None
         self._operation_reference: ArtifactRef | None = None
         self._progress: "AcquisitionProgress | None" = None
         super().__init__(id=id)
@@ -214,21 +353,59 @@ class RemoteView(Widget):
                 variant="primary",
                 disabled=disabled,
             )
-        progress = ModelInstallProgress(
-            self._progress,
-            id="remote-model-install-progress",
-        )
-        progress.display = self._progress is not None
-        yield progress
-        yield Static(self._default_status(), id="remote-model-status", markup=False)
+        with Horizontal(classes="remote-workspace"):
+            with Vertical(classes="remote-results-pane"):
+                yield Static("Repositories", classes="remote-pane-title")
+                yield VerticalScroll(
+                    *self._result_widgets(disabled=disabled),
+                    id="remote-model-results",
+                )
+            with Vertical(classes="remote-detail-pane"):
+                yield Static(
+                    self._default_status(),
+                    id="remote-model-status",
+                    markup=False,
+                )
+                progress = ModelInstallProgress(
+                    self._progress,
+                    id="remote-model-install-progress",
+                )
+                progress.display = self._progress is not None
+                yield progress
+                yield VerticalScroll(
+                    *self._detail_widgets(disabled=disabled),
+                    id="remote-model-details",
+                )
+                with Horizontal(classes="remote-action-bar"):
+                    yield Static(
+                        self._selection_summary(),
+                        id="remote-model-selection",
+                        markup=False,
+                    )
+                    yield Button(
+                        "Review and install…",
+                        id="remote-model-install",
+                        variant="primary",
+                        disabled=disabled or self._selected_candidate is None,
+                    )
 
-        yield VerticalScroll(
-            *self._content_widgets(disabled=disabled),
-            id="remote-model-content",
-            classes="remote-list",
-        )
+    def on_mount(self) -> None:
+        """Apply the measured compact layout without creating dependencies."""
+        self._set_responsive(self.size.width or self.app.size.width)
+
+    def on_resize(self, event: events.Resize) -> None:
+        """Keep the internal browser usable inside the real Models body."""
+        self._set_responsive(event.size.width)
+
+    def _set_responsive(self, width: int) -> None:
+        """Stack the action bar and release pane floors below the breakpoint."""
+        self.set_class(width < _NARROW_WIDTH, "-narrow")
 
     def _default_status(self) -> str:
+        if self._selected_candidate is not None:
+            return (
+                "GGUF variant selected. Review the managed install before downloading."
+            )
         if self._resolved is not None:
             return (
                 f"Pinned {self._resolved.repository} at "
@@ -238,29 +415,79 @@ class RemoteView(Widget):
             return "Select a repository to inspect its eligible GGUF files."
         return "Search runs only when you press Search."
 
+    def _selection_summary(self) -> str:
+        """Describe the selected GGUF candidate beside the install action."""
+        if self._selected_candidate is None:
+            return "Select one GGUF file or complete shard set."
+        return (
+            f"Selected: {_candidate_display_name(self._selected_candidate)} · "
+            f"{format_mib(self._selected_candidate.total_bytes)}"
+        )
+
     def _result_widget(
         self, summary: RemoteModelSummary, *, disabled: bool
     ) -> Vertical:
         button = Button(
             "Inspect GGUF files",
             classes="remote-result",
-            variant="primary",
+            variant=(
+                "primary"
+                if summary.repository == self._selected_repository
+                else "default"
+            ),
             disabled=disabled,
         )
         button.repository = summary.repository
-        access = "private" if summary.private else "public"
+        access = "Private" if summary.private else "Public"
+        metrics = (
+            f"{_format_count(summary.downloads)} downloads · "
+            f"{_format_count(summary.likes)} likes"
+        )
+        updated = _format_last_modified(summary.last_modified)
         return Vertical(
             Static(summary.repository, classes="remote-title", markup=False),
-            Static(f"{access} · gated: {summary.gated}", markup=False),
+            Static(metrics, classes="remote-muted", markup=False),
+            Static(updated, classes="remote-muted", markup=False),
+            Static(f"{access} · Gated: {summary.gated}", markup=False),
             button,
-            classes="remote-row",
+            classes="remote-result-row",
         )
 
-    def _content_widgets(self, *, disabled: bool):
+    def _result_widgets(self, *, disabled: bool):
+        if not self._results:
+            yield Static(
+                "Search by model name, architecture, or publisher.",
+                classes="remote-muted",
+                markup=False,
+            )
         for summary in self._results:
             yield self._result_widget(summary, disabled=disabled)
+
+    def _detail_widgets(self, *, disabled: bool):
         if self._resolved is not None:
             yield from self._resolved_widgets(self._resolved, disabled=disabled)
+            return
+        if self._selected_repository is not None:
+            yield Static(
+                f"Inspecting {self._selected_repository}",
+                classes="remote-title",
+                markup=False,
+            )
+            yield Static(
+                "Reading pinned repository metadata and eligible GGUF files…",
+                classes="remote-muted",
+                markup=False,
+            )
+            return
+        yield Static("Select a model", classes="remote-title", markup=False)
+        yield Static(
+            (
+                "Search on the left, then inspect a repository without losing "
+                "your result list. You can also paste an exact owner/repository ID."
+            ),
+            classes="remote-muted",
+            markup=False,
+        )
 
     def _resolved_widgets(
         self,
@@ -270,11 +497,11 @@ class RemoteView(Widget):
     ):
         yield Static(
             "Runtime compatibility has not been verified.",
-            classes="remote-title",
+            classes="remote-compatibility",
             markup=False,
         )
-        yield Static(f"Repository: {resolved.repository}", markup=False)
-        yield Static(f"Commit: {resolved.commit}", markup=False)
+        yield Static(resolved.repository, classes="remote-title", markup=False)
+        yield Static(f"Pinned commit: {resolved.commit}", markup=False)
         license_label = (
             "Unknown / not declared"
             if resolved.license_id == "NOASSERTION"
@@ -283,6 +510,7 @@ class RemoteView(Widget):
         yield Static(f"License: {license_label}", markup=False)
         yield Static(f"Source review page: {resolved.review_url}", markup=False)
         yield Static("Provenance: Local integrity recorded", markup=False)
+        yield Static("Available GGUF files", classes="remote-detail-section")
         if resolved.total_candidate_count > len(resolved.candidates):
             yield Static(
                 f"First {len(resolved.candidates)} of "
@@ -292,38 +520,69 @@ class RemoteView(Widget):
         for warning in resolved.warnings:
             yield Static(f"Incomplete shard set: {warning}", markup=False)
         for candidate in resolved.candidates:
+            selected = candidate == self._selected_candidate
             button = Button(
-                "Review and install…",
+                "Selected variant" if selected else "Select variant",
                 classes="remote-candidate",
-                variant="primary",
+                variant="primary" if selected else "default",
                 disabled=disabled,
             )
             button.candidate = candidate
             yield Vertical(
                 Static(candidate.label, classes="remote-title", markup=False),
+                button,
                 Static(
-                    f"{len(candidate.files)} file(s) · {candidate.total_bytes} bytes",
+                    f"{len(candidate.files)} file(s) · {format_mib(candidate.total_bytes)}",
+                    classes="remote-muted",
                     markup=False,
                 ),
-                button,
-                classes="remote-row",
+                classes="remote-candidate-row",
             )
 
     def _set_status(self, message: str) -> None:
         self.query_one("#remote-model-status", Static).update(message)
 
     def _refresh_with_status(self, message: str) -> None:
+        disabled = self._operation_reference is not None
+        results = self.query_one("#remote-model-results", VerticalScroll)
+        results.remove_children()
+        results.mount(*self._result_widgets(disabled=disabled))
+        self._refresh_details_with_status(message)
+
+    def _refresh_details_with_status(self, message: str) -> None:
+        """Update only the right pane so browse context and focus remain stable."""
         self._set_status(message)
-        content = self.query_one("#remote-model-content", VerticalScroll)
-        content.remove_children()
-        content.mount(
-            *self._content_widgets(disabled=self._operation_reference is not None)
+        disabled = self._operation_reference is not None
+        details = self.query_one("#remote-model-details", VerticalScroll)
+        details.remove_children()
+        details.mount(*self._detail_widgets(disabled=disabled))
+        self.query_one("#remote-model-selection", Static).update(
+            self._selection_summary()
         )
+        self.query_one("#remote-model-install", Button).disabled = (
+            disabled or self._selected_candidate is None
+        )
+
+    def _set_selected_result_variant(self) -> None:
+        """Paint repository selection without replacing the focused result row."""
+        for button in self.query(".remote-result").results(Button):
+            button.variant = (
+                "primary"
+                if getattr(button, "repository", None) == self._selected_repository
+                else "default"
+            )
+
+    def _set_search_controls_disabled(self, disabled: bool) -> None:
+        """Disable query submission without disturbing focused result rows."""
+        for control in self.query("#remote-model-query, #remote-model-search"):
+            control.disabled = disabled
 
     def _set_metadata_controls_disabled(self, disabled: bool) -> None:
         for control in self.query("#remote-model-query, #remote-model-search"):
             control.disabled = disabled
-        for button in self.query(".remote-result, .remote-candidate").results(Button):
+        for button in self.query(
+            ".remote-result, .remote-candidate, #remote-model-install"
+        ).results(Button):
             button.disabled = disabled
 
     @on(Button.Pressed, "#remote-model-search")
@@ -336,12 +595,15 @@ class RemoteView(Widget):
         self._resolve_generation += 1
         self._results = ()
         self._resolved = None
+        self._selected_repository = None
+        self._selected_candidate = None
         self._set_metadata_controls_disabled(True)
         if is_exact_repository(query):
-            self._set_status("Inspecting repository…")
+            self._selected_repository = query
+            self._refresh_with_status("Inspecting repository…")
             self._resolve_remote(query, self._resolve_generation, query)
             return
-        self._set_status("Searching remote models…")
+        self._refresh_with_status("Searching remote models…")
         self._search_remote(query, self._search_generation)
 
     @on(Button.Pressed, ".remote-result")
@@ -354,16 +616,44 @@ class RemoteView(Widget):
             return
         self._resolve_generation += 1
         self._resolved = None
-        self._set_metadata_controls_disabled(True)
-        self._set_status("Inspecting repository…")
+        self._selected_repository = repository
+        self._selected_candidate = None
+        self._set_search_controls_disabled(True)
+        self._set_selected_result_variant()
+        self._refresh_details_with_status("Inspecting repository…")
         relevant_input = self.query_one("#remote-model-query", Input).value.strip()
         self._resolve_remote(repository, self._resolve_generation, relevant_input)
 
     @on(Button.Pressed, ".remote-candidate")
     def _candidate_pressed(self, event: Button.Pressed) -> None:
-        """Post an install intent for one reviewed candidate; never preflight/provision here."""
+        """Select one current GGUF candidate without starting acquisition."""
         event.stop()
         candidate = getattr(event.button, "candidate", None)
+        if (
+            type(candidate) is not RemoteGGUFCandidate
+            or self._resolved is None
+            or candidate not in self._resolved.candidates
+            or self._operation_reference is not None
+        ):
+            return
+        self._selected_candidate = candidate
+        self._set_status(
+            "GGUF variant selected. Review the managed install before downloading."
+        )
+        for button in self.query(".remote-candidate").results(Button):
+            selected = getattr(button, "candidate", None) == candidate
+            button.variant = "primary" if selected else "default"
+            button.label = "Selected variant" if selected else "Select variant"
+        self.query_one("#remote-model-selection", Static).update(
+            self._selection_summary()
+        )
+        self.query_one("#remote-model-install", Button).disabled = False
+
+    @on(Button.Pressed, "#remote-model-install")
+    def _install_pressed(self, event: Button.Pressed) -> None:
+        """Post an install intent for the selected candidate; never acquire here."""
+        event.stop()
+        candidate = self._selected_candidate
         if (
             type(candidate) is not RemoteGGUFCandidate
             or self._resolved is None
@@ -379,6 +669,21 @@ class RemoteView(Widget):
                 severity="error",
             )
             return
+        try:
+            service = self._service_factory()
+            credential_resolver = self._credential_resolver_factory()
+        except Exception as exc:
+            logger.error(
+                "Remote install dependency construction failed; error_type={}",
+                type(exc).__name__,
+            )
+            message = (
+                "Could not prepare the managed install. Check model storage "
+                "settings and try again."
+            )
+            self.notify(message, severity="error")
+            self._set_status(message)
+            return
         self._operation_reference = catalog.artifact.reference
         self._set_metadata_controls_disabled(True)
         self._set_status("Preparing the managed install plan…")
@@ -386,8 +691,8 @@ class RemoteView(Widget):
             self.InstallRequested(
                 catalog,
                 candidate,
-                service=self._service_factory(),
-                credential_resolver=self._credential_resolver_factory(),
+                service=service,
+                credential_resolver=credential_resolver,
             )
         )
 
@@ -433,10 +738,14 @@ class RemoteView(Widget):
         if error is not None:
             self._results = ()
             self._resolved = None
+            self._selected_repository = None
+            self._selected_candidate = None
             self._refresh_with_status(_discovery_error_message(error))
             return
         self._results = results
         self._resolved = None
+        self._selected_repository = None
+        self._selected_candidate = None
         message = (
             "Select a repository to inspect its eligible GGUF files."
             if results
@@ -503,6 +812,8 @@ class RemoteView(Widget):
         ):
             self._results = ()
             self._resolved = None
+            self._selected_repository = None
+            self._selected_candidate = None
             self._set_metadata_controls_disabled(False)
             self._refresh_with_status(
                 "Repository selection changed. Press Search to inspect the current ID."
@@ -511,16 +822,27 @@ class RemoteView(Widget):
         self._set_metadata_controls_disabled(False)
         if error is not None or resolved is None:
             self._resolved = None
-            self._refresh_with_status(
-                _discovery_error_message(error or RuntimeError("resolve failed"))
-            )
+            self._selected_repository = None
+            self._selected_candidate = None
+            message = _discovery_error_message(error or RuntimeError("resolve failed"))
+            if self._results:
+                self._set_selected_result_variant()
+                self._refresh_details_with_status(message)
+            else:
+                self._refresh_with_status(message)
             return
-        self._results = ()
         self._resolved = resolved
-        self._refresh_with_status(
+        self._selected_repository = resolved.repository
+        self._selected_candidate = None
+        message = (
             f"Pinned {resolved.repository} at {resolved.commit}. "
             "Select one GGUF candidate."
         )
+        if self._results:
+            self._set_selected_result_variant()
+            self._refresh_details_with_status(message)
+        else:
+            self._refresh_with_status(message)
 
     def apply_progress(self, progress: "AcquisitionProgress") -> None:
         """Render one acquisition progress event, retaining it for later.
@@ -553,6 +875,73 @@ class RemoteView(Widget):
         except NoMatches:
             self.refresh(recompose=True)
 
+    def restore_install_context(
+        self,
+        catalog: ResolvedRemoteCatalog,
+        candidate: RemoteGGUFCandidate,
+        *,
+        status_message: str = "Installing the selected GGUF variant…",
+    ) -> bool:
+        """Restore selected-model presentation after a screen recompose.
+
+        The host screen retains the already-validated frozen catalog and exact
+        candidate for the life of an install. Rebuilding the read-only detail
+        state from those values keeps provenance, selection, and progress
+        truthful without moving any acquisition responsibility into this view.
+
+        Args:
+            catalog: Frozen one-item catalog retained by ``LLMScreen``.
+            candidate: Exact GGUF candidate retained alongside the catalog.
+            status_message: Truthful host-owned lifecycle copy to restore.
+
+        Returns:
+            Whether the retained values reproduced the exact frozen catalog.
+        """
+        if (
+            type(catalog) is not ResolvedRemoteCatalog
+            or type(candidate) is not RemoteGGUFCandidate
+        ):
+            return False
+        descriptor = catalog.artifact
+        repository = descriptor.upstream_repository
+        commit = descriptor.upstream_revision
+        review_url = descriptor.license_url
+        if not all(
+            isinstance(value, str) and value
+            for value in (repository, commit, review_url, descriptor.license_id)
+        ):
+            return False
+        resolved = ResolvedRemoteModel(
+            repository=repository,
+            commit=commit,
+            license_id=descriptor.license_id,
+            review_url=review_url,
+            candidates=(candidate,),
+            total_candidate_count=1,
+            warnings=(),
+        )
+        try:
+            rebuilt = build_remote_catalog(resolved, candidate)
+        except ValueError:
+            return False
+        if rebuilt != catalog:
+            return False
+        if (
+            self._resolved == resolved
+            and self._selected_candidate == candidate
+            and self._operation_reference == descriptor.reference
+        ):
+            self._set_status(status_message)
+            self._set_metadata_controls_disabled(True)
+            return True
+        self._resolved = resolved
+        self._selected_repository = repository
+        self._selected_candidate = candidate
+        self._operation_reference = descriptor.reference
+        self._refresh_with_status(status_message)
+        self._set_metadata_controls_disabled(True)
+        return True
+
     def cancel_pending_install(self, message: str | None = None) -> None:
         """Clear the in-flight indicator without disturbing search/resolve state.
 
@@ -573,7 +962,11 @@ class RemoteView(Widget):
         """
         self._operation_reference = None
         self._set_metadata_controls_disabled(False)
-        self._set_status(message or self._default_status())
+        if message is None:
+            self._selected_candidate = None
+            self._refresh_details_with_status(self._default_status())
+            return
+        self._set_status(message)
 
     def finish_install(self, message: str | None = None) -> None:
         """Clear the in-flight indicator and hide progress after a completed install.
@@ -598,6 +991,35 @@ class RemoteView(Widget):
             progress.display = False
         self._set_metadata_controls_disabled(False)
         self._set_status(message or self._default_status())
+
+
+def _format_count(value: int | None) -> str:
+    """Format bounded Hugging Face counters for compact result metadata."""
+    if value is None:
+        return "—"
+    if value >= 1_000_000:
+        return f"{value / 1_000_000:.1f}M"
+    if value >= 1_000:
+        return f"{value / 1_000:.1f}K"
+    return str(value)
+
+
+def _format_last_modified(value: str | None) -> str:
+    """Normalize a printable ISO timestamp before exposing its calendar date."""
+    if not isinstance(value, str) or not value or not value.isprintable():
+        return "Updated —"
+    normalized = f"{value[:-1]}+00:00" if value.endswith("Z") else value
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return "Updated —"
+    return f"Updated {parsed.date().isoformat()}"
+
+
+def _candidate_display_name(candidate: RemoteGGUFCandidate) -> str:
+    """Return the candidate label without repeating the selected repository."""
+    _repository, separator, filename = candidate.label.partition(" · ")
+    return filename if separator else candidate.label
 
 
 def _discovery_error_message(error: BaseException) -> str:

@@ -14,9 +14,9 @@ Tests that used to drive this view's own ``_preflight_model``/
 push, activation, and failure-logging coverage) moved to
 ``test_llm_screen_lab_adoption.py``, against ``LLMScreen``, which now owns
 that logic; what belongs here instead is ``RemoteView``'s own render-only
-contract: reviewing a candidate posts ``InstallRequested`` and, once told
-the outcome, calls ``cancel_pending_install()``/``finish_install()``/
-``apply_progress()``.
+contract: confirming a selected candidate posts ``InstallRequested`` and,
+once told the outcome, calls ``cancel_pending_install()``/
+``finish_install()``/``apply_progress()``.
 """
 
 from __future__ import annotations
@@ -376,6 +376,249 @@ async def test_free_text_search_resolves_only_after_result_selection() -> None:
 
 
 @pytest.mark.asyncio
+async def test_repository_selection_keeps_results_and_metadata_visible_in_two_panes() -> (
+    None
+):
+    """Collapsing discovery into the selected model must not destroy browse context."""
+    selected = RemoteModelSummary(
+        repository="owner/repository",
+        private=False,
+        gated="none",
+        downloads=12_400,
+        likes=81,
+        last_modified="2026-08-18T14:05:00Z",
+    )
+    other = RemoteModelSummary(
+        repository="other/repository",
+        private=True,
+        gated="manual",
+        downloads=None,
+        likes=None,
+        last_modified=None,
+    )
+    adapter = _Adapter(search_result=(selected, other), resolved=_resolved())
+    view = _view(
+        adapter_factory=lambda: adapter,
+        resolver_factory=lambda: _Resolver([]),
+    )
+    app = _RemoteApp(view)
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        await _submit(app, pilot, "quantized model")
+        result_buttons = list(view.query(".remote-result").results(Button))
+        assert len(result_buttons) == 2
+
+        result_buttons[0].press()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        rendered = _text(view)
+        result_buttons = list(view.query(".remote-result").results(Button))
+        candidate_buttons = list(view.query(".remote-candidate").results(Button))
+        result_x = result_buttons[0].region.x
+        candidate_x = candidate_buttons[0].region.x
+
+    assert len(result_buttons) == 2
+    assert len(candidate_buttons) == 1
+    assert "owner/repository" in rendered
+    assert "other/repository" in rendered
+    assert "12.4K downloads · 81 likes" in rendered
+    assert "Updated 2026-08-18" in rendered
+    assert "Public · Gated: none" in rendered
+    assert "Private · Gated: manual" in rendered
+    assert result_x < candidate_x
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "last_modified",
+    ("updated", "2026-08-18\x1b[31m"),
+)
+async def test_result_metadata_rejects_malformed_or_nonprintable_update_dates(
+    last_modified: str,
+) -> None:
+    """Untrusted bounded text must not impersonate a normalized update date."""
+    summary = RemoteModelSummary(
+        repository="owner/repository",
+        private=False,
+        gated="none",
+        downloads=1,
+        likes=2,
+        last_modified=last_modified,
+    )
+    adapter = _Adapter(search_result=(summary,), resolved=_resolved())
+    view = _view(
+        adapter_factory=lambda: adapter,
+        resolver_factory=lambda: _Resolver([]),
+    )
+    app = _RemoteApp(view)
+
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "quantized model")
+        rendered = _text(view)
+
+    assert "Updated —" in rendered
+    assert last_modified not in rendered
+
+
+@pytest.mark.asyncio
+async def test_repository_selection_preserves_result_focus_while_inspecting() -> None:
+    """Opening details must not replace the result row under the keyboard."""
+    adapter = _Adapter(search_result=(_summary(),), resolved=_resolved())
+    view = _view(
+        adapter_factory=lambda: adapter,
+        resolver_factory=lambda: _Resolver([]),
+    )
+    app = _RemoteApp(view)
+
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "quantized model")
+        result = view.query_one(".remote-result", Button)
+        app.screen.set_focus(result)
+        await pilot.pause()
+        assert app.focused is result
+
+        result.press()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert app.focused is result
+        assert view.query_one(".remote-candidate", Button).region.x > result.region.x
+
+
+@pytest.mark.asyncio
+async def test_candidate_selection_enables_one_contextual_install_action() -> None:
+    """Selecting a file must not start acquisition before the explicit install action."""
+    resolved = ResolvedRemoteModel(
+        repository="owner/repository",
+        commit=_COMMIT,
+        license_id="apache-2.0",
+        review_url=f"https://huggingface.co/owner/repository/tree/{_COMMIT}",
+        candidates=(
+            RemoteGGUFCandidate(
+                label="owner/repository · model-q5-k-m.gguf",
+                files=(
+                    RemoteGGUFFile(
+                        "model-q5-k-m.gguf",
+                        661_191_781,
+                        _DIGEST,
+                    ),
+                ),
+                total_bytes=661_191_781,
+            ),
+        ),
+        total_candidate_count=1,
+        warnings=(),
+    )
+    view = _view(adapter_factory=MagicMock(), resolver_factory=MagicMock())
+    app = _capturing_app(view)
+
+    async with app.run_test() as pilot:
+        query = view.query_one("#remote-model-query", Input)
+        query.value = "owner/repository"
+        view._resolve_generation = 1
+        view._apply_resolve_result(
+            1,
+            "owner/repository",
+            "owner/repository",
+            resolved,
+            None,
+        )
+        await pilot.pause()
+
+        candidate_button = view.query_one(".remote-candidate", Button)
+        assert str(candidate_button.label) == "Select variant"
+        candidate_button.press()
+        await pilot.pause()
+
+        assert app.requests == []
+        assert str(candidate_button.label) == "Selected variant"
+        install = view.query_one("#remote-model-install", Button)
+        assert install.disabled is False
+        assert "630.6 MiB" in _text(view)
+
+        install.press()
+        await pilot.pause()
+
+    assert len(app.requests) == 1
+    assert app.requests[0].candidate == resolved.candidates[0]
+
+
+@pytest.mark.asyncio
+async def test_candidate_selection_preserves_keyboard_focus() -> None:
+    """Selecting a variant must not replace the focused row under the keyboard."""
+    resolved = _resolved()
+    view = _view(adapter_factory=MagicMock(), resolver_factory=MagicMock())
+    app = _RemoteApp(view)
+
+    async with app.run_test() as pilot:
+        query = view.query_one("#remote-model-query", Input)
+        query.value = resolved.repository
+        view._resolve_generation = 1
+        view._apply_resolve_result(
+            1,
+            resolved.repository,
+            resolved.repository,
+            resolved,
+            None,
+        )
+        await pilot.pause()
+
+        candidate = view.query_one(".remote-candidate", Button)
+        app.screen.set_focus(candidate)
+        await pilot.pause()
+        assert app.focused is candidate
+
+        candidate.press()
+        await pilot.pause()
+
+        assert app.focused is candidate
+        assert view.query_one("#remote-model-install", Button).disabled is False
+
+
+@pytest.mark.asyncio
+async def test_two_pane_layout_and_install_action_paint_at_eighty_columns() -> None:
+    """The supported narrow terminal must paint both panes and the final action."""
+    adapter = _Adapter(search_result=(_summary(),), resolved=_resolved())
+    view = _view(
+        adapter_factory=lambda: adapter,
+        resolver_factory=lambda: _Resolver([]),
+    )
+    app = _RemoteApp(view)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _submit(app, pilot, "quantized model")
+        view.query_one(".remote-result", Button).press()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        candidate = view.query_one(".remote-candidate", Button)
+        app.screen.set_focus(candidate)
+        candidate.scroll_visible(animate=False, immediate=True, force=True)
+        await pilot.pause()
+        candidate.press()
+        await pilot.pause()
+
+        results_pane = view.query_one(".remote-results-pane")
+        detail_pane = view.query_one(".remote-detail-pane")
+        install = view.query_one("#remote-model-install", Button)
+        widget_at_install, _offset = app.get_widget_at(*install.region.center)
+        painted = "\n".join(
+            "".join(segment.text for segment in strip)
+            for strip in app.screen._compositor.render_strips()
+        )
+
+        assert results_pane.region.width > 0
+        assert detail_pane.region.width > 0
+        assert results_pane.region.right <= detail_pane.region.x
+        assert install.region.width > 0
+        assert install.region.bottom <= view.region.bottom
+        assert widget_at_install is install
+        assert "Repositories" in painted
+        assert "Review and install" in painted
+
+
+@pytest.mark.asyncio
 async def test_stale_search_and_resolve_completions_cannot_replace_newer_results() -> (
     None
 ):
@@ -593,6 +836,34 @@ async def test_discovery_errors_render_sanitized_retry_guidance(
 
 
 @pytest.mark.asyncio
+async def test_resolve_error_keeps_results_without_stale_inspecting_copy() -> None:
+    """A failed detail request must return to browse context instead of looking busy."""
+    summary = _summary()
+    view = _view(adapter_factory=MagicMock(), resolver_factory=MagicMock())
+    app = _RemoteApp(view)
+
+    async with app.run_test() as pilot:
+        query = view.query_one("#remote-model-query", Input)
+        query.value = "quantized model"
+        view._results = (summary,)
+        view._selected_repository = summary.repository
+        view._resolve_generation = 1
+        view._apply_resolve_result(
+            1,
+            summary.repository,
+            "quantized model",
+            None,
+            RemoteDiscoveryError("network_error", retryable=True),
+        )
+        await pilot.pause()
+        rendered = _text(view)
+
+    assert "owner/repository" in rendered
+    assert "Remote request failed. Retry." in rendered
+    assert "Inspecting owner/repository" not in rendered
+
+
+@pytest.mark.asyncio
 async def test_no_eligible_error_renders_bounded_incomplete_shard_details() -> None:
     """Validated missing-shard recovery details must follow the generic LFS rule."""
     detail = "owner/repository · model-q4 missing 00002 00004"
@@ -741,10 +1012,10 @@ def _capturing_app(view) -> App:
 
 
 @pytest.mark.asyncio
-async def test_candidate_press_posts_install_requested_with_the_resolved_service_and_resolver() -> (
+async def test_contextual_install_posts_requested_with_the_resolved_service_and_resolver() -> (
     None
 ):
-    """A real candidate click -- not a direct call to an internal method --
+    """Real candidate selection plus the contextual install action
     posts ``RemoteView.InstallRequested`` carrying the exact catalog,
     candidate, service, and credential resolver the host screen needs to
     resolve a plan itself (TASK-1914: this view no longer performs that
@@ -771,8 +1042,13 @@ async def test_candidate_press_posts_install_requested_with_the_resolved_service
     async with app.run_test() as pilot:
         await _submit(app, pilot, "owner/repository")
 
-        button = view.query_one(".remote-candidate", Button)
-        await pilot.click(button)
+        candidate_button = view.query_one(".remote-candidate", Button)
+        candidate_button.press()
+        await pilot.pause()
+        assert app.requests == []
+
+        install_button = view.query_one("#remote-model-install", Button)
+        install_button.press()
         await pilot.pause()
 
         assert len(app.requests) == 1
@@ -783,11 +1059,82 @@ async def test_candidate_press_posts_install_requested_with_the_resolved_service
         assert event.service is service
         assert event.credential_resolver is resolver
 
-        # The clicked candidate's own row re-disables immediately (the
+        # The selected candidate's own row re-disables immediately (the
         # long-standing "cannot double-click install" contract, unrelated
         # to whether LLMScreen has even received the message yet).
         assert view.query_one(".remote-candidate", Button).disabled is True
         assert view.query_one("#remote-model-search", Button).disabled is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failing_dependency", ("service", "credential resolver"))
+async def test_install_dependency_failure_keeps_the_selected_candidate_retryable(
+    failing_dependency: str,
+) -> None:
+    """A dependency factory failure must not strand the view in-flight.
+
+    This catches moving ``_operation_reference``/control disabling ahead of
+    dependency construction without a rollback path. The dependency is
+    allowed to fail only after repository resolution so the test exercises
+    the install boundary, not metadata search.
+    """
+    resolved = _resolved()
+    adapter = _Adapter(resolved=resolved)
+    resolver = _Resolver([])
+    fail_now = False
+
+    def service_factory():
+        if fail_now and failing_dependency == "service":
+            raise RuntimeError("private service detail")
+        return object()
+
+    def resolver_factory():
+        if fail_now and failing_dependency == "credential resolver":
+            raise RuntimeError("private resolver detail")
+        return resolver
+
+    view = _view(
+        adapter_factory=lambda: adapter,
+        resolver_factory=resolver_factory,
+        service_factory=service_factory,
+    )
+    app = _capturing_app(view)
+    notifications: list[tuple[str, str]] = []
+
+    async with app.run_test() as pilot:
+        view.notify = lambda message, *, severity: notifications.append(
+            (message, severity)
+        )
+        await _submit(app, pilot, resolved.repository)
+        view.query_one(".remote-candidate", Button).press()
+        await pilot.pause()
+        fail_now = True
+
+        error: Exception | None = None
+        try:
+            view._install_pressed(
+                Button.Pressed(view.query_one("#remote-model-install", Button))
+            )
+        except Exception as exc:  # assertion below exposes the production leak
+            error = exc
+        await pilot.pause()
+
+        assert error is None, "dependency construction escaped the UI boundary"
+        assert app.requests == []
+        assert view._operation_reference is None
+        assert view.query_one("#remote-model-install", Button).disabled is False
+        assert view.query_one("#remote-model-search", Button).disabled is False
+        assert "private" not in str(
+            view.query_one("#remote-model-status", Static).renderable
+        )
+
+    assert notifications == [
+        (
+            "Could not prepare the managed install. Check model storage "
+            "settings and try again.",
+            "error",
+        )
+    ]
 
 
 @pytest.mark.asyncio
@@ -804,7 +1151,9 @@ async def test_default_credential_resolver_factory_builds_env_config_resolver_fo
 
     async with app.run_test() as pilot:
         await _submit(app, pilot, "owner/repository")
-        await pilot.click(".remote-candidate")
+        view.query_one(".remote-candidate", Button).press()
+        await pilot.pause()
+        view.query_one("#remote-model-install", Button).press()
         await pilot.pause()
 
     assert len(app.requests) == 1
@@ -829,6 +1178,12 @@ async def test_stale_candidate_press_is_rejected_at_the_ui_boundary() -> None:
         view._refresh_with_status("Current resolution")
         await pilot.pause()
         view._candidate_pressed(Button.Pressed(stale_button))
+        await pilot.pause()
+
+        assert view._selected_candidate is None
+        install = view.query_one("#remote-model-install", Button)
+        assert install.disabled is True
+        install.press()
         await pilot.pause()
 
     assert app.requests == []
@@ -862,7 +1217,9 @@ async def test_candidate_press_notifies_and_does_not_post_when_the_catalog_canno
         view._resolved = tampered
         view._refresh_with_status("Select one GGUF candidate.")
         await pilot.pause()
-        await pilot.click(".remote-candidate")
+        view.query_one(".remote-candidate", Button).press()
+        await pilot.pause()
+        view.query_one("#remote-model-install", Button).press()
         await pilot.pause()
 
     assert app.requests == []
@@ -899,10 +1256,11 @@ async def test_apply_progress_renders_and_retains_the_tick() -> None:
         view.apply_progress(progress)
         await pilot.pause()
 
-        widget = view.query_one(
-            "#remote-model-install-progress", ModelInstallProgress
-        )
+        widget = view.query_one("#remote-model-install-progress", ModelInstallProgress)
+        detail_pane = view.query_one(".remote-detail-pane")
         assert widget.display is True
+        assert widget.region.x >= detail_pane.region.x
+        assert widget.region.right <= detail_pane.region.right
         assert view._progress == progress
 
 
@@ -928,12 +1286,16 @@ async def test_cancel_pending_install_clears_the_indicator_and_reenables_control
     """A preflight failure or a decline releases the indicator without reloading."""
     resolved = _resolved()
     adapter = _Adapter(resolved=resolved)
-    view = _view(adapter_factory=lambda: adapter, resolver_factory=lambda: _Resolver([]))
+    view = _view(
+        adapter_factory=lambda: adapter, resolver_factory=lambda: _Resolver([])
+    )
     app = _RemoteApp(view)
 
     async with app.run_test() as pilot:
         await _submit(app, pilot, "owner/repository")
-        await pilot.click(".remote-candidate")
+        view.query_one(".remote-candidate", Button).press()
+        await pilot.pause()
+        view.query_one("#remote-model-install", Button).press()
         await pilot.pause()
         assert view._operation_reference is not None
         assert view.query_one("#remote-model-search", Button).disabled is True
@@ -956,12 +1318,16 @@ async def test_cancel_pending_install_with_no_message_restores_the_default_statu
     """An explicit consent-modal decline restores ordinary status copy."""
     resolved = _resolved()
     adapter = _Adapter(resolved=resolved)
-    view = _view(adapter_factory=lambda: adapter, resolver_factory=lambda: _Resolver([]))
+    view = _view(
+        adapter_factory=lambda: adapter, resolver_factory=lambda: _Resolver([])
+    )
     app = _RemoteApp(view)
 
     async with app.run_test() as pilot:
         await _submit(app, pilot, "owner/repository")
-        await pilot.click(".remote-candidate")
+        view.query_one(".remote-candidate", Button).press()
+        await pilot.pause()
+        view.query_one("#remote-model-install", Button).press()
         await pilot.pause()
 
         view.cancel_pending_install()
@@ -984,13 +1350,17 @@ async def test_finish_install_clears_the_indicator_progress_and_shows_the_given_
 
     resolved = _resolved()
     adapter = _Adapter(resolved=resolved)
-    view = _view(adapter_factory=lambda: adapter, resolver_factory=lambda: _Resolver([]))
+    view = _view(
+        adapter_factory=lambda: adapter, resolver_factory=lambda: _Resolver([])
+    )
     app = _RemoteApp(view)
     reference = ArtifactRef("owner-repository", "a" * 40, "q4_k_m")
 
     async with app.run_test() as pilot:
         await _submit(app, pilot, "owner/repository")
-        await pilot.click(".remote-candidate")
+        view.query_one(".remote-candidate", Button).press()
+        await pilot.pause()
+        view.query_one("#remote-model-install", Button).press()
         await pilot.pause()
         view.apply_progress(
             AcquisitionProgress("fetch", reference, "model-q4.gguf", 512, 1024)

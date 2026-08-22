@@ -1034,10 +1034,13 @@
 
     RemoteView {
         height: 100%;
+        background: $background;
     }
 
     RemoteView .remote-header {
         height: 3;
+        padding: 0 1;
+        background: $panel;
     }
 
     RemoteView #remote-model-query {
@@ -1048,19 +1051,146 @@
         width: auto;
     }
 
-    RemoteView .remote-list {
+    RemoteView .remote-workspace {
         height: 1fr;
     }
 
-    RemoteView .remote-row {
+    RemoteView .remote-results-pane {
+        width: 2fr;
+        min-width: 24;
+        border-right: solid $surface-lighten-1;
+        background: $panel;
+    }
+
+    RemoteView .remote-detail-pane {
+        width: 3fr;
+        min-width: 32;
+        background: $background;
+    }
+
+    RemoteView .remote-pane-title {
+        height: 2;
+        padding: 0 1;
+        text-style: bold;
+        background: $surface;
+        color: $text;
+    }
+
+    RemoteView #remote-model-results,
+    RemoteView #remote-model-details {
+        height: 1fr;
+    }
+
+    RemoteView #remote-model-results {
+        padding: 0 1;
+    }
+
+    RemoteView #remote-model-details {
+        padding: 1 2;
+    }
+
+    RemoteView .remote-result-row {
         height: auto;
-        padding: 1;
-        margin-bottom: 1;
-        border: solid $surface-lighten-1;
+        padding: 1 0;
+        border-bottom: solid $surface-lighten-1;
     }
 
     RemoteView .remote-title {
         text-style: bold;
+    }
+
+    RemoteView .remote-muted {
+        color: $text-muted;
+    }
+
+    RemoteView .remote-result,
+    RemoteView .remote-candidate {
+        width: 100%;
+        margin-top: 1;
+    }
+
+    RemoteView .remote-candidate-row {
+        height: auto;
+        padding: 1 0;
+        border-bottom: solid $surface-lighten-1;
+    }
+
+    RemoteView .remote-compatibility {
+        height: auto;
+        margin-bottom: 1;
+        padding: 1;
+        background: $warning 12%;
+        color: $text;
+        text-style: bold;
+    }
+
+    RemoteView .remote-detail-section {
+        height: auto;
+        margin-top: 1;
+        text-style: bold;
+        color: $accent;
+    }
+
+    RemoteView #remote-model-status {
+        height: auto;
+        min-height: 2;
+        padding: 0 1;
+        color: $text-muted;
+    }
+
+    RemoteView #remote-model-install-progress {
+        height: auto;
+        margin: 0 1;
+        padding: 1;
+        background: $surface;
+    }
+
+    RemoteView .remote-action-bar {
+        height: auto;
+        min-height: 4;
+        padding: 1;
+        border-top: solid $surface-lighten-1;
+        background: $panel;
+    }
+
+    RemoteView #remote-model-selection {
+        width: 1fr;
+        height: auto;
+        color: $text-muted;
+    }
+
+    RemoteView #remote-model-install {
+        width: auto;
+        min-width: 22;
+    }
+
+    RemoteView.-narrow .remote-results-pane {
+        width: 2fr;
+        min-width: 0;
+    }
+
+    RemoteView.-narrow .remote-detail-pane {
+        width: 3fr;
+        min-width: 0;
+    }
+
+    RemoteView.-narrow .remote-header {
+        padding: 0;
+    }
+
+    RemoteView.-narrow #remote-model-details {
+        padding: 0 1;
+    }
+
+    RemoteView.-narrow .remote-action-bar {
+        layout: vertical;
+        min-height: 6;
+    }
+
+    RemoteView.-narrow #remote-model-selection,
+    RemoteView.-narrow #remote-model-install {
+        width: 100%;
+        min-width: 0;
     }
 
 

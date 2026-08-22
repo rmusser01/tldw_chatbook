@@ -129,6 +129,12 @@ MODELS_RAIL_SECTIONS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
 #: press-triggered read would report "stopped".
 LAB_SERVER_POLL_SECONDS = 2.0
 
+_REMOTE_INSTALL_TERMINAL_FINISH = "finish"
+_REMOTE_INSTALL_TERMINAL_CANCEL = "cancel"
+_REMOTE_INSTALL_TERMINAL_ACTIONS = frozenset(
+    {_REMOTE_INSTALL_TERMINAL_FINISH, _REMOTE_INSTALL_TERMINAL_CANCEL}
+)
+
 #: Back-compat alias for the (app attribute, display name) server-process
 #: table; ``LAB_SERVER_SOURCES`` in ``lab_server_status`` is the canonical
 #: copy and carries the same six providers.
@@ -292,6 +298,14 @@ class LLMScreen(LabScreen):
         self._model_install_catalog: "ResolvedRemoteCatalog | None" = None
         self._model_install_candidate: "RemoteGGUFCandidate | None" = None
         self._model_install_credential_resolver: "CredentialResolver | None" = None
+        #: Terminal Remote presentation retained only when the current view is
+        #: inside LabScreen's teardown/remount gap. The acquisition fields
+        #: above may then be cleared immediately without losing the selected
+        #: repository or its outcome before a fresh RemoteView can consume it.
+        self._remote_install_terminal_catalog: "ResolvedRemoteCatalog | None" = None
+        self._remote_install_terminal_candidate: "RemoteGGUFCandidate | None" = None
+        self._remote_install_terminal_action: str | None = None
+        self._remote_install_terminal_message: str | None = None
         self._audio_cpp_model_request_claim: (
             HandoffClaim[AudioCppModelLibraryRequest] | None
         ) = None
@@ -458,6 +472,8 @@ class LLMScreen(LabScreen):
             self._model_install_phase = None
             self._model_install_last_progress = None
         self.refresh_lab_status()
+        if event.active and getattr(self, "_model_install_kind", None) == "remote":
+            self._sync_remote_install_context_status()
 
     def _curated_view(self) -> "CuratedView | None":
         """Return the mounted ``CuratedView``, or None if it cannot be found.
@@ -2367,6 +2383,7 @@ class LLMScreen(LabScreen):
             )
             self._clear_remote_install_state()
             return
+        self._clear_remote_terminal_presentation()
         self._model_install_kind = "remote"
         self._model_install_reference = event.catalog.artifact.reference
         self._model_install_service = event.service
@@ -2449,8 +2466,8 @@ class LLMScreen(LabScreen):
         # _model_install_kind, not on _model_install_worker (TASK-1914 fix
         # round 2).
         self._model_install_worker = None
-        catalog = self._model_install_catalog
-        candidate = self._model_install_candidate
+        catalog = getattr(self, "_model_install_catalog", None)
+        candidate = getattr(self, "_model_install_candidate", None)
         if (
             error is not None
             or report is None
@@ -2462,6 +2479,7 @@ class LLMScreen(LabScreen):
             self._clear_remote_install_state(message)
             return
         self._model_install_pending_report = report
+        self._sync_remote_install_context_status()
         acknowledgment = (
             "No license was declared. I reviewed the source and want to continue."
             if catalog.artifact.license_id == "NOASSERTION"
@@ -2597,15 +2615,16 @@ class LLMScreen(LabScreen):
             self._deliver_curated(
                 InstallStatusChanged(reference, active=False, succeeded=error is None)
             )
+        self._deliver_or_retain_remote_terminal_presentation(
+            _REMOTE_INSTALL_TERMINAL_FINISH,
+            message,
+        )
         self._model_install_reference = None
         self._model_install_service = None
         self._model_install_catalog = None
         self._model_install_candidate = None
         self._model_install_credential_resolver = None
         self._model_install_kind = None
-        view = self._remote_view()
-        if view is not None:
-            view.finish_install(message)
 
     def _clear_remote_install_state(self, message: str | None = None) -> None:
         """Reset this screen's own bookkeeping after a request that never
@@ -2621,6 +2640,10 @@ class LLMScreen(LabScreen):
                 sanitized preflight failure); ``None`` for an explicit
                 decline, which restores the view's default status.
         """
+        self._deliver_or_retain_remote_terminal_presentation(
+            _REMOTE_INSTALL_TERMINAL_CANCEL,
+            message,
+        )
         self._model_install_reference = None
         self._model_install_service = None
         self._model_install_catalog = None
@@ -2628,9 +2651,111 @@ class LLMScreen(LabScreen):
         self._model_install_credential_resolver = None
         self._model_install_pending_report = None
         self._model_install_kind = None
+
+    def _clear_remote_terminal_presentation(self) -> None:
+        """Discard a terminal Remote presentation after a mounted view consumes it."""
+        self._remote_install_terminal_catalog = None
+        self._remote_install_terminal_candidate = None
+        self._remote_install_terminal_action = None
+        self._remote_install_terminal_message = None
+
+    def _deliver_or_retain_remote_terminal_presentation(
+        self,
+        action: str,
+        message: str | None,
+    ) -> None:
+        """Show a Remote outcome now, or retain it across the remount gap.
+
+        Args:
+            action: ``"finish"`` for provisioning outcomes or ``"cancel"``
+                for preflight/consent termination.
+            message: Sanitized outcome copy, or ``None`` for a decline.
+        """
+        catalog = self._model_install_catalog
+        candidate = self._model_install_candidate
         view = self._remote_view()
-        if view is not None:
+        if view is not None and view.is_mounted:
+            if isinstance(catalog, ResolvedRemoteCatalog) and isinstance(
+                candidate, RemoteGGUFCandidate
+            ):
+                view.restore_install_context(catalog, candidate)
+            if action == _REMOTE_INSTALL_TERMINAL_FINISH:
+                view.finish_install(message)
+            else:
+                view.cancel_pending_install(message)
+            self._clear_remote_terminal_presentation()
+            return
+        if isinstance(catalog, ResolvedRemoteCatalog) and isinstance(
+            candidate, RemoteGGUFCandidate
+        ):
+            self._remote_install_terminal_catalog = catalog
+            self._remote_install_terminal_candidate = candidate
+            self._remote_install_terminal_action = action
+            self._remote_install_terminal_message = message
+
+    def _hydrate_remote_terminal_presentation(self) -> bool:
+        """Deliver one retained Remote outcome to the fresh mounted view."""
+        catalog = getattr(self, "_remote_install_terminal_catalog", None)
+        candidate = getattr(self, "_remote_install_terminal_candidate", None)
+        action = getattr(self, "_remote_install_terminal_action", None)
+        if (
+            not isinstance(catalog, ResolvedRemoteCatalog)
+            or not isinstance(candidate, RemoteGGUFCandidate)
+            or action not in _REMOTE_INSTALL_TERMINAL_ACTIONS
+        ):
+            return False
+        view = self._remote_view()
+        if view is None or not view.is_mounted:
+            return False
+        if not view.restore_install_context(catalog, candidate):
+            return False
+        message = getattr(self, "_remote_install_terminal_message", None)
+        if action == _REMOTE_INSTALL_TERMINAL_FINISH:
+            view.finish_install(message)
+        else:
             view.cancel_pending_install(message)
+        self._clear_remote_terminal_presentation()
+        return True
+
+    def _model_install_presentation_pending(self) -> bool:
+        """Return whether a remounted install view needs host hydration."""
+        return (
+            self._model_install_active
+            or (
+                self._model_install_kind == "remote"
+                and self._model_install_catalog is not None
+                and self._model_install_candidate is not None
+            )
+            or getattr(self, "_remote_install_terminal_action", None) is not None
+        )
+
+    def _remote_install_context_status(self) -> str:
+        """Return truthful lifecycle copy for a reconstructed Remote detail."""
+        if self._model_install_active or (
+            self._model_install_pending_report is not None
+            and self._model_install_worker is not None
+        ):
+            return "Installing the selected GGUF variant…"
+        if self._model_install_pending_report is not None:
+            return "Awaiting review; no download has started."
+        return "Preparing the managed install plan…"
+
+    def _sync_remote_install_context_status(self) -> bool:
+        """Apply the current host lifecycle copy to the mounted Remote detail."""
+        catalog = self._model_install_catalog
+        candidate = self._model_install_candidate
+        if not isinstance(catalog, ResolvedRemoteCatalog) or not isinstance(
+            candidate, RemoteGGUFCandidate
+        ):
+            return False
+        view = self._remote_view()
+        if view is None or not view.is_mounted:
+            return False
+        return view.restore_install_context(
+            catalog,
+            candidate,
+            status_message=self._remote_install_context_status(),
+        )
 
     def compose_lab_rail(self) -> ComposeResult:
         """Yield the two rail sections and their nine provider rows."""
@@ -2718,7 +2843,7 @@ class LLMScreen(LabScreen):
         # freshly (re)mounted LLMManagementWindow's own children a chance
         # to finish composing before _hydrate_model_install_progress
         # queries for them.
-        if self._model_install_active:
+        if self._model_install_presentation_pending():
             self.call_after_refresh(self._hydrate_model_install_progress)
 
     @on(LLMManagementWindow.DeferredViewsMounted)
@@ -2741,12 +2866,12 @@ class LLMScreen(LabScreen):
                 exclusive=True,
                 exit_on_error=False,
             )
-        if self._model_install_active:
+        if self._model_install_presentation_pending():
             self._hydrate_model_install_progress()
         self._hydrate_external_status()
 
     def _hydrate_model_install_progress(self) -> None:
-        """Re-apply the last known install progress after a recompose.
+        """Re-apply selected-model context and progress after a recompose.
 
         Covers both flows (TASK-1914): whichever view owns the in-flight
         install (``_active_install_view()``, keyed by
@@ -2784,11 +2909,22 @@ class LLMScreen(LabScreen):
         every (re)mount, rather than by trying to identify and replay
         whichever specific message the gap happened to swallow.
         """
+        self._hydrate_remote_terminal_presentation()
+        view = self._active_install_view()
+        if (
+            isinstance(view, RemoteView)
+            and self._model_install_catalog is not None
+            and self._model_install_candidate is not None
+        ):
+            view.restore_install_context(
+                self._model_install_catalog,
+                self._model_install_candidate,
+                status_message=self._remote_install_context_status(),
+            )
         if not self._model_install_active:
             return
         if self._model_install_last_progress is None:
             return
-        view = self._active_install_view()
         if view is not None:
             view.apply_progress(self._model_install_last_progress)
         installed = self._installed_view()

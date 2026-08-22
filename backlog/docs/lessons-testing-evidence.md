@@ -6279,3 +6279,22 @@ status-plus-incomplete-journal on reopen, and explicit-check-while-recovery-is
 unresolved. Assert both authorities after each interleaving: the in-memory
 admission/next action and the durable journal/status. A state matrix is necessary,
 but it is not concurrency or restart evidence until the edges are executed.
+
+---
+
+## A package AST sweep can descend into an ignored nested virtualenv (TASK-19906, 2026-08-22)
+
+While verifying the Remote Models redesign, the package-wide class-CSS
+consolidation test failed inside Textual's own `Widget` and `Toast` classes,
+even though the changed stylesheet parsed and reproduced exactly. The test's
+`Path.rglob("*.py")` walked through an old, gitignored
+`tldw_chatbook/.venv/lib/python3.13/site-packages/` directory nested beneath
+the package root; serializing that foreign Textual version's default rules
+then crashed on a `None` link background. A targeted diagnostic that printed
+the `(module, class)` pair for each parse failure proved both failures came
+from the ignored virtualenv, not application code.
+
+Rule: source-tree AST/file sweeps must prune environment and tool directories
+(`.venv`, virtualenvs, caches) explicitly; `.gitignore` does not affect
+`Path.rglob`. When such a gate fails in dependency code, print the exact
+discovered path before changing production CSS or blaming version drift.
