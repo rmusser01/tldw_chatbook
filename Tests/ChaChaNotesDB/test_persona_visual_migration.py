@@ -170,6 +170,10 @@ def test_real_v40_upgrade_installs_separate_persona_visual_schema(
     climbed, so the test asserts the behaviour of *its own* migration, not
     the global current version, and there is no upfront version equality
     to short-circuit the rest of the body.
+
+    Args:
+        tmp_path: pytest-provided temporary directory holding the seeded v40
+            database and the persona JSON the v40->v41 step reads.
     """
     path = tmp_path / "persona-visual-v40.db"
     persona_json = tmp_path / "personas.json"
