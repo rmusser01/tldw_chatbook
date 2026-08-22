@@ -1,10 +1,10 @@
 ---
 id: TASK-19056
 title: Enable Shared Visual Identity for Persona actors
-status: Done
+status: In Progress
 assignee: []
 created_date: '2026-08-20 18:01'
-updated_date: '2026-08-22 16:31'
+updated_date: '2026-08-22 17:11'
 labels: []
 dependencies:
   - TASK-16319
@@ -50,6 +50,7 @@ Executable plan: Docs/superpowers/plans/2026-08-22-task-19056-persona-shared-vis
 4. Extend the existing Console actor-scoped reaction/cache path to eligible local Personas without Buddy coupling.
 5. Prove lifecycle, race, targeted invalidation, privacy, architecture, and Character-equivalence contracts.
 6. Run isolated touched-component/static/governance evidence and close the task only if every scoped gate is green.
+7. After rebasing onto current `dev`, reproduce the Console config-lock regression, add one lock-order test, apply the minimal shared-lock ordering fix, and rerun affected evidence before re-closing.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
