@@ -1086,7 +1086,7 @@ Omit the diagnostic test path if it was not changed.
   `Tests/Wizards/test_first_run_setup_wizard.py`
 - Inspect: `Tests/UI/test_first_run_wizard_live_contract.py`
 
-- [ ] **Step 1: Scan every moved name and state field**
+- [x] **Step 1: Scan every moved name and state field**
 
 Run:
 
@@ -1099,7 +1099,7 @@ Classify every hit as controller ownership, direct `_session` production/test
 call, architecture string, or stale screen call. Repair every stale executable
 screen call; do not edit comments or unrelated fixtures without evidence.
 
-- [ ] **Step 2: Run the focused behavior and mounted integration matrix**
+- [x] **Step 2: Run the focused behavior and mounted integration matrix**
 
 Run:
 
@@ -1109,6 +1109,7 @@ Run:
   Tests/UI/test_console_controller_wiring.py \
   Tests/Wizards/test_first_run_setup_wizard.py::test_finalize_stages_exact_first_chat_after_successful_setup_mutation \
   Tests/Wizards/test_first_run_setup_wizard.py::test_first_chat_stage_failure_leaves_mounted_console_byte_exact \
+  Tests/Wizards/test_first_run_setup_wizard.py::test_generation_advance_after_stage_before_consume_never_mutates_console \
   Tests/Wizards/test_first_run_setup_wizard.py::test_finalize_does_not_stage_first_chat_when_setup_mutation_fails \
   Tests/Wizards/test_first_run_setup_wizard.py::test_finalize_reserves_future_target_only_without_console_owner \
   Tests/Wizards/test_first_run_setup_wizard.py::test_finalize_reserves_future_target_when_mounted_console_is_ineligible \
@@ -1120,14 +1121,14 @@ Run:
 Expected: all selected tests pass. Preserve real mounted `pilot`/focus behavior;
 do not replace it with direct widget mutation.
 
-- [ ] **Step 3: Run exact static checks on changed tests**
+- [x] **Step 3: Run exact static checks on changed tests**
 
 Run Ruff check, Ruff format-check, and `git diff --check` on every test returned
 by the scan. If a whole-file format check is inherited-red, compare the base
 blob and prove this task introduced no formatter delta before deciding whether
 to make a separate mechanical formatting commit.
 
-- [ ] **Step 4: Commit caller repairs if any remain**
+- [x] **Step 4: Commit caller repairs if any remain**
 
 Run:
 
@@ -1141,6 +1142,27 @@ git commit -m "test(console): cover first-chat session controller"
 ```
 
 Skip this commit if Task 1 already contains every required test-only change.
+
+**Task 3 execution evidence (2026-08-22):**
+
+- The exact stale-owner scan returned 114 hits: 77 controller-owner
+  implementation/test/broker hits, 3 legitimate direct `_session`
+  production/test calls, 34 architecture/inventory/synthetic-string hits, and
+  zero comment/doc or stale executable screen calls.
+- The combined Step 2 matrix, including
+  `test_generation_advance_after_stage_before_consume_never_mutates_console`,
+  passed 232 tests with zero skips/xfails and 3 warnings in 148.35 seconds
+  (151.30 seconds wall). The warnings were the environment's Requests dependency
+  mismatch, Python 3.13 `audioop` deprecation, and an unawaited
+  `SummaryStep._render_rows` warning collected during
+  `test_mounted_wizard_generation_race_rolls_back_and_retries_intent`.
+- Scoped Ruff check passed all four first-chat test files. Ruff format-check
+  found three formatted files and the inherited-red
+  `Tests/UI/test_first_run_wizard_live_contract.py`; its HEAD and parent blobs
+  were identical (`c3a1b01bd22081a39b885016462dd575f1f55350`), proving Task 3
+  introduced no formatter delta. `git diff --check` passed.
+- Task 1/Task 2 already contained every caller repair. Task 3 changed no test or
+  source file and intentionally created no empty caller-repair commit.
 
 ### Task 4: Prove mutation sensitivity and exact restoration
 
