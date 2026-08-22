@@ -63,6 +63,29 @@ def test_console_runtime_owns_one_screen_free_persona_buddy_sink():
     assert "view" not in vars(runtime.persona_buddy_sink)
 
 
+@pytest.mark.asyncio
+async def test_persona_buddy_release_follows_controller_wake_disposal():
+    """Runtime shutdown terminally fences wake producers before sink release."""
+    events: list[str] = []
+
+    class Sink:
+        def release_all(self) -> None:
+            events.append("sink-release")
+
+    class Controller:
+        async def shutdown(self) -> None:
+            events.append("wake-dispose")
+
+    runtime = ConsoleRuntime(type("App", (), {})())
+    runtime._persona_buddy_sink = Sink()
+    runtime._chat_controller = Controller()
+    runtime._provider_gateway = None
+
+    await runtime.dispose()
+
+    assert events == ["wake-dispose", "sink-release"]
+
+
 def _construction_sites(class_name: str) -> list[str]:
     """Every `<path>:<line>` in the shipped package CALLING `class_name(...)`.
 
@@ -422,8 +445,8 @@ def test_the_runtime_is_disposed_by_the_apps_shutdown_lifecycles():
 
 
 @pytest.mark.unit
-def test_persona_buddy_is_app_owned_and_shutdown_before_other_lifecycles():
-    """Buddy survives navigation and drains before profile-backed teardown."""
+def test_persona_buddy_is_app_owned_and_shutdown_after_console_producers():
+    """Console producers stop before Buddy drains, which precedes profiles."""
     import inspect
 
     from tldw_chatbook.app import TldwCli
@@ -440,29 +463,31 @@ def test_persona_buddy_is_app_owned_and_shutdown_before_other_lifecycles():
     source = inspect.getsource(TldwCli._shutdown_app_owned_lifecycles)
     buddy = source.index("_shutdown_persona_buddy")
     console = source.index("_shutdown_console_runtime")
-    assert buddy < console, source
+    assert console < buddy, source
     disposer = inspect.getsource(TldwCli._shutdown_persona_buddy)
     assert "persona_buddy_controller.shutdown" in disposer, disposer
 
 
 @pytest.mark.asyncio
-async def test_app_waits_for_buddy_drain_before_profile_service_teardown(
+async def test_app_fences_console_then_drains_buddy_before_profile_teardown(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """The app-owned await settles Buddy work before profile resources close."""
+    """Repeated cancellation cannot skip either ordered app-owned drain."""
     from textual.app import App
 
     from tldw_chatbook.app import TldwCli
 
-    entered = asyncio.Event()
-    release = asyncio.Event()
+    console_entered = asyncio.Event()
+    console_release = asyncio.Event()
+    buddy_entered = asyncio.Event()
+    buddy_release = asyncio.Event()
     events: list[str] = []
 
     class Buddy:
         async def shutdown(self) -> None:
             events.append("buddy-start")
-            entered.set()
-            await release.wait()
+            buddy_entered.set()
+            await buddy_release.wait()
             events.append("buddy-finished")
 
     class ProfileService:
@@ -476,13 +501,27 @@ async def test_app_waits_for_buddy_drain_before_profile_service_teardown(
     async def later_lifecycle() -> None:
         events.append("later-lifecycle")
 
+    console_task: asyncio.Task[None] | None = None
+
+    async def console_runner() -> None:
+        events.append("console-start")
+        console_entered.set()
+        await console_release.wait()
+        events.append("console-finished")
+
+    async def shutdown_console_runtime() -> None:
+        nonlocal console_task
+        if console_task is None:
+            console_task = asyncio.create_task(console_runner())
+        await asyncio.shield(console_task)
+
     app = object.__new__(TldwCli)
     app.persona_buddy_controller = Buddy()
     app._persona_buddy_shutdown_task = None
     app._audio_cpp_artifact_lease_coordinator = None
     app.audio_cpp_model_install_owner = AsyncOwner()
     app._shutdown_console_image_edits = later_lifecycle
-    app._shutdown_console_runtime = later_lifecycle
+    app._shutdown_console_runtime = shutdown_console_runtime
     app._shutdown_file_notes_session_owner = later_lifecycle
     profile_service = ProfileService()
 
@@ -491,11 +530,26 @@ async def test_app_waits_for_buddy_drain_before_profile_service_teardown(
 
     monkeypatch.setattr(App, "_shutdown", profile_teardown)
     draining = asyncio.create_task(TldwCli._shutdown(app))
-    await entered.wait()
-    assert events == ["buddy-start"]
+    await asyncio.wait_for(console_entered.wait(), 2)
+    assert events == ["console-start"]
     assert not draining.done()
-    release.set()
-    await draining
 
-    assert events[:2] == ["buddy-start", "buddy-finished"]
+    draining.cancel()
+    await asyncio.sleep(0)
+    draining.cancel()
+    await asyncio.sleep(0)
+    assert not draining.done()
+    assert not buddy_entered.is_set()
+
+    console_release.set()
+    await asyncio.wait_for(buddy_entered.wait(), 2)
+    assert events[:3] == ["console-start", "console-finished", "buddy-start"]
+    assert "profile-teardown" not in events
+
+    buddy_release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await draining
+
+    assert events.index("console-finished") < events.index("buddy-start")
+    assert events.index("buddy-finished") < events.index("profile-teardown")
     assert events[-1] == "profile-teardown"

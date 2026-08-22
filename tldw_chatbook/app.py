@@ -11710,13 +11710,15 @@ class TldwCli(
 
     async def _shutdown_app_owned_lifecycles(self) -> None:
         """Drain durable app-owned work before Textual closes screen state."""
+        # Console shutdown terminally fences every trusted Buddy producer
+        # before Buddy itself closes admission and drains owned work.
+        await self._shutdown_console_runtime()
         await self._shutdown_persona_buddy()
         coordinator = getattr(self, "_audio_cpp_artifact_lease_coordinator", None)
         if coordinator is not None:
             await coordinator.shutdown()
         await self.audio_cpp_model_install_owner.shutdown()
         await self._shutdown_console_image_edits()
-        await self._shutdown_console_runtime()
         await self._shutdown_file_notes_session_owner()
 
     async def _shutdown(self) -> None:

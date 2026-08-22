@@ -223,6 +223,126 @@ def _controller_rig(tmp_path, *, session_title="Research"):
     return chacha, app, runs_db, store, session, gateway, bridge, controller
 
 
+class _RecordingBuddySink:
+    """Content-free wake sink used to pin terminal coordinator fencing."""
+
+    def __init__(self):
+        self.calls: list[tuple[object, ...]] = []
+
+    def wake(self, conversation_id: str, run_id: str, *, active: bool) -> None:
+        self.calls.append(("wake", conversation_id, run_id, active))
+
+    def clear_wakes(self) -> None:
+        self.calls.append(("clear",))
+
+
+def test_dispose_fences_a_drain_callback_that_started_before_the_latch():
+    """A survivor observed after terminal disposal cannot reacquire a lease."""
+    entered = threading.Event()
+    release = threading.Event()
+    sink = _RecordingBuddySink()
+    coordinator = ConsoleFleetWakeCoordinator(SimpleNamespace(_buddy_sink=sink))
+
+    class BarrierDrain:
+        conversation_id = "conversation-1"
+
+        @property
+        def children(self):
+            entered.set()
+            assert release.wait(2), "test barrier was never released"
+            return (_survivor("run-late"),)
+
+    worker = threading.Thread(
+        target=coordinator.on_fleet_drained, args=(BarrierDrain(),)
+    )
+    worker.start()
+    assert entered.wait(2), "drain callback never reached the barrier"
+
+    coordinator.dispose()
+    release.set()
+    worker.join(2)
+
+    assert not worker.is_alive()
+    assert coordinator.pending_conversation_ids() == ()
+    assert sink.calls == [("clear",)]
+
+
+def test_dispose_is_terminal_idempotent_and_safe_without_a_sink():
+    """Callbacks after disposal no-op; repeated/no-sink disposal stays safe."""
+    sink = _RecordingBuddySink()
+    coordinator = ConsoleFleetWakeCoordinator(SimpleNamespace(_buddy_sink=sink))
+
+    coordinator.dispose()
+    coordinator.dispose()
+    coordinator.on_fleet_drained(_drain("conversation-1", _survivor("run-late")))
+
+    assert coordinator.pending_conversation_ids() == ()
+    assert sink.calls == [("clear",)]
+
+    no_sink = ConsoleFleetWakeCoordinator(SimpleNamespace())
+    no_sink.dispose()
+    no_sink.dispose()
+    no_sink.on_fleet_drained(_drain("conversation-2", _survivor("run-late")))
+    assert no_sink.pending_conversation_ids() == ()
+
+
+@pytest.mark.asyncio
+async def test_dispose_fences_delivery_completion_after_its_await():
+    """An accepted late result neither commits nor rebuilds disposed state."""
+    started = asyncio.Event()
+    release = asyncio.Event()
+    sink = _RecordingBuddySink()
+
+    class RunsDB:
+        stamps = 0
+
+        def mark_wake_delivered(self, run_ids) -> None:
+            self.stamps += 1
+
+    runs_db = RunsDB()
+
+    class Controller:
+        _buddy_sink = sink
+        _agent_bridge = SimpleNamespace(runs_db=runs_db)
+
+        async def submit_draft(self, *args, **kwargs):
+            started.set()
+            await release.wait()
+            return SimpleNamespace(accepted=True)
+
+    controller = Controller()
+    coordinator = ConsoleFleetWakeCoordinator(controller)
+    with coordinator._registry_lock:
+        coordinator._pending["conversation-1"] = {"run-1": "done"}
+        coordinator._delivering = "conversation-1"
+        coordinator._delivering_session = "session-1"
+    sink.wake("conversation-1", "run-1", active=True)
+    authorization = AgentWakeAuthorization(
+        coordinator,
+        "session-1",
+        _key=console_fleet_wake._WAKE_AUTHORIZATION_KEY,
+    )
+
+    task = asyncio.create_task(
+        coordinator._deliver(
+            "conversation-1",
+            "session-1",
+            ("run-1",),
+            "",
+            authorization,
+        )
+    )
+    await started.wait()
+    coordinator.dispose()
+    release.set()
+    await task
+
+    assert runs_db.stamps == 0
+    assert coordinator.pending_conversation_ids() == ()
+    clear_index = sink.calls.index(("clear",))
+    assert all(call[-1] is not True for call in sink.calls[clear_index + 1 :])
+
+
 @pytest.mark.asyncio
 async def test_persona_buddy_wake_tracks_pending_delivery_and_exact_settlement(
     tmp_path,

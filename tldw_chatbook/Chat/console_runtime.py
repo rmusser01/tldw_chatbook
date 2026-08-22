@@ -1001,7 +1001,6 @@ class ConsoleRuntime:
         """
         self._disposed = True
         self.detach_view(None)
-        self._persona_buddy_sink.release_all()
         controller, gateway = self._chat_controller, self._provider_gateway
         self.generation += 1
         if controller is not None:
@@ -1011,6 +1010,10 @@ class ConsoleRuntime:
                 logger.opt(exception=True).warning(
                     "Console runtime: controller shutdown failed at dispose."
                 )
+        # Controller shutdown begins by terminally fencing the fleet-wake
+        # coordinator. Only after every trusted producer is tombstoned may
+        # the shared Buddy sink release its remaining owner tokens.
+        self._persona_buddy_sink.release_all()
         close = getattr(gateway, "aclose", None)
         if callable(close):
             try:
