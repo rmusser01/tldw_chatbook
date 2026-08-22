@@ -41,6 +41,30 @@ service, or application-lifetime decision.
 If a later rebase changes the eight-method membership or behavior, stop and
 amend/re-review the design. Do not silently rewrite the historical oracle.
 
+## Latest-Dev Implementation Baseline (Task 0)
+
+- Pre-rebase base/head: `0da426e1e4c2846f13671690b8f981f72e673359` /
+  `c8c8671638e0267daad1cf4bae25591f5df32463`.
+- Freshly fetched `origin/dev` and post-rebase base:
+  `ede2162143331e324c44832ff6a3910e1185cf58`; rebased documentation head:
+  `0d24696182483521203263093147ad34405662a1`.
+- `git range-diff` paired all three reviewed documentation commits unchanged.
+- The immutable approved-base and rebased-candidate AST measurements both read
+  19,995 physical lines / 640 direct methods and the exact ordered eight-method
+  family / 328 definition lines. Both normalized family ASTs hash to
+  `3a2968883c63dc89de430ee72b40444ebd97fb9b36c1dbc8a46e19d063a715ee`.
+- The exact focused baseline completed with `230 passed, 2 warnings in 148.85s
+  (0:02:28)`. The warnings were the environment's Requests dependency-version
+  warning and the Python 3.13 `audioop` deprecation warning.
+- Both required diagnostic commands exited zero. The metadata-only test reported
+  `1 passed, 1 warning in 2.21s`. The non-write checker reported inherited
+  latest-dev drift from 7,206 to 7,211 calls (`Subscriptions_DB.py` +3 and
+  `scheduler/loop.py` +2); those production paths, the checker, its test, and
+  the governed manifest are byte-identical to `origin/dev`. No writer ran and
+  no registry or manifest changed.
+- Backlog status remains `In Progress`; the concise five-step implementation
+  plan is present and all acceptance criteria remain unchecked.
+
 ## File Map
 
 **Production**
@@ -83,7 +107,7 @@ callback abstraction.
 - Modify: `Docs/superpowers/plans/2026-08-22-task-3070-9-console-first-chat-handoff.md`
 - Modify: `backlog/tasks/task-3070.9 - Extract-Console-first-chat-handoff-ownership.md`
 
-- [ ] **Step 1: Verify the isolated worktree and reviewed documentation scope**
+- [x] **Step 1: Verify the isolated worktree and reviewed documentation scope**
 
 Run:
 
@@ -97,7 +121,7 @@ Expected: only the reviewed design, plan, and task files are modified/untracked;
 `HEAD` descends from the approved base. Do not rebase with these documentation
 edits uncommitted. Preserve `0da426e1...` as immutable design evidence.
 
-- [ ] **Step 2: Validate the approved-base screen and exact method family**
+- [x] **Step 2: Validate the approved-base screen and exact method family**
 
 Run:
 
@@ -137,7 +161,7 @@ PY
 Expected at the approved base: `19995 640`, then `8 328`, then the exact ordered
 family. This is immutable design evidence, not the final implementation baseline.
 
-- [ ] **Step 3: Run the approved-base focused baseline without changing source**
+- [x] **Step 3: Run the rebased implementation focused baseline without changing source**
 
 Run:
 
@@ -159,7 +183,7 @@ Run:
 
 Expected: all selected tests pass. Record counts, warnings, and duration.
 
-- [ ] **Step 4: Record the approved-base non-write diagnostic baseline**
+- [x] **Step 4: Record the rebased implementation non-write diagnostic baseline**
 
 Run:
 
@@ -171,7 +195,7 @@ Run:
 
 Expected: both pass. Do not run `--write` during baseline.
 
-- [ ] **Step 5: Verify the concise Backlog implementation plan**
+- [x] **Step 5: Verify the concise Backlog implementation plan**
 
 Run:
 
@@ -181,7 +205,7 @@ backlog task edit 3070.9 --plan $'1. Freeze latest-dev baseline and focused evid
 
 Expected: task remains `In Progress`; all ACs remain unchecked.
 
-- [ ] **Step 6: Commit the reviewed plan**
+- [x] **Step 6: Commit the reviewed plan**
 
 Run:
 
@@ -193,7 +217,7 @@ git diff --cached --check
 git commit -m "docs(console): plan first-chat ownership extraction"
 ```
 
-- [ ] **Step 7: Fetch, rebase, and collect the implementation baseline**
+- [x] **Step 7: Fetch, rebase, and collect the implementation baseline**
 
 Only after Step 6 leaves a clean worktree, run:
 

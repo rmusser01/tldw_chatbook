@@ -2,7 +2,8 @@
 
 **Status:** User-approved design; pending specification review
 **Date:** 2026-08-22
-**Implementation base:** `0da426e1e4c2846f13671690b8f981f72e673359`
+**Approved design base:** `0da426e1e4c2846f13671690b8f981f72e673359`
+**Latest-dev Task 0 baseline:** `ede2162143331e324c44832ff6a3910e1185cf58`
 **Task:** `TASK-3070.9`
 **Parent design:** `Docs/superpowers/specs/2026-08-13-console-decomposition-wave6-design.md`
 
@@ -18,9 +19,9 @@ the Console session model.
 
 ## Baseline and Scope
 
-At the implementation base, `chat_screen.py` has 19,995 physical lines and
-`ChatScreen` has 640 direct methods. The reviewed first-chat family is exactly
-eight methods and 328 definition lines:
+At the immutable approved design base, `chat_screen.py` has 19,995 physical
+lines and `ChatScreen` has 640 direct methods. The reviewed first-chat family
+is exactly eight methods and 328 definition lines:
 
 - `_first_chat_defaults_match`
 - `_current_first_chat_defaults`
@@ -30,6 +31,14 @@ eight methods and 328 definition lines:
 - `_resync_console_after_first_chat_rollback`
 - `_resync_mounted_console_after_first_chat_rollback`
 - `consume_pending_console_first_chat_intent`
+
+Task 0 rebased the reviewed documentation series without change onto latest
+`origin/dev` `ede2162143331e324c44832ff6a3910e1185cf58`. The rebased candidate
+retains the same 19,995 / 640 screen measurements, exact eight-method / 328-line
+membership, and normalized family AST digest
+`3a2968883c63dc89de430ee72b40444ebd97fb9b36c1dbc8a46e19d063a715ee` as
+the immutable design base. Latest-dev test and diagnostic results are execution
+baseline evidence only; they do not replace or rewrite the approved oracle.
 
 All eight methods move to `ConsoleSessionController`. Their only mutable owned
 state, `_first_chat_handoff_notified_revision`, moves with them. No compatibility
