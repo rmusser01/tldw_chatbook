@@ -2746,7 +2746,7 @@ class LLMScreen(LabScreen):
         self._hydrate_external_status()
 
     def _hydrate_model_install_progress(self) -> None:
-        """Re-apply the last known install progress after a recompose.
+        """Re-apply selected-model context and progress after a recompose.
 
         Covers both flows (TASK-1914): whichever view owns the in-flight
         install (``_active_install_view()``, keyed by
@@ -2786,9 +2786,18 @@ class LLMScreen(LabScreen):
         """
         if not self._model_install_active:
             return
+        view = self._active_install_view()
+        if (
+            isinstance(view, RemoteView)
+            and self._model_install_catalog is not None
+            and self._model_install_candidate is not None
+        ):
+            view.restore_install_context(
+                self._model_install_catalog,
+                self._model_install_candidate,
+            )
         if self._model_install_last_progress is None:
             return
-        view = self._active_install_view()
         if view is not None:
             view.apply_progress(self._model_install_last_progress)
         installed = self._installed_view()

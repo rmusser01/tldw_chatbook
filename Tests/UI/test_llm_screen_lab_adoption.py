@@ -611,6 +611,50 @@ async def test_empty_models_recovery_routes_hold_at_80_columns(
 
 
 @pytest.mark.asyncio
+async def test_remote_two_pane_install_action_stays_inside_real_models_body_at_80_columns():
+    """Remote's panes must fit the actual Lab body, not a full-width harness."""
+    from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
+
+    app = _app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        screen = await _models_screen(app)
+        assert await _wait_for(lambda: bool(screen.query("#remote-models-view")), pilot)
+
+        remote_row = next(
+            row for row in _rail_rows(screen) if row.lab_view_key == "remote"
+        )
+        remote_row.press()
+        await pilot.pause()
+
+        window = screen.query_one(LLMManagementWindow)
+        remote = window.query_one("#remote-models-view", RemoteView)
+        resolved = _resolved_remote_model()
+        query = remote.query_one("#remote-model-query", Input)
+        query.value = resolved.repository
+        remote._resolve_generation = 1
+        remote._apply_resolve_result(
+            1,
+            resolved.repository,
+            resolved.repository,
+            resolved,
+            None,
+        )
+        await pilot.pause()
+        remote.query_one(".remote-candidate", Button).press()
+        await pilot.pause()
+
+        parent = window.query_one("#llm-view-remote")
+        results_pane = remote.query_one(".remote-results-pane")
+        detail_pane = remote.query_one(".remote-detail-pane")
+        install = remote.query_one("#remote-model-install", Button)
+
+        _assert_painted_inside(app, results_pane, parent)
+        _assert_painted_inside(app, detail_pane, parent)
+        _assert_painted_inside(app, install, parent)
+        assert results_pane.region.right <= detail_pane.region.x
+
+
+@pytest.mark.asyncio
 async def test_the_window_no_longer_carries_nav_buttons():
     app = _app()
     async with app.run_test(size=(120, 40)) as pilot:
@@ -2525,7 +2569,9 @@ async def test_remote_install_progress_survives_a_screen_level_recompose(monkeyp
         ModelInstallProgress,
     )
 
+    resolved = _resolved_remote_model()
     catalog = _remote_catalog()
+    candidate = resolved.candidates[0]
     reference = catalog.artifact.reference
     first_progress = AcquisitionProgress(
         "fetch", reference, "model-part-1.gguf", 100, 1024
@@ -2583,12 +2629,22 @@ async def test_remote_install_progress_survives_a_screen_level_recompose(monkeyp
         window = screen.query_one(LLMManagementWindow)
         remote = window.query_one(RemoteView)
 
+        # Match the selected-model context the real RemoteView posts with
+        # InstallRequested before LLMScreen takes ownership of the worker.
+        remote._resolved = resolved
+        remote._selected_repository = resolved.repository
+        remote._selected_candidate = candidate
+        remote._operation_reference = reference
+        remote._refresh_with_status("Preparing the managed install plan…")
+        await pilot.pause()
+
         # State lives on the SCREEN now (TASK-1914), not on the RemoteView
         # instance -- it must survive the instance being torn down below.
         screen._model_install_kind = "remote"
         screen._model_install_reference = reference
         screen._model_install_service = MagicMock()
         screen._model_install_catalog = catalog
+        screen._model_install_candidate = candidate
         screen._model_install_credential_resolver = MagicMock()
         fake_report = MagicMock(root=reference)
 
@@ -2619,6 +2675,12 @@ async def test_remote_install_progress_survives_a_screen_level_recompose(monkeyp
 
         # Half 1 of the fix: hydration.
         assert "model-part-1.gguf" in _progress_text(fresh_remote)
+        fresh_text = "\n".join(
+            str(item.renderable) for item in fresh_remote.query(Static)
+        )
+        assert resolved.repository in fresh_text
+        assert candidate.label in fresh_text
+        assert fresh_remote.query_one("#remote-model-install", Button).disabled
 
         # Half 2 of the fix: still updating, via this screen's own
         # still-running worker -- never owned by the RemoteView instance
@@ -2782,7 +2844,7 @@ async def test_remote_install_progress_renders_exactly_once_per_tick_and_never_r
 
 @pytest.mark.asyncio
 async def test_remote_install_click_reaches_the_shared_consent_modal(monkeypatch):
-    """A real candidate click -- not a direct call to an internal method --
+    """Real candidate selection plus the contextual install action
     posts ``RemoteView.InstallRequested``, which ``LLMScreen`` resolves
     (through a stubbed acquisition service, so this stays network-free)
     into the exact shared ``ModelInstallModal``. Mirrors ``test_curated_
@@ -2843,8 +2905,13 @@ async def test_remote_install_click_reaches_the_shared_consent_modal(monkeypatch
             await pilot.pause()
         assert remote._resolved is not None, "Remote view never finished resolving"
 
-        button = remote.query_one(".remote-candidate")
-        await pilot.click(button)
+        candidate = remote.query_one(".remote-candidate")
+        candidate.press()
+        await pilot.pause()
+        assert app.push_screen.called is False
+
+        install = remote.query_one("#remote-model-install")
+        install.press()
         await pilot.pause()
         await pilot.pause()
 
@@ -2852,7 +2919,7 @@ async def test_remote_install_click_reaches_the_shared_consent_modal(monkeypatch
             if app.push_screen.called:
                 break
             await pilot.pause()
-        assert app.push_screen.called, "clicking a candidate never reached push_screen"
+        assert app.push_screen.called, "install action never reached push_screen"
 
         modal, callback = app.push_screen.call_args[0]
         assert isinstance(modal, ModelInstallModal)
