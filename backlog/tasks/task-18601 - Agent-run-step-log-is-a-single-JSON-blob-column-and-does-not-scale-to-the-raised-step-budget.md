@@ -43,3 +43,39 @@ which is why TASK-18600 shipped the number as specified instead of lowering it.
 - [ ] #3 The run-log viewer can render a long run without holding every step in memory at once.
 - [ ] #4 Existing runs stored in the current blob format remain readable after the change.
 <!-- AC:END -->
+
+## Measurement (2026-08-21) — the premise, quantified
+
+`append_steps` (`DB/AgentRuns_DB.py`) reads the ENTIRE step log, JSON-parses
+it, extends the list, re-serializes it and rewrites the whole column -- on
+every append. That is O(n) per step and O(n^2) per run.
+
+Measured against a real `AgentRunsDB`, one ~200-byte step per append:
+
+    append #    1:    0.05 ms
+    append #  100:    0.13 ms
+    append #  500:    0.49 ms
+    append # 1000:    0.98 ms
+    append # 1500:    1.42 ms
+    append # 2000:    2.18 ms
+    2,000 appends total: 2.09s
+
+Per-append cost grows linearly with log size (44x from the 1st to the
+2,000th), confirming the quadratic total. Extrapolating the same curve to the
+25,000-step budget AC #1 names gives **~5.4 minutes** of pure database churn
+for one run -- and that is write cost alone, before the viewer reads it back.
+
+**Scope.** This is an arc, not a single change: a child `agent_run_steps`
+table plus a schema bump (AgentRuns_DB is at v4, and its migration mechanism
+is `CREATE TABLE IF NOT EXISTS` on every open), a compatibility read path so
+existing blob-format runs stay readable (AC #4), and a viewer change to page
+steps rather than hold them all in memory (AC #3). Suggested split:
+
+* **A** -- child table + dual-read (new writes go to rows, reads prefer rows
+  and fall back to the blob). Closes AC #1, #2, #4 and is independently
+  shippable.
+* **B** -- viewer paging over the new table. Closes AC #3.
+* **C** -- optional backfill of historical blobs, once A has soaked.
+
+Not started here; the measurement is recorded so the arc can be planned
+against a number rather than an adjective.

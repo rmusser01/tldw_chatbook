@@ -1127,6 +1127,12 @@ def summarize_with_anthropic(
                     headers=headers,
                     json=data,
                     stream=streaming,
+                    # task-19560: unbounded before this -- a half-open
+                    # connection hung the summarization forever. Same
+                    # config-driven idiom the OpenAI path already uses.
+                    timeout=int(
+                        get_cli_setting("anthropic_api", "api_timeout", 120)
+                    ),
                     # task-19557: the API key travels in the custom
                     # `x-api-key` header. `requests` strips `Authorization`
                     # across a redirect host change but NOT custom headers,
