@@ -48,7 +48,7 @@ from tldw_chatbook.TTS.voice_blend_paths import (
     write_private_json,
 )
 from tldw_chatbook.config import get_cli_setting
-from tldw_chatbook.Utils.path_validation import validate_path_simple
+from tldw_chatbook.Utils.path_validation import validate_path, validate_path_simple
 from tldw_chatbook.Utils.private_paths import (
     secure_private_directory,
     verify_trusted_directory,
@@ -108,6 +108,12 @@ def _kokoro_stream_download(
     """
     parent = os.path.dirname(destination) or "."
     os.makedirs(parent, exist_ok=True)
+    # Qodo #4: every filesystem write in this app goes through
+    # path_validation. These destinations are internally derived (config'd
+    # model/voice dirs), not user input, but validating anyway means a
+    # future caller passing a traversal-shaped path is refused here rather
+    # than discovering the rule does not apply to downloads.
+    validate_path(destination, parent, redact_paths=True)
     partial = destination + ".part"
 
     try:
@@ -379,9 +385,18 @@ class KokoroTTSBackend(LocalTTSBackend):
                     # task-19560: the transfer runs off the event loop with
                     # timeouts; the checksum-verify + move below is unchanged.
                     hasher = hashlib.sha256()
-                    tmp_path = os.path.join(
-                        tempfile.gettempdir(), f"kokoro-download-{os.getpid()}-{"model.onnx"}"
+                    # Qodo #1 + #3: the previous form nested a string literal
+                    # inside an f-string expression, which is only legal from
+                    # Python 3.12 (PEP 701) -- on this project's 3.11 floor the
+                    # whole module failed to import. It also used a
+                    # pid-deterministic name, so two concurrent initialisations
+                    # in one process clobbered each other's in-flight download
+                    # and the checksum/move then operated on the wrong file.
+                    # mkstemp gives a unique path and creates it 0600.
+                    tmp_fd, tmp_path = tempfile.mkstemp(
+                        prefix="kokoro-download-", suffix="-model.onnx"
                     )
+                    os.close(tmp_fd)
                     await asyncio.to_thread(
                         _kokoro_stream_download,
                         url,
@@ -430,9 +445,18 @@ class KokoroTTSBackend(LocalTTSBackend):
                     # task-19560: the transfer runs off the event loop with
                     # timeouts; the checksum-verify + move below is unchanged.
                     hasher = hashlib.sha256()
-                    tmp_path = os.path.join(
-                        tempfile.gettempdir(), f"kokoro-download-{os.getpid()}-{"voices.bin"}"
+                    # Qodo #1 + #3: the previous form nested a string literal
+                    # inside an f-string expression, which is only legal from
+                    # Python 3.12 (PEP 701) -- on this project's 3.11 floor the
+                    # whole module failed to import. It also used a
+                    # pid-deterministic name, so two concurrent initialisations
+                    # in one process clobbered each other's in-flight download
+                    # and the checksum/move then operated on the wrong file.
+                    # mkstemp gives a unique path and creates it 0600.
+                    tmp_fd, tmp_path = tempfile.mkstemp(
+                        prefix="kokoro-download-", suffix="-voices.bin"
                     )
+                    os.close(tmp_fd)
                     await asyncio.to_thread(
                         _kokoro_stream_download,
                         url,

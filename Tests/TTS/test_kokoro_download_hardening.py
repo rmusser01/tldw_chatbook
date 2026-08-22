@@ -63,6 +63,12 @@ def fake_requests(monkeypatch):
 
 
 def test_download_sends_connect_and_read_timeouts(tmp_path, fake_requests):
+    """A download with no timeout hangs forever on a half-open connection.
+
+    Args:
+        tmp_path: pytest temporary directory.
+        fake_requests: (calls, holder) from the fake `requests.get` fixture.
+    """
     calls, holder = fake_requests
     holder["response"] = _FakeResponse([b"abc"])
 
@@ -134,6 +140,12 @@ def test_download_is_atomic_final_path_appears_only_when_complete(
 
 
 def test_hasher_sees_every_byte(tmp_path, fake_requests):
+    """The checksum must cover the whole body, not just the first chunk.
+
+    Args:
+        tmp_path: pytest temporary directory.
+        fake_requests: (calls, holder) from the fake `requests.get` fixture.
+    """
     import hashlib
 
     calls, holder = fake_requests
