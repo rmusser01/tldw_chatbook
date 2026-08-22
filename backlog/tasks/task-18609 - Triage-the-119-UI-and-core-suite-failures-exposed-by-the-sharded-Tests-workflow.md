@@ -39,6 +39,19 @@ drive the workflow to green so it can gate merges again.
 - [ ] #4 The core-suite failures from the same run (macOS 55 + ubuntu's full list, see notes) are included in the same triage.
 <!-- AC:END -->
 
+## Blocked-on note (2026-08-21)
+
+AC#3 ("a complete `Tests` run on a PR to `dev` is green") cannot currently
+be satisfied by the mechanism it assumes: no `dev` Tests run completes at
+all. `cancel-in-progress` is true for every non-`main` ref and merges land
+every 20-40 minutes against an ~80-minute run, so 25 of the last 40 runs
+were cancelled and none finished (TASK-19600). A manual
+`gh workflow run Tests --ref dev` DOES complete -- it forms its own
+concurrency group -- and run 32511976568 is the first full `dev` verdict in
+weeks, but it is still red: 54 `test_library_prompts_canvas` failures from
+PR #1893's workspace-registry work (owned by TASK-19602, In Progress) plus
+other clusters. So AC#3 stays open on substance, not just on mechanism.
+
 
 
 ## Notes

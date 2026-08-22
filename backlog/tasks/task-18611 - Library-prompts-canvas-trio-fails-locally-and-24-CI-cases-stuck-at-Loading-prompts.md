@@ -3,7 +3,7 @@ id: TASK-18611
 title: >-
   Library prompts canvas: trio fails on clean dev and 24 CI cases stuck at
   "Loading prompts"
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-19 15:30'
 labels:
@@ -40,7 +40,7 @@ found during TASK-18610 triage:
 
 <!-- AC:BEGIN -->
 - [x] #1 The trio passes on a clean dev checkout (bisect 35bb1aa98 first).
-- [ ] #2 The CI-only stuck-loading mode is reproduced or instrumented (e.g. capture the load worker's state on timeout) and fixed.
+- [x] #2 The CI-only stuck-loading mode is reproduced or instrumented (e.g. capture the load worker's state on timeout) and fixed.
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -63,3 +63,41 @@ deadline) and reworks `_open_prompts_list` in this same test file, which
 targets exactly this mode; it also covers the audio_cpp/TTS stragglers
 from TASK-18610. Re-check AC #2 against CI only after #1838 merges; close
 it there if the sharded UI runs no longer show the stuck-loading cluster.
+
+## Implementation Notes
+
+**AC#1 — fixed and merged.** PR #1849 (`2a74a7b31`): the retry Undo press
+targeted a cached `#library-prompts-delete-undo` reference that the
+cancelled-import recomposes had detached, so the press silently no-op'd.
+Both affected tests now query the live mounted button at press time, plus a
+settlement wait that drains the cancelled worker rather than trusting
+`import_finished` alone. Root cause bisected to `0dfadf463`, NOT the
+`35bb1aa98` this task guessed at.
+
+**AC#2 — verified RESOLVED, by measurement rather than by fixing.** The
+24 CI-only cases that timed out waiting for `#library-prompt-row-5` with
+"Loading prompts..." stuck were fixed upstream by PR #1838 (task-18912),
+which reworked `_wait_for_prompt_browse_scope`/`_open_prompts_list` to gate
+on canvas settlement with a real deadline.
+
+Evidence (2026-08-21, run **32511976568**, dev@`2a15a72bb`, all 12 ubuntu
+UI shards): **338 canvas rows, 0 failures carrying the stuck-loading
+signature** (no timeout on `#library-prompt-row-5`, no "Loading prompts"
+in any longrepr). The mode is gone.
+
+Getting that verdict needed a workaround worth recording: no `dev` Tests
+run can complete (see TASK-19600 -- `cancel-in-progress` plus a 20-40
+minute merge cadence against an ~80 minute run; 25 of 40 recent runs
+cancelled, zero completed). A manual `gh workflow run Tests --ref dev`
+forms its own concurrency group and therefore survives; that is how this
+run finished.
+
+**Remaining canvas red is a DIFFERENT failure and is not this task.** The
+same run shows 54 canvas failures whose signatures are
+`AssertionError: Initial Prompt failure never reached the mounted pager`
+(50), `NoMatches` on `#library-row-browse-prompts` (2), `LibraryHarness has
+no attribute 'app_config'` (1), and `NoActiveAppError` (1) -- none present
+in the 2026-08-20 baseline artifacts, all introduced by PR #1893's
+workspace-registry work, and already owned by **TASK-19602** (In Progress)
+which reproduces the same signatures. Closing here rather than absorbing
+that regression.
