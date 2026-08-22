@@ -69,6 +69,10 @@ _MAX_V2_GRAPH_DEPTH = 2_048
 IMPORT_OUTCOME_NONE = "none"  # this type was not part of the import at all
 IMPORT_OUTCOME_EXCLUDED = "excluded"  # present in the chatbook, not attempted
 IMPORT_OUTCOME_EMPTY = "empty"  # nothing to import (an empty chatbook)
+IMPORT_OUTCOME_IMPORTED = "imported"  # every attempted item landed
+IMPORT_OUTCOME_PARTIAL = "partial"  # some landed, some did not
+IMPORT_OUTCOME_SKIPPED = "skipped"  # nothing landed; everything already present
+IMPORT_OUTCOME_FAILED = "failed"  # nothing landed and something went wrong
 #
 # ``empty`` is a claim about the FILE and ``excluded`` a claim about the RUN,
 # and they must never be swapped (Qodo review of PR #1945): making
@@ -76,10 +80,6 @@ IMPORT_OUTCOME_EMPTY = "empty"  # nothing to import (an empty chatbook)
 # items were all opted out of, or all of types this importer cannot write,
 # reported "this chatbook contained no items" -- false, and contradicted by
 # the per-type rows and warnings the same run produced.
-IMPORT_OUTCOME_IMPORTED = "imported"  # every attempted item landed
-IMPORT_OUTCOME_PARTIAL = "partial"  # some landed, some did not
-IMPORT_OUTCOME_SKIPPED = "skipped"  # nothing landed; everything already present
-IMPORT_OUTCOME_FAILED = "failed"  # nothing landed and something went wrong
 
 # The two reasons an item present in a chatbook is never attempted. Defined
 # once here so the importer's return message and the wizard's banner name them

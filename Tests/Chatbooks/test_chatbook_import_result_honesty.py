@@ -130,15 +130,22 @@ def _status(
     successful=0,
     skipped=0,
     failed=0,
+    unsupported=0,
     by_type=None,
 ) -> ImportStatus:
-    """Build an ``ImportStatus`` with the given aggregate (and per-type) counts."""
+    """Build an ``ImportStatus`` with the given aggregate (and per-type) counts.
+
+    ``unsupported`` is recorded against a content type this importer cannot
+    write, which is the only way real runs produce it.
+    """
     status = ImportStatus()
     status.total_items = total
     status.successful_items = successful
     status.skipped_items = skipped
     status.failed_items = failed
     status.processed_items = successful + skipped + failed
+    if unsupported:
+        status.mark_unsupported(ContentType.EVALUATION, unsupported)
     for content_type, counts in (by_type or {}).items():
         result = status.result_for(content_type)
         result.attempted = counts.get("attempted", 0)
@@ -465,8 +472,9 @@ def test_a_partially_failed_type_is_not_reported_like_a_successful_one():
 @pytest.mark.parametrize("skipped", [0, 1, 3])
 @pytest.mark.parametrize("failed", [0, 1, 3])
 @pytest.mark.parametrize("unaccounted", [0, 2])
+@pytest.mark.parametrize("unsupported", [0, 6])
 def test_headline_never_contradicts_the_summary_counts(
-    successful, skipped, failed, unaccounted
+    successful, skipped, failed, unaccounted, unsupported
 ):
     """AC#3 over every combination of imported / skipped / failed.
 
@@ -476,9 +484,22 @@ def test_headline_never_contradicts_the_summary_counts(
     Failed. Without this axis the sweep only ever built statuses where
     ``total == imported + skipped + failed``, so it could not see the case
     where the panel reads "Total 5 / Imported 1 / Skipped 0 / Failed 0".
+
+    ``unsupported`` is the fifth, and it is outside Total altogether: items
+    the chatbook held that this importer cannot write. It became reachable in
+    every outcome once the Qodo review of PR #1945 made them countable rather
+    than warning-only, so the sweep has to see them too -- with 0 of them the
+    banner must not mention support at all, and with some the banner must
+    name them rather than leaving an 8-item file reading "2 of 2 imported".
     """
     total = successful + skipped + failed + unaccounted
-    status = _status(total=total, successful=successful, skipped=skipped, failed=failed)
+    status = _status(
+        total=total,
+        successful=successful,
+        skipped=skipped,
+        failed=failed,
+        unsupported=unsupported,
+    )
 
     title, banner, state = describe_import_outcome(status)
     claims_success = "Successfully" in banner or "completed" in banner.lower()
@@ -507,6 +528,17 @@ def test_headline_never_contradicts_the_summary_counts(
         assert str(unaccounted) in banner, (banner, status.to_dict())
     else:
         assert "unaccounted for" not in banner, banner
+
+    # Items the importer cannot write are outside Total entirely, so nothing
+    # on the panel would otherwise account for them.
+    assert status.unsupported_items == unsupported, status.to_dict()
+    if unsupported:
+        assert f"{unsupported} not supported by this importer" in banner, (
+            banner,
+            status.to_dict(),
+        )
+    else:
+        assert "not supported" not in banner, banner
 
 
 def test_an_empty_chatbook_reports_nothing_rather_than_success():

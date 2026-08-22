@@ -198,7 +198,9 @@ def describe_import_outcome(status: ImportStatus) -> Tuple[str, str, str]:
         )
         banner += f" ({detail})." if detail else "."
     elif outcome == IMPORT_OUTCOME_SKIPPED:
-        detail = _count_detail((status.unaccounted_items, "unaccounted for"), unsupported)
+        detail = _count_detail(
+            (status.unaccounted_items, "unaccounted for"), unsupported
+        )
         banner = (
             f"⊘ Nothing was imported — {status.skipped_items} of "
             f"{status.attempted_items} item(s) were already present and were "
