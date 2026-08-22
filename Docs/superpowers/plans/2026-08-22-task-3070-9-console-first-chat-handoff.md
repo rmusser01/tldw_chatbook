@@ -56,12 +56,20 @@ amend/re-review the design. Do not silently rewrite the historical oracle.
 - The exact focused baseline completed with `230 passed, 2 warnings in 148.85s
   (0:02:28)`. The warnings were the environment's Requests dependency-version
   warning and the Python 3.13 `audioop` deprecation warning.
-- Both required diagnostic commands exited zero. The metadata-only test reported
-  `1 passed, 1 warning in 2.21s`. The non-write checker reported inherited
-  latest-dev drift from 7,206 to 7,211 calls (`Subscriptions_DB.py` +3 and
-  `scheduler/loop.py` +2); those production paths, the checker, its test, and
-  the governed manifest are byte-identical to `origin/dev`. No writer ran and
-  no registry or manifest changed.
+- The non-write checker exited `1`; this is an inherited-red baseline, not a
+  passing checker. A validated `/private/tmp` archive of frozen rebased base
+  `ede2162143331e324c44832ff6a3910e1185cf58` reproduced byte-identical checker
+  output (SHA-256
+  `bdd245044db1597a76c95543d9d6bb56bee1cf6d86f4d96a8f9524f0cfe47f77`):
+  7,206 to 7,211 calls, `Subscriptions_DB.py`
+  `5/8d4a08a1d2b297b3ea78 -> 8/aba72ffb44d7eaba6204` (+3), and
+  `scheduler/loop.py`
+  `6/3a01bd3222d1bf8254f1 -> 8/c454d267a78237dcdf00` (+2), with no
+  sink-topology row. The candidate metadata-only node passed with `1 passed, 1
+  warning in 2.23s`; the frozen-base counterfactual also passed with `1 passed,
+  1 warning in 2.39s`. The task series has no source change, no writer ran, and
+  no registry or manifest changed. This proves non-regression only; Task 5 still
+  requires final reconciliation and a passing checker.
 - Backlog status remains `In Progress`; the concise five-step implementation
   plan is present and all acceptance criteria remain unchecked.
 
@@ -193,7 +201,14 @@ Run:
   Tests/Architecture/test_persistent_diagnostic_inventory.py::test_reviewed_diagnostic_changes_are_metadata_only
 ```
 
-Expected: both pass. Do not run `--write` during baseline.
+Expected: the checker normally passes and the metadata-only node passes. An
+inherited-red checker baseline may be accepted only when the exact frozen
+`origin/dev` counterfactual reproduces the candidate failure byte-for-byte or
+with an exactly equivalent owner/call/topology signature, the metadata-only
+node passes on both trees, the task series contains no source change, and the
+writer remains deferred to final reconciliation. Record the checker exit as
+red and describe this only as non-regression evidence, never as a passing
+checker. Do not run `--write` during baseline.
 
 - [x] **Step 5: Verify the concise Backlog implementation plan**
 
@@ -242,7 +257,10 @@ git range-diff \
 Then repeat Steps 2–4 on the rebased candidate and record those results as the
 implementation baseline. If the eight-method membership or behavior changed,
 or a baseline gate is red, stop and amend/re-review the design and ratchet
-before writing RED tests.
+before writing RED tests. The sole baseline exception is a non-write diagnostic
+checker failure accepted under every Step 4 inherited-red condition; that is
+non-regression evidence only and does not relax Task 5's final green diagnostic
+requirements.
 
 ### Task 1: Lock the ownership and behavior contract with RED tests
 
