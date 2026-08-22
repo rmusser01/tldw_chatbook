@@ -1471,7 +1471,9 @@ class AgentRunsDB(BaseDB):
         Live capture calls this with one step; terminal recovery calls it
         with the complete outcome. Validation and canonical JSON encoding
         finish before the write lock. Under the lock, an identical retry is
-        a no-op and a divergent retry raises ``AgentStepConflictError``.
+        a no-op, missing rows are inserted, and divergent durable indices are
+        collected. The transaction commits before ``AgentStepConflictError``
+        reports those conflicts, so recovery never loses unrelated rows.
         Step inserts do not change ``agent_runs.updated_at`` because that
         timestamp records lifecycle transitions used by wake classification.
 
@@ -1492,6 +1494,7 @@ class AgentRunsDB(BaseDB):
             prepared[index] = canonical
 
         stamp = _now_iso()
+        conflicts: list[int] = []
         with self.transaction() as conn:
             exists = conn.execute(
                 "SELECT 1 FROM agent_runs WHERE id = ?", (run_id,)
@@ -1511,20 +1514,22 @@ class AgentRunsDB(BaseDB):
                             sort_keys=True,
                             separators=(",", ":"),
                         )
-                    except (TypeError, ValueError) as exc:
-                        raise AgentStepConflictError(
-                            f"stored step payload is not canonicalizable at index {index}"
-                        ) from exc
+                    except (TypeError, ValueError):
+                        conflicts.append(index)
+                        continue
                     if stored != canonical:
-                        raise AgentStepConflictError(
-                            f"step payload conflicts with durable index {index}"
-                        )
+                        conflicts.append(index)
                     continue
                 conn.execute(
                     "INSERT INTO agent_run_steps (run_id, seq, payload, created_at) "
                     "VALUES (?, ?, ?, ?)",
                     (run_id, index, canonical, stamp),
                 )
+        if conflicts:
+            indices = ", ".join(str(index) for index in conflicts)
+            raise AgentStepConflictError(
+                f"step payload conflicts with durable indices: {indices}"
+            )
 
     def set_status(self, run_id: str, status: str, result: str | None = None) -> bool:
         """Update a run's terminal (or in-progress) status.

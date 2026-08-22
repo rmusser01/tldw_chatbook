@@ -327,6 +327,38 @@ def test_explicit_index_insert_rejects_divergent_stored_payload(
     assert db.get_run(run_id)["steps"][0]["summary"] == "original"
 
 
+def test_mixed_terminal_recovery_commits_missing_rows_before_reporting_conflict(
+    db: AgentRunsDB,
+) -> None:
+    run_id = db.create_run(conversation_id="c", agent_kind="primary")
+    db.insert_steps_at_indices(
+        run_id, [(0, {"index": 0, "kind": "model", "summary": "durable"})]
+    )
+
+    with pytest.raises(agent_runs_db_module.AgentStepConflictError) as raised:
+        db.insert_steps_at_indices(
+            run_id,
+            [
+                (
+                    0,
+                    {
+                        "index": 0,
+                        "kind": "model",
+                        "summary": "SECRET_DIVERGENT_PAYLOAD",
+                    },
+                ),
+                (1, {"index": 1, "kind": "tool_call", "summary": "missing"}),
+            ],
+        )
+
+    assert "0" in str(raised.value)
+    assert "SECRET_DIVERGENT_PAYLOAD" not in str(raised.value)
+    assert db.get_run(run_id)["steps"] == [
+        {"index": 0, "kind": "model", "summary": "durable"},
+        {"index": 1, "kind": "tool_call", "summary": "missing"},
+    ]
+
+
 def test_explicit_index_insert_deduplicates_identical_batch_entries(
     db: AgentRunsDB,
 ) -> None:
