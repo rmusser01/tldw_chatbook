@@ -13,6 +13,7 @@ from tldw_chatbook.Model_Artifacts.machine_memory import (
     CapacityState,
     ContextMemoryEstimate,
     CurrentPressure,
+    GGUFMemoryProjection,
     GIB,
     MIB,
     MAX_INPUT_BYTES,
@@ -48,6 +49,29 @@ def _snapshot(
         accelerators=accelerators,
         system_reason=system_reason,
         accelerator_reason=accelerator_reason,
+    )
+
+
+def _estimate(
+    *,
+    context_tokens: int,
+    model_bytes: int = 4 * GIB,
+    runtime_allowance_bytes: int = GIB,
+    context_allowance_bytes: int,
+    ram_working_budget_bytes: int = 25 * GIB,
+    total_physical_bytes: int = 32 * GIB,
+) -> ContextMemoryEstimate:
+    return ContextMemoryEstimate(
+        context_tokens=context_tokens,
+        model_bytes=model_bytes,
+        runtime_allowance_bytes=runtime_allowance_bytes,
+        context_allowance_bytes=context_allowance_bytes,
+        estimated_bytes=(
+            model_bytes + runtime_allowance_bytes + context_allowance_bytes
+        ),
+        ram_working_budget_bytes=ram_working_budget_bytes,
+        total_physical_bytes=total_physical_bytes,
+        capacity_state=CapacityState.WITHIN_BUDGET,
     )
 
 
@@ -188,6 +212,72 @@ def test_out_of_bound_derived_estimate_is_rejected_without_wrapping() -> None:
             ram_working_budget_bytes=MAX_INPUT_BYTES,
             total_physical_bytes=MAX_INPUT_BYTES,
             capacity_state=CapacityState.OVER_TOTAL,
+        )
+
+
+def test_context_estimate_rejects_a_contradictory_derived_total() -> None:
+    """A caller cannot label an undersized sum as a trustworthy memory estimate."""
+    with pytest.raises(ValueError, match="estimated_bytes"):
+        ContextMemoryEstimate(
+            context_tokens=32_768,
+            model_bytes=4 * GIB,
+            runtime_allowance_bytes=GIB,
+            context_allowance_bytes=4 * GIB,
+            estimated_bytes=8 * GIB,
+            ram_working_budget_bytes=25 * GIB,
+            total_physical_bytes=32 * GIB,
+            capacity_state=CapacityState.WITHIN_BUDGET,
+        )
+
+
+def test_context_estimate_rejects_float_context_tokens() -> None:
+    """A float equal to 32768 is not a valid exact context-token count."""
+    with pytest.raises(ValueError, match="context_tokens"):
+        _estimate(
+            context_tokens=32_768.0,  # type: ignore[arg-type]
+            context_allowance_bytes=4 * GIB,
+        )
+
+
+@pytest.mark.parametrize(
+    "context_64k",
+    [
+        _estimate(
+            context_tokens=65_536,
+            model_bytes=5 * GIB,
+            context_allowance_bytes=8 * GIB,
+        ),
+        _estimate(
+            context_tokens=65_536,
+            runtime_allowance_bytes=2 * GIB,
+            context_allowance_bytes=8 * GIB,
+        ),
+        _estimate(
+            context_tokens=65_536,
+            context_allowance_bytes=8 * GIB,
+            ram_working_budget_bytes=24 * GIB,
+        ),
+        _estimate(
+            context_tokens=65_536,
+            context_allowance_bytes=8 * GIB,
+            total_physical_bytes=31 * GIB,
+        ),
+        _estimate(context_tokens=65_536, context_allowance_bytes=6 * GIB),
+    ],
+)
+def test_projection_rejects_mismatched_paired_scenario_facts(
+    context_64k: ContextMemoryEstimate,
+) -> None:
+    """Paired scenarios must share model/machine facts and double the 32K allowance."""
+    with pytest.raises(ValueError):
+        GGUFMemoryProjection(
+            context_32k=_estimate(
+                context_tokens=32_768,
+                context_allowance_bytes=4 * GIB,
+            ),
+            context_64k=context_64k,
+            primary_state=CapacityState.WITHIN_BUDGET,
+            current_pressure=CurrentPressure.NONE,
         )
 
 

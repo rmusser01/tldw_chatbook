@@ -283,7 +283,10 @@ class ContextMemoryEstimate:
     capacity_state: CapacityState
 
     def __post_init__(self) -> None:
-        if self.context_tokens not in {CONTEXT_32K, CONTEXT_64K}:
+        if type(self.context_tokens) is not int or self.context_tokens not in {
+            CONTEXT_32K,
+            CONTEXT_64K,
+        }:
             raise ValueError("context_tokens must be 32768 or 65536")
         _require_enum(self.capacity_state, CapacityState, "capacity_state")
         values = (
@@ -321,6 +324,16 @@ class ContextMemoryEstimate:
             raise ValueError(
                 "ram_working_budget_bytes may not exceed total_physical_bytes"
             )
+        try:
+            expected_estimated_bytes = _bounded_sum(
+                self.model_bytes,  # type: ignore[arg-type]
+                self.runtime_allowance_bytes,  # type: ignore[arg-type]
+                self.context_allowance_bytes,  # type: ignore[arg-type]
+            )
+        except OverflowError as exc:
+            raise ValueError("estimate components exceed projection bound") from exc
+        if self.estimated_bytes != expected_estimated_bytes:
+            raise ValueError("estimated_bytes must equal the estimate components")
         expected_state = _capacity_state(
             self.estimated_bytes,  # type: ignore[arg-type]
             self.ram_working_budget_bytes,  # type: ignore[arg-type]
@@ -356,11 +369,35 @@ class GGUFMemoryProjection:
         if self.primary_state is not expected_primary:
             raise ValueError("primary_state does not match context estimates")
         if self.primary_state is CapacityState.UNKNOWN:
+            if (
+                self.context_32k.capacity_state is not CapacityState.UNKNOWN
+                or self.context_64k.capacity_state is not CapacityState.UNKNOWN
+            ):
+                raise ValueError(
+                    "unknown projection requires unknown context estimates"
+                )
             if self.current_pressure is not CurrentPressure.UNKNOWN:
                 raise ValueError("unknown projection has unknown current_pressure")
             return
-        if self.context_32k.model_bytes != self.context_64k.model_bytes:
-            raise ValueError("context estimates must use the same model_bytes")
+        if (
+            self.context_32k.model_bytes != self.context_64k.model_bytes
+            or self.context_32k.runtime_allowance_bytes
+            != self.context_64k.runtime_allowance_bytes
+            or self.context_32k.ram_working_budget_bytes
+            != self.context_64k.ram_working_budget_bytes
+            or self.context_32k.total_physical_bytes
+            != self.context_64k.total_physical_bytes
+        ):
+            raise ValueError("context estimates must share model and machine facts")
+        try:
+            expected_64k_allowance = _bounded_sum(
+                self.context_32k.context_allowance_bytes,  # type: ignore[arg-type]
+                self.context_32k.context_allowance_bytes,  # type: ignore[arg-type]
+            )
+        except OverflowError as exc:
+            raise ValueError("32K context allowance exceeds projection bound") from exc
+        if self.context_64k.context_allowance_bytes != expected_64k_allowance:
+            raise ValueError("64K context allowance must be twice the 32K allowance")
 
 
 def _ceil_percent_mib(value: int, numerator: int, denominator: int = 100) -> int:
