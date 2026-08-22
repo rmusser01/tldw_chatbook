@@ -181,6 +181,7 @@ and the warning never quotes the rejected data.
 | "Analyze after import" | Runs an LLM summary of each imported item, stored alongside it (visible from the media viewer's analysis panel). The whole `[analysis_defaults]` section travels — provider, model, temperature, top_p, min_p, max_tokens, system_prompt — so the stored analysis matches what the Media analysis panel would produce under the same config; the key comes from `[api_settings.<provider>]` or the provider's usual environment variable. When the option is on but no provider is callable — including a configured provider the analysis pipeline cannot dispatch ("provider 'X' is not supported for ingest analysis") — a line above Start says so ("Analyze after import is on, but … Imports will run without analysis.") and finished rows read "Imported name — analysis skipped: <reason>". If the analysis call itself fails (provider error), the import still succeeds and the row reads "Imported name — analysis failed: <reason>" instead of silently storing nothing (or worse, the error text). |
 | "Chunk content" | Governs every type: off means no retrieval chunks are stored at all; on chunks plain text / documents / HTML too (not just PDF/e-book/audio), using "Chunk size" and "Chunk overlap" — both measured in words. (The import forms expose the handful of methods that make sense per type; the chunking engine underneath implements the full roster — words, sentences, paragraphs, tokens, semantic, json, xml, ebook_chapters, rolling_summarize, fixed_size, code, code_ast, structure_aware — for anything that calls it directly, including `ebook_chapters` for PDFs and documents.) |
 | "Chunking template" | In the Import behavior fold, above the queue: pick one of your chunking templates (the live rows from RAG Admin) instead of setting method/size/overlap by hand. Defaults to "None (manual settings)" — today's behavior exactly. A picked template's chunking scheme beats the form's untouched size/overlap defaults; only a value you explicitly changed in the form overrides the template. The choice is remembered per imported item (it drives a later re-chunk of that item), and the import form's list loads from the database when the canvas is shown — newly created or renamed templates appear the next time you enter the Import view. The control is hidden in server mode (a server import never carries a template), and it is inert with "Chunk content" off ("— needs Chunk content on"). A template that no longer resolves (deleted or renamed after the choice was made) fails that import row with a named error instead of silently chunking a different way. |
+| "Chunking template" — "Auto" | The picker's other choice, listed right after "None (manual settings)": let the app pick the chunking scheme per item. Auto decides in three steps and always lands somewhere: (1) if one of your templates carries a **classifier block** that matches the item (its `media_types`, plus optional `filename_regex` / `title_regex` / `url_regex`, cleared its `min_score`), the highest-scoring match wins and runs in full — preprocessing, chunking and postprocessing, indistinguishable from picking it by hand; (2) otherwise a media-type-aware plan from the same auto planner the server uses derives the method/size/overlap; (3) if that declines too, today's plain defaults apply — Auto never fails an import, it can only explain why it declined. Templates opt in by carrying a classifier block: a template without one is never auto-picked (the built-ins ship without blocks, so nothing changes until you author one), and blocks are added through the template authoring path in RAG Admin / the service layer. The name "auto" is reserved — you cannot create or rename a template to it — so the choice can never be shadowed by a row. The decision is recorded per item and **re-decided, not replayed**: a later re-chunk re-runs the selection against the current template store (add, delete or re-score classifier blocks and the re-chunk follows the new outcome), and the item's stored record is re-stamped to say what the re-chunk actually used. Auto is exclusively this picker choice — the `[chunking] default_template` config key never triggers it (a configured default is an ordinary template name). |
 | "Encoding" | How plain text and HTML files are decoded: "Auto-detect (UTF-8 first)" (strict UTF-8, then detection) or an explicit UTF-8 / UTF-16 / "Latin-1 (ISO-8859-1)" / "Windows-1252 (Western)". A wrong explicit choice shows up as replacement characters rather than failing the import. |
 | "Install verified Parakeet v2 INT8 (630.6 MiB)…" | In the Audio & video fold, enabled when the provider is parakeet-onnx (under any other provider the button is inert and its label ends "— needs the parakeet-onnx provider"). Opens a consent dialog listing Source, Revision, License, Download size, and Destination, ending "All four files are checked against pinned sizes and SHA-256 digests before the bundle becomes usable." Buttons: "Cancel" / "Install". |
 | "Start import" | Queues everything the pre-check found. If "⚠" tooling warnings are outstanding, the first press doesn't submit — the line beside Start turns into "⚠ Press Start again to import anyway — N files will fail without more tooling." (or "… N files may fail." when the missing package is only an optional enhancement) and a second press (or a second Enter in the path field) starts the import. See "Consent for risky imports" below. Start is unavailable, with the reason stated at the button, when the selection has nothing importable: "This folder is empty — there's nothing to import. Choose a folder with files, or a single file." for a folder that really is empty, "Nothing in this folder could be scanned — 2 entries were skipped: folder imports pass over hidden files, links, and folders they can't read. Import a file directly, or choose another folder." for a folder whose entries the scan passed over, and "Nothing in this selection can be imported — N unsupported files." when nothing in it has a handler. Importing on the server adds one more: a selection this machine reads perfectly well but that backend will not take at all (a folder of nothing but images) gates Start with "Nothing in this selection can be sent to the server — 3 files unsupported by the server. Switch to importing on this machine, or choose video, audio, document, PDF or e-book files." — a different sentence from the one above, because the files are fine and the destination is the problem. None of these leaves a failed row behind: the import never starts. |
@@ -335,6 +336,18 @@ preprocessing operation named) — consumers that need source-relative spans
 (navigation, citations) can check that one key instead of guessing. The
 item's stored chunk rows also record which template chunked them, alongside
 the engine-version stamp.
+
+If you pick **Auto** in that picker, a template's **classifier block** is
+how it volunteers for automatic selection: `media_types` matches the
+import's type, each of `filename_regex` / `title_regex` / `url_regex` that
+matches adds score, and the block's `min_score` gates the result (a block
+with no `min_score` selects at any positive score). Highest score wins;
+ties break by the block's `priority` and then by name. The stored decision
+(`mode: "auto"`, the winning tier and rationale) rides the same
+`Media.chunking_config` column a named pick does — template-tier Auto wins
+record the winner's name there too, so RAG Admin's usage counts and
+"documents using this template" treat them exactly like manual picks, and
+stop counting the moment a re-chunk moves the item off that template.
 
 Deep dives: [TRANSCRIPTION.md](../../Features/TRANSCRIPTION.md) covers the
 audio/video transcription providers and their optional extras. See also
@@ -712,3 +725,22 @@ offset-basis caveat for template chunks is the paragraph above. Pinned by
 `Tests/UI/test_library_ingest_template_picker.py`,
 `Tests/Local_Ingestion/test_ingest_template_persistence.py`, and
 `Tests/test_config_chunking_defaults.py`.)*
+
+*Verified against feat/chunking-auto-selection — 2026-08-22
+(chunking-auto-selection, tasks 1-5: the "Chunking template" picker gains
+the "Auto" option documented above — value the reserved sentinel name
+`"auto"` (`Chunking/auto_selection.AUTO_SENTINEL`), None still the
+default, the sentinel stripped from server-mode ingest kwargs. The
+three-tier decision is `Chunking/auto_selection.resolve_auto` over the
+vendored planner (`Chunking/engine/auto_planner.py`, manifest-moved from
+excluded), with the media-type vocabulary pinned by
+`Tests/Chunking/test_media_type_vocabulary.py` and planner parity by
+byte-pinned fixtures (`Tests/Chunking/test_auto_planner_parity.py`).
+Persistence (`mode`/`auto_tier`/`auto_rationale`, `template` key only on
+a template-tier win) and re-chunk re-resolution — including the re-stamp
+of `Media.chunking_config` with the re-resolved outcome, so a tier flip
+on re-chunk never leaves a stale template name for the readers to count —
+are pinned by `Tests/Local_Ingestion/test_ingest_template_resolution.py`,
+`Tests/UI/test_library_ingest_template_picker.py`, and
+`Tests/Library/test_library_rechunk_service.py`. Template CRUD refuses
+the reserved name `auto` on create and rename.)*
