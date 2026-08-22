@@ -425,7 +425,14 @@ open, so checking earlier could only promise something that later stops
 being true.)
 
 **Push (`p` / the Push… button).** Always confirms in a dialog first,
-naming the repository, the branch, and where it's going. A branch with no
+naming the repository, the branch, and where it's going — including the
+remote's actual **URL**, not just its name. That matters when the
+repository redirects pushes to a different host than it fetches from
+(`remote.<name>.pushurl`, or `url.<other>.pushInsteadOf`), which is a
+perfectly normal setup — fetching over https and pushing over ssh, say.
+Those redirects are honoured rather than refused; the dialog simply tells
+you where the push will actually land, so the confirmation says as much as
+`git remote -v` would. A branch with no
 upstream yet gets one set on this push; with an upstream already
 configured, push targets exactly that upstream's remote and ref — never
 "whatever the repository's push configuration would have done" (see the
@@ -1665,3 +1672,5 @@ verbatim, not something Task 9 changed, and it is not re-verified live
 here.)*
 
 *Git-actions placement corrected @ TASK-19703 — 2026-08-22: the mid-merge/rebase/cherry-pick refusal was documented here as happening "before the dialog even opens", which is true of the active-run refusal but not of this one — it fires when you confirm. Not driven live; corrected by reading the shipped code (`commit_selected`'s `in-progress-check` step) against this page's claim, and the design spec was amended to match rather than the code changed (a pre-modal check could only be advisory, since the repository can enter a merge while the dialog is open).*
+
+*Push-destination disclosure added @ TASK-19701 — 2026-08-22: the confirm dialog now names the remote's effective push URL. Not driven live; verified against real repositories in tests configured with `remote.<name>.pushurl` and with `url.<other>.pushInsteadOf`, plus a control with no redirect.*

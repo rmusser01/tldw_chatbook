@@ -1,7 +1,7 @@
 ---
 id: TASK-19701
 title: 'Change review: remaining git-config push redirects (pushurl, pushInsteadOf)'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-21'
 labels:
@@ -39,8 +39,45 @@ terminal would.
 ## Acceptance Criteria
 
 <!-- AC:BEGIN -->
-- [ ] #1 A decision is recorded for each of `remote.<name>.pushurl` and `url.<other>.pushInsteadOf`: surface the effective push URL, refuse the push, or accept the redirect as normal git behaviour
-- [ ] #2 If the decision is to surface it, the push confirm modal names the effective destination the push will actually reach, not only the remote's name
-- [ ] #3 Tests drive a real repository configured with each redirect and assert the chosen behaviour
-- [ ] #4 The User Guide's git-actions section matches whatever behaviour ships
+- [x] #1 A decision is recorded for each of `remote.<name>.pushurl` and `url.<other>.pushInsteadOf`: surface the effective push URL, refuse the push, or accept the redirect as normal git behaviour
+- [x] #2 If the decision is to surface it, the push confirm modal names the effective destination the push will actually reach, not only the remote's name
+- [x] #3 Tests drive a real repository configured with each redirect and assert the chosen behaviour
+- [x] #4 The User Guide's git-actions section matches whatever behaviour ships
 <!-- AC:END -->
+
+## Implementation Notes
+
+**Decision (AC #1): surface, do not refuse.** Both `remote.<name>.pushurl`
+and `url.<other>.pushInsteadOf` are legitimate, widely used git
+configuration — fetching over https while pushing over ssh is a standard
+corporate setup — so refusing them would break ordinary workflows to guard
+against nothing this app is entitled to override. What was wrong was not
+the redirect but the silence: the confirm dialog named the remote's ALIAS
+and never its destination, so a terminal running `git remote -v` told the
+user more than the dialog whose whole job is to state what a button will do
+before it is pressed.
+
+**No new git call was needed.** Verified against real git that both
+settings are already resolved into `git remote -v`'s (push) line (and
+`git remote get-url --push`), and detection parses exactly that line — so
+the effective URL was in hand all along:
+
+```
+baseline          origin  https://fetch.example/repo.git (push)
++ pushurl         origin  ssh://git@PUSH-TARGET.example/repo.git (push)
++ pushInsteadOf   origin  ssh://git@INSTEADOF.example/repo.git (push)
+```
+
+The dialog now reads `pushes to origin (ssh://…)`. The URL is shown for
+EVERY push, redirected or not, so the disclosure is ordinary copy rather
+than an alarm that appears only in the unusual case — a warning that fires
+only when something is odd trains people to fear the odd case; a line that
+always states the destination just makes the dialog honest.
+
+**Tests (AC #3)** drive real repositories configured each way, plus a
+control asserting the plain destination is named with no redirect present;
+mutation-proven (dropping the URL from the label fails all three).
+
+**Files:** `tldw_chatbook/UI/Screens/change_review_screen.py`,
+`Docs/User_Guide/console/agent-runs-and-tools.md`,
+`Tests/UI/test_change_review_push_ui.py`.
