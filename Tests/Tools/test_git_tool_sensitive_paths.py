@@ -740,6 +740,75 @@ def test_prepare_repository_refuses_a_protected_repository_root(
 
     import tldw_chatbook.Tools.git_tool_impls as gti
 
-    monkeypatch.setattr(gti, "is_sensitive_path", lambda candidate: True)
+    # TASK-19632 review fix: `prepare_repository` now accepts an optional
+    # `context` it threads into this exact call (see `_denylist_pathspecs`
+    # sharing one `SensitivePathContext` per tool call instead of
+    # re-resolving it) -- the stub must accept that keyword too.
+    monkeypatch.setattr(
+        gti, "is_sensitive_path", lambda candidate, context=None: True
+    )
     with pytest.raises(LocalToolError, match="protected path"):
         prepare_repository(repo, ".")
+
+
+# ---------------------------------------------------------------------------
+# Qodo review of PR #1948 (TASK-19632/19633): the denylist context is
+# resolved ONCE per call, not once per check.
+# ---------------------------------------------------------------------------
+
+
+def test_git_status_and_git_diff_resolve_the_denylist_context_exactly_once(
+    ordinary_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One ``SensitivePathContext`` per tool call, not one per denylist check.
+
+    Before this fix, ``prepare_repository``'s own ``is_sensitive_path(repo_root)``
+    call (no ``context`` argument) forced ``resolve_sensitive_context()`` to
+    run, and ``_denylist_pathspecs()`` -- called separately by
+    ``git_status``/``git_diff`` right after -- resolved it AGAIN, even
+    though its own ``context`` parameter existed and simply was never
+    passed by either caller. With ``path="."`` (the default), the full
+    chain (``_prepare_for_path``'s own ``resolve_workspace_path`` call, the
+    ``resolve_workspace_path`` call inside ``prepare_repository``, that
+    function's ``is_sensitive_path`` check on the discovered repo root, and
+    ``_denylist_pathspecs``) resolved it FOUR times over. Measured cost of
+    one resolution on this machine: ~4-5ms (11 config accessors), so this
+    was not free -- see the TASK-19632/19633 task files' Implementation
+    Notes for a before/after timing comparison on a 1000-file repo.
+
+    Pattern follows ``Tests/Agents/test_tool_catalog_concurrency.py``'s
+    ``test_invoke_by_name_takes_exactly_one_catalog_snapshot``: count calls
+    to the real resolver via a counting wrapper, deterministic, no timing
+    dependence.
+    """
+    import tldw_chatbook.Tools.git_tool_impls as gti
+
+    real_resolve = gti.resolve_sensitive_context
+    calls: list[int] = []
+
+    def _counting() -> object:
+        calls.append(1)
+        return real_resolve()
+
+    monkeypatch.setattr(gti, "resolve_sensitive_context", _counting)
+
+    calls.clear()
+    git_status(ordinary_repo, ".")
+    assert len(calls) == 1, (
+        f"git_status resolved the sensitive-path context {len(calls)} "
+        "times in one call; expected exactly 1"
+    )
+
+    calls.clear()
+    git_diff(ordinary_repo)
+    assert len(calls) == 1, (
+        f"git_diff resolved the sensitive-path context {len(calls)} times "
+        "in one call; expected exactly 1"
+    )
+
+    calls.clear()
+    git_log(ordinary_repo)
+    assert len(calls) == 1, (
+        f"git_log resolved the sensitive-path context {len(calls)} times "
+        "in one call; expected exactly 1"
+    )

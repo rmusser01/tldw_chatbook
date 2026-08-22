@@ -259,3 +259,91 @@ Evidence note for the record: the new test module imports `_denylist_pathspecs`
 at module scope, so at `d4f3f9776` it does not COLLECT at all — "10 of the 19
 fail at base" is only reproducible with those imports shimmed (13 fail, 7 pass
 that way). The behavioural failures do each carry the leaked bytes, as claimed.
+
+## PR #1948 Qodo review fixes (2026-08-22)
+
+Two findings on the merged PR, both scoped to `git_tool_impls.py`; neither
+touches `Utils/sensitive_paths.py`.
+
+**Finding 1 (redundant denylist context resolve).** `prepare_repository`
+called `is_sensitive_path(repo_root)` with no `context`, forcing a fresh
+`resolve_sensitive_context()` — and `git_status`/`git_diff` then called
+`_denylist_pathspecs(repo_root)` right after with no `context` either, even
+though that function already had a `context` parameter nobody was passing.
+Traced the FULL chain rather than just the two call sites Qodo named: with
+`path="."` (the default), `_prepare_for_path`'s own `resolve_workspace_path`
+call, the `resolve_workspace_path` call inside `prepare_repository`, that
+function's `is_sensitive_path` check on the discovered repo root, and
+`_denylist_pathspecs` each re-resolved independently — **4 resolutions for
+`git_status`, 3 for `git_diff`, 2 for `git_log`** (measured directly by
+counting real `resolve_sensitive_context` calls against the pre-fix code
+loaded from this commit's own blob, not assumed).
+
+Ordering check (the task's own caveat): the context is a snapshot of
+config-derived state only (files/dirs/db_paths/user_data_dir) — it does not
+depend on `repo_root`, which `prepare_repository` DISCOVERS. So resolving it
+once at the top of `git_status`/`git_diff`/`git_log`/`git_blame`/
+`git_branches`, before repo discovery even runs, and threading it through
+`_prepare_for_path` → `prepare_repository` → `resolve_workspace_path` /
+`is_sensitive_path` → `_denylist_pathspecs` is correct, not just faster:
+nothing in that chain can make the context stale mid-call, since this is
+synchronous, single-threaded code with no `await` between resolution and
+use. `prepare_repository`, `_prepare_for_path` and `_repo_relative_path` each
+gained an optional keyword-only `context: SensitivePathContext | None`
+(mirroring `resolve_workspace_path`'s existing parameter), defaulting to
+`None` so every other caller (`Agents/local_tool_provider.py`'s
+`path_targets`, the existing test suite) is unaffected.
+
+Measured on a synthetic 1000-tracked-file repo (120 dirty), isolated HOME,
+before (this commit's blob) vs. after, averaged over 30 calls with 3
+warm-up calls discarded, two independent runs:
+
+| call | before | after | before | after |
+| --- | --- | --- | --- | --- |
+| `git_status` | 48.7ms | 31.0ms | 46.5ms | 34.5ms |
+| `git_diff` | 54.7ms | 43.6ms | 56.3ms | 48.4ms |
+
+`resolve_sensitive_context()` alone costs ~4.7-5.1ms (11 config accessors).
+Not negligible — collapsing 4→1 resolutions accounts for essentially all of
+`git_status`'s ~15-18ms improvement. A new regression test,
+`test_git_status_and_git_diff_resolve_the_denylist_context_exactly_once` in
+`Tests/Tools/test_git_tool_sensitive_paths.py`, counts real
+`resolve_sensitive_context` calls the same way (pattern borrowed from
+`Tests/Agents/test_tool_catalog_concurrency.py`'s
+`test_invoke_by_name_takes_exactly_one_catalog_snapshot`) and pins exactly 1
+per `git_status`/`git_diff`/`git_log` call; confirmed non-vacuous by running
+the same counting logic against the pre-fix module (4/3/2 respectively).
+
+**Required mutation check re-run**: dropped `icase` from the
+`subtree`/`file` branch of `_denylist_pathspecs` again;
+`test_a_location_exclusion_survives_a_case_variant_directory_spelling`
+reds with the synthetic key's content in the failure message, exactly as
+the original review documented. Restored via `Edit`, re-verified green
+(never `git checkout` over uncommitted work — see
+`lessons-backlog-hygiene.md`/mutation-restores-must-be-edit-based).
+
+**Finding 2 (docstrings).** `git_status`, `git_log` and `git_diff` gained
+Google-style `Args:`/`Returns:` sections. `git_status`'s `path` Args entry
+states the discrepancy Qodo asked about rather than papering over it:
+`path` is used ONLY for repository discovery (walking up to find which repo
+to report on) and is NEVER applied as a scoping pathspec — the tool's argv
+carries no positive pathspec for it, unlike `git_diff`/`git_log`. Asking for
+a subdirectory's status still returns the WHOLE repository's changes. This
+is pre-existing behavior, not something introduced here; **filing a
+follow-up is warranted** to decide whether `git_status` should gain a real
+scoping pathspec (mirroring `git_diff`/`git_log`'s `_repo_relative_path`/
+`_literal_pathspec` pattern) or whether the docstring fix (making the
+limitation legible to the model) is the whole fix.
+
+**Evidence.** `Tests/Tools/test_git_tool_sensitive_paths.py` (23 tests,
+including the new one) and `Tests/Tools/test_git_tool_impls.py` (25 tests)
+both green under an isolated HOME. `Tests/Tools/` + `Tests/Agents/`:
+2480 passed, 1 failed
+(`test_tool_catalog_concurrency.py::test_invoke_by_name_takes_exactly_one_catalog_snapshot`,
+confirmed identical on `origin/dev` — unrelated to this change). Repo-wide
+`--collect-only -q`: 54660 tests collected, no collection errors.
+
+Modified: `tldw_chatbook/Tools/git_tool_impls.py`,
+`Tests/Tools/test_git_tool_sensitive_paths.py` (one existing monkeypatch
+signature updated for the new `context` keyword, plus the new regression
+test).

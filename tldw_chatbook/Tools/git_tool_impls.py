@@ -85,6 +85,7 @@ from tldw_chatbook.Tools.local_tool_impls import LocalToolError, resolve_workspa
 from tldw_chatbook.Utils.sensitive_paths import (
     SensitivePathContext,
     is_sensitive_path,
+    resolve_sensitive_context,
     sensitive_exclusions_under,
 )
 
@@ -432,7 +433,12 @@ def _denylist_pathspecs(
     return tuple(specs)
 
 
-def prepare_repository(workspace_root: Path, path: str = ".") -> Path:
+def prepare_repository(
+    workspace_root: Path,
+    path: str = ".",
+    *,
+    context: SensitivePathContext | None = None,
+) -> Path:
     """Resolve the git repo root for ``path``, confined to ``workspace_root``.
 
     Refuses (LocalToolError) when git is unavailable, ``path`` escapes the
@@ -441,13 +447,27 @@ def prepare_repository(workspace_root: Path, path: str = ".") -> Path:
     it — a workspace nested inside a repo is refused so the model cannot
     read repo state outside the confinement).
 
+    Args:
+        workspace_root: The confinement root ``path`` must resolve inside.
+        path: The workspace-relative (or absolute-but-confined) location to
+            discover a repository from; ``"."`` (the default) discovers
+            from ``workspace_root`` itself.
+        context: Optional pre-resolved ``SensitivePathContext``. Passed
+            through to both denylist checks this function makes (the
+            ``path`` argument, via ``resolve_workspace_path``, and the
+            DISCOVERED repo root below) so a caller that also needs the
+            same context for e.g. ``_denylist_pathspecs`` resolves the
+            ~11 config accessors behind the denylist once per tool call
+            instead of once per check. ``None`` resolves fresh each time —
+            still enforces the denylist, just not shared.
+
     Returns:
         The resolved repository root path.
     """
     if shutil.which("git") is None:
         raise LocalToolError("git is not available on this system")
     workspace_root = Path(workspace_root).resolve()
-    target = resolve_workspace_path(path, workspace_root)
+    target = resolve_workspace_path(path, workspace_root, context=context)
     result = run_git(
         ["git", "-C", str(target), "rev-parse", "--show-toplevel"],
         timeout=REPOSITORY_DISCOVERY_TIMEOUT_SECONDS,
@@ -478,7 +498,7 @@ def prepare_repository(workspace_root: Path, path: str = ".") -> Path:
     # denylist-checked -- this is here so that stays true if either
     # relationship is ever relaxed: excluding denied paths from a
     # repository that is ITSELF denied would leave nothing honest to show.
-    if is_sensitive_path(repo_root):
+    if is_sensitive_path(repo_root, context=context):
         raise LocalToolError(
             f"repository root ({repo_root}) is a protected path; refusing"
         )
@@ -516,9 +536,25 @@ def _run_git_checked(argv: list[str], *, subcommand: str) -> GitCommandResult:
     return result
 
 
-def _repo_relative_path(workspace_root: Path, repo_root: Path, path: str) -> str:
-    """Resolve ``path`` confined to the workspace, rendered repo-relative."""
-    resolved = resolve_workspace_path(path, Path(workspace_root).resolve())
+def _repo_relative_path(
+    workspace_root: Path,
+    repo_root: Path,
+    path: str,
+    *,
+    context: SensitivePathContext | None = None,
+) -> str:
+    """Resolve ``path`` confined to the workspace, rendered repo-relative.
+
+    Args:
+        workspace_root: The confinement root ``path`` must resolve inside.
+        repo_root: The already-discovered repository root.
+        path: The workspace-relative (or absolute-but-confined) path.
+        context: Optional pre-resolved ``SensitivePathContext``, threaded
+            through to ``resolve_workspace_path`` so a caller that has
+            already resolved one for the same tool call does not pay for
+            it again here.
+    """
+    resolved = resolve_workspace_path(path, Path(workspace_root).resolve(), context=context)
     try:
         relative = resolved.relative_to(repo_root)
     except ValueError:
@@ -528,14 +564,31 @@ def _repo_relative_path(workspace_root: Path, repo_root: Path, path: str) -> str
     return relative.as_posix() or "."
 
 
-def _prepare_for_path(workspace_root: Path, path: str | None) -> Path:
-    """Repo discovery that tolerates ``path`` being a file (uses its parent)."""
+def _prepare_for_path(
+    workspace_root: Path,
+    path: str | None,
+    *,
+    context: SensitivePathContext | None = None,
+) -> Path:
+    """Repo discovery that tolerates ``path`` being a file (uses its parent).
+
+    Args:
+        workspace_root: The confinement root ``path`` must resolve inside.
+        path: The workspace-relative (or absolute-but-confined) path to
+            discover a repository from, or ``None`` to discover from
+            ``workspace_root`` itself.
+        context: Optional pre-resolved ``SensitivePathContext``, threaded
+            through to every denylist check this function (and
+            ``prepare_repository`` beneath it) makes, so a caller that
+            resolves one per tool call — rather than letting each check
+            resolve its own — pays the ~11 config-accessor cost once.
+    """
     if path is None:
-        return prepare_repository(workspace_root, ".")
-    resolved = resolve_workspace_path(path, Path(workspace_root).resolve())
+        return prepare_repository(workspace_root, ".", context=context)
+    resolved = resolve_workspace_path(path, Path(workspace_root).resolve(), context=context)
     discovery = resolved if resolved.is_dir() else resolved.parent
     relative = os.path.relpath(discovery, Path(workspace_root).resolve())
-    return prepare_repository(workspace_root, relative)
+    return prepare_repository(workspace_root, relative, context=context)
 
 
 def _sanitize_author_name(value: str) -> str:
@@ -557,8 +610,26 @@ def git_status(workspace_root: Path, path: str = ".") -> str:
     this tool named ``~/.ssh/id_rsa`` on a dirty ``$HOME``-rooted
     workspace (TASK-19632). Existence and a name are all a status entry
     carries, so excluding them is the whole refusal.
+
+    Args:
+        workspace_root: The confinement root ``path`` must resolve inside.
+        path: Used ONLY to discover which repository to report on (a file
+            or directory anywhere inside the target repo works, since
+            discovery walks up to the repo root). It is NOT applied as a
+            scoping pathspec: unlike ``git_diff``/``git_log``, this
+            function's argv carries no positive pathspec for ``path``, so
+            the status returned always covers the WHOLE repository —
+            asking for a subdirectory's status still returns every
+            changed file in the repo, not just that subdirectory's.
+
+    Returns:
+        The branch header line, one ``category: XY path`` (or
+        ``untracked: path``) line per entry up to ``GIT_STATUS_MAX_ENTRIES``,
+        ``"(working tree clean)"`` when there are none, and a truncation
+        note appended if the repository has more entries than the cap.
     """
-    repo_root = _prepare_for_path(workspace_root, path)
+    context = resolve_sensitive_context()
+    repo_root = _prepare_for_path(workspace_root, path, context=context)
     result = _run_git_checked(
         [
             "git",
@@ -571,7 +642,7 @@ def git_status(workspace_root: Path, path: str = ".") -> str:
             "--branch",
             "--untracked-files=all",
             "--",
-            *_denylist_pathspecs(repo_root),
+            *_denylist_pathspecs(repo_root, context=context),
         ],
         subcommand="status",
     )
@@ -697,7 +768,7 @@ def git_branches(workspace_root: Path) -> str:
 
     Sync adaptation of the reference's ``_execute_branches`` (:621).
     """
-    repo_root = prepare_repository(workspace_root, ".")
+    repo_root = prepare_repository(workspace_root, ".", context=resolve_sensitive_context())
     result = _run_git_checked(
         [
             "git",
@@ -749,9 +820,23 @@ def git_log(
     ``path`` pathspec IS rendered literally, for the same reason
     ``git_diff``'s is: the value is a model-supplied filename and a bare
     one would be parsed as pathspec magic.
+
+    Args:
+        workspace_root: The confinement root ``path`` must resolve inside.
+        count: Maximum number of commits to return, clamped to 1..100.
+        path: When given, scopes the log to commits touching this file or
+            directory (rendered as a literal pathspec — see the note
+            above); ``None`` (the default) returns the log for the whole
+            repository ``path`` (or ``workspace_root`` when ``path`` is
+            also omitted) discovers.
+
+    Returns:
+        One ``short_hash date author: subject`` line per commit, newest
+        first, or ``"(no commits)"`` when there are none.
     """
     count = min(max(int(count), 1), GIT_LOG_MAX_COUNT)
-    repo_root = _prepare_for_path(workspace_root, path)
+    context = resolve_sensitive_context()
+    repo_root = _prepare_for_path(workspace_root, path, context=context)
     argv = [
         "git",
         "--no-pager",
@@ -764,7 +849,12 @@ def git_log(
     ]
     if path is not None:
         argv.extend(
-            ["--", _literal_pathspec(_repo_relative_path(workspace_root, repo_root, path))]
+            [
+                "--",
+                _literal_pathspec(
+                    _repo_relative_path(workspace_root, repo_root, path, context=context)
+                ),
+            ]
         )
     result = _run_git_checked(argv, subcommand="log")
     lines: list[str] = []
@@ -808,6 +898,25 @@ def git_diff(
     path — which is the same disclosure ``stat=True``/``git_status`` were
     leaking. A model that names the path still gets a "protected path"
     refusal, which is the case where the information is actionable.
+
+    Args:
+        workspace_root: The confinement root ``path`` must resolve inside.
+        staged: When True, diff the index against ``HEAD`` (``--cached``)
+            instead of the worktree.
+        commit_range: When given, diff across this ref/range instead of
+            against the worktree or index (validated against
+            ``^[A-Za-z0-9._/~^-]+$`` and refused if it starts with ``-``).
+        path: When given, scopes the diff to this file or directory
+            (rendered as a literal pathspec, so a magic-shaped filename is
+            matched literally); ``None`` (the default) diffs the whole
+            repository ``path`` (or ``workspace_root`` when ``path`` is
+            also omitted) discovers.
+        stat: When True, return a ``--stat`` summary instead of a unified
+            patch.
+
+    Returns:
+        The unified diff (or ``--stat`` summary) text, or ``"(no
+        changes)"`` when the diff is empty.
     """
     if commit_range is not None:
         # Leading-dash values are FLAGS, not refnames (git refnames cannot
@@ -822,7 +931,8 @@ def git_diff(
                 f"invalid commit_range {commit_range!r}: "
                 "must be a ref/range matching [A-Za-z0-9._/~^-] and not start with '-'"
             )
-    repo_root = _prepare_for_path(workspace_root, path)
+    context = resolve_sensitive_context()
+    repo_root = _prepare_for_path(workspace_root, path, context=context)
     argv = [
         "git",
         "--no-pager",
@@ -846,12 +956,14 @@ def git_diff(
     pathspecs: list[str] = []
     if path is not None:
         pathspecs.append(
-            _literal_pathspec(_repo_relative_path(workspace_root, repo_root, path))
+            _literal_pathspec(
+                _repo_relative_path(workspace_root, repo_root, path, context=context)
+            )
         )
     # Exclusions come LAST and are never empty (the name rule always
     # applies), so `--` is always present: an exclude-only pathspec list
     # is applied to the whole tree, which is exactly the no-`path` case.
-    pathspecs.extend(_denylist_pathspecs(repo_root))
+    pathspecs.extend(_denylist_pathspecs(repo_root, context=context))
     argv.extend(["--", *pathspecs])
     result = _run_git_checked(argv, subcommand="diff")
     return result.stdout if result.stdout.strip() else "(no changes)"
@@ -871,10 +983,11 @@ def git_blame(
     neither bound is given) and the range is capped at
     ``GIT_BLAME_MAX_LINES`` lines.
     """
-    resolved = resolve_workspace_path(path, Path(workspace_root).resolve())
+    context = resolve_sensitive_context()
+    resolved = resolve_workspace_path(path, Path(workspace_root).resolve(), context=context)
     if not resolved.is_file():
         raise LocalToolError(f"file not found: {path}")
-    repo_root = _prepare_for_path(workspace_root, path)
+    repo_root = _prepare_for_path(workspace_root, path, context=context)
     try:
         repo_relative = resolved.relative_to(repo_root).as_posix()
     except ValueError:
