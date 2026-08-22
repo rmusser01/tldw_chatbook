@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 from textual import events
@@ -10,6 +11,8 @@ from textual.widget import Widget
 from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Chat.console_display_state import (
+    CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,
+    CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,
     ConsoleDisplayRow,
     ConsoleStagedContextState,
 )
@@ -505,6 +508,74 @@ async def test_n_and_p_are_rail_local_no_wrap_and_editable_input_keeps_printable
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "key,boundary_selector", (("p", "sources"), ("n", "live-work"))
+)
+async def test_no_wrap_navigation_consumes_bubbled_key_before_screen_barge_in(
+    key: str,
+    boundary_selector: str,
+):
+    async with make_console_pilot(size=(160, 45)) as pilot:
+        rail = await _open_inspector(pilot)
+        section = rail.query_one(
+            f"#console-bounded-section-{boundary_selector}", ConsoleBoundedSection
+        )
+        await _overflow(section)
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: section.viewport.can_focus,
+            description=f"overflowing {boundary_selector} no-wrap anchor",
+        )
+        section.viewport.focus()
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: pilot.app.focused is section.viewport,
+            description=f"focused {boundary_selector} no-wrap anchor",
+        )
+
+        barge_keys: list[str] = []
+        pilot.app.screen._console_hands_free = SimpleNamespace(
+            tick_timer=None,
+            controller=SimpleNamespace(
+                on_composer_key=lambda: barge_keys.append(key),
+            ),
+        )
+        bubbled_key = events.Key(key, key)
+        assert section.viewport.post_message(bubbled_key)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert pilot.app.focused is section.viewport
+        assert barge_keys == []
+        assert bubbled_key._stop_propagation is True
+        assert bubbled_key._no_default_action is True
+
+
+@pytest.mark.asyncio
+async def test_navigation_keys_remain_unconsumed_outside_inspector_and_in_editable_input():
+    async with make_console_pilot(size=(160, 45)) as pilot:
+        rail = await _open_inspector(pilot)
+        section = rail.query_one(
+            "#console-bounded-section-sources", ConsoleBoundedSection
+        )
+        editor = Input(id="inspector-navigation-consumption-editor")
+        await section.viewport.mount(editor)
+        editor.focus()
+
+        editable_key = events.Key("n", "n")
+        rail.on_key(editable_key)
+        assert editable_key._stop_propagation is False
+        assert editable_key._no_default_action is False
+
+        outside = pilot.app.screen.query_one("#console-native-composer")
+        outside.focus()
+        outside_key = events.Key("p", "p")
+        rail.on_key(outside_key)
+        assert outside_key._stop_propagation is False
+        assert outside_key._no_default_action is False
+
+
+@pytest.mark.asyncio
 async def test_navigation_from_scope_uses_first_following_boundary():
     async with make_console_pilot(size=(160, 45)) as pilot:
         rail = await _open_inspector(pilot)
@@ -863,6 +934,120 @@ async def test_navigation_focuses_first_enabled_visible_control_in_nonoverflow_t
             lambda: pilot.app.focused is settings_control,
             description="first enabled visible control in nonoverflow Settings",
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("target_mode", "expected_selector"),
+    (
+        ("header", "#console-inspector-approvals-heading"),
+        ("body", f"#{CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID}"),
+        ("none", "#console-inspector-rail-body"),
+    ),
+)
+async def test_run_boundary_focus_never_leaks_to_sibling_group_control(
+    target_mode: str,
+    expected_selector: str,
+):
+    async with make_console_pilot(size=(160, 45)) as pilot:
+        rail = await _open_inspector(pilot)
+        inspector = rail.query_one("#console-run-inspector-state", ConsoleRunInspector)
+        actions = tuple(
+            replace(
+                action,
+                enabled=(
+                    action.widget_id == CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID
+                    or (
+                        target_mode in {"header", "body"}
+                        and action.widget_id == CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID
+                    )
+                ),
+                disabled_reason=(
+                    ""
+                    if action.widget_id == CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID
+                    or target_mode in {"header", "body"}
+                    else "unavailable"
+                ),
+            )
+            for action in inspector.state.actions
+            if action.widget_id
+            in {
+                CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,
+                CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,
+            }
+        )
+        assert {action.widget_id for action in actions} == {
+            CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,
+            CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,
+        }
+        inspector.sync_state(
+            replace(
+                inspector.state,
+                rows=(
+                    ConsoleDisplayRow("Tools", "ready"),
+                    ConsoleDisplayRow("Approvals", "none"),
+                ),
+                actions=actions,
+                dictionary_rows=(),
+                dictionary_actions=(),
+                world_book_rows=(),
+                world_book_actions=(),
+            )
+        )
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: (
+                bool(list(rail.query("#console-bounded-section-approvals")))
+                and bool(list(rail.query(f"#{CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID}")))
+                and not rail.query_one(
+                    f"#{CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID}", Button
+                ).disabled
+            ),
+            description="real sibling Run Inspector boundaries",
+        )
+        approvals = rail.query_one(
+            "#console-bounded-section-approvals", ConsoleBoundedSection
+        )
+        approvals.set_allocation(20)
+        approvals_header = rail.query_one("#console-inspector-approvals-heading")
+        artifacts = rail.query_one(f"#{CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID}", Button)
+        if target_mode == "header":
+            approvals_header.can_focus = True
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: (
+                not approvals.viewport.can_focus
+                and not artifacts.disabled
+                and artifacts.display
+            ),
+            description="nonoverflow target beside enabled sibling action",
+        )
+
+        tools_header = rail.query_one("#console-inspector-tools-heading")
+        tools_header.can_focus = True
+        tools_header.focus()
+        await pilot.press("n")
+        expected = rail.query_one(expected_selector)
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: pilot.app.focused is expected,
+            description=f"{target_mode} target-local focus priority",
+        )
+
+        assert pilot.app.focused is not artifacts
+        if target_mode != "none":
+            await pilot.press("p")
+            await _wait_for_right_rail_condition(
+                pilot,
+                lambda: pilot.app.focused is tools_header,
+                description="previous Run sibling without skip or wrap",
+            )
+            await pilot.press("n")
+            await _wait_for_right_rail_condition(
+                pilot,
+                lambda: pilot.app.focused is expected,
+                description="next Run sibling without skip or wrap",
+            )
 
 
 @pytest.mark.asyncio

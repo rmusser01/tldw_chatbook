@@ -464,6 +464,11 @@ class ConsoleInspectorRail(Vertical):
             return
         if not isinstance(focused, Widget):
             return
+        # Once n/p is a rail-local command, consume it even when navigation
+        # reaches a no-wrap edge. Otherwise the same printable key bubbles to
+        # ChatScreen's global hands-free/realtime barge-in hook.
+        event.stop()
+        event.prevent_default()
         direction = 1 if event.key == "n" else -1
         boundaries = self._mounted_boundaries()
         if not boundaries:
@@ -479,8 +484,6 @@ class ConsoleInspectorRail(Vertical):
                 return
         if target_index is None:
             return
-        event.stop()
-        event.prevent_default()
         self._navigation_generation += 1
         self._focus_boundary(
             boundaries[target_index], generation=self._navigation_generation
@@ -492,7 +495,7 @@ class ConsoleInspectorRail(Vertical):
         *,
         generation: int,
     ) -> None:
-        section, header, root = boundary
+        section, header, _root = boundary
         try:
             outer = self.query_one("#console-inspector-rail-body", VerticalScroll)
         except (NoMatches, QueryError):
@@ -501,7 +504,12 @@ class ConsoleInspectorRail(Vertical):
         if section.viewport.can_focus and self._is_visible(section.viewport):
             target = section.viewport
         else:
-            for widget in root.query("*"):
+            boundary_targets = (
+                header,
+                *header.query("*"),
+                *section.viewport.query("*"),
+            )
+            for widget in boundary_targets:
                 if isinstance(widget, Widget) and self._is_enabled_focus_target(widget):
                     target = widget
                     break
