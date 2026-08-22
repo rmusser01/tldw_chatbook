@@ -199,6 +199,13 @@ deliberately not the RAG-admin verb), denied before any backend call.
   **skipped** re-chunk (e.g. empty source) carries its reason in `notes` and
   no `reindexed` key at all; a default (reindex-off) call never carries
   `reindexed` either — it carries the "reindex not requested" note instead.
+- **Concurrency — double-work, never corruption.** A re-chunk from this tool
+  can run concurrently with the Library UI's re-chunk action or a backfill
+  over the same item; there is no cross-process lock, so the two can
+  duplicate each other's work, but each runs as a per-item transaction that
+  replaces chunk rows atomically — corruption is impossible and the
+  double-work is accepted by design (spec §8.14, same class as the UI
+  action's own ruling).
 
 ### Console/MCP posture of the four
 

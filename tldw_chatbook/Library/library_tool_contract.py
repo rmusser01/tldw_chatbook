@@ -7,10 +7,9 @@ validation, and the 32 KiB serialized-result byte fitting. Both runtimes
 (Console `LibraryToolProvider` and local MCP registration/delegation) derive
 from this module so their contracts cannot drift.
 
-The table holds the 18 task-1337 tools plus the four media chunking siblings
-(chunking-agent-tools spec §4: structure, chunk fetch, spec list, spec save;
-the re-chunk tool's descriptor lands with its handler in a later task of the
-same change).
+The table holds the 18 task-1337 tools plus the four media chunking tools
+(chunking-agent-tools spec §4: structure, chunk fetch, spec list/save,
+re-chunk).
 
 Design: Docs/superpowers/specs/2026-08-02-local-library-agent-tools-design.md
 Pure module: no I/O, no SQLite, no Textual, no event-loop imports.
@@ -995,12 +994,10 @@ __all__ = [
     "ERROR_INVALID_ARGUMENT",
     "ERROR_NOT_FOUND",
     "ERROR_STORAGE_ERROR",
-    "KEYWORD_VALUE_MAX_CHARS",
     "KEYWORDS_PER_ITEM_MAX",
+    "KEYWORD_VALUE_MAX_CHARS",
     "LIBRARY_ITEM_TYPES",
     "LIBRARY_TOOL_DESCRIPTORS",
-    "LibraryToolDescriptor",
-    "LibraryToolError",
     "MAX_CHUNK_CONTEXT",
     "MAX_CURSOR_CHARS",
     "MAX_MAX_CHARS",
@@ -1012,6 +1009,8 @@ __all__ = [
     "MAX_SEARCH_QUERY_CHARS",
     "PAGE_MANDATORY_RESERVE_BYTES",
     "PREVIEW_MAX_CHARS",
+    "LibraryToolDescriptor",
+    "LibraryToolError",
     "check_cursor_revision",
     "fit_page_payload",
     "fit_text_segment",

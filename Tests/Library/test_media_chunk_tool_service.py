@@ -1,9 +1,9 @@
 """Task 3 (chunking-agent-tools): the media chunk tool service.
 
-``LocalMediaChunkToolService`` -- the structure + chunk-fetch agent tools
-over REAL stored ``UnvectorizedMediaChunks`` rows (spec §4.1-§4.2) plus the
-not-yet payloads for the spec/rechunk tools that land with Tasks 4-5 in
-this same change. All Media-DB work here is real (``tmp_path`` DBs): node
+``LocalMediaChunkToolService`` -- the four media chunking agent tools
+(structure, chunk fetch, spec list/save, re-chunk; spec §4.1-§4.4) over
+REAL stored ``UnvectorizedMediaChunks`` rows. All Media-DB work here is
+real (``tmp_path`` DBs): node
 annotation, node pagination, revision tokens, family disambiguation, and
 the error mappings are observable DB behavior, not mock dance.
 
