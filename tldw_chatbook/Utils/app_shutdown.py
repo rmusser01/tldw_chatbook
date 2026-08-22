@@ -28,7 +28,11 @@ The shape that replaces both
    deadline. If the process has not finished by then, the watchdog reports
    which threads are still alive and *then* hard-exits. The hard exit is the
    escape hatch after the graceful path has had its bounded chance, never
-   the first action.
+   the first action. The deadline does not distinguish a wedged process from
+   a healthy one that is simply slow, and it cannot: an uninterruptible
+   thread worker looks identical either way. See
+   ``DEFAULT_SHUTDOWN_GRACE_SECONDS`` for what that costs and why the
+   default is sized the way it is.
 3. **Escalate on repeat.** A second ``SIGTERM``/``SIGINT`` is an explicit
    operator "I meant it" and exits immediately.
 
@@ -72,20 +76,33 @@ __all__ = [
 
 #: How long the whole teardown -- Textual unmount, ``asyncio.run`` cleanup and
 #: interpreter finalization -- may take before the watchdog stops waiting.
-#: A measured *quiet* exit is 0.60-0.70s, so this leaves ~30x headroom for
-#: the ordinary case.
 #:
-#: Be clear-eyed about what it is NOT, though: it is not only a stuck-process
-#: bound. `run_worker(..., thread=True)` runs on the loop's default executor
-#: and cannot be interrupted, so teardown genuinely waits for it -- and a
+#: Be clear-eyed about what this is NOT: it is not only a stuck-process bound.
+#: ``run_worker(..., thread=True)`` runs on the loop's default executor and
+#: cannot be interrupted, so teardown genuinely waits for it -- and a
 #: *healthy* worker that outlives this deadline is hard-exited exactly like a
-#: wedged one. Measured on this branch: a clean quit with a 30s thread worker
-#: holding an open ``BEGIN IMMEDIATE`` died at 20.1s with the transaction
-#: abandoned (at the merge base the same run blocked 28.8s and committed).
-#: That is the accepted trade -- the alternative is the unbounded hang this
-#: task exists to remove -- but a deployment that routinely quits during long
-#: ingests/exports should raise ``[general] shutdown_grace_seconds``.
-DEFAULT_SHUTDOWN_GRACE_SECONDS = 20.0
+#: wedged one, with whatever it was writing abandoned. There are ~180
+#: ``thread=True`` sites in this codebase, including media ingest, notes and
+#: character export, library export and RAG indexing, so "quit while a big
+#: ingest is running" is the live case, not a corner.
+#:
+#: **Why 120 s and not something tighter.** Measured, clean quit (no signal),
+#: one ordinary thread worker holding an open ``BEGIN IMMEDIATE``: at 20 s the
+#: process died at 20.1 s with rc 1 and the transaction abandoned, where the
+#: merge base had waited 28.8 s and committed. The cliff was exactly the grace
+#: period. Nothing is bought by tightening it: the "interpreter exit is not
+#: blocked for seconds" requirement is satisfied by the *quiet*-exit
+#: measurement (0.60-0.70 s), which this number does not touch at all, because
+#: a healthy exit never reaches the deadline. So a smaller value costs a
+#: 30-second ingest its write and buys nothing. 120 s still bounds a wedged
+#: process to two minutes, which is the thing the watchdog exists for.
+#:
+#: The asymmetry is what decides it: a slow quit is an annoyance, an abandoned
+#: transaction is data loss, and the owner's standing ruling is durability over
+#: quick. Deliberately NOT done: extending the deadline when a straggler is
+#: reported -- that turns a bound into a suggestion, and it was declined under
+#: the same ruling.
+DEFAULT_SHUTDOWN_GRACE_SECONDS = 120.0
 
 #: Clamp for the configured value. Below a second the watchdog would start
 #: killing healthy shutdowns; above five minutes it stops being a bound.
@@ -428,7 +445,26 @@ def _handle_termination_signal(signum: int, _frame: Any) -> None:
         _hard_exit(exit_code)
         return
 
-    arm_exit_watchdog(reason=f"signal {signum}", exit_code=exit_code)
+    # Arm a bound BEFORE reading configuration, in two steps. Reading
+    # `[general] shutdown_grace_seconds` means importing and locking the
+    # config module from inside a signal handler; that cannot self-deadlock
+    # here (the lock is re-entrant and this runs on the main thread), but it
+    # can do file I/O, and "the escape hatch does not exist yet" is a bad
+    # state to be in while finding out. So: an unconditional backstop first,
+    # then the configured value.
+    #
+    # The backstop is the clamp maximum precisely because no configured value
+    # can exceed it, which makes the refinement below always tighter (or
+    # within a few microseconds of equal) and therefore always accepted by the
+    # monotonic arming rule. Arming the *default* first would have been wrong:
+    # a user who configured 300 s would then be refused their own value and
+    # silently bounded at 120 s -- exactly the abandoned-write direction this
+    # grace period exists to avoid.
+    arm_exit_watchdog(
+        _MAX_GRACE_SECONDS, reason=f"signal {signum} (backstop)", exit_code=exit_code
+    )
+    grace = graceful_shutdown_grace_seconds()
+    arm_exit_watchdog(grace, reason=f"signal {signum}", exit_code=exit_code)
 
     app, loop = _STATE.app_and_loop()
     if app is None or loop is None or loop.is_closed():
@@ -440,7 +476,7 @@ def _handle_termination_signal(signum: int, _frame: Any) -> None:
 
     logger.info(
         f"Received signal {signum}; running the ordinary shutdown path "
-        f"(hard exit in at most {graceful_shutdown_grace_seconds():.0f}s)."
+        f"(hard exit in at most {grace:.0f}s)."
     )
     try:
         loop.call_soon_threadsafe(_request_app_exit, app)

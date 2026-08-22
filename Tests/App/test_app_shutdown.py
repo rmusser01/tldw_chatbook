@@ -272,6 +272,145 @@ def test_grace_period_falls_back_when_config_raises(monkeypatch):
     )
 
 
+# --- the grace period is enforced against healthy work ---------------------
+#
+# Independent review found a HIGH regression at a 20 s default: a clean quit
+# (`app.exit()`, no signal) with one ordinary `run_worker(..., thread=True)`
+# holding an open `BEGIN IMMEDIATE` died at 20.1 s with rc 1 and the
+# transaction abandoned, where the merge base waited 28.8 s and committed. The
+# cliff was exactly the grace period, and Textual thread workers cannot be
+# interrupted, so this is any long ingest/export running when the user quits.
+#
+# These tests run the real shape at 1/20th scale so they finish in seconds.
+
+#: Wall-clock divisor. The absolute numbers below are the real ones scaled by
+#: this, so the test costs ~2 s instead of ~2 minutes while pinning the same
+#: ordering.
+_TIME_SCALE = 0.05
+
+#: The default this fix replaced. Kept as a literal on purpose: the point of
+#: the test is that going back to it re-breaks the case below.
+_SUPERSEDED_DEFAULT_GRACE = 20.0
+
+#: The reviewer's measured background job -- the one that sits between the old
+#: default and the new one.
+_LONG_JOB_SECONDS = 30.0
+
+
+def _commit_after(db_path, seconds: float, committed: threading.Event) -> None:
+    """A stand-in for a thread worker holding an open write transaction.
+
+    Non-daemon and uninterruptible, exactly like the default-executor thread
+    a `run_worker(..., thread=True)` job runs on: nothing shutdown can do
+    will make this finish sooner.
+    """
+    import sqlite3
+
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("CREATE TABLE IF NOT EXISTS t (v TEXT)")
+        conn.commit()
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("INSERT INTO t (v) VALUES ('stmt1')")
+        time.sleep(seconds)
+        conn.execute("INSERT INTO t (v) VALUES ('stmt2')")
+        conn.commit()
+        committed.set()
+    finally:
+        conn.close()
+
+
+def _rows(db_path) -> list[str]:
+    import sqlite3
+
+    conn = sqlite3.connect(db_path)
+    try:
+        return [r[0] for r in conn.execute("SELECT v FROM t")]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+def test_the_default_grace_outlives_a_long_background_job():
+    """The constant itself, stated as the requirement it has to meet.
+
+    This is the fast guard: dropping `DEFAULT_SHUTDOWN_GRACE_SECONDS` back to
+    20 s fails here immediately, without waiting for the timing test below.
+    """
+    assert app_shutdown.DEFAULT_SHUTDOWN_GRACE_SECONDS > _LONG_JOB_SECONDS, (
+        "a background job of this length must be able to finish its write "
+        "during a clean quit; see the module docstring for the measurement"
+    )
+    assert (
+        app_shutdown.DEFAULT_SHUTDOWN_GRACE_SECONDS <= app_shutdown._MAX_GRACE_SECONDS
+    )
+
+
+def test_a_long_job_commits_within_the_default_grace(
+    tmp_path, _isolated_shutdown_state
+):
+    """At the default grace, a 30 s-class job still lands its transaction."""
+    exits = _isolated_shutdown_state
+    db_path = str(tmp_path / "job.db")
+    committed = threading.Event()
+
+    worker = threading.Thread(
+        target=_commit_after,
+        args=(db_path, _LONG_JOB_SECONDS * _TIME_SCALE, committed),
+        name="probe-thread-worker",
+    )
+    worker.start()
+    try:
+        app_shutdown.arm_exit_watchdog(
+            app_shutdown.DEFAULT_SHUTDOWN_GRACE_SECONDS * _TIME_SCALE,
+            reason="clean quit",
+        )
+        assert committed.wait(30.0), "the job never finished"
+        # The assertion that matters: the watchdog had not fired by the time
+        # the write landed. Ordering, not wall clock -- a loaded machine
+        # slows both sides.
+        assert exits == [], "the watchdog killed a healthy job mid-transaction"
+        assert _rows(db_path) == ["stmt1", "stmt2"]
+    finally:
+        worker.join(30.0)
+
+
+def test_the_superseded_20s_default_would_have_abandoned_that_write(
+    tmp_path, _isolated_shutdown_state
+):
+    """The red half: this is what a 20 s grace does to the same job.
+
+    Kept as a live test rather than a comment so the regression stays
+    visible -- if someone lowers the default back, the test above goes red
+    and this one explains why.
+    """
+    exits = _isolated_shutdown_state
+    db_path = str(tmp_path / "job.db")
+    committed = threading.Event()
+
+    worker = threading.Thread(
+        target=_commit_after,
+        args=(db_path, _LONG_JOB_SECONDS * _TIME_SCALE, committed),
+        name="probe-thread-worker",
+    )
+    worker.start()
+    try:
+        app_shutdown.arm_exit_watchdog(
+            _SUPERSEDED_DEFAULT_GRACE * _TIME_SCALE, reason="clean quit"
+        )
+        deadline = time.monotonic() + 30.0
+        while not exits and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert exits, "the watchdog should have fired at the shorter grace"
+        # The process would have died here. Nothing is committed yet, and the
+        # worker cannot be interrupted to make it so.
+        assert not committed.is_set()
+        assert _rows(db_path) == [], "the transaction was still open"
+    finally:
+        worker.join(30.0)
+
+
 # --- signal handling -------------------------------------------------------
 
 
@@ -302,6 +441,58 @@ def test_first_signal_asks_the_app_to_exit_instead_of_hard_exiting(
     assert app.exited == 1, "SIGTERM ran the ordinary shutdown path"
     assert exits == [], "no hard exit on the first signal"
     assert app_shutdown.termination_requested() is True
+
+
+def test_a_signal_arms_a_bound_even_when_config_is_unreadable(
+    _isolated_shutdown_state, monkeypatch
+):
+    """The handler must not depend on config to get *a* bound in place.
+
+    Reading `[general] shutdown_grace_seconds` imports and locks the config
+    module and can do file I/O; "the escape hatch does not exist yet" is a
+    bad state to discover that from. The handler arms an unconditional
+    backstop first.
+    """
+    import tldw_chatbook.config as config_mod
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("config is unreadable right now")
+
+    monkeypatch.setattr(config_mod, "get_cli_setting", _boom, raising=False)
+
+    with pytest.raises(SystemExit):
+        app_shutdown._handle_termination_signal(signal.SIGTERM, None)
+
+    assert app_shutdown._STATE._watchdog_deadline is not None, "no bound was armed"
+    assert [t for t in threading.enumerate() if t.name == "tldw-exit-watchdog"]
+
+
+def test_a_signal_honours_a_configured_grace_larger_than_the_default(
+    _isolated_shutdown_state, monkeypatch
+):
+    """The backstop must not silently clamp the user's own, larger value.
+
+    This is why the backstop is `_MAX_GRACE_SECONDS` and not the default:
+    arming the default first would refuse a configured 250s as "laxer" and
+    bound the user at 120s -- the abandoned-write direction the grace period
+    exists to avoid.
+    """
+    import tldw_chatbook.config as config_mod
+
+    configured = 250.0
+    assert configured > app_shutdown.DEFAULT_SHUTDOWN_GRACE_SECONDS
+    monkeypatch.setattr(
+        config_mod, "get_cli_setting", lambda *a, **k: configured, raising=False
+    )
+
+    before = time.monotonic()
+    with pytest.raises(SystemExit):
+        app_shutdown._handle_termination_signal(signal.SIGTERM, None)
+
+    remaining = app_shutdown._STATE._watchdog_deadline - before
+    assert remaining == pytest.approx(configured, abs=5.0), (
+        f"configured {configured}s was not honoured; bound is ~{remaining:.0f}s"
+    )
 
 
 def test_second_signal_escalates_to_a_hard_exit(_isolated_shutdown_state):

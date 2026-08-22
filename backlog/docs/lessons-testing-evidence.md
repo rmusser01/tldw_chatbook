@@ -6598,3 +6598,15 @@ self._thread.is_alive()` has a hole between publishing the thread and starting
 it. An `RLock` does not close it — signal handlers re-enter on the *same*
 thread and sail straight through. Key the guard off the state you actually
 care about (here: an unexpired deadline), not off thread liveness.
+
+**Resolved:** the default went 20 s -> 120 s. The reasoning is worth keeping
+because it generalises to any "how long should the timeout be" argument: the
+requirement that motivated the bound (*"interpreter exit is not blocked for
+seconds"*) was already satisfied by the **quiet**-exit measurement, 0.6 s,
+which the constant does not affect at all — a healthy exit never reaches the
+deadline. So tightening it bought nothing on the AC and cost a 30-second
+ingest its write. Once you notice that a knob is inert on the metric you
+picked it for, the only live consideration left is the asymmetry of the two
+failure modes: a slow quit is an annoyance, an abandoned transaction is data
+loss. Deliberately declined at the same time: extending the deadline whenever
+a straggler is reported, which turns a bound into a suggestion.

@@ -259,3 +259,66 @@ guard is now keyed off an unexpired deadline and `thread.start()` moved inside
 the lock; `_watch` additionally retires itself on identity/`None` rather than on
 deadline arithmetic alone, so a `stand_down()` landing between its timeout and
 its check can no longer lose. Three regression tests added.
+
+## Review Round 2 — owner call taken (2026-08-22)
+
+**`DEFAULT_SHUTDOWN_GRACE_SECONDS` 20 s -> 120 s**, closing the HIGH the
+review filed. The reviewer's measurement is the whole argument: a clean quit
+(`app.exit()`, no signal) with one ordinary `run_worker(..., thread=True)`
+holding an open `BEGIN IMMEDIATE` died at 20.10 s with rc 1 and the
+transaction abandoned, where the merge base waited 28.8 s and committed. An
+8 s worker committed fine, so the cliff was exactly the grace period. Textual
+thread workers end in `loop.run_in_executor(None, ...)` and cannot be
+interrupted, and there are ~180 `thread=True` sites — `library_ingest_queue`,
+notes/character export, library export, RAG indexing — so this is the live
+"quit during a big ingest" case, not a corner.
+
+Why 120 and not a tighter number: the "interpreter exit is not blocked for
+seconds" AC is satisfied by the *quiet*-exit measurement (0.60–0.70 s), which
+this constant does not touch, because a healthy exit never reaches the
+deadline. So tightening it buys nothing and costs a 30 s ingest its write.
+120 s still bounds a wedged process to two minutes. A slow quit is an
+annoyance; an abandoned transaction is data loss; the owner's standing ruling
+is durability over quick. The 1–300 clamp is unchanged.
+
+**Deliberately not done:** extending the deadline when a straggler is
+reported. That converts a bound into a suggestion, and it was declined under
+the same ruling.
+
+**Signal-handler ordering.** `_handle_termination_signal` read the configured
+grace (importing and locking the config module, possibly doing file I/O)
+*before* any bound existed. It now arms an unconditional backstop at
+`_MAX_GRACE_SECONDS` first and refines with the configured value immediately
+after. The backstop is the clamp maximum precisely so the refinement is always
+tighter and therefore always accepted by the monotonic rule — arming the
+*default* first would have silently bounded a user who configured 300 s at
+120 s, which is the abandoned-write direction this whole change is avoiding.
+
+**Regression coverage** (`Tests/App/test_app_shutdown.py`, three tests): a
+constant-level guard (`DEFAULT > 30 s`), a scaled live test that a 30 s-class
+job holding a real `BEGIN IMMEDIATE` commits within the default grace, and its
+red twin showing what a 20 s grace does to the same job. Scaled 1/20 so the
+pair costs ~3 s instead of ~2 minutes. Verified red at a 20 s default:
+`assert 20.0 > 30.0` and `AssertionError: the watchdog killed a healthy job
+mid-transaction / assert [1] == []`.
+
+**Round-2 gates.** `Tests/App` + `Tests/Scheduling` + `Tests/Watchlists` +
+`Tests/RuntimePolicy` 1566 passed; `Tests/Subscriptions` 837 passed / 1
+skipped; repo-wide `--collect-only -q` 55,015 collected (the reviewer's
+55,010 plus this round's five tests). Live re-verified after the change: a
+real `SIGTERM` to a real instance still runs the ordinary shutdown path —
+died in 6.4 s waiting for the in-flight write, both statements committed,
+`transaction_finally_ran` + `atexit_ran` + `app_stopping` all present.
+
+**Not ours, worth filing.** One intermittent failure was seen in a single
+four-directory run: `Tests/Watchlists/test_watchlists_artifacts_pane.py::
+test_export_feed_press_survives_an_os_error_from_the_service`, with
+`WorkerFailed: KeyError("No 'directory-navigation--hidden' key in
+COMPONENT_CLASSES")` from inside the third-party `SelectDirectory` picker.
+It did **not** reproduce: the identical selection re-run green (1566), the
+run with this round's five tests deselected was green (1561), and the test
+alone passed 8/8. There is no `pytest-randomly` in this venv, so collection
+order is fixed — this is load/state sensitivity in the file-picker path, not
+ordering. Nothing in this change can reach it: the harness under test is a
+`DestinationHarness`, not `TldwCli`, so no `on_unmount`, watchdog or signal
+code runs for it.
