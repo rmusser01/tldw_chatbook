@@ -40,6 +40,7 @@ from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
 from tldw_chatbook.Workspaces import ConsoleConversationBrowserInputRow
 from tldw_chatbook.Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
+    ConsoleActivityPresentation,
     ConsoleChatMessage,
     ConsoleCitationNoticeCode,
     ConsoleCitationPhase,
@@ -1799,8 +1800,8 @@ def _static_plain_text(widget: Static) -> str:
 def _message_row_plain_text(console, message_id: str) -> str:
     """Renderer-agnostic plain text of one transcript message row (TASK-1990).
 
-    Plain rows carry one Content renderable; markdown rows expose header and
-    footer Statics plus the Markdown source.
+    Grouped Assistant messages carry their sole role label on the outer turn
+    surface. Standalone rows retain their pre-grouping message-row shape.
     """
     from textual.widgets import Markdown
 
@@ -1808,12 +1809,18 @@ def _message_row_plain_text(console, message_id: str) -> str:
         ConsoleMarkdownMessage,
     )
 
+    try:
+        surface = console.query_one(f"#console-assistant-turn-{message_id}")
+    except NoMatches:
+        surface = console.query_one(f"#console-message-{message_id}")
     row = console.query_one(f"#console-message-{message_id}")
     if isinstance(row, ConsoleMarkdownMessage):
-        parts = [_static_plain_text(static) for static in row.query(Static)]
+        parts = [_static_plain_text(static) for static in surface.query(Static)]
         parts.append(row.query_one(Markdown).source)
         return "\n".join(parts)
-    return _static_plain_text(row)
+    if surface is row:
+        return _static_plain_text(row)
+    return "\n".join(_static_plain_text(static) for static in surface.query(Static))
 
 
 def _widget_text(widget) -> str:
@@ -3818,9 +3825,12 @@ async def test_transcript_role_label_renders_dim_body_full_contrast():
 
         row = console.query_one(f"#console-message-{message.id}")
         if isinstance(row, ConsoleMarkdownMessage):
-            # The dim role label lives inside the stable header; the body is a
-            # separate Markdown widget and keeps full contrast by construction.
-            rendered = row.query_one(
+            # The one dim role label belongs to the outer Assistant turn; the
+            # headerless Markdown answer remains a separate full-contrast body.
+            turn = console.query_one(f"#console-assistant-turn-{message.id}")
+            labels = list(turn.query(".console-transcript-speaker-label"))
+            assert len(labels) == 1
+            rendered = turn.query_one(
                 ".console-transcript-speaker-label", Static
             ).renderable
             body_text = _message_row_plain_text(console, message.id)
@@ -5191,6 +5201,87 @@ async def test_console_selected_message_updates_inspector_action_guidance():
         )
         assert "Variants: 2 variants, showing 2/2" in inspector_text
         assert "Excerpt: second assistant variant" in inspector_text
+
+
+@pytest.mark.asyncio
+async def test_console_display_only_activity_selection_updates_and_clears_inspector():
+    """Inspector resolves only the selected activity in the active projection."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session(title="Activity owner")
+        owner = store.append_message(
+            first.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="The workspace contains two files.",
+        )
+        marker = store.append_message(
+            first.id,
+            role=ConsoleMessageRole.TOOL,
+            content="a.txt\nb.txt",
+            tool_output_full="a.txt\nb.txt",
+            activity_presentation=ConsoleActivityPresentation(
+                "tool", "fs_list", "success"
+            ),
+        )
+        second = store.create_session(title="Other session", activate=False)
+        await console._sync_native_console_chat_ui()
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        assert transcript.display_message(marker.id) is not None
+        with pytest.raises(KeyError):
+            store.get_message(marker.id)
+
+        transcript.select_message(marker.id)
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(
+            console, pilot, f"#console-message-actions-{marker.id}"
+        )
+
+        inspector_text = _visible_text(
+            console.query_one("#console-run-inspector-state")
+        )
+        assert "Selected message: Tool message" in inspector_text
+        assert "Message actions:" in inspector_text
+        assert "Excerpt: a.txt b.txt" in inspector_text
+        action_ids = {
+            button.id
+            for button in console.query(f"#console-message-actions-{marker.id} Button")
+        }
+        assert action_ids
+        assert all(action_id.endswith(marker.id) for action_id in action_ids)
+
+        transcript.select_message(owner.id)
+        await console._sync_native_console_chat_ui()
+        inspector_text = _visible_text(
+            console.query_one("#console-run-inspector-state")
+        )
+        assert "Selected message: Assistant message" in inspector_text
+        assert "Excerpt: The workspace contains two files." in inspector_text
+
+        transcript.select_message(marker.id)
+        store.switch_session(second.id)
+        await console._sync_native_console_chat_ui()
+        assert transcript.selected_message_id is None
+        assert "Selected Message" not in _visible_text(
+            console.query_one("#console-run-inspector-state")
+        )
+
+        store.switch_session(first.id)
+        await console._sync_native_console_chat_ui()
+        transcript.select_message(marker.id)
+        await console._sync_native_console_chat_ui()
+        store.delete_message(owner.id)
+        await console._sync_native_console_chat_ui()
+        assert transcript.selected_message_id is None
+        assert transcript.display_message(marker.id) is None
+        assert "Selected Message" not in _visible_text(
+            console.query_one("#console-run-inspector-state")
+        )
 
 
 @pytest.mark.asyncio

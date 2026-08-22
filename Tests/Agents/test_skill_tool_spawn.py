@@ -449,10 +449,17 @@ def test_native_spawn_child_cannot_call_a_skill_tool(tmp_path):
     child_runs = [r for r in runs if r["agent_kind"] == "subagent"]
     assert len(child_runs) == 1
     tool_results = [
-        s["result"] for s in child_runs[0]["steps"] if s["kind"] == "tool_result"
+        step for step in child_runs[0]["steps"] if step["kind"] == "tool_result"
     ]
-    assert any("Tool not permitted: code-review" in r for r in tool_results)
-    assert not any("sub-agent budget exhausted" in r for r in tool_results)
+    permission_refusal = next(
+        step
+        for step in tool_results
+        if "Tool not permitted: code-review" in step["result"]
+    )
+    assert permission_refusal["tool_outcome"] == "blocked"
+    assert not any(
+        "sub-agent budget exhausted" in step["result"] for step in tool_results
+    )
 
 
 # --- PR2a Task 6.5: a SKILL call keeps its contract under a live fleet ---

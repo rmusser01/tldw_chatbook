@@ -29,6 +29,7 @@ import pytest
 from textual.app import App, ComposeResult
 
 from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleActivityPresentation,
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
@@ -95,6 +96,163 @@ async def _far_jump_to_m10(pilot, transcript: ConsoleTranscript) -> None:
     await _settle(pilot)
     assert _mounted_message_ids(transcript)[0] == "m10", (
         "precondition: the jump target must be head-pinned (first mounted row)"
+    )
+
+
+def test_activity_far_jump_maps_to_owner_and_keeps_turn_window_atomic() -> None:
+    """Re-centering a nested id targets the owner and never splits its unit."""
+    transcript = ConsoleTranscript()
+    messages = [
+        ConsoleChatMessage(
+            id="before", role=ConsoleMessageRole.USER, content="before"
+        ),
+        ConsoleChatMessage(
+            id="owner", role=ConsoleMessageRole.ASSISTANT, content="answer"
+        ),
+        ConsoleChatMessage(
+            id="thinking",
+            role=ConsoleMessageRole.TOOL,
+            content="safe preamble",
+            activity_presentation=ConsoleActivityPresentation(
+                "thinking", "Thinking", "done"
+            ),
+        ),
+        ConsoleChatMessage(
+            id="tool",
+            role=ConsoleMessageRole.TOOL,
+            content="preview",
+            activity_presentation=ConsoleActivityPresentation(
+                "tool", "fs_list", "success"
+            ),
+        ),
+        ConsoleChatMessage(
+            id="after", role=ConsoleMessageRole.USER, content="after"
+        ),
+    ]
+    transcript.set_messages(messages)
+    transcript._set_hidden_prefix(4)
+    transcript._recenter_window_on(3, "tool")
+
+    assert transcript._reveal_scroll_target == "owner"
+    assert {"owner", "thinking", "tool"}.isdisjoint(
+        transcript._pruned_message_ids
+    )
+    assert {"owner", "thinking", "tool"}.isdisjoint(transcript._hidden_tail_ids)
+
+
+def test_initial_activity_window_boundaries_never_split_an_assistant_turn() -> None:
+    """A prefix boundary landing inside activities expands to the unit."""
+    transcript = ConsoleTranscript()
+    messages = [
+        ConsoleChatMessage(
+            id="old", role=ConsoleMessageRole.USER, content="old\n" * 20
+        ),
+        ConsoleChatMessage(
+            id="owner", role=ConsoleMessageRole.ASSISTANT, content="answer"
+        ),
+        ConsoleChatMessage(
+            id="activity",
+            role=ConsoleMessageRole.TOOL,
+            content="preview",
+            activity_presentation=ConsoleActivityPresentation(
+                "tool", "fs_list", "success"
+            ),
+        ),
+    ]
+
+    transcript.set_messages(messages)
+    transcript._set_hidden_prefix(2)
+
+    assert {"owner", "activity"}.isdisjoint(transcript._pruned_message_ids)
+
+
+def _large_activity_turn() -> list[ConsoleChatMessage]:
+    return [
+        ConsoleChatMessage(
+            id="before-unit", role=ConsoleMessageRole.USER, content="before"
+        ),
+        ConsoleChatMessage(
+            id="large-owner", role=ConsoleMessageRole.ASSISTANT, content="answer"
+        ),
+        ConsoleChatMessage(
+            id="large-tool-1",
+            role=ConsoleMessageRole.TOOL,
+            content="first preview " * 80,
+            activity_presentation=ConsoleActivityPresentation(
+                "tool", "fs_read", "success"
+            ),
+        ),
+        ConsoleChatMessage(
+            id="large-tool-2",
+            role=ConsoleMessageRole.TOOL,
+            content="second preview " * 80,
+            activity_presentation=ConsoleActivityPresentation(
+                "tool", "fs_list", "success"
+            ),
+        ),
+        ConsoleChatMessage(
+            id="after-unit", role=ConsoleMessageRole.USER, content="after"
+        ),
+    ]
+
+
+def test_pending_nested_activity_selection_reveals_owner_unit_atomically() -> None:
+    """A hidden pending Inspector id reveals its whole Assistant unit."""
+    transcript = ConsoleTranscript()
+    messages = _large_activity_turn()
+    transcript.set_messages(messages)
+    transcript._hide_tail_from(1)
+    transcript.pending_selection_id = "large-tool-1"
+
+    transcript.set_messages(list(messages))
+
+    assert transcript.selected_message_id == "large-tool-1"
+    assert {"large-owner", "large-tool-1", "large-tool-2"}.isdisjoint(
+        transcript._hidden_tail_ids
+    )
+    assert "large-tool-1" in {
+        message.id for message in transcript._visible_messages()
+    }
+
+
+@pytest.mark.asyncio
+async def test_tailward_activity_hydration_rounds_forward_and_makes_progress() -> None:
+    """A chunk ending inside a composite reveals through the entire unit."""
+    app = TwoSidedHarness(low=300, high=0)
+    async with app.run_test(size=(100, 30)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        messages = _large_activity_turn()
+        transcript.set_messages(messages)
+        transcript._hide_tail_from(1)
+        await transcript.refresh_messages()
+        await pilot.pause()
+        before = transcript._hidden_tail_start_index()
+        owner_lines = transcript._estimated_message_lines(messages[1])
+        transcript._scrollback_chunk_line_budget = (  # type: ignore[method-assign]
+            lambda: owner_lines + 1
+        )
+        scheduled_at: list[int] = []
+        transcript._schedule_tailward_hydration = (  # type: ignore[method-assign]
+            lambda: scheduled_at.append(transcript._hidden_tail_start_index())
+        )
+
+        await transcript._hydrate_tailward()
+
+        assert before == 1
+        assert transcript._hidden_tail_start_index() == 4
+        assert scheduled_at == [4]
+
+
+def test_activity_hide_start_alignment_rounds_backward_to_owner() -> None:
+    """Hiding from inside a composite never leaves an orphan fragment visible."""
+    transcript = ConsoleTranscript()
+    transcript.set_messages(_large_activity_turn())
+
+    transcript._hide_tail_from(3)
+
+    assert transcript._hidden_tail_start_index() == 1
+    assert {"large-owner", "large-tool-1", "large-tool-2"}.issubset(
+        transcript._hidden_tail_ids
     )
 
 

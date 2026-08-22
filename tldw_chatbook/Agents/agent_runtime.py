@@ -52,6 +52,9 @@ from .agent_models import (
     STEP_STEERING,
     STEP_TOOL_CALL,
     STEP_TOOL_RESULT,
+    TOOL_OUTCOME_BLOCKED,
+    TOOL_OUTCOME_FAILED,
+    TOOL_OUTCOME_SUCCESS,
     WAIT_AGENTS_TOOL_NAME,
     AgentConfig,
     AgentStep,
@@ -1368,7 +1371,12 @@ def run_agent_loop(
                     status="refused",
                     call_id=call.call_id,
                 )
-                add(STEP_TOOL_RESULT, tool_name=call.name, result=content[:2000])
+                add(
+                    STEP_TOOL_RESULT,
+                    tool_name=call.name,
+                    result=content[:2000],
+                    tool_outcome=TOOL_OUTCOME_BLOCKED,
+                )
                 if restoring_batch:
                     if not expand_restore_history(continuation_checkpoint):
                         return continuation_error()
@@ -1389,6 +1397,7 @@ def run_agent_loop(
             )
             if verdict != "proceed":
                 content = verdict
+                tool_outcome = TOOL_OUTCOME_BLOCKED
             else:
                 if call.name == SPAWN_TOOL_NAME:
                     if SPAWN_TOOL_NAME not in config.allowed_tools:
@@ -1625,6 +1634,15 @@ def run_agent_loop(
                     add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
                     result = deps.invoke_tool(call)
 
+                tool_outcome = (
+                    TOOL_OUTCOME_SUCCESS
+                    if result.ok
+                    else (
+                        TOOL_OUTCOME_BLOCKED
+                        if result.outcome == TOOL_OUTCOME_BLOCKED
+                        else TOOL_OUTCOME_FAILED
+                    )
+                )
                 content = result.content if result.ok else f"ERROR: {result.error}"
 
             # tool_result capture stays HERE, after dispatch: this is the
@@ -1701,6 +1719,7 @@ def run_agent_loop(
                 STEP_TOOL_RESULT,
                 tool_name=call.name,
                 result=content[:2000],
+                tool_outcome=tool_outcome,
             )
             if restoring_batch and continuation_checkpoint is not None:
                 if not expand_restore_history(continuation_checkpoint):

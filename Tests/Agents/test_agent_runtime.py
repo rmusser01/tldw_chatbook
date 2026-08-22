@@ -130,6 +130,68 @@ def test_tool_error_is_not_fatal_and_feeds_back():
     assert result_steps and "boom" in result_steps[0].result
 
 
+def test_tool_result_step_records_success_before_flattening_collision_payload() -> None:
+    out = run(
+        [
+            ModelTurn(text=fence("calculator", {"expression": "6*7"})),
+            ModelTurn(text="done"),
+        ],
+        invoke=lambda _call: ToolResult(
+            ok=True, content="ERROR: harmless successful payload"
+        ),
+    )
+
+    result = next(step for step in out.steps if step.kind == STEP_TOOL_RESULT)
+    assert result.tool_outcome == "success"
+
+
+def test_tool_result_step_distinguishes_failure_and_provider_block() -> None:
+    ordinary = run(
+        [
+            ModelTurn(text=fence("calculator", {"expression": "bad"})),
+            ModelTurn(text="done"),
+        ],
+        invoke=lambda _call: ToolResult(ok=False, error="division failed"),
+    )
+    blocked = run(
+        [
+            ModelTurn(text=fence("calculator", {"expression": "6*7"})),
+            ModelTurn(text="done"),
+        ],
+        invoke=lambda _call: ToolResult.blocked(
+            "tool execution is disabled by the kill switch"
+        ),
+    )
+
+    assert (
+        next(
+            step for step in ordinary.steps if step.kind == STEP_TOOL_RESULT
+        ).tool_outcome
+        == "failed"
+    )
+    assert (
+        next(
+            step for step in blocked.steps if step.kind == STEP_TOOL_RESULT
+        ).tool_outcome
+        == "blocked"
+    )
+
+
+def test_direct_review_refusal_records_blocked_without_dispatch() -> None:
+    deps = make_deps(
+        [
+            ModelTurn(text=fence("calculator", {"expression": "6*7"})),
+            ModelTurn(text="done"),
+        ]
+    )
+    deps.review_tool_calls = lambda _calls: {"calculator": "review refused"}
+
+    out = run_agent_loop(CFG, [{"role": "user", "content": "hi"}], [CALC], deps)
+
+    result = next(step for step in out.steps if step.kind == STEP_TOOL_RESULT)
+    assert result.tool_outcome == "blocked"
+
+
 def test_spawn_result_and_budget():
     tasks = []
     turns = [

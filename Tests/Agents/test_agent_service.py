@@ -1479,6 +1479,7 @@ def test_load_tools_gate_disclosure_mirrors_loop_active_cap(db):
     assert load_result["result"] == "loaded: t0, t1"
     # The gate must refuse t2: the loop never put it in `active`.
     assert "Tool not permitted: t2" in t2_result["result"]
+    assert t2_result["tool_outcome"] == "blocked"
     # t0 stayed in room, so it must remain genuinely callable through
     # the gate (a real provider invocation, not a permission error).
     assert t0_result["result"] == "invoked fake:t0"

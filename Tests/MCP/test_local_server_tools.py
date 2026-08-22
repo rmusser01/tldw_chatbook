@@ -504,7 +504,7 @@ def test_watchlists_external_ask_refuses_before_storage_resolution(
 
     result = provider.invoke("local:watchlists_search_items", {})
 
-    assert result == ToolResult(ok=False, error=EXTERNAL_NO_CALLBACK_REFUSAL)
+    assert result == ToolResult.blocked(EXTERNAL_NO_CALLBACK_REFUSAL)
 
 
 # -- _local_agent_tool_registrations (pure builder, no mcp package needed) --
@@ -534,7 +534,7 @@ def test_ask_state_handler_returns_tool_result(workspace, store):
     result = _registrations(provider)["fs_write"].handler(
         {"path": "x.txt", "content": "y"}
     )
-    assert result == ToolResult(ok=False, error=EXTERNAL_NO_CALLBACK_REFUSAL)
+    assert result == ToolResult.blocked(EXTERNAL_NO_CALLBACK_REFUSAL)
 
 
 def test_deny_state_handler_returns_tool_result(workspace, store):
@@ -542,7 +542,7 @@ def test_deny_state_handler_returns_tool_result(workspace, store):
     hub = provider.hub_tool_for("fs_glob")
     store.set_tool_state(hub.server_key, hub.name, "deny")
     result = _registrations(provider)["fs_glob"].handler({"pattern": "*.py"})
-    assert result == ToolResult(ok=False, error=LOCAL_DENY_REFUSAL)
+    assert result == ToolResult.blocked(LOCAL_DENY_REFUSAL)
 
 
 def test_kill_switch_handler_returns_tool_result(workspace, store):
@@ -550,7 +550,7 @@ def test_kill_switch_handler_returns_tool_result(workspace, store):
     _grant(store, provider, "fs_read")
     store.set_kill_switch(True)
     result = _registrations(provider)["fs_read"].handler({"path": "hello.txt"})
-    assert result == ToolResult(ok=False, error=LOCAL_KILL_SWITCH_REFUSAL)
+    assert result == ToolResult.blocked(LOCAL_KILL_SWITCH_REFUSAL)
 
 
 def test_session_task_tools_absent_from_external_registrations(workspace, store):

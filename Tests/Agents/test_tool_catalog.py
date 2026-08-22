@@ -216,6 +216,7 @@ def test_builtin_provider_refuses_when_gate_denies():
     )
     assert out.ok is False
     assert "nope" in out.error
+    assert out.outcome == "blocked"
 
 
 def test_builtin_provider_runs_when_gate_permits():

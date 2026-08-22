@@ -45,7 +45,9 @@ from tldw_chatbook.Agents.agent_models import (
     TERMINAL_RUN_STATUSES,
     SPAWN_TOOL_NAME,
     STEP_ERROR,
+    STEP_MODEL,
     STEP_SPAWN,
+    STEP_TOOL_CALL,
     STEP_TOOL_RESULT,
     AgentConfig,
     AgentStep,
@@ -53,6 +55,7 @@ from tldw_chatbook.Agents.agent_models import (
     SkillFileBindings,
     ToolCall,
     ToolCatalogEntry,
+    ToolOutcome,
     ToolResult,
     ToolSchema,
 )
@@ -78,6 +81,20 @@ from tldw_chatbook.Agents.project_instruction_runtime import (
 from tldw_chatbook.Agents.native_tools import provider_supports_native_tools
 from tldw_chatbook.Agents.agent_stream import StreamGate
 from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator, FleetHandle
+from tldw_chatbook.Agents.local_tool_provider import (
+    LOCAL_DENY_REFUSAL,
+    LOCAL_GATE_ERROR_REFUSAL,
+    LOCAL_KILL_SWITCH_REFUSAL,
+    LOCAL_ROOT_CHANGED_REFUSAL,
+    LOCAL_TIMEOUT_REFUSAL,
+)
+from tldw_chatbook.Agents.mcp_tool_provider import (
+    DENY_REFUSAL as MCP_DENY_REFUSAL,
+    KILL_SWITCH_REFUSAL as MCP_KILL_SWITCH_REFUSAL,
+    TIMEOUT_REFUSAL as MCP_TIMEOUT_REFUSAL,
+    UNRESOLVED_REFUSAL as MCP_UNRESOLVED_REFUSAL,
+    USER_DENY_REFUSAL as MCP_USER_DENY_REFUSAL,
+)
 from tldw_chatbook.Agents.tool_catalog import (
     BuiltinToolProvider,
     SkillToolProvider,
@@ -86,9 +103,15 @@ from tldw_chatbook.Agents.tool_catalog import (
 )
 from tldw_chatbook.Tools.workspace_file_roots import workspace_context_note
 from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleActivityPresentation,
+    ConsoleActivityStatus,
     ConsoleChatMessage,
     ConsoleMessageRole,
     ProjectInstructionActivationEvent,
+)
+from tldw_chatbook.Chat.console_chat_controller import (
+    KILL_SWITCH_REFUSAL as CONTROLLER_KILL_SWITCH_REFUSAL,
+    USER_DENIED_REFUSAL as CONTROLLER_USER_DENIED_REFUSAL,
 )
 from tldw_chatbook.Chat.console_display_state import (
     format_diff_feedback_disclosure,
@@ -903,6 +926,317 @@ def _sanitize_task_marker_label(text: str) -> str:
         for char in flattened
     )
     return sanitized[:200]
+
+
+_PRIVATE_REASONING_TAG_RE = re.compile(
+    r"""
+    (?:
+        <\s*/?\s*(?:
+            think(?:ing)?
+            |analysis
+            |reasoning(?:[_\s-]?(?:content|details?))?
+            |chain[_\s-]?of[_\s-]?thought
+            |cot
+        )\b[^>]*>
+        |
+        \[\s*/?\s*(?:
+            think(?:ing)?
+            |analysis
+            |reasoning(?:[_\s-]?(?:content|details?))?
+            |chain[_\s-]?of[_\s-]?thought
+            |cot
+        )\s*\]
+        |
+        ```\s*(?:
+            think(?:ing)?
+            |analysis
+            |reasoning(?:[_\s-]?(?:content|details?))?
+            |chain[_\s-]?of[_\s-]?thought
+            |cot
+        )\b
+        |
+        <\|\s*(?:
+            think(?:ing)?
+            |analysis
+            |reasoning(?:[_\s-]?(?:content|details?))?
+            |chain[_\s-]?of[_\s-]?thought
+            |cot
+        )\s*\|>
+        |
+        <\|\s*channel\s*\|>\s*(?:thinking|analysis|reasoning)\b
+        |
+        (?:^|\n)\s*(?:
+            (?:begin|end)\s+(?:
+                thinking
+                |analysis
+                |reasoning(?:[_\s-]?(?:content|details?))?
+                |chain[_\s-]?of[_\s-]?thought
+            )\s*:?\s*(?=$|\n)
+            |
+            (?:
+                thinking
+                |analysis
+                |reasoning(?:[_\s-]?(?:content|details?))?
+                |chain[_\s-]?of[_\s-]?thought
+            )\s*:\s*
+        )
+    )
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+_TOOL_PAYLOAD_KEY_RE = re.compile(
+    r"(?i)(?:[\"']?\b(?:tool_calls?|function_call|arguments)\b[\"']?\s*:)"
+)
+
+_TOOL_CALL_SHAPE_RE = re.compile(
+    r"""
+    (?:
+        <\s*/?\s*(?:tool_(?:calls?|use)|function_call)\b[^>]*>
+        |
+        \[\s*/?\s*(?:tool_(?:calls?|use)|function_call)\s*\]
+        |
+        \b(?:calling|invoking)\b[\s\S]*?
+        \b(?:tool|function)\b[\s\S]*?\{
+    )
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+_THINKING_PROVING_STEP_KINDS = frozenset(
+    {STEP_TOOL_CALL, STEP_SPAWN, STEP_TOOL_RESULT}
+)
+
+
+def safe_intermediate_thinking_summary(summary: str | None) -> str | None:
+    """Return a bounded visible model preamble, never private reasoning.
+
+    ``AgentStep.summary`` is the run rail's existing visible-summary seam.
+    Even there, this disclosure stays conservative: provider-private wrapper
+    shapes reject the whole value, fenced payloads are discarded, and an
+    explicit tool/function payload key rejects the remaining visible prefix.
+    No redaction copy is returned because that would create fake detail.
+
+    Args:
+        summary: Existing visible step summary, or ``None``.
+
+    Returns:
+        A bounded terminal-safe summary, or ``None`` when the value is empty
+        or unsafe to disclose.
+    """
+    raw = str(summary or "")
+    # The terminal-safe helper below uses str.splitlines(), whose boundary
+    # vocabulary is wider than just LF. Normalize through that exact seam
+    # before matching line-anchored private headers so CR, VT, FF, NEL, and
+    # Unicode line/paragraph separators cannot become visible only after the
+    # privacy check has already missed them.
+    normalized = "\n".join(raw.splitlines())
+    if any(
+        ord(char) < 0x20 or 0x7F <= ord(char) <= 0x9F
+        for char in normalized
+        if char != "\n"
+    ):
+        # Non-line controls can split or prefix every private/payload token
+        # this function recognizes. Reject instead of attempting to guess
+        # whether removing/replacing one would reveal a hidden wrapper.
+        return None
+    if _PRIVATE_REASONING_TAG_RE.search(normalized):
+        return None
+    visible = normalized.split("```", 1)[0]
+    if _TOOL_PAYLOAD_KEY_RE.search(visible) or _TOOL_CALL_SHAPE_RE.search(visible):
+        return None
+    safe = _sanitize_task_marker_label(visible).strip()
+    if not safe:
+        return None
+    return _truncate_step_text(
+        safe,
+        limit=_console_tool_result_display_cap(),
+    )
+
+
+def build_intermediate_thinking_marker(
+    summary: str | None,
+) -> ConsoleChatMessage:
+    """Build one session-only Thinking activity from a visible step summary.
+
+    Args:
+        summary: Existing visible step summary, or ``None``.
+
+    Returns:
+        A display-only Thinking marker containing only the bounded safe
+        summary.
+    """
+    safe_summary = safe_intermediate_thinking_summary(summary)
+    return ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL,
+        content=safe_summary or "",
+        status="complete",
+        activity_presentation=ConsoleActivityPresentation(
+            "thinking", "Thinking", "done"
+        ),
+        # A Thinking row never carries uncapped/raw model text. Its bounded
+        # content is the complete safe detail, so a full-output sidecar would
+        # only add a dead expansion affordance (or weaken the privacy cap).
+        tool_output_full=None,
+    )
+
+
+def _step_proves_intermediate_tool_work(kind: str) -> bool:
+    """Return whether the next primary step proves its model round used tools."""
+    return kind in _THINKING_PROVING_STEP_KINDS
+
+
+class _PendingPrimaryThinkingDeriver:
+    """Derive at most one Thinking marker from each primary model round."""
+
+    def __init__(self) -> None:
+        self._has_pending_model = False
+        self._pending_summary: str | None = None
+
+    def observe(
+        self,
+        step: AgentStep | Mapping[str, Any],
+        agent_kind: str,
+    ) -> ConsoleChatMessage | None:
+        """Observe one attributed step and return a marker before it, if proven."""
+        if agent_kind != AGENT_KIND_PRIMARY:
+            return None
+        if isinstance(step, Mapping):
+            kind = str(step.get("kind") or "")
+            summary_value = step.get("summary")
+        else:
+            kind = step.kind
+            summary_value = step.summary
+        summary = None if summary_value is None else str(summary_value)
+        if kind == STEP_MODEL:
+            # A consecutive model step proves the earlier pending round did
+            # not initiate tool work. Replace it; if this is the final answer
+            # no later proving step will ever flush it.
+            self._has_pending_model = True
+            self._pending_summary = summary
+            return None
+        if not self._has_pending_model:
+            return None
+        pending_summary = self._pending_summary
+        self._has_pending_model = False
+        self._pending_summary = None
+        if not _step_proves_intermediate_tool_work(kind):
+            return None
+        return build_intermediate_thinking_marker(pending_summary)
+
+
+_BUILTIN_KILL_SWITCH_REFUSAL = "tool execution is disabled by the kill switch"
+_BUILTIN_DENY_REFUSAL_PREFIX = "tool is set to Off: "
+_BUILTIN_UNRESOLVED_REFUSAL_PREFIX = (
+    "tool requires approval and none was granted: "
+)
+_CONTROLLER_USER_DENIED_PREFIX = CONTROLLER_USER_DENIED_REFUSAL.partition(
+    "{name}"
+)[0]
+_BLOCKED_PROVIDER_REFUSALS = frozenset(
+    {
+        _BUILTIN_KILL_SWITCH_REFUSAL,
+        LOCAL_DENY_REFUSAL,
+        LOCAL_TIMEOUT_REFUSAL,
+        LOCAL_KILL_SWITCH_REFUSAL,
+        LOCAL_GATE_ERROR_REFUSAL,
+        LOCAL_ROOT_CHANGED_REFUSAL,
+        MCP_DENY_REFUSAL,
+        MCP_USER_DENY_REFUSAL,
+        MCP_UNRESOLVED_REFUSAL,
+        MCP_TIMEOUT_REFUSAL,
+        MCP_KILL_SWITCH_REFUSAL,
+    }
+)
+_BLOCKED_PROVIDER_REFUSAL_PREFIXES = (
+    _BUILTIN_DENY_REFUSAL_PREFIX,
+    _CONTROLLER_USER_DENIED_PREFIX,
+    _BUILTIN_UNRESOLVED_REFUSAL_PREFIX,
+)
+
+
+def _is_direct_controller_block(result: str) -> bool:
+    """Return whether ``result`` is a pre-dispatch Console review refusal."""
+    return result == CONTROLLER_KILL_SWITCH_REFUSAL or result.startswith(
+        _CONTROLLER_USER_DENIED_PREFIX
+    )
+
+
+def _is_blocked_tool_refusal(error: str) -> bool:
+    """Match canonical dispatched-provider permission refusal copy."""
+    return error in _BLOCKED_PROVIDER_REFUSALS or error.startswith(
+        _BLOCKED_PROVIDER_REFUSAL_PREFIXES
+    )
+
+
+def classify_activity_status(
+    kind: str,
+    result: Any = None,
+    *,
+    tool_outcome: ToolOutcome | None = None,
+) -> ConsoleActivityStatus:
+    """Classify one step from protocol facts, never its formatted marker."""
+    if kind == STEP_APPROVAL_TIMEOUT:
+        return "blocked"
+    if kind == STEP_ERROR:
+        return "failed"
+    if kind != STEP_TOOL_RESULT:
+        return "done"
+    if tool_outcome == "success":
+        return "success"
+    if tool_outcome == "failed":
+        return "failed"
+    if tool_outcome == "blocked":
+        return "blocked"
+    text = str(result if result is not None else "")
+    if _is_direct_controller_block(text):
+        return "blocked"
+    if not text.startswith("ERROR:"):
+        return "success"
+    error = text.removeprefix("ERROR:").strip()
+    return "blocked" if _is_blocked_tool_refusal(error) else "failed"
+
+
+def _activity_label(value: object, *, fallback: str) -> str:
+    """Return one non-empty, bounded literal label for presentation metadata."""
+    sanitized = _sanitize_task_marker_label(str(value or "")).strip()
+    return sanitized or fallback
+
+
+def build_step_activity_presentation(
+    kind: str,
+    *,
+    tool_name: str | None = None,
+    result: Any = None,
+    tool_outcome: ToolOutcome | None = None,
+) -> ConsoleActivityPresentation:
+    """Build bounded presentation metadata directly from an agent step."""
+    status = classify_activity_status(kind, result, tool_outcome=tool_outcome)
+    if kind == STEP_TOOL_RESULT:
+        return ConsoleActivityPresentation(
+            "tool",
+            _activity_label(tool_name, fallback="Tool"),
+            status,
+        )
+    if kind == STEP_SPAWN:
+        return ConsoleActivityPresentation("spawn", "Sub-agent", status)
+    if kind == STEP_APPROVAL_TIMEOUT:
+        return ConsoleActivityPresentation(
+            "warning",
+            _activity_label(tool_name, fallback="Approval"),
+            status,
+        )
+    if kind == STEP_ERROR:
+        return ConsoleActivityPresentation(
+            "warning",
+            _activity_label(tool_name, fallback="Error"),
+            status,
+        )
+    return ConsoleActivityPresentation(
+        "activity",
+        _activity_label(tool_name or kind, fallback="Activity"),
+        status,
+    )
 
 
 def format_todo_marker(tasks: list[dict[str, object]]) -> str:
@@ -3743,6 +4077,7 @@ class ConsoleAgentBridge:
         # source of truth for this conversation from here on, so any
         # previously cached historical (DB-derived) summary is stale.
         self._historical_cache.pop(conversation_id, None)
+        thinking_deriver = _PendingPrimaryThinkingDeriver()
 
         def on_step(step: AgentStep, agent_kind: str, run_id: str) -> None:
             # PR 2a (task-3): AgentService now attributes every step to its
@@ -3787,7 +4122,17 @@ class ConsoleAgentBridge:
             tool_diff: tuple[str, str, str] | None = None
             if step.kind == STEP_TOOL_RESULT and pending_diffs:
                 tool_diff = _pair_step_diff(pending_diffs, step.tool_name)
+            thinking_marker = thinking_deriver.observe(step, agent_kind)
             if agent_kind == AGENT_KIND_PRIMARY:
+                if thinking_marker is not None:
+                    self._append_marker(
+                        session_id,
+                        thinking_marker.content,
+                        full_output=thinking_marker.tool_output_full,
+                        activity_presentation=(
+                            thinking_marker.activity_presentation
+                        ),
+                    )
                 if step.kind == STEP_SPAWN:
                     # PR2b Task 2: this is this run's ONLY source of rows
                     # on the inline path (fleet off, `[agents]
@@ -3827,6 +4172,12 @@ class ConsoleAgentBridge:
                             marker_text=marker_text,
                         ),
                         tool_diff=tool_diff,
+                        activity_presentation=build_step_activity_presentation(
+                            step.kind,
+                            tool_name=step.tool_name,
+                            result=step.result,
+                            tool_outcome=step.tool_outcome,
+                        ),
                     )
             # Content-free operational logging for tool outcomes. The actual
             # invocation lives inside AgentService, so this intentionally
@@ -4293,6 +4644,9 @@ class ConsoleAgentBridge:
                             role=ConsoleMessageRole.TOOL,
                             content=format_diff_feedback_disclosure(
                                 disclosed_notes
+                            ),
+                            activity_presentation=ConsoleActivityPresentation(
+                                "feedback", "Feedback delivered", "done"
                             ),
                         )
                 except Exception:  # noqa: BLE001 -- notes must never break the reply
@@ -5586,9 +5940,26 @@ class ConsoleAgentBridge:
         blocks: list[tuple[str | None, list[ConsoleChatMessage]]] = []
         for record in records:
             block: list[ConsoleChatMessage] = []
-            for step in record.get("steps") or []:
+            steps = record.get("steps") or []
+            for index, step in enumerate(steps):
+                kind = str(step.get("kind") or "")
+                # Resume's persisted primary run has no interleaved child
+                # steps. Immediate look-ahead is therefore equivalent to
+                # the live pending-primary state machine above: only a
+                # proving next primary step turns this model round into a
+                # Thinking row; a final model round has no proving successor.
+                if (
+                    kind == STEP_MODEL
+                    and index + 1 < len(steps)
+                    and _step_proves_intermediate_tool_work(
+                        str(steps[index + 1].get("kind") or "")
+                    )
+                ):
+                    block.append(
+                        build_intermediate_thinking_marker(step.get("summary"))
+                    )
                 text = format_agent_step_marker(
-                    str(step.get("kind") or ""),
+                    kind,
                     tool_name=step.get("tool_name"),
                     result=step.get("result"),
                     summary=step.get("summary"),
@@ -5599,6 +5970,12 @@ class ConsoleAgentBridge:
                             role=ConsoleMessageRole.TOOL,
                             content=text,
                             status="complete",
+                            activity_presentation=build_step_activity_presentation(
+                                str(step.get("kind") or ""),
+                                tool_name=step.get("tool_name"),
+                                result=step.get("result"),
+                                tool_outcome=step.get("tool_outcome"),
+                            ),
                             # AC#5: a resumed marker is as expandable as a
                             # live one -- the step rows carry the full result.
                             tool_output_full=full_step_output(
@@ -5645,6 +6022,15 @@ class ConsoleAgentBridge:
                         ),
                         status="complete",
                         change_review_run_id=str(record.get("id")),
+                        activity_presentation=ConsoleActivityPresentation(
+                            "changes",
+                            (
+                                "Sub-agent changes"
+                                if _rows is post_turn_rows
+                                else "Changes"
+                            ),
+                            "done",
+                        ),
                     )
                 )
                 if _rows is turn_rows and any(
@@ -5656,6 +6042,9 @@ class ConsoleAgentBridge:
                             role=ConsoleMessageRole.TOOL,
                             content=format_concurrent_subagent_change_marker(),
                             status="complete",
+                            activity_presentation=ConsoleActivityPresentation(
+                                "warning", "Concurrent sub-agent", "done"
+                            ),
                         )
                     )
             # Parity for the FAILURE shape too (review finding 2): live
@@ -5672,6 +6061,9 @@ class ConsoleAgentBridge:
                                 str(_row.get("tracking_error", "")),
                             ),
                             status="complete",
+                            activity_presentation=ConsoleActivityPresentation(
+                                "warning", "Change tracking", "failed"
+                            ),
                         )
                     )
             # task-6 (turn-file-annotate, spec §4) + fix round: append this
@@ -5700,6 +6092,9 @@ class ConsoleAgentBridge:
                             disclosure_batches[str(record.get("id"))][_delivered_at]
                         ),
                         status="complete",
+                        activity_presentation=ConsoleActivityPresentation(
+                            "feedback", "Feedback delivered", "done"
+                        ),
                     )
                 )
             blocks.append((record.get("assistant_message_id"), block))
@@ -5717,7 +6112,13 @@ class ConsoleAgentBridge:
         ``call_from_thread`` marshalling, exactly like the live step-marker
         path. Nothing is re-derived from durable AgentRuns state on restart.
         """
-        self._append_marker(session_id, format_todo_marker(tasks))
+        self._append_marker(
+            session_id,
+            format_todo_marker(tasks),
+            activity_presentation=ConsoleActivityPresentation(
+                "tasks", "Tasks updated", "done"
+            ),
+        )
 
     # -- internals ------------------------------------------------------
 
@@ -5765,12 +6166,24 @@ class ConsoleAgentBridge:
                         sum(r.dels for r in changed),
                     ),
                     change_review_run_id=run_id,
+                    activity_presentation=ConsoleActivityPresentation(
+                        "changes",
+                        (
+                            "Sub-agent changes"
+                            if kind == CHANGE_KIND_SUBAGENT_POST_TURN
+                            else "Changes"
+                        ),
+                        "done",
+                    ),
                 )
                 if kind == CHANGE_KIND_TURN_CONCURRENT_SUBAGENT:
                     self._store.append_message(
                         session_id,
                         role=ConsoleMessageRole.TOOL,
                         content=format_concurrent_subagent_change_marker(),
+                        activity_presentation=ConsoleActivityPresentation(
+                            "warning", "Concurrent sub-agent", "done"
+                        ),
                     )
             for rec in records:
                 if rec.tracking_error:
@@ -5779,6 +6192,9 @@ class ConsoleAgentBridge:
                         role=ConsoleMessageRole.TOOL,
                         content=format_change_tracking_failure_marker(
                             rec.root, rec.tracking_error
+                        ),
+                        activity_presentation=ConsoleActivityPresentation(
+                            "warning", "Change tracking", "failed"
                         ),
                     )
         except Exception:  # noqa: BLE001 -- a marker must never fail the run
@@ -5822,6 +6238,7 @@ class ConsoleAgentBridge:
         *,
         full_output: str | None = None,
         tool_diff: tuple[str, str, str] | None = None,
+        activity_presentation: ConsoleActivityPresentation | None = None,
     ) -> None:
         # Kept raw (no escaping): both consumers render markup-off --
         # console_transcript.py's _message_render_text builds a Content via
@@ -5842,6 +6259,7 @@ class ConsoleAgentBridge:
                 content=text,
                 tool_output_full=full_output,
                 tool_diff=tool_diff,
+                activity_presentation=activity_presentation,
             )
         except KeyError:
             pass  # session vanished mid-run; the rail still has the live snapshot

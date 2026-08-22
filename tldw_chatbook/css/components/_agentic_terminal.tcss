@@ -4326,6 +4326,180 @@ with stray left-edge border fragments), and padding 0 1 so the full
     color: $ds-text-primary;
 }
 
+/* TASK-19426: one causal Assistant turn owns its activity disclosures,
+   final answer, and adjuncts. The left-edge ownership accent is singular;
+   nested activity rows stay quiet so they read as evidence inside the turn
+   rather than as neighboring transcript cards. */
+.console-assistant-turn {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    margin: 0;
+    padding: 0 1 1 1;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+.-dark-mode .console-assistant-turn {
+    border-left: tall $ds-chat-assistant-accent-dark;
+}
+
+.-light-mode .console-assistant-turn {
+    border-left: tall $ds-chat-assistant-accent-light;
+}
+
+.console-assistant-turn > .console-message-header,
+.console-assistant-activity-stack,
+.console-assistant-adjunct-stack {
+    width: 100%;
+    height: auto;
+    min-height: 0;
+}
+
+.console-assistant-turn > .console-message-header {
+    height: 1;
+    min-height: 1;
+}
+
+.console-assistant-activity-stack {
+    padding: 0 1;
+}
+
+.console-assistant-turn > .console-transcript-message {
+    width: 100%;
+    height: auto;
+    margin: 1 0 0 0;
+}
+
+/* Selection belongs to the answer, not its entire ownership surface. */
+.console-assistant-turn > .console-transcript-message-selected {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+}
+
+.console-activity-disclosure {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    margin: 0;
+    padding: 0;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+.console-activity-header {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    overflow: hidden;
+}
+
+.console-activity-label {
+    width: 1fr;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    overflow: hidden;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+.console-activity-status {
+    width: 9;
+    min-width: 9;
+    max-width: 9;
+    height: 1;
+    min-height: 1;
+    text-align: right;
+    text-style: bold;
+}
+
+.console-activity-status-success {
+    background: $ds-status-ready 10%;
+    color: $ds-text-primary;
+}
+
+.console-activity-status-blocked {
+    background: $ds-status-blocked 16%;
+    color: $ds-text-primary;
+}
+
+.console-activity-status-failed {
+    background: $ds-status-error 16%;
+    color: $ds-text-primary;
+}
+
+.console-activity-status-done {
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+/* These height-one headers opt out of the global outline because it would
+   paint over their only content row. Text + background + underline provide
+   the non-color focus cue without changing geometry in either theme. */
+.console-activity-header:focus {
+    outline: none;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+.console-activity-header-selected {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold;
+}
+
+.console-activity-header:focus > .console-activity-status,
+.console-activity-header-selected > .console-activity-status {
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+    text-style: bold underline;
+}
+
+.console-activity-disclosure-selected > .console-activity-action-stack {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+}
+
+.console-activity-action-stack {
+    width: 100%;
+    height: auto;
+    min-height: 0;
+    padding: 0 1;
+}
+
+.console-activity-detail-stack {
+    width: 1fr;
+    min-width: 0;
+    height: auto;
+    min-height: 0;
+    margin: 0 1 1 1;
+    padding: 0 1;
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+.console-activity-disclosure-expanded > .console-activity-detail-stack {
+    background: $ds-surface-panel;
+}
+
+.console-activity-detail-stack .console-transcript-message {
+    width: 100%;
+    height: auto;
+    padding: 0;
+    background: transparent;
+}
+
+.console-activity-detail-stack .console-transcript-tool-diff {
+    padding: 0 0 0 2;
+}
+
 .console-transcript-message-roleplay-user,
 .console-transcript-message-role-user {
     background: $primary 8%;

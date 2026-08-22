@@ -244,6 +244,59 @@ class ConsoleFleetCompletionTarget:
 
 ConsoleMessageStatus = Literal["complete", "pending", "streaming", "stopped", "failed"]
 ConsoleMessageFeedback = Literal["up", "down"]
+ConsoleActivityKind = Literal[
+    "thinking",
+    "tool",
+    "spawn",
+    "tasks",
+    "changes",
+    "feedback",
+    "warning",
+    "activity",
+]
+ConsoleActivityStatus = Literal["success", "blocked", "failed", "done"]
+
+_CONSOLE_ACTIVITY_KINDS = frozenset(
+    {
+        "thinking",
+        "tool",
+        "spawn",
+        "tasks",
+        "changes",
+        "feedback",
+        "warning",
+        "activity",
+    }
+)
+_CONSOLE_ACTIVITY_STATUSES = frozenset({"success", "blocked", "failed", "done"})
+
+
+@dataclass(frozen=True)
+class ConsoleActivityPresentation:
+    """Bounded, session-only presentation facts for one activity marker."""
+
+    kind: ConsoleActivityKind
+    label: str
+    status: ConsoleActivityStatus
+
+    def __post_init__(self) -> None:
+        """Reject unbounded labels and values outside the public vocabulary."""
+        if self.kind not in _CONSOLE_ACTIVITY_KINDS:
+            raise ValueError("activity kind is invalid")
+        if (
+            not isinstance(self.label, str)
+            or not self.label.strip()
+            or len(self.label) > 200
+            or "\n" in self.label
+            or "\r" in self.label
+        ):
+            raise ValueError(
+                "activity label must be a non-empty single line <= 200 chars"
+            )
+        if self.status not in _CONSOLE_ACTIVITY_STATUSES:
+            raise ValueError("activity status is invalid")
+
+
 CONSOLE_GLOBAL_WORKSPACE_ID = "global"
 DEFAULT_CONSOLE_SESSION_TITLE = "Chat 1"
 
@@ -567,6 +620,9 @@ class ConsoleChatMessage:
     exchanges: tuple["ExchangeCapture", ...] = ()
     #: Safe current-session citation UI state. Never persisted or restored.
     citation_presentation: ConsoleCitationPresentation | None = None
+    #: Structured activity-header facts. Session-only; never persisted,
+    #: restored, sent to a provider, or written to the agent run log.
+    activity_presentation: ConsoleActivityPresentation | None = None
     #: TASK-1860: the FULL, untruncated tool result behind a TOOL marker.
     #: ``content`` is a preview capped by the Console display setting, so
     #: without this the whole result was unreachable from the transcript --

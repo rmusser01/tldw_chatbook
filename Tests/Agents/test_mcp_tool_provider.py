@@ -657,6 +657,7 @@ def test_invoke_deny_refuses_and_records_decision(running_loop):
 
     assert result.ok is False
     assert result.error == DENY_REFUSAL
+    assert result.outcome == "blocked"
     assert service.record_tool_decision_calls == [
         ("local:srv", "run", "denied", "agent", None)
     ]
