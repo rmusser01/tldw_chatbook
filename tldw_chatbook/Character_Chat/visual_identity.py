@@ -2038,19 +2038,20 @@ def publish_visual_identity_candidate(
                 os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
                 dir_fd=versions_fd,
             )
-            write_file = lambda name, data: _write_private_publication_file(
-                staging_fd, name, data
-            )
-            read_file = lambda name, limit: _read_private_publication_file(
-                staging_fd, name, max_bytes=limit
-            )
+
+            def write_file(name, data):
+                return _write_private_publication_file(staging_fd, name, data)
+
+            def read_file(name, limit):
+                return _read_private_publication_file(staging_fd, name, max_bytes=limit)
+
         else:
-            write_file = lambda name, data: _write_private_publication_path(
-                staging_dir, name, data
-            )
-            read_file = lambda name, limit: _read_private_publication_path(
-                staging_dir, name, limit
-            )
+
+            def write_file(name, data):
+                return _write_private_publication_path(staging_dir, name, data)
+
+            def read_file(name, limit):
+                return _read_private_publication_path(staging_dir, name, limit)
 
         assets, manifest = _materialize_visual_identity_candidate(
             candidate,
