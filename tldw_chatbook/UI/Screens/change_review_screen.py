@@ -1729,7 +1729,11 @@ class ChangeReviewScreen(Screen):
                     "change_review: git detection failed; mode not offered"
                 )
                 detected = {}
-            app.call_from_thread(self._land_git_detection, detected)
+            # TASK-19703 AC #1: the same teardown-only guard every other
+            # landing uses, so a genuine bug in `_land_git_detection`
+            # surfaces as a WorkerFailed traceback rather than dying
+            # quietly on the worker thread.
+            _land_on_ui(app, self._land_git_detection, detected)
 
         self.run_worker(
             _detect,
@@ -4460,10 +4464,16 @@ class ChangeGitCommitModal(SafeModalDismissMixin, ModalScreen["dict | None"]):
                     "file_count": len(selected),
                 }
             )
-        except Exception:  # noqa: BLE001 -- never raise out of a handler
+        except Exception as exc:  # noqa: BLE001 -- never raise out of a handler
+            # TASK-19703 AC #2: returning silently here left the user
+            # pressing Commit with NOTHING happening -- no commit, no
+            # error, no dismissal, indistinguishable from a dead button.
+            # The broad catch stays (a handler must not raise into
+            # Textual); what changes is that the failure is now visible.
             logger.opt(exception=True).warning(
                 "change_review: commit modal submit failed"
             )
+            self._show_error(f"could not submit: {exc}")
 
     @on(Button.Pressed, "#change-git-commit-yes")
     def _confirm(self, event: Button.Pressed) -> None:
@@ -4738,10 +4748,23 @@ class ChangeGitPushModal(SafeModalDismissMixin, ModalScreen["dict | None"]):
                     "info": self._infos[root],
                 }
             )
-        except Exception:  # noqa: BLE001 -- never raise out of a handler
+        except Exception as exc:  # noqa: BLE001 -- never raise out of a handler
+            # TASK-19703 AC #2, as for the commit modal. This dialog has no
+            # inline error Static, so the report goes through `notify`
+            # rather than inventing a widget (and its CSS) for a path that
+            # only a bug reaches; the modal stays open so the user can
+            # cancel deliberately instead of guessing.
             logger.opt(exception=True).warning(
                 "change_review: push modal submit failed"
             )
+            try:
+                self.app.notify(
+                    f"Could not submit: {exc}", severity="error"
+                )
+            except Exception:  # noqa: BLE001 -- notify is best-effort
+                logger.opt(exception=True).debug(
+                    "change_review: push modal could not report its failure"
+                )
 
     @on(Button.Pressed, "#change-git-push-yes")
     def _confirm(self, event: Button.Pressed) -> None:

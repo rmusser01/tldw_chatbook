@@ -1,7 +1,7 @@
 ---
 id: TASK-19703
 title: 'Change review git modes: polish batch from whole-branch review'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-21'
 labels:
@@ -41,7 +41,49 @@ three artefacts should agree.
 ## Acceptance Criteria
 
 <!-- AC:BEGIN -->
-- [ ] #1 The detection worker's landing uses the same teardown-only guard as every other landing, so a real bug there surfaces as a traceback rather than a debug line
-- [ ] #2 A bug raised inside either git modal's submit reports itself to the user instead of leaving the confirm button silently inert; a test proves it
-- [ ] #3 The in-progress refusal's placement is consistent across the code, the design spec and the User Guide — whichever placement is chosen
+- [x] #1 The detection worker's landing uses the same teardown-only guard as every other landing, so a real bug there surfaces as a traceback rather than a debug line
+- [x] #2 A bug raised inside either git modal's submit reports itself to the user instead of leaving the confirm button silently inert; a test proves it
+- [x] #3 The in-progress refusal's placement is consistent across the code, the design spec and the User Guide — whichever placement is chosen
 <!-- AC:END -->
+
+## Implementation Notes
+
+Three items, all from TASK-16801's whole-branch review; each is a place a
+failure was reported less honestly than the rest of the feature manages.
+
+**AC #1 — the detection landing.** `_dispatch_git_detection`'s
+`call_from_thread` was the one landing not routed through `_land_on_ui`,
+the shared helper that tolerates ONLY Textual's teardown `RuntimeError`.
+Now routed, so a genuine bug in `_land_git_detection` surfaces as a
+`WorkerFailed` traceback instead of dying quietly on the worker thread.
+
+**AC #2 — both modals' submit.** Each `_submit` wraps its body in a broad
+`except` so it can never raise into a Textual handler — correct — but then
+returned SILENTLY, so pressing Commit (or Push) did nothing at all: no
+action, no error, no dismissal, indistinguishable from a dead button. The
+broad catch stays; the failure is now visible. The commit modal reuses its
+inline `#change-git-commit-error` Static; the push modal has no such widget
+and reports through `notify` rather than inventing one (plus CSS) for a
+path only a bug reaches. Both proven red first and mutation-checked:
+removing the two reports fails both new tests.
+
+**AC #3 — the in-progress refusal's placement.** Code, spec and Guide
+disagreed. The spec listed the merge/rebase/cherry-pick check as a
+modal-open gate (step 3) and the User Guide told users it fired "before the
+dialog even opens"; it actually ships as the engine's `in-progress-check`
+step, i.e. at confirm time. **Resolved by amending the documents, not the
+code.** The engine is the right home: the repository can enter a merge
+between modal-open and submit, so a pre-modal check could only ever be
+advisory — and an advisory check that passes and is then refused at submit
+is more confusing than one honest refusal, while duplicating it invites the
+two copies to drift. The Guide sentence bundled this together with the
+active-run refusal, which genuinely IS pre-modal, so the two are now stated
+separately with the reason for the difference. Guide stamped honestly: not
+driven live, corrected by reading the shipped code against the page's own
+claim.
+
+**Files:** `tldw_chatbook/UI/Screens/change_review_screen.py`,
+`Docs/superpowers/specs/2026-08-20-console-review-git-modes-design.md`,
+`Docs/User_Guide/console/agent-runs-and-tools.md`,
+`Tests/UI/test_change_review_commit_ui.py`,
+`Tests/UI/test_change_review_push_ui.py`.

@@ -416,9 +416,13 @@ optional "create branch first" field checks out a new branch before
 staging. The dialog also shows non-blocking **warnings** — they never stop
 the commit — for a detached HEAD ("this commit will not be on any
 branch") and for committing straight to `main` or `master`. Committing is
-**refused outright** (before the dialog even opens) while an agent run is
-active on that workspace, and separately while the repository is mid
-merge, rebase, or cherry-pick — finish or abort that operation first.
+**refused outright before the dialog even opens** while an agent run is
+active on that workspace. A repository that is mid merge, rebase, or
+cherry-pick is also refused, but at the moment you confirm rather than
+before the dialog opens — finish or abort that operation first. (The check
+runs then because the repository can enter a merge while the dialog is
+open, so checking earlier could only promise something that later stops
+being true.)
 
 **Push (`p` / the Push… button).** Always confirms in a dialog first,
 naming the repository, the branch, and where it's going. A branch with no
@@ -1659,3 +1663,5 @@ conversation with no turns yet may show no `current` entry; this is a
 pre-existing characteristic of the change-tracking roots this arc reused
 verbatim, not something Task 9 changed, and it is not re-verified live
 here.)*
+
+*Git-actions placement corrected @ TASK-19703 — 2026-08-22: the mid-merge/rebase/cherry-pick refusal was documented here as happening "before the dialog even opens", which is true of the active-run refusal but not of this one — it fires when you confirm. Not driven live; corrected by reading the shipped code (`commit_selected`'s `in-progress-check` step) against this page's claim, and the design spec was amended to match rather than the code changed (a pre-modal check could only be advisory, since the repository can enter a merge while the dialog is open).*
