@@ -1,6 +1,6 @@
 ---
 id: TASK-15455
-title: Console transcript: windowed mount for long-conversation load
+title: 'Console transcript: windowed mount for long-conversation load'
 status: Done
 assignee:
   - codex

@@ -1,6 +1,6 @@
 ---
 id: TASK-260
-title: RAG conversation search: batch fetch + skip image BLOBs
+title: 'RAG conversation search: batch fetch + skip image BLOBs'
 status: Done
 assignee: ['@claude']
 created_date: '2026-07-16 14:30'

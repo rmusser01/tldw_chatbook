@@ -1,6 +1,6 @@
 ---
 id: TASK-15470
-title: Config persistence: batch writes and take them off the click path
+title: 'Config persistence: batch writes and take them off the click path'
 status: Done
 assignee:
   - '@claude'

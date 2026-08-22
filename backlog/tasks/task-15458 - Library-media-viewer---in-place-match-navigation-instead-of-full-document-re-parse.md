@@ -1,6 +1,6 @@
 ---
 id: TASK-15458
-title: Library media viewer: in-place match navigation instead of full-document re-parse
+title: 'Library media viewer: in-place match navigation instead of full-document re-parse'
 status: Done
 assignee: []
 created_date: '2026-08-11 12:05'
