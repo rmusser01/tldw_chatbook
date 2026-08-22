@@ -536,7 +536,10 @@ class ConsoleInspectorRail(Vertical):
         if not self._header_reveal_is_current(outer, header, target, generation):
             return
         outer.scroll_to(
-            y=max(0, header.virtual_region.y),
+            y=max(
+                0,
+                outer.scroll_y + header.region.y - outer.content_region.y,
+            ),
             animate=False,
             immediate=True,
             force=True,
@@ -561,7 +564,10 @@ class ConsoleInspectorRail(Vertical):
         if not self._header_reveal_is_current(outer, header, target, generation):
             return
         outer.scroll_to(
-            y=max(0, header.virtual_region.y),
+            y=max(
+                0,
+                outer.scroll_y + header.region.y - outer.content_region.y,
+            ),
             animate=False,
             immediate=True,
             force=True,

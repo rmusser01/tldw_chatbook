@@ -134,6 +134,11 @@ def _fully_inside_outer(header: Widget, outer: Widget) -> bool:
     )
 
 
+def _external_boundary_header(section: ConsoleBoundedSection) -> Widget:
+    siblings = list(section.parent.children)
+    return siblings[siblings.index(section) - 1]
+
+
 def _staged_state(row_count: int) -> ConsoleStagedContextState:
     return ConsoleStagedContextState(
         heading="Sources",
@@ -595,6 +600,101 @@ async def test_navigation_focuses_overflow_viewport_contains_header_and_preserve
         assert sources.viewport.scroll_y == 2
         assert tray.display is tray_display
         assert sources.display is section_display
+
+
+@pytest.mark.asyncio
+async def test_nested_selected_boundary_uses_actual_sibling_header_coordinates():
+    async with make_console_pilot(size=(160, 30)) as pilot:
+        rail = await _open_inspector(pilot)
+        outer = rail.query_one("#console-inspector-rail-body")
+        selected = rail.query_one(
+            "#console-bounded-section-selected-conversation",
+            ConsoleBoundedSection,
+        )
+        run_wrapper = selected.parent.parent
+        offset_spacer = Static("", id="nested-run-offset-spacer")
+        offset_spacer.styles.height = 20
+        await outer.mount(offset_spacer, before=run_wrapper)
+        selected.set_allocation(1)
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: selected.viewport.can_focus,
+            description="nested Selected boundary overflow",
+        )
+        boundaries = rail._mounted_boundaries()
+        selected_index = next(
+            index
+            for index, (section, _header, _root) in enumerate(boundaries)
+            if section is selected
+        )
+        actual_header = _external_boundary_header(selected)
+        assert actual_header is boundaries[selected_index][1]
+        assert actual_header is not selected.parent.children[0]
+
+        previous_header = boundaries[selected_index - 1][1]
+        previous_header.can_focus = True
+        previous_header.focus()
+        await pilot.press("n")
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: pilot.app.focused is selected.viewport,
+            description="nested Selected target focuses its viewport exactly",
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        assert pilot.app.focused is selected.viewport
+        assert _fully_inside_outer(actual_header, outer)
+
+
+@pytest.mark.asyncio
+async def test_newer_navigation_prevents_stale_delayed_header_reveal():
+    async with make_console_pilot(size=(160, 30)) as pilot:
+        rail = await _open_inspector(pilot)
+        outer = rail.query_one("#console-inspector-rail-body")
+        selected = rail.query_one(
+            "#console-bounded-section-selected-conversation",
+            ConsoleBoundedSection,
+        )
+        boundaries = rail._mounted_boundaries()
+        selected_index = next(
+            index
+            for index, (section, _header, _root) in enumerate(boundaries)
+            if section is selected
+        )
+        successor = boundaries[selected_index + 1][0]
+        run_wrapper = selected.parent.parent
+        offset_spacer = Static("", id="stale-run-offset-spacer")
+        offset_spacer.styles.height = 20
+        await outer.mount(offset_spacer, before=run_wrapper)
+        selected.set_allocation(1)
+        await _overflow(successor)
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: selected.viewport.can_focus and successor.viewport.can_focus,
+            description="two overflowing targets for stale reveal guard",
+        )
+
+        previous_header = boundaries[selected_index - 1][1]
+        previous_header.can_focus = True
+        previous_header.focus()
+        await pilot.press("n", "n")
+        successor_header = _external_boundary_header(successor)
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: (
+                pilot.app.focused is successor.viewport
+                and _fully_inside_outer(successor_header, outer)
+            ),
+            description="newer nested reveal settling before stale callback",
+        )
+        settled_scroll_y = outer.scroll_y
+        await pilot.pause()
+        await pilot.pause()
+
+        assert pilot.app.focused is successor.viewport
+        assert outer.scroll_y == settled_scroll_y
+        assert _fully_inside_outer(successor_header, outer)
 
 
 @pytest.mark.asyncio
