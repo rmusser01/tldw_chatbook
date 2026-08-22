@@ -585,149 +585,276 @@ class AudioBookGenerationWidget(Widget):
             self.app.notify(f"Failed to import file: {e}", severity="error")
 
     def _import_from_notes(self) -> None:
-        """Import content from notes"""
+        """Import content from notes.
+
+        Task-19576: this used to import `fetch_all_notes`/`fetch_note_by_id`
+        from `tldw_chatbook.DB.ChaChaNotes_DB` -- neither function exists,
+        and the imports sat outside the `try:` block, so every use of this
+        action crashed with an uncaught `ImportError`. This now routes
+        through the shared `notes_scope_service` seam (the same one
+        Library/Home use) instead of resurrecting module-level DB
+        functions. The service is async, so the actual work happens in
+        `_import_from_notes_worker`.
+        """
+        self._import_from_notes_worker()
+
+    @work(exclusive=True, group="audiobook-import-notes")
+    async def _import_from_notes_worker(self) -> None:
+        """Worker half of `_import_from_notes` (see its docstring)."""
+        from tldw_chatbook.Notes.notes_scope_service import ScopeType
         from tldw_chatbook.Widgets.Note_Widgets.note_selection_dialog import (
             NoteSelectionDialog,
         )
-        from tldw_chatbook.DB.ChaChaNotes_DB import fetch_all_notes
+
+        notes_scope_service = getattr(self.app, "notes_scope_service", None)
+        if notes_scope_service is None:
+            self.app.notify(
+                "Notes are unavailable in this session.", severity="error"
+            )
+            return
+
+        user_id = getattr(self.app, "notes_user_id", None) or "default_user"
 
         try:
-            # Fetch all notes from database
-            notes = fetch_all_notes()
-            if not notes:
-                self.app.notify("No notes found in database", severity="warning")
-                return
-
-            # Show note selection dialog
-            def handle_note_selection(selected_ids: Optional[List[int]]) -> None:
-                if selected_ids:
-                    # Fetch full content for selected notes
-                    from tldw_chatbook.DB.ChaChaNotes_DB import fetch_note_by_id
-
-                    combined_content = []
-
-                    for note_id in selected_ids:
-                        note = fetch_note_by_id(note_id)
-                        if note:
-                            # Add note title as chapter if it exists
-                            if note.get("title"):
-                                combined_content.append(f"# {note['title']}\n")
-                            combined_content.append(note.get("content", ""))
-                            combined_content.append("\n\n")  # Separator between notes
-
-                    # Load combined content
-                    self.content_text = "\n".join(combined_content)
-                    content_preview = self.query_one("#content-preview", TextArea)
-                    preview_text = (
-                        self.content_text[:1000] + "..."
-                        if len(self.content_text) > 1000
-                        else self.content_text
-                    )
-                    content_preview.load_text(preview_text)
-                    content_preview.disabled = False
-
-                    # Auto-detect chapters (see task-15478: the switch that
-                    # used to gate this is gone from the composed UI).
-                    self._detect_chapters()
-
-                    self.app.notify(
-                        f"Imported {len(selected_ids)} note(s)", severity="information"
-                    )
-
-            self.app.push_screen(NoteSelectionDialog(notes), handle_note_selection)
-
+            notes = await notes_scope_service.list_notes(
+                scope=ScopeType.LOCAL_NOTE,
+                user_id=user_id,
+            )
         except Exception as e:
             logger.error(f"Failed to import from notes: {e}")
             self.app.notify(f"Failed to import notes: {e}", severity="error")
+            return
+
+        if not notes:
+            self.app.notify("No notes found in database", severity="warning")
+            return
+
+        # `list_notes` already returns full note rows (title + content, not
+        # a preview), so the notes selected in the dialog below can be
+        # combined straight from this same page -- no second per-note fetch
+        # needed.
+        notes_by_id: Dict[str, Dict[str, Any]] = {}
+        dialog_notes: List[Dict[str, Any]] = []
+        for note in notes:
+            note_id = note.get("id")
+            if note_id is None:
+                continue
+            note_id = str(note_id)
+            notes_by_id[note_id] = note
+            dialog_notes.append(
+                {
+                    "note_id": note_id,
+                    "title": note.get("title", ""),
+                    "content": note.get("content", ""),
+                    "created_at": note.get("created_at", "Unknown"),
+                }
+            )
+
+        try:
+            selected_ids = await self.app.push_screen(
+                NoteSelectionDialog(dialog_notes), wait_for_dismiss=True
+            )
+        except Exception as e:
+            logger.error(f"Failed to import from notes: {e}")
+            self.app.notify(f"Failed to import notes: {e}", severity="error")
+            return
+
+        if not selected_ids:
+            return
+
+        combined_content = []
+        for note_id in selected_ids:
+            note = notes_by_id.get(str(note_id))
+            if note:
+                # Add note title as chapter if it exists
+                if note.get("title"):
+                    combined_content.append(f"# {note['title']}\n")
+                combined_content.append(note.get("content", ""))
+                combined_content.append("\n\n")  # Separator between notes
+
+        # Load combined content
+        self.content_text = "\n".join(combined_content)
+        content_preview = self.query_one("#content-preview", TextArea)
+        preview_text = (
+            self.content_text[:1000] + "..."
+            if len(self.content_text) > 1000
+            else self.content_text
+        )
+        content_preview.load_text(preview_text)
+        content_preview.disabled = False
+
+        # Auto-detect chapters (see task-15478: the switch that
+        # used to gate this is gone from the composed UI).
+        self._detect_chapters()
+
+        self.app.notify(
+            f"Imported {len(selected_ids)} note(s)", severity="information"
+        )
 
     def _import_from_conversation(self) -> None:
-        """Import content from conversation"""
+        """Import content from a conversation.
+
+        Task-19576: this used to import `fetch_all_conversations`/
+        `fetch_messages_by_conversation_id` from
+        `tldw_chatbook.DB.ChaChaNotes_DB` -- neither function exists, and
+        the imports sat outside the `try:` block, so every use of this
+        action crashed with an uncaught `ImportError` (same defect and
+        same fix shape as `_import_from_notes`). This now routes through
+        the shared `chat_conversation_scope_service` seam. The service is
+        async, so the actual work happens in
+        `_import_from_conversation_worker`.
+        """
+        self._import_from_conversation_worker()
+
+    # Bounded page walk for message loading (task-19576): the removed
+    # `fetch_messages_by_conversation_id` had no limit at all.
+    # `get_messages_with_context` pages in bounded chunks; this caps the
+    # total collected messages generously above what any audiobook-worthy
+    # conversation should reach, rather than reintroducing an unbounded read.
+    _CONVERSATION_IMPORT_PAGE_SIZE = 200
+    _CONVERSATION_IMPORT_MAX_MESSAGES = 5000
+
+    @work(exclusive=True, group="audiobook-import-conversation")
+    async def _import_from_conversation_worker(self) -> None:
+        """Worker half of `_import_from_conversation` (see its docstring)."""
         from tldw_chatbook.Widgets.conversation_selection_dialog import (
             ConversationSelectionDialog,
         )
-        from tldw_chatbook.DB.ChaChaNotes_DB import fetch_all_conversations
+
+        conversation_service = getattr(
+            self.app, "chat_conversation_scope_service", None
+        )
+        if conversation_service is None:
+            self.app.notify(
+                "Conversations are unavailable in this session.", severity="error"
+            )
+            return
 
         try:
-            # Fetch all conversations from database
-            conversations = fetch_all_conversations()
-            if not conversations:
-                self.app.notify(
-                    "No conversations found in database", severity="warning"
-                )
-                return
-
-            # Show conversation selection dialog
-            def handle_conversation_selection(
-                selection: Optional[Dict[str, Any]],
-            ) -> None:
-                if selection:
-                    # Fetch messages for selected conversation
-                    from tldw_chatbook.DB.ChaChaNotes_DB import (
-                        fetch_messages_by_conversation_id,
-                    )
-
-                    messages = fetch_messages_by_conversation_id(
-                        selection["conversation_id"]
-                    )
-
-                    if not messages:
-                        self.app.notify(
-                            "No messages found in conversation", severity="warning"
-                        )
-                        return
-
-                    # Build content based on options
-                    content_parts = []
-                    for msg in messages:
-                        role = msg.get("role", "unknown")
-                        content = msg.get("content", "")
-
-                        # Filter based on inclusion options
-                        if selection.get("include_all"):
-                            pass  # Include all messages
-                        elif selection.get("include_user") and role != "user":
-                            continue
-                        elif selection.get("include_assistant") and role != "assistant":
-                            continue
-
-                        # Format based on speaker option
-                        if selection.get("include_speakers"):
-                            speaker_name = "User" if role == "user" else "Assistant"
-                            content_parts.append(f"{speaker_name}: {content}")
-                        else:
-                            content_parts.append(content)
-
-                        content_parts.append("")  # Empty line between messages
-
-                    # Load combined content
-                    self.content_text = "\n".join(content_parts)
-                    content_preview = self.query_one("#content-preview", TextArea)
-                    preview_text = (
-                        self.content_text[:1000] + "..."
-                        if len(self.content_text) > 1000
-                        else self.content_text
-                    )
-                    content_preview.load_text(preview_text)
-                    content_preview.disabled = False
-
-                    # Auto-detect chapters might not be suitable for
-                    # conversations, but run it anyway (see task-15478: the
-                    # switch that used to gate this is gone from the UI).
-                    self._detect_chapters()
-
-                    self.app.notify(
-                        f"Imported conversation with {len(messages)} messages",
-                        severity="information",
-                    )
-
-            self.app.push_screen(
-                ConversationSelectionDialog(conversations),
-                handle_conversation_selection,
+            payload = await conversation_service.list_conversations(
+                mode="local",
+                # "all" spans global- and workspace-scoped conversations, so
+                # a Console chat saved inside a workspace session is still
+                # importable here.
+                scope_type="all",
+                limit=100,
+                offset=0,
             )
-
         except Exception as e:
             logger.error(f"Failed to import from conversation: {e}")
             self.app.notify(f"Failed to import conversation: {e}", severity="error")
+            return
+
+        items = payload.get("items") if isinstance(payload, dict) else None
+        conversations: List[Dict[str, Any]] = []
+        for item in items or []:
+            conversation_id = item.get("id")
+            if conversation_id is None:
+                continue
+            conversations.append(
+                {
+                    "conversation_id": str(conversation_id),
+                    "title": item.get("title", ""),
+                    "model_name": item.get("runtime_backend") or "Unknown",
+                    "message_count": item.get("message_count", 0),
+                    "created_at": item.get("created_at", "Unknown"),
+                    "updated_at": item.get("last_modified", "Unknown"),
+                }
+            )
+
+        if not conversations:
+            self.app.notify(
+                "No conversations found in database", severity="warning"
+            )
+            return
+
+        try:
+            selection = await self.app.push_screen(
+                ConversationSelectionDialog(conversations), wait_for_dismiss=True
+            )
+        except Exception as e:
+            logger.error(f"Failed to import from conversation: {e}")
+            self.app.notify(f"Failed to import conversation: {e}", severity="error")
+            return
+
+        if not selection:
+            return
+
+        conversation_id = str(selection["conversation_id"])
+
+        messages: List[Dict[str, Any]] = []
+        offset = 0
+        try:
+            while len(messages) < self._CONVERSATION_IMPORT_MAX_MESSAGES:
+                page = await conversation_service.get_messages_with_context(
+                    conversation_id,
+                    mode="local",
+                    limit=self._CONVERSATION_IMPORT_PAGE_SIZE,
+                    offset=offset,
+                    include_rag_context=False,
+                )
+                if not page:
+                    break
+                messages.extend(page)
+                if len(page) < self._CONVERSATION_IMPORT_PAGE_SIZE:
+                    break
+                offset += self._CONVERSATION_IMPORT_PAGE_SIZE
+        except Exception as e:
+            logger.error(f"Failed to import from conversation: {e}")
+            self.app.notify(f"Failed to import conversation: {e}", severity="error")
+            return
+
+        if not messages:
+            self.app.notify(
+                "No messages found in conversation", severity="warning"
+            )
+            return
+
+        # Build content based on options
+        content_parts = []
+        for msg in messages:
+            sender = str(msg.get("role") or msg.get("sender") or "")
+            is_user_message = sender.strip().lower() == "user"
+
+            # Filter based on inclusion options
+            if selection.get("include_all"):
+                pass  # Include all messages
+            elif selection.get("include_user") and not is_user_message:
+                continue
+            elif selection.get("include_assistant") and is_user_message:
+                continue
+
+            content = msg.get("content", "")
+
+            # Format based on speaker option
+            if selection.get("include_speakers"):
+                speaker_name = "User" if is_user_message else "Assistant"
+                content_parts.append(f"{speaker_name}: {content}")
+            else:
+                content_parts.append(content)
+
+            content_parts.append("")  # Empty line between messages
+
+        # Load combined content
+        self.content_text = "\n".join(content_parts)
+        content_preview = self.query_one("#content-preview", TextArea)
+        preview_text = (
+            self.content_text[:1000] + "..."
+            if len(self.content_text) > 1000
+            else self.content_text
+        )
+        content_preview.load_text(preview_text)
+        content_preview.disabled = False
+
+        # Auto-detect chapters might not be suitable for
+        # conversations, but run it anyway (see task-15478: the
+        # switch that used to gate this is gone from the UI).
+        self._detect_chapters()
+
+        self.app.notify(
+            f"Imported conversation with {len(messages)} messages",
+            severity="information",
+        )
 
     def _import_from_paste(self) -> None:
         """Import content from clipboard paste"""
