@@ -242,22 +242,83 @@ wrong** and the review round corrected it: it is only true while the Logs
 screen is OPEN. With no screen mounted there is no downstream work at all,
 and redaction is ~93% of what the handler costs.
 
-Worse, cost is linear in line length, so an uncapped kv-dense line scaled
-badly: 3.4 KB → 755 µs, 100 KB → **22 ms**, paid on whichever thread emitted
-the record, the UI thread included.
+Cost is linear in line length, and a second measurement in the Qodo round
+corrected a further claim: it is **not** driven by key/value density, as the
+first note implied. A 100 KB line costs 14–21 ms whatever its shape —
+kv-dense 20.9 ms, JSON 18.5 ms, prose 16.3 ms, base64 with no `=` at all
+14.5 ms — paid on whichever thread emitted the record, the UI thread
+included. So the cap is not a defence against a pathological input; it is a
+defence against large inputs, which is a much more ordinary thing to hit.
 
 No fast path was added — a fast path on a redactor is a bypass hole. A
 **length cap** was, which is the opposite: it keeps strictly *less* data than
-the uncapped line, so it cannot be a bypass. Lines are truncated to
-`MAX_REDACTED_LINE_CHARS` (2,000) before redaction, with the original length
-disclosed in the marker. Measured effect: typical unchanged (33.0 vs 33.6 µs),
-3.4 KB 755 → 501 µs, 100 KB **22.2 ms → 0.50 ms**, a 45× bound on the worst
-case. 2,000 characters is far past terminal readability and still keeps a
+the uncapped line, so it cannot be a bypass.
+
+**Order and alignment (Qodo finding 2).** The first cut truncated at a fixed
+offset and redacted the remainder, which *manufactured* secrets: every
+`_STANDALONE_CREDENTIALS` pattern carries a minimum length, so a key
+straddling the cap was sliced into a fragment too short to match and the
+fragment stayed in the Logs view and in "Copy visible logs". The fix cuts on
+a **token boundary** — the last whitespace inside the cap — and redacts
+everything that survives the cut. A credential never contains whitespace, so
+it is either wholly inside the cut and redacted, or wholly outside it and
+discarded; no fragment is reachable. A single unbroken token longer than the
+cap has no safe cut at all, so its body is withheld rather than sliced (a
+2,000-character prefix of an opaque token is most of a secret). Formatter
+output always carries whitespace in its timestamp prefix, so that branch is
+reached only by raw input.
+
+Redacting the *whole* line and truncating afterwards — the literal reading of
+the review instruction — is equally sound but gives the bound back. Measured
+side by side (token-cut vs `max_length=0`):
+
+| shape | 2 KB | 16 KB | 100 KB |
+| --- | --- | --- | --- |
+| kv-dense | 0.445 / 0.446 ms | 0.445 / 3.434 ms | **0.448 / 20.898 ms** |
+| JSON | 0.384 / 0.384 ms | 0.378 / 3.004 ms | **0.389 / 18.518 ms** |
+| prose | 0.332 / 0.334 ms | 0.342 / 2.644 ms | **0.335 / 16.252 ms** |
+
+Typical 140-character lines are unaffected either way (0.032 ms). The
+token-aligned cut holds cost flat at ~0.4 ms for any input size — a 47×
+bound at 100 KB — while giving up nothing in soundness, so it is what
+shipped. 2,000 characters is far past terminal readability and still keeps a
 20-parameter `sql_logging.preview_params` line (80 chars each) whole.
 
 This also closes the second residual the first draft recorded honestly and
 could not then fix: the buffer bounded line *count* but not line *size*, so a
 dumped provider response body was retained whole. It no longer is.
+
+### Home-path substitution (Qodo finding 1)
+
+`redact_user_paths` replaced the literal `$HOME` with `str.replace`, which is
+wrong whenever one home path prefixes another string:
+
+* with `$HOME=/Users/jan`, `/Users/janedoe/Notes/x.pdf` became
+  `~edoe/Notes/x.pdf` — half of a **different** account's name left in place,
+  still identifying, and with the `/Users/` prefix destroyed so
+  `_HOME_ROOTS_POSIX` could no longer clean up after it;
+* with `$HOME=/srv/appdata`, the unrelated `/srv/appdata-backup/db` became
+  `~-backup/db`, which is a plain correctness bug as well as a privacy one.
+
+The literal candidates (`$HOME`, `$USERPROFILE`, `Path.home()`) are now one
+`lru_cache`d alternation anchored on path-segment characters at both ends, so
+a home matches only a complete final segment; longest candidate first, so a
+disagreement between `$HOME` and `Path.home()` resolves to the more specific
+one. Both the POSIX and Windows halves were checked, and the Windows literal
+had the same defect.
+
+### Token-shaped literals in fixtures (Qodo finding 3)
+
+Every synthetic credential in the changed files is assembled at import time
+from fragments (`_synthetic`), so no committed line contains a contiguous
+string in a real token shape. This is not cosmetic: GitHub push protection
+rejects the **branch**, not the file, and it had already blocked this one
+once. The sweep was run over all 13 changed files with 16 detectors — the
+redactor's own patterns plus Stripe, npm, PyPI, SendGrid and PEM private
+keys — and reports **0 hits**. Five pre-existing literals in
+`Tests/Utils/test_log_sanitizer.py` were converted too, rather than only the
+ones Qodo flagged, since scanners gain detectors over time and a file that
+trips protection blocks everything behind it.
 
 ### Verification
 
@@ -290,6 +351,25 @@ reds — the reviewer's `append_record` mutation now fails with both the key
 and the account name present in the captured feed, and the equivalent
 mutation on the legacy `_current_log_widget.write` branch reds too. The
 lessons entry has been updated with this second incident.
+
+**Qodo round.** Six further tests, all born red against the shipped code and
+each showing the defect rather than an abstraction of it: the fragment
+`sk-19555PRIVATEsentine` surviving the cap; a half-word `'ch'` at the seam;
+an unbroken token emitted as a 2,000-character prefix; `~edoe/Notes/x.pdf`;
+`~edoe\Notes`; and `/srv/appdata-backup/db` mangled to `~-backup/db`.
+Mutation-checked after the fix: a fixed-offset cut (4 red), an unanchored
+home alternation (3 red), and the earlier live-feed mutation re-run to
+confirm it still reds (2 red).
+
+**Two vacuous drafts of the astride test were caught by that discipline, not
+by review.** The first hand-computed a padding length that ignored the
+formatter's timestamp prefix, so the key never landed across the cap. The
+second used a `%s` template with `loguru`, which formats with `str.format` —
+so the template was logged verbatim and the key was never emitted at all.
+Both passed against the broken implementation. The shipped version measures
+the prefix width off a probe record, sweeps every straddle position, and
+carries an explicit anti-vacuity control asserting the sentinel is a shape
+the redactor actually recognises.
 
 ### Modified or added files
 

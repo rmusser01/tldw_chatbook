@@ -40,8 +40,12 @@ credential in a format it does not recognise, with no `key=`-style label
 beside it, will pass through. Treat the list above as "the common shapes are
 handled", not "nothing can leak".
 
-Lines longer than 2,000 characters are truncated before anything is stored,
-so a dumped response body is never retained whole.
+Lines longer than 2,000 characters are shortened before anything is stored,
+so a dumped response body is never retained whole. The cut lands on a word
+boundary and the redactor sees everything that survives it, so a key sitting
+across the limit is dropped rather than half-shown. A single unbroken run of
+more than 2,000 characters — one enormous token with no spaces in it — is
+withheld entirely for the same reason.
 
 What is **not** removed from the visible log, and therefore not from
 **Copy visible logs**: file names, note titles, keywords, search terms,

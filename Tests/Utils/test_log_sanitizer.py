@@ -16,6 +16,26 @@ from tldw_chatbook.Utils.log_sanitizer import (
 from tldw_chatbook.Utils.sensitive_config_keys import is_sensitive_config_key
 
 
+def _synthetic(*parts: str) -> str:
+    """Assemble a synthetic credential at import time from fragments.
+
+    The fragments exist so that no committed line of this file contains a
+    contiguous string in a real token shape (TASK-19555 Qodo round, rule
+    497144). Secret scanners -- including GitHub push protection, which
+    rejects the whole branch rather than the file -- match on the literal, so
+    splitting the detector-bearing prefix is what makes the fixture shippable.
+    The assembled value is byte-identical to the one the redactor must handle,
+    so nothing about the test weakens.
+
+    Args:
+        *parts: Fragments to join, split at the detector prefix.
+
+    Returns:
+        The joined synthetic credential.
+    """
+    return "".join(parts)
+
+
 def _iter_leaf_key_names(mapping):
     """Yield leaf mapping keys from the shipped configuration structure."""
     for key, value in mapping.items():
@@ -236,9 +256,10 @@ def test_url_userinfo_removes_both_username_and_password() -> None:
 @pytest.mark.parametrize(
     "raw",
     [
-        "sk-proj-DO_NOT_USE_EXAMPLE_123456",
-        "sk-ant-api03-DO_NOT_USE_EXAMPLE_123456",
-        "sk-DONOTUSEEXAMPLEONLY1234567890",
+        # Assembled, not literal -- see `_synthetic` (TASK-19555 Qodo round).
+        _synthetic("sk", "-proj-DO_NOT_USE_EXAMPLE_123456"),
+        _synthetic("sk", "-ant-api03-DO_NOT_USE_EXAMPLE_123456"),
+        _synthetic("sk", "-DONOTUSEEXAMPLEONLY1234567890"),
         "AIza" + "DO_NOT_USE_EXAMPLE_ONLY_" + "0" * 11,
     ],
     ids=("openai-project", "anthropic", "openai-legacy", "google"),
@@ -270,7 +291,8 @@ def test_uppercase_standalone_credential_shapes_are_not_recognized(raw: str) -> 
 
 def test_labeled_standalone_shaped_value_has_one_idempotent_marker() -> None:
     """Assignment redaction consumes a key-shaped quoted secret only once."""
-    raw = 'api_key="sk-proj-DO_NOT_USE_EXAMPLE_123456"'
+    secret = _synthetic("sk", "-proj-DO_NOT_USE_EXAMPLE_123456")
+    raw = f'api_key="{secret}"'
     sanitized = sanitize_string(raw)
 
     assert sanitized == 'api_key="***REDACTED***"'
@@ -410,7 +432,7 @@ class TestLogSanitizer:
         msg = create_safe_log_message(
             "User {} logged in with key {}",
             "john",
-            "sk-DONOTUSEEXAMPLEONLY1234567890",
+            _synthetic("sk", "-DONOTUSEEXAMPLEONLY1234567890"),
         )
         assert msg == "User john logged in with key ***REDACTED***"
 
@@ -486,12 +508,11 @@ class TestSinkRedaction:
     def test_redact_log_line_applies_both_halves(self) -> None:
         from tldw_chatbook.Utils.log_sanitizer import redact_log_line
 
-        line = (
-            "upload /Users/janedoe/x.pdf with api_key=sk-DONOTUSEEXAMPLE1234567890"
-        )
+        secret = _synthetic("sk", "-DONOTUSEEXAMPLE1234567890")
+        line = f"upload /Users/janedoe/x.pdf with api_key={secret}"
         redacted = redact_log_line(line)
         assert "janedoe" not in redacted
-        assert "sk-DONOTUSEEXAMPLE1234567890" not in redacted
+        assert secret not in redacted
         assert "upload ~/x.pdf" in redacted
 
     def test_redact_log_line_leaves_ordinary_diagnostics_alone(self) -> None:
@@ -504,17 +525,20 @@ class TestSinkRedaction:
     @pytest.mark.parametrize(
         "credential",
         [
-            "ghp_DONOTUSEEXAMPLEONLYaaaaaaaaaaaaaaaaaaaaaa",
-            "gho_DONOTUSEEXAMPLEONLYaaaaaaaaaaaaaaaaaaaaaa",
-            "github_pat_DONOTUSEEXAMPLEONLYaaaaaaaaaaaaaaaaaaaa",
-            "hf_DONOTUSEEXAMPLEONLYaaaaaaaaaaaaaaaa",
-            "sk-or-v1-DONOTUSEEXAMPLEONLYaaaaaaaaaaaaaaaa",
-            "AKIADONOTUSEEXAMPLE1",
-            # Assembled rather than written literally: a literal in this shape
-            # trips GitHub push protection (Slack detector) even though the value
-            # is synthetic. The redactor under test sees the identical string.
-            "xox" + "b-1234567890-DONOTUSEEXAMPLEONLY",
-            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.DONOTUSEEXAMPLE1",
+            # Every one is assembled by `_synthetic` rather than written as a
+            # literal: see that helper for why (Qodo rule 497144 / GitHub push
+            # protection). The values reaching the redactor are unchanged.
+            _synthetic("ghp", "_DONOTUSEEXAMPLEONLYaaaaaaaaaaaaaaaaaaaaaa"),
+            _synthetic("gho", "_DONOTUSEEXAMPLEONLYaaaaaaaaaaaaaaaaaaaaaa"),
+            _synthetic("github", "_pat_DONOTUSEEXAMPLEONLYaaaaaaaaaaaaaaaaaaaa"),
+            _synthetic("hf", "_DONOTUSEEXAMPLEONLYaaaaaaaaaaaaaaaa"),
+            _synthetic("sk", "-or-v1-DONOTUSEEXAMPLEONLYaaaaaaaaaaaaaaaa"),
+            _synthetic("AKI", "ADONOTUSEEXAMPLE1"),
+            _synthetic("xox", "b-1234567890-DONOTUSEEXAMPLEONLY"),
+            _synthetic(
+                "eyJ", "hbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0",
+                ".DONOTUSEEXAMPLE1",
+            ),
         ],
     )
     def test_unlabelled_provider_token_shapes_are_redacted(
@@ -549,3 +573,103 @@ class TestSinkRedaction:
         from tldw_chatbook.Utils.log_sanitizer import redact_log_line
 
         assert "truncated" not in redact_log_line("a short diagnostic line")
+
+
+# ---------------------------------------------------------------------------
+# TASK-19555 Qodo round: two security defects in the first cut of the above.
+# ---------------------------------------------------------------------------
+
+
+class TestRedactionOrderAndPathBoundaries:
+    """Truncation must not manufacture a partial secret, and the literal
+    home substitution must not rewrite half of somebody else's username."""
+
+    def test_credential_astride_the_truncation_boundary_leaves_no_fragment(
+        self,
+    ) -> None:
+        """Truncating BEFORE redaction cut tokens out of pattern range.
+
+        `_STANDALONE_CREDENTIALS` all carry minimum lengths (`sk-` needs 20+
+        trailing characters). A secret straddling the cap was therefore sliced
+        into a fragment too short to match, and the fragment stayed in the
+        Logs view and in "Copy visible logs" -- the exact surface this task
+        exists to protect.
+        """
+        from tldw_chatbook.Utils.log_sanitizer import (
+            MAX_REDACTED_LINE_CHARS,
+            redact_log_line,
+        )
+
+        secret = _synthetic("sk", "-", "B" * 40)
+        # Land the cap inside the token: 13 of its characters fall before it.
+        head = "x" * (MAX_REDACTED_LINE_CHARS - 20)
+        line = f"{head} token {secret} tail " + "y " * 5000
+
+        redacted = redact_log_line(line)
+
+        assert secret not in redacted
+        # ...and no leading slice of it either.
+        assert _synthetic("sk", "-B") not in redacted
+
+    def test_truncation_keeps_whole_tokens_and_still_reports_the_real_length(
+        self,
+    ) -> None:
+        from tldw_chatbook.Utils.log_sanitizer import (
+            MAX_REDACTED_LINE_CHARS,
+            redact_log_line,
+        )
+
+        line = "chunk " * 5000
+        redacted = redact_log_line(line)
+
+        assert "truncated, 30000 chars" in redacted
+        assert len(redacted) < MAX_REDACTED_LINE_CHARS + 100
+        # No half-word at the seam: every retained token is intact.
+        body = redacted.split("…")[0]
+        assert set(body.split()) <= {"chunk"}
+
+    def test_one_unbroken_token_larger_than_the_cap_is_withheld_entirely(
+        self,
+    ) -> None:
+        """No safe cut exists inside a single token, so none is attempted."""
+        from tldw_chatbook.Utils.log_sanitizer import redact_log_line
+
+        blob = "Q" * 9000
+        redacted = redact_log_line(blob)
+
+        assert "Q" * 50 not in redacted
+        assert "9000" in redacted
+
+    def test_a_home_prefixing_another_account_is_not_partially_replaced(
+        self, monkeypatch
+    ) -> None:
+        """`str.replace` rewrote `/Users/jan` inside `/Users/janedoe`.
+
+        That left `edoe` -- still identifying -- and destroyed the `/Users/`
+        prefix `_HOME_ROOTS_POSIX` needed in order to fire, so the fallback
+        could not clean up after it either.
+        """
+        monkeypatch.setenv("HOME", "/Users/jan")
+        from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
+
+        assert redact_user_paths("/Users/janedoe/Notes/x.pdf") == "~/Notes/x.pdf"
+        assert "edoe" not in redact_user_paths("/Users/janedoe/Notes/x.pdf")
+
+    def test_the_windows_home_literal_respects_segment_boundaries_too(
+        self, monkeypatch
+    ) -> None:
+        monkeypatch.setenv("USERPROFILE", r"C:\Users\jan")
+        from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
+
+        assert redact_user_paths(r"C:\Users\janedoe\Notes") == r"~\Notes"
+
+    def test_an_exotic_home_outside_users_and_home_still_collapses(
+        self, monkeypatch
+    ) -> None:
+        """The literal pass is what covers `/root` and `$HOME` overrides."""
+        monkeypatch.setenv("HOME", "/srv/appdata")
+        from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
+
+        assert redact_user_paths("/srv/appdata/db.sqlite") == "~/db.sqlite"
+        # A sibling that merely shares the prefix must survive intact.
+        assert redact_user_paths("/srv/appdata-backup/db") == "/srv/appdata-backup/db"

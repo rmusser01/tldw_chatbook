@@ -7,6 +7,7 @@ sensitive information from log messages.
 
 import os
 import re
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -244,6 +245,54 @@ _HOME_ROOTS_WINDOWS = re.compile(
 #: nothing legible is lost, and it bounds the worst case at roughly 0.3 ms.
 MAX_REDACTED_LINE_CHARS = 2000
 
+#: Characters that may continue a path segment. Used as both lookbehind and
+#: lookahead when substituting a literal home directory, so the match has to
+#: cover a WHOLE segment.
+_PATH_SEGMENT_CHARS = r"A-Za-z0-9_.\-~"
+
+#: Whitespace treated as a token boundary when truncating (see
+#: ``redact_log_line``). Credentials never contain whitespace, so cutting on
+#: one cannot split a credential in half.
+_TOKEN_BOUNDARY_CHARS = " \t\n\r\v\f"
+
+
+@lru_cache(maxsize=8)
+def _home_literal_pattern(candidates: tuple[str, ...]) -> "re.Pattern | None":
+    """Compile a segment-anchored alternation over literal home directories.
+
+    TASK-19555 Qodo round. This used to be a bare ``str.replace(home, "~")``,
+    which is wrong in both directions when one home path is a prefix of
+    another:
+
+    * with ``$HOME=/Users/jan``, the line ``/Users/janedoe/Notes/x.pdf``
+      became ``~edoe/Notes/x.pdf`` -- half of a DIFFERENT account's name left
+      in place, still identifying, and with the ``/Users/`` prefix destroyed
+      so ``_HOME_ROOTS_POSIX`` could no longer clean up after it;
+    * with ``$HOME=/srv/appdata``, the unrelated ``/srv/appdata-backup/db``
+      became ``~-backup/db``.
+
+    Anchoring on ``_PATH_SEGMENT_CHARS`` at both ends makes a home match only
+    a complete final segment. Longest candidate first, so when ``$HOME`` and
+    ``Path.home()`` disagree by a prefix the more specific one wins.
+
+    Args:
+        candidates: Home-directory strings; empty entries are ignored.
+
+    Returns:
+        A compiled pattern, or None when no usable candidate was supplied.
+    """
+    usable = sorted(
+        {candidate for candidate in candidates if candidate and len(candidate) > 1},
+        key=len,
+        reverse=True,
+    )
+    if not usable:
+        return None
+    alternation = "|".join(re.escape(candidate) for candidate in usable)
+    return re.compile(
+        rf"(?<![{_PATH_SEGMENT_CHARS}])(?:{alternation})(?![{_PATH_SEGMENT_CHARS}])"
+    )
+
 
 def redact_user_paths(text: str) -> str:
     """Replace home-directory prefixes with ``~`` so no account name survives.
@@ -255,7 +304,8 @@ def redact_user_paths(text: str) -> str:
 
     The running user's own home is substituted first and literally, so the
     rule still holds for accounts that live outside ``/Users`` or ``/home``
-    (``/root``, or any ``$HOME`` override).
+    (``/root``, or any ``$HOME`` override). That substitution is anchored on
+    path-segment boundaries -- see ``_home_literal_pattern``.
 
     Args:
         text: One log line, or any free text that may embed filesystem paths.
@@ -266,18 +316,20 @@ def redact_user_paths(text: str) -> str:
     if not isinstance(text, str) or not text:
         return text
 
-    result = text
     # os.environ first: Path.home() falls back to the password database, which
     # would rewrite paths the user's own $HOME no longer points at.
-    for candidate in (os.environ.get("HOME"), os.environ.get("USERPROFILE")):
-        if candidate and len(candidate) > 1:
-            result = result.replace(candidate, "~")
     try:
-        home = str(Path.home())
+        resolved_home = str(Path.home())
     except (OSError, RuntimeError):  # pragma: no cover - no resolvable home
-        home = ""
-    if len(home) > 1:
-        result = result.replace(home, "~")
+        resolved_home = ""
+    pattern = _home_literal_pattern(
+        (
+            os.environ.get("HOME") or "",
+            os.environ.get("USERPROFILE") or "",
+            resolved_home,
+        )
+    )
+    result = pattern.sub("~", text) if pattern is not None else text
     result = _HOME_ROOTS_POSIX.sub("~", result)
     return _HOME_ROOTS_WINDOWS.sub("~", result)
 
@@ -305,22 +357,56 @@ def redact_log_line(text: str, max_length: int = MAX_REDACTED_LINE_CHARS) -> str
       which substring of a message was interpolated from user data. That
       exposure is handled by bounding what the bulk share action exports.
 
+    Oversized lines are cut on a TOKEN boundary, and redaction then runs over
+    everything that survives the cut (TASK-19555 Qodo round). The first
+    revision truncated at a fixed offset and redacted afterwards, which
+    manufactured secrets: every pattern in ``_STANDALONE_CREDENTIALS`` carries
+    a minimum length, so a key straddling the cap was sliced into a fragment
+    too short to match and the fragment stayed in the Logs view and in "Copy
+    visible logs".
+
+    Cutting on whitespace fixes that without giving up the cost bound, because
+    a credential never contains whitespace: it is either wholly inside the cut
+    and redacted, or wholly outside it and discarded. Redaction over the full
+    line would also be correct, but it is linear in length -- 14-20 ms for a
+    100 KB line, on whichever thread emitted the record -- and that bound is
+    the reason the cap exists.
+
     Args:
         text: One fully formatted log line.
-        max_length: Characters kept before truncation. See
-            ``MAX_REDACTED_LINE_CHARS`` for why truncation happens first.
+        max_length: Characters kept before the token-aligned cut, or 0 to
+            redact the whole line however long it is. See
+            ``MAX_REDACTED_LINE_CHARS``.
 
     Returns:
-        The line, truncated if oversized, with recognised credentials and
-        home-directory account names redacted.
+        The line, cut on a token boundary if oversized, with recognised
+        credentials and home-directory account names redacted.
     """
     if not isinstance(text, str):
         text = str(text)
-    if max_length > 0 and len(text) > max_length:
-        # Truncate BEFORE redacting: redaction is linear in length, and the
-        # tail is being discarded either way.
-        text = f"{text[:max_length]}… [truncated, {len(text)} chars]"
-    return redact_user_paths(sanitize_string(text))
+    original_length = len(text)
+    suffix = ""
+    if max_length > 0 and original_length > max_length:
+        head = text[:max_length]
+        boundary = max(
+            (head.rfind(character) for character in _TOKEN_BOUNDARY_CHARS),
+            default=-1,
+        )
+        if boundary <= 0:
+            # One unbroken token longer than the cap. There is no cut that
+            # cannot split it, and a 2,000-character prefix of an opaque token
+            # is most of a secret, so the body is withheld rather than sliced.
+            # Formatter output always has whitespace in its timestamp prefix,
+            # so this is reached only by raw, unformatted input.
+            return (
+                f"{REDACTION_MARKER} [oversized unbroken log line withheld, "
+                f"{original_length} chars]"
+            )
+        text = head[:boundary]
+        suffix = f"… [truncated, {original_length} chars]"
+    # The suffix is generated text, so it is appended after redaction rather
+    # than being fed through it.
+    return redact_user_paths(sanitize_string(text)) + suffix
 
 
 def sanitize_dict(data: Dict[str, Any], deep: bool = True) -> Dict[str, Any]:

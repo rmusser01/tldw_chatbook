@@ -5879,3 +5879,37 @@ of collections it lands in; walk the function line by line and pin each one.
 Cheapest reliable check: mutate each outward hand-off in turn and require a
 red for every one — three lines of test closed this, but only after a mutation
 found it.
+
+## A security test that never emitted its payload, twice (TASK-19555, 2026-08-22)
+
+**What happened.** Fixing a truncation bug that could leave a partial API key
+in the Logs view, I wrote the obvious regression test: log a line with the key
+positioned across the 2,000-character cap, assert no fragment survives. It
+passed against the **broken** implementation — twice, for two different
+reasons.
+
+1. The padding length was hand-computed from the cap alone. The handler's
+   formatter prepends `asctime - name - LEVEL - `, roughly 68 characters of
+   unpredictable width, so the key landed comfortably past the cut and was
+   discarded whole. Nothing was ever astride anything.
+2. The rewrite used `logger.info("%s %s", padding, secret)`. **Loguru formats
+   with `str.format`, not `%`.** With no `{}` in the template, loguru logged
+   the template verbatim and silently dropped every argument. The test emitted
+   the literal string `%s %s` and asserted, truthfully, that it contained no
+   credential.
+
+Both were found by mutating the fix and expecting red, not by reading the
+test. The shipped version measures the prefix width off a probe record,
+sweeps every straddle position rather than guessing one, and carries an
+anti-vacuity control that asserts the sentinel is a shape the redactor
+actually recognises.
+
+**What to do.** For a "secret X must not appear in Y" test, the assertion is
+satisfied by an empty Y, so it proves nothing until you separately prove X was
+there. Add a control in the same test — log the payload plainly and assert it
+*was* redacted — and where the position of X matters, sweep the range and
+derive the offsets from a measured value instead of arithmetic on a constant.
+Then mutate the fix: a negative-space assertion that stays green under the
+mutation is not a test. And in this codebase specifically: **`loguru` uses
+brace formatting**; a `%s` template is a silent no-op that drops your payload,
+while stdlib `logging` calls on the same page take `%s` correctly.

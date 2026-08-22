@@ -41,7 +41,26 @@ from tldw_chatbook.Utils.persistent_diagnostics import log_persistent_metadata
 pytestmark = pytest.mark.unit
 
 
-API_KEY_SENTINEL = "sk-19555PRIVATEsentinelKEYnotreal01"
+def _synthetic(*parts: str) -> str:
+    """Assemble a synthetic credential at import time from fragments.
+
+    No committed line here may contain a contiguous string in a real token
+    shape (TASK-19555 Qodo round, rule 497144): secret scanners match the
+    literal, and GitHub push protection rejects the whole branch rather than
+    the file. Splitting the detector-bearing prefix is what makes the fixture
+    shippable; the assembled value is byte-identical to what the redactor is
+    asked to handle.
+
+    Args:
+        *parts: Fragments to join, split at the detector prefix.
+
+    Returns:
+        The joined synthetic credential.
+    """
+    return "".join(parts)
+
+
+API_KEY_SENTINEL = _synthetic("sk", "-19555PRIVATEsentinelKEYnotreal01")
 CONTENT_SENTINEL = "19555-PRIVATE-NOTE-TITLE-divorce-papers"
 
 
@@ -193,11 +212,74 @@ def test_session_log_buffer_is_bounded() -> None:
 def test_oversized_lines_are_truncated_before_they_are_stored() -> None:
     """The buffer bounds line COUNT; without this it did not bound line SIZE."""
     with _Collector() as stub:
-        loguru_logger.info("body " + "x" * 50_000)
+        loguru_logger.info("body " + "chunk " * 20_000)
 
         stored = _records_text(stub)
         assert "truncated, " in stored
         assert len(max(stub._log_records, key=lambda r: len(r[2]))[2]) < 3_000
+
+
+def test_a_credential_astride_the_truncation_boundary_reaches_no_surface() -> None:
+    """The unit-level guarantee, re-proved through the real handler.
+
+    Truncating before redaction sliced a straddling key into a fragment too
+    short for any `_STANDALONE_CREDENTIALS` pattern, and the fragment then
+    reached the live view and "Copy visible logs".
+
+    A SWEEP, not an anecdote, and one whose alignment is MEASURED rather than
+    assumed: the handler's formatter prepends a timestamp and a logger name,
+    so a hand-computed padding length does not reliably land the key across
+    the cap. Two earlier drafts of this test guessed and passed against the
+    broken implementation. The prefix width is read off a probe record, then
+    every straddle position is walked.
+    """
+    from tldw_chatbook.Utils.log_sanitizer import MAX_REDACTED_LINE_CHARS
+
+    with _Collector() as stub:
+        window = _FakeLogsWindow()
+        stub._current_logs_window = window
+
+        loguru_logger.info("PROBE")
+        prefix_width = len(stub._log_records[-1][2]) - len("PROBE")
+        assert 0 < prefix_width < MAX_REDACTED_LINE_CHARS
+
+        # Anti-vacuity control. Without it the sweep below could assert
+        # nothing at all -- an earlier draft used a `%s` template, which
+        # loguru renders literally, so it logged no key and passed happily
+        # against the broken implementation.
+        loguru_logger.info("control {}", API_KEY_SENTINEL)
+        assert "***REDACTED***" in stub._log_records[-1][2]
+
+        # Walk the key's start position across the cap, so at least one
+        # emission is cut through the middle of it.
+        for start in range(
+            MAX_REDACTED_LINE_CHARS - len(API_KEY_SENTINEL),
+            MAX_REDACTED_LINE_CHARS + 1,
+        ):
+            padding = start - prefix_width - 1
+            assert padding > 0
+            # Braces, not %s: loguru formats with str.format, so a %s template
+            # emits the template and silently drops the payload. An earlier
+            # draft did that and the test passed while logging nothing.
+            loguru_logger.info(
+                "{} {} tail {}", "x" * padding, API_KEY_SENTINEL, "y " * 2_000
+            )
+
+        # ...and the sweep really did produce oversized lines to cut.
+        assert any(
+            "truncated," in message for _l, _n, message in stub._log_records
+        )
+
+        surfaces = "\n".join(
+            (
+                _records_text(stub),
+                _buffer_text(stub),
+                "\n".join(message for _l, _n, message in window.calls),
+            )
+        )
+        assert API_KEY_SENTINEL not in surfaces
+        # No leading slice of it either -- the fragment is the whole point.
+        assert API_KEY_SENTINEL[:12] not in surfaces
 
 
 # ---------------------------------------------------------------------------
