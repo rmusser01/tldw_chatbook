@@ -548,6 +548,60 @@ def test_campaign_ledger_appends_sorted_newline_json_and_syncs(
     ) + "\n"
 
 
+def test_campaign_directory_fsync_helper_uses_directory_descriptor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[tuple[str, object]] = []
+    monkeypatch.setattr(
+        profile.os,
+        "open",
+        lambda path, flags: calls.append(("open", (path, flags))) or 91,
+    )
+    monkeypatch.setattr(
+        profile.os, "fsync", lambda descriptor: calls.append(("fsync", descriptor))
+    )
+    monkeypatch.setattr(
+        profile.os, "close", lambda descriptor: calls.append(("close", descriptor))
+    )
+
+    profile._fsync_directory(tmp_path)
+
+    assert calls[0][0] == "open"
+    assert calls[0][1][0] == tmp_path
+    assert calls[1:] == [("fsync", 91), ("close", 91)]
+
+
+def test_campaign_state_bearing_namespace_mutations_fsync_parents_in_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    synced: list[Path] = []
+    monkeypatch.setattr(
+        profile, "_fsync_directory", lambda path: synced.append(Path(path)), raising=False
+    )
+    campaign = tmp_path / "campaign"
+
+    attempt_root = profile.create_attempt_root(campaign, "attempt-0001")
+    owner = _acquire_lock(campaign)
+    profile.append_attempt_state(
+        campaign / "attempts.jsonl",
+        _attempt_event("attempt-0001", "running"),
+    )
+    profile.release_campaign_lock(campaign, owner)
+
+    assert synced == [
+        tmp_path,
+        campaign,
+        campaign / "attempts",
+        campaign,
+        campaign / ".campaign-lock",
+        campaign,
+        campaign,
+        campaign / ".campaign-release",
+        campaign,
+    ]
+    assert attempt_root.is_dir()
+
+
 def test_campaign_ledger_never_overwrites_or_truncates(tmp_path: Path) -> None:
     ledger = tmp_path / "attempts.jsonl"
     running = _attempt_event("attempt-0001", "running")
@@ -729,6 +783,60 @@ def test_campaign_correctable_derived_changes_preserve_raw_hash_and_lineage(
         for event in profile.attempt_lineage(ledger)
         if "raw_sha256" in event
     } == {raw_sha256}
+
+
+def test_campaign_changes_required_preserves_first_measured_verdict(
+    tmp_path: Path,
+) -> None:
+    ledger = tmp_path / "attempts.jsonl"
+    profile.append_attempt_state(
+        ledger, _attempt_event("attempt-0001", "running")
+    )
+    profile.complete_attempt_measurement(
+        ledger, "attempt-0001", verdict="pass", raw_sha256="a" * 64
+    )
+
+    with pytest.raises(RuntimeError, match="^campaign_verdict_mismatch$"):
+        profile.append_attempt_state(
+            ledger,
+            _attempt_event(
+                "attempt-0001",
+                "changes_required",
+                verdict="regression",
+                raw_sha256="a" * 64,
+                reason_category="report",
+            ),
+        )
+
+
+def test_campaign_renewed_pending_review_preserves_first_measured_verdict(
+    tmp_path: Path,
+) -> None:
+    ledger = tmp_path / "attempts.jsonl"
+    profile.append_attempt_state(
+        ledger, _attempt_event("attempt-0001", "running")
+    )
+    profile.complete_attempt_measurement(
+        ledger, "attempt-0001", verdict="pass", raw_sha256="a" * 64
+    )
+    profile.append_attempt_state(
+        ledger,
+        _attempt_event(
+            "attempt-0001",
+            "changes_required",
+            verdict="pass",
+            raw_sha256="a" * 64,
+            reason_category="report",
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="^campaign_verdict_mismatch$"):
+        profile.complete_attempt_measurement(
+            ledger,
+            "attempt-0001",
+            verdict="inconclusive",
+            raw_sha256="a" * 64,
+        )
 
 
 @pytest.mark.parametrize(
@@ -983,7 +1091,8 @@ def test_campaign_release_never_deletes_replacement_owner(
 
     monkeypatch.setattr(profile, "_read_lock_owner", replace_after_validation)
 
-    profile.release_campaign_lock(tmp_path, original)
+    with pytest.raises(RuntimeError, match="^campaign_lock_owner_mismatch$"):
+        profile.release_campaign_lock(tmp_path, original)
 
     assert real_read_owner(tmp_path / ".campaign-lock") == replacement
     assert not (tmp_path / ".campaign-release").exists()
@@ -1006,6 +1115,62 @@ def test_campaign_wrong_release_token_restores_original_canonical_lock(
     assert not (tmp_path / ".campaign-release").exists()
 
 
+def test_campaign_wrong_release_token_never_moves_canonical_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = _acquire_lock(tmp_path)
+    wrong = profile.CampaignLockOwner(
+        pid=owner.pid,
+        process_start_sha256=owner.process_start_sha256,
+        owner_token="2" * 64,
+    )
+    real_rename = Path.rename
+    renamed = False
+
+    def recording_rename(path: Path, target: Path):
+        nonlocal renamed
+        if path.name == ".campaign-lock":
+            renamed = True
+        return real_rename(path, target)
+
+    monkeypatch.setattr(Path, "rename", recording_rename)
+
+    with pytest.raises(RuntimeError, match="^campaign_lock_owner_mismatch$"):
+        profile.release_campaign_lock(tmp_path, wrong)
+
+    assert not renamed
+    assert profile._read_lock_owner(tmp_path / ".campaign-lock") == owner
+
+
+def test_campaign_wrong_release_cannot_resurrect_after_exact_owner_finishes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = _acquire_lock(tmp_path)
+    wrong = profile.CampaignLockOwner(
+        pid=owner.pid,
+        process_start_sha256=owner.process_start_sha256,
+        owner_token="2" * 64,
+    )
+    real_read_owner = profile._read_lock_owner
+    interleaved = False
+
+    def finish_exact_release_after_claim(lock_root: Path):
+        nonlocal interleaved
+        observed = real_read_owner(lock_root)
+        if lock_root.name in {".campaign-lock", ".campaign-release"} and not interleaved:
+            interleaved = True
+            profile.release_campaign_lock(tmp_path, owner)
+        return observed
+
+    monkeypatch.setattr(profile, "_read_lock_owner", finish_exact_release_after_claim)
+
+    with pytest.raises(RuntimeError, match="^campaign_lock_owner_mismatch$"):
+        profile.release_campaign_lock(tmp_path, wrong)
+
+    assert not (tmp_path / ".campaign-lock").exists()
+    assert not (tmp_path / ".campaign-release").exists()
+
+
 def test_campaign_release_conflict_remains_recoverable_by_exact_owner(
     tmp_path: Path,
 ) -> None:
@@ -1025,6 +1190,53 @@ def test_campaign_release_conflict_remains_recoverable_by_exact_owner(
     profile.release_campaign_lock(tmp_path, original)
 
     assert not (tmp_path / ".campaign-lock").exists()
+    assert not (tmp_path / ".campaign-release").exists()
+
+
+def test_campaign_release_fsync_failure_preserves_resumable_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = _acquire_lock(tmp_path)
+    fail = True
+    real_fsync_directory = profile._fsync_directory
+
+    def injected_fsync(path: Path) -> None:
+        if fail and path == tmp_path:
+            raise OSError("injected directory fsync failure")
+        real_fsync_directory(path)
+
+    monkeypatch.setattr(profile, "_fsync_directory", injected_fsync)
+
+    with pytest.raises(RuntimeError, match="^campaign_release_in_progress$"):
+        profile.release_campaign_lock(tmp_path, owner)
+
+    assert profile._read_lock_owner(tmp_path / ".campaign-release") == owner
+    fail = False
+    profile.release_campaign_lock(tmp_path, owner)
+    assert not (tmp_path / ".campaign-release").exists()
+
+
+def test_campaign_owner_unlink_fsync_failure_leaves_empty_resumable_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = _acquire_lock(tmp_path)
+    fail = True
+    real_fsync_directory = profile._fsync_directory
+
+    def injected_fsync(path: Path) -> None:
+        if fail and path.name == ".campaign-release":
+            raise OSError("injected directory fsync failure")
+        real_fsync_directory(path)
+
+    monkeypatch.setattr(profile, "_fsync_directory", injected_fsync)
+
+    with pytest.raises(OSError, match="injected directory fsync failure"):
+        profile.release_campaign_lock(tmp_path, owner)
+
+    assert (tmp_path / ".campaign-release").is_dir()
+    assert not any((tmp_path / ".campaign-release").iterdir())
+    fail = False
+    profile.release_campaign_lock(tmp_path, owner)
     assert not (tmp_path / ".campaign-release").exists()
 
 
@@ -1057,6 +1269,176 @@ def test_campaign_attempt_acquisition_leaves_running_lock_and_staging_evidence(
     assert profile.attempt_lineage(tmp_path / "attempts.jsonl") == (
         {"attempt_id": "attempt-0001", "state": "running"},
     )
+
+
+def test_campaign_ledger_creation_fsync_failure_retains_running_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ledger = tmp_path / "attempts.jsonl"
+    real_fsync_directory = profile._fsync_directory
+
+    def injected_fsync(path: Path) -> None:
+        if path == tmp_path and ledger.exists():
+            raise OSError("injected ledger namespace fsync failure")
+        real_fsync_directory(path)
+
+    monkeypatch.setattr(profile, "_fsync_directory", injected_fsync)
+
+    with pytest.raises(OSError, match="injected ledger namespace fsync failure"):
+        _acquire_attempt(tmp_path)
+
+    assert profile.attempt_lineage(ledger) == (
+        {"attempt_id": "attempt-0001", "state": "running"},
+    )
+    assert (tmp_path / ".campaign-lock").is_dir()
+
+
+def test_campaign_acquisition_resumes_empty_canonical_lock(tmp_path: Path) -> None:
+    (tmp_path / ".campaign-lock").mkdir()
+
+    owner = _acquire_lock(tmp_path)
+
+    assert profile._read_lock_owner(tmp_path / ".campaign-lock") == owner
+    assert not (tmp_path / ".campaign-recovery").exists()
+
+
+def test_campaign_recovery_releases_dead_lock_before_running_ledger(
+    tmp_path: Path,
+) -> None:
+    _acquire_lock(tmp_path)
+
+    event = profile.recover_interrupted_attempt(
+        tmp_path, process_start_probe=lambda _pid: None
+    )
+
+    assert event == {"state": "failed", "reason_category": "interrupted"}
+    assert not (tmp_path / ".campaign-lock").exists()
+    assert not (tmp_path / ".campaign-recovery").exists()
+    assert not (tmp_path / "attempts.jsonl").exists()
+    assert _acquire_attempt(tmp_path).attempt_id == "attempt-0001"
+
+
+def test_campaign_recovery_finishes_owned_marker_after_interrupted_append(
+    tmp_path: Path,
+) -> None:
+    _acquire_attempt(tmp_path)
+    ledger = tmp_path / "attempts.jsonl"
+    (tmp_path / ".campaign-lock").rename(tmp_path / ".campaign-recovery")
+    failed = _attempt_event(
+        "attempt-0001", "failed", reason_category="interrupted"
+    )
+    profile.append_attempt_state(ledger, failed)
+
+    assert profile.recover_interrupted_attempt(
+        tmp_path,
+        process_start_probe=lambda _pid: pytest.fail("must not probe completed recovery"),
+    ) == failed
+    assert not (tmp_path / ".campaign-recovery").exists()
+    assert profile.attempt_lineage(ledger) == (
+        {"attempt_id": "attempt-0001", "state": "running"},
+        failed,
+    )
+    assert _acquire_attempt(tmp_path).attempt_id == "attempt-0002"
+
+
+def test_campaign_recovery_append_exception_preserves_resumable_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _acquire_attempt(tmp_path)
+    real_append = profile.append_attempt_state
+
+    def append_then_fail(ledger: Path, event: dict[str, object]) -> None:
+        real_append(ledger, event)
+        raise OSError("injected post-append failure")
+
+    monkeypatch.setattr(profile, "append_attempt_state", append_then_fail)
+
+    with pytest.raises(OSError, match="injected post-append failure"):
+        profile.recover_interrupted_attempt(
+            tmp_path, process_start_probe=lambda _pid: None
+        )
+
+    assert (tmp_path / ".campaign-recovery").is_dir()
+    assert not (tmp_path / ".campaign-lock").exists()
+    monkeypatch.setattr(profile, "append_attempt_state", real_append)
+    assert profile.recover_interrupted_attempt(
+        tmp_path, process_start_probe=lambda _pid: pytest.fail("must not reprobe")
+    ) == _attempt_event(
+        "attempt-0001", "failed", reason_category="interrupted"
+    )
+    assert not (tmp_path / ".campaign-recovery").exists()
+
+
+def test_campaign_recovery_resumes_owned_marker_before_interrupted_append(
+    tmp_path: Path,
+) -> None:
+    _acquire_attempt(tmp_path)
+    ledger = tmp_path / "attempts.jsonl"
+    (tmp_path / ".campaign-lock").rename(tmp_path / ".campaign-recovery")
+
+    event = profile.recover_interrupted_attempt(
+        tmp_path, process_start_probe=lambda _pid: None
+    )
+
+    assert event == _attempt_event(
+        "attempt-0001", "failed", reason_category="interrupted"
+    )
+    assert [item["state"] for item in profile.attempt_lineage(ledger)] == [
+        "running",
+        "failed",
+    ]
+    assert not (tmp_path / ".campaign-recovery").exists()
+    assert _acquire_attempt(tmp_path).attempt_id == "attempt-0002"
+
+
+def test_campaign_release_and_recovery_resume_empty_markers(tmp_path: Path) -> None:
+    release_campaign = tmp_path / "release"
+    release_owner = _acquire_lock(release_campaign)
+    (release_campaign / ".campaign-lock").rename(
+        release_campaign / ".campaign-release"
+    )
+    (release_campaign / ".campaign-release" / "owner.json").unlink()
+
+    profile.release_campaign_lock(release_campaign, release_owner)
+
+    assert not (release_campaign / ".campaign-release").exists()
+    assert _acquire_lock(release_campaign)
+
+    recovery_campaign = tmp_path / "recovery"
+    _acquire_attempt(recovery_campaign)
+    recovery_ledger = recovery_campaign / "attempts.jsonl"
+    (recovery_campaign / ".campaign-lock").rename(
+        recovery_campaign / ".campaign-recovery"
+    )
+    failed = _attempt_event(
+        "attempt-0001", "failed", reason_category="interrupted"
+    )
+    profile.append_attempt_state(recovery_ledger, failed)
+    (recovery_campaign / ".campaign-recovery" / "owner.json").unlink()
+
+    assert profile.recover_interrupted_attempt(recovery_campaign) == failed
+    assert not (recovery_campaign / ".campaign-recovery").exists()
+    assert _acquire_attempt(recovery_campaign).attempt_id == "attempt-0002"
+
+
+def test_campaign_acquisition_finishes_empty_release_marker_without_owner_token(
+    tmp_path: Path,
+) -> None:
+    attempt = _acquire_attempt(tmp_path)
+    profile.append_attempt_state(
+        tmp_path / "attempts.jsonl",
+        _attempt_event(
+            "attempt-0001", "failed", reason_category="acquisition"
+        ),
+    )
+    (tmp_path / ".campaign-lock").rename(tmp_path / ".campaign-release")
+    (tmp_path / ".campaign-release" / "owner.json").unlink()
+
+    resumed = _acquire_attempt(tmp_path, pid=456)
+
+    assert attempt.attempt_id == "attempt-0001"
+    assert resumed.attempt_id == "attempt-0002"
+    assert not (tmp_path / ".campaign-release").exists()
 
 
 def test_campaign_live_exact_owner_recovery_refuses_without_mutation(
@@ -1098,6 +1480,23 @@ def test_campaign_process_probe_failures_use_stable_codes_and_preserve_lock(
         )
     assert (tmp_path / "existing" / ".campaign-lock").is_dir()
     assert (tmp_path / "existing" / "attempts.jsonl").read_bytes() == before
+
+
+def test_campaign_owner_token_generation_failure_uses_dedicated_code(
+    tmp_path: Path,
+) -> None:
+    def failing_token() -> str:
+        raise RuntimeError("sensitive token detail")
+
+    with pytest.raises(RuntimeError, match="^campaign_owner_token_failed$"):
+        profile.acquire_campaign_lock(
+            tmp_path,
+            pid=123,
+            process_start_probe=lambda _pid: _OWNER_START,
+            owner_token_factory=failing_token,
+        )
+
+    assert not (tmp_path / ".campaign-lock").exists()
 
 
 def test_process_start_identity_returns_none_only_for_exact_missing_pid() -> None:
@@ -1529,6 +1928,81 @@ def test_campaign_attempt_cleanup_removes_only_owned_target_worktrees(
     assert {Path(command[-1]).name for command in commands} == {"control", "candidate"}
     assert raw.read_bytes() == b"retained\n"
     assert attempt_root.is_dir()
+
+
+def test_campaign_attempt_cleanup_rejects_attempts_symlink_outside_campaign(
+    tmp_path: Path,
+) -> None:
+    campaign = tmp_path / "campaign"
+    campaign.mkdir()
+    outside = tmp_path / "outside"
+    attempt = outside / "attempt-0001"
+    for name in ("control", "candidate"):
+        (attempt / name).mkdir(parents=True)
+    (campaign / "attempts").symlink_to(outside, target_is_directory=True)
+    calls: list[list[str]] = []
+
+    def run_command(command, **_kwargs):
+        calls.append(command)
+        return SimpleNamespace(returncode=0)
+
+    with pytest.raises(RuntimeError, match="^campaign_attempt_cleanup_refused$"):
+        profile.cleanup_attempt_worktrees(
+            tmp_path,
+            campaign,
+            "attempt-0001",
+            run_command=run_command,
+        )
+
+    assert calls == []
+    assert (attempt / "control").is_dir()
+    assert (attempt / "candidate").is_dir()
+
+
+def test_campaign_attempt_cleanup_rejects_attempt_root_inode_swap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    campaign = tmp_path / "campaign"
+    attempt = profile.create_attempt_root(campaign, "attempt-0001")
+    for name in ("control", "candidate"):
+        (attempt / name).mkdir()
+    outside = tmp_path / "outside" / "attempt-0001"
+    for name in ("control", "candidate"):
+        (outside / name).mkdir(parents=True)
+    original_remove = profile._remove_target_worktree
+    swapped = False
+    calls: list[list[str]] = []
+
+    def swap_then_remove(*args, **kwargs):
+        nonlocal swapped
+        if not swapped:
+            swapped = True
+            (campaign / "attempts").rename(campaign / "original-attempts")
+            (campaign / "attempts").symlink_to(
+                tmp_path / "outside", target_is_directory=True
+            )
+        return original_remove(*args, **kwargs)
+
+    monkeypatch.setattr(profile, "_remove_target_worktree", swap_then_remove)
+
+    def run_command(command, **_kwargs):
+        calls.append(command)
+        return SimpleNamespace(returncode=0)
+
+    with pytest.raises(BaseExceptionGroup) as caught:
+        profile.cleanup_attempt_worktrees(
+            tmp_path,
+            campaign,
+            "attempt-0001",
+            run_command=run_command,
+        )
+
+    assert {str(error) for error in caught.value.exceptions} == {
+        "campaign_attempt_cleanup_refused"
+    }
+    assert calls == []
+    assert (outside / "control").is_dir()
+    assert (outside / "candidate").is_dir()
 
 
 def _materialize_original_runner(candidate_root: Path) -> Path:
@@ -4072,26 +4546,26 @@ def test_remove_target_worktree_preserves_remove_and_registration_failures(
     assert (run_root / "candidate").is_dir()
 
 
-def test_remove_target_worktree_cleans_registered_missing_directory(
+def test_remove_target_worktree_rejects_missing_target_before_git(
     tmp_path: Path,
 ) -> None:
     run_root = tmp_path / "run"
     run_root.mkdir()
-    target = (run_root / "candidate").resolve()
     calls: list[list[str]] = []
 
     def fake_run(command, **_kwargs):
         calls.append(command)
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
-    profile._remove_target_worktree(
-        tmp_path / "repository",
-        run_root,
-        name="candidate",
-        run_command=fake_run,
-    )
+    with pytest.raises(RuntimeError, match="^target_worktree_invalid$"):
+        profile._remove_target_worktree(
+            tmp_path / "repository",
+            run_root,
+            name="candidate",
+            run_command=fake_run,
+        )
 
-    assert calls == [["git", "worktree", "remove", "--force", str(target)]]
+    assert calls == []
 
 
 def test_remove_target_worktrees_attempts_both_when_first_cleanup_fails(
