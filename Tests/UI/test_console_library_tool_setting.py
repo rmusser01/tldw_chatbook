@@ -154,6 +154,43 @@ def test_factory_wires_the_policy_enforcer_into_the_chunk_tool_service(monkeypat
     assert chunk_service._policy_enforcer is app.service_policy_enforcer
 
 
+def test_factory_chunk_read_tools_degrade_when_one_media_handle_is_missing(
+    monkeypatch, tmp_path
+):
+    """Qodo review (PR #1976): the factory constructs the chunk service when
+    EITHER media handle resolves, so the one-present/one-absent shape must
+    degrade the read tools to the NAMED feature_unavailable payload -- not
+    scrub an AttributeError on the missing handle to storage_error."""
+    from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+
+    _patch_cli_config(monkeypatch, {"console": {"direct_library_tools": True}})
+    app, screen = _build_screen()
+    # Media DB present, reading service absent: the service IS constructed
+    # (the factory's either-handle guard), with a None reading handle.
+    app.media_db = MediaDatabase(
+        tmp_path / "console-degrade.db", client_id="console-degrade-tests"
+    )
+    app.local_media_reading_service = None
+
+    provider = screen._console_library_provider_factory()
+
+    assert isinstance(provider, LibraryToolProvider)
+    assert provider._service._media_chunk is not None
+    degrade_cases = (
+        ("library:library_get_media_structure", {"id": "media:irrelevant"}),
+        (
+            "library:library_get_media_chunk",
+            {"id": "media:irrelevant", "chunk_index": 0},
+        ),
+    )
+    for tool_id, args in degrade_cases:
+        result = provider.invoke(tool_id, args)
+        assert result.ok is False
+        payload = json.loads(result.error)
+        assert payload["error"]["code"] == ERROR_FEATURE_UNAVAILABLE
+
+
 def test_factory_missing_backend_yields_per_tool_feature_unavailable(monkeypatch):
     """A backend that is None must degrade that backend's tools to
     ``feature_unavailable`` -- never fail the whole provider."""

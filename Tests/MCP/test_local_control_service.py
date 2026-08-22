@@ -1943,14 +1943,15 @@ _LIBRARY_TOOL_POLICY_EXPECTATIONS = {
     "library_list_collections": ("library.collections.list.local", "library_collections"),
     "library_get_collection": ("library.collections.detail.local", "library_collections"),
     "library_search_collections": ("library.collections.list.local", "library_collections"),
-    # chunking-agent-tools siblings: read tools on the existing media read
-    # path (spec §6 "no new verbs"); the derived mapping resolves their
-    # non-get operations to the browse-level read action. spec_save resolves
-    # to its OWN write action (Task 4's deadline carry: the moment the save
-    # handler went live, the provisional derived READ mapping had to stop --
-    # a live write must never resolve to a read action under policy).
-    "library_get_media_structure": ("media.reading.list.local", "media_reading_ingestion_sources"),
-    "library_get_media_chunk": ("media.reading.list.local", "media_reading_ingestion_sources"),
+    # chunking-agent-tools siblings: the read tools ride the existing media
+    # read path (spec §6 "no new verbs") at the matching LEVEL -- structure
+    # and chunk fetch are single-item detail reads (by id, like get), spec
+    # list is a browse-level listing. spec_save resolves to its OWN write
+    # action (Task 4's deadline carry: the moment the save handler went
+    # live, the provisional derived READ mapping had to stop -- a live
+    # write must never resolve to a read action under policy).
+    "library_get_media_structure": ("media.reading.detail.local", "media_reading_ingestion_sources"),
+    "library_get_media_chunk": ("media.reading.detail.local", "media_reading_ingestion_sources"),
     "library_list_chunk_specs": ("media.reading.list.local", "media_reading_ingestion_sources"),
     "library_save_chunk_spec": ("library.templates.save.local", "library_collections"),
     "library_rechunk_media": ("library.media.rechunk.local", "library_collections"),

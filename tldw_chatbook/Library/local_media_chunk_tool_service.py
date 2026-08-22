@@ -203,7 +203,21 @@ class LocalMediaChunkToolService:
     # -- Entry point ---------------------------------------------------------
 
     def invoke(self, tool_name: str, arguments: Mapping[str, Any]) -> dict[str, Any]:
-        """Run one chunk tool; failures return the structured error payload."""
+        """Run one chunk tool; failures return the structured error payload.
+
+        Args:
+            tool_name: One of the five media chunk tool names registered in
+                ``LIBRARY_TOOL_DESCRIPTORS``.
+            arguments: The tool's JSON-object arguments, validated against
+                the descriptor's schema keys before any backend touch.
+
+        Returns:
+            The tool's response payload, or the structured
+            ``LibraryToolError`` payload for named refusals (invalid
+            arguments, not-found, feature-unavailable degrades) and the
+            scrubbed storage-error payload for operational failures. Never
+            raises.
+        """
         try:
             return self._dispatch(tool_name, arguments)
         except LibraryToolError as exc:
@@ -249,6 +263,25 @@ class LocalMediaChunkToolService:
             raise _invalid(f"missing required argument(s): {', '.join(missing)}")
 
     # -- Shared resolution ----------------------------------------------------
+
+    def _require_media_read_backend(self) -> None:
+        """Both read-tool handles, or the named degrade payload.
+
+        The two read tools need the media DB (row/chunk reads) AND the
+        reading service (navigation, unit fetch); both wiring sites can
+        construct this service with one handle absent (the Console factory
+        builds on EITHER, the MCP builder survives a failed media backend),
+        so a missing handle degrades THESE tools to the structured
+        ``feature_unavailable`` payload -- the sibling ``_backend`` None
+        discipline -- instead of letting the eventual ``AttributeError``
+        scrub to a misleading storage_error.
+        """
+        if self._media_db is None or self._reading is None:
+            raise LibraryToolError(
+                ERROR_FEATURE_UNAVAILABLE,
+                "The local media store is not available in this deployment,"
+                " so media structure and chunk reads are unavailable.",
+            )
 
     def _resolve_media_row(self, arguments: Mapping[str, Any]) -> tuple[str, dict]:
         """Parse the public media ID and load the ACTIVE media row.
@@ -301,17 +334,27 @@ class LocalMediaChunkToolService:
     def _family_index_range(
         self, media_id: int, chunk_type: str | None
     ) -> tuple[int, int] | None:
-        """The selected family's ``[min_index, max_index]``, or None."""
+        """The selected family's ``[min_index, max_index]``, or None.
+
+        Two LITERAL statements (no f-string composition): the NULL family
+        cannot be expressed as a bound parameter, so the branch picks one
+        of two fixed SQL texts -- every VALUE stays parameterized either
+        way, matching the reading service's own queries over this table.
+        """
         if chunk_type is None or chunk_type == _PRIMARY_FAMILY_LABEL:
-            clause, params = "chunk_type IS NULL", (media_id,)
+            row = self._media_db.get_connection().execute(
+                "SELECT MIN(chunk_index) AS lo, MAX(chunk_index) AS hi "
+                "FROM UnvectorizedMediaChunks "
+                "WHERE media_id = ? AND deleted = 0 AND chunk_type IS NULL",
+                (media_id,),
+            ).fetchone()
         else:
-            clause, params = "chunk_type = ?", (media_id, chunk_type)
-        row = self._media_db.get_connection().execute(
-            f"SELECT MIN(chunk_index) AS lo, MAX(chunk_index) AS hi "
-            f"FROM UnvectorizedMediaChunks "
-            f"WHERE media_id = ? AND deleted = 0 AND {clause}",
-            params,
-        ).fetchone()
+            row = self._media_db.get_connection().execute(
+                "SELECT MIN(chunk_index) AS lo, MAX(chunk_index) AS hi "
+                "FROM UnvectorizedMediaChunks "
+                "WHERE media_id = ? AND deleted = 0 AND chunk_type = ?",
+                (media_id, chunk_type),
+            ).fetchone()
         if row is None or row["lo"] is None:
             return None
         return int(row["lo"]), int(row["hi"])
@@ -319,6 +362,7 @@ class LocalMediaChunkToolService:
     # -- library_get_media_structure (spec §4.1) --------------------------------
 
     def _structure(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
+        self._require_media_read_backend()
         public_id, row = self._resolve_media_row(arguments)
         media_id = int(row["id"])
         revision = str(row["version"])
@@ -532,6 +576,7 @@ class LocalMediaChunkToolService:
     # -- library_get_media_chunk (spec §4.2) ------------------------------------
 
     def _fetch_chunk(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
+        self._require_media_read_backend()
         public_id, row = self._resolve_media_row(arguments)
         media_id = int(row["id"])
         revision = str(row["version"])

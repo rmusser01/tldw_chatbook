@@ -68,17 +68,25 @@ _LIBRARY_TOOL_ACTION_OVERRIDES = {
 }
 
 
+# chunking-agent-tools (Qodo review, PR #1976): the two media chunk READ
+# tools are single-item detail reads (by id, exactly like ``get``), so their
+# operations derive the DETAIL action -- not the browse-level list the
+# provisional non-get fallback resolved them to.
+_DETAIL_READ_OPERATIONS = frozenset({"get", "structure", "chunk"})
+
+
 def _library_tool_action_id(descriptor: LibraryToolDescriptor) -> str:
     """Map one Library descriptor to its policy action id.
 
-    list/search are browse-level reads; get is a detail-level read; writing
+    list/search/spec_list are browse-level reads; get and the single-item
+    chunk reads (structure, chunk) are detail-level reads; writing
     operations carry an explicit override above. Derived from the descriptor
     table so the policy surface can never drift from the tool contract.
     """
     override = _LIBRARY_TOOL_ACTION_OVERRIDES.get(descriptor.operation)
     if override is not None:
         return override
-    action = "detail" if descriptor.operation == "get" else "list"
+    action = "detail" if descriptor.operation in _DETAIL_READ_OPERATIONS else "list"
     namespace = _LIBRARY_ITEM_TYPE_ACTION_NAMESPACE[descriptor.item_type]
     return f"{namespace}.{action}.local"
 

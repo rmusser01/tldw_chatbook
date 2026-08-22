@@ -972,6 +972,46 @@ def test_backend_failure_scrubs_to_storage_error(
     assert "/secret/path.sql" not in json.dumps(payload)
 
 
+def test_read_tools_without_reading_service_map_to_feature_unavailable(media_db):
+    """A missing reading-service handle degrades the two read tools to the
+    NAMED payload -- never the scrubbed storage_error an AttributeError on
+    ``None.get_media_navigation`` would produce (the sibling ``_backend``
+    None discipline; both wiring sites can construct the service with one
+    handle absent)."""
+    service = LocalMediaChunkToolService(media_db, None, template_interop=None)
+    public_id = make_public_id("media", str(uuid.uuid4()))
+
+    structure = _invoke(service, "library_get_media_structure", {"id": public_id})
+    fetch = _invoke(
+        service,
+        "library_get_media_chunk",
+        {"id": public_id, "chunk_index": 0},
+    )
+
+    assert _error_code(structure) == ERROR_FEATURE_UNAVAILABLE
+    assert _error_code(fetch) == ERROR_FEATURE_UNAVAILABLE
+
+
+def test_read_tools_without_media_db_map_to_feature_unavailable(media_db):
+    """The mirror gap: a reading service whose own media_db resolution is
+    absent leaves ``_media_db`` None; the read tools name the degrade
+    instead of scrubbing the ``None.get_media_by_uuid`` failure."""
+    service = LocalMediaChunkToolService(
+        None, LocalMediaReadingService(media_db), template_interop=None
+    )
+    public_id = make_public_id("media", str(uuid.uuid4()))
+
+    structure = _invoke(service, "library_get_media_structure", {"id": public_id})
+    fetch = _invoke(
+        service,
+        "library_get_media_chunk",
+        {"id": public_id, "chunk_index": 0},
+    )
+
+    assert _error_code(structure) == ERROR_FEATURE_UNAVAILABLE
+    assert _error_code(fetch) == ERROR_FEATURE_UNAVAILABLE
+
+
 # ---------------------------------------------------------------------------
 # library_rechunk_media (Task 5, spec §4.4)
 # ---------------------------------------------------------------------------
