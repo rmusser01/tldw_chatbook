@@ -285,6 +285,11 @@ def test_real_run_log_omits_sensitive_tool_args_and_results(wired, monkeypatch):
         json.dumps({"reasoning": "private internal plan"}),
         json.dumps({"meta": {"reasoning_content": "private internal plan"}}),
         "{'chain_of_thought': 'private internal plan'}",
+        "reasoning: private internal plan",
+        "  reasoning_content = private internal plan",
+        "meta:\n  chain_of_thought: private internal plan",
+        "{reasoning: private internal plan}",
+        "chain-of-thought = private internal plan",
         "ghp_" + "a" * 36,
         "AKIA" + "A" * 16,
         "eyJabcdefghij.abcdefghij.abcdefghij",
@@ -298,11 +303,12 @@ def test_real_run_log_omits_sensitive_tool_args_and_results(wired, monkeypatch):
     for value in sensitive:
         assert on_record("tool_call", {"content": json.dumps({"value": value})}) is None
         assert on_record("tool_result", {"content": value}) is None
-    safe_number = on_record(
-        "tool_result",
-        {"content": "safe output: reasoning about three visible matches"},
+    safe_values = (
+        "safe output: reasoning about three visible matches",
+        "rendered HTML: <div>safe</div>",
     )
-    assert isinstance(safe_number, int)
+    for value in safe_values:
+        assert isinstance(on_record("tool_result", {"content": value}), int)
 
     records = read_all(root)
     persisted = "\n".join(record.content for record in records)
@@ -310,10 +316,7 @@ def test_real_run_log_omits_sensitive_tool_args_and_results(wired, monkeypatch):
         assert value not in persisted
     assert "private internal plan" not in persisted
     assert "private-key-body" not in persisted
-    assert any(
-        record.content == "safe output: reasoning about three visible matches"
-        for record in records
-    )
+    assert all(any(record.content == value for record in records) for value in safe_values)
 
 
 def test_run_turn_called_twice_on_one_service_gets_two_separate_logs(wired):

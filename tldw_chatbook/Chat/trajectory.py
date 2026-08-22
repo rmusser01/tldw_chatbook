@@ -41,6 +41,7 @@ Never-fabricate contract
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import heapq
 import json
@@ -83,7 +84,7 @@ _COMPACTION_PURPOSE = "conversation_compaction"
 _NO_SEQ = float("inf")
 
 _LOCAL_PATH_RE = re.compile(
-    r"(?<![A-Za-z0-9:/])(?:~/|/)[^\s\"'<>]+"
+    r"(?<![A-Za-z0-9:/<])(?:~/|/)[^\s\"'<>]+"
     r"|(?<![A-Za-z0-9_])(?:[A-Za-z]:[\\/]|\\\\[^\\/\s]+[\\/][^\\/\s]+)"
     r"[^\s\"'<>]*"
 )
@@ -92,6 +93,7 @@ _HTTP_REQUEST_TARGET_RE = re.compile(
     r"^(\s*(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+)\S+", re.IGNORECASE
 )
 _SAFE_ROUTE_ROOTS = frozenset({"api", "docs", "help", "v1", "v2", "v3"})
+_PATH_CONTEXT_KEYS = frozenset({"path", "file_path", "file", "cwd", "directory"})
 _PYTHON_STACK_RE = re.compile(
     r"\bfile\s+[\"']?[^\"',\s]+[\\/][^\"',]+[\"']?,\s*line\s+\d+",
     re.IGNORECASE,
@@ -103,6 +105,34 @@ _JS_STACK_RE = re.compile(
 
 def contains_local_path(value: str) -> bool:
     """Return whether text contains a local path or file URI."""
+    stripped_value = value.strip()
+    if stripped_value.startswith(("{", "[", "(")):
+        try:
+            structured = json.loads(stripped_value)
+        except (TypeError, ValueError):
+            try:
+                structured = ast.literal_eval(stripped_value)
+            except (SyntaxError, ValueError):
+                structured = None
+
+        def has_path_context(item: Any) -> bool:
+            if isinstance(item, Mapping):
+                for key, nested in item.items():
+                    normalized = re.sub(r"[\s-]+", "_", str(key).lower())
+                    if normalized in _PATH_CONTEXT_KEYS and isinstance(nested, str):
+                        candidate = nested.strip()
+                        if candidate.lower().startswith("file://") or candidate.startswith(
+                            ("/", "~/", "\\\\")
+                        ) or (len(candidate) > 2 and candidate[1:3] in {":\\", ":/"}):
+                            return True
+                    if has_path_context(nested):
+                        return True
+            elif isinstance(item, (list, tuple)):
+                return any(has_path_context(nested) for nested in item)
+            return False
+
+        if structured is not None and has_path_context(structured):
+            return True
     if "file://" in value.lower():
         return True
     searchable_lines: list[str] = []
@@ -122,8 +152,14 @@ def contains_local_path(value: str) -> bool:
             return True
         if candidate.startswith("/"):
             parts = [part for part in candidate.split("/") if part]
-            prefix = searchable[max(0, match.start() - 8) : match.start()].lower()
-            explicit_context = bool(re.search(r"(?:\bcd\s+|\bcwd\s*=\s*)$", prefix))
+            prefix = searchable[max(0, match.start() - 32) : match.start()].lower()
+            explicit_context = bool(
+                re.search(
+                    r"(?:\b(?:cd|ls)\s+|"
+                    r"\b(?:cwd|path|file_path|file|directory)\s*[:=]\s*)$",
+                    prefix,
+                )
+            )
             if explicit_context or not parts or parts[0].lower() not in _SAFE_ROUTE_ROOTS:
                 return True
     return False
