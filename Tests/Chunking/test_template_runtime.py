@@ -370,9 +370,19 @@ _RE_VENDORED_TEMPLATES_IMPORT = re.compile(r"engine\.templates")
 _RE_NAME_RESOLUTION = re.compile(
     r"FROM\s+ChunkingTemplates\s+WHERE\s+name", re.IGNORECASE
 )
+# Auto-selection task 1 (spec §4.1): TemplateManager/TemplateLearner stay
+# fully fenced (zero construction homes anywhere). TemplateClassifier gains
+# exactly ONE permitted home — Chunking/auto_selection.py, the module this
+# sub-project builds next — so it gets its own pattern + allowed set; the
+# home file does not exist yet, so its scan is empty today and the guard
+# stays green by construction while pinning the classifier's placement.
 _RE_FENCED_CONSTRUCTION = re.compile(
-    r"(?<![A-Za-z0-9_])Template(?:Manager|Classifier|Learner)\s*\("
+    r"(?<![A-Za-z0-9_])Template(?:Manager|Learner)\s*\("
 )
+_RE_CLASSIFIER_CONSTRUCTION = re.compile(
+    r"(?<![A-Za-z0-9_])TemplateClassifier\s*\("
+)
+CLASSIFIER_CONSTRUCTION_ALLOWED = {"Chunking/auto_selection.py"}
 
 
 def _production_py_files():
@@ -451,10 +461,17 @@ class TestEnumerationGuards:
             probe.unlink(missing_ok=True)
 
     def test_no_production_module_constructs_fenced_classes(self):
-        # AC 9 (source half): TemplateManager/TemplateClassifier/TemplateLearner
-        # are vendored-but-unused. The lookbehind excludes the legacy
+        # AC 9 (source half): TemplateManager/TemplateLearner are
+        # vendored-but-unused. The lookbehind excludes the legacy
         # pydantic ChunkingTemplateManager (deleted wholesale in PR C).
         assert _scan(_RE_FENCED_CONSTRUCTION) == []
+        # Auto-selection (spec §4.1): TemplateClassifier's single allowed
+        # construction home is Chunking/auto_selection.py — zero constructors
+        # may appear anywhere else. The home module does not exist yet, so
+        # the scan is empty today and this stays green by construction.
+        hits = _scan(_RE_CLASSIFIER_CONSTRUCTION)
+        assert set(hits) <= CLASSIFIER_CONSTRUCTION_ALLOWED, \
+            f"TemplateClassifier constructed outside its home: {sorted(hits)}"
 
 
 # ---------------------------------------------------------------------------

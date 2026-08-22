@@ -12,12 +12,13 @@ BRANCH = "dev"
 PIN = "385afa951922c8a9dc2002c675bb6cad65e4ac23"
 
 # Phase-1 file set (spec §5.1) plus templates.py (template-parity task 4,
-# spec §6.1); excludes the still-deferred #2/#3/#6 modules and
-# upstream's own __init__.py (chatbook-authored instead, §5.1).
+# spec §6.1) and auto_planner.py (auto-selection task 1, spec §4.1); excludes
+# the still-deferred #2/#6 modules and upstream's own __init__.py
+# (chatbook-authored instead, §5.1).
 VENDORED = [
     "base.py", "chunker.py", "constants.py", "exceptions.py", "error_policy.py",
     "option_utils.py", "regex_safety.py", "security_logger.py",
-    "multilingual.py", "llm_context.py", "templates.py",
+    "multilingual.py", "llm_context.py", "templates.py", "auto_planner.py",
     "process_text/__init__.py", "process_text/models.py", "process_text/options.py",
     "process_text/preparation.py", "process_text/dispatch.py",
     "process_text/pipeline.py", "process_text/metadata.py",
