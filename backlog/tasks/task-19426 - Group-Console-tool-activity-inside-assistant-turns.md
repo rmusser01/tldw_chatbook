@@ -58,7 +58,7 @@ Key decisions and tradeoffs:
 - Inspector resolves active-session display-only markers through the transcript only after the authoritative store lookup misses.
 - Qodo follow-up converts both generic service permission gates to structured blocked results, documents all new public helper contracts, and caches causal spans once per transcript ingest instead of regrouping on each window/prune lookup.
 
-Scoped verification, followed by a clean final rebase onto dev base f278a43c1:
+Scoped verification, followed by a clean final rebase onto dev base e98076411:
 - Complete focused changed-functionality suite: 856 passed, 2 warnings.
 - Additional modified-code coverage for continuation persistence, models/review hook, local-server blocked outcomes, Inspector activity selection, and CSS integrity: 127 passed, 2 warnings.
 - Adjacent Console suite: 323 passed. The two marker E2E `binding_unavailable` failures reproduced exactly on clean dev before any feature assertion runs.
