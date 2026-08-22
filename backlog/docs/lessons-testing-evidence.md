@@ -5980,3 +5980,48 @@ happens to use. Three of those four routes were already closed here; the
 fourth was the one no test had ever expressed. The fix was
 `send(..., auth=None)` — explicit `None`, because *omitting* the argument
 leaves httpx's `USE_CLIENT_DEFAULT` sentinel in play and changes nothing.
+
+## The pathspec-magic vector reappears wherever a FILENAME reaches argv — and the blanket fix for it breaks exclusions (task-19632, 2026-08-21)
+
+The lesson above (task-16801) recorded pathspec magic as vector 4 in Change
+Review's git modes and recommended `GIT_LITERAL_PATHSPECS=1` as the blanket
+hardening. The agent-facing `git_*` tools are a *different* module with a
+*different* entry point, and the same vector was live there, reached from the
+other direction: not a repository filename the UI carried into a commit, but
+the model's own `path` ARGUMENT.
+
+`git_diff(path=":(exclude)notes.txt")` — a legal POSIX filename, a real file in
+the repo, so `resolve_workspace_path` resolves it, confines it, and finds it
+un-denylisted, exactly as designed. git then read it as MAGIC and inverted the
+diff's scope, returning the rest of the repository including `~/.ssh/id_rsa`'s
+content. The tool's *own* denylist refusal for `path=".ssh/id_rsa"` still
+worked; the model simply asked a different question. Measured before the fix,
+with an isolated `$HOME`.
+
+Two things generalise:
+
+- **Trace the argv slot per module, not per repository.** The 16801 audit was
+  correct and complete for the module it audited. "This class was fixed" is not
+  a property of a codebase; a second module building the same argv from a
+  different source needs its own slot table. Here the source was the model, and
+  the choke point every reviewer trusts (`resolve_workspace_path`) is a PATH
+  validator — it has no opinion about pathspec syntax, and correctly so.
+- **`GIT_LITERAL_PATHSPECS=1` and `:(exclude)` are mutually exclusive, and the
+  conflict is SILENT.** With it set, `:(exclude,literal)<path>` is taken as a
+  literal filename, matches nothing, and `git diff`/`git status` return **empty
+  output with exit 0** (verified, git 2.39). Applying the previous lesson's
+  blanket recommendation to this module would therefore have broken the feature
+  *and* every credential exclusion at once, with no error to notice. The
+  per-pathspec form (`:(literal)` on values that SCOPE, `:(exclude,literal)` /
+  `:(exclude,glob)` on values that DENY) is the compatible equivalent. There is
+  now a test asserting no `*_PATHSPECS` variable appears in that runner's
+  environment, because the comment alone would not survive a future hardening
+  pass.
+
+One test-craft note from the same session: the born-red run for the injection
+case **passed at base**, which looked like the vector was already closed. It was
+not — the assertions happened to align with the injected behaviour, because the
+credential file was not dirty in that scenario, so the inverted scope had
+nothing to leak. Reading the base-run PASS list rather than only the FAILED list
+is what caught it. A born-red test that passes at base is a defect in the test
+until you have explained why.

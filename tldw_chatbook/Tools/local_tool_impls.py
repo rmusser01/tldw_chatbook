@@ -33,11 +33,17 @@ per candidate. ``grep_files`` is the sharpest of the three — it READS every
 file it walks and prints matching lines — so its check runs before the
 read, not after.
 
-``Tools/git_tool_impls.py`` shares this choke point for its path arguments
-but has NO such output filter, and ``path`` is optional on ``git_status``/
-``git_log``/``git_diff``: with it omitted, ``git_diff`` returns the CONTENT
-of a denylisted file (TASK-19632, open). Do not extend that family assuming
-the choke point alone makes its output safe.
+``Tools/git_tool_impls.py`` shares this choke point for its path arguments,
+and ``path`` is optional on ``git_status``/``git_log``/``git_diff``: with
+it omitted the choke point sees only the repository root, and ``git_diff``
+returned the CONTENT of a denylisted file from a CLEAN worktree
+(TASK-19632). That family solves the same problem a third way -- it cannot
+filter candidates it never sees, because git enumerates the repository for
+it, so it instead excludes denylisted paths from git's INPUT by pathspec
+(``git_tool_impls._denylist_pathspecs``). Do not extend that family
+assuming the choke point alone makes its output safe: whichever of the
+three mechanisms fits, a tool that PRESENTS paths the model never named
+needs one.
 """
 
 from __future__ import annotations

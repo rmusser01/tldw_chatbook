@@ -23,18 +23,38 @@ TWO independent agent file-tool families enforce this, and both must:
      so each additionally filters its own walked candidates against
      :func:`is_sensitive_path` -- the choke point only ever sees their
      root.
-   * **The ``git_*`` tools do NOT have that filtering, and one of them
-     leaks (TASK-19632, open).** ``path`` is OPTIONAL on ``git_status``/
-     ``git_log``/``git_diff``, and when it is omitted nothing reaches this
-     module at all (``Agents/local_tool_provider.py``'s ``path_targets``
-     returns the repo root and stops). Measured on a ``$HOME``-rooted
-     workspace containing ``~/.ssh/id_rsa``: ``git_diff`` returns the
-     file's CONTENT (a clean worktree is enough -- ``commit_range=
-     "HEAD~1..HEAD"`` reads it out of history, no write primitive needed);
-     ``git_diff(stat=True)`` and ``git_status`` on a dirty tree return the
-     NAME; ``git_log`` returns commit metadata only and leaks nothing. Do
-     not read item 2 as "the git tools are covered" -- their path
-     ARGUMENT is, their output is not.
+   * The ``git_*`` tools present entries the model never named too --
+     ``path`` is OPTIONAL on ``git_status``/``git_log``/``git_diff``, and
+     with it omitted nothing but the repository root reaches this module
+     (``Agents/local_tool_provider.py``'s ``path_targets`` returns the
+     repo root and stops). They do not filter git's OUTPUT; they
+     constrain its INPUT, translating this module's denials into
+     ``:(exclude)`` PATHSPECS computed per call from
+     :func:`sensitive_exclusions_under` (see ``Tools/git_tool_impls.py``'s
+     ``_denylist_pathspecs``). git stays the authority on what matches,
+     and no diff or porcelain text is ever parsed to decide what to
+     withhold -- a half-parsed diff is worse than none. TASK-19632, which
+     that closed: on a ``$HOME``-rooted workspace containing
+     ``~/.ssh/id_rsa``, ``git_diff`` with no ``path`` returned the file's
+     CONTENT from a CLEAN worktree (``commit_range="HEAD~1..HEAD"`` reads
+     it out of history -- no write primitive and no dirty tree needed),
+     and ``git_diff(stat=True)`` / ``git_status`` returned its NAME.
+     ``git_log`` leaked nothing (commit metadata only -- no paths, no
+     content) and is deliberately left unfiltered, so its output is
+     unchanged by any of this.
+
+   One consequence of using pathspecs belongs here, where the denials are
+   defined: **a pathspec is not a path**. A repository file whose NAME is
+   itself pathspec magic (``:(exclude)notes.txt`` is a legal POSIX
+   filename) inverts the scope of whatever argv it is spliced into --
+   ``git_diff(path=":(exclude)notes.txt")`` was measured returning the
+   whole-repo diff, ``~/.ssh/id_rsa``'s content included, while nominally
+   scoping to that one file, and it did so THROUGH the choke point, since
+   the string is a real filename that resolves inside the workspace. The
+   ``--`` separator does not stop it: ``--`` ends OPTIONS, and everything
+   after it is parsed as a pathspec, magic and all. Every pathspec those
+   tools build is therefore rendered with explicit ``:(literal)`` /
+   ``:(exclude,literal)`` magic, the model-supplied ``path`` included.
 
    This family was added AFTER this contract was written and, until
    TASK-19551, called none of this: it confined paths to ``[console]
@@ -54,14 +74,54 @@ TWO independent agent file-tool families enforce this, and both must:
    modules) and pins the two families' agreement on the denylist, so they
    cannot drift apart again.
 
-Also worth knowing before relying on this module: the denylist is an
-ENUMERATION (``_SENSITIVE_DIRS`` plus the accessor-resolved paths below),
-so its coverage is exactly what it lists. Credential files it does not
-enumerate -- ``~/.netrc``, ``~/.git-credentials``, ``~/.npmrc``,
-``~/.pypirc``, ``~/.cargo/credentials.toml``, ``~/.config/gh/hosts.yml`` --
-are NOT refused by it, and family 2 passes ``allow_hidden=True`` while
-family 1 does not, so for dotted paths family 2 is strictly the weaker of
-the two (TASK-19633, open).
+Two instruments express what is denied, and the choice between them is
+made per case rather than by taste (TASK-19633):
+
+* **Location rules** -- ``_SENSITIVE_DIRS`` plus the accessor-resolved
+  paths further down -- for anything whose LOCATION is the unambiguous
+  part. ``~/.ssh``, ``~/.aws``, ``~/.config/gh``: everything under them is
+  credential material, and their filenames are NOT self-identifying
+  (``hosts.yml`` is just as often an Ansible inventory).
+* **A name rule** (``_SENSITIVE_FILE_NAMES``) for the handful of
+  filenames that identify a credential store wherever they appear.
+  Adopted after ``~/.netrc``, ``~/.git-credentials``, ``~/.npmrc``,
+  ``~/.pypirc``, ``~/.cargo/credentials.toml`` and
+  ``~/.config/gh/hosts.yml`` were each measured returning their body
+  through ``fs_read``. A location rule cannot cover most of that set: the
+  credential is not confined to one directory (a project-local
+  ``.npmrc``/``.pypirc`` carries an auth token exactly like the home one,
+  and a copy of ``credentials.toml`` is a credential wherever it lands),
+  and refusing the whole of ``~/.cargo`` or ``~/.config/git`` would take
+  down things an agent legitimately reads.
+
+BOTH are enumerations and both trail reality -- names no less than
+locations. The name rule is preferred where it applies because one entry
+covers unbounded locations while one location entry covers exactly one,
+and because a tool's config DIRECTORY migrates between XDG/legacy/OS
+conventions far more often than its credential FILENAME ever changes. It
+is kept deliberately small and biased toward names that are credential
+stores by definition; a name is added only when a false refusal would be
+a curiosity rather than routine obstruction -- which is why ``.env`` is
+deliberately NOT here (as often build configuration as secrets, and
+refusing it would break the ADR-032 coding-agent use case this module
+must not break). The cost is real and accepted: an agent cannot read a
+test fixture named ``credentials``, and the refusal names it as protected
+rather than failing silently.
+
+The two families' HIDDEN-COMPONENT policies still differ, and that
+difference is design, not residue. Family 1 confines through
+``validate_path_multi``, which defaults ``allow_hidden=False`` and so
+refuses any dotted component before this module is consulted; family 2
+passes ``allow_hidden=True`` (ADR-032 -- a coding agent that cannot read
+``.github/`` or ``.gitignore`` is useless). Family 1 is therefore
+strictly stricter for dotted NAMES, which is acceptable because the two
+roots are different kinds of place: family 1's sandbox root is app-owned
+storage where a dotfile has no legitimate purpose, while family 2's root
+is a user source tree where dotfiles are the point. What must not differ
+is THIS module's answer -- and since TASK-19633 it does not: every
+credential path measured above is refused by the denylist itself, under
+either family, so the part of the gap that was weaker-by-accident is
+gone and only the deliberate difference remains.
 
 This is *not* wired into
 ``Utils/path_validation.validate_path``/``validate_path_multi`` themselves:
@@ -144,11 +204,17 @@ track is the real answer for shell execution.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
 from loguru import logger
 
 #: Directory prefixes that are refused along with everything beneath them.
+#: The LOCATION rule (see the module docstring): used where the directory
+#: is unambiguously a credential store and its filenames are not
+#: self-identifying. ``~/.config/gh`` joined in TASK-19633 for exactly
+#: that reason -- it holds the GitHub CLI's OAuth tokens in
+#: ``hosts.yml``, a filename far too generic to put in the name rule
+#: below.
 _SENSITIVE_DIRS = (
     "~/.ssh",
     "~/.aws",
@@ -157,6 +223,32 @@ _SENSITIVE_DIRS = (
     "~/.docker",
     "~/.kube",
     "~/.local/share/keyrings",
+    "~/.config/gh",
+)
+
+#: The NAME rule (TASK-19633): filenames that identify a credential store
+#: WHEREVER they appear, refused by name in addition to every location
+#: rule. Compared case-folded, because the macOS and Windows filesystems
+#: this app runs on are case-insensitive -- ``.NETRC`` opens the same file
+#: an exact-case check would wave through. See the module docstring for
+#: why a name rule earns its place here (and why ``.env`` does not).
+#:
+#: Matching is skipped for an existing DIRECTORY, mirroring the
+#: direct-child-file rule's own ``is_dir()`` gate below: a directory named
+#: ``credentials`` is a container, not a credential, and refusing it would
+#: make everything under it unlistable. A path that does not exist is not
+#: a directory either, so it still fails closed.
+_SENSITIVE_FILE_NAMES = frozenset(
+    name.casefold()
+    for name in (
+        ".netrc",  # curl/ftp/python-netrc credentials
+        "_netrc",  # the same file's Windows spelling (and it is NOT dotted)
+        ".git-credentials",  # git credential-store default
+        ".npmrc",  # npm `_authToken` -- per-project as often as per-user
+        ".pypirc",  # PyPI upload credentials
+        "credentials",  # cargo (legacy), git credential-store under XDG
+        "credentials.toml",  # cargo's current registry-token file
+    )
 )
 
 #: NOTE: this app's own ``config.toml`` and the MCP-permission-store family
@@ -608,6 +700,19 @@ def _is_within(child: Path, ancestor: Path) -> bool:
     return child_key[: len(ancestor_key)] == ancestor_key
 
 
+def _name_key(path: Path) -> str:
+    """The final component of ``path``, in the same folded form (TASK-19633).
+
+    The name rule's half of :func:`_compare_key`. Kept here rather than
+    spelled ``path.name.casefold()`` at the one call site so this module
+    has exactly ONE definition of how two path spellings are compared --
+    the property TASK-19800 established and the reason a name rule could
+    be added without opening a second normalization path.
+    """
+    key = _compare_key(path)
+    return key[-1] if key else ""
+
+
 def is_sensitive_path(
     candidate: Path, context: SensitivePathContext | None = None
 ) -> bool:
@@ -632,9 +737,10 @@ def is_sensitive_path(
       choke point the workspace-local ``fs_*``/``git_*`` family resolves
       its path ARGUMENTS through -- plus the per-candidate filters in
       ``list_directory``/``glob_files``/``grep_files`` there (TASK-19551).
-      The ``git_*`` tools have no output filter and ``git_diff`` leaks
-      content for a denylisted path when ``path`` is omitted; see this
-      module's docstring and TASK-19632.
+      The ``git_*`` tools additionally translate this function's denials
+      into git ``:(exclude)`` pathspecs, via
+      :func:`sensitive_exclusions_under`, so git never reports a denied
+      path in the first place (TASK-19632); see this module's docstring.
 
     Args:
         candidate: The path a tool intends to touch.
@@ -674,6 +780,20 @@ def is_sensitive_path(
         if _is_within(resolved, root):
             return True
 
+    # TASK-19633: the NAME rule, applied wherever the file sits. See the
+    # module docstring for why this instrument exists alongside the
+    # location rules above and why it is kept small. `is_dir()` exempts a
+    # container directory that happens to carry one of these names; a
+    # path that does not exist yet is not a directory, so it still fails
+    # closed.
+    #
+    # Normalized through `_compare_key` like every comparison above, NOT
+    # through a second casefold of its own: TASK-19800 made this module's
+    # folding rule one function on purpose, and a security primitive with
+    # two independently-normalized comparison paths is how they drift.
+    if _name_key(resolved) in _SENSITIVE_FILE_NAMES and not resolved.is_dir():
+        return True
+
     # Finding 2 (substrate review), generalized beyond `get_user_data_dir()`
     # to every container directory `_direct_child_rule_container_dirs()`
     # resolves (also the effective config directory, the ChromaDB persist
@@ -709,6 +829,138 @@ def is_sensitive_path(
             return True
 
     return False
+
+
+class SensitiveExclusion(NamedTuple):
+    """One denial of :func:`is_sensitive_path`, expressed relative to a root.
+
+    Produced by :func:`sensitive_exclusions_under` for callers that cannot
+    ask this module about each candidate one at a time because they never
+    see the candidates -- the ``git_*`` tools, which hand a whole
+    repository to ``git`` and get finished output back. Such a caller
+    translates these into whatever exclusion syntax its own subprocess
+    speaks (git pathspecs, in the only current case) instead of parsing
+    that output to decide what to withhold.
+
+    Attributes:
+        kind: Which rule produced this denial.
+
+            * ``"subtree"`` -- ``value`` and everything beneath it.
+            * ``"file"`` -- exactly ``value``.
+            * ``"direct_children"`` -- the direct, non-recursive child
+              FILES of the directory ``value`` (never anything deeper,
+              and never the subdirectories themselves): the
+              container-directory rule in :func:`is_sensitive_path`.
+            * ``"name"`` -- any file named ``value`` at ANY depth under
+              the root: the TASK-19633 name rule.
+        value: For every kind but ``"name"``, a POSIX path RELATIVE to
+            the root passed to :func:`sensitive_exclusions_under`, and
+            the empty string when it IS that root (possible only for
+            ``"subtree"`` -- the whole root is denied, which a caller
+            must treat as "refuse outright", there being nothing left to
+            show -- and for ``"direct_children"``). For ``"name"``, a
+            bare filename, not a path.
+    """
+
+    kind: Literal["subtree", "file", "direct_children", "name"]
+    value: str
+
+
+def _relative_within(root: Path, candidate: Path) -> str | None:
+    """POSIX path of ``candidate`` relative to ``root``, or ``None`` if outside.
+
+    Returns ``""`` when ``candidate`` IS ``root`` (both already resolved).
+
+    Containment is decided by :func:`_is_within`, i.e. through the SAME
+    folded key every other denylist comparison uses (TASK-19800), not by
+    ``Path.relative_to``'s exact-case parts. ``root`` here is a repository
+    root the caller resolved from git's own output while the candidates
+    come from config accessors and ``$HOME``; on a case-insensitive
+    filesystem those two chains can legitimately disagree about the
+    spelling of a shared ancestor, and an exclusion that silently decides
+    "outside the repository" for that reason would be a hole, not a
+    no-op.
+
+    The RETURNED value is built from the candidate's own components, not
+    the folded ones -- the folding decides the relationship, never what
+    gets rendered.
+    """
+    if _same_path(candidate, root):
+        return ""
+    if not _is_within(candidate, root):
+        return None
+    return Path(*candidate.parts[len(root.parts) :]).as_posix()
+
+
+def sensitive_exclusions_under(
+    root: Path, context: SensitivePathContext | None = None
+) -> tuple[SensitiveExclusion, ...]:
+    """Every denial that could match something inside ``root``.
+
+    The bridge for callers that delegate enumeration to a subprocess and
+    therefore cannot consult :func:`is_sensitive_path` per candidate --
+    today only ``Tools/git_tool_impls.py``, which renders these as git
+    ``:(exclude)`` pathspecs so ``git diff``/``git status`` never emit a
+    denied path's name or content (TASK-19632).
+
+    This function is deliberately the ONE place that enumerates the
+    module's rules for that purpose, so a denial added to
+    :func:`is_sensitive_path` flows into those tools by being added here
+    rather than by someone remembering to update a second list in a
+    different package. ``Tests/Tools/test_git_tool_sensitive_paths.py``
+    pins the two against each other.
+
+    Args:
+        root: The directory the exclusions will be expressed relative to
+            (a repository root, in the current caller). Resolved here.
+        context: Optional pre-resolved ``SensitivePathContext``; see
+            ``resolve_sensitive_context``.
+
+    Returns:
+        Deduplicated ``SensitiveExclusion`` entries, in a deterministic
+        order. Location-based denials that fall entirely OUTSIDE ``root``
+        are omitted (nothing under the root can match them); the name
+        rule is always present, since it can match at any depth.
+    """
+    ctx = context if context is not None else resolve_sensitive_context()
+    resolved_root = _resolved(str(root))
+    if resolved_root is None:
+        # Fail closed the same way `is_sensitive_path` does: a root we
+        # cannot resolve gets the most restrictive answer available.
+        return (SensitiveExclusion("subtree", ""),)
+
+    found: list[SensitiveExclusion] = []
+    seen: set[SensitiveExclusion] = set()
+
+    def _record(kind: str, value: str) -> None:
+        entry = SensitiveExclusion(kind, value)  # type: ignore[arg-type]
+        if entry not in seen:
+            seen.add(entry)
+            found.append(entry)
+
+    for denied_dir in ctx.dirs:
+        relative = _relative_within(resolved_root, denied_dir)
+        if relative is not None:
+            _record("subtree", relative)
+
+    denied_files: list[Path] = list(ctx.files)
+    for db_path in ctx.db_paths:
+        denied_files.append(db_path)
+        denied_files.extend(_db_sidecar_paths(db_path))
+    for denied_file in denied_files:
+        relative = _relative_within(resolved_root, denied_file)
+        if relative:  # "" would mean the root itself is a file -- not possible
+            _record("file", relative)
+
+    for container in ctx.direct_child_denied_dirs:
+        relative = _relative_within(resolved_root, container)
+        if relative is not None:
+            _record("direct_children", relative)
+
+    for name in sorted(_SENSITIVE_FILE_NAMES):
+        _record("name", name)
+
+    return tuple(found)
 
 
 def find_root_binding_conflict(

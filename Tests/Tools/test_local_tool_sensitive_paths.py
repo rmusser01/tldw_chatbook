@@ -366,16 +366,23 @@ def _denylisted_candidates() -> list[tuple[str, Path]]:
     refusal comes from confinement, not the denylist -- a distinction the
     assertions below keep rather than paper over.
 
-    Read that distinction accurately (review round): it is not purely a
-    design difference. Because the second family rejects dotted components
-    at confinement, it ALSO refuses dotted credential files the denylist
-    does not enumerate at all (``~/.netrc``, ``~/.git-credentials``,
-    ``~/.npmrc``, ...), which the ``fs_*`` family -- passing
-    ``allow_hidden=True`` -- returns in full. For dotted paths the ``fs_*``
-    family is therefore strictly the weaker of the two, and part of what
-    looks like an honest difference of mechanism is residue. Tracked as
-    TASK-19633; the candidates below are all genuinely denylisted, so this
-    test is unaffected either way.
+    That distinction is now an honest one, and TASK-19633 is what made it
+    so -- the phrase used to carry a caveat, because it was describing
+    residue as well as design. When TASK-19551 shipped, the second
+    family's dotted-component rejection ALSO refused credential files the
+    denylist did not enumerate at all (``~/.netrc``,
+    ``~/.git-credentials``, ``~/.npmrc``, ``~/.pypirc``,
+    ``~/.cargo/credentials.toml``, ``~/.config/gh/hosts.yml``), every one
+    of which the ``fs_*`` family returned in full: for those paths the
+    ``fs_*`` family was strictly the weaker of the two, by accident rather
+    than by decision. TASK-19633 closed that in the shared oracle -- a
+    name rule for unambiguous credential FILENAMES plus ``~/.config/gh``
+    as a location -- so both families now refuse all six, and
+    ``test_both_families_refuse_the_TASK_19633_credential_paths`` below
+    pins it in configurations where confinement cannot be what does the
+    work. What remains is only the mechanism difference described above:
+    a deliberate ADR-032 policy split about DOTTED NAMES, not a gap in
+    what the denylist knows.
     """
     from tldw_chatbook import config as app_config
 
@@ -906,3 +913,260 @@ def test_binding_gate_still_allows_an_unrelated_root():
     plain = _home() / "projects" / "myapp"
     plain.mkdir(parents=True, exist_ok=True)
     assert find_root_binding_conflict(plain) is None
+
+
+# ---------------------------------------------------------------------------
+# TASK-19633: credential files the denylist did not cover.
+#
+# TASK-19551 kept `allow_hidden=True` (ADR-032) on the argument that "starts
+# with a dot" is a name heuristic while `is_sensitive_path` answers the
+# question properly, by resolved ancestry. That decision is right, but
+# resolved-ancestry matching is only as strong as what the denylist knows:
+# `_SENSITIVE_DIRS` listed seven locations and nothing else, so every file
+# below returned its BODY through `fs_read` (measured, isolated $HOME).
+#
+# The fix is in the denylist's CONTENT: a NAME rule for filenames that are
+# credential stores wherever they appear, plus `~/.config/gh` as a location
+# where the filename (`hosts.yml`) is far too generic to be one. See
+# `Utils/sensitive_paths.py`'s docstring for why both instruments exist.
+# ---------------------------------------------------------------------------
+
+CREDENTIAL_MARKER = "SYNTHETIC-NOT-A-REAL-CREDENTIAL-19633"
+
+#: (label, path relative to $HOME, which rule refuses it). Exactly the six
+#: paths measured in the task; the rule column is asserted, not decorative.
+_TASK_19633_CREDENTIALS = (
+    ("netrc", ".netrc", "name"),
+    ("git credential store", ".git-credentials", "name"),
+    ("npm auth token", ".npmrc", "name"),
+    ("pypi upload credentials", ".pypirc", "name"),
+    ("cargo registry token", ".cargo/credentials.toml", "name"),
+    ("github cli oauth tokens", ".config/gh/hosts.yml", "location"),
+)
+
+
+def _plant_credential(path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"machine example.invalid password {CREDENTIAL_MARKER}\n")
+    return path
+
+
+@pytest.mark.parametrize(
+    ("label", "relative", "rule"),
+    _TASK_19633_CREDENTIALS,
+    ids=[relative for _label, relative, _rule in _TASK_19633_CREDENTIALS],
+)
+def test_fs_read_refuses_each_TASK_19633_credential_path(label, relative, rule):
+    """One born-red case per added path shape.
+
+    The workspace root is the file's OWN directory, so the relative
+    portion carries no dotted component and ``allow_hidden=True`` is not
+    what lets it through -- only the denylist can refuse it. At base every
+    one of these returned the file's body.
+    """
+    from tldw_chatbook.Utils.sensitive_paths import is_sensitive_path
+
+    path = _plant_credential(_home() / relative)
+    assert is_sensitive_path(path), f"{label}: the shared oracle must refuse it"
+
+    message = _refused(
+        lambda: read_file(path.name, workspace_root=path.parent),
+        f"fs_read({relative})",
+    )
+    assert "protected path" in message, label
+    assert CREDENTIAL_MARKER not in message, label
+
+
+def test_the_name_rule_and_the_location_rule_each_do_their_own_work():
+    """Which instrument refuses which path, asserted rather than assumed.
+
+    A name-rule path must still be refused after being MOVED (that is the
+    whole reason a name rule was chosen for it); a location-rule path must
+    NOT be, because its filename is generic on purpose -- ``hosts.yml`` is
+    just as often an Ansible inventory, and refusing it everywhere would
+    be exactly the over-refusal the module docstring rules out.
+    """
+    from tldw_chatbook.Utils.sensitive_paths import is_sensitive_path
+
+    elsewhere = _home() / "projects" / "repo"
+    for label, relative, rule in _TASK_19633_CREDENTIALS:
+        moved = _plant_credential(elsewhere / Path(relative).name)
+        assert is_sensitive_path(moved) is (rule == "name"), (
+            f"{label}: expected the {rule} rule to decide, and it did not"
+        )
+        moved.unlink()
+
+
+def test_the_name_rule_is_case_insensitive():
+    """macOS and Windows filesystems are case-insensitive.
+
+    ``.NETRC`` opens the same file an exact-case comparison would wave
+    through, so the check is case-folded.
+    """
+    from tldw_chatbook.Utils.sensitive_paths import is_sensitive_path
+
+    assert is_sensitive_path(_plant_credential(_home() / ".NETRC"))
+    assert is_sensitive_path(_plant_credential(_home() / "Credentials.TOML"))
+
+
+def test_the_name_rule_does_not_refuse_near_misses_or_containers():
+    """The cost of a name rule is over-refusal; this is where it is bounded.
+
+    A container DIRECTORY carrying one of the names stays reachable (the
+    same ``is_dir()`` gate the direct-child-file rule uses), and names that
+    merely resemble a credential file are ordinary files. ``.env`` is the
+    deliberate omission recorded in the module docstring.
+    """
+    from tldw_chatbook.Utils.sensitive_paths import is_sensitive_path
+
+    workspace = _home() / "projects" / "repo"
+    (workspace / "credentials").mkdir(parents=True)
+    (workspace / "credentials" / "README.md").write_text("docs\n")
+    for name in (".npmrc.example", "netrc", "my.netrc", ".env", "credentials.json"):
+        (workspace / name).write_text("ordinary\n")
+
+    assert not is_sensitive_path(workspace / "credentials")
+    assert "README.md" in list_directory("credentials", workspace_root=workspace)
+    for name in (".npmrc.example", "netrc", "my.netrc", ".env", "credentials.json"):
+        assert "ordinary" in read_file(name, workspace_root=workspace), name
+
+
+def test_both_families_refuse_the_TASK_19633_credential_paths(monkeypatch):
+    """AC1: BOTH families, in configurations confinement cannot explain.
+
+    Constructing that configuration takes deliberate care, because the two
+    families disagree about dotted names on purpose:
+
+    * The NAME-rule paths are planted at a NON-dotted location under a
+      NON-dotted root (``projects/repo/_netrc``, ``credentials.toml``,
+      ``credentials``). Nothing in either family's confinement can object,
+      so a refusal is the denylist's -- and that a moved credential is
+      still refused is the name rule's whole point.
+    * The LOCATION-rule path keeps its location, since that is what
+      identifies it -- but rooted at ``~/.config/gh`` the relative portion
+      is a plain ``hosts.yml`` and the root's own basename (``gh``) is not
+      dotted either, so family 1's ``allow_hidden=False`` has nothing to
+      reject.
+    """
+    from tldw_chatbook.Tools import file_operation_tools as fot
+    from tldw_chatbook.Tools import workspace_file_roots as wfr
+
+    def _raise():
+        raise RuntimeError("no workspace registry in this test")
+
+    monkeypatch.setattr(wfr, "_registry_factory", _raise)
+
+    neutral = _home() / "projects" / "repo"
+    cases: list[tuple[str, Path]] = [
+        (f"moved name-rule credential ({name})", _plant_credential(neutral / name))
+        for name in ("_netrc", "credentials.toml", "credentials")
+    ]
+    cases.append(
+        ("github cli oauth tokens", _plant_credential(_home() / ".config/gh/hosts.yml"))
+    )
+
+    for label, path in cases:
+        relative_parts = (path.name,)
+        assert not any(part.startswith(".") for part in relative_parts), label
+        assert not path.parent.name.startswith("."), label
+
+        # Family A: fs_* (allow_hidden=True), root = the file's directory.
+        message = _refused(
+            lambda p=path: read_file(p.name, workspace_root=p.parent),
+            f"fs_read({label})",
+        )
+        assert "protected path" in message, label
+        assert CREDENTIAL_MARKER not in message, label
+
+        # Family B: file_operation_tools, sandbox root = the same directory.
+        monkeypatch.setattr(fot, "_tool_sandbox_root", lambda p=path: p.parent.resolve())
+        legacy = asyncio.run(fot.ReadFileTool().execute(file_path=path.name))
+        assert "error" in legacy, label
+        assert "protected path" in legacy["error"], label
+        assert CREDENTIAL_MARKER not in str(legacy), label
+
+
+def test_family_b_hides_the_dotted_credential_names_by_denylist_not_confinement(
+    monkeypatch,
+):
+    """The four inherently-dotted names, for family B, with the denylist alone.
+
+    ``.netrc`` cannot be spelled without a dot, so ``ReadFileTool`` will
+    always refuse it at confinement and prove nothing about the denylist.
+    ``ListDirectoryTool`` with ``include_hidden=True`` is the seam where
+    that is not true: it lists dotted entries by request, and the ONLY
+    thing that can then withhold one is ``is_sensitive_path``. Before
+    TASK-19633 all four were listed by name; ``.gitignore`` is the control
+    proving ``include_hidden`` is honored and the listing itself works.
+    """
+    from tldw_chatbook.Tools import file_operation_tools as fot
+    from tldw_chatbook.Tools import workspace_file_roots as wfr
+
+    def _raise():
+        raise RuntimeError("no workspace registry in this test")
+
+    monkeypatch.setattr(wfr, "_registry_factory", _raise)
+
+    workspace = _home() / "projects" / "repo"
+    dotted = (".netrc", ".git-credentials", ".npmrc", ".pypirc")
+    for name in dotted:
+        _plant_credential(workspace / name)
+    (workspace / ".gitignore").write_text("*.pyc\n")
+
+    monkeypatch.setattr(fot, "_tool_sandbox_root", lambda: workspace.resolve())
+    listing = asyncio.run(
+        fot.ListDirectoryTool().execute(directory_path=".", include_hidden=True)
+    )
+
+    names = {entry["name"] for entry in listing.get("entries", [])}
+    assert ".gitignore" in names, (
+        f"the listing itself is broken or include_hidden was ignored: {listing}"
+    )
+    for name in dotted:
+        assert name not in names, (
+            f"ListDirectoryTool(include_hidden=True) disclosed {name}: {sorted(names)}"
+        )
+
+
+def test_fs_grep_never_reads_a_name_rule_credential(monkeypatch):
+    """The sharpest ``fs_*`` tool, on the newly-covered shape.
+
+    ``grep_files`` READS every file it walks and prints matching lines, so
+    a home-rooted workspace and a pattern as bland as ``password`` emitted
+    ``~/.netrc``'s body verbatim into the transcript.
+    """
+    _plant_credential(_home() / ".netrc")
+    (_home() / "notes.txt").write_text(f"decoy password {CREDENTIAL_MARKER}\n")
+
+    out = grep_files("password", workspace_root=_home())
+
+    assert "notes.txt" in out
+    assert ".netrc" not in out
+    assert out.count(CREDENTIAL_MARKER) == 1  # the decoy line only
+
+
+def test_the_name_rule_uses_the_modules_one_folding_rule(monkeypatch):
+    """TASK-19633 must not open a SECOND normalization path (TASK-19800).
+
+    ``_compare_key`` is this module's single definition of how two path
+    spellings are compared. If the name rule ever grows its own
+    ``.casefold()`` beside it, the two can drift -- so this pins the
+    dependency by MUTATION: with folding removed from ``_compare_key``
+    (and only from there), a case-variant credential name must stop being
+    refused. It does not, if the name rule folds on its own.
+
+    The mutation keeps ``_compare_key``'s SHAPE (a tuple of components) so
+    the other rules keep working normally and this test isolates the one
+    it is about.
+    """
+    import tldw_chatbook.Utils.sensitive_paths as sp
+
+    variant = _plant_credential(_home() / "projects" / "repo" / "Credentials.TOML")
+    assert sp.is_sensitive_path(variant)
+
+    monkeypatch.setattr(sp, "_compare_key", lambda p: tuple(p.parts))
+    assert not sp.is_sensitive_path(variant), (
+        "the name rule still folded case after folding was removed from "
+        "_compare_key, so it normalizes independently of the module's one "
+        "folding rule"
+    )
