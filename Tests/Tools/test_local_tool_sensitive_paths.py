@@ -795,3 +795,114 @@ def test_case_variants_do_not_over_refuse_gitignore(tmp_path):
     (root / ".git").mkdir(parents=True)
     write_file(".GITIGNORE", "build/\n", workspace_root=root)
     assert (root / ".GITIGNORE").read_text() == "build/\n"
+
+
+# ---------------------------------------------------------------------------
+# Shape 6: case-variant spellings of a denylisted path (TASK-19800).
+#
+# Found while fixing TASK-19700's `.git` guard for the same weakness. macOS
+# and Windows filesystems are case-insensitive by DEFAULT, and
+# `Path.resolve()` does NOT canonicalise case there (it resolves symlinks
+# and `..`, but preserves what the caller typed) -- so `~/.SSH/id_rsa` opens
+# the same file as `~/.ssh/id_rsa` while comparing unequal to every
+# denylist entry.
+#
+# Reproduced end-to-end before the fix against the app's OWN config file:
+#   tldw_cli/config.toml -> refused
+#   TLDW_CLI/config.toml -> ALLOWED, returned 32782 chars
+# i.e. the user's provider API keys, read straight through the denylist by
+# changing the case of one path component. The same shape reaches `~/.ssh`,
+# `~/.aws` and `mcp_permissions.json` -- and bypassing that last one turns
+# every `ask` into `allow`, which is the permission-gate bypass TASK-19551
+# exists to prevent.
+# ---------------------------------------------------------------------------
+
+
+def test_is_sensitive_path_matches_case_variants_of_a_denied_directory():
+    from tldw_chatbook.Utils.sensitive_paths import is_sensitive_path
+
+    _plant_ssh_key()
+    home = _home()
+    for spelling in (".ssh", ".SSH", ".Ssh", ".sSh"):
+        assert is_sensitive_path(home / spelling / "id_rsa"), (
+            f"~/{spelling}/id_rsa must be denied: on a case-insensitive "
+            f"filesystem it IS ~/.ssh/id_rsa"
+        )
+
+
+def test_is_sensitive_path_matches_a_case_variant_of_a_denied_file():
+    from tldw_chatbook import config as app_config
+    from tldw_chatbook.Utils.sensitive_paths import is_sensitive_path
+
+    real = app_config._get_effective_config_path()
+    real.parent.mkdir(parents=True, exist_ok=True)
+    real.write_text("[API]\nopenai_api_key = \"SYNTHETIC-19800\"\n")
+    variant = real.parent.parent / real.parent.name.upper() / real.name
+    assert is_sensitive_path(real)
+    assert is_sensitive_path(variant), (
+        f"{variant} must be denied: it is the same file on a "
+        f"case-insensitive filesystem"
+    )
+
+
+def test_fs_read_refuses_a_case_variant_of_this_apps_config():
+    """End-to-end through the tool, not just the predicate."""
+    from tldw_chatbook import config as app_config
+
+    real = app_config._get_effective_config_path()
+    real.parent.mkdir(parents=True, exist_ok=True)
+    real.write_text("[API]\nopenai_api_key = \"SYNTHETIC-19800\"\n")
+    root = real.parent.parent
+    message = _refused(
+        lambda: read_file(
+            f"{real.parent.name.upper()}/{real.name}", workspace_root=root
+        ),
+        "fs_read(CASE-VARIANT config.toml)",
+    )
+    assert "protected path" in message
+    assert "SYNTHETIC-19800" not in message
+
+
+def test_case_folding_does_not_deny_an_unrelated_lookalike():
+    """The match stays ancestry-based, not substring-based: `~/.sshfoo` is a
+    genuinely different directory and must remain readable."""
+    from tldw_chatbook.Utils.sensitive_paths import is_sensitive_path
+
+    home = _home()
+    (home / ".sshfoo").mkdir(parents=True, exist_ok=True)
+    (home / ".sshfoo" / "notes.txt").write_text("ordinary\n")
+    assert not is_sensitive_path(home / ".sshfoo" / "notes.txt")
+    assert not is_sensitive_path(home / ".SSHFOO" / "notes.txt")
+
+
+def test_binding_gate_detects_a_case_variant_conflict():
+    """Qodo #1 (PR #1936): `find_root_binding_conflict` enforces the SAME
+    protected-path policy at folder-bind time, and was still comparing
+    case-sensitively — so a case-variant spelling could bind a workspace
+    root that overlaps a protected directory, widening tool reachability
+    into it.
+
+    Not a confinement check: this is the denylist's own overlap gate, so
+    folding it fails safe (more conflicts reported) exactly as elsewhere.
+    """
+    from tldw_chatbook.Utils.sensitive_paths import find_root_binding_conflict
+
+    _plant_ssh_key()
+    home = _home()
+
+    # (1) the root IS a protected directory, spelled differently
+    assert find_root_binding_conflict(home / ".SSH") is not None
+
+    # (3) the root CONTAINS a protected path, reached by a cased ancestor
+    upper_home = Path(str(home).upper())
+    assert find_root_binding_conflict(upper_home) is not None, (
+        "a cased spelling of an ancestor still contains the protected paths"
+    )
+
+
+def test_binding_gate_still_allows_an_unrelated_root():
+    from tldw_chatbook.Utils.sensitive_paths import find_root_binding_conflict
+
+    plain = _home() / "projects" / "myapp"
+    plain.mkdir(parents=True, exist_ok=True)
+    assert find_root_binding_conflict(plain) is None
