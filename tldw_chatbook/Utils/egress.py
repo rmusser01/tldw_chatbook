@@ -209,6 +209,21 @@ def _log_origin(url: str) -> str:
     return f"{parsed.scheme}://{rendered_host}{rendered_port}"
 
 
+def log_origin(url: str) -> str:
+    """Public wrapper for :func:`_log_origin` (same ``_host_of``/``host_of``
+    pattern used below): a credential- and query-free ``scheme://host[:port]``
+    label, safe to interpolate into a log line outside this module.
+
+    Any caller that would otherwise log a raw URL -- which may carry an
+    embedded ``user:pass@`` credential or a query string with a token/API
+    key -- should call this instead. It is the same redaction the
+    ``EgressBlockedError``/``EgressFetchError`` messages already apply to
+    themselves; this just makes it reusable so there is one spelling of
+    "how we name a URL in a log", not a second copy of the logic.
+    """
+    return _log_origin(url)
+
+
 def _blocked(url: str, reason: str, host: str, detail: str = "") -> EgressDecision:
     logger.warning(f"Egress blocked ({reason}): {_log_origin(url)} {detail}".rstrip())
     log_counter("egress_blocked", labels={"reason": reason})
