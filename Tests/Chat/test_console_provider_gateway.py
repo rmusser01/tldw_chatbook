@@ -2869,12 +2869,17 @@ class _DeepBacklogHTTPServer(http.server.ThreadingHTTPServer):
     request_queue_size = 32
 
 
+_LOOPBACK_LISTENER_PERMISSION_SKIP_REASON = (
+    "loopback listener unavailable: permission denied"
+)
+
+
 @pytest.fixture
 def local_http_server():
     try:
         server = _DeepBacklogHTTPServer(("127.0.0.1", 0), _JSONOKHandler)
     except PermissionError:
-        pytest.skip("loopback listener unavailable: permission denied")
+        pytest.skip(_LOOPBACK_LISTENER_PERMISSION_SKIP_REASON)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -2887,6 +2892,12 @@ def local_http_server():
 def test_local_http_server_permission_denied_skips_with_capability_reason(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Classify listener permission denial as an explicit capability skip.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace listener construction.
+    """
+
     def deny_listener(*_args, **_kwargs):
         raise PermissionError("sandbox denied loopback bind")
 
@@ -2895,12 +2906,18 @@ def test_local_http_server_permission_denied_skips_with_capability_reason(
     with pytest.raises(pytest.skip.Exception) as exc_info:
         next(local_http_server.__wrapped__())
 
-    assert str(exc_info.value) == "loopback listener unavailable: permission denied"
+    assert str(exc_info.value) == _LOOPBACK_LISTENER_PERMISSION_SKIP_REASON
 
 
 def test_local_http_server_non_permission_oserror_propagates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Keep non-permission listener failures actionable instead of skipping.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace listener construction.
+    """
+
     def fail_listener(*_args, **_kwargs):
         raise OSError("address resources exhausted")
 

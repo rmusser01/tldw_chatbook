@@ -260,6 +260,20 @@ git commit -m "docs(backlog): close TASK-19642.2"
 
 Re-run the two fixture-contract nodes, the two assigned nodes in both restricted and capable modes, the four network-policy owner nodes, Ruff, `git diff --check origin/dev...HEAD`, and `git status --short`. Record exact counts and the final commit SHA.
 
+### PR Review Remediation
+
+- [x] Reopen TASK-19642.2 while addressing Qodo's two maintainability findings.
+- [x] Define the canonical listener-permission skip reason once and reuse the named constant in the fixture and assertion.
+- [x] Add concise Google-style intent docstrings, including fixture argument documentation, to both new contract tests.
+- [x] Re-run the restricted contract/consumer gate: 2 passed and 2 exact-reason skips.
+- [x] Re-run the capable-host consumer/policy gate: 6 passed.
+- [x] Re-run Ruff and whitespace checks on the review diff.
+
+The named constant is a documented deviation from Task 2's original
+no-constant constraint. Qodo's active repository compliance rule requires
+centralizing the repeated semantic literal; no helper abstraction or production
+change was introduced.
+
 Deliberately not completed as written: the user prohibited code-test reruns
 during closeout. The accepted fresh independent functional, policy, and Ruff
 evidence is recorded in the task. The bookkeeping-only portion was completed
