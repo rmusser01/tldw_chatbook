@@ -290,6 +290,7 @@ def derive_trajectory(
     agent_runs: Iterable[Any] = (),
     agent_steps: Iterable[Any] = (),
     retrieval_runs: Iterable[Any] = (),
+    diagnostic_events: Iterable[Any] = (),
 ) -> TrajectorySnapshot:
     """Project a conversation's persisted facts into a trajectory snapshot.
 
@@ -441,6 +442,7 @@ def derive_trajectory(
         *_records_from_agent_runs(agent_runs),
         *_records_from_agent_steps(agent_steps),
         *_records_from_retrieval_runs(retrieval_runs),
+        *(_record_from_sidecar_event(event) for event in diagnostic_events),
     ]
     records = [record for turn in turns for record in turn.records]
     turns = _coherent_turns(_causal_order([*records, *extra_records]))
@@ -674,7 +676,11 @@ def _record_from_sidecar_event(
             row,
             default={"payload": "observed" if payload is not None else "not_available"},
         ),
-        sensitivity=_optional_text(_field(row, "sensitivity")) or "diagnostic",
+        sensitivity=(
+            _optional_text(_field(row, "sensitivity"))
+            or ("tool_content" if kind in _TOOL_KINDS else None)
+            or ("conversation_content" if payload is not None else "diagnostic")
+        ),
     )
 
 
@@ -813,6 +819,18 @@ def _records_from_agent_runs(runs: Iterable[Any]) -> list[TrajectoryRecord]:
         task = _optional_text(_field(run, "task")) or ""
         created_at = _parse_timestamp(_field(run, "created_at"))
         status = _optional_text(_field(run, "status")) or "unknown"
+        run_states = _field_state_map(
+            run,
+            default={
+                "result": (
+                    "observed"
+                    if _field(run, "result") is not None
+                    else "not_available"
+                )
+            },
+        )
+        if task:
+            run_states["task"] = "omitted"
         records.append(
             TrajectoryRecord(
                 seq=0,
@@ -827,10 +845,14 @@ def _records_from_agent_runs(runs: Iterable[Any]) -> list[TrajectoryRecord]:
                 usage=None,
                 step_started_at=created_at,
                 first_token_at=None,
-                completed_at=_parse_timestamp(_field(run, "updated_at")),
+                completed_at=(
+                    _parse_timestamp(_field(run, "updated_at"))
+                    if status in {"done", "error", "stuck", "cancelled", "superseded"}
+                    else None
+                ),
                 model=_optional_text(_field(run, "model")),
                 provider=_optional_text(_field(run, "provider")),
-                payload={"task": task} if task else None,
+                payload=None,
                 variants=(),
                 depth=0,
                 event_id=f"agent-run:{run_id}",
@@ -862,17 +884,10 @@ def _records_from_agent_runs(runs: Iterable[Any]) -> list[TrajectoryRecord]:
                     _field(run, "replacement_event_id")
                 ),
                 observed_at=created_at,
-                field_states=_field_state_map(
-                    run,
-                    default={
-                        "result": (
-                            "observed"
-                            if _field(run, "result") is not None
-                            else "not_available"
-                        )
-                    },
-                ),
-                sensitivity=_optional_text(_field(run, "sensitivity")) or "diagnostic",
+                field_states=run_states,
+                sensitivity=("conversation_content" if task else (
+                    _optional_text(_field(run, "sensitivity")) or "diagnostic"
+                )),
             )
         )
     return records
@@ -956,6 +971,7 @@ def _records_from_agent_steps(steps: Iterable[Any]) -> list[TrajectoryRecord]:
                 ),
                 sensitivity=(
                     _optional_text(_field(step, "sensitivity"))
+                    or ("conversation_content" if kind == "model" else None)
                     or ("tool_content" if has_tool_content else "diagnostic")
                 ),
             )

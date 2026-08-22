@@ -172,8 +172,9 @@ def test_agent_run_and_step_adapters_preserve_actor_run_and_field_state() -> Non
     assert run_record.source_seq == 4
     assert run_record.label == "Agent run"
     assert run_record.status == "running"
-    assert run_record.field_states == {"result": "not_available"}
-    assert run_record.sensitivity == "diagnostic"
+    assert run_record.field_states == {"result": "not_available", "task": "omitted"}
+    assert run_record.sensitivity == "conversation_content"
+    assert run_record.payload is None
 
     step_record = by_id["agent-step:run-1:9"]
     assert step_record.run_id == "run-1"
@@ -339,6 +340,7 @@ def test_unknown_sidecar_kind_is_preserved_instead_of_discarded() -> None:
     assert records[1].event_id == "trajectory:conv-1:2"
     assert records[1].label == "Future observable event"
     assert records[1].payload == {"safe": True}
+    assert records[1].sensitivity == "conversation_content"
 
 
 def test_legacy_callers_can_omit_all_new_sources() -> None:
@@ -643,3 +645,24 @@ def test_equal_owner_sequences_remain_concurrent() -> None:
     ids = [r.event_id for r in _records(_snapshot(messages=[message], traj_rows=rows))]
 
     assert ids.index("trajectory:c:z") < ids.index("trajectory:c:a")
+
+
+def test_agent_privacy_and_terminal_completion_are_honest() -> None:
+    secret = "SENTINEL-AGENT-TASK-SECRET"
+    runs = [
+        {"id": "running", "task": secret, "status": "running", "updated_at": 9},
+        {"id": "done", "task": "complete", "status": "done", "updated_at": 10},
+    ]
+    steps = [
+        {"run_id": "running", "index": 1, "kind": "model", "summary": secret},
+    ]
+
+    by_id = {r.event_id: r for r in _records(_snapshot(agent_runs=runs, agent_steps=steps))}
+
+    running = by_id["agent-run:running"]
+    assert secret not in repr(running.payload)
+    assert running.field_states["task"] == "omitted"
+    assert running.sensitivity == "conversation_content"
+    assert running.completed_at is None
+    assert by_id["agent-run:done"].completed_at == 10
+    assert by_id["agent-step:running:1"].sensitivity == "conversation_content"

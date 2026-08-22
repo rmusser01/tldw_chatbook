@@ -287,6 +287,19 @@ def _authorization(
     )
 
 
+def test_active_owner_candidate_ids_are_identity_scoped_and_bounded(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository, message_id="candidate-message")
+
+    candidates = repository.active_owner_candidate_message_ids(
+        tuple(["missing"] * 600 + ["candidate-message"])
+    )
+
+    assert candidates == {"candidate-message"}
+
+
 def test_runtime_policy_is_frozen_and_disabled_write_fails_before_validation(
     db: CharactersRAGDB,
 ) -> None:

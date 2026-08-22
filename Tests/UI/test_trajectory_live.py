@@ -426,6 +426,10 @@ def test_build_trajectory_snapshot_threads_agent_and_retrieval_owners():
     )
 
     class _CitationRepository:
+        def active_owner_candidate_message_ids(self, message_ids):
+            assert message_ids == ["a1"]
+            return {"a1"}
+
         def get_active_trace_for_current_message(self, message_id, current_body):
             assert (message_id, current_body) == ("a1", "answer")
             return active_result
@@ -493,6 +497,59 @@ def test_build_trajectory_snapshot_threads_agent_and_retrieval_owners():
         if record.event_id == "agent-run:run-1"
     )
     assert agent_run.turn_id == "t1"
+
+
+def test_snapshot_builder_prefilters_citations_and_pages_context_failures():
+    class _DB:
+        def get_messages_for_conversation(self, *_args, **_kwargs):
+            return [msg(f"a{i}", "assistant", content="x", ts=i) for i in range(20)]
+
+        def get_trajectory_rows(self, _conversation_id):
+            return []
+
+        def get_conversation_active_leaf(self, _conversation_id):
+            raise RuntimeError("leaf unavailable")
+
+    class _Context:
+        def __init__(self):
+            self.offsets = []
+
+        def list_auxiliary_attempts(self, _conversation_id, *, limit, offset):
+            self.offsets.append(offset)
+            return [{"operation_id": f"op-{offset + i}"} for i in range(500)] if offset == 0 else []
+
+    class _Citations:
+        candidate_calls = 0
+        detail_calls = 0
+
+        def active_owner_candidate_message_ids(self, message_ids):
+            self.candidate_calls += 1
+            assert len(message_ids) == 20
+            return set()
+
+        def get_active_trace_for_current_message(self, *_args):
+            self.detail_calls += 1
+            raise AssertionError("prefilter should skip detail reads")
+
+    context = _Context()
+    citations = _Citations()
+    store = SimpleNamespace(
+        persistence=SimpleNamespace(
+            db=_DB(), context_repository=context, citation_repository=citations
+        ),
+        variant_sets_for_conversation=lambda _conversation_id: (),
+    )
+
+    snapshot = _build_trajectory_snapshot(store, "conv-1")
+    records = [record for turn in snapshot.turns for record in turn.records]
+
+    assert context.offsets == [0, 500]
+    assert citations.candidate_calls == 1
+    assert citations.detail_calls == 0
+    failure = next(record for record in records if record.kind == "capture_failed")
+    assert failure.status == "capture_failed"
+    assert failure.field_states == {"source": "capture_failed"}
+    assert failure.sensitivity == "diagnostic"
 
 
 async def test_trajectory_launch_action_presents_screen():

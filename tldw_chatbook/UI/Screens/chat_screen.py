@@ -1197,7 +1197,26 @@ def _build_trajectory_snapshot(
     agent_runs: list[Any] = []
     agent_steps: list[Any] = []
     retrieval_runs: list[Any] = []
+    diagnostic_events: list[Any] = []
     active_leaf: str | None = None
+
+    def capture_failed(source: str, error: Exception) -> None:
+        logger.opt(exception=error).error(
+            "Trace source read failed: source={} conversation_id={}",
+            source,
+            conversation_id,
+        )
+        diagnostic_events.append(
+            {
+                "event_id": f"capture-failed:{source}:{conversation_id}",
+                "conversation_id": conversation_id,
+                "event_kind": "capture_failed",
+                "status": "capture_failed",
+                "summary": f"{source} capture failed",
+                "field_states": {"source": "capture_failed"},
+                "sensitivity": "diagnostic",
+            }
+        )
     persistence = getattr(store, "persistence", None)
     db = getattr(persistence, "db", None)
     if db is not None:
@@ -1210,15 +1229,18 @@ def _build_trajectory_snapshot(
                     include_image_data=False,
                 )
             )
-        except Exception:  # noqa: BLE001 - launch must degrade, not fail
+        except Exception as error:  # noqa: BLE001 - launch must degrade, not fail
+            capture_failed("messages", error)
             messages = []
         try:
             traj_rows = list(db.get_trajectory_rows(conversation_id))
-        except Exception:  # noqa: BLE001
+        except Exception as error:  # noqa: BLE001
+            capture_failed("trajectory", error)
             traj_rows = []
         try:
             active_leaf = db.get_conversation_active_leaf(conversation_id)
-        except Exception:  # noqa: BLE001
+        except Exception as error:  # noqa: BLE001
+            capture_failed("active_leaf", error)
             active_leaf = None
     usage_by_id: dict[str, ProviderUsage] = {}
     for message in messages:
@@ -1229,16 +1251,26 @@ def _build_trajectory_snapshot(
             usage_by_id[str(message.get("id"))] = usage
     try:
         variant_sets = list(store.variant_sets_for_conversation(conversation_id))
-    except Exception:  # noqa: BLE001
+    except Exception as error:  # noqa: BLE001
+        capture_failed("variants", error)
         variant_sets = []
     context_repository = getattr(persistence, "context_repository", None)
     if context_repository is not None:
         try:
             # The projection itself filters purpose == "conversation_compaction".
-            compaction_records = list(
-                context_repository.list_auxiliary_attempts(conversation_id, limit=500)
-            )
-        except Exception:  # noqa: BLE001
+            offset = 0
+            while True:
+                page = list(
+                    context_repository.list_auxiliary_attempts(
+                        conversation_id, limit=500, offset=offset
+                    )
+                )
+                compaction_records.extend(page)
+                if len(page) < 500:
+                    break
+                offset += len(page)
+        except Exception as error:  # noqa: BLE001
+            capture_failed("context", error)
             compaction_records = []
     turn_by_message: dict[str, str] = {}
     for trajectory_row in traj_rows:
@@ -1272,11 +1304,26 @@ def _build_trajectory_snapshot(
                             "turn_id": run.get("turn_id"),
                         }
                     )
-        except Exception:  # noqa: BLE001
+        except Exception as error:  # noqa: BLE001
+            capture_failed("agent", error)
             agent_runs = []
             agent_steps = []
     citation_repository = getattr(persistence, "citation_repository", None)
     if citation_repository is not None:
+        assistant_ids = [
+            str(message.get("id") or "")
+            for message in messages
+            if isinstance(message, Mapping)
+            and str(message.get("sender") or "").lower() == "assistant"
+            and message.get("id")
+        ]
+        try:
+            candidates = citation_repository.active_owner_candidate_message_ids(
+                assistant_ids
+            )
+        except Exception as error:  # noqa: BLE001
+            capture_failed("retrieval_candidates", error)
+            candidates = set()
         for message in messages:
             if not isinstance(message, Mapping):
                 continue
@@ -1284,6 +1331,7 @@ def _build_trajectory_snapshot(
             if (
                 not message_id
                 or str(message.get("sender") or "").lower() != "assistant"
+                or message_id not in candidates
             ):
                 continue
             try:
@@ -1309,7 +1357,8 @@ def _build_trajectory_snapshot(
                             "sensitivity": "retrieval_metadata",
                         }
                     )
-            except Exception:  # noqa: BLE001
+            except Exception as error:  # noqa: BLE001
+                capture_failed("retrieval", error)
                 continue
     return derive_trajectory(
         messages,
@@ -1321,6 +1370,7 @@ def _build_trajectory_snapshot(
         agent_runs=agent_runs,
         agent_steps=agent_steps,
         retrieval_runs=retrieval_runs,
+        diagnostic_events=diagnostic_events,
     )
 
 
