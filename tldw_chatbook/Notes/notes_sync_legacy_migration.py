@@ -12,6 +12,10 @@ from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 if TYPE_CHECKING:
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.Notes.notes_sync_state import (
+        MigrationRunRecord,
+        NotesSyncStateRepository,
+    )
 
 
 JsonScalar: TypeAlias = str | int | float | bool | None
@@ -59,6 +63,47 @@ _CONFLICT_FIELDS = (
 
 class LegacyNotesSyncSourceError(RuntimeError):
     """Report a bounded legacy-source capture failure."""
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _LegacyRootRequest:
+    locator_digest: str
+    item_locator_digest: str
+    lexical_root_path: str
+    display_name: str
+    direction: str
+    reason_code: str | None
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _LegacyBindingRequest:
+    locator_digest: str
+    item_locator_digest: str
+    root_locator_digest: str
+    note_id: str
+    lexical_relative_path: str
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _LegacyRejectedItemRequest:
+    item_kind: str
+    item_locator_digest: str
+    reason_code: str
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _LegacyConflictRequest:
+    item_locator_digest: str
+    note_id: str | None
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _LegacyGenerationRequest:
+    roots: tuple[_LegacyRootRequest, ...]
+    bindings: tuple[_LegacyBindingRequest, ...]
+    duplicate_note_ids: frozenset[str]
+    rejected_items: tuple[_LegacyRejectedItemRequest, ...]
+    conflicts: tuple[_LegacyConflictRequest, ...]
 
 
 def _canonical_bytes(value: object) -> bytes:
@@ -468,6 +513,170 @@ def rejected_binding_item_locator_digest(
     return legacy_item_locator_digest("binding", primary_key)
 
 
+def _prepare_legacy_generation(
+    snapshot: LegacyNotesSyncSourceSnapshot,
+) -> _LegacyGenerationRequest:
+    """Classify one canonical source without opening the destination owner."""
+    source = snapshot.source
+    config = cast(Mapping[str, object], source["config"])
+    notes = cast(Sequence[Mapping[str, object]], source["notes"])
+    conflicts = cast(Sequence[Mapping[str, object]], source["conflicts"])
+    direction, direction_reason = map_legacy_direction(config["sync_direction"])
+    config_root = config["sync_directory"]
+    roots: dict[str, _LegacyRootRequest] = {}
+    bindings: list[_LegacyBindingRequest] = []
+    rejected: dict[tuple[str, str], _LegacyRejectedItemRequest] = {}
+
+    def reject(kind: str, locator: str, reason: str) -> None:
+        rejected[(kind, locator)] = _LegacyRejectedItemRequest(
+            item_kind=kind,
+            item_locator_digest=locator,
+            reason_code=reason,
+        )
+
+    def root_request(value: object) -> _LegacyRootRequest | None:
+        try:
+            lexical_path = _bounded_text(value, field_name="root_path")
+        except LegacyNotesSyncSourceError:
+            locator = rejected_root_item_locator_digest(value)
+            reject("root", locator, "legacy_root_path_invalid")
+            return None
+        locator = legacy_root_locator_digest(lexical_path)
+        request = roots.get(locator)
+        if request is None:
+            request = _LegacyRootRequest(
+                locator_digest=locator,
+                item_locator_digest=legacy_item_locator_digest("root", locator),
+                lexical_root_path=lexical_path,
+                display_name="Legacy sync folder",
+                direction=direction,
+                reason_code=direction_reason,
+            )
+            roots[locator] = request
+        return request
+
+    root_request(config_root)
+    for note in notes:
+        note_id = note["id"]
+        root_value = (
+            note["sync_root_folder"]
+            if note["sync_root_folder"] is not None
+            else config_root
+        )
+        relative_value = (
+            note["relative_file_path_on_disk"]
+            if note["relative_file_path_on_disk"] is not None
+            else note["file_path_on_disk"]
+        )
+        root = root_request(root_value)
+        try:
+            if (
+                type(note_id) is not str
+                or not note_id
+                or len(note_id) > _MAX_ID_LENGTH
+                or "\x00" in note_id
+            ):
+                raise LegacyNotesSyncSourceError("invalid_note_id")
+            relative_path = _bounded_text(
+                relative_value,
+                field_name="relative_path",
+            )
+            if note["last_synced_disk_file_mtime"] == "invalid_non_finite_real":
+                raise LegacyNotesSyncSourceError("invalid_non_finite_real")
+        except LegacyNotesSyncSourceError as error:
+            if type(note_id) is not str or not note_id or len(note_id) > _MAX_ID_LENGTH:
+                raise LegacyNotesSyncSourceError("invalid_note_id") from None
+            item_locator = rejected_binding_item_locator_digest(
+                note_id,
+                relative_value,
+                root_value,
+            )
+            reason = (
+                "legacy_non_finite_real"
+                if str(error) == "invalid_non_finite_real"
+                else "legacy_relative_path_invalid"
+            )
+            reject("binding", item_locator, reason)
+            continue
+        if root is None:
+            item_locator = rejected_binding_item_locator_digest(
+                note_id,
+                relative_value,
+                root_value,
+            )
+            reject("binding", item_locator, "legacy_root_path_invalid")
+            continue
+        locator = legacy_binding_locator_digest(
+            note_id,
+            relative_path,
+            root.locator_digest,
+        )
+        bindings.append(
+            _LegacyBindingRequest(
+                locator_digest=locator,
+                item_locator_digest=legacy_item_locator_digest("binding", locator),
+                root_locator_digest=root.locator_digest,
+                note_id=note_id,
+                lexical_relative_path=relative_path,
+            )
+        )
+
+    distinct_bindings = {binding.locator_digest: binding for binding in bindings}
+    by_note: dict[str, list[_LegacyBindingRequest]] = {}
+    for binding in distinct_bindings.values():
+        by_note.setdefault(binding.note_id, []).append(binding)
+    duplicate_note_ids = frozenset(
+        note_id for note_id, group in by_note.items() if len(group) > 1
+    )
+
+    conflict_requests = tuple(
+        _LegacyConflictRequest(
+            item_locator_digest=legacy_item_locator_digest(
+                "legacy_conflict",
+                conflict["id"],
+            ),
+            note_id=(
+                cast(str, conflict["note_id"])
+                if type(conflict["note_id"]) is str
+                else None
+            ),
+        )
+        for conflict in conflicts
+    )
+    return _LegacyGenerationRequest(
+        roots=tuple(sorted(roots.values(), key=lambda item: item.locator_digest)),
+        bindings=tuple(
+            sorted(distinct_bindings.values(), key=lambda item: item.locator_digest)
+        ),
+        duplicate_note_ids=duplicate_note_ids,
+        rejected_items=tuple(
+            sorted(
+                rejected.values(),
+                key=lambda item: (item.item_kind, item.item_locator_digest),
+            )
+        ),
+        conflicts=conflict_requests,
+    )
+
+
+def migrate_legacy_notes_sync_state(
+    repository: NotesSyncStateRepository,
+    notes_db: CharactersRAGDB,
+) -> MigrationRunRecord:
+    """Persist snapshot A, then bind its receipt to one fresh snapshot B."""
+    from tldw_chatbook.Notes.notes_sync_state import MigrationState
+
+    snapshot_a = capture_legacy_source(notes_db)
+    pending_or_terminal = repository.record_legacy_generation(snapshot_a)
+    if pending_or_terminal.state is not MigrationState.PENDING_RECHECK:
+        return pending_or_terminal
+    snapshot_b = capture_legacy_source(notes_db)
+    return repository.finalize_legacy_generation(
+        pending_or_terminal.migration_id,
+        source_revision_after=snapshot_b.digest,
+    )
+
+
 __all__ = [
     "LegacyNotesSyncSourceError",
     "LegacyNotesSyncSourceSnapshot",
@@ -477,6 +686,7 @@ __all__ = [
     "legacy_root_locator_digest",
     "legacy_value_digest",
     "map_legacy_direction",
+    "migrate_legacy_notes_sync_state",
     "rejected_binding_item_locator_digest",
     "rejected_root_item_locator_digest",
 ]

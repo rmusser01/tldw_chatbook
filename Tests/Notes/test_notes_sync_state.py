@@ -24,6 +24,10 @@ from tldw_chatbook.Notes.notes_sync_state import (
     MAX_SYNC_ROOTS,
     NotesSyncStateError,
     NotesSyncStateRepository,
+    MigrationItemCount,
+    MigrationItemRecord,
+    MigrationRunRecord,
+    MigrationState,
     SyncBindingRecord,
     SyncBindingState,
     SyncRootRecord,
@@ -91,6 +95,10 @@ def test_public_root_api_is_narrow_and_exports_required_types() -> None:
         "MAX_SYNC_ROOTS",
         "NotesSyncStateError",
         "NotesSyncStateRepository",
+        "MigrationItemCount",
+        "MigrationItemRecord",
+        "MigrationRunRecord",
+        "MigrationState",
         "SyncBindingRecord",
         "SyncBindingState",
         "SyncRootRecord",
@@ -116,6 +124,11 @@ def test_public_root_api_is_narrow_and_exports_required_types() -> None:
         "list_bindings",
         "list_roots",
         "mark_binding_needs_attention",
+        "record_legacy_generation",
+        "finalize_legacy_generation",
+        "get_migration_run",
+        "list_migration_items",
+        "migration_item_counts",
         "pause_root",
         "update_provisional_binding",
         "update_candidate_root",
@@ -132,6 +145,59 @@ def test_public_root_api_is_narrow_and_exports_required_types() -> None:
         "disconnected",
     }
     assert MAX_SYNC_BINDINGS == 100_000
+
+
+def test_migration_projections_are_exact_frozen_redacted_and_bounded() -> None:
+    assert [field.name for field in fields(MigrationRunRecord)] == [
+        "migration_id",
+        "source_kind",
+        "source_revision_before",
+        "source_revision_after",
+        "state",
+        "created_at",
+        "updated_at",
+    ]
+    assert [field.name for field in fields(MigrationItemRecord)] == [
+        "migration_id",
+        "item_kind",
+        "source_locator_digest",
+        "outcome",
+        "root_id",
+        "binding_id",
+        "reason_code",
+        "created_at",
+    ]
+    assert [field.name for field in fields(MigrationItemCount)] == [
+        "item_kind",
+        "outcome",
+        "count",
+    ]
+    run = MigrationRunRecord(
+        migration_id=_PRIVATE_MIGRATION_ID,
+        source_kind="legacy_notes_sync_v1",
+        source_revision_before=_PRIVATE_DIGEST,
+        source_revision_after=None,
+        state=MigrationState.PENDING_RECHECK,
+        created_at=1,
+        updated_at=1,
+    )
+    item = MigrationItemRecord(
+        migration_id=_PRIVATE_MIGRATION_ID,
+        item_kind="binding",
+        source_locator_digest=_PRIVATE_DIGEST,
+        outcome="rejected",
+        root_id=_PRIVATE_ID,
+        binding_id="private-binding",
+        reason_code="duplicate_note_claim",
+        created_at=1,
+    )
+    assert _PRIVATE_MIGRATION_ID not in repr(run)
+    assert _PRIVATE_DIGEST not in repr(run)
+    assert _PRIVATE_MIGRATION_ID not in repr(item)
+    assert _PRIVATE_DIGEST not in repr(item)
+    assert _PRIVATE_ID not in repr(item)
+    with pytest.raises(FrozenInstanceError):
+        run.state = MigrationState.DRIFTED  # type: ignore[misc]
 
 
 def test_root_projection_maps_every_column_and_redacts_private_values(

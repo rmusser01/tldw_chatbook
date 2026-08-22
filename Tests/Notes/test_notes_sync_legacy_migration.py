@@ -7,14 +7,27 @@ import hashlib
 import json
 import math
 import os
+import sqlite3
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import FrozenInstanceError
 from pathlib import Path
+from threading import Barrier, local
 from typing import Any
 
 import pytest
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 from tldw_chatbook.Notes import notes_sync_legacy_migration as legacy
+from tldw_chatbook.Notes import notes_sync_state as sync_state
+from tldw_chatbook.Notes.notes_sync_state import (
+    MAX_SYNC_BINDINGS,
+    MAX_SYNC_ROOTS,
+    MigrationState,
+    NotesSyncStateRepository,
+    SyncStateCapacityError,
+)
+from tldw_chatbook.Notes.notes_sync_state_schema import notes_sync_state_transaction
 
 
 _NOTE_FIELDS = (
@@ -682,3 +695,610 @@ def test_capture_source_uses_real_io_but_never_candidate_filesystem_operands(
     assert after_database_rows == before_database_rows
     assert all(not os.path.lexists(value) for value in candidate_operands)
     db.close()
+
+
+def _snapshot(
+    *,
+    directory: object = "legacy/config-root",
+    direction: object = "bidirectional",
+    notes: tuple[dict[str, object], ...] = (),
+    conflicts: tuple[dict[str, object], ...] = (),
+) -> legacy.LegacyNotesSyncSourceSnapshot:
+    source = legacy._source_revision(
+        {
+            "sync_conflict_resolution": "newer_wins",
+            "sync_direction": direction,
+            "sync_directory": directory,
+        },
+        notes,
+        conflicts,
+    )
+    return legacy.LegacyNotesSyncSourceSnapshot(source, _digest(source))
+
+
+def _migration_repository(tmp_path: Path) -> NotesSyncStateRepository:
+    return NotesSyncStateRepository(tmp_path / "migration-state.sqlite3")
+
+
+def test_migration_persists_multiple_lexical_roots_exact_directions_and_siblings(
+    tmp_path: Path,
+) -> None:
+    repository = _migration_repository(tmp_path)
+    snapshot = _snapshot(
+        direction="disk_to_db",
+        notes=(
+            _note_row(
+                "note-a",
+                sync_root_folder="legacy/root-a",
+                relative_file_path_on_disk="a.md",
+            ),
+            _note_row(
+                "note-b",
+                sync_root_folder="legacy/root-b",
+                relative_file_path_on_disk="b.md",
+            ),
+            _note_row(
+                "note-bad",
+                sync_root_folder="legacy/root-b",
+                relative_file_path_on_disk="",
+            ),
+            _note_row(
+                "note-root-bad",
+                sync_root_folder="bad\x00root",
+                relative_file_path_on_disk="otherwise-valid.md",
+            ),
+        ),
+        conflicts=(_conflict_row(7, note_id="note-a"),),
+    )
+
+    run = repository.record_legacy_generation(snapshot)
+    roots = repository.list_roots()
+    bindings = tuple(
+        binding
+        for root in roots
+        for binding in repository.list_bindings(root_id=root.root_id)
+    )
+    items = repository.list_migration_items(run.migration_id)
+
+    assert run.state is MigrationState.PENDING_RECHECK
+    assert {root.lexical_root_path for root in roots} == {
+        "legacy/config-root",
+        "legacy/root-a",
+        "legacy/root-b",
+    }
+    assert {root.direction for root in roots} == {"folder_to_notes"}
+    assert {root.state.value for root in roots} == {"candidate"}
+    assert all(root.needs_rescan for root in roots)
+    assert {binding.note_id for binding in bindings} == {"note-a", "note-b"}
+    assert {binding.state.value for binding in bindings} == {"candidate"}
+    assert all(binding.needs_rescan for binding in bindings)
+    assert any(
+        item.item_kind == "binding"
+        and item.outcome == "rejected"
+        and item.reason_code == "legacy_relative_path_invalid"
+        for item in items
+    )
+    assert any(
+        item.item_kind == "root"
+        and item.outcome == "rejected"
+        and item.reason_code == "legacy_root_path_invalid"
+        for item in items
+    )
+    assert any(
+        item.item_kind == "legacy_conflict"
+        and item.outcome == "needs_rescan"
+        and item.reason_code == "legacy_conflict"
+        for item in items
+    )
+    with notes_sync_state_transaction(
+        tmp_path / "migration-state.sqlite3"
+    ) as connection:
+        destination_sql = " ".join(
+            row[0]
+            for row in connection.execute(
+                "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL"
+            )
+        ).lower()
+    assert "watcher" not in destination_sql
+    assert "activation" not in destination_sql
+    assert "content_hash" not in destination_sql
+    assert "conflict_content" not in destination_sql
+
+
+def test_migration_maps_invalid_direction_to_exact_review_state(tmp_path: Path) -> None:
+    repository = _migration_repository(tmp_path)
+
+    run = repository.record_legacy_generation(_snapshot(direction=False))
+    roots = repository.list_roots()
+    items = repository.list_migration_items(run.migration_id)
+
+    assert len(roots) == 1
+    assert roots[0].direction == "unspecified"
+    assert roots[0].needs_rescan is True
+    assert roots[0].reason_code == "legacy_direction_invalid"
+    assert any(
+        item.item_kind == "root"
+        and item.outcome == "needs_rescan"
+        and item.reason_code == "legacy_direction_invalid"
+        for item in items
+    )
+
+
+def test_duplicate_note_equivalence_class_and_existing_owner_choose_no_winner(
+    tmp_path: Path,
+) -> None:
+    repository = _migration_repository(tmp_path)
+    existing_root = repository.create_candidate_root(
+        "manual/root", "Manual", "bidirectional"
+    )
+    repository.create_provisional_binding(existing_root.root_id, "claimed", "manual.md")
+    snapshot = _snapshot(
+        notes=(
+            _note_row(
+                "duplicate",
+                sync_root_folder="legacy/a",
+                relative_file_path_on_disk="one.md",
+            ),
+            _note_row(
+                "duplicate",
+                sync_root_folder="legacy/b",
+                relative_file_path_on_disk="two.md",
+            ),
+            _note_row(
+                "claimed",
+                sync_root_folder="legacy/a",
+                relative_file_path_on_disk="claimed.md",
+            ),
+        )
+    )
+
+    run = repository.record_legacy_generation(snapshot)
+    items = repository.list_migration_items(run.migration_id)
+    migrated = tuple(
+        binding
+        for root in repository.list_roots()
+        for binding in repository.list_bindings(root_id=root.root_id)
+        if binding.source_migration_id == run.migration_id
+    )
+
+    assert migrated == ()
+    assert sum(item.reason_code == "duplicate_note_claim" for item in items) == 2
+    assert sum(item.reason_code == "note_already_owned" for item in items) == 1
+
+
+def test_duplicate_preflight_preserves_only_an_exact_existing_locator_match(
+    tmp_path: Path,
+) -> None:
+    repository = _migration_repository(tmp_path)
+    first = repository.record_legacy_generation(
+        _snapshot(
+            notes=(
+                _note_row(
+                    "note",
+                    sync_root_folder="legacy/a",
+                    relative_file_path_on_disk="one.md",
+                ),
+            )
+        )
+    )
+    original_binding = next(
+        binding
+        for root in repository.list_roots()
+        for binding in repository.list_bindings(root_id=root.root_id)
+        if binding.note_id == "note"
+    )
+    changed = _snapshot(
+        direction="disk_to_db",
+        notes=(
+            _note_row(
+                "note",
+                sync_root_folder="legacy/a",
+                relative_file_path_on_disk="one.md",
+            ),
+            _note_row(
+                "note",
+                sync_root_folder="legacy/b",
+                relative_file_path_on_disk="two.md",
+            ),
+        ),
+    )
+
+    second = repository.record_legacy_generation(changed)
+    binding_after = repository.get_binding(original_binding.binding_id)
+    items = repository.list_migration_items(second.migration_id)
+
+    assert binding_after.source_migration_id == second.migration_id
+    assert binding_after.row_version == original_binding.row_version + 1
+    assert (
+        sum(item.outcome == "matched" for item in items if item.item_kind == "binding")
+        == 1
+    )
+    assert sum(item.reason_code == "duplicate_note_claim" for item in items) == 1
+    assert first.migration_id != second.migration_id
+
+
+def test_exact_digest_and_pending_replay_never_rewrite_candidates_or_items(
+    tmp_path: Path,
+) -> None:
+    repository = _migration_repository(tmp_path)
+    snapshot = _snapshot(
+        notes=(
+            _note_row(
+                "note",
+                sync_root_folder="legacy/root",
+                relative_file_path_on_disk="note.md",
+            ),
+        )
+    )
+    first = repository.record_legacy_generation(snapshot)
+    root_before = next(
+        root
+        for root in repository.list_roots()
+        if root.source_migration_id == first.migration_id
+    )
+    items_before = repository.list_migration_items(first.migration_id)
+
+    second = repository.record_legacy_generation(snapshot)
+    root_after = repository.get_root(root_before.root_id)
+
+    assert second == first
+    assert root_after == root_before
+    assert repository.list_migration_items(first.migration_id) == items_before
+
+
+def test_pending_crash_replay_performs_only_fresh_recheck(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _migration_repository(tmp_path)
+    snapshot = _snapshot(
+        notes=(
+            _note_row(
+                "note",
+                sync_root_folder="legacy/root",
+                relative_file_path_on_disk="note.md",
+            ),
+        )
+    )
+    pending = repository.record_legacy_generation(snapshot)
+    roots_before = repository.list_roots()
+    items_before = repository.list_migration_items(pending.migration_id)
+    captures = iter((snapshot, snapshot))
+    monkeypatch.setattr(legacy, "capture_legacy_source", lambda _db: next(captures))
+
+    terminal = legacy.migrate_legacy_notes_sync_state(repository, object())
+
+    assert terminal.state is MigrationState.MATCHED_RECHECK
+    assert repository.list_roots() == roots_before
+    assert repository.list_migration_items(pending.migration_id) == items_before
+
+
+def test_changed_digest_updates_only_exact_migration_owned_candidates(
+    tmp_path: Path,
+) -> None:
+    repository = _migration_repository(tmp_path)
+    original = _snapshot(
+        notes=(
+            _note_row(
+                "candidate",
+                sync_root_folder="legacy/root",
+                relative_file_path_on_disk="candidate.md",
+            ),
+            _note_row(
+                "reviewed",
+                sync_root_folder="legacy/reviewed",
+                relative_file_path_on_disk="reviewed.md",
+            ),
+        )
+    )
+    first = repository.record_legacy_generation(original)
+    roots = {root.lexical_root_path: root for root in repository.list_roots()}
+    reviewed_binding = next(
+        binding
+        for binding in repository.list_bindings(
+            root_id=roots["legacy/reviewed"].root_id
+        )
+        if binding.note_id == "reviewed"
+    )
+    repository.pause_root(
+        roots["legacy/reviewed"].root_id,
+        roots["legacy/reviewed"].row_version,
+        "reviewed",
+    )
+    repository.mark_binding_needs_attention(
+        reviewed_binding.binding_id,
+        reviewed_binding.row_version,
+        "reviewed",
+    )
+    changed = _snapshot(
+        direction="db_to_disk",
+        notes=tuple(original.source["notes"]),  # type: ignore[arg-type]
+    )
+
+    second = repository.record_legacy_generation(changed)
+    updated_candidate = repository.get_root(roots["legacy/root"].root_id)
+    untouched_reviewed = repository.get_root(roots["legacy/reviewed"].root_id)
+    untouched_binding = repository.get_binding(reviewed_binding.binding_id)
+
+    assert second.migration_id != first.migration_id
+    assert updated_candidate.direction == "notes_to_folder"
+    assert updated_candidate.source_migration_id == second.migration_id
+    assert untouched_reviewed.state.value == "paused"
+    assert untouched_reviewed.source_migration_id == first.migration_id
+    assert untouched_binding.state.value == "needs_attention"
+    assert untouched_binding.source_migration_id == first.migration_id
+
+
+def test_changed_digest_never_reopens_disconnected_migration_rows(
+    tmp_path: Path,
+) -> None:
+    repository = _migration_repository(tmp_path)
+    original = _snapshot(
+        notes=(
+            _note_row(
+                "note",
+                sync_root_folder="legacy/root",
+                relative_file_path_on_disk="note.md",
+            ),
+        )
+    )
+    first = repository.record_legacy_generation(original)
+    migrated_root = next(
+        root
+        for root in repository.list_roots()
+        if root.lexical_root_path == "legacy/root"
+    )
+    migrated_binding = repository.list_bindings(root_id=migrated_root.root_id)[0]
+    repository.disconnect_root(migrated_root.root_id, migrated_root.row_version)
+    changed = _snapshot(
+        direction="db_to_disk",
+        notes=tuple(original.source["notes"]),  # type: ignore[arg-type]
+    )
+
+    second = repository.record_legacy_generation(changed)
+    root_after = repository.get_root(migrated_root.root_id)
+    binding_after = repository.get_binding(migrated_binding.binding_id)
+    items = repository.list_migration_items(second.migration_id)
+
+    assert root_after.state.value == "disconnected"
+    assert binding_after.state.value == "disconnected"
+    assert root_after.source_migration_id == first.migration_id
+    assert binding_after.source_migration_id == first.migration_id
+    assert any(item.reason_code == "candidate_not_mutable" for item in items)
+    assert any(item.reason_code == "root_claim_unavailable" for item in items)
+
+
+@pytest.mark.parametrize(
+    ("root_count", "binding_count", "limit_name"),
+    (
+        (MAX_SYNC_ROOTS, 0, "root"),
+        (0, MAX_SYNC_BINDINGS, "binding"),
+    ),
+)
+def test_capacity_preflight_aborts_before_any_migration_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    root_count: int,
+    binding_count: int,
+    limit_name: str,
+) -> None:
+    repository = _migration_repository(tmp_path)
+    database = tmp_path / "migration-state.sqlite3"
+    with notes_sync_state_transaction(database):
+        pass
+    destination_writes: list[str] = []
+    original_transaction = sync_state._repository_transaction
+
+    @contextmanager
+    def traced_transaction(database_path: Path, *, immediate: bool = False):
+        with original_transaction(database_path, immediate=immediate) as connection:
+            if immediate:
+                connection.set_trace_callback(destination_writes.append)
+            yield connection
+
+    monkeypatch.setattr(sync_state, "_repository_transaction", traced_transaction)
+    monkeypatch.setattr(
+        "tldw_chatbook.Notes.notes_sync_state.MAX_SYNC_ROOTS", root_count or 64
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Notes.notes_sync_state.MAX_SYNC_BINDINGS",
+        binding_count or 100_000,
+    )
+    if root_count:
+        monkeypatch.setattr("tldw_chatbook.Notes.notes_sync_state.MAX_SYNC_ROOTS", 0)
+    if binding_count:
+        monkeypatch.setattr("tldw_chatbook.Notes.notes_sync_state.MAX_SYNC_BINDINGS", 0)
+    snapshot = _snapshot(
+        notes=(
+            _note_row(
+                "note",
+                sync_root_folder="legacy/root",
+                relative_file_path_on_disk="note.md",
+            ),
+        )
+    )
+
+    with pytest.raises(SyncStateCapacityError, match=limit_name):
+        repository.record_legacy_generation(snapshot)
+
+    with notes_sync_state_transaction(database) as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM sync_migration_runs"
+        ).fetchone() == (0,)
+        assert connection.execute(
+            "SELECT count(*) FROM sync_migration_items"
+        ).fetchone() == (0,)
+        assert connection.execute("SELECT count(*) FROM sync_roots").fetchone() == (0,)
+        assert connection.execute("SELECT count(*) FROM sync_bindings").fetchone() == (
+            0,
+        )
+    assert not any(
+        statement.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE"))
+        for statement in destination_writes
+    )
+
+
+def test_migration_item_combinations_are_enforced_and_counts_are_derived(
+    tmp_path: Path,
+) -> None:
+    repository = _migration_repository(tmp_path)
+    run = repository.record_legacy_generation(
+        _snapshot(
+            notes=(
+                _note_row(
+                    "note",
+                    sync_root_folder="legacy/root",
+                    relative_file_path_on_disk="note.md",
+                ),
+            )
+        )
+    )
+    root = next(
+        root
+        for root in repository.list_roots()
+        if root.lexical_root_path == "legacy/root"
+    )
+    binding = repository.list_bindings(root_id=root.root_id)[0]
+    counts_before = repository.migration_item_counts(run.migration_id)
+    database = tmp_path / "migration-state.sqlite3"
+    invalid_combinations = (
+        ("root", "created", None, None, None),
+        ("root", "rejected", root.root_id, None, "invalid_path"),
+        ("binding", "created", root.root_id, None, None),
+        ("legacy_conflict", "created", None, None, None),
+        (
+            "legacy_conflict",
+            "needs_rescan",
+            root.root_id,
+            binding.binding_id,
+            "legacy_conflict",
+        ),
+    )
+    for index, (kind, outcome, root_id, binding_id, reason) in enumerate(
+        invalid_combinations
+    ):
+        with pytest.raises(sqlite3.IntegrityError):
+            with notes_sync_state_transaction(database, immediate=True) as connection:
+                connection.execute(
+                    """INSERT INTO sync_migration_items (
+                           migration_id, item_kind, source_locator_digest, outcome,
+                           root_id, binding_id, reason_code, created_at
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, 1)""",
+                    (
+                        run.migration_id,
+                        kind,
+                        f"{index + 10:064x}",
+                        outcome,
+                        root_id,
+                        binding_id,
+                        reason,
+                    ),
+                )
+    with notes_sync_state_transaction(database, immediate=True) as connection:
+        connection.execute(
+            "DELETE FROM sync_migration_items WHERE migration_id = ?",
+            (run.migration_id,),
+        )
+    assert counts_before
+    assert repository.migration_item_counts(run.migration_id) == ()
+
+
+def test_migrate_orchestration_records_matched_and_drifted_fresh_rechecks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot_a = _snapshot(directory="legacy/a")
+    snapshot_b = _snapshot(directory="legacy/b")
+    captures = iter((snapshot_a, snapshot_a, snapshot_a, snapshot_b))
+    monkeypatch.setattr(legacy, "capture_legacy_source", lambda _db: next(captures))
+    first_repository = NotesSyncStateRepository(tmp_path / "matched.sqlite3")
+    second_repository = NotesSyncStateRepository(tmp_path / "drifted.sqlite3")
+
+    matched = legacy.migrate_legacy_notes_sync_state(first_repository, object())
+    drifted = legacy.migrate_legacy_notes_sync_state(second_repository, object())
+
+    assert matched.state is MigrationState.MATCHED_RECHECK
+    assert drifted.state is MigrationState.DRIFTED
+    assert matched.source_revision_after == snapshot_a.digest
+    assert drifted.source_revision_after == snapshot_b.digest
+    assert all(root.needs_rescan for root in first_repository.list_roots())
+    assert all(root.needs_rescan for root in second_repository.list_roots())
+
+
+def test_two_connections_finalizing_different_rechecks_return_one_immutable_winner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "migration-state.sqlite3"
+    snapshot = _snapshot()
+    first = NotesSyncStateRepository(database)
+    second = NotesSyncStateRepository(database)
+    first.record_legacy_generation(snapshot)
+    barrier = Barrier(2)
+    thread_state = local()
+    original_require = sync_state._require_migration_run
+
+    def controlled_capture(snapshots: tuple[object, object]):
+        capture_index = getattr(thread_state, "capture_index", 0)
+        thread_state.capture_index = capture_index + 1
+        return snapshots[capture_index]
+
+    monkeypatch.setattr(legacy, "capture_legacy_source", controlled_capture)
+
+    def controlled_require(connection: sqlite3.Connection, migration_id: str):
+        run = original_require(connection, migration_id)
+        if not getattr(thread_state, "observed_pending", False):
+            thread_state.observed_pending = True
+            assert run.state is MigrationState.PENDING_RECHECK
+            barrier.wait()
+        return run
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Notes.notes_sync_state._require_migration_run",
+        controlled_require,
+    )
+
+    def migrate(
+        repository: NotesSyncStateRepository,
+        snapshots: tuple[object, object],
+    ):
+        return legacy.migrate_legacy_notes_sync_state(repository, snapshots)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = tuple(
+            pool.map(
+                lambda pair: migrate(*pair),
+                (
+                    (first, (snapshot, snapshot)),
+                    (second, (snapshot, _snapshot(directory="legacy/drifted"))),
+                ),
+            )
+        )
+
+    assert results[0] == results[1]
+    assert results[0].state in {
+        MigrationState.MATCHED_RECHECK,
+        MigrationState.DRIFTED,
+    }
+    assert results[0].source_revision_after in {
+        snapshot.digest,
+        _snapshot(directory="legacy/drifted").digest,
+    }
+
+
+def test_terminal_migration_replay_skips_fresh_source_capture(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _migration_repository(tmp_path)
+    snapshot = _snapshot()
+    terminal = repository.finalize_legacy_generation(
+        repository.record_legacy_generation(snapshot).migration_id,
+        source_revision_after=snapshot.digest,
+    )
+    captures = iter((snapshot,))
+    monkeypatch.setattr(legacy, "capture_legacy_source", lambda _db: next(captures))
+
+    replay = legacy.migrate_legacy_notes_sync_state(repository, object())
+
+    assert replay == terminal

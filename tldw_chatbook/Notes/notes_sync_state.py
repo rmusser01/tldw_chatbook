@@ -10,13 +10,18 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from tldw_chatbook.Notes.notes_sync_state_schema import (
     NotesSyncStateSchemaError,
     notes_sync_state_transaction,
 )
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Notes.notes_sync_legacy_migration import (
+        LegacyNotesSyncSourceSnapshot,
+    )
 
 
 MAX_SYNC_ROOTS = 64
@@ -36,6 +41,12 @@ _ROOT_COLUMNS = """root_id, lexical_root_path, display_name, direction, state,
 _BINDING_COLUMNS = """binding_id, root_id, note_id, lexical_relative_path, path_key,
                       state, row_version, needs_rescan, reason_code, source_kind,
                       source_locator_digest, source_migration_id, created_at, updated_at"""
+_MIGRATION_RUN_COLUMNS = """migration_id, source_kind, source_revision_before,
+                            source_revision_after, state, created_at, updated_at"""
+_MIGRATION_ITEM_COLUMNS = """migration_id, item_kind, source_locator_digest, outcome,
+                             root_id, binding_id, reason_code, created_at"""
+_ITEM_KINDS = frozenset({"root", "binding", "legacy_conflict"})
+_ITEM_OUTCOMES = frozenset({"created", "matched", "rejected", "needs_rescan"})
 
 
 class NotesSyncStateError(RuntimeError):
@@ -68,6 +79,61 @@ class SyncBindingState(StrEnum):
     CANDIDATE = "candidate"
     NEEDS_ATTENTION = "needs_attention"
     DISCONNECTED = "disconnected"
+
+
+class MigrationState(StrEnum):
+    """Representable lifecycle states for one legacy migration generation."""
+
+    PENDING_RECHECK = "pending_recheck"
+    MATCHED_RECHECK = "matched_recheck"
+    DRIFTED = "drifted"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class MigrationRunRecord:
+    """Immutable exact projection of one private migration-run row."""
+
+    migration_id: str = field(repr=False)
+    source_kind: str = field(repr=False)
+    source_revision_before: str = field(repr=False)
+    source_revision_after: str | None = field(repr=False)
+    state: MigrationState
+    created_at: int
+    updated_at: int
+
+    def __repr__(self) -> str:
+        """Return a diagnostic representation containing no private identity."""
+        return f"MigrationRunRecord(state={self.state.value!r})"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class MigrationItemRecord:
+    """Immutable exact projection of one private migration-item row."""
+
+    migration_id: str = field(repr=False)
+    item_kind: str
+    source_locator_digest: str = field(repr=False)
+    outcome: str
+    root_id: str | None = field(repr=False)
+    binding_id: str | None = field(repr=False)
+    reason_code: str | None
+    created_at: int
+
+    def __repr__(self) -> str:
+        """Return a diagnostic representation containing no private identity."""
+        return (
+            f"MigrationItemRecord(item_kind={self.item_kind!r}, "
+            f"outcome={self.outcome!r}, reason_code={self.reason_code!r})"
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class MigrationItemCount:
+    """One redacted aggregate derived from durable migration items."""
+
+    item_kind: str
+    outcome: str
+    count: int
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -448,6 +514,121 @@ def _binding_record(row: tuple[object, ...]) -> SyncBindingRecord:
     raise failure from None
 
 
+def _migration_run_record(row: tuple[object, ...]) -> MigrationRunRecord:
+    try:
+        if len(row) != 7:
+            raise ValueError
+        migration_id, kind, before, after, state, created_at, updated_at = row
+        if (
+            type(migration_id) is not str
+            or len(migration_id) != 36
+            or "\x00" in migration_id
+            or kind != "legacy_notes_sync_v1"
+            or type(before) is not str
+            or _LOWER_DIGEST_PATTERN.fullmatch(before) is None
+            or (
+                after is not None
+                and (
+                    type(after) is not str
+                    or _LOWER_DIGEST_PATTERN.fullmatch(after) is None
+                )
+            )
+            or type(state) is not str
+            or type(created_at) is not int
+            or type(updated_at) is not int
+            or created_at <= 0
+            or updated_at <= 0
+        ):
+            raise ValueError
+        return MigrationRunRecord(
+            migration_id=migration_id,
+            source_kind=kind,
+            source_revision_before=before,
+            source_revision_after=after,
+            state=MigrationState(state),
+            created_at=created_at,
+            updated_at=updated_at,
+        )
+    except (TypeError, ValueError):
+        raise SyncStateCorruptionError(
+            "A private migration-run record is incompatible with canonical v2."
+        ) from None
+
+
+def _migration_item_record(row: tuple[object, ...]) -> MigrationItemRecord:
+    try:
+        if len(row) != 8:
+            raise ValueError
+        (
+            migration_id,
+            kind,
+            locator,
+            outcome,
+            root_id,
+            binding_id,
+            reason,
+            created_at,
+        ) = row
+        if (
+            type(migration_id) is not str
+            or len(migration_id) != 36
+            or "\x00" in migration_id
+            or kind not in _ITEM_KINDS
+            or type(locator) is not str
+            or _LOWER_DIGEST_PATTERN.fullmatch(locator) is None
+            or outcome not in _ITEM_OUTCOMES
+            or type(created_at) is not int
+            or created_at <= 0
+        ):
+            raise ValueError
+        for identifier in (root_id, binding_id):
+            if identifier is not None and (
+                type(identifier) is not str
+                or not 1 <= len(identifier) <= _MAX_ID_LENGTH
+                or "\x00" in identifier
+            ):
+                raise ValueError
+        if reason is not None and (
+            type(reason) is not str or _REASON_CODE_PATTERN.fullmatch(reason) is None
+        ):
+            raise ValueError
+        return MigrationItemRecord(
+            migration_id=migration_id,
+            item_kind=cast(str, kind),
+            source_locator_digest=locator,
+            outcome=cast(str, outcome),
+            root_id=cast(str | None, root_id),
+            binding_id=cast(str | None, binding_id),
+            reason_code=cast(str | None, reason),
+            created_at=created_at,
+        )
+    except (TypeError, ValueError):
+        raise SyncStateCorruptionError(
+            "A private migration-item record is incompatible with canonical v2."
+        ) from None
+
+
+def _select_migration_run(
+    connection: sqlite3.Connection,
+    migration_id: str,
+) -> MigrationRunRecord | None:
+    row = connection.execute(
+        f"SELECT {_MIGRATION_RUN_COLUMNS} FROM sync_migration_runs WHERE migration_id = ?",
+        (migration_id,),
+    ).fetchone()
+    return None if row is None else _migration_run_record(row)
+
+
+def _require_migration_run(
+    connection: sqlite3.Connection,
+    migration_id: str,
+) -> MigrationRunRecord:
+    run = _select_migration_run(connection, migration_id)
+    if run is None:
+        raise NotesSyncStateError("Migration run was not found.")
+    return run
+
+
 def _select_root(
     connection: sqlite3.Connection,
     root_id: str,
@@ -751,6 +932,513 @@ class NotesSyncStateRepository:
             ).fetchall()
             return tuple(_binding_record(row) for row in rows)
 
+    def get_migration_run(self, migration_id: str) -> MigrationRunRecord:
+        """Return one durable migration generation by its private identity."""
+        validated_id = _validate_text(
+            migration_id,
+            field_name="migration_id",
+            maximum=36,
+        )
+        if len(validated_id) != 36:
+            raise ValueError("migration_id must be an exact bounded identity.")
+        with _repository_transaction(self._database_path) as connection:
+            return _require_migration_run(connection, validated_id)
+
+    def list_migration_items(
+        self,
+        migration_id: str,
+    ) -> tuple[MigrationItemRecord, ...]:
+        """Return one generation's exact items in stable private order."""
+        validated_id = _validate_text(
+            migration_id,
+            field_name="migration_id",
+            maximum=36,
+        )
+        if len(validated_id) != 36:
+            raise ValueError("migration_id must be an exact bounded identity.")
+        with _repository_transaction(self._database_path) as connection:
+            _require_migration_run(connection, validated_id)
+            rows = connection.execute(
+                f"""SELECT {_MIGRATION_ITEM_COLUMNS}
+                    FROM sync_migration_items
+                    WHERE migration_id = ?
+                    ORDER BY item_kind, source_locator_digest""",
+                (validated_id,),
+            ).fetchall()
+            return tuple(_migration_item_record(row) for row in rows)
+
+    def migration_item_counts(
+        self,
+        migration_id: str,
+    ) -> tuple[MigrationItemCount, ...]:
+        """Derive redacted item aggregates from the canonical item rows."""
+        validated_id = _validate_text(
+            migration_id,
+            field_name="migration_id",
+            maximum=36,
+        )
+        if len(validated_id) != 36:
+            raise ValueError("migration_id must be an exact bounded identity.")
+        with _repository_transaction(self._database_path) as connection:
+            _require_migration_run(connection, validated_id)
+            rows = connection.execute(
+                """SELECT item_kind, outcome, count(*)
+                   FROM sync_migration_items
+                   WHERE migration_id = ?
+                   GROUP BY item_kind, outcome
+                   ORDER BY item_kind, outcome""",
+                (validated_id,),
+            ).fetchall()
+            counts: list[MigrationItemCount] = []
+            for kind, outcome, count in rows:
+                if (
+                    kind not in _ITEM_KINDS
+                    or outcome not in _ITEM_OUTCOMES
+                    or type(count) is not int
+                    or count <= 0
+                ):
+                    raise SyncStateCorruptionError(
+                        "A private migration aggregate is incompatible with canonical v2."
+                    )
+                counts.append(MigrationItemCount(kind, outcome, count))
+            return tuple(counts)
+
+    def record_legacy_generation(
+        self,
+        snapshot: LegacyNotesSyncSourceSnapshot,
+    ) -> MigrationRunRecord:
+        """Atomically persist one preflighted provisional legacy generation."""
+        from tldw_chatbook.Notes.notes_sync_legacy_migration import (
+            LegacyNotesSyncSourceSnapshot,
+            _prepare_legacy_generation,
+        )
+
+        if type(snapshot) is not LegacyNotesSyncSourceSnapshot:
+            raise TypeError("snapshot must be a canonical legacy source snapshot.")
+        source_revision = snapshot.digest
+        with _repository_transaction(self._database_path) as connection:
+            row = connection.execute(
+                f"""SELECT {_MIGRATION_RUN_COLUMNS} FROM sync_migration_runs
+                    WHERE source_kind = 'legacy_notes_sync_v1'
+                      AND source_revision_before = ?""",
+                (source_revision,),
+            ).fetchone()
+            if row is not None:
+                return _migration_run_record(row)
+
+        request = _prepare_legacy_generation(snapshot)
+        migration_id = str(uuid4())
+        created_at = _timestamp_after()
+        with _repository_transaction(self._database_path, immediate=True) as connection:
+            row = connection.execute(
+                f"""SELECT {_MIGRATION_RUN_COLUMNS} FROM sync_migration_runs
+                    WHERE source_kind = 'legacy_notes_sync_v1'
+                      AND source_revision_before = ?""",
+                (source_revision,),
+            ).fetchone()
+            if row is not None:
+                return _migration_run_record(row)
+
+            root_decisions: list[dict[str, Any]] = []
+            root_by_locator: dict[str, dict[str, Any]] = {}
+            new_roots = 0
+            for root_request in request.roots:
+                root_id = f"legacy-root-{root_request.locator_digest}"
+                exact_row = connection.execute(
+                    f"""SELECT {_ROOT_COLUMNS} FROM sync_roots
+                        WHERE source_kind = 'legacy_notes_sync_v1'
+                          AND source_locator_digest = ?
+                          AND state <> 'disconnected'""",
+                    (root_request.locator_digest,),
+                ).fetchone()
+                exact = None if exact_row is None else _root_record(exact_row)
+                stable = _select_root(connection, root_id)
+                if exact is not None and exact.state is SyncRootState.CANDIDATE:
+                    decision = {
+                        "request": root_request,
+                        "root_id": exact.root_id,
+                        "record": exact,
+                        "action": "update",
+                        "outcome": (
+                            "needs_rescan" if root_request.reason_code else "matched"
+                        ),
+                        "reason": root_request.reason_code,
+                    }
+                elif exact is None and stable is None:
+                    new_roots += 1
+                    decision = {
+                        "request": root_request,
+                        "root_id": root_id,
+                        "record": None,
+                        "action": "insert",
+                        "outcome": (
+                            "needs_rescan" if root_request.reason_code else "created"
+                        ),
+                        "reason": root_request.reason_code,
+                    }
+                else:
+                    decision = {
+                        "request": root_request,
+                        "root_id": None,
+                        "record": exact or stable,
+                        "action": "reject",
+                        "outcome": "rejected",
+                        "reason": "candidate_not_mutable",
+                    }
+                root_decisions.append(decision)
+                root_by_locator[root_request.locator_digest] = decision
+
+            live_roots = connection.execute(
+                "SELECT count(*) FROM sync_roots WHERE state <> 'disconnected'"
+            ).fetchone()[0]
+            if type(live_roots) is not int:
+                raise SyncStateCorruptionError(
+                    "The private sync-root count is incompatible with canonical v2."
+                )
+            if live_roots + new_roots > MAX_SYNC_ROOTS:
+                raise SyncStateCapacityError(
+                    f"Migration root capacity of {MAX_SYNC_ROOTS} would be exceeded."
+                )
+
+            binding_decisions: list[dict[str, Any]] = []
+            distinct_requests: dict[str, Any] = {
+                binding.locator_digest: binding for binding in request.bindings
+            }
+            for binding_request in distinct_requests.values():
+                root_decision = root_by_locator.get(binding_request.root_locator_digest)
+                binding_id = f"legacy-binding-{binding_request.locator_digest}"
+                exact_row = connection.execute(
+                    f"""SELECT {_BINDING_COLUMNS} FROM sync_bindings
+                        WHERE source_kind = 'legacy_notes_sync_v1'
+                          AND source_locator_digest = ?
+                        ORDER BY state <> 'disconnected' DESC LIMIT 1""",
+                    (binding_request.locator_digest,),
+                ).fetchone()
+                exact_binding = (
+                    None if exact_row is None else _binding_record(exact_row)
+                )
+                owner_row = connection.execute(
+                    f"""SELECT {_BINDING_COLUMNS} FROM sync_bindings
+                        WHERE note_id = ? AND state <> 'disconnected' LIMIT 1""",
+                    (binding_request.note_id,),
+                ).fetchone()
+                owner = None if owner_row is None else _binding_record(owner_row)
+                stable_binding = _select_binding(connection, binding_id)
+                if root_decision is None or root_decision["action"] == "reject":
+                    decision = {
+                        "request": binding_request,
+                        "binding_id": None,
+                        "record": exact_binding,
+                        "action": "reject",
+                        "outcome": "rejected",
+                        "reason": "root_claim_unavailable",
+                    }
+                elif (
+                    exact_binding is not None
+                    and exact_binding.state is SyncBindingState.CANDIDATE
+                    and owner is not None
+                    and owner.binding_id == exact_binding.binding_id
+                ):
+                    decision = {
+                        "request": binding_request,
+                        "binding_id": exact_binding.binding_id,
+                        "record": exact_binding,
+                        "action": "update",
+                        "outcome": "matched",
+                        "reason": None,
+                    }
+                elif binding_request.note_id in request.duplicate_note_ids:
+                    decision = {
+                        "request": binding_request,
+                        "binding_id": None,
+                        "record": exact_binding or stable_binding or owner,
+                        "action": "reject",
+                        "outcome": "rejected",
+                        "reason": "duplicate_note_claim",
+                    }
+                elif exact_binding is not None or stable_binding is not None:
+                    decision = {
+                        "request": binding_request,
+                        "binding_id": None,
+                        "record": exact_binding or stable_binding,
+                        "action": "reject",
+                        "outcome": "rejected",
+                        "reason": "candidate_not_mutable",
+                    }
+                elif owner is not None:
+                    decision = {
+                        "request": binding_request,
+                        "binding_id": None,
+                        "record": owner,
+                        "action": "reject",
+                        "outcome": "rejected",
+                        "reason": "note_already_owned",
+                    }
+                else:
+                    decision = {
+                        "request": binding_request,
+                        "binding_id": binding_id,
+                        "record": None,
+                        "action": "insert",
+                        "outcome": "created",
+                        "reason": None,
+                    }
+                binding_decisions.append(decision)
+
+            new_bindings = sum(
+                decision["action"] == "insert" for decision in binding_decisions
+            )
+
+            live_bindings = connection.execute(
+                "SELECT count(*) FROM sync_bindings WHERE state <> 'disconnected'"
+            ).fetchone()[0]
+            if type(live_bindings) is not int:
+                raise SyncStateCorruptionError(
+                    "The private sync-binding count is incompatible with canonical v2."
+                )
+            if live_bindings + new_bindings > MAX_SYNC_BINDINGS:
+                raise SyncStateCapacityError(
+                    f"Migration binding capacity of {MAX_SYNC_BINDINGS} would be exceeded."
+                )
+
+            connection.execute(
+                """INSERT INTO sync_migration_runs (
+                       migration_id, source_kind, source_revision_before,
+                       source_revision_after, state, created_at, updated_at
+                   ) VALUES (?, 'legacy_notes_sync_v1', ?, NULL,
+                             'pending_recheck', ?, ?)""",
+                (migration_id, source_revision, created_at, created_at),
+            )
+            for decision in root_decisions:
+                root_write_request: Any = decision["request"]
+                if decision["action"] == "insert":
+                    changed = connection.execute(
+                        """INSERT INTO sync_roots (
+                               root_id, lexical_root_path, display_name, direction,
+                               state, row_version, needs_rescan, reason_code,
+                               source_kind, source_locator_digest, source_migration_id,
+                               created_at, updated_at
+                           ) VALUES (?, ?, ?, ?, 'candidate', 1, 1, ?,
+                                     'legacy_notes_sync_v1', ?, ?, ?, ?)""",
+                        (
+                            decision["root_id"],
+                            root_write_request.lexical_root_path,
+                            root_write_request.display_name,
+                            root_write_request.direction,
+                            root_write_request.reason_code,
+                            root_write_request.locator_digest,
+                            migration_id,
+                            created_at,
+                            created_at,
+                        ),
+                    ).rowcount
+                    if changed != 1:
+                        raise SyncStateConflictError(
+                            "A migration-owned sync root changed before persistence."
+                        )
+                elif decision["action"] == "update":
+                    root_record = cast(SyncRootRecord, decision["record"])
+                    changed = connection.execute(
+                        """UPDATE sync_roots
+                           SET display_name = ?, direction = ?, needs_rescan = 1,
+                               reason_code = ?, source_migration_id = ?,
+                               row_version = row_version + 1, updated_at = ?
+                           WHERE root_id = ? AND row_version = ? AND state = 'candidate'
+                             AND source_kind = 'legacy_notes_sync_v1'
+                             AND source_locator_digest = ?""",
+                        (
+                            root_write_request.display_name,
+                            root_write_request.direction,
+                            root_write_request.reason_code,
+                            migration_id,
+                            _timestamp_after(root_record.updated_at),
+                            root_record.root_id,
+                            root_record.row_version,
+                            root_write_request.locator_digest,
+                        ),
+                    ).rowcount
+                    if changed != 1:
+                        raise SyncStateConflictError(
+                            "A migration-owned sync root changed before persistence."
+                        )
+
+            successful_bindings: dict[str, str] = {}
+            for decision in binding_decisions:
+                binding_write_request: Any = decision["request"]
+                root_id = root_by_locator[binding_write_request.root_locator_digest][
+                    "root_id"
+                ]
+                if decision["action"] == "insert":
+                    changed = connection.execute(
+                        """INSERT INTO sync_bindings (
+                               binding_id, root_id, note_id, lexical_relative_path,
+                               path_key, state, row_version, needs_rescan, reason_code,
+                               source_kind, source_locator_digest, source_migration_id,
+                               created_at, updated_at
+                           ) VALUES (?, ?, ?, ?, NULL, 'candidate', 1, 1, NULL,
+                                     'legacy_notes_sync_v1', ?, ?, ?, ?)""",
+                        (
+                            decision["binding_id"],
+                            root_id,
+                            binding_write_request.note_id,
+                            binding_write_request.lexical_relative_path,
+                            binding_write_request.locator_digest,
+                            migration_id,
+                            created_at,
+                            created_at,
+                        ),
+                    ).rowcount
+                    if changed != 1:
+                        raise SyncStateConflictError(
+                            "A migration-owned sync binding changed before persistence."
+                        )
+                elif decision["action"] == "update":
+                    binding_record = cast(SyncBindingRecord, decision["record"])
+                    changed = connection.execute(
+                        """UPDATE sync_bindings
+                           SET root_id = ?, lexical_relative_path = ?, needs_rescan = 1,
+                               reason_code = NULL, source_migration_id = ?,
+                               row_version = row_version + 1, updated_at = ?
+                           WHERE binding_id = ? AND row_version = ? AND state = 'candidate'
+                             AND source_kind = 'legacy_notes_sync_v1'
+                             AND source_locator_digest = ?""",
+                        (
+                            root_id,
+                            binding_write_request.lexical_relative_path,
+                            migration_id,
+                            _timestamp_after(binding_record.updated_at),
+                            binding_record.binding_id,
+                            binding_record.row_version,
+                            binding_write_request.locator_digest,
+                        ),
+                    ).rowcount
+                    if changed != 1:
+                        raise SyncStateConflictError(
+                            "A migration-owned sync binding changed before persistence."
+                        )
+                if decision["action"] in ("insert", "update"):
+                    successful_bindings[binding_write_request.note_id] = cast(
+                        str, decision["binding_id"]
+                    )
+
+            item_rows: list[tuple[object, ...]] = []
+            for rejected in request.rejected_items:
+                item_rows.append(
+                    (
+                        migration_id,
+                        rejected.item_kind,
+                        rejected.item_locator_digest,
+                        "rejected",
+                        None,
+                        None,
+                        rejected.reason_code,
+                        created_at,
+                    )
+                )
+            for decision in root_decisions:
+                item_rows.append(
+                    (
+                        migration_id,
+                        "root",
+                        cast(Any, decision["request"]).item_locator_digest,
+                        decision["outcome"],
+                        decision["root_id"],
+                        None,
+                        decision["reason"],
+                        created_at,
+                    )
+                )
+            for decision in binding_decisions:
+                item_rows.append(
+                    (
+                        migration_id,
+                        "binding",
+                        cast(Any, decision["request"]).item_locator_digest,
+                        decision["outcome"],
+                        None,
+                        decision["binding_id"],
+                        decision["reason"],
+                        created_at,
+                    )
+                )
+            for conflict in request.conflicts:
+                item_rows.append(
+                    (
+                        migration_id,
+                        "legacy_conflict",
+                        conflict.item_locator_digest,
+                        "needs_rescan",
+                        None,
+                        (
+                            successful_bindings.get(conflict.note_id)
+                            if conflict.note_id is not None
+                            else None
+                        ),
+                        "legacy_conflict",
+                        created_at,
+                    )
+                )
+            connection.executemany(
+                """INSERT INTO sync_migration_items (
+                       migration_id, item_kind, source_locator_digest, outcome,
+                       root_id, binding_id, reason_code, created_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                item_rows,
+            )
+            return _require_migration_run(connection, migration_id)
+
+    def finalize_legacy_generation(
+        self,
+        migration_id: str,
+        *,
+        source_revision_after: str,
+    ) -> MigrationRunRecord:
+        """Compare-and-set one pending generation to its immutable terminal state."""
+        validated_id = _validate_text(
+            migration_id,
+            field_name="migration_id",
+            maximum=36,
+        )
+        if len(validated_id) != 36:
+            raise ValueError("migration_id must be an exact bounded identity.")
+        validated_after = _validate_text(
+            source_revision_after,
+            field_name="source_revision_after",
+            maximum=64,
+        )
+        if _LOWER_DIGEST_PATTERN.fullmatch(validated_after) is None:
+            raise ValueError("source_revision_after must be a canonical digest.")
+        with _repository_transaction(self._database_path) as connection:
+            observed = _require_migration_run(connection, validated_id)
+        if observed.state is not MigrationState.PENDING_RECHECK:
+            return observed
+        state = (
+            MigrationState.MATCHED_RECHECK
+            if observed.source_revision_before == validated_after
+            else MigrationState.DRIFTED
+        )
+        with _repository_transaction(self._database_path, immediate=True) as connection:
+            changed = connection.execute(
+                """UPDATE sync_migration_runs
+                   SET state = ?, source_revision_after = ?, updated_at = ?
+                   WHERE migration_id = ?
+                     AND state = 'pending_recheck'
+                     AND source_revision_after IS NULL""",
+                (
+                    state.value,
+                    validated_after,
+                    _timestamp_after(observed.updated_at),
+                    validated_id,
+                ),
+            ).rowcount
+            if changed == 0:
+                return _require_migration_run(connection, validated_id)
+            if changed != 1:
+                raise SyncStateCorruptionError(
+                    "A private migration finalization changed an invalid row count."
+                )
+            return _require_migration_run(connection, validated_id)
+
     def update_provisional_binding(
         self,
         binding_id: str,
@@ -1044,6 +1732,10 @@ class NotesSyncStateRepository:
 __all__ = (
     "MAX_SYNC_BINDINGS",
     "MAX_SYNC_ROOTS",
+    "MigrationItemCount",
+    "MigrationItemRecord",
+    "MigrationRunRecord",
+    "MigrationState",
     "NotesSyncStateError",
     "NotesSyncStateRepository",
     "SyncBindingRecord",
