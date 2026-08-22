@@ -6,7 +6,6 @@ import hashlib
 import json
 import math
 import re
-from copy import deepcopy
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
@@ -62,47 +61,54 @@ class LegacyNotesSyncSourceError(RuntimeError):
     """Report a bounded legacy-source capture failure."""
 
 
-@dataclass(frozen=True, slots=True, repr=False)
-class LegacyNotesSyncSourceSnapshot:
-    """One immutable private source-revision input and its canonical digest."""
-
-    _source: dict[str, object] = field(repr=False)
-    digest: str = field(repr=False)
-
-    @property
-    def source(self) -> dict[str, object]:
-        """Return a defensive copy of the authority bound by ``digest``."""
-        return deepcopy(self._source)
-
-    def __repr__(self) -> str:
-        """Return counts only, excluding paths, note IDs, and digests."""
-        notes = self._source.get("notes")
-        conflicts = self._source.get("conflicts")
-        note_count = len(notes) if isinstance(notes, tuple) else 0
-        conflict_count = len(conflicts) if isinstance(conflicts, tuple) else 0
-        return (
-            "LegacyNotesSyncSourceSnapshot("
-            f"note_count={note_count}, conflict_count={conflict_count})"
-        )
-
-
-def _canonical_digest(value: object) -> str:
-    payload = json.dumps(
+def _canonical_bytes(value: object) -> bytes:
+    return json.dumps(
         value,
         ensure_ascii=True,
         separators=(",", ":"),
         sort_keys=True,
     ).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
+
+
+def _canonical_digest(value: object) -> str:
+    return hashlib.sha256(_canonical_bytes(value)).hexdigest()
+
+
+@dataclass(frozen=True, slots=True, repr=False, init=False)
+class LegacyNotesSyncSourceSnapshot:
+    """One immutable private source-revision input and its canonical digest."""
+
+    _canonical_source: str = field(repr=False)
+    digest: str = field(repr=False)
+
+    def __init__(self, source: Mapping[str, object], digest: str) -> None:
+        canonical = _canonical_bytes(source)
+        observed_digest = hashlib.sha256(canonical).hexdigest()
+        if digest != observed_digest:
+            raise LegacyNotesSyncSourceError("source_digest_mismatch")
+        object.__setattr__(self, "_canonical_source", canonical.decode("utf-8"))
+        object.__setattr__(self, "digest", observed_digest)
+
+    @property
+    def source(self) -> dict[str, object]:
+        """Return a defensive copy of the authority bound by ``digest``."""
+        return cast(dict[str, object], json.loads(self._canonical_source))
+
+    def __repr__(self) -> str:
+        """Return no paths, note IDs, counts, or digests."""
+        return "LegacyNotesSyncSourceSnapshot(redacted=True)"
 
 
 def _real_value(value: object) -> str | None:
     if value is None:
         return None
+    number: float | None = None
     try:
         number = float(cast(Any, value))
     except (TypeError, ValueError):
-        raise LegacyNotesSyncSourceError("invalid_source_type") from None
+        pass
+    if number is None:
+        raise LegacyNotesSyncSourceError("invalid_source_type")
     return number.hex() if math.isfinite(number) else "invalid_non_finite_real"
 
 
@@ -255,8 +261,8 @@ def capture_legacy_source(
     notes, conflicts = notes_db.read_legacy_notes_sync_source_rows()
     source = _source_revision(config, notes, conflicts)
     return LegacyNotesSyncSourceSnapshot(
-        _source=source,
-        digest=_canonical_digest(source),
+        source,
+        _canonical_digest(source),
     )
 
 

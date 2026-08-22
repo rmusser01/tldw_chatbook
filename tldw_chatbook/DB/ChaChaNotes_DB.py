@@ -11982,6 +11982,10 @@ UPDATE db_schema_version
         Returns:
             Frozen note and unresolved-conflict row sequences as plain mappings.
         """
+        if self.get_connection().in_transaction:
+            raise CharactersRAGDBError(
+                "Legacy Notes sync capture requires an independent transaction."
+            )
         with self.transaction() as connection:
             note_rows = connection.execute(
                 """SELECT id, file_path_on_disk, relative_file_path_on_disk,

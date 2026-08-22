@@ -7,12 +7,13 @@ import hashlib
 import json
 import math
 import os
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 from tldw_chatbook.Notes import notes_sync_legacy_migration as legacy
 
 
@@ -195,6 +196,43 @@ def test_legacy_source_reader_pins_unresolved_conflict_predicate_and_order(
     db.close()
 
 
+def test_legacy_source_reader_rejects_an_ambient_transaction_snapshot(
+    tmp_path: Path,
+) -> None:
+    first = _new_db(tmp_path)
+    second = CharactersRAGDB(first.db_path, client_id="legacy-source-second")
+    _add_note(first, "before", sync_strategy="bidirectional")
+
+    with first.transaction():
+        with pytest.raises(CharactersRAGDBError, match="independent transaction"):
+            first.read_legacy_notes_sync_source_rows()
+        _add_note(second, "after", sync_strategy="bidirectional")
+
+    assert [row["id"] for row in first.read_legacy_notes_sync_source_rows()[0]] == [
+        "after",
+        "before",
+    ]
+    first.close()
+    second.close()
+
+
+def test_consecutive_fresh_source_reads_observe_an_intervening_connection_commit(
+    tmp_path: Path,
+) -> None:
+    first = _new_db(tmp_path)
+    second = CharactersRAGDB(first.db_path, client_id="legacy-source-second")
+    _add_note(first, "before", sync_strategy="bidirectional")
+
+    before = first.read_legacy_notes_sync_source_rows()
+    _add_note(second, "after", sync_strategy="bidirectional")
+    after = first.read_legacy_notes_sync_source_rows()
+
+    assert [row["id"] for row in before[0]] == ["before"]
+    assert [row["id"] for row in after[0]] == ["after", "before"]
+    first.close()
+    second.close()
+
+
 def test_unrelated_notes_and_resolved_conflicts_do_not_change_source_digest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -266,6 +304,22 @@ def test_real_value_uses_exact_finite_hex_and_nonfinite_marker(
     assert legacy._real_value(value) == expected
 
 
+def test_real_value_conversion_error_has_no_private_exception_chain() -> None:
+    secret = "private-real-conversion-sentinel"
+
+    class BrokenReal:
+        def __float__(self) -> float:
+            raise ValueError(secret)
+
+    with pytest.raises(legacy.LegacyNotesSyncSourceError) as raised:
+        legacy._real_value(BrokenReal())
+
+    error: BaseException | None = raised.value
+    while error is not None:
+        assert secret not in str(error)
+        error = error.__cause__ or error.__context__
+
+
 def test_source_revision_encodes_real_fields_in_their_exact_canonical_shape() -> None:
     source = legacy._source_revision(
         {
@@ -322,6 +376,26 @@ def test_captured_source_projection_cannot_mutate_the_digest_authority(
     assert snapshot.source["config"]["sync_directory"] == "~/Documents/Notes"
     assert snapshot.digest == _digest(snapshot.source)
     db.close()
+
+
+def test_snapshot_defensively_owns_constructor_source_and_immutable_storage() -> None:
+    source = legacy._source_revision(
+        {
+            "sync_directory": "private/root",
+            "sync_direction": "bidirectional",
+            "sync_conflict_resolution": "newer_wins",
+        },
+        (),
+        (),
+    )
+    snapshot = legacy.LegacyNotesSyncSourceSnapshot(source, _digest(source))
+
+    source["config"]["sync_directory"] = "mutated"
+
+    assert snapshot.source["config"]["sync_directory"] == "private/root"
+    assert snapshot.digest == _digest(snapshot.source)
+    with pytest.raises(FrozenInstanceError):
+        snapshot._canonical_source = "mutated"  # type: ignore[misc]
 
 
 def test_capture_source_prefers_new_conflict_key_and_preserves_exact_scalars(
