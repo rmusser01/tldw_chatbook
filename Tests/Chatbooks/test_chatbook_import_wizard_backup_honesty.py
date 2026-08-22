@@ -37,24 +37,25 @@ from tldw_chatbook.UI.Wizards.ChatbookImportWizard import (
     ImportProgressStep,
 )
 
-# Every status row this flow is allowed to mark "completed", and the work that
-# earns the claim (task-19550 audit):
+# Every status row this flow is allowed to hard-code as "completed", and the
+# work that earns the claim (task-19550 audit):
 #   status-prepare       -- the importer/server request was actually built
-#   status-conversations -- ChatbookImporter.import_chatbook returned success
-#   status-notes         --   "
-#   status-characters    --   "
-#   status-media         --   "
-#   status-indexes       -- FTS5 triggers maintain the indexes inside those writes
+#   status-indexes       -- FTS5 triggers maintain the indexes inside the writes
 #   status-finalize      -- the import call returned
 # "status-backup" is deliberately absent: no backup is taken, so no row may
 # claim one.
+#
+# The four per-type rows (status-conversations / -notes / -characters /
+# -media) used to be in this set. They left it in task-19734, which found
+# that a literal "completed" was exactly the bug: the row was ticked off a
+# MANIFEST count, so an all-skipped re-import showed four green
+# "✓ Imported ..." rows over "Imported: 0". Their state is now derived from
+# the import's per-type results, and
+# Tests/Chatbooks/test_chatbook_import_result_honesty.py pins that no
+# constant outcome state may be hard-coded for them again.
 AUDITED_COMPLETED_STATUS_IDS = frozenset(
     {
         "status-prepare",
-        "status-conversations",
-        "status-notes",
-        "status-characters",
-        "status-media",
         "status-indexes",
         "status-finalize",
     }
@@ -221,34 +222,46 @@ async def test_import_run_never_claims_a_backup_it_did_not_take(monkeypatch):
     assert not any("backup" in text.lower() for _, _, text in statuses)
 
 
-def test_no_completed_status_row_is_painted_from_an_unimplemented_code_path():
-    """AC#4: a status row may not report success from a TODO/no-op path, and
-    the rows that CAN report success are pinned to the audited allowlist."""
+def test_no_status_row_is_painted_from_an_unimplemented_code_path():
+    """AC#4: a status row may not report progress or success from a TODO/no-op
+    path, and the rows that hard-code "completed" are pinned to the audited
+    allowlist.
+
+    The marker scan covers every function that paints a status row, not only
+    the ones with a literal "completed" -- task-19734 moved the four per-type
+    rows onto result-derived states, and a TODO behind one of those would
+    otherwise have slipped out of this guard's reach.
+    """
     source = Path(inspect.getfile(wizard_module)).read_text(encoding="utf-8")
     tree = ast.parse(source)
 
     completed_status_ids: set[str] = set()
+    status_painting_functions: list[str] = []
     offenders: list[str] = []
 
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
 
-        function_completed_ids = {
-            call.args[0].value
+        status_calls = [
+            call
             for call in ast.walk(node)
             if isinstance(call, ast.Call)
             and isinstance(call.func, ast.Attribute)
             and call.func.attr == "_update_status"
-            and len(call.args) >= 2
+        ]
+        if not status_calls:
+            continue
+
+        status_painting_functions.append(node.name)
+        completed_status_ids |= {
+            call.args[0].value
+            for call in status_calls
+            if len(call.args) >= 2
             and isinstance(call.args[0], ast.Constant)
             and isinstance(call.args[1], ast.Constant)
             and call.args[1].value == "completed"
         }
-        if not function_completed_ids:
-            continue
-
-        completed_status_ids |= function_completed_ids
 
         segment = ast.get_source_segment(source, node) or ""
         found = [marker for marker in _UNIMPLEMENTED_MARKERS if marker in segment]
@@ -256,8 +269,12 @@ def test_no_completed_status_row_is_painted_from_an_unimplemented_code_path():
             offenders.append(f"{node.name}: {', '.join(found)}")
 
     assert completed_status_ids, "the parser found no completed status rows at all"
+    assert "_paint_type_result_rows" in status_painting_functions, (
+        "the result-driven row painter went missing; the per-type rows are "
+        "back to being painted some other way"
+    )
     assert offenders == [], (
-        "these functions claim a completed status row while still carrying an "
+        "these functions paint a status row while still carrying an "
         f"unimplemented marker: {offenders}"
     )
     assert completed_status_ids == set(AUDITED_COMPLETED_STATUS_IDS)

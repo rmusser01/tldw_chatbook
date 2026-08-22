@@ -15,7 +15,7 @@ Implements the chatbook import workflow:
 
 import asyncio
 from pathlib import Path
-from typing import Dict, List, Any, Optional, TYPE_CHECKING
+from typing import Dict, List, Any, Optional, Tuple, TYPE_CHECKING
 
 from textual.app import ComposeResult
 from textual.containers import Container
@@ -35,7 +35,19 @@ from loguru import logger
 
 from .BaseWizard import WizardContainer, WizardStep, WizardStepConfig, WizardScreen
 from ...Chatbooks.database_paths import get_chatbook_database_paths
-from ...Chatbooks.chatbook_importer import ChatbookImporter, ImportStatus
+from ...Chatbooks.chatbook_importer import (
+    IMPORT_OUTCOME_EMPTY,
+    IMPORT_OUTCOME_EXCLUDED,
+    IMPORT_OUTCOME_FAILED,
+    IMPORT_OUTCOME_IMPORTED,
+    IMPORT_OUTCOME_NONE,
+    IMPORT_OUTCOME_PARTIAL,
+    IMPORT_OUTCOME_SKIPPED,
+    UNSUPPORTED_BY_IMPORTER_NOUN,
+    ChatbookImporter,
+    ImportStatus,
+    ImportTypeResult,
+)
 from ...Chatbooks.chatbook_models import ChatbookManifest, ContentType
 from ...Chatbooks.conflict_resolver import ConflictResolution
 from ...Chatbooks.server_chatbook_service import (
@@ -52,6 +64,170 @@ from ...Widgets.enhanced_file_picker import EnhancedFileOpen
 
 if TYPE_CHECKING:
     pass
+
+
+# --- Result-driven completion reporting (task-19734) ------------------------
+#
+# Every claim the completion screen makes is derived here, from what the
+# import actually recorded. Nothing in this section may consult a manifest:
+# a manifest count says what a chatbook *contains*, and the wizard used to
+# tick "✓ Imported conversations" off exactly that -- which stays true when
+# every single item was skipped as already present.
+
+#: (row id, content type, plural noun) for each per-type status row.
+PER_TYPE_STATUS_ROWS: List[Tuple[str, ContentType, str]] = [
+    ("status-conversations", ContentType.CONVERSATION, "conversations"),
+    ("status-notes", ContentType.NOTE, "notes"),
+    ("status-characters", ContentType.CHARACTER, "characters"),
+    ("status-media", ContentType.MEDIA, "media items"),
+]
+
+#: The progress-panel title for each whole-import outcome.
+_OUTCOME_TITLES = {
+    IMPORT_OUTCOME_IMPORTED: "✅ Import Complete!",
+    IMPORT_OUTCOME_PARTIAL: "⚠️ Import Finished With Issues",
+    IMPORT_OUTCOME_SKIPPED: "⊘ Nothing Imported",
+    IMPORT_OUTCOME_EMPTY: "⊘ Nothing to Import",
+    # Distinct from EMPTY on purpose: "there was nothing to import" and "there
+    # was something and none of it was attempted" are different facts, and the
+    # first is a claim about the user's file (Qodo review of PR #1945).
+    IMPORT_OUTCOME_EXCLUDED: "⊘ All Items Left Out",
+    IMPORT_OUTCOME_FAILED: "❌ Import Failed",
+}
+
+
+def _count_detail(*parts: Tuple[int, str]) -> str:
+    """Join the non-zero ``(count, noun)`` pairs into a readable clause."""
+    return ", ".join(f"{count} {noun}" for count, noun in parts if count > 0)
+
+
+def describe_type_result(result: ImportTypeResult, noun: str) -> Tuple[str, str]:
+    """Return the ``(state, text)`` for one content type's status row.
+
+    Takes a result and nothing else, so a row can only ever report what that
+    type's import actually did.
+    """
+    outcome = result.outcome
+
+    if outcome == IMPORT_OUTCOME_NONE:
+        return "", f"— No {noun} in this chatbook"
+
+    if outcome == IMPORT_OUTCOME_EXCLUDED:
+        # Two different reasons an item was never attempted, reported apart:
+        # the user's own choice, and this importer's limit.
+        reasons = []
+        if result.excluded > 0:
+            reasons.append(
+                f"{result.excluded} {noun} in this chatbook were not imported "
+                "(you turned this option off)"
+            )
+        if result.unsupported > 0:
+            reasons.append(
+                f"{result.unsupported} {noun} in this chatbook were not imported "
+                "(not supported by this importer)"
+            )
+        return "", "— " + "; ".join(reasons)
+
+    if outcome == IMPORT_OUTCOME_IMPORTED:
+        return "completed", f"✓ Imported {result.successful} {noun}"
+
+    if outcome == IMPORT_OUTCOME_PARTIAL:
+        detail = _count_detail(
+            (result.skipped, "skipped"),
+            (result.failed, "failed"),
+            (result.attempted - result.accounted, "unaccounted for"),
+        )
+        text = f"⚠ Imported {result.successful} of {result.attempted} {noun}"
+        if detail:
+            text += f" — {detail}"
+        return "warning", text
+
+    if outcome == IMPORT_OUTCOME_SKIPPED:
+        detail = _count_detail((result.attempted - result.accounted, "unaccounted for"))
+        text = f"⊘ Skipped {result.skipped} {noun} — already present, nothing imported"
+        if detail:
+            text += f" ({detail})"
+        return "warning", text
+
+    detail = _count_detail(
+        (result.failed, "failed"),
+        (result.skipped, "skipped"),
+        (result.attempted - result.accounted, "unaccounted for"),
+    )
+    text = f"✗ Imported no {noun}"
+    if detail:
+        text += f" — {detail}"
+    return "error", text
+
+
+def describe_import_outcome(status: ImportStatus) -> Tuple[str, str, str]:
+    """Return ``(title, banner, state)`` for the completion panel.
+
+    The banner carries the same numbers the summary panel shows, so the two
+    cannot disagree.
+    """
+    outcome = status.outcome
+    title = _OUTCOME_TITLES.get(outcome, _OUTCOME_TITLES[IMPORT_OUTCOME_FAILED])
+    state = f"outcome-{outcome}"
+
+    # Items of a type this importer cannot write are named on screen wherever
+    # they exist. They used to go only into ``status.warnings``, which this
+    # panel renders nowhere, so a chatbook of 8 items with 2 importable ones
+    # said "2 of 2 item(s) imported" and the other 6 were never mentioned
+    # (Qodo review of PR #1945). Items the USER excluded are not repeated
+    # here -- their own per-type row already names them.
+    unsupported = (status.unsupported_items, UNSUPPORTED_BY_IMPORTER_NOUN)
+
+    if outcome == IMPORT_OUTCOME_IMPORTED:
+        detail = _count_detail(unsupported)
+        banner = (
+            f"✅ Import completed — {status.successful_items} of "
+            f"{status.total_items} item(s) imported"
+        )
+        banner += f" ({detail})." if detail else "."
+    elif outcome == IMPORT_OUTCOME_PARTIAL:
+        detail = _count_detail(
+            (status.skipped_items, "skipped"),
+            (status.failed_items, "failed"),
+            (status.unaccounted_items, "unaccounted for"),
+            unsupported,
+        )
+        banner = (
+            f"⚠️ Import finished — {status.successful_items} of "
+            f"{status.total_items} item(s) imported"
+        )
+        banner += f" ({detail})." if detail else "."
+    elif outcome == IMPORT_OUTCOME_SKIPPED:
+        detail = _count_detail(
+            (status.unaccounted_items, "unaccounted for"), unsupported
+        )
+        banner = (
+            f"⊘ Nothing was imported — {status.skipped_items} of "
+            f"{status.attempted_items} item(s) were already present and were "
+            "skipped"
+        )
+        banner += f" ({detail})." if detail else "."
+    elif outcome == IMPORT_OUTCOME_EXCLUDED:
+        # The chatbook was NOT empty. It held items and this run attempted
+        # none of them; say which reason kept each of them out.
+        banner = (
+            "⊘ Nothing was imported — none of this chatbook's "
+            f"{status.left_out_items} item(s) were attempted: "
+            f"{status.left_out_detail()}."
+        )
+    elif outcome == IMPORT_OUTCOME_EMPTY:
+        banner = "⊘ Nothing was imported — this chatbook contained no items."
+    else:
+        detail = _count_detail(
+            (status.failed_items, "failed"),
+            (status.skipped_items, "skipped"),
+            (status.unaccounted_items, "unaccounted for"),
+            unsupported,
+        )
+        banner = "❌ Nothing was imported"
+        banner += f" — {detail}." if detail else " and the import reported no results."
+
+    return title, banner, state
 
 
 class FileSelectionStep(WizardStep):
@@ -551,36 +727,23 @@ class ImportOptionsStep(WizardStep):
                 classes="option-description",
             )
 
+            # This box used to read "Merge with existing tags" and was wired
+            # straight to the importer's `prefix_imported` flag, which never
+            # touches a tag -- it renames items (task-19734). The behaviour is
+            # real and worth keeping; the label now says what it does.
+            # NB: the square brackets must stay escaped -- Textual renders
+            # these strings as console markup, and a bare "[Imported]" is
+            # parsed as a style tag and vanishes from the label entirely.
             yield Checkbox(
-                "Preserve timestamps",
+                r'Prefix imported item names with "\[Imported]"',
                 value=True,
-                id="preserve-timestamps",
+                id="prefix-imported",
                 classes="checkbox-option",
             )
             yield Static(
-                "Keep original creation and modification dates",
-                classes="option-description",
-            )
-
-        # Tag handling
-        with Container(classes="options-section"):
-            yield Static("Tag Handling:", classes="section-title")
-
-            yield Checkbox(
-                "Import tags", value=True, id="import-tags", classes="checkbox-option"
-            )
-            yield Static(
-                "Import all tags from the chatbook", classes="option-description"
-            )
-
-            yield Checkbox(
-                "Merge with existing tags",
-                value=True,
-                id="merge-tags",
-                classes="checkbox-option",
-            )
-            yield Static(
-                "Combine imported tags with any existing tags",
+                "Renames imported conversations, notes, characters and prompts "
+                r'(e.g. "\[Imported] Weekly notes") so you can tell them apart. '
+                "Tags and keywords are unaffected.",
                 classes="option-description",
             )
 
@@ -623,15 +786,14 @@ class ImportOptionsStep(WizardStep):
         if mode_set.pressed_button and mode_set.pressed_button.id == "mode-server":
             execution_mode = "server"
 
+        # Every key here is consumed by the import call below. Two former
+        # keys, `preserve_timestamps` and `import_tags`, were collected and
+        # read by nothing at all; their controls are gone (task-19734).
         return {
             "execution_mode": execution_mode,
             "import_media": self.query_one("#import-media", Checkbox).value,
             "import_embeddings": self.query_one("#import-embeddings", Checkbox).value,
-            "preserve_timestamps": self.query_one(
-                "#preserve-timestamps", Checkbox
-            ).value,
-            "import_tags": self.query_one("#import-tags", Checkbox).value,
-            "merge_tags": self.query_one("#merge-tags", Checkbox).value,
+            "prefix_imported": self.query_one("#prefix-imported", Checkbox).value,
         }
 
 
@@ -687,11 +849,11 @@ class ImportProgressStep(WizardStep):
                     "○ Finalizing import", id="status-finalize", classes="status-item"
                 )
 
-            # Completion message (hidden initially)
+            # Completion message (hidden initially). Its text is written by
+            # `_show_completion` from the recorded result -- the panel never
+            # ships a pre-baked success claim (task-19734).
             with Container(id="completion-container", classes="hidden"):
-                yield Static(
-                    "✅ Import Completed Successfully!", classes="completion-message"
-                )
+                yield Static("", id="completion-message", classes="completion-message")
 
                 # Import statistics
                 with Container(classes="completion-stats"):
@@ -793,7 +955,7 @@ class ImportProgressStep(WizardStep):
                         file_path,
                         selections=server_selections,
                         conflict_resolution=resolution_strategy,
-                        prefix_imported=options.get("merge_tags", False),
+                        prefix_imported=options.get("prefix_imported", False),
                         import_media=options.get("import_media", True),
                         import_embeddings=options.get("import_embeddings", False),
                         async_mode=True,
@@ -865,6 +1027,9 @@ class ImportProgressStep(WizardStep):
                     self.import_status.processed_items = self.import_status.total_items
                     self.import_status.skipped_items = 0
 
+                    # A server import returns totals only, so no per-type row
+                    # can honestly claim anything (task-19734).
+                    self._mark_type_rows_not_itemised()
                     self._update_status(
                         "status-indexes", "completed", "✓ Server import completed"
                     )
@@ -915,9 +1080,7 @@ class ImportProgressStep(WizardStep):
                 chatbook_path=file_path,
                 content_selections=None,  # Import all by default
                 conflict_resolution=resolution_strategy,
-                prefix_imported=options.get(
-                    "merge_tags", False
-                ),  # Use merge_tags as prefix flag
+                prefix_imported=options.get("prefix_imported", False),
                 import_media=options.get("import_media", True),
                 import_embeddings=options.get("import_embeddings", False),
                 import_status=self.import_status,
@@ -925,41 +1088,12 @@ class ImportProgressStep(WizardStep):
 
             # Update progress based on actual results
             if success:
-                # Update status for completed imports
-                if manifest:
-                    progress = 30
-                    if manifest.total_conversations > 0:
-                        self._update_status(
-                            "status-conversations",
-                            "completed",
-                            "✓ Imported conversations",
-                        )
-                        progress += 15
-                        self._update_progress(progress)
-
-                    if manifest.total_notes > 0:
-                        self._update_status(
-                            "status-notes", "completed", "✓ Imported notes"
-                        )
-                        progress += 15
-                        self._update_progress(progress)
-
-                    if manifest.total_characters > 0:
-                        self._update_status(
-                            "status-characters", "completed", "✓ Imported characters"
-                        )
-                        progress += 15
-                        self._update_progress(progress)
-
-                    if (
-                        options.get("import_media", True)
-                        and manifest.total_media_items > 0
-                    ):
-                        self._update_status(
-                            "status-media", "completed", "✓ Imported media"
-                        )
-                        progress += 15
-                        self._update_progress(progress)
+                # Per-type rows come from the RESULTS the import recorded, not
+                # from the manifest's advertised totals (task-19734). A
+                # manifest count says what the chatbook contains; only a
+                # result says what landed, and an all-skipped re-import used
+                # to tick four green "✓ Imported ..." rows off the former.
+                self._paint_type_result_rows()
 
                 # Indexes are updated as part of the import
                 self._update_status("status-indexes", "completed", "✓ Updated indexes")
@@ -996,20 +1130,54 @@ class ImportProgressStep(WizardStep):
         status_item.update(text)
 
         # Update classes
-        status_item.remove_class("active", "completed", "error")
+        status_item.remove_class("active", "completed", "error", "warning")
         if state:
             status_item.add_class(state)
 
+    def _mark_type_rows_not_itemised(self) -> None:
+        """State plainly that no per-type result is available for this run."""
+        for status_id, _content_type, _noun in PER_TYPE_STATUS_ROWS:
+            self._update_status(
+                status_id, "", "— No per-type breakdown returned by the server"
+            )
+
+    def _paint_type_result_rows(self) -> None:
+        """Report each content type's own result in its status row.
+
+        The only input is ``self.import_status``: what the import recorded.
+        """
+        status = self.import_status
+        if status is None:
+            return
+
+        progress = 30
+        for status_id, content_type, noun in PER_TYPE_STATUS_ROWS:
+            state, text = describe_type_result(
+                status.result_snapshot(content_type), noun
+            )
+            self._update_status(status_id, state, text)
+            progress += 15
+            self._update_progress(progress)
+
     async def _show_completion(self) -> None:
-        """Show completion message."""
+        """Show the completion panel, headlined by what actually happened."""
         self.is_complete = True
 
+        title, banner, outcome_state = describe_import_outcome(
+            self.import_status or ImportStatus()
+        )
+
         # Update title
-        self.query_one("#progress-title", Static).update("✅ Import Complete!")
+        self.query_one("#progress-title", Static).update(title)
 
         # Show completion container
         completion = self.query_one("#completion-container", Container)
         completion.display = True
+
+        message_widget = self.query_one("#completion-message", Static)
+        message_widget.update(banner)
+        message_widget.remove_class(*(f"outcome-{name}" for name in _OUTCOME_TITLES))
+        message_widget.add_class(outcome_state)
 
         # Update statistics
         if self.import_status:
