@@ -121,7 +121,6 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_CREATE_STUDY,
     LIBRARY_ROW_INGEST_EXPORT,
     LIBRARY_ROW_INGEST_MEDIA,
-    LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP,
 )
 from tldw_chatbook.Media.local_media_reading_service import LocalMediaReadingService
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
