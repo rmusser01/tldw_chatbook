@@ -24,7 +24,7 @@ from tldw_chatbook.Library.ingest_capabilities import (
 )
 from tldw_chatbook.Library.ingest_types import PreflightResult
 from tldw_chatbook.Local_Ingestion.local_file_ingestion import is_http_url
-from tldw_chatbook.Utils.egress import EgressBlockedError, check_url_or_raise
+from tldw_chatbook.Utils.egress import EgressBlockedError, check_url_or_raise, log_origin
 from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.path_validation import validate_path_simple
 
@@ -306,7 +306,15 @@ def _probe_url(url: str) -> UrlProbe:
         logger.debug(f"URL probe declined by egress policy: {exc}")
         return UrlProbe(note=_UNVERIFIABLE_NOTE)
     except Exception as exc:  # policy evaluation itself failed
-        logger.debug(f"URL probe policy check failed for {url}: {exc!r}")
+        # Same discipline as the branch above: name the origin, not the raw
+        # URL (which may carry an embedded credential or a query-string
+        # secret). This is a rarer condition than a policy decline -- the
+        # check itself blew up rather than returning a decision -- so the
+        # message still carries the exception TYPE to tell the two apart.
+        logger.debug(
+            f"URL probe policy check failed for {log_origin(url)}: "
+            f"{type(exc).__name__}: {exc}"
+        )
         return UrlProbe(note=_UNVERIFIABLE_NOTE)
 
     try:
@@ -336,10 +344,10 @@ def _probe_url(url: str) -> UrlProbe:
         # No HTTP response at all: DNS failure, refused connection, bad TLS.
         # (task-3305, MI-13) The user-facing line names the failure's KIND;
         # the raw exception detail is debug-log material, never UI copy.
-        logger.debug(f"URL probe failure for {url}: {exc!r}")
+        logger.debug(f"URL probe failure for {log_origin(url)}: {exc!r}")
         return UrlProbe(error=_plain_unreachable_reason(exc))
     except Exception as exc:
-        logger.debug(f"URL probe unexpected failure for {url}: {exc!r}")
+        logger.debug(f"URL probe unexpected failure for {log_origin(url)}: {exc!r}")
         return UrlProbe(
             error="URL probe failed — the address could not be checked."
         )

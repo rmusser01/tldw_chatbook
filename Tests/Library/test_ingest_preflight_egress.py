@@ -41,6 +41,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import BaseHandler
 
 import pytest
+from loguru import logger
 
 from Tests import network_guard
 from tldw_chatbook.Library import ingest_preflight
@@ -513,3 +514,66 @@ def test_the_probe_reports_a_redirect_as_an_answered_status_not_an_error(
     assert [w.get("label") for w in result.warnings] == ["Could not check the link"]
     assert "302" in result.warnings[0]["hint"]
     assert _FakeRedirectingHTTPHandler.opened == [PUBLIC_REDIRECTOR]
+
+
+# ---------------------------------------------------------------------------
+# 7. Privacy: the raw URL (credentials, query-string secrets) must never
+#    reach a log line -- including when policy EVALUATION itself blows up,
+#    not just when it declines.
+# ---------------------------------------------------------------------------
+
+#: A URL carrying both an embedded credential and a query-string secret --
+#: exactly what `validate_url` exists to keep out of `analyze_path`'s
+#: network path, but `_probe_url` is reachable directly (and defends in
+#: depth regardless of caller).
+_CREDENTIAL_URL = (
+    "http://sneaky_user:hunter2@10.255.255.1/report?api_key=SECRET_TOKEN_VALUE"
+)
+
+
+def test_policy_check_failure_does_not_log_the_credential_or_query(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The `except Exception` fallback around the policy check must not log
+    more than the `EgressBlockedError` branch immediately above it does.
+
+    That sibling branch is careful on purpose: `EgressBlockedError.__str__`
+    renders `Utils/egress.py`'s `_log_origin(url)` -- a credential- and
+    query-free `scheme://host[:port]` label -- never the raw URL. This
+    exercises the *other* except clause: `check_url_or_raise` raising
+    something other than `EgressBlockedError` (a bug in policy evaluation
+    itself, not a decline), with a URL carrying an embedded credential and
+    a query-string secret.
+
+    Channel: this module's `logger` is `loguru`'s global singleton
+    (`from loguru import logger`, no reassignment) -- confirmed by reading
+    `ingest_preflight.py` directly, not assumed. A `logger.add(...)` sink
+    captures the RENDERED message text, the same channel a real deployment
+    writes to, so a leak here is a leak there.
+    """
+
+    def _boom(*_a: object, **_k: object) -> None:
+        raise RuntimeError("config lookup exploded")
+
+    monkeypatch.setattr(ingest_preflight, "check_url_or_raise", _boom)
+
+    messages: list[str] = []
+    sink_id = logger.add(
+        lambda message: messages.append(message.record["message"]), level="DEBUG"
+    )
+    try:
+        result = ingest_preflight._probe_url(_CREDENTIAL_URL)
+    finally:
+        logger.remove(sink_id)
+
+    assert result.note == ingest_preflight._UNVERIFIABLE_NOTE
+
+    rendered = "\n".join(messages)
+    assert rendered, "expected the policy-check-failed line to be logged at all"
+    for secret in ("sneaky_user", "hunter2", "SECRET_TOKEN_VALUE", "api_key"):
+        assert secret not in rendered, f"credential/secret leaked into log: {rendered!r}"
+    assert "/report" not in rendered, f"URL path leaked into log: {rendered!r}"
+    assert _CREDENTIAL_URL not in rendered, f"raw URL leaked into log: {rendered!r}"
+    # Still diagnostic: the exception type distinguishes "policy evaluation
+    # itself failed" from an ordinary EgressBlockedError decline.
+    assert "RuntimeError" in rendered

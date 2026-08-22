@@ -1077,7 +1077,7 @@
     },
     {
       "call_count": 4,
-      "diagnostic_digest": "42439470f236b1611763",
+      "diagnostic_digest": "d7e85acdb99de3005f73",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Library/ingest_preflight.py",
       "reason": "remaining Chatbook production diagnostic owner"
