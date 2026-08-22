@@ -275,7 +275,7 @@ async def test_content_and_allocation_changes_clamp_and_reconcile_state() -> Non
         allocation=10,
         on_focus_recovery=lambda: recovered.append(None),
     )
-    app = _Harness(section)
+    app = _FocusHarness(section)
 
     async with app.run_test(size=(60, 30)) as pilot:
         await _settle(pilot)
@@ -293,6 +293,11 @@ async def test_content_and_allocation_changes_clamp_and_reconcile_state() -> Non
         assert section.hint.display is True
 
         await button.remove()
+        await section.recompose()
+        await _settle(pilot)
+        assert recovered == [None]
+        assert app.focused is section.viewport
+
         tail.update(_lines(3))
         await section.recompose()
         await _settle(pilot)
@@ -301,6 +306,10 @@ async def test_content_and_allocation_changes_clamp_and_reconcile_state() -> Non
         assert section.viewport.scroll_y == 0
         assert section.viewport.can_focus is False
         assert section.hint.display is False
+        outside = app.query_one("#outside", Button)
+        outside.focus()
+        await pilot.pause()
+        assert app.focused is outside
 
         section.set_allocation(2)
         await pilot.pause()
@@ -314,6 +323,18 @@ async def test_content_and_allocation_changes_clamp_and_reconcile_state() -> Non
         assert section.viewport.scroll_y == 0
         assert section.viewport.can_focus is False
         assert section.hint.display is False
+
+
+def test_missing_callback_does_not_consume_focus_recovery_incident() -> None:
+    recovered: list[None] = []
+    section, _content = _section(1)
+
+    section._notify_focus_recovery()
+    section._on_focus_recovery = lambda: recovered.append(None)
+    section._notify_focus_recovery()
+    section._notify_focus_recovery()
+
+    assert recovered == [None]
 
 
 @pytest.mark.asyncio
@@ -350,6 +371,66 @@ async def test_viewport_focus_recovers_once_when_overflow_disappears() -> None:
         section.request_reconcile()
         await _settle(pilot)
         assert recovered == [None]
+
+
+@pytest.mark.asyncio
+async def test_viewport_loss_then_removed_descendant_notifies_once() -> None:
+    recovered: list[None] = []
+    focused_row = Button("Inside", id="viewport-first")
+    section = ConsoleBoundedSection(
+        focused_row,
+        Static(_lines(20), id="viewport-first-tail"),
+        section_id="viewport-first",
+        allocation=5,
+        on_focus_recovery=lambda: recovered.append(None),
+    )
+    app = _FocusHarness(section)
+
+    async with app.run_test(size=(60, 30)) as pilot:
+        await _settle(pilot)
+        focused_row.focus()
+        await pilot.pause()
+        await focused_row.remove()
+
+        section._focused_descendant = focused_row
+        section.viewport.can_focus = True
+        app.screen.set_focus(section.viewport)
+        section._set_viewport_focusable(
+            section.viewport,
+            focusable=False,
+            recover_owned_focus=True,
+        )
+        section._recover_removed_focus_target()
+        assert recovered == [None]
+
+
+@pytest.mark.asyncio
+async def test_separate_viewport_focus_loss_incidents_each_notify_once() -> None:
+    recovered: list[None] = []
+    section, _content = _section(
+        3,
+        allocation=2,
+        on_focus_recovery=lambda: recovered.append(None),
+    )
+    app = _FocusHarness(section)
+
+    async with app.run_test(size=(60, 30)) as pilot:
+        await _settle(pilot)
+        app.screen.set_focus(section.viewport)
+        section.set_allocation(3)
+        await section.recompose()
+        await _settle(pilot)
+        assert recovered == [None]
+
+        section.set_allocation(2)
+        await section.recompose()
+        await _settle(pilot)
+        assert section.viewport.can_focus is True
+        app.screen.set_focus(section.viewport)
+        section.set_allocation(3)
+        await section.recompose()
+        await _settle(pilot)
+        assert recovered == [None, None]
 
 
 @pytest.mark.asyncio

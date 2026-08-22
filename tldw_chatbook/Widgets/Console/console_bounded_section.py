@@ -7,7 +7,7 @@ from collections.abc import Callable
 from textual.app import ComposeResult
 from textual.containers import Vertical, VerticalScroll
 from textual.css.query import NoMatches
-from textual.events import DescendantFocus
+from textual.events import DescendantBlur, DescendantFocus
 from textual.widget import Widget
 from textual.widgets import Static
 
@@ -89,6 +89,7 @@ class ConsoleBoundedSection(Vertical):
         self._hint_text = ""
         self._reconcile_scheduled = False
         self._focused_descendant: Widget | None = None
+        self._focus_recovery_notified = False
 
         self._viewport = _BoundedSectionViewport(
             *content,
@@ -171,6 +172,7 @@ class ConsoleBoundedSection(Vertical):
             self.call_after_refresh(self.request_reconcile)
 
     def on_mount(self) -> None:
+        self._focus_recovery_notified = False
         self.request_reconcile()
 
     def on_show(self) -> None:
@@ -186,6 +188,7 @@ class ConsoleBoundedSection(Vertical):
         if target is self._viewport:
             return
         if self._viewport in target.ancestors:
+            self._focus_recovery_notified = False
             self._focused_descendant = target
             self._viewport.scroll_to_widget(
                 target,
@@ -193,6 +196,12 @@ class ConsoleBoundedSection(Vertical):
                 immediate=True,
             )
             self._update_hint()
+
+    def on_descendant_blur(self, event: DescendantBlur) -> None:
+        """Close a recovery incident once focus reaches a valid outside owner."""
+
+        if self._is_valid_outside_focus(self.app.focused):
+            self._focus_recovery_notified = False
 
     def request_reconcile(self) -> None:
         """Coalesce geometry reconciliation into one post-refresh callback."""
@@ -295,18 +304,9 @@ class ConsoleBoundedSection(Vertical):
 
         self._focused_descendant = None
         focused = self.app.focused
-        if focused is not None and not self._owns_widget(focused):
-            outside_focus_is_valid = (
-                focused.is_mounted
-                and focused.focusable
-                and focused.display
-                and all(
-                    not isinstance(ancestor, Widget) or ancestor.display
-                    for ancestor in focused.ancestors
-                )
-            )
-            if outside_focus_is_valid:
-                return
+        if self._is_valid_outside_focus(focused):
+            self._focus_recovery_notified = False
+            return
         self._notify_focus_recovery()
 
     def _set_viewport_focusable(
@@ -319,6 +319,9 @@ class ConsoleBoundedSection(Vertical):
         was_focusable = viewport.can_focus
         if was_focusable is not focusable:
             viewport.can_focus = focusable
+        if focusable and not was_focusable:
+            # Becoming a scroll owner again starts a fresh focus lifecycle.
+            self._focus_recovery_notified = False
         if (
             recover_owned_focus
             and was_focusable
@@ -334,9 +337,25 @@ class ConsoleBoundedSection(Vertical):
     def _owns_widget(self, widget: Widget) -> bool:
         return widget is self._viewport or self._viewport in widget.ancestors
 
+    def _is_valid_outside_focus(self, widget: Widget | None) -> bool:
+        return bool(
+            widget is not None
+            and not self._owns_widget(widget)
+            and widget.is_mounted
+            and widget.focusable
+            and widget.display
+            and all(
+                not isinstance(ancestor, Widget) or ancestor.display
+                for ancestor in widget.ancestors
+            )
+        )
+
     def _notify_focus_recovery(self) -> None:
-        if self._on_focus_recovery is not None:
-            self._on_focus_recovery()
+        callback = self._on_focus_recovery
+        if callback is None or self._focus_recovery_notified:
+            return
+        self._focus_recovery_notified = True
+        callback()
 
     def _fail_closed(self) -> None:
         self._has_overflow = False
