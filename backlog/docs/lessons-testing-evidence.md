@@ -6463,3 +6463,61 @@ concurrently -- a sequential loop tests ident recycling, not your registry.
 And before asserting on file descriptors, establish what the *correct*
 steady state looks like by measuring a known-good control (here: the same
 code path with no registry at all), rather than assuming it is the baseline.
+
+---
+
+## The interpreter is an input to your test, and this repo spans four of them (PR #1960, 2026-08-22)
+
+**The trap.** A test can be correct, deterministic, and still pass or fail purely on
+which Python ran it. This repo makes that routine rather than exotic: the declared
+floor is **3.11** (`requires-python = ">=3.11"`), the maintainer's `.venv` is **3.12**,
+worktree venvs get **3.14**, and a contributor may have **3.13**. Four of six reds
+found on dev in one sweep were this, by three unrelated mechanisms — each invisible on
+whichever interpreter its author happened to use.
+
+**What happened.**
+
+- **`ast.dump()` stopped rendering empty fields.** Python 3.13 added `show_empty`,
+  defaulting to `False`, so `Call(func=..., args=[...], keywords=[])` became
+  `Call(func=..., args=[...])`. The summarization diagnostic ledger FREEZES dumped
+  shapes, so every reviewed row holding a no-keyword call stopped matching. Measured by
+  digesting all 229 shapes in `Local_Summarization_Lib.py` on four real interpreters:
+  3.11 and 3.12 gave `92a85a3a989ffd13`; 3.13 and 3.14 gave `cd27a1b6c1fdf001`. The
+  split is exactly where `show_empty` landed.
+- **`dis.findlinestarts()` began yielding `None` lines.** On
+  `ProfileStoreLease.acquire`, 3.11 yields 0 positionless entries and 3.14 yields 12.
+  Comparing those against an int boundary raised `TypeError` while building a
+  *module-level* constant — a COLLECTION error, so all 98 tests in the file stopped
+  running rather than failing.
+- **A nested same-quote f-string is a 3.11 `SyntaxError`.** PEP 701 legalised quote
+  reuse in 3.12. `TTS/backends/kokoro.py` therefore could not be imported *at all* on
+  the project's own floor, while every local test passed on 3.14. Note that
+  `ast.parse(feature_version=(3, 11))` does **not** catch this — it does not downgrade
+  the tokenizer. Only a real 3.11 interpreter does.
+
+**A recorded diagnosis is not a fix.** The `findlinestarts` case was already written up
+here nine days earlier ("Run source-inspection tests on a supported interpreter before
+changing them", TASK-15706, 2026-08-13). That entry was accurate and correctly told the
+reader how to tell interpreter drift from a product regression — and the 98 tests stayed
+uncollectable the whole time, because diagnosing is not the same as repairing. When an
+entry lands here describing something still broken, it needs a task, not just a
+paragraph.
+
+**What to do.**
+
+1. **Verify a version-sensitive fix on both ends of the supported range**, not on the
+   one you are sitting at. `uv python find 3.11` / `3.12` / `3.13` are all available on
+   this machine, and running the same digest under each is a few seconds of work.
+2. **An artifact that freezes interpreter output must pin the rendering, not chase it.**
+   `Tests/ast_shape.stable_dump()` forces the pre-3.13 rendering (`show_empty=True`
+   where supported, nothing below 3.13 where empty fields always rendered), so all four
+   interpreters reproduce the committed digest. Regenerating the ledger against the new
+   rendering was the tempting alternative and the wrong one: it invalidates a large set
+   of individually reviewed privacy rows at once, and breaks the 3.11 floor instead of
+   fixing anything.
+3. **Treat an Optional in an introspection API as load-bearing.** `findlinestarts`
+   documents its line as optional; the failure was assuming otherwise.
+4. **A module-level computation turns drift into a collection error**, which reports as
+   an error rather than a failure and can be skipped past with
+   `--continue-on-collection-errors`. Grep for `ERROR` as well as `FAILED` when
+   surveying a suite, or an entire file's worth of tests will read as "not failing".
