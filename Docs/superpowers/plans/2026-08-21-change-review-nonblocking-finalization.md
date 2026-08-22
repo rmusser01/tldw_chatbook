@@ -42,8 +42,8 @@ list; it never applies a resume overlay to, or otherwise mutates, the
 conversation store.
 
 ADR required: no
-ADR path: `backlog/decisions/077-change-review-consent-and-asynchronous-finalization.md`
-Reason: ADR-077 already defines app ownership, per-root FIFO, immutable pure
+ADR path: `backlog/decisions/079-change-review-consent-and-asynchronous-finalization.md`
+Reason: ADR-079 already defines app ownership, per-root FIFO, immutable pure
 worker inputs/results, durable publication races, and shutdown order.
 
 ## Files

@@ -1,4 +1,4 @@
-# ADR-077: Make Change Review explicit, asynchronous, and advisory
+# ADR-079: Make Change Review explicit, asynchronous, and advisory
 
 Status: Accepted
 Date: 2026-08-21

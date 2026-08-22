@@ -11,7 +11,7 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ## A completed Textual product contract can still be cancelled by test-loop teardown
 
-**TASK-19641, 2026-08-21.** The real-provider three-turn Console benchmark
+**TASK-20009, 2026-08-21.** The real-provider three-turn Console benchmark
 intermittently exited nonzero only on Change Review-enabled samples. The first
 failure wrote no terminal record because `asyncio.CancelledError` sits outside
 `Exception`; after preserving `BaseException` failures with a content-free

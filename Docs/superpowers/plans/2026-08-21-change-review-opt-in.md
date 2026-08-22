@@ -46,7 +46,7 @@ this worktree, not the primary checkout or another editable-install target.
 
 ADR required: yes
 
-ADR path: `backlog/decisions/077-change-review-consent-and-asynchronous-finalization.md`
+ADR path: `backlog/decisions/079-change-review-consent-and-asynchronous-finalization.md`
 
 Reason: The task changes privacy-sensitive retained file-content ownership, workspace consent, concurrent state transitions, and app lifecycle.
 
@@ -386,7 +386,7 @@ Temporarily neutralize, one at a time, missing-row-disabled mapping, unavailable
 
 - [ ] **Step 5: Complete task hygiene only after evidence is green**
 
-Update every acceptance criterion to checked, add concise implementation notes including ADR-077 and modified files, then set TASK-19501 to Done. Do not use `backlog task edit` for this five-digit ID; edit the source file directly per the repository's recorded CLI defect.
+Update every acceptance criterion to checked, add concise implementation notes including ADR-079 and modified files, then set TASK-19501 to Done. Do not use `backlog task edit` for this five-digit ID; edit the source file directly per the repository's recorded CLI defect.
 
 - [ ] **Step 6: Commit documentation and closeout**
 

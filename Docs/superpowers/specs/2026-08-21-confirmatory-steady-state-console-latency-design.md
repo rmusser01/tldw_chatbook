@@ -6,7 +6,7 @@ Status: approved after independent written-spec review
 
 ## Context
 
-TASK-19641 completed its pre-registered real-provider comparison with 30 measured
+TASK-20009 completed its pre-registered real-provider comparison with 30 measured
 three-turn conversations per arm. All 90 measured conversations satisfied the mounted
 Console, provider, tool, persistence, isolation, and ownership contracts, but three of
 the four primary confidence bounds crossed the 10% non-regression ceiling. The retained
@@ -23,7 +23,7 @@ This task performs one separate, pre-registered confirmation. It introduces five
 complete balanced burn-in blocks before a fresh 30-block measurement. Burn-in validates
 the full product contract and is retained for audit, but it is never used in a
 performance-summary calculation, bootstrap, verdict, improvement claim, or replacement
-analysis of TASK-19641.
+analysis of TASK-20009.
 
 ## Goals
 
@@ -32,16 +32,16 @@ analysis of TASK-19641.
 2. Preserve an apples-to-apples comparison by pinning the same production revisions,
    endpoint-reported model alias, retained server contract, fixtures, provider request
    settings, mounted workflow, isolation, metrics, bootstrap, and decision thresholds
-   used by TASK-19641.
+   used by TASK-20009.
 3. Retain enough phase-labelled evidence to prove exactly which samples were excluded
    and independently reproduce the measured verdict.
-4. Preserve the original TASK-19641 evidence byte-for-byte and report the confirmation
+4. Preserve the original TASK-20009 evidence byte-for-byte and report the confirmation
    as a separate result, including another `inconclusive` result if that is what the
    pre-registered rules produce.
 
 ## Non-goals
 
-- This task does not revise, supersede, merge with, or selectively filter TASK-19641.
+- This task does not revise, supersede, merge with, or selectively filter TASK-20009.
 - It does not tune Change Review, the Console, prompts, sampling, llama.cpp, GPU
   placement, or the local model.
 - It does not change the 10% ceiling, bootstrap method, confidence level, primary
@@ -73,7 +73,7 @@ resolved full `harness_revision` and SHA-256 of the tracked runner file, then ve
 that `git status --porcelain --untracked-files=all` is empty and that the runner bytes
 still match the recorded digest. This pins the code that owns scheduling, validation,
 statistics, and evidence even though it is intentionally newer than the production
-candidate. Preflight repeats the arm-specific behavior fingerprints from TASK-19641
+candidate. Preflight repeats the arm-specific behavior fingerprints from TASK-20009
 before any sample runs.
 
 Before modifying the harness and again before retaining the confirmation, the task
@@ -88,6 +88,10 @@ gate if those values differ from the following immutable baseline:
 | `real-provider-three-turn.manifest.json` | `f5dec9153845b585d32660ca87f8d4aef7ad31be4dc431bb52e64fdc29187bb6` |
 | `real-provider-three-turn.raw.jsonl` | `82150cd55ba701b5a2680f87fce43b15676004fc1609f477f458a7abb2078319` |
 | `real-provider-three-turn.summary.json` | `edec5d347427748e26c93d21da7ecf121cccedb41ea7d304fb6cdad684f3668a` |
+
+These immutable original artifacts internally retain their pre-integration
+`TASK-19641` label. That embedded label is digest-pinned historical evidence and is
+not a second current task identity; mutable references use canonical TASK-20009.
 
 The runner writes into one explicit confirmation campaign root outside the repository.
 That root contains an append-only attempt ledger and a new, uniquely numbered staging
@@ -140,13 +144,13 @@ The schedule has three ordered phases:
 
 1. **Warmup:** one successful sample per arm, in `control, disabled, enabled` order.
 2. **Burn-in:** five complete balanced blocks, 15 samples total. Arm order rotates by
-   block with the same three permutations used by TASK-19641. Burn-in iterations are
+   block with the same three permutations used by TASK-20009. Burn-in iterations are
    numbered 0–4 within the `burn_in` phase.
 3. **Measured:** 30 new complete balanced blocks, 90 samples total. Rotation continues
    from global block index 5, so the first measured order is
    `enabled, control, disabled`; measured iterations are still numbered 0–29. This
    avoids giving control two consecutive samples at the burn-in/measurement seam while
-   retaining ten occurrences of each arm-order position, exactly as TASK-19641 did.
+   retaining ten occurrences of each arm-order position, exactly as TASK-20009 did.
 
 Every warmup and burn-in sample must satisfy `validate_sample`, privacy rules, cleanup,
 and ownership checks before the next sample begins. Any failure stops the run and makes
@@ -168,7 +172,7 @@ onward.
 
 ## Product path, provider, and isolation
 
-Apart from the schedule and immutable-candidate worktree ownership, TASK-19641's
+Apart from the schedule and immutable-candidate worktree ownership, TASK-20009's
 approved design remains normative. Each sample is a fresh mounted Console conversation
 using the same synthetic corpus, explicit `rw` binding, permission definition, three
 composer sends, common terminal-turn-two trigger, and exact 1/3/1 provider rounds.
@@ -183,7 +187,7 @@ temperature `0`, 512 maximum output tokens, streaming with usage, and reasoning 
 sample deadlines, child-process isolation, path and credential privacy rules, source
 write inventory, and final ownership checks are unchanged.
 
-TASK-19641 retained the endpoint-reported model alias and sanitized llama-server
+TASK-20009 retained the endpoint-reported model alias and sanitized llama-server
 metadata, but not a model-weight digest. This confirmation therefore cannot claim that
 the GGUF bytes are historically identical. It fails closed unless every retained
 `provider_server` field matches the original manifest—build info, context tokens,
@@ -199,7 +203,7 @@ target worktree or the harness while it is active. The manifest records runtime,
 provider, host-load, and listener-resource metadata at the same boundaries as the
 original run.
 
-Before any conversation, a pure protocol preflight loads the retained TASK-19641
+Before any conversation, a pure protocol preflight loads the retained TASK-20009
 manifest and machine summary and compares them with the confirmatory harness's declared
 protocol. It fails closed unless all of the following match:
 
@@ -243,7 +247,7 @@ The smallest harness extension is preferred:
    while rejecting a dirty harness and recording `harness_revision` plus the runner
    file SHA-256.
 6. A pure protocol-equivalence guard checks the current declared protocol against the
-   immutable TASK-19641 manifest and summary plus the explicitly pinned original runner
+   immutable TASK-20009 manifest and summary plus the explicitly pinned original runner
    before sampling; it does not parse the design document.
 7. The manifest records the phase schedule, `burn_in_blocks: 5`, the exclusion rule,
    protocol-equivalence result, pinned original evidence hashes, target revisions,
@@ -285,7 +289,7 @@ content; and no secret-bearing listener command line.
 
 The 30 measured rotated iteration triples are the only pairing blocks. The report uses
 the same nearest-rank p95, medians, deterministic 10,000-resample paired block bootstrap,
-seed `19_641`, two-sided 95% interval, and one-sided 95% bounds as TASK-19641.
+seed `19_641`, two-sided 95% interval, and one-sided 95% bounds as TASK-20009.
 
 The two primary metrics remain:
 
@@ -310,9 +314,9 @@ unfavorable. Only an uncorrectable acquisition/raw-evidence defect can make an a
 invalid and allow a retry. Invalid and failed attempts retain their objective gate
 failure and remain linked from the definitive receipt's reviewed manifest.
 
-The confirmatory report stands beside TASK-19641. It may say whether the independent
+The confirmatory report stands beside TASK-20009. It may say whether the independent
 pre-registered confirmation passed, regressed, or was inconclusive; it may not rewrite
-TASK-19641's `inconclusive` verdict or pool the two datasets.
+TASK-20009's `inconclusive` verdict or pool the two datasets.
 
 ## Verification
 
@@ -352,7 +356,7 @@ is not part of the retained measurement. The final evidence is accepted only aft
    metrics, confidence bounds, gate verdicts, provider/tool contract, prompt ordering,
    isolation, ownership, and token-use totals;
 3. privacy and absolute-path scans pass;
-4. all original TASK-19641 evidence hashes match the immutable table above;
+4. all original TASK-20009 evidence hashes match the immutable table above;
 5. an independent review finds no Important evidence or correctness defect.
 
 ## ADR check
@@ -361,5 +365,5 @@ ADR required: no.
 
 This task changes opt-in benchmark tooling and adds separate retained evidence. It does
 not alter production storage, runtime boundaries, provider contracts, ownership,
-security posture, or long-lived UX. ADR-077 remains the governing decision for Change
+security posture, or long-lived UX. ADR-079 remains the governing decision for Change
 Review consent, asynchronous finalization, and advisory behavior.

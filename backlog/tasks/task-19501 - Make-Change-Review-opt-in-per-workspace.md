@@ -43,7 +43,7 @@ Stop ordinary Console chats from silently creating and retaining shadow Git hist
 6. Run focused registry, Change Review, and Settings suites; mutation-check the default, failure, CAS, and ABA guards.
 
 ADR required: yes
-ADR path: `backlog/decisions/077-change-review-consent-and-asynchronous-finalization.md`
+ADR path: `backlog/decisions/079-change-review-consent-and-asynchronous-finalization.md`
 Reason: This changes privacy-sensitive shadow-content ownership, workspace consent, cross-module state, and lifecycle policy.
 <!-- SECTION:PLAN:END -->
 
@@ -57,7 +57,7 @@ warnings, revision/generation-safe completion, bounded retry, and bounded
 shutdown. Settings now renders the same revision-consistent service snapshot,
 discloses shadow Git file-content retention, and keeps chat/tools available
 through preparation or failure. No schema migration was needed; the design
-follows ADR-077.
+follows ADR-079.
 
 Verification covered real SQLite registry behavior, deterministic concurrency
 barriers, mounted Settings flows, Console turn-context capture, bridge warning

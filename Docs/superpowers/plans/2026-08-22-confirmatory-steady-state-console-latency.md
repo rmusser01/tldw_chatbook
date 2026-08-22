@@ -223,7 +223,7 @@ Expected: FAIL because constants/loaders/guards are absent.
 
 - [ ] **Step 3: Generalize detached target ownership and load the original module**
 
-Replace the control-only helper with `prepare_target_worktree(repository_root, run_root, *, name, revision, run_command=subprocess.run)`. Create fixed `control` and `candidate` worktrees. Verify the original runner inside the candidate worktree, load it as `task_19641_original_runner`, and invoke its `validate_sample`, `validate_run`, and `build_summary` rather than copying its transitive statistics path.
+Replace the control-only helper with `prepare_target_worktree(repository_root, run_root, *, name, revision, run_command=subprocess.run)`. Create fixed `control` and `candidate` worktrees. Verify the original runner inside the candidate worktree, load it as `task_20009_original_runner`, and invoke its `validate_sample`, `validate_run`, and `build_summary` rather than copying its transitive statistics path.
 
 - [ ] **Step 4: Write RED protocol-equivalence tests**
 
@@ -409,7 +409,7 @@ Expected: tests, lint, compilation, and whitespace checks pass; status contains 
 
 - [ ] **Step 2: Reverify immutable inputs and the live endpoint**
 
-Recompute the original runner and TASK-19641 evidence hashes recorded in the spec. Query `http://127.0.0.1:9099` and require the exact model alias, provider server, and runtime contract before creating any benchmark conversation. Stop if any identity differs.
+Recompute the original runner and TASK-20009 evidence hashes recorded in the spec. Query `http://127.0.0.1:9099` and require the exact model alias, provider server, and runtime contract before creating any benchmark conversation. Stop if any identity differs.
 
 - [ ] **Step 3: Run one disposable end-to-end smoke campaign**
 

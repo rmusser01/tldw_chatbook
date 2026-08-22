@@ -19,10 +19,10 @@
 - Generate `Docs/superpowers/qa/console-three-turn-real-provider/real-provider-three-turn.manifest.json`: revisions, model/runtime metadata, fixture hashes, arm order, and safe host facts.
 - Generate `Docs/superpowers/qa/console-three-turn-real-provider/real-provider-three-turn.summary.json`: recomputable per-arm distributions, paired confidence bounds, validity gates, and verdicts.
 - Generate `Docs/superpowers/qa/console-three-turn-real-provider/real-provider-three-turn-summary.md`: concise human interpretation separating provider and application latency.
-- Modify `backlog/tasks/task-19641 - Measure-real-provider-three-turn-Console-latency.md`: check acceptance criteria, add implementation/evidence notes, retain ADR-077 linkage, and mark Done only after the full evidence review.
+- Modify `backlog/tasks/task-20009 - Measure-real-provider-three-turn-Console-latency.md`: check acceptance criteria, add implementation/evidence notes, retain ADR-079 linkage, and mark Done only after the full evidence review.
 
 ADR required: no
-ADR path: `backlog/decisions/077-change-review-consent-and-asynchronous-finalization.md` (existing governing ADR)
+ADR path: `backlog/decisions/079-change-review-consent-and-asynchronous-finalization.md` (existing governing ADR)
 Reason: the task adds opt-in benchmark tooling and evidence only; it does not change production ownership, storage, provider contracts, or user-visible behavior.
 
 ### Task 1: Establish the pure benchmark contract
@@ -370,7 +370,7 @@ git commit -m "perf(console): retain real-provider three-turn evidence"
 ### Task 7: Close verification and backlog hygiene
 
 **Files:**
-- Modify: `backlog/tasks/task-19641 - Measure-real-provider-three-turn-Console-latency.md`
+- Modify: `backlog/tasks/task-20009 - Measure-real-provider-three-turn-Console-latency.md`
 - Modify if generalized knowledge was learned: `backlog/docs/lessons-testing-evidence.md` or `backlog/docs/lessons-live-verification.md`
 
 - [ ] **Step 1: Run final focused and changed-surface gates**
@@ -385,7 +385,7 @@ Run:
 git diff --check
 ```
 
-- [ ] **Step 2: Self-review the complete diff against the spec and ADR-077**
+- [ ] **Step 2: Self-review the complete diff against the spec and ADR-079**
 
 Check that no production file changed, the disabled path creates no shadow state, the trigger is identical across arms, wrappers are observational, every required boundary is real, and evidence claims match raw data.
 
@@ -400,7 +400,7 @@ Record the incident and evidence, not a generic rule. If no new lesson emerged, 
 - [ ] **Step 5: Commit closeout**
 
 ```bash
-git add 'backlog/tasks/task-19641 - Measure-real-provider-three-turn-Console-latency.md' backlog/docs
+git add 'backlog/tasks/task-20009 - Measure-real-provider-three-turn-Console-latency.md' backlog/docs
 git commit -m "docs(perf): close real-provider Console benchmark"
 ```
 

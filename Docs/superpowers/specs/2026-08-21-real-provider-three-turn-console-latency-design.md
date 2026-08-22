@@ -1,7 +1,7 @@
 # Real-provider three-turn Console latency design
 
 Date: 2026-08-21
-Task: TASK-19641
+Task: TASK-20009
 Status: approved
 
 ## Context
@@ -311,13 +311,13 @@ Test-driven implementation begins with unit tests for:
 
 One three-arm, one-sample smoke validates the mounted path before the long run. The
 final thirty-sample evidence is independently recomputed from raw JSONL, privacy
-scanned, and reviewed before TASK-19641 can close.
+scanned, and reviewed before TASK-20009 can close.
 
 ## ADR check
 
 ADR required: no.
 
 This design adds opt-in benchmark tooling and retained evidence. It changes no storage
-schema, runtime boundary, provider contract, ownership model, or long-lived UX. ADR-077
+schema, runtime boundary, provider contract, ownership model, or long-lived UX. ADR-079
 remains the governing decision for Change Review consent and asynchronous
 finalization.

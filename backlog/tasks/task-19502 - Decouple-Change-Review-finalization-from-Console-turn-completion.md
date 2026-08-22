@@ -43,8 +43,8 @@ Ensure a completed assistant response releases the Console turn and prompt queue
 7. Run deterministic three-turn, concurrency, remount, failure, cancellation, and shutdown verification.
 
 ADR required: no
-ADR path: `backlog/decisions/077-change-review-consent-and-asynchronous-finalization.md`
-Reason: ADR-077 already defines the cross-root ordering, publication, and lifecycle boundaries implemented by this task.
+ADR path: `backlog/decisions/079-change-review-consent-and-asynchronous-finalization.md`
+Reason: ADR-079 already defines the cross-root ordering, publication, and lifecycle boundaries implemented by this task.
 
 Detailed plan: `Docs/superpowers/plans/2026-08-21-change-review-nonblocking-finalization.md`
 <!-- SECTION:PLAN:END -->
@@ -59,5 +59,5 @@ Detailed plan: `Docs/superpowers/plans/2026-08-21-change-review-nonblocking-fina
 - Publication remains lifecycle-owned until its database callback returns. An atomic batch failure gets exactly one terminal tracking-error attempt. The publisher and runtime close their own thread-local AgentRunsDB connections; a bounded shutdown timeout cannot close a connection still in use by the other thread or append a late overload marker to the store.
 - Runtime disposal orders controller shutdown, coordinator shutdown, thread-local AgentRunsDB close, and provider close. A mounted Console regression holds turn two's E, records its durable assistant anchor, and proves turn three reaches the provider before E is released.
 - Verification: 92/92 complete coordinator/tracker/execution-context/runtime tests passed; 16/16 focused mounted/projection/state tests passed; the earlier five-file run passed 395 tests and exposed 12 unrelated bare-screen fixture failures now closed by TASK-19507. Ruff and `git diff --check` passed. Independent re-review reported no remaining blocker or Important findings.
-- ADR required: no. Existing ADR: `backlog/decisions/077-change-review-consent-and-asynchronous-finalization.md`.
+- ADR required: no. Existing ADR: `backlog/decisions/079-change-review-consent-and-asynchronous-finalization.md`.
 <!-- SECTION:NOTES:END -->
