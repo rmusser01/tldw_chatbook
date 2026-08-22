@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import ast
 import inspect
 import os
 import sqlite3
 import stat
+import warnings
 from dataclasses import FrozenInstanceError, replace
 from itertools import islice, repeat
 from pathlib import Path
@@ -484,6 +486,40 @@ def _repository(tmp_path: Path) -> NoteImportReceiptRepository:
     return NoteImportReceiptRepository(tmp_path / "notes-sync.sqlite3")
 
 
+def _notes_sync_state_path_references(source_path: Path) -> tuple[int, ...]:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", SyntaxWarning)
+        tree = ast.parse(source_path.read_text(encoding="utf-8"))
+    allowed_nodes: set[int] = set()
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == (
+            "get_notes_sync_state_db_path"
+        ):
+            allowed_nodes.update(id(child) for child in ast.walk(node))
+    references: list[int] = []
+    for node in ast.walk(tree):
+        if id(node) in allowed_nodes:
+            continue
+        is_reference = (
+            (isinstance(node, ast.Name) and node.id == "get_notes_sync_state_db_path")
+            or (
+                isinstance(node, ast.Attribute)
+                and node.attr == "get_notes_sync_state_db_path"
+            )
+            or (
+                isinstance(node, ast.alias)
+                and node.name == "get_notes_sync_state_db_path"
+            )
+            or (
+                isinstance(node, ast.Constant)
+                and node.value == "tldw_chatbook_notes_sync_state.db"
+            )
+        )
+        if is_reference:
+            references.append(getattr(node, "lineno", 0))
+    return tuple(references)
+
+
 def test_notes_sync_state_path_is_profile_local_and_has_no_production_consumer(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -494,18 +530,30 @@ def test_notes_sync_state_path_is_profile_local_and_has_no_production_consumer(
         tmp_path / "tldw_chatbook_notes_sync_state.db"
     )
     production_root = Path(__file__).parents[2] / "tldw_chatbook"
-    config_path = production_root / "config.py"
-    consumers = []
+    consumers: dict[str, tuple[int, ...]] = {}
     for source_path in production_root.rglob("*.py"):
-        if source_path == config_path:
-            continue
-        source = source_path.read_text(encoding="utf-8")
-        if (
-            "get_notes_sync_state_db_path" in source
-            or "tldw_chatbook_notes_sync_state.db" in source
-        ):
-            consumers.append(source_path.relative_to(production_root).as_posix())
-    assert consumers == []
+        references = _notes_sync_state_path_references(source_path)
+        if references:
+            consumers[source_path.relative_to(production_root).as_posix()] = references
+    assert consumers == {}
+
+
+def test_notes_sync_state_consumer_ratchet_detects_config_alias_mutation(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "config.py"
+    source_path.write_text(
+        """def get_notes_sync_state_db_path():
+    return data_dir / \"tldw_chatbook_notes_sync_state.db\"
+
+def backup_matrix():
+    selected = get_notes_sync_state_db_path
+    return selected()
+""",
+        encoding="utf-8",
+    )
+
+    assert _notes_sync_state_path_references(source_path) == (5,)
 
 
 def test_receipt_repository_creates_v2_normalized_schema_without_private_text(

@@ -72,23 +72,25 @@ RESTORE_BACKUP_OWNER_IDS = (
 MIGRATION_BOUNDARY_BACKUP_OWNER_IDS = ("tts.profile_migration_boundary",)
 
 
-def test_notes_sync_state_owner_allows_internal_memory_and_not_backup() -> None:
-    policy = SQLITE_OWNER_REGISTRY["notes.sync_state"]
+def test_notes_sync_state_owners_split_durable_file_from_memory_oracle() -> None:
+    durable = SQLITE_OWNER_REGISTRY["notes.sync_state"]
+    oracle = SQLITE_OWNER_REGISTRY["notes.sync_state_schema_oracle"]
 
-    assert policy.allowed_target_kinds == frozenset(
-        {SQLiteTargetKind.PRIVATE_FILE, SQLiteTargetKind.MEMORY}
+    assert durable.allowed_target_kinds == frozenset({SQLiteTargetKind.PRIVATE_FILE})
+    assert oracle.allowed_target_kinds == frozenset({SQLiteTargetKind.MEMORY})
+    assert durable.centralized_backup_allowed is False
+    assert oracle.centralized_backup_allowed is False
+    assert "device-private import receipts" in durable.reason.casefold()
+    assert "canonical-schema oracle" in oracle.reason.casefold()
+    assert {"notes.sync_state", "notes.sync_state_schema_oracle"}.isdisjoint(
+        {
+            *CONNECTION_BACKUP_OWNER_IDS,
+            *COPY_BACKUP_OWNER_IDS,
+            *OPEN_CONNECTION_BACKUP_OWNER_IDS,
+            *RESTORE_BACKUP_OWNER_IDS,
+            *MIGRATION_BOUNDARY_BACKUP_OWNER_IDS,
+        }
     )
-    assert policy.centralized_backup_allowed is False
-    reason = policy.reason.casefold()
-    assert "device-private import receipts" in reason
-    assert "future lasting-sync state" in reason
-    assert "notes.sync_state" not in {
-        *CONNECTION_BACKUP_OWNER_IDS,
-        *COPY_BACKUP_OWNER_IDS,
-        *OPEN_CONNECTION_BACKUP_OWNER_IDS,
-        *RESTORE_BACKUP_OWNER_IDS,
-        *MIGRATION_BOUNDARY_BACKUP_OWNER_IDS,
-    }
 
 
 @pytest.mark.parametrize("database", (":memory:", Path(":memory:")))

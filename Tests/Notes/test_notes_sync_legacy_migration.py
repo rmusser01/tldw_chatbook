@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import ast
 import builtins
 import hashlib
 import json
 import math
 import os
 import sqlite3
+import warnings
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import FrozenInstanceError
@@ -1364,6 +1366,54 @@ def test_terminal_migration_replay_skips_fresh_source_capture(
     assert replay == terminal
 
 
+def _ast_reference_names(source: str) -> tuple[str, ...]:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", SyntaxWarning)
+        tree = ast.parse(source)
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                names.add(node.module)
+            names.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.Name):
+            names.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            names.add(node.attr)
+    return tuple(sorted(names))
+
+
+def _foundation_reference_violations(source: str) -> tuple[str, ...]:
+    prohibited = (
+        "activate",
+        "activation",
+        "watcher",
+        "reconcile",
+        "resolver",
+        "journal",
+        "tldw_chatbook.ui",
+        "server",
+        "sync_v2",
+        "backup",
+        "export",
+        "logging",
+        "loguru",
+        "logger",
+    )
+    return tuple(
+        name
+        for name in _ast_reference_names(source)
+        if any(fragment in name.casefold() for fragment in prohibited)
+    )
+
+
+def _migration_api_references(source: str) -> tuple[str, ...]:
+    target = "migrate_legacy_notes_sync_state"
+    return tuple(name for name in _ast_reference_names(source) if name == target)
+
+
 def test_sync_foundation_non_goals_and_legacy_owner_are_source_ratchets() -> None:
     project_root = Path(__file__).parents[2]
     notes_root = project_root / "tldw_chatbook/Notes"
@@ -1377,37 +1427,43 @@ def test_sync_foundation_non_goals_and_legacy_owner_are_source_ratchets() -> Non
         notes_root / "notes_sync_state.py",
         notes_root / "notes_sync_legacy_migration.py",
     )
-    prohibited = (
-        "activate",
-        "activation",
-        "watcher",
-        "reconcile",
-        "resolver",
-        "journal",
-        "tldw_chatbook.ui",
-        "server",
-        "sync_v2",
-        "sync-v2",
-        "backup_",
-        "portable export",
-    )
     for source_path in foundation_paths:
-        source = source_path.read_text(encoding="utf-8").lower()
-        assert all(term not in source for term in prohibited), source_path.name
-        assert "loguru" not in source
-        assert "import logging" not in source
-        assert "logger." not in source
+        source = source_path.read_text(encoding="utf-8")
+        assert _foundation_reference_violations(source) == (), source_path.name
 
-    invocation_marker = "migrate_legacy_notes_sync_state("
-    startup_callers = []
+    startup_callers: dict[str, tuple[str, ...]] = {}
     migration_module = notes_root / "notes_sync_legacy_migration.py"
     for source_path in (project_root / "tldw_chatbook").rglob("*.py"):
         if source_path == migration_module:
             continue
         source = source_path.read_text(encoding="utf-8")
-        if invocation_marker in source:
-            startup_callers.append(source_path.relative_to(project_root).as_posix())
-    assert startup_callers == []
+        references = _migration_api_references(source)
+        if references:
+            startup_callers[source_path.relative_to(project_root).as_posix()] = (
+                references
+            )
+    assert startup_callers == {}
+
+
+def test_non_goal_ast_ratchets_detect_aliased_and_reformatted_mutations() -> None:
+    mutated_foundation = """from tldw_chatbook.UI.sync import activate as begin
+import logging as audit
+
+def run():
+    audit.warning(\"starting\")
+    return begin()
+"""
+    mutated_startup = """from tldw_chatbook.Notes.notes_sync_legacy_migration import (
+    migrate_legacy_notes_sync_state as run_migration,
+)
+
+run_migration(repository, notes_db)
+"""
+
+    assert _foundation_reference_violations(mutated_foundation)
+    assert _migration_api_references(mutated_startup) == (
+        "migrate_legacy_notes_sync_state",
+    )
 
 
 def test_migration_privacy_redacts_hash_inputs_models_and_aggregates(
@@ -1438,11 +1494,24 @@ def test_migration_privacy_redacts_hash_inputs_models_and_aggregates(
         ),
     )
     repository = _migration_repository(tmp_path)
+    prepared = legacy._prepare_legacy_generation(snapshot)
     run = repository.record_legacy_generation(snapshot)
     items = repository.list_migration_items(run.migration_id)
     aggregates = repository.migration_item_counts(run.migration_id)
 
-    rendered = repr((snapshot, run, items, aggregates))
+    rendered = repr(
+        (
+            snapshot,
+            prepared,
+            prepared.roots,
+            prepared.bindings,
+            prepared.rejected_items,
+            prepared.conflicts,
+            run,
+            items,
+            aggregates,
+        )
+    )
     for private in (
         private_path,
         private_note_id,

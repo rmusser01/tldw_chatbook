@@ -68,7 +68,8 @@ Classifications have these meanings:
 | C47 | tldw_chatbook/TTS/profile_repository | restore version/qualification/publication source | tts.profile_restore_stage | read_only_uri | exact admitted restore source | Migrated via `connect_private_sqlite`. Every restore-stage connection is repository-owned under the exclusive lease. A close failure retains the live handle and exclusive lease, leaves the repository unavailable, and is retried only by later cleanup. |
 | C48 | tldw_chatbook/TTS/profile_schema | open_exact_current_profile_store | tts.profile_store_descriptor | read_only_uri | immutable descriptor-bound shared-startup proof | Migrated via `connect_private_sqlite_descriptor`. Shared startup retains the canonical parent/file descriptors, validates an immutable exact-v4 logical image, and requires the query-only path connection to serialize to the same image before writes are enabled; the returned live handle owns the proof descriptors for its lifetime. |
 | C49 | tldw_chatbook/DB/Subscriptions_DB | SubscriptionsDB._get_connection | db.subscriptions.agent_read | read_only_uri | external agent Watchlists read | Migrated via `connect_private_sqlite`. Opens only an existing Watchlists database through a read-only URI, preserves the source file mode owned by the mutable application database, and cannot create or migrate the database or write the main database file, schema, or rows. A WAL reader may create or update SQLite-managed `-wal`/`-shm` sidecars; suppressing that with `immutable=1` could ignore committed, uncheckpointed WAL frames. |
-| C50 | tldw_chatbook/Notes/notes_sync_state_schema | _canonical_v2_snapshot / notes_sync_state_transaction | notes.sync_state | private_file, memory | device-private import receipts and future lasting-sync state | Migrated via `connect_private_sqlite`. The profile-local ledger stores only opaque identifiers, private digests, paused lasting-sync candidates, bounded lifecycle state, and migration metadata; the memory target is a transient canonical-schema oracle with no artifact, and the file ledger is excluded from portable export and centralized backup. |
+| C50 | tldw_chatbook/Notes/notes_sync_state_schema | notes_sync_state_transaction | notes.sync_state | private_file | device-private import receipts and lasting-sync state | Migrated via `connect_private_sqlite`. The profile-local ledger stores only opaque identifiers, private digests, paused lasting-sync candidates, bounded lifecycle state, and migration metadata; it is excluded from portable export and centralized backup. |
+| C51 | tldw_chatbook/Notes/notes_sync_state_schema | _canonical_v2_snapshot | notes.sync_state_schema_oracle | memory | transient canonical Notes sync-state schema oracle | Migrated via `connect_private_sqlite`. The exact in-memory target builds the canonical schema census, creates no artifact, and is excluded from portable export and centralized backup. |
 
 ## SQLite backup and restore inventory
 
@@ -156,7 +157,7 @@ a checked `P` row when it is introduced.
 | X03 | tldw_chatbook/DB/Client_Media_DB_v2 | create_automated_backup | No-op placeholder; it creates no backup artifact. |
 | X04 | production tree | aiosqlite.connect | No production `aiosqlite.connect` owner exists. |
 
-The migrated boundary retains 45 classified connection sites and eighteen
+The migrated boundary retains 51 classified connection sites and seventeen
 classified backup/restore operations. Production has one raw
 `sqlite3.connect` site and one direct `Connection.backup()` site, both inside
 `DB/private_sqlite.py`; Settings has no SQLite database `shutil.copy2()` site.

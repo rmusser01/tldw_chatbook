@@ -661,7 +661,9 @@ def _schema_snapshot(connection: sqlite3.Connection) -> SyncStateSchemaSnapshot:
 
 @cache
 def _canonical_v2_snapshot() -> SyncStateSchemaSnapshot:
-    with connect_private_sqlite("notes.sync_state", Path(":memory:")) as connection:
+    with connect_private_sqlite(
+        "notes.sync_state_schema_oracle", Path(":memory:")
+    ) as connection:
         connection.execute("PRAGMA foreign_keys = ON")
         for statement in _COMPLETE_V2_STATEMENTS:
             connection.execute(statement)
