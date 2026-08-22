@@ -51,13 +51,21 @@ from ...Character_Chat.expression_generation import (
 )
 from ...Character_Chat.local_chat_dictionary_service import statistics_from_record
 from ...Character_Chat.persona_list_paging import page_persona_profiles
+from ...Character_Chat.persona_visual_identity import (
+    LocalPersonaVisualIdentityAuthority,
+    capture_local_persona_visual_identity,
+    local_persona_visual_identity_is_current,
+    resolve_persona_visual_identity,
+)
 from ...Character_Chat.visual_identity import (
+    CANONICAL_EXPRESSION_SLOTS,
     VisualIdentityCandidate,
     VisualIdentityPublicationError,
     VisualIdentityPublicationResult,
     VisualIdentityResolution,
     cleanup_visual_identity_publication_candidate,
     create_visual_identity_candidate,
+    display_label_for_expression_key,
     publish_visual_identity_candidate,
     resolve_visual_identity,
 )
@@ -602,6 +610,47 @@ class _PersonaVisualAuthorSnapshot:
     editor_session_token: int
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class _PersonaSharedVisualIdentityLoadSnapshot:
+    """Exact local Persona editor authority for Shared Identity metadata."""
+
+    editor_ref: weakref.ReferenceType[PersonaProfileEditorWidget]
+    db: object
+    local_service: object
+    persona_id: str
+    persona_revision: int
+    screen_generation: int
+    editor_session_token: int
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _PersonaSharedVisualIdentityAuthorSnapshot:
+    """Exact Persona/editor/pack authority for one unpublished reaction draft."""
+
+    editor_ref: weakref.ReferenceType[PersonaProfileEditorWidget]
+    browser_ref: weakref.ReferenceType[PersonasVisualIdentityPackWidget]
+    db: object
+    local_service: object
+    persona_id: str
+    persona_revision: int
+    persona_authority: LocalPersonaVisualIdentityAuthority
+    screen_generation: int
+    editor_session_token: int
+    binding_id: int
+    pack_id: int
+    pack_version_id: int
+
+
+@dataclasses.dataclass(slots=True)
+class _PersonaSharedVisualIdentityAuthoringState:
+    """One Persona reaction candidate plus its cancellation authority."""
+
+    snapshot: _PersonaSharedVisualIdentityAuthorSnapshot
+    candidate: VisualIdentityCandidate
+    cancel_event: threading.Event
+    authoritative_pack: VisualIdentityPackMetadata
+
+
 @dataclasses.dataclass(slots=True)
 class _PersonaVisualAuthoringState:
     """One unpublished Persona Visual draft plus its private source lease."""
@@ -964,6 +1013,19 @@ class PersonasScreen(BaseAppScreen):
         self._visual_identity_operation_task: asyncio.Task[Any] | None = None
         self._visual_identity_operation_event: threading.Event | None = None
         self._visual_identity_publication_inflight: bool = False
+        self._persona_shared_visual_identity_authority: (
+            LocalPersonaVisualIdentityAuthority | None
+        ) = None
+        self._persona_shared_visual_identity_authoring: (
+            _PersonaSharedVisualIdentityAuthoringState | None
+        ) = None
+        self._persona_shared_visual_identity_operation_task: (
+            asyncio.Task[Any] | None
+        ) = None
+        self._persona_shared_visual_identity_operation_event: threading.Event | None = (
+            None
+        )
+        self._persona_shared_visual_identity_publication_inflight = False
         self._persona_visual_authoring: _PersonaVisualAuthoringState | None = None
         self._persona_visual_generation = 0
         self._persona_visual_operation_task: asyncio.Task[Any] | None = None
@@ -6193,6 +6255,8 @@ class PersonasScreen(BaseAppScreen):
 
     async def _begin_create_profile(self) -> None:
         self._advance_persona_buddy_session()
+        await self._drain_persona_shared_visual_identity_authoring()
+        self._persona_shared_visual_identity_authority = None
         await self._discard_persona_visual_authoring_async()
         self._persona_visual_generation += 1
         self._edit_mode = "create"
@@ -6545,6 +6609,8 @@ class PersonasScreen(BaseAppScreen):
         self._profile_save_operation_inflight = False
         # Change-based dirty tracking: the session starts clean; the editor
         # posts EditorContentChanged on the first real modification.
+        await self._drain_persona_shared_visual_identity_authoring()
+        self._persona_shared_visual_identity_authority = None
         await self._discard_persona_visual_authoring_async()
         self._persona_visual_generation += 1
         editor = self.query_one(PersonaProfileEditorWidget)
@@ -6552,6 +6618,17 @@ class PersonasScreen(BaseAppScreen):
             record,
             runtime_source=self.persona_handler.current_mode(),
         )
+        self._persona_shared_visual_identity_authority = None
+        shared_identity_snapshot = self._persona_shared_visual_identity_snapshot(editor)
+        if shared_identity_snapshot is not None:
+            self.run_worker(
+                self._configure_persona_shared_visual_identity(
+                    shared_identity_snapshot
+                ),
+                group="personas-shared-visual-identity-load",
+                exit_on_error=False,
+                exclusive=True,
+            )
         visual_snapshot = self._persona_visual_snapshot(editor)
         if visual_snapshot is not None:
             self.run_worker(
@@ -6566,6 +6643,623 @@ class PersonasScreen(BaseAppScreen):
         inspector.show_validation_editing()
         self._sync_title_and_console_actions()
         self.call_after_refresh(self._focus_editor_name)
+
+    def _persona_shared_visual_identity_snapshot(
+        self, editor: PersonaProfileEditorWidget | None = None
+    ) -> _PersonaSharedVisualIdentityLoadSnapshot | None:
+        """Capture one saved local Persona editor before metadata I/O."""
+
+        if self._edit_mode != "edit" or self.persona_handler.current_mode() != "local":
+            return None
+        try:
+            editor = editor or self.query_one(PersonaProfileEditorWidget)
+            data = editor.collect()
+        except (QueryError, ValueError):
+            return None
+        persona_id = data.get("id")
+        persona_revision = data.get("version")
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        scope = getattr(self.app_instance, "character_persona_scope_service", None)
+        local_service = getattr(scope, "local_service", None)
+        if (
+            type(persona_id) is not str
+            or not persona_id
+            or type(persona_revision) is not int
+            or persona_revision < 1
+            or db is None
+            or local_service is None
+        ):
+            return None
+        return _PersonaSharedVisualIdentityLoadSnapshot(
+            editor_ref=weakref.ref(editor),
+            db=db,
+            local_service=local_service,
+            persona_id=persona_id,
+            persona_revision=persona_revision,
+            screen_generation=self._persona_visual_generation,
+            editor_session_token=editor.persona_visual_session_token,
+        )
+
+    def _persona_shared_visual_identity_snapshot_is_current(
+        self,
+        snapshot: _PersonaSharedVisualIdentityLoadSnapshot,
+    ) -> bool:
+        """Fence local source, editor, revision, profile, and service identity."""
+
+        editor = snapshot.editor_ref()
+        scope = getattr(self.app_instance, "character_persona_scope_service", None)
+        if (
+            editor is None
+            or not self.is_mounted
+            or self._edit_mode != "edit"
+            or self.state.active_mode != "personas"
+            or self.persona_handler.current_mode() != "local"
+            or self._persona_visual_generation != snapshot.screen_generation
+            or getattr(self.app_instance, "chachanotes_db", None) is not snapshot.db
+            or getattr(scope, "local_service", None) is not snapshot.local_service
+            or editor.persona_visual_session_token != snapshot.editor_session_token
+        ):
+            return False
+        try:
+            current_editor = self.query_one(PersonaProfileEditorWidget)
+            data = current_editor.collect()
+        except (QueryError, ValueError):
+            return False
+        if (
+            current_editor is not editor
+            or not editor.display
+            or data.get("id") != snapshot.persona_id
+            or data.get("version") != snapshot.persona_revision
+        ):
+            return False
+        return True
+
+    @staticmethod
+    def _unbound_persona_shared_visual_identity_metadata() -> (
+        VisualIdentityPackMetadata
+    ):
+        """Return canonical path-free slots for creating a Persona binding."""
+
+        return VisualIdentityPackMetadata(
+            binding_id=0,
+            pack_id=0,
+            pack_version_id=0,
+            title="Shared Visual Identity reactions",
+            source_kind="unbound",
+            default_expression_key="neutral",
+            assets=tuple(
+                VisualIdentityAssetMetadata(
+                    asset_id=-index,
+                    expression_key=key,
+                    original_label=key,
+                    display_label=display_label_for_expression_key(key),
+                    content_type="",
+                    is_animated=False,
+                )
+                for index, key in enumerate(CANONICAL_EXPRESSION_SLOTS, start=1)
+            ),
+        )
+
+    async def _configure_persona_shared_visual_identity(
+        self, snapshot: _PersonaSharedVisualIdentityLoadSnapshot
+    ) -> None:
+        """Mount one bound or canonical-unbound local Persona pack browser."""
+
+        if not self._persona_shared_visual_identity_snapshot_is_current(snapshot):
+            return
+        try:
+            authority = await asyncio.to_thread(
+                capture_local_persona_visual_identity,
+                snapshot.local_service,
+                snapshot.persona_id,
+            )
+            graph = await asyncio.to_thread(
+                VisualIdentityRepository(snapshot.db).get_active_actor_pack,
+                "persona",
+                snapshot.persona_id,
+            )
+            checked_authority = await asyncio.to_thread(
+                capture_local_persona_visual_identity,
+                snapshot.local_service,
+                snapshot.persona_id,
+            )
+            metadata = (
+                self._visual_identity_pack_metadata(graph)
+                if graph is not None
+                else self._unbound_persona_shared_visual_identity_metadata()
+            )
+        except (sqlite3.Error, TypeError, ValueError, OverflowError):
+            authority = None
+            metadata = None
+        editor = snapshot.editor_ref()
+        if (
+            authority is None
+            or authority.persona_revision != snapshot.persona_revision
+            or checked_authority != authority
+            or metadata is None
+            or editor is None
+            or not self._persona_shared_visual_identity_snapshot_is_current(snapshot)
+        ):
+            if (
+                editor is not None
+                and self._persona_shared_visual_identity_snapshot_is_current(snapshot)
+            ):
+                await editor.show_shared_visual_identity_unavailable()
+            return
+        mounted = await editor.show_shared_visual_identity_pack(metadata)
+        if not self._persona_shared_visual_identity_snapshot_is_current(snapshot):
+            await editor.discard_shared_visual_identity_pack(mounted)
+            return
+        try:
+            mounted_authority = await asyncio.to_thread(
+                capture_local_persona_visual_identity,
+                snapshot.local_service,
+                snapshot.persona_id,
+            )
+            final_graph = await asyncio.to_thread(
+                VisualIdentityRepository(snapshot.db).get_active_actor_pack,
+                "persona",
+                snapshot.persona_id,
+            )
+            final_authority = await asyncio.to_thread(
+                capture_local_persona_visual_identity,
+                snapshot.local_service,
+                snapshot.persona_id,
+            )
+            final_metadata = (
+                self._visual_identity_pack_metadata(final_graph)
+                if final_graph is not None
+                else self._unbound_persona_shared_visual_identity_metadata()
+            )
+        except (sqlite3.Error, TypeError, ValueError, OverflowError):
+            final_metadata = None
+        if (
+            final_metadata != metadata
+            or mounted_authority != authority
+            or final_authority != authority
+            or not self._persona_shared_visual_identity_snapshot_is_current(snapshot)
+        ):
+            await editor.discard_shared_visual_identity_pack(mounted)
+            if self._persona_shared_visual_identity_snapshot_is_current(snapshot):
+                await editor.show_shared_visual_identity_unavailable()
+            return
+        self._persona_shared_visual_identity_authority = authority
+
+    def _persona_shared_visual_identity_author_snapshot(
+        self,
+    ) -> _PersonaSharedVisualIdentityAuthorSnapshot | None:
+        """Capture the active local Persona reaction editor without service I/O."""
+
+        authority = self._persona_shared_visual_identity_authority
+        if authority is None:
+            return None
+        try:
+            editor = self.query_one(PersonaProfileEditorWidget)
+            browser = editor.query_one(PersonasVisualIdentityPackWidget)
+            data = editor.collect()
+        except (QueryError, ValueError):
+            return None
+        pack = browser.pack
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        scope = getattr(self.app_instance, "character_persona_scope_service", None)
+        local_service = getattr(scope, "local_service", None)
+        if (
+            pack is None
+            or db is None
+            or local_service is None
+            or not self.is_mounted
+            or self.state.active_mode != "personas"
+            or self._edit_mode != "edit"
+            or self.persona_handler.current_mode() != "local"
+            or not editor.display
+            or data.get("id") != authority.persona_id
+            or data.get("version") != authority.persona_revision
+        ):
+            return None
+        return _PersonaSharedVisualIdentityAuthorSnapshot(
+            editor_ref=weakref.ref(editor),
+            browser_ref=weakref.ref(browser),
+            db=db,
+            local_service=local_service,
+            persona_id=authority.persona_id,
+            persona_revision=authority.persona_revision,
+            persona_authority=authority,
+            screen_generation=self._persona_visual_generation,
+            editor_session_token=editor.persona_visual_session_token,
+            binding_id=pack.binding_id,
+            pack_id=pack.pack_id,
+            pack_version_id=pack.pack_version_id,
+        )
+
+    def _persona_shared_visual_identity_author_snapshot_is_current(
+        self, snapshot: _PersonaSharedVisualIdentityAuthorSnapshot
+    ) -> bool:
+        """Fence the mounted Persona reaction editor without blocking I/O."""
+
+        editor = snapshot.editor_ref()
+        browser = snapshot.browser_ref()
+        scope = getattr(self.app_instance, "character_persona_scope_service", None)
+        if (
+            editor is None
+            or browser is None
+            or not self.is_mounted
+            or self.state.active_mode != "personas"
+            or self._edit_mode != "edit"
+            or self.persona_handler.current_mode() != "local"
+            or self._persona_visual_generation != snapshot.screen_generation
+            or getattr(self.app_instance, "chachanotes_db", None) is not snapshot.db
+            or getattr(scope, "local_service", None) is not snapshot.local_service
+            or editor.persona_visual_session_token != snapshot.editor_session_token
+            or self._persona_shared_visual_identity_authority
+            != snapshot.persona_authority
+            or not editor.display
+            or not browser.is_mounted
+        ):
+            return False
+        try:
+            data = editor.collect()
+            current_browser = editor.query_one(PersonasVisualIdentityPackWidget)
+        except (QueryError, ValueError):
+            return False
+        pack = browser.pack
+        return bool(
+            current_browser is browser
+            and data.get("id") == snapshot.persona_id
+            and data.get("version") == snapshot.persona_revision
+            and pack is not None
+            and (pack.binding_id, pack.pack_id, pack.pack_version_id)
+            == (snapshot.binding_id, snapshot.pack_id, snapshot.pack_version_id)
+        )
+
+    async def _persona_shared_visual_identity_authority_is_current(
+        self, snapshot: _PersonaSharedVisualIdentityAuthorSnapshot
+    ) -> bool:
+        """Re-read exact local Persona authority off-loop after an await."""
+
+        if not self._persona_shared_visual_identity_author_snapshot_is_current(
+            snapshot
+        ):
+            return False
+        current = await asyncio.to_thread(
+            capture_local_persona_visual_identity,
+            snapshot.local_service,
+            snapshot.persona_id,
+        )
+        return current == snapshot.persona_authority and (
+            self._persona_shared_visual_identity_author_snapshot_is_current(snapshot)
+        )
+
+    def _begin_persona_shared_visual_identity_operation(
+        self, snapshot: _PersonaSharedVisualIdentityAuthorSnapshot
+    ) -> tuple[asyncio.Task[Any], threading.Event] | None:
+        """Admit one Persona reaction operation without overlapping work."""
+
+        task = asyncio.current_task()
+        active = self._persona_shared_visual_identity_operation_task
+        state = self._persona_shared_visual_identity_authoring
+        if (
+            task is None
+            or self._profile_save_operation_inflight
+            or (active is not None and not active.done())
+            or (state is not None and state.snapshot != snapshot)
+        ):
+            return None
+        event = state.cancel_event if state is not None else threading.Event()
+        self._persona_shared_visual_identity_operation_task = task
+        self._persona_shared_visual_identity_operation_event = event
+        browser = snapshot.browser_ref()
+        if browser is not None and browser.parent is not None:
+            browser.set_preparing(True)
+        return task, event
+
+    def _finish_persona_shared_visual_identity_operation(
+        self,
+        task: asyncio.Task[Any],
+        browser: PersonasVisualIdentityPackWidget | None,
+    ) -> None:
+        """Release serialization only after the admitted operation drains."""
+
+        if self._persona_shared_visual_identity_operation_task is not task:
+            return
+        self._persona_shared_visual_identity_operation_task = None
+        if self._persona_shared_visual_identity_authoring is None:
+            self._persona_shared_visual_identity_operation_event = None
+        if (
+            browser is not None
+            and browser.parent is not None
+            and self._persona_shared_visual_identity_author_snapshot() is not None
+        ):
+            browser.set_preparing(False)
+
+    def _persona_shared_visual_identity_has_unsaved_authoring(self) -> bool:
+        task = self._persona_shared_visual_identity_operation_task
+        return self._persona_shared_visual_identity_authoring is not None or (
+            task is not None and not task.done()
+        )
+
+    async def _drain_persona_shared_visual_identity_authoring(self) -> None:
+        """Signal and drain Persona reaction work before discarding its draft."""
+
+        event = self._persona_shared_visual_identity_operation_event
+        state = self._persona_shared_visual_identity_authoring
+        if event is None and state is not None:
+            event = state.cancel_event
+        if event is not None:
+            event.set()
+        task = self._persona_shared_visual_identity_operation_task
+        cancellation: asyncio.CancelledError | None = None
+        if task is not None and task is not asyncio.current_task() and not task.done():
+            drained = await _drain_async(
+                _join_task(task),
+                task_name="personas-persona-reaction-pack-drain",
+            )
+            cancellation = drained.cancellation
+        self._discard_persona_shared_visual_identity_authoring()
+        if cancellation is not None:
+            raise cancellation
+
+    def _discard_persona_shared_visual_identity_authoring(self) -> None:
+        """Discard only the unpublished Persona reaction candidate."""
+
+        state = self._persona_shared_visual_identity_authoring
+        self._persona_shared_visual_identity_authoring = None
+        if state is None:
+            return
+        state.cancel_event.set()
+        try:
+            state.candidate.cancel()
+        except VisualIdentityPublicationError:
+            pass
+        browser = state.snapshot.browser_ref()
+        if (
+            browser is not None
+            and browser.parent is not None
+            and self._persona_shared_visual_identity_author_snapshot_is_current(
+                state.snapshot
+            )
+        ):
+            browser.pack = state.authoritative_pack
+            browser.apply_filter(
+                browser.query_one("#personas-visual-identity-filter", Input).value
+            )
+            browser.reset_staged()
+
+    async def _persona_shared_visual_identity_candidate(
+        self,
+        snapshot: _PersonaSharedVisualIdentityAuthorSnapshot,
+        event: threading.Event,
+    ) -> _PersonaSharedVisualIdentityAuthoringState | None:
+        """Create one authority-fenced Persona reaction candidate off-loop."""
+
+        current = self._persona_shared_visual_identity_authoring
+        if current is not None and current.snapshot == snapshot:
+            return current
+        self._discard_persona_shared_visual_identity_authoring()
+        try:
+            candidate = await asyncio.to_thread(
+                create_visual_identity_candidate,
+                snapshot.db,
+                actor_kind="persona",
+                actor_id=snapshot.persona_id,
+                actor_authority=snapshot.persona_authority.cache_identity,
+                actor_guard=lambda: local_persona_visual_identity_is_current(
+                    snapshot.local_service, snapshot.persona_authority
+                ),
+            )
+        except (ValueError, sqlite3.Error, RuntimeError):
+            return None
+        expected = (
+            snapshot.binding_id or None,
+            snapshot.pack_id or None,
+            snapshot.pack_version_id or None,
+        )
+        actual = (
+            candidate.old_binding_id,
+            candidate.old_pack_id,
+            candidate.old_version_id,
+        )
+        if (
+            actual != expected
+            or event.is_set()
+            or not await self._persona_shared_visual_identity_authority_is_current(
+                snapshot
+            )
+        ):
+            event.set()
+            candidate.cancel()
+            return None
+        browser = snapshot.browser_ref()
+        authoritative_pack = browser.pack if browser is not None else None
+        if authoritative_pack is None:
+            candidate.cancel()
+            return None
+        state = _PersonaSharedVisualIdentityAuthoringState(
+            snapshot=snapshot,
+            candidate=candidate,
+            cancel_event=event,
+            authoritative_pack=authoritative_pack,
+        )
+        self._persona_shared_visual_identity_authoring = state
+        return state
+
+    async def _stage_persona_shared_visual_identity_replacement(
+        self, asset: VisualIdentityAssetMetadata, data: bytes
+    ) -> bool:
+        snapshot = self._persona_shared_visual_identity_author_snapshot()
+        browser = snapshot.browser_ref() if snapshot is not None else None
+        if snapshot is None or browser is None or asset not in browser.pack.assets:
+            return False
+        admission = self._begin_persona_shared_visual_identity_operation(snapshot)
+        if admission is None:
+            return False
+        task, event = admission
+        try:
+            state = await self._persona_shared_visual_identity_candidate(
+                snapshot, event
+            )
+            if state is None:
+                return False
+            await asyncio.to_thread(
+                state.candidate.stage_replacement,
+                asset.expression_key,
+                data,
+                source="upload",
+            )
+            if (
+                event.is_set()
+                or not await self._persona_shared_visual_identity_authority_is_current(
+                    snapshot
+                )
+            ):
+                self._discard_persona_shared_visual_identity_authoring()
+                return False
+            browser.set_staged_change(asset.expression_key, "replace")
+            return True
+        except (ValueError, VisualIdentityPublicationError):
+            return False
+        finally:
+            self._finish_persona_shared_visual_identity_operation(task, browser)
+
+    async def _stage_persona_shared_visual_identity_clear(
+        self, asset: VisualIdentityAssetMetadata
+    ) -> bool:
+        snapshot = self._persona_shared_visual_identity_author_snapshot()
+        browser = snapshot.browser_ref() if snapshot is not None else None
+        if snapshot is None or browser is None or asset not in browser.pack.assets:
+            return False
+        admission = self._begin_persona_shared_visual_identity_operation(snapshot)
+        if admission is None:
+            return False
+        task, event = admission
+        try:
+            state = await self._persona_shared_visual_identity_candidate(
+                snapshot, event
+            )
+            if state is None:
+                return False
+            await asyncio.to_thread(state.candidate.stage_clear, asset.expression_key)
+            if (
+                event.is_set()
+                or not await self._persona_shared_visual_identity_authority_is_current(
+                    snapshot
+                )
+            ):
+                self._discard_persona_shared_visual_identity_authoring()
+                return False
+            browser.set_staged_change(asset.expression_key, "clear")
+            return True
+        except (ValueError, VisualIdentityPublicationError):
+            return False
+        finally:
+            self._finish_persona_shared_visual_identity_operation(task, browser)
+
+    async def _save_persona_shared_visual_identity_pack(self) -> bool:
+        """Publish one Persona reaction candidate and reconcile exact consumers."""
+
+        state = self._persona_shared_visual_identity_authoring
+        if (
+            state is None
+            or not await self._persona_shared_visual_identity_authority_is_current(
+                state.snapshot
+            )
+        ):
+            return False
+        admission = self._begin_persona_shared_visual_identity_operation(state.snapshot)
+        if admission is None:
+            return False
+        task, _event = admission
+        browser = state.snapshot.browser_ref()
+        published = False
+        cancellation: asyncio.CancelledError | None = None
+        try:
+            if browser is not None:
+                browser.set_saving(True)
+            self._persona_shared_visual_identity_publication_inflight = True
+            outcome = await _drain_to_thread(
+                publish_visual_identity_candidate,
+                state.snapshot.db,
+                state.candidate,
+                user_data_dir=get_user_data_dir(),
+                task_name="personas-persona-reaction-pack-publish",
+            )
+            cancellation = outcome.cancellation
+            error = outcome.error
+            if isinstance(error, VisualIdentityPublicationError):
+                token = error.cleanup_candidate_relpath
+                if token is not None:
+                    cleanup = await _drain_to_thread(
+                        cleanup_visual_identity_publication_candidate,
+                        state.snapshot.db,
+                        token,
+                        user_data_dir=get_user_data_dir(),
+                        task_name="personas-persona-reaction-pack-cleanup",
+                    )
+                    if cancellation is None:
+                        cancellation = cleanup.cancellation
+            if outcome.error is not None or not isinstance(
+                outcome.value, VisualIdentityPublicationResult
+            ):
+                if await self._persona_shared_visual_identity_authority_is_current(
+                    state.snapshot
+                ):
+                    self._notify("Reaction pack was not saved.", "error")
+                return False
+            result = outcome.value
+            published = True
+            self._persona_shared_visual_identity_authoring = None
+
+            async def reconcile() -> None:
+                await self._invalidate_visual_identity_publication(result)
+                if not await self._persona_shared_visual_identity_authority_is_current(
+                    state.snapshot
+                ):
+                    return
+                editor = state.snapshot.editor_ref()
+                if editor is None:
+                    return
+                await self._configure_persona_shared_visual_identity(
+                    _PersonaSharedVisualIdentityLoadSnapshot(
+                        editor_ref=weakref.ref(editor),
+                        db=state.snapshot.db,
+                        local_service=state.snapshot.local_service,
+                        persona_id=state.snapshot.persona_id,
+                        persona_revision=state.snapshot.persona_revision,
+                        screen_generation=state.snapshot.screen_generation,
+                        editor_session_token=state.snapshot.editor_session_token,
+                    )
+                )
+
+            reconciled = await _drain_async(
+                reconcile(), task_name="personas-persona-reaction-pack-reconcile"
+            )
+            if cancellation is None:
+                cancellation = reconciled.cancellation
+            return True
+        finally:
+            self._persona_shared_visual_identity_publication_inflight = False
+            if browser is not None and browser.parent is not None:
+                if published:
+                    browser.reset_staged()
+                elif self._persona_shared_visual_identity_author_snapshot_is_current(
+                    state.snapshot
+                ):
+                    browser.set_saving(False)
+            self._finish_persona_shared_visual_identity_operation(task, browser)
+            if cancellation is not None:
+                raise cancellation
+
+    def _request_persona_shared_visual_identity_cancel(self) -> None:
+        """Signal in-flight draft work or discard an idle unpublished draft."""
+
+        if self._persona_shared_visual_identity_publication_inflight:
+            return
+        event = self._persona_shared_visual_identity_operation_event
+        task = self._persona_shared_visual_identity_operation_task
+        if event is not None and task is not None and not task.done():
+            event.set()
+            return
+        self._discard_persona_shared_visual_identity_authoring()
+        self._persona_shared_visual_identity_operation_event = None
 
     def _persona_visual_snapshot(
         self, editor: PersonaProfileEditorWidget | None = None
@@ -8420,6 +9114,23 @@ class PersonasScreen(BaseAppScreen):
         """Decode only the selected pack asset in a fenced screen worker."""
 
         message.stop()
+        if self.state.active_mode == "personas":
+            snapshot = self._persona_shared_visual_identity_author_snapshot()
+            browser = snapshot.browser_ref() if snapshot is not None else None
+            if (
+                snapshot is not None
+                and browser is not None
+                and browser.selected_asset == message.asset
+            ):
+                self.run_worker(
+                    self._render_persona_shared_visual_identity_preview(
+                        snapshot, message.asset
+                    ),
+                    group="personas-shared-visual-identity-preview",
+                    exit_on_error=False,
+                    exclusive=True,
+                )
+            return
         editor = self._editor_or_none()
         if editor is None:
             return
@@ -8455,6 +9166,89 @@ class PersonasScreen(BaseAppScreen):
             exit_on_error=False,
             exclusive=True,
         )
+
+    async def _render_persona_shared_visual_identity_preview(
+        self,
+        snapshot: _PersonaSharedVisualIdentityAuthorSnapshot,
+        asset: VisualIdentityAssetMetadata,
+    ) -> None:
+        """Resolve and paint one Persona reaction under complete authority."""
+
+        browser = snapshot.browser_ref()
+        if browser is None or snapshot.pack_version_id == 0:
+            if browser is not None:
+                browser.set_preview_unavailable(asset_id=asset.asset_id)
+            return
+        try:
+            resolution = await asyncio.to_thread(
+                resolve_persona_visual_identity,
+                snapshot.db,
+                snapshot.local_service,
+                persona_id=snapshot.persona_id,
+                requested_state="idle",
+                manual_expression_key=asset.expression_key,
+            )
+        except (TypeError, ValueError, OverflowError, sqlite3.Error):
+            browser.set_preview_unavailable(asset_id=asset.asset_id)
+            return
+        if (
+            browser.selected_asset != asset
+            or resolution.pack_id != snapshot.pack_id
+            or resolution.pack_version_id != snapshot.pack_version_id
+            or resolution.asset_id != asset.asset_id
+            or not resolution.image_bytes
+            or not await self._persona_shared_visual_identity_authority_is_current(
+                snapshot
+            )
+        ):
+            browser.set_preview_unavailable(asset_id=asset.asset_id)
+            return
+        from ...Chat.console_image_view import ConsoleImageRenderCache
+
+        if getattr(self, "_avatar_render_cache", None) is None:
+            self._avatar_render_cache = ConsoleImageRenderCache()
+        cache = self._avatar_render_cache
+        cache_key = (
+            "personas-persona-shared-visual-preview-"
+            f"{snapshot.screen_generation}-{hash(resolution.cache_identity)}"
+        )
+        try:
+            decoded = await asyncio.to_thread(
+                cache.prepare, cache_key, bytes(resolution.image_bytes)
+            )
+        except Exception:
+            decoded = False
+        if (
+            not decoded
+            or not await self._persona_shared_visual_identity_authority_is_current(
+                snapshot
+            )
+        ):
+            browser.set_preview_unavailable(asset_id=asset.asset_id)
+            return
+        latest = await asyncio.to_thread(
+            resolve_persona_visual_identity,
+            snapshot.db,
+            snapshot.local_service,
+            persona_id=snapshot.persona_id,
+            requested_state="idle",
+            manual_expression_key=asset.expression_key,
+        )
+        if (
+            latest.cache_identity != resolution.cache_identity
+            or latest.image_bytes != resolution.image_bytes
+            or browser.selected_asset != asset
+            or not await self._persona_shared_visual_identity_authority_is_current(
+                snapshot
+            )
+        ):
+            browser.set_preview_unavailable(asset_id=asset.asset_id)
+            return
+        renderable = self._build_avatar_pixels(cache, cache_key)
+        if renderable is None:
+            browser.set_preview_unavailable(asset_id=asset.asset_id)
+            return
+        browser.set_preview(renderable, asset_id=asset.asset_id)
 
     def _visual_identity_snapshot_is_current(
         self,
@@ -9438,8 +10232,13 @@ class PersonasScreen(BaseAppScreen):
         self, message: VisualIdentityPackClearRequested
     ) -> None:
         message.stop()
+        operation = (
+            self._stage_persona_shared_visual_identity_clear(message.asset)
+            if self.state.active_mode == "personas"
+            else self._stage_visual_identity_clear(message.asset)
+        )
         self.run_worker(
-            self._stage_visual_identity_clear(message.asset),
+            operation,
             group="personas-visual-identity-authoring",
             exit_on_error=False,
         )
@@ -9449,6 +10248,8 @@ class PersonasScreen(BaseAppScreen):
         self, message: VisualIdentityPackGenerateRequested
     ) -> None:
         message.stop()
+        if self.state.active_mode == "personas":
+            return
         self.run_worker(
             self._generate_visual_identity_assets((message.asset,)),
             group="personas-visual-identity-authoring",
@@ -9460,6 +10261,8 @@ class PersonasScreen(BaseAppScreen):
         self, message: VisualIdentityPackGenerateAllRequested
     ) -> None:
         message.stop()
+        if self.state.active_mode == "personas":
+            return
         self.run_worker(
             self._generate_visual_identity_pack_all(),
             group="personas-visual-identity-authoring",
@@ -9471,6 +10274,9 @@ class PersonasScreen(BaseAppScreen):
         self, message: VisualIdentityPackCancelRequested
     ) -> None:
         message.stop()
+        if self.state.active_mode == "personas":
+            self._request_persona_shared_visual_identity_cancel()
+            return
         self._request_visual_identity_generation_cancel()
 
     @on(VisualIdentityPackSaveRequested)
@@ -9478,6 +10284,13 @@ class PersonasScreen(BaseAppScreen):
         self, message: VisualIdentityPackSaveRequested
     ) -> None:
         message.stop()
+        if self.state.active_mode == "personas":
+            self.run_worker(
+                self._save_persona_shared_visual_identity_pack(),
+                group="personas-persona-shared-visual-identity-save",
+                exit_on_error=False,
+            )
+            return
         snapshot = self._visual_identity_author_snapshot()
         browser = snapshot.browser_ref() if snapshot is not None else None
         self.run_worker(
@@ -9495,13 +10308,15 @@ class PersonasScreen(BaseAppScreen):
             return
         self._io_dialog_active = True
         self.run_worker(
-            self._visual_identity_replace_dialog(message.asset),
+            self._visual_identity_replace_dialog(
+                message.asset, persona_mode=self.state.active_mode == "personas"
+            ),
             group="personas-io",
             exit_on_error=False,
         )
 
     async def _visual_identity_replace_dialog(
-        self, asset: VisualIdentityAssetMetadata
+        self, asset: VisualIdentityAssetMetadata, *, persona_mode: bool = False
     ) -> None:
         from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
 
@@ -9523,7 +10338,14 @@ class PersonasScreen(BaseAppScreen):
             if not path:
                 return
             data = await asyncio.to_thread(self._read_avatar_image_bytes, str(path))
-            await self._stage_visual_identity_replacement(asset, data, source="upload")
+            if persona_mode:
+                await self._stage_persona_shared_visual_identity_replacement(
+                    asset, data
+                )
+            else:
+                await self._stage_visual_identity_replacement(
+                    asset, data, source="upload"
+                )
         except (OSError, ValueError) as exc:
             logger.warning(
                 "Reaction replacement failed (category=image_read_failed, error_type={}).",
@@ -12744,8 +13566,18 @@ class PersonasScreen(BaseAppScreen):
         # cache and must go back to the DB).
         editor = self.query_one(PersonaProfileEditorWidget)
         editor.mark_saved(saved)
+        await self._drain_persona_shared_visual_identity_authoring()
+        self._persona_shared_visual_identity_authority = None
         await self._discard_persona_visual_authoring_async()
         self._persona_visual_generation += 1
+        shared_snapshot = self._persona_shared_visual_identity_snapshot(editor)
+        if shared_snapshot is not None:
+            self.run_worker(
+                self._configure_persona_shared_visual_identity(shared_snapshot),
+                group="personas-shared-visual-identity-load",
+                exit_on_error=False,
+                exclusive=True,
+            )
         visual_snapshot = self._persona_visual_snapshot(editor)
         if visual_snapshot is not None:
             self.run_worker(
@@ -12771,6 +13603,8 @@ class PersonasScreen(BaseAppScreen):
 
     def _finish_cancel_edit(self) -> None:
         self._discard_visual_identity_authoring()
+        self._discard_persona_shared_visual_identity_authoring()
+        self._persona_shared_visual_identity_authority = None
         self._character_editor_generation += 1
         # A picked image-gen style is scoped to the editor session that
         # picked it (fix round 1) - the session just ended.
@@ -12933,6 +13767,7 @@ class PersonasScreen(BaseAppScreen):
         if not (
             self.state.has_unsaved_changes
             or self._visual_identity_has_unsaved_authoring()
+            or self._persona_shared_visual_identity_has_unsaved_authoring()
             or self._persona_visual_has_unsaved_authoring()
         ):
             await continuation()
@@ -12956,6 +13791,7 @@ class PersonasScreen(BaseAppScreen):
             # (the continuation may move the selection without a row rebuild).
             self._set_active_row_unsaved(False)
             await self._drain_visual_identity_authoring()
+            await self._drain_persona_shared_visual_identity_authoring()
             await self._drain_persona_visual_authoring()
             await continuation()
             self._sync_title_and_console_actions()
@@ -12972,6 +13808,7 @@ class PersonasScreen(BaseAppScreen):
         if not (
             self.state.has_unsaved_changes
             or self._visual_identity_has_unsaved_authoring()
+            or self._persona_shared_visual_identity_has_unsaved_authoring()
             or self._persona_visual_has_unsaved_authoring()
         ):
             return True

@@ -129,3 +129,65 @@ def test_cache_hit_path_does_no_rebuild(counting_bootstrap):
     for _ in range(5):
         assert isinstance(config_module.load_settings(), dict)
     assert counting_bootstrap == [], "a cache hit must not rebuild"
+
+
+def test_config_write_waits_for_settings_rebuild_before_file_lock(tmp_path):
+    """A writer must not invert the settings-rebuild/config-file lock order."""
+    config_module.load_settings()
+    entered_write = threading.Event()
+    release_write = threading.Event()
+
+    def writer() -> None:
+        with config_module._config_write_lock(tmp_path / "config.toml"):
+            entered_write.set()
+            release_write.wait(timeout=5)
+
+    with config_module._SETTINGS_REBUILD_LOCK:
+        thread = threading.Thread(target=writer)
+        thread.start()
+        entered_while_rebuilding = entered_write.wait(timeout=0.25)
+        file_lock_was_free = config_module._CONFIG_FILE_LOCK.acquire(blocking=False)
+        if file_lock_was_free:
+            config_module._CONFIG_FILE_LOCK.release()
+        release_write.set()
+
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+    assert entered_while_rebuilding is False
+    assert file_lock_was_free is True
+
+
+def test_runtime_snapshot_takes_rebuild_lock_before_file_lock(monkeypatch):
+    """Runtime snapshots must follow the global rebuild -> file lock order."""
+    events: list[str] = []
+
+    class TrackingLock:
+        def __init__(self, name: str) -> None:
+            self._name = name
+            self._lock = threading.RLock()
+
+        def __enter__(self):
+            events.append(self._name)
+            self._lock.acquire()
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback) -> None:
+            del exc_type, exc_value, traceback
+            self._lock.release()
+
+    rebuild_lock = TrackingLock("rebuild")
+    file_lock = TrackingLock("file")
+    monkeypatch.setattr(config_module, "_SETTINGS_REBUILD_LOCK", rebuild_lock)
+    monkeypatch.setattr(config_module, "_CONFIG_FILE_LOCK", file_lock)
+
+    def load_settings(*, force_reload: bool = False) -> dict:
+        del force_reload
+        with config_module._settings_rebuild_lock():
+            return {"source": "test"}
+
+    monkeypatch.setattr(config_module, "load_settings", load_settings)
+
+    snapshot = config_module.get_runtime_config_snapshot(force_reload=True)
+
+    assert snapshot.values == {"source": "test"}
+    assert events[:2] == ["rebuild", "file"]

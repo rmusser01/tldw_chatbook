@@ -369,7 +369,7 @@ class ConsoleCharacterController:
         if actor_scope is None:
             await self._paint(request, None, name=name, manual_label=manual_label)
             return
-        character_id = int(actor_scope[2])
+        _session_id, actor_kind, actor_id = actor_scope
         resolution = await asyncio.to_thread(
             self._resolve_visual_identity,
             actor_scope,
@@ -391,7 +391,8 @@ class ConsoleCharacterController:
         mode = self._console_image_default_mode() or "pixels"
         key = "visual-identity:" + "|".join(identity)
         spec = {
-            "character_id": character_id,
+            "actor_kind": actor_kind,
+            "actor_id": actor_id,
             "state": state,
             "name": name,
             "mode": mode,
@@ -400,6 +401,8 @@ class ConsoleCharacterController:
             "manual_expression_key": manual_key,
             "resolution_cache_identity": identity,
         }
+        if actor_kind == "character":
+            spec["character_id"] = int(actor_id)
         try:
             if resolution.image_bytes:
                 ok = await asyncio.to_thread(cache.prepare, key, resolution.image_bytes)

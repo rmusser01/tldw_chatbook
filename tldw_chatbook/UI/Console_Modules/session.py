@@ -178,6 +178,10 @@ from ...Character_Chat.visual_identity import (
     VisualIdentityResolution,
     resolve_visual_identity,
 )
+from ...Character_Chat.persona_visual_identity import (
+    capture_local_persona_visual_identity,
+    resolve_persona_visual_identity,
+)
 from ...DB.VisualIdentity_DB import VisualIdentityRepository
 from ...config import coerce_bool_setting
 from ...Widgets.Console import (
@@ -425,11 +429,22 @@ def _resolve_visual_identity_for_db(
     scope: tuple[str, str, str],
     requested_state: str,
     manual_expression_key: str | None,
+    local_persona_service: object | None = None,
 ) -> VisualIdentityResolution | None:
     """Resolve one immutable preview request without retaining its screen."""
 
     _session_id, actor_kind, actor_id = scope
     try:
+        if actor_kind == "persona":
+            if local_persona_service is None:
+                return None
+            return resolve_persona_visual_identity(
+                db,
+                local_persona_service,
+                persona_id=actor_id,
+                requested_state=requested_state,
+                manual_expression_key=manual_expression_key,
+            )
         return resolve_visual_identity(
             db,
             actor_kind=actor_kind,
@@ -449,13 +464,30 @@ def _resolve_visual_identity_for_db(
 
 
 def _visual_identity_options_for_db(
-    db: Any, scope: tuple[str, str, str]
+    db: Any,
+    scope: tuple[str, str, str],
+    local_persona_service: object | None = None,
 ) -> tuple[ReactionOption, ...]:
     """Read metadata-only preview options without retaining its screen."""
 
     _session_id, actor_kind, actor_id = scope
     try:
+        persona_authority = None
+        if actor_kind == "persona":
+            if local_persona_service is None:
+                return ()
+            persona_authority = capture_local_persona_visual_identity(
+                local_persona_service, actor_id
+            )
+            if persona_authority is None:
+                return ()
         graph = VisualIdentityRepository(db).get_active_actor_pack(actor_kind, actor_id)
+        if (
+            actor_kind == "persona"
+            and capture_local_persona_visual_identity(local_persona_service, actor_id)
+            != persona_authority
+        ):
+            return ()
     except (SQLiteError, TypeError, ValueError, OverflowError) as exc:
         logger.debug(  # noqa: PLE1205 - Loguru uses brace-style arguments.
             "Console reaction inventory failed for actor_kind={} actor_id={} "
@@ -897,15 +929,26 @@ class ConsoleSessionController:
                 self._manual_reaction_overrides.pop(scope, None)
 
     def _current_visual_identity_actor_scope(self) -> tuple[str, str, str] | None:
-        """Return the active local character's session-and-actor scope."""
+        """Return the active local Character or Persona actor scope."""
 
         session = self._active_native_console_session()
         if session is None or session.runtime_backend != "local":
             return None
+        if session.assistant_kind == "persona":
+            actor_id = session.assistant_id
+            if type(actor_id) is not str or not actor_id or len(actor_id) > 200:
+                return None
+            return (session.id, "persona", actor_id)
         actor_id = session.local_character_id()
-        if actor_id is None:
-            return None
-        return (session.id, "character", str(actor_id))
+        return (
+            (session.id, "character", str(actor_id)) if actor_id is not None else None
+        )
+
+    def _local_persona_visual_identity_service(self) -> object | None:
+        """Return the current local Persona service without retaining it."""
+
+        scope = getattr(self.app_instance, "character_persona_scope_service", None)
+        return getattr(scope, "local_service", None)
 
     def _manual_reaction_label_for_current_actor(self) -> str | None:
         """Return a compact display label for the active manual reaction."""
@@ -952,7 +995,15 @@ class ConsoleSessionController:
         if db is None:
             return None
         return _resolve_visual_identity_for_db(
-            db, scope, requested_state, manual_expression_key
+            db,
+            scope,
+            requested_state,
+            manual_expression_key,
+            (
+                self._local_persona_visual_identity_service()
+                if scope[1] == "persona"
+                else None
+            ),
         )
 
     def _visual_identity_options(
@@ -963,7 +1014,15 @@ class ConsoleSessionController:
         db = self._visual_identity_db_accessor()
         if db is None:
             return ()
-        return _visual_identity_options_for_db(db, scope)
+        return _visual_identity_options_for_db(
+            db,
+            scope,
+            (
+                self._local_persona_visual_identity_service()
+                if scope[1] == "persona"
+                else None
+            ),
+        )
 
     async def _open_console_reaction_picker(self) -> None:
         """Query reaction metadata off-thread and open the owned picker."""
@@ -972,25 +1031,35 @@ class ConsoleSessionController:
         scope = context[0]
         if scope is None:
             self.app_instance.notify(
-                "Choose a local character before selecting a reaction.",
+                "Choose a local Character or Persona before selecting a reaction.",
                 severity="warning",
             )
             return
         db = self._visual_identity_db_accessor()
+        persona_service = (
+            self._local_persona_visual_identity_service()
+            if scope[1] == "persona"
+            else None
+        )
         if db is None:
             options = ()
         else:
-            options = await asyncio.to_thread(
-                _visual_identity_options_for_db, db, scope
+            args = (
+                (db, scope, persona_service) if scope[1] == "persona" else (db, scope)
             )
+            options = await asyncio.to_thread(_visual_identity_options_for_db, *args)
         if (
             self._visual_identity_db_accessor() is not db
             or self._visual_identity_request_context() != context
+            or (
+                scope[1] == "persona"
+                and self._local_persona_visual_identity_service() is not persona_service
+            )
         ):
             return
         if not options:
             self.app_instance.notify(
-                "This character has no reaction pack.", severity="information"
+                "This actor has no reaction pack.", severity="information"
             )
             return
         self.push_screen(
@@ -1066,10 +1135,20 @@ class ConsoleSessionController:
         db = self._visual_identity_db_accessor()
         if db is None:
             return False
-        options = await asyncio.to_thread(_visual_identity_options_for_db, db, scope)
+        persona_service = (
+            self._local_persona_visual_identity_service()
+            if scope[1] == "persona"
+            else None
+        )
+        args = (db, scope, persona_service) if scope[1] == "persona" else (db, scope)
+        options = await asyncio.to_thread(_visual_identity_options_for_db, *args)
         if (
             self._visual_identity_db_accessor() is not db
             or self._visual_identity_request_context() != context
+            or (
+                scope[1] == "persona"
+                and self._local_persona_visual_identity_service() is not persona_service
+            )
         ):
             return False
         if option.expression_key not in {
@@ -1108,12 +1187,18 @@ class ConsoleSessionController:
         db: object,
         expression_key: str,
         picker_ref: weakref.ReferenceType[ConsoleReactionPickerModal],
+        persona_service: object | None = None,
     ) -> bool:
         picker = picker_ref()
         return (
             generation == getattr(self, "_reaction_preview_generation", 0)
             and self._visual_identity_db_accessor() is db
             and self._visual_identity_request_context() == context
+            and (
+                context[0] is None
+                or context[0][1] != "persona"
+                or self._local_persona_visual_identity_service() is persona_service
+            )
             and picker is not None
             and picker.is_preview_current(expression_key)
         )
@@ -1139,6 +1224,11 @@ class ConsoleSessionController:
         context = self._visual_identity_request_context()
         scope, state, _manual = context
         db = self._visual_identity_db_accessor()
+        persona_service = (
+            self._local_persona_visual_identity_service()
+            if scope is not None and scope[1] == "persona"
+            else None
+        )
         if (
             scope is None
             or db is None
@@ -1148,12 +1238,16 @@ class ConsoleSessionController:
                 db=db,
                 expression_key=option.expression_key,
                 picker_ref=picker_ref,
+                persona_service=persona_service,
             )
         ):
             return
 
+        options_args = (
+            (db, scope, persona_service) if scope[1] == "persona" else (db, scope)
+        )
         options = await self._run_serialized_preview_sync(
-            _visual_identity_options_for_db, db, scope
+            _visual_identity_options_for_db, *options_args
         )
         if not self._preview_request_is_current(
             generation=generation,
@@ -1161,6 +1255,7 @@ class ConsoleSessionController:
             db=db,
             expression_key=option.expression_key,
             picker_ref=picker_ref,
+            persona_service=persona_service,
         ):
             return
         if option.expression_key not in {
@@ -1171,12 +1266,13 @@ class ConsoleSessionController:
             )
             return
 
+        resolution_args = (
+            (db, scope, state, option.expression_key, persona_service)
+            if scope[1] == "persona"
+            else (db, scope, state, option.expression_key)
+        )
         resolution = await self._run_serialized_preview_sync(
-            _resolve_visual_identity_for_db,
-            db,
-            scope,
-            state,
-            option.expression_key,
+            _resolve_visual_identity_for_db, *resolution_args
         )
         if not self._preview_request_is_current(
             generation=generation,
@@ -1184,6 +1280,7 @@ class ConsoleSessionController:
             db=db,
             expression_key=option.expression_key,
             picker_ref=picker_ref,
+            persona_service=persona_service,
         ):
             return
         if (
@@ -1208,6 +1305,7 @@ class ConsoleSessionController:
             db=db,
             expression_key=option.expression_key,
             picker_ref=picker_ref,
+            persona_service=persona_service,
         ):
             return
         if not prepared:
@@ -1225,14 +1323,11 @@ class ConsoleSessionController:
             db=db,
             expression_key=option.expression_key,
             picker_ref=picker_ref,
+            persona_service=persona_service,
         ):
             return
         current = await self._run_serialized_preview_sync(
-            _resolve_visual_identity_for_db,
-            db,
-            scope,
-            state,
-            option.expression_key,
+            _resolve_visual_identity_for_db, *resolution_args
         )
         if (
             not self._preview_request_is_current(
@@ -1241,6 +1336,7 @@ class ConsoleSessionController:
                 db=db,
                 expression_key=option.expression_key,
                 picker_ref=picker_ref,
+                persona_service=persona_service,
             )
             or current is None
             or current.cache_identity != identity

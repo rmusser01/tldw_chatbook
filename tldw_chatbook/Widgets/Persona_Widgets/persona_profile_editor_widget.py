@@ -8,6 +8,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.timer import Timer
+from textual.widget import Widget
 from textual.widgets import Button, Input, Label, Select, Static, Switch, TextArea
 
 from ...tldw_api.character_persona_schemas import PersonaMode
@@ -15,8 +16,10 @@ from .personas_pane_messages import (
     EditorContentChanged,
     PersonaProfileEditCancelled,
     PersonaProfileSaveRequested,
+    VisualIdentityPackMetadata,
 )
 from .personas_persona_visual_pack_widget import PersonasPersonaVisualPackWidget
+from .personas_visual_identity_pack_widget import PersonasVisualIdentityPackWidget
 
 #: The `PersonaMode` literal's values, for the editor's mode `Select` options.
 PERSONA_MODES: tuple[str, ...] = get_args(PersonaMode)
@@ -127,6 +130,15 @@ class PersonaProfileEditorWidget(Container):
             with Horizontal(classes="ds-field-row"):
                 yield Label("Enabled")
                 yield Switch(id="personas-editor-enabled", value=True)
+            yield Container(
+                Static("Loading Shared Visual Identity reactions…", markup=False),
+                id="personas-editor-shared-visual-identity-host",
+            )
+            yield Static(
+                "Persona Visual operational states",
+                id="personas-editor-persona-visual-title",
+                classes="destination-section",
+            )
             yield PersonasPersonaVisualPackWidget()
         # Validation stays outside the scroll body so it is always visible
         # next to Save (anchored-footer principle, same as the character editor).
@@ -208,12 +220,24 @@ class PersonaProfileEditorWidget(Container):
                 data.get("is_active", True)
             )
             visual = self.query_one(PersonasPersonaVisualPackWidget)
+            shared_host = self.query_one(
+                "#personas-editor-shared-visual-identity-host", Container
+            )
             if self._runtime_source == "server":
                 visual.set_availability("server")
+                self._set_shared_visual_identity_status(
+                    shared_host, "Save a local copy first"
+                )
             elif self._persona_id is None:
                 visual.set_availability("unsaved")
+                self._set_shared_visual_identity_status(
+                    shared_host, "Save the Persona first"
+                )
             else:
                 visual.set_availability("loading")
+                self._set_shared_visual_identity_status(
+                    shared_host, "Loading Shared Visual Identity reactions…"
+                )
             self.query_one("#personas-editor-validation", Static).update("")
             # Clear any stale per-field invalid marks left by a prior session:
             # if the reopened record's values are byte-identical to what's
@@ -231,6 +255,46 @@ class PersonaProfileEditorWidget(Container):
     def new_persona(self, *, runtime_source: str | None = None) -> None:
         """Clear the form for a new (unsaved) persona."""
         self.load_persona({}, runtime_source=runtime_source)
+
+    @staticmethod
+    def _set_shared_visual_identity_status(host: Container, copy: str) -> None:
+        """Replace or update the host's single path-free status line."""
+
+        children = tuple(host.children)
+        if len(children) == 1 and isinstance(children[0], Static):
+            children[0].update(copy)
+            return
+        host.remove_children()
+        host.mount(Static(copy, markup=False))
+
+    async def show_shared_visual_identity_pack(
+        self, pack: VisualIdentityPackMetadata
+    ) -> PersonasVisualIdentityPackWidget:
+        """Mount one local Persona Shared Visual Identity metadata browser."""
+
+        host = self.query_one("#personas-editor-shared-visual-identity-host", Container)
+        await host.remove_children()
+        browser = PersonasVisualIdentityPackWidget(pack, actor_kind="persona")
+        await host.mount(browser)
+        return browser
+
+    async def show_shared_visual_identity_unavailable(self) -> Static:
+        """Show one path-free non-authoring Shared Visual Identity state."""
+
+        host = self.query_one("#personas-editor-shared-visual-identity-host", Container)
+        await host.remove_children()
+        status = Static("Unavailable", markup=False)
+        await host.mount(status)
+        return status
+
+    async def discard_shared_visual_identity_pack(self, content: Widget | None) -> None:
+        """Remove only one stale Shared Visual Identity mount."""
+
+        if content is None:
+            return
+        host = self.query_one("#personas-editor-shared-visual-identity-host", Container)
+        if content.parent is host:
+            await content.remove()
 
     def mark_saved(self, record: Dict[str, Any]) -> None:
         """Re-baseline dirty state to a just-persisted persona (save-in-place).
