@@ -518,6 +518,43 @@ def test_disconnect_root_advances_newer_child_timestamps_during_clock_rollback(
     assert disconnected.updated_at == child_updated_at + 1
 
 
+def test_disconnect_root_rejects_maximum_child_version_and_rolls_back_atomically(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "child-version-overflow.sqlite3"
+    repository = NotesSyncStateRepository(database)
+    root = repository.create_candidate_root("root", "Root", "bidirectional")
+    first = repository.create_provisional_binding(root.root_id, "note-1", "one.md")
+    second = repository.create_provisional_binding(root.root_id, "note-2", "two.md")
+    with notes_sync_state_transaction(database, immediate=True) as connection:
+        connection.execute(
+            "UPDATE sync_bindings SET row_version = ? WHERE binding_id = ?",
+            (_MAX_SQLITE_INTEGER, second.binding_id),
+        )
+
+    with pytest.raises(NotesSyncStateError) as caught:
+        repository.disconnect_root(root.root_id, root.row_version)
+
+    assert str(_MAX_SQLITE_INTEGER) not in str(caught.value)
+    with notes_sync_state_transaction(database) as connection:
+        persisted_root = connection.execute(
+            "SELECT state, row_version FROM sync_roots WHERE root_id = ?",
+            (root.root_id,),
+        ).fetchone()
+        persisted_children = connection.execute(
+            """SELECT binding_id, state, row_version
+               FROM sync_bindings WHERE root_id = ? ORDER BY binding_id""",
+            (root.root_id,),
+        ).fetchall()
+    assert persisted_root == ("candidate", root.row_version)
+    assert persisted_children == sorted(
+        (
+            (first.binding_id, "candidate", first.row_version),
+            (second.binding_id, "candidate", _MAX_SQLITE_INTEGER),
+        )
+    )
+
+
 @pytest.mark.parametrize(
     ("column", "malformed"),
     (
@@ -1094,6 +1131,35 @@ def test_binding_projection_rejects_noncanonical_rows_without_disclosure(
     assert caught.value.__context__ is None
 
 
+def test_binding_projection_requires_exact_migration_id_length(tmp_path: Path) -> None:
+    database = tmp_path / "corrupt-binding-migration-id.sqlite3"
+    repository = NotesSyncStateRepository(database)
+    root = repository.create_candidate_root("root", "Root", "bidirectional")
+    binding = repository.create_provisional_binding(root.root_id, "note", "note.md")
+    malformed_migration_id = "private-short-migration"
+    with notes_sync_state_transaction(database, immediate=True) as connection:
+        connection.execute("PRAGMA ignore_check_constraints = ON")
+        connection.execute(
+            """INSERT INTO sync_migration_runs (
+                   migration_id, source_kind, source_revision_before,
+                   state, created_at, updated_at
+               ) VALUES (?, 'legacy_notes_sync_v1', ?, 'pending_recheck', 1, 1)""",
+            (malformed_migration_id, "a" * 64),
+        )
+        connection.execute(
+            """UPDATE sync_bindings
+               SET source_kind = 'legacy_notes_sync_v1',
+                   source_locator_digest = ?, source_migration_id = ?
+               WHERE binding_id = ?""",
+            ("b" * 64, malformed_migration_id, binding.binding_id),
+        )
+
+    with pytest.raises(SyncStateCorruptionError) as caught:
+        repository.get_binding(binding.binding_id)
+    assert malformed_migration_id not in str(caught.value)
+    assert caught.value.__context__ is None
+
+
 def test_live_note_ownership_is_global_across_candidate_and_paused_roots(
     tmp_path: Path,
 ) -> None:
@@ -1204,6 +1270,45 @@ def test_mark_binding_needs_attention_is_versioned_and_redacted(tmp_path: Path) 
         repository.mark_binding_needs_attention(
             binding.binding_id, binding.row_version, "stale"
         )
+
+
+@pytest.mark.parametrize("operation", ("update", "attention", "disconnect"))
+def test_binding_mutations_reject_unadvanceable_maximum_version_atomically(
+    tmp_path: Path,
+    operation: str,
+) -> None:
+    database = tmp_path / f"binding-version-{operation}.sqlite3"
+    repository = NotesSyncStateRepository(database)
+    root = repository.create_candidate_root("root", "Root", "bidirectional")
+    binding = repository.create_provisional_binding(root.root_id, "note", "note.md")
+    with notes_sync_state_transaction(database, immediate=True) as connection:
+        connection.execute(
+            "UPDATE sync_bindings SET row_version = ? WHERE binding_id = ?",
+            (_MAX_SQLITE_INTEGER, binding.binding_id),
+        )
+
+    with pytest.raises(NotesSyncStateError) as caught:
+        if operation == "update":
+            repository.update_provisional_binding(
+                binding.binding_id,
+                _MAX_SQLITE_INTEGER,
+                lexical_relative_path="changed.md",
+            )
+        elif operation == "attention":
+            repository.mark_binding_needs_attention(
+                binding.binding_id, _MAX_SQLITE_INTEGER, "review"
+            )
+        else:
+            repository.disconnect_binding(binding.binding_id, _MAX_SQLITE_INTEGER)
+
+    assert type(caught.value) is NotesSyncStateError
+    with notes_sync_state_transaction(database) as connection:
+        persisted = connection.execute(
+            """SELECT lexical_relative_path, state, row_version
+               FROM sync_bindings WHERE binding_id = ?""",
+            (binding.binding_id,),
+        ).fetchone()
+    assert persisted == ("note.md", "candidate", _MAX_SQLITE_INTEGER)
 
 
 def test_binding_writes_reject_missing_or_disconnected_parent(tmp_path: Path) -> None:

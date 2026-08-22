@@ -419,7 +419,7 @@ def _binding_record(row: tuple[object, ...]) -> SyncBindingRecord:
             or type(source_locator_digest) is not str
             or _LOWER_DIGEST_PATTERN.fullmatch(source_locator_digest) is None
             or type(source_migration_id) is not str
-            or not 1 <= len(source_migration_id) <= _MAX_ID_LENGTH
+            or len(source_migration_id) != 36
             or "\x00" in source_migration_id
         ):
             raise ValueError
@@ -488,6 +488,11 @@ def _require_binding(
     if record is None:
         raise NotesSyncStateError("Sync binding was not found.")
     return record
+
+
+def _require_advanceable_binding(record: SyncBindingRecord) -> None:
+    if record.row_version >= _MAX_SQLITE_INTEGER:
+        raise NotesSyncStateError("A private sync-binding version cannot be advanced.")
 
 
 def _ensure_root_children_consistent(
@@ -776,6 +781,7 @@ class NotesSyncStateRepository:
             current = _require_binding(connection, validated_binding_id)
             if current.state is SyncBindingState.DISCONNECTED:
                 raise SyncStateConflictError("A disconnected sync binding is terminal.")
+            _require_advanceable_binding(current)
             _require_live_parent(connection, current.root_id, existing_child=True)
             if validated_key is not None:
                 owner = connection.execute(
@@ -825,6 +831,7 @@ class NotesSyncStateRepository:
             current = _require_binding(connection, validated_binding_id)
             if current.state is SyncBindingState.DISCONNECTED:
                 raise SyncStateConflictError("A disconnected sync binding is terminal.")
+            _require_advanceable_binding(current)
             _require_live_parent(connection, current.root_id, existing_child=True)
             changed = _execute_mutation(
                 connection,
@@ -858,6 +865,7 @@ class NotesSyncStateRepository:
             current = _require_binding(connection, validated_binding_id)
             if current.state is SyncBindingState.DISCONNECTED:
                 raise SyncStateConflictError("A disconnected sync binding is terminal.")
+            _require_advanceable_binding(current)
             _require_live_parent(connection, current.root_id, existing_child=True)
             changed = _execute_mutation(
                 connection,
@@ -971,6 +979,25 @@ class NotesSyncStateRepository:
             current = _require_root(connection, validated_root_id)
             if current.state is SyncRootState.DISCONNECTED:
                 raise SyncStateConflictError("A disconnected sync root is terminal.")
+            invalid_child_version = connection.execute(
+                """SELECT 1 FROM sync_bindings
+                   WHERE root_id = ? AND state <> 'disconnected'
+                     AND (typeof(row_version) <> 'integer' OR row_version <= 0)
+                   LIMIT 1""",
+                (validated_root_id,),
+            ).fetchone()
+            if invalid_child_version is not None:
+                raise SyncStateCorruptionError(
+                    "A private child version is incompatible with canonical v2."
+                )
+            unadvanceable_child = connection.execute(
+                """SELECT 1 FROM sync_bindings
+                   WHERE root_id = ? AND state <> 'disconnected'
+                     AND row_version >= ? LIMIT 1""",
+                (validated_root_id, _MAX_SQLITE_INTEGER),
+            ).fetchone()
+            if unadvanceable_child is not None:
+                raise NotesSyncStateError("A private child version cannot be advanced.")
             child_updated_at = connection.execute(
                 """SELECT COALESCE(MAX(updated_at), 0)
                    FROM sync_bindings
