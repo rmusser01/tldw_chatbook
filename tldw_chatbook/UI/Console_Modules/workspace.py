@@ -1675,9 +1675,7 @@ class ConsoleWorkspaceController:
             self.app_instance.notify(message, severity="warning")
         if not result.make_active:
             self._sync_console_workspace_context()
-            self.app_instance.notify(
-                f"Created {result.name}.", severity="information"
-            )
+            self.app_instance.notify(f"Created {result.name}.", severity="information")
             if result.project_skills:
                 maybe_offer_project_skills_import(
                     self.app_instance, result.project_skills
@@ -1710,9 +1708,7 @@ class ConsoleWorkspaceController:
             severity="information",
         )
         if result.project_skills:
-            maybe_offer_project_skills_import(
-                self.app_instance, result.project_skills
-            )
+            maybe_offer_project_skills_import(self.app_instance, result.project_skills)
 
     # -- Workspace RAG-scope picker ------------------------------------------
 
