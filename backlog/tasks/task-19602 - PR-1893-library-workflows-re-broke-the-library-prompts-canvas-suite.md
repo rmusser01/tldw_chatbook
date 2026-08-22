@@ -164,3 +164,29 @@ Remaining-16 diagnostic map for the next tranche:
   at these sizes?) and #library-prompts-export (button gated or moved).
 - app_config on LibraryHarness WorkerFailed x1 + file_notes x3
   (source-choices keyboard, database-files return, False-is-True x2).
+
+## Fix progress tranche 4 (2026-08-21/22 night, PR #1917 merged)
+
+11 more cleared; unique failing tests across both suites 16 -> 5. The
+unlock: the pytest sandbox factory builds a NEW Library profile
+(lifecycle UNKNOWN -> 2-row landing rail) while bare-probe runs read
+the real config's graduated lifecycle -- which is why the rail-row
+strand never reproduced outside pytest. Legacy-profile
+_build_test_app wrappers installed in test_library_prompts_canvas.py
+and test_library_file_notes_workspace.py (mirroring
+test_library_shell.py). Plus: export-refusal empty-CTA seeding, five
+notify count-asserts relaxed to latest-call (4aa59c20a graduation
+toast precedes legitimately), discard clean-state aligned (always
+enabled under a24a2202f).
+
+Remaining 5, with root-cause evidence:
+- copy-lane x2: a24a2202f editor republishes block state on a
+  system-lane change and reverts a programmatic user-lane .text write.
+- db-files switch: workspace stuck in save_state=conflict AFTER the
+  test's confirmed reload + successful flush (spy:
+  _flush_active_file_notes sees conflict and vetoes every return) --
+  needs the conflict-clear path after confirmed reload root-caused;
+  possibly a real product bug.
+- source-choices keyboard (sizes 1/2): keyboard switch path.
+- cancelled_prompt_import: order-dependent with the trio fix's
+  drain semantics (18611 notes).
