@@ -264,6 +264,74 @@ def _sections(rail: ConsoleLeftRail) -> Iterator[ConsoleBoundedSection]:
     return iter(rail.query("#console-left-rail-body ConsoleBoundedSection"))
 
 
+def _assert_compositor_hit(screen, widget) -> None:
+    """Assert one positive physical region is owned at its center hit point."""
+
+    assert widget.region.width > 0 and widget.region.height > 0, (
+        widget.id,
+        widget.region,
+    )
+    point = (
+        widget.region.x + widget.region.width // 2,
+        widget.region.y + (widget.region.height - 1) // 2,
+    )
+    hit = screen.get_widget_at(*point)[0]
+    assert hit is widget or widget in hit.ancestors, (widget.id, point, hit)
+
+
+def _assert_context_direct_sections_are_compositor_contained(
+    screen,
+    rail: ConsoleLeftRail,
+) -> None:
+    """Prove every direct Context section owns distinct painted geometry."""
+
+    outer = rail.query_one("#console-left-rail-body")
+    assert rail.region.contains_region(outer.region)
+    handles = (
+        screen.query_one("#console-context-rail-handle"),
+        screen.query_one("#console-inspector-rail-handle"),
+    )
+    headers = [
+        rail.query_one(f"#console-rail-section-header-{section_id}")
+        for section_id in SECTION_IDS
+    ]
+    bounded_sections = [
+        rail.query_one(f"#console-bounded-section-{section_id}", ConsoleBoundedSection)
+        for section_id in SECTION_IDS
+    ]
+
+    for index, (header, bounded) in enumerate(zip(headers, bounded_sections)):
+        assert header.parent is outer
+        assert bounded.parent is outer
+        for widget in (header, bounded):
+            assert outer.content_region.contains_region(widget.region), (
+                widget.id,
+                widget.region,
+                outer.content_region,
+            )
+            assert rail.region.contains_region(widget.region)
+            _assert_compositor_hit(screen, widget)
+
+        assert not header.region.overlaps(bounded.region)
+        assert bounded.region.contains_region(bounded.viewport.region)
+        _assert_compositor_hit(screen, bounded.viewport)
+        if bounded.hint.display:
+            hint = bounded.hint
+            assert bounded.region.contains_region(hint.region)
+            assert outer.content_region.contains_region(hint.region)
+            assert rail.region.contains_region(hint.region)
+            assert not bounded.viewport.region.overlaps(hint.region)
+            _assert_compositor_hit(screen, hint)
+            for handle in handles:
+                assert not hint.region.overlaps(handle.region)
+
+        if index + 1 < len(headers):
+            following_header = headers[index + 1]
+            assert not bounded.region.overlaps(following_header.region)
+            if bounded.hint.display:
+                assert not bounded.hint.region.overlaps(following_header.region)
+
+
 async def _open_all_production_context_sections(host, pilot) -> ConsoleLeftRail:
     screen = host.screen_stack[-1]
     await _wait_for_selector(screen, pilot, "#console-left-rail")
@@ -359,6 +427,7 @@ async def test_bounded_rail_shell_regions_are_compositor_contained(
             context.query_one(f"#console-rail-section-header-{section_id}").open
             for section_id in SECTION_IDS
         )
+        _assert_context_direct_sections_are_compositor_contained(screen, context)
         assert tray.region.contains_region(sources.region)
         assert sources.region.contains_region(sources.viewport.region)
         assert sources.region.contains_region(sources.hint.region)
