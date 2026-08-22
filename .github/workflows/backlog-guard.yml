@@ -4,11 +4,19 @@ on:
   pull_request:
     paths:
       - 'backlog/tasks/**'
+      # Archiving or completing a file moves it between these directories
+      # without freeing its id, so a move alone can create a collision.
+      - 'backlog/completed/**'
+      - 'backlog/archive/tasks/**'
       - 'scripts/check_backlog_task_ids.py'
   push:
     branches: [dev, main]
     paths:
       - 'backlog/tasks/**'
+      # Archiving or completing a file moves it between these directories
+      # without freeing its id, so a move alone can create a collision.
+      - 'backlog/completed/**'
+      - 'backlog/archive/tasks/**'
       - 'scripts/check_backlog_task_ids.py'
 
 # One run per workflow per ref: a new push supersedes the previous run instead of
