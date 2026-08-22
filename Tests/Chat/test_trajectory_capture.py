@@ -49,6 +49,9 @@ class _TraceGateway:
     async def stream_chat(self, _resolution, _messages, **_kwargs):
         if self.outcome == "error":
             raise RuntimeError("provider secret must not persist")
+        if self.outcome == "partial_error":
+            yield "partial"
+            raise RuntimeError("provider secret must not persist")
         if self.outcome == "success":
             yield "done"
 
@@ -231,6 +234,21 @@ def test_streamed_assistant_row_carries_timing(tmp_path):
             "model_status": "completed",
             "trace_version": 2,
         }
+        snapshot = derive_trajectory(
+            db.get_messages_for_conversation(conversation_id), {}, rows, [], []
+        )
+        records = [record for turn in snapshot.turns for record in turn.records]
+        assert [record.kind for record in records] == [
+            "user",
+            "model_request_started",
+            "model_first_token",
+            "model_response_completed",
+            "assistant",
+        ]
+        assert records[-1].parent_event_id == (
+            f"model-timing:{completed.persisted_message_id}:completed"
+        )
+        assert records[-1].observed_at == pytest.approx(row.completed_at)
     finally:
         db.close()
 
@@ -537,6 +555,81 @@ async def test_regenerate_replacement_identity_resolves_after_persistence(tmp_pa
         db.close()
 
 
+@pytest.mark.asyncio
+async def test_regenerate_partial_error_records_failed_replacement(tmp_path):
+    db, store = _store_with_db(tmp_path)
+    try:
+        session = store.ensure_session(title="Trace")
+        store.persist_session_if_needed(session.id)
+        store.append_message(
+            session.id, role=ConsoleMessageRole.USER, content="question", persist=True
+        )
+        original = store.append_message(
+            session.id, role=ConsoleMessageRole.ASSISTANT, content="answer", persist=True
+        )
+        controller = ConsoleChatController(
+            store=store, provider_gateway=_TraceGateway("partial_error")
+        )
+
+        result = await controller.regenerate_message(original.id)
+        assert result.accepted
+        siblings, _index, _count = store.siblings_at(original.id)
+        sibling = next(item for item in siblings if item.id != original.id)
+        assert sibling.status == "failed"
+        conversation_id = next(
+            item.persisted_conversation_id
+            for item in store.sessions()
+            if item.id == session.id
+        )
+        row = next(
+            row
+            for row in db.get_trajectory_rows(conversation_id)
+            if row.event_kind == "message_regenerated"
+        )
+        assert json.loads(row.payload_json)["status"] == "failed"
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_regenerate_cancel_records_stopped_replacement(tmp_path):
+    db, store = _store_with_db(tmp_path)
+    gateway = _CancelGateway()
+    try:
+        session = store.ensure_session(title="Trace")
+        store.persist_session_if_needed(session.id)
+        store.append_message(
+            session.id, role=ConsoleMessageRole.USER, content="question", persist=True
+        )
+        original = store.append_message(
+            session.id, role=ConsoleMessageRole.ASSISTANT, content="answer", persist=True
+        )
+        controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+        task = asyncio.create_task(controller.regenerate_message(original.id))
+        await asyncio.wait_for(gateway.started.wait(), timeout=1)
+        await asyncio.sleep(0)
+        assert controller.stop_active_run() is True
+        result = await asyncio.wait_for(task, timeout=1)
+        assert result.accepted
+        siblings, _index, _count = store.siblings_at(original.id)
+        sibling = next(item for item in siblings if item.id != original.id)
+        assert sibling.status == "stopped"
+        conversation_id = next(
+            item.persisted_conversation_id
+            for item in store.sessions()
+            if item.id == session.id
+        )
+        row = next(
+            row
+            for row in db.get_trajectory_rows(conversation_id)
+            if row.event_kind == "message_regenerated"
+        )
+        assert json.loads(row.payload_json)["status"] == "stopped"
+    finally:
+        db.close()
+
+
 def test_tool_result_uses_bounded_safe_summary_with_truncated_marker(tmp_path):
     db, store = _store_with_db(tmp_path)
     try:
@@ -839,6 +932,50 @@ def test_capture_failed_identity_deduplicates_after_restart_and_separates_source
         assert all(event_id.startswith("capture-failed:") for event_id in event_ids)
     finally:
         reopened.close()
+
+
+def test_capture_failed_hydrates_durable_ids_once_for_many_failures() -> None:
+    class FakeDB:
+        def __init__(self) -> None:
+            self.read_count = 0
+            self.rows = [
+                SimpleNamespace(event_kind="model", payload_json=None)
+                for _ in range(5_000)
+            ]
+
+        def get_trajectory_rows(self, _conversation_id):
+            self.read_count += 1
+            return list(self.rows)
+
+    db = FakeDB()
+
+    def writer(rows):
+        if [row.event_kind for row in rows] != ["capture_failed"]:
+            return False
+        db.rows.append(
+            SimpleNamespace(
+                event_kind="capture_failed", payload_json=rows[0].payload_json
+            )
+        )
+        return True
+
+    store = ConsoleChatStore(
+        persistence=SimpleNamespace(db=db, write_trajectory_rows=writer)
+    )
+    for index in range(25):
+        source = TrajectoryRowWrite(
+            message_id="message-1",
+            conversation_id="conversation-1",
+            turn_id="turn-1",
+            seq=None,
+            event_kind="model_error",
+            payload_json=json.dumps({"event_id": f"source:{index}"}),
+        )
+        assert not store.write_trajectory_rows([source])
+
+    assert db.read_count == 1
+    diagnostics = [row for row in db.rows if row.event_kind == "capture_failed"]
+    assert len(diagnostics) == 25
 
 
 def test_trajectory_write_failure_never_fails_the_turn(tmp_path):

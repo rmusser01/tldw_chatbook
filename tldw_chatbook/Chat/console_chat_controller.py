@@ -7170,12 +7170,23 @@ class ConsoleChatController:
             and persisted_sibling.persisted_message_id is not None
             else None
         )
+        replacement_status = (
+            persisted_sibling.status if persisted_sibling is not None else "incomplete"
+        )
+        trace_status = (
+            "completed"
+            if replacement_event_id is not None and replacement_status == "complete"
+            else replacement_status
+            if replacement_event_id is not None
+            and replacement_status in {"failed", "stopped"}
+            else "incomplete"
+        )
         self.store.record_trace_event(
             session_id,
             anchor_message_id=message_id,
             event_kind="message_regenerated",
             summary="Assistant response regenerated",
-            status="completed" if replacement_event_id is not None else "incomplete",
+            status=trace_status,
             source_event_id=(
                 f"message:{message.persisted_message_id}"
                 if message.persisted_message_id is not None

@@ -233,8 +233,14 @@ def test_lifecycle_capture_failure_is_contained_and_diagnosed_when_writable(
         )
 
         assert outcome.status == "done"
-        kinds = [step["kind"] for step in db.get_run(run_id)["steps"]]
+        durable_steps = db.get_run(run_id)["steps"]
+        kinds = [step["kind"] for step in durable_steps]
         assert ("capture_failed" in kinds) is (not diagnostic_fails)
+        if not diagnostic_fails:
+            diagnostic = next(
+                step for step in durable_steps if step["kind"] == "capture_failed"
+            )
+            assert diagnostic["field_states"]["payload"] == "capture_failed"
         assert "SECRET_CAPTURE_FAILURE" not in repr(db.get_run(run_id))
     finally:
         db.close()
@@ -519,5 +525,50 @@ def test_agent_service_actual_request_assembly_captures_safe_context_chain(tmp_p
         injected_event_id = f"agent-step:{run_id}:{injected['index']}"
         assert model_started.parent_event_id == injected_event_id
         assert model_started.source_event_id == injected_event_id
+    finally:
+        db.close()
+
+
+def test_agent_service_post_response_cancel_persists_causal_observation(tmp_path) -> None:
+    db = AgentRunsDB(tmp_path / "agent-runs.db", client_id="test")
+    flags = iter((False, True))
+    try:
+        service = AgentService(
+            db,
+            ToolCatalogRegistry(),
+            chat_call=lambda **_kwargs: {"choices": [{"message": {"content": "done"}}]},
+            review_tool_calls=lambda _calls, _run_id: {},
+        )
+        run_id, outcome = service.run_turn(
+            conversation_id="conv-1",
+            messages=[{"role": "user", "content": "go"}],
+            config=AgentConfig(model="model", system_prompt="system", allowed_tools=()),
+            api_endpoint="openai",
+            should_cancel=lambda: next(flags, True),
+        )
+
+        assert outcome.status == "cancelled"
+        durable = db.get_run(run_id)["steps"]
+        request = next(step for step in durable if step["kind"] == "model_request_started")
+        completed = next(
+            step for step in durable if step["kind"] == "model_response_completed"
+        )
+        cancelled = next(step for step in durable if step["kind"] == "model_cancelled")
+        assert cancelled["parent_event_id"] == f"agent-step:{run_id}:{completed['index']}"
+        assert cancelled["source_event_id"] == f"agent-step:{run_id}:{request['index']}"
+        snapshot = derive_trajectory(
+            [],
+            {},
+            [],
+            [],
+            [],
+            agent_runs=[db.get_run(run_id)],
+            agent_steps=[
+                {**step, "run_id": run_id, "conversation_id": "conv-1"}
+                for step in durable
+            ],
+        )
+        kinds = [record.kind for turn in snapshot.turns for record in turn.records]
+        assert kinds.index("model_response_completed") < kinds.index("model_cancelled")
     finally:
         db.close()

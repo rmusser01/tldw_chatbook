@@ -87,11 +87,41 @@ _LOCAL_PATH_RE = re.compile(
     r"|(?<![A-Za-z0-9_])(?:[A-Za-z]:[\\/]|\\\\[^\\/\s]+[\\/][^\\/\s]+)"
     r"[^\s\"'<>]*"
 )
+_HTTP_URL_RE = re.compile(r"https?://[^\s\"'<>]+", re.IGNORECASE)
+_HTTP_METHODS = ("GET ", "POST ", "PUT ", "PATCH ", "DELETE ", "HEAD ", "OPTIONS ")
+_COMMON_POSIX_ROOTS = frozenset(
+    {"bin", "dev", "etc", "home", "opt", "private", "root", "tmp", "usr", "var"}
+)
 
 
 def contains_local_path(value: str) -> bool:
-    """Return whether text contains a local absolute or home-relative path."""
-    return bool(_LOCAL_PATH_RE.search(value))
+    """Return whether text contains a local path or file URI."""
+    if "file://" in value.lower():
+        return True
+    searchable_lines: list[str] = []
+    for line in value.splitlines() or [value]:
+        stripped = line.lstrip()
+        if any(stripped.upper().startswith(method) for method in _HTTP_METHODS):
+            continue
+        if "File " in line and ", line " in line:
+            quoted = line.split("File ", 1)[1].split(", line ", 1)[0].strip(" \"'")
+            if "/" in quoted or "\\" in quoted:
+                return True
+        searchable_lines.append(_HTTP_URL_RE.sub("", line))
+    searchable = "\n".join(searchable_lines)
+    for match in _LOCAL_PATH_RE.finditer(searchable):
+        candidate = match.group(0)
+        if candidate.startswith(("~/", "\\\\")):
+            return True
+        if len(candidate) >= 3 and candidate[1:3] in {":\\", ":/"}:
+            return True
+        if candidate.startswith("/"):
+            parts = [part for part in candidate.split("/") if part]
+            if len(parts) > 1 or (
+                parts and (parts[0] in _COMMON_POSIX_ROOTS or "." in parts[0])
+            ):
+                return True
+    return False
 
 
 @dataclass(frozen=True)
@@ -592,6 +622,14 @@ def _message_record(
         _optional_text(_field(row, "conversation_id")) or m.conversation_id
     )
     is_system = kind == KIND_SYSTEM
+    metadata = _parse_payload(_field(row, "payload_json")) or {}
+    completion_observed_at = _parse_timestamp(_field(row, "completed_at"))
+    completed_v2_assistant = (
+        kind == KIND_ASSISTANT
+        and metadata.get("trace_version") == 2
+        and metadata.get("model_status") == "completed"
+        and completion_observed_at is not None
+    )
     return TrajectoryRecord(
         seq=0,  # assigned by the final pass
         kind=kind,
@@ -616,10 +654,16 @@ def _message_record(
         status=_optional_text(_field(row, "status")) or "complete",
         actor_kind=kind,
         actor_id=kind,
-        parent_event_id=f"message:{m.parent}" if m.parent else None,
+        parent_event_id=(
+            f"model-timing:{m.mid}:completed"
+            if completed_v2_assistant
+            else f"message:{m.parent}"
+            if m.parent
+            else None
+        ),
         source_event_id=_optional_text(_field(row, "source_event_id")),
         replacement_event_id=_optional_text(_field(row, "replacement_event_id")),
-        observed_at=m.ts,
+        observed_at=completion_observed_at if completed_v2_assistant else m.ts,
         field_states=_field_state_map(
             row,
             default={"content_preview": "omitted" if is_system else "observed"},

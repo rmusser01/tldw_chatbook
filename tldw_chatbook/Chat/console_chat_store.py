@@ -855,6 +855,7 @@ class ConsoleChatStore:
         self._pending_trajectory_tool_rows: dict[str, list[dict[str, Any]]] = {}
         self._pending_trajectory_event_rows: dict[str, list[dict[str, Any]]] = {}
         self._trajectory_capture_failure_keys: set[str] = set()
+        self._trajectory_capture_failure_hydrated: set[str] = set()
 
     def subscribe_message_completed(
         self,
@@ -4555,22 +4556,30 @@ class ConsoleChatStore:
         event_id = f"capture-failed:{digest.removeprefix('sha256:')}"
         if event_id in self._trajectory_capture_failure_keys:
             return
-        try:
-            db = getattr(self.persistence, "db", None)
-            reader = getattr(db, "get_trajectory_rows", None)
-            if callable(reader):
-                for existing in reader(first.conversation_id):
-                    if existing.event_kind != "capture_failed":
-                        continue
-                    try:
-                        existing_payload = json.loads(existing.payload_json or "{}")
-                    except (TypeError, ValueError):
-                        continue
-                    if existing_payload.get("event_id") == event_id:
-                        self._trajectory_capture_failure_keys.add(event_id)
-                        return
-        except Exception:  # noqa: BLE001 — diagnostic lookup is best-effort
-            logger.warning("trajectory_capture_diagnostic_lookup_failed")
+        if first.conversation_id not in self._trajectory_capture_failure_hydrated:
+            try:
+                db = getattr(self.persistence, "db", None)
+                reader = getattr(db, "get_trajectory_rows", None)
+                if callable(reader):
+                    for existing in reader(first.conversation_id):
+                        if existing.event_kind != "capture_failed":
+                            continue
+                        try:
+                            existing_payload = json.loads(
+                                existing.payload_json or "{}"
+                            )
+                        except (TypeError, ValueError):
+                            continue
+                        existing_id = existing_payload.get("event_id")
+                        if isinstance(existing_id, str):
+                            self._trajectory_capture_failure_keys.add(existing_id)
+                    self._trajectory_capture_failure_hydrated.add(
+                        first.conversation_id
+                    )
+            except Exception:  # noqa: BLE001 — diagnostic lookup is best-effort
+                logger.warning("trajectory_capture_diagnostic_lookup_failed")
+        if event_id in self._trajectory_capture_failure_keys:
+            return
         self._trajectory_capture_failure_keys.add(event_id)
         diagnostic = TrajectoryRowWrite(
             message_id=first.message_id,

@@ -7,8 +7,6 @@ import re
 import pytest
 
 from tldw_chatbook.Agents.agent_models import (
-    AGENT_KIND_PRIMARY,
-    AGENT_KIND_SUBAGENT,
     RUN_DONE,
     RUNTIME_TOOL_NAMES,
     SEARCH_RUN_LOG_TOOL_NAME,
@@ -276,6 +274,14 @@ def test_real_closure_recovers_full_content_beyond_both_caps(tmp_path, monkeypat
     marker = "END_MARKER_7f3a9c"
     big_content = "A" * 10_000 + marker + "C" * 40_000
     (sandbox / "big.txt").write_text(big_content, encoding="utf-8")
+
+    async def safe_read_file(_self, **_kwargs):
+        # This test exercises lossless recovery for safe content. Real
+        # read_file results include an absolute path and are intentionally
+        # omitted from the durable run log at the privacy boundary.
+        return {"content": big_content, "size_bytes": len(big_content)}
+
+    monkeypatch.setattr(file_tools.ReadFileTool, "execute", safe_read_file)
 
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     reg = ToolCatalogRegistry()

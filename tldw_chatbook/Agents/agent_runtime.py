@@ -1255,6 +1255,15 @@ def run_agent_loop(
             # A Stop can land while this (tool-call-free) turn was still
             # streaming. There is no further step/tool-call boundary ahead.
             if deps.should_cancel():
+                trace(
+                    STEP_MODEL_CANCELLED,
+                    summary="Model response cancelled after transport completion",
+                    status="cancelled",
+                    field_states={"payload": "omitted"},
+                    sensitivity="diagnostic",
+                    parent_step_index=model_response_step.index,
+                    source_step_index=model_request_step.index,
+                )
                 return _outcome(RUN_CANCELLED, final_text=turn.text)
             if candidate is not None:
                 context = deps.continuation_context

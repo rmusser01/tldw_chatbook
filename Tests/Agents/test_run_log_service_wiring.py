@@ -258,6 +258,50 @@ def test_on_record_returns_the_assigned_record_number(wired, monkeypatch):
     )
 
 
+def test_real_run_log_omits_sensitive_tool_args_and_results(wired, monkeypatch):
+    db, registry, root = wired
+    captured: dict = {}
+    real_run_agent_loop = agent_service_module.run_agent_loop
+
+    def spy_run_agent_loop(config, messages, active, deps):
+        captured["deps"] = deps
+        return real_run_agent_loop(config, messages, active, deps)
+
+    monkeypatch.setattr(agent_service_module, "run_agent_loop", spy_run_agent_loop)
+    service = AgentService(db, registry, chat_call=chat_call_returning("hello"))
+    service.run_turn(
+        conversation_id="conv1",
+        messages=[{"role": "user", "content": "hi"}],
+        config=AgentConfig(model="m", system_prompt="s", budget=RunBudget()),
+        api_endpoint="openai",
+    )
+    on_record = captured["deps"].on_record
+    sensitive = (
+        "chain of thought: private internal plan",
+        "ghp_" + "a" * 36,
+        "AKIA" + "A" * 16,
+        "eyJabcdefghij.abcdefghij.abcdefghij",
+        "-----BEGIN PRIVATE KEY-----\nprivate-key-body",
+        "/private/var/db/secrets.txt",
+        "file:///private/tmp/secret.txt",
+        r"C:\Users\alice\secret.txt",
+        r"\\server\share\secret.txt",
+        'File "package/module.py", line 42, in run',
+    )
+    for value in sensitive:
+        on_record("tool_call", {"content": json.dumps({"value": value})})
+        on_record("tool_result", {"content": value})
+    on_record("tool_result", {"content": "safe output: 3 matches"})
+
+    records = read_all(root)
+    persisted = "\n".join(record.content for record in records)
+    for value in sensitive:
+        assert value not in persisted
+    assert "private internal plan" not in persisted
+    assert "private-key-body" not in persisted
+    assert any(record.content == "safe output: 3 matches" for record in records)
+
+
 def test_run_turn_called_twice_on_one_service_gets_two_separate_logs(wired):
     """Round-1 review fix (item 3): ``bind()`` latches permanently, so a
     writer built once in ``__init__`` and reused across two ``run_turn``
@@ -349,8 +393,6 @@ def test_tool_is_not_offered_when_nothing_else_is_disclosed(wired, monkeypatch):
     a native-capable endpoint with no disclosable schemas must send no
     ``tools=`` kwarg at all).
     """
-    from tldw_chatbook.Agents.agent_models import SEARCH_RUN_LOG_TOOL_NAME
-
     db, registry, root = wired
     offered = []
 

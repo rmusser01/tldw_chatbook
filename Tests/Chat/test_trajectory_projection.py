@@ -9,11 +9,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import pytest
+
 from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.trajectory import (
     TrajectoryRecord,
     TrajectorySnapshot,
+    contains_local_path,
     derive_trajectory,
 )
 
@@ -74,6 +77,62 @@ class VariantSetLike:
     turn_id: str
     variants: tuple[VariantLike, ...]
     selected_index: int = 0
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    (
+        ("/private/var/db/secrets.txt", True),
+        ("~/private.txt", True),
+        (r"C:\Users\alice\secret.txt", True),
+        (r"\\server\share\secret.txt", True),
+        ("file:///private/tmp/secret.txt", True),
+        ('  File "package/module.py", line 42, in run', True),
+        ("https://example.test/private/path?q=/still/url", False),
+        ("GET /api/v1/models HTTP/1.1", False),
+        ("POST /v1/chat/completions", False),
+        ("/help", False),
+        ("3/4 + 5/6", False),
+        ("safe result with 3 matches", False),
+    ),
+)
+def test_local_path_classifier_avoids_url_request_and_slash_false_positives(
+    value: str, expected: bool
+) -> None:
+    assert contains_local_path(value) is expected
+
+
+def test_completed_trace_v2_assistant_follows_model_completion() -> None:
+    messages = [
+        msg("u1", "user", ts=1.0),
+        msg("a1", "assistant", ts=2.0, parent="u1", content="answer"),
+    ]
+    rows = [
+        TrajRow("u1", seq=1, event_kind="user"),
+        TrajRow(
+            "a1",
+            seq=2,
+            event_kind="assistant",
+            step_started_at=10.0,
+            first_token_at=11.0,
+            completed_at=12.0,
+            payload_json='{"trace_version": 2, "model_status": "completed"}',
+        ),
+    ]
+
+    snapshot = derive_trajectory(messages, {}, rows, [], [])
+    records = [record for turn in snapshot.turns for record in turn.records]
+
+    assert [record.kind for record in records] == [
+        "user",
+        "model_request_started",
+        "model_first_token",
+        "model_response_completed",
+        "assistant",
+    ]
+    assistant = records[-1]
+    assert assistant.parent_event_id == "model-timing:a1:completed"
+    assert assistant.observed_at == 12.0
 
 
 def compaction_record(

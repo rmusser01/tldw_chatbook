@@ -768,6 +768,21 @@ def _safe_agent_step_record(run_id: str, step: AgentStep) -> dict[str, Any]:
     return record
 
 
+def _safe_run_log_content(record_type: str, content: str) -> str:
+    """Sanitize durable tool records without changing runtime payloads."""
+    if record_type not in {"tool_call", "tool_result"}:
+        return content
+    lowered = content.lower()
+    if any(marker in lowered for marker in ("reasoning_content", "chain of thought")):
+        return ""
+    if contains_local_path(content):
+        return ""
+    uppered = content.upper()
+    if "-----BEGIN " in uppered and "PRIVATE KEY-----" in uppered:
+        return REDACTION_MARKER
+    return redact_log_line(content, max_length=0)
+
+
 def _default_chat_call():
     from tldw_chatbook.Chat.Chat_Functions import chat_api_call
 
@@ -4250,11 +4265,12 @@ class AgentService:
                 ``_truncate_tool_result``). ``None`` when the writer is
                 inactive or the underlying write failed -- never raises.
             """
+            content = str(payload.get("content", ""))
             return writer.append(
                 run_id=run_id,
                 kind=agent_kind,
                 type=record_type,
-                content=str(payload.get("content", "")),
+                content=_safe_run_log_content(record_type, content),
                 tool=str(payload.get("tool", "")),
                 status=str(payload.get("status", "")),
                 call_id=str(payload.get("call_id", "")),
@@ -4339,7 +4355,7 @@ class AgentService:
                     status="incomplete",
                     owner_seq=step.owner_seq,
                     source_step_index=step.index,
-                    field_states={"payload": "not_available"},
+                    field_states={"payload": "capture_failed"},
                     sensitivity="diagnostic",
                 )
                 try:
