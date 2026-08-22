@@ -4,7 +4,7 @@ title: Define and create portable Actor Packs
 status: Done
 assignee: []
 created_date: '2026-08-20 18:13'
-updated_date: '2026-08-22 21:19'
+updated_date: '2026-08-22 21:29'
 labels: []
 dependencies: []
 references:
@@ -58,4 +58,6 @@ Implemented the portable Actor Pack foundation governed by ADR-074: strict tldw.
 TDD and mutation evidence covered path/inventory/digest/portrait bounds, UUID and transaction ownership, every Persona recovery state, source/editor/portrait authority, duplicate admission, cancellation/drain, stale reconciliation, packaging inventory, and the architecture boundary. Final isolated evidence passed 134 Actor Pack/service/Workbench/ownership/architecture tests, 317 complete ChaChaNotes plus migration-package tests, 23 focused Workbench/non-regression tests, 81 branch-owned diagnostic/privacy tests, 5 Actor Pack architecture guards, and the assigned-worktree provenance test. The Impeccable detector ran once after the final visible change and returned an empty finding list. Ruff and compilation passed all touched Python files; 22 files are format-clean, while five exact files reproduce the same formatter baseline at pinned base 0da426e1e. Diff checks, licence/dependency review, Backlog governance, diagnostic inventory (five reviewed fixed-category calls), private SQLite ownership, and migration packaging passed.
 
 A broad privacy run also reported six Client_Media_DB_v2 exception-chain failures; the exact pinned base reproduced the same six failures with 83 passes, and this task does not modify that owner. No new lesson was added because the diagnostic and profile-isolation incidents are already covered by the existing testing-evidence and live-verification lessons. Local specification/correctness and separate Ponytail reviews found no remaining task-owned issue. ADR required: no; ADR-074 remains authoritative.
+
+Post-rebase verification against current origin/dev b593f853d passed the Actor Pack product path (121 tests), architecture/migration/Backlog identity (18 tests), and migration packaging (2 tests). Current dev itself fails the diagnostic inventory because five unrelated Subscription/Scheduler calls landed without a pin update; three interpolate database paths/exceptions. The exact command and owner deltas reproduce in a detached origin/dev worktree, so this branch does not regenerate or approve those unrelated rows.
 <!-- SECTION:NOTES:END -->
