@@ -532,6 +532,36 @@ def _parse_numstat(raw: str) -> dict[str, tuple[int, int, bool]]:
     return counts
 
 
+#: Flags that stop repository CONFIGURATION from rewriting what a diff
+#: says. Ported whole from the read-only agent git tools
+#: (``Tools/git_tool_impls.py``'s ``git_diff``/``_run_diff_command``, which
+#: call them the machine-safe flags) rather than two-thirds of the set --
+#: all three shapes are reachable by anything that can write
+#: ``.git/config`` in the root this feature operates on, and all three
+#: were reproduced against real git:
+#:
+#: * ``diff.external = <script>`` -- the pane printed ``TOTALLY FABRICATED
+#:   DIFF OUTPUT`` for a real edit (``--no-ext-diff``);
+#: * a ``.gitattributes`` ``diff=<driver>`` textconv whose output is
+#:   constant -- the pane rendered NOTHING (0 bytes) for a genuinely
+#:   changed file, while ``--numstat`` still reported ``1 1 a.txt`` and
+#:   status still listed the row, so the review surface contradicted its
+#:   own file list (``--no-textconv``);
+#: * ``color.ui = always`` -- ANSI escapes in a CAPTURED, non-tty diff
+#:   (``--no-color``).
+#:
+#: This is a REVIEW surface whose whole purpose is telling the user the
+#: truth about their changes before they commit, so a faked or blanked
+#: diff is deception rather than mere breakage. ``--numstat`` is unaffected
+#: by all three (verified), but the flags are applied there too so no call
+#: site depends on which of them git happens to honour today.
+_MACHINE_SAFE_DIFF_FLAGS: tuple[str, ...] = (
+    "--no-ext-diff",
+    "--no-textconv",
+    "--no-color",
+)
+
+
 def working_tree_status(root: Path, info: GitWorkspaceInfo) -> CurrentRootStatus:
     """Read the real working tree's status at ``root``.
 
@@ -559,7 +589,9 @@ def working_tree_status(root: Path, info: GitWorkspaceInfo) -> CurrentRootStatus
 
     counts: dict[str, tuple[int, int, bool]] = {}
     if not info.unborn:
-        numstat_result = _run_user_git(root, "diff", "HEAD", "--numstat", "-z")
+        numstat_result = _run_user_git(
+            root, "diff", *_MACHINE_SAFE_DIFF_FLAGS, "HEAD", "--numstat", "-z"
+        )
         counts = _parse_numstat(numstat_result.stdout)
 
     files = tuple(
@@ -586,6 +618,11 @@ def working_tree_diff(root: Path, path: str) -> str:
     diff against -- every file there is untracked) or for an untracked
     path; use :func:`untracked_preview` for those instead.
 
+    Carries :data:`_MACHINE_SAFE_DIFF_FLAGS`, without which repository
+    configuration can make this REVIEW surface lie -- print a fabricated
+    diff, or print nothing at all for a file the same read lists as
+    changed.
+
     Args:
         root: Workspace root.
         path: Root-relative path to diff.
@@ -596,7 +633,9 @@ def working_tree_diff(root: Path, path: str) -> str:
     Raises:
         GitWorkspaceError: The git invocation failed.
     """
-    result = _run_user_git(root, "diff", "HEAD", "--", path)
+    result = _run_user_git(
+        root, "diff", *_MACHINE_SAFE_DIFF_FLAGS, "HEAD", "--", path
+    )
     return result.stdout
 
 

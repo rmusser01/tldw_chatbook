@@ -444,12 +444,24 @@ honestly that PR links only support those four.
 or rewrites history — not `--force`, not `--force-with-lease`, not an
 amend. Nor can your repository's own configuration turn one of these
 pushes into a force: each push names one exact source and destination ref
-on the command line, which overrides any `remote.<name>.push`,
-`remote.<name>.mirror` or `push.default` setting in `.git/config`, so
-exactly one branch is ever updated and only ever as a fast-forward. A push
-that the remote rejects (e.g. it's behind) reports git's own rejection
-message rather than retrying with force; you resolve it from a terminal
-exactly as you would any other rejected push.
+on the command line, which supersedes any `remote.<name>.push` refspec or
+`push.default` setting in `.git/config` (and a `remote.<name>.mirror`
+remote is *rejected* outright rather than silently honoured — git refuses
+to combine `--mirror` with a refspec). So exactly one branch is ever
+updated, and only as a fast-forward. The one thing a push can add beyond
+that branch is tags: with `push.followTags = true` set in your config, git
+also publishes annotated tags reachable from the commits you just pushed.
+That is additive only — it creates tags the remote does not have and can
+never move or delete one it already has. A push that the remote rejects
+(e.g. it's behind) reports git's own rejection message rather than
+retrying with force; you resolve it from a terminal exactly as you would
+any other rejected push.
+
+**What the diff pane shows is your real diff.** The pane never renders a
+custom diff driver's output, so a `diff.external` program or a
+`.gitattributes` `textconv` driver configured in the repository cannot
+substitute its own text for a file's real change, blank the pane for a
+file the list shows as changed, or colour-code it into unreadability.
 
 ### Parallel sub-agents (the fleet)
 
@@ -1608,14 +1620,22 @@ the arc's regression sweep —
 `Tests/UI/test_change_review_opener_roots.py` (new, T9's own opener-wiring
 pin), and `Tests/Workspaces/`, 624 passed in 260.12s — plus a
 `--collect-only` sweep of the whole `Tests/` tree, 52,273 collected with
-zero collection errors. Two paragraphs were rewritten in the final fix
-wave: the no-force guarantee now also states that repository CONFIG
-(`remote.<name>.push`, `remote.<name>.mirror`, `push.default`) cannot turn
-one of these pushes into a force — true only because `push_current` now
-carries an explicit fully-qualified refspec — and the
-rename/staged-deletion "Known limitation" paragraph was DELETED, because
-`commit_selected` now filters the add pathspec to worktree-present paths
-and both gestures commit. One correction against this task's own brief: the
+zero collection errors. Three paragraphs changed in the final fix wave:
+the no-force guarantee now also states that repository CONFIG
+(`remote.<name>.push` superseded, `remote.<name>.mirror` rejected,
+`push.default` irrelevant) cannot turn one of these pushes into a force —
+true only because `push_current` now carries an explicit fully-qualified
+refspec — with the one honest exception, `push.followTags`, verified
+additive-only against real git (a re-pointed `v9` was NOT pushed over the
+remote's existing `v9`); the rename/staged-deletion "Known limitation"
+paragraph was DELETED, because `commit_selected` now filters the add
+pathspec to worktree-present paths and both gestures commit; and a new
+"What the diff pane shows is your real diff" paragraph records the
+machine-safe diff flags (`--no-ext-diff`/`--no-textconv`/`--no-color` at
+both `git diff` sites, matching `Tools/git_tool_impls.py`'s precedent),
+without which `diff.external` rendered `TOTALLY FABRICATED DIFF OUTPUT`
+and a constant-output textconv driver rendered 0 bytes for a file the
+same read counted as `1 1`. One correction against this task's own brief: the
 brief described the live workspace root as driven by `[console]
 workspace_root`; on a real mounted Console session that config key is
 NOT what feeds `current` mode's live candidate root — the wired

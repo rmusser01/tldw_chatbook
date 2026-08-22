@@ -142,6 +142,114 @@ def test_working_tree_diff_returns_unified(repo):
     assert "-base" in working_tree_diff(repo, "a.txt")
 
 
+# ---------------------------------------------------------------------------
+# The review pane cannot be FAKED by repository configuration.
+#
+# This is a REVIEW surface: the user decides what to commit from what this
+# pane shows. Two repository-supplied diff drivers make it lie, and both
+# are reachable by anything that can write `.git/config` -- the same
+# precondition the arc already accepted for the push-refspec vector.
+# `Tools/git_tool_impls.py` already ports `--no-ext-diff`/`--no-textconv`/
+# `--no-color` as one "machine-safe" set for exactly this reason.
+# ---------------------------------------------------------------------------
+
+
+def _real_edit(repo: Path) -> None:
+    (repo / "a.txt").write_text("REAL EDIT the user must see\n")
+
+
+def test_diff_external_cannot_fabricate_the_review_pane(repo, tmp_path):
+    """`diff.external` printed `TOTALLY FABRICATED DIFF OUTPUT` pre-fix."""
+    fake = tmp_path / "fake.sh"
+    fake.write_text("#!/bin/bash\necho 'TOTALLY FABRICATED DIFF OUTPUT'\n")
+    fake.chmod(0o755)
+    _git(repo, "config", "diff.external", str(fake))
+    _real_edit(repo)
+
+    diff = working_tree_diff(repo, "a.txt")
+
+    assert "TOTALLY FABRICATED" not in diff, (
+        f"the review pane rendered a repository-supplied fabrication: {diff!r}"
+    )
+    assert "REAL EDIT the user must see" in diff, (
+        f"...and must show the file's real change instead; got {diff!r}"
+    )
+    assert "-base" in diff, diff
+
+
+def test_a_textconv_driver_cannot_blank_the_review_pane(repo, tmp_path):
+    """A textconv driver rendered NOTHING for a genuinely changed file.
+
+    The nastier half of the pair: the row is still listed as changed with
+    real +1/-1 counts (`--numstat` ignores textconv), so the pane reads as
+    "this file has no textual difference" for a file that does.
+    """
+    driver = tmp_path / "tc.sh"
+    driver.write_text("#!/bin/bash\necho IDENTICAL\n")
+    driver.chmod(0o755)
+    _git(repo, "config", "diff.fake.textconv", str(driver))
+    (repo / ".gitattributes").write_text("a.txt diff=fake\n")
+    _git(repo, "add", ".gitattributes")
+    _git(repo, "commit", "-qm", "attrs")
+    _real_edit(repo)
+
+    diff = working_tree_diff(repo, "a.txt")
+
+    assert diff.strip(), "the review pane was BLANK for a changed file"
+    assert "REAL EDIT the user must see" in diff, diff
+    assert "IDENTICAL" not in diff, diff
+
+    # The row the pane contradicts: still listed, still counted.
+    status = working_tree_status(repo, detect_git_workspace(repo))
+    changed = {f.path: (f.adds, f.dels) for f in status.files}
+    assert changed["a.txt"] == (1, 1), changed
+
+
+def test_color_config_cannot_inject_ansi_into_the_review_pane(repo):
+    """`color.ui = always` colorizes even a captured (non-tty) diff.
+
+    Third member of the same family, and why the precedent's flag set is
+    ported whole rather than two-thirds of it: the pane would render raw
+    escape sequences instead of a diff.
+    """
+    _git(repo, "config", "color.ui", "always")
+    _real_edit(repo)
+
+    diff = working_tree_diff(repo, "a.txt")
+
+    assert "\x1b[" not in diff, f"ANSI escapes reached the pane: {diff!r}"
+    assert "REAL EDIT the user must see" in diff, diff
+
+
+def test_machine_safe_flags_do_not_regress_normal_spaced_or_utf8_diffs(repo):
+    (repo / "sub dir").mkdir()
+    (repo / "sub dir" / "spaced file.txt").write_text("x\n")
+    (repo / "ünïcode–π.txt").write_text("y\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "more")
+    (repo / "a.txt").write_text("edited\n")
+    (repo / "sub dir" / "spaced file.txt").write_text("x2\n")
+    (repo / "ünïcode–π.txt").write_text("y2\n")
+
+    assert "+edited" in working_tree_diff(repo, "a.txt")
+    assert "+x2" in working_tree_diff(repo, "sub dir/spaced file.txt")
+    assert "+y2" in working_tree_diff(repo, "ünïcode–π.txt")
+
+
+def test_untracked_preview_is_unaffected_by_a_hostile_diff_driver(repo, tmp_path):
+    """The untracked path renders from a plain read, never from git."""
+    fake = tmp_path / "fake.sh"
+    fake.write_text("#!/bin/bash\necho 'TOTALLY FABRICATED DIFF OUTPUT'\n")
+    fake.chmod(0o755)
+    _git(repo, "config", "diff.external", str(fake))
+    (repo / "new.txt").write_text("brand new content\n")
+
+    preview = untracked_preview(repo, "new.txt", 20)
+
+    assert "+brand new content" in preview, preview
+    assert "TOTALLY FABRICATED" not in preview, preview
+
+
 def test_working_tree_diff_is_not_polluted_by_a_pathspec_magic_filename(repo):
     """`git diff HEAD -- ':!nothing'` renders OTHER files' diffs pre-fix.
 
