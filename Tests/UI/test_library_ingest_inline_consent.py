@@ -1108,7 +1108,7 @@ async def _warned_ingest_screen(host, pilot, monkeypatch, tmp_path):
     monkeypatch.setattr(
         library_screen_module,
         "analyze_path",
-        lambda path, scan_limit=1000: result,
+        lambda path, scan_limit=1000, **_kwargs: result,
     )
     await screen._select_library_rail_row(LIBRARY_ROW_INGEST_MEDIA)
     path_input = await _wait_for_selector(screen, pilot, "#library-ingest-path")

@@ -27,9 +27,13 @@ def test_scrape_from_sitemap_blocked_returns_empty():
         result = AEL.scrape_from_sitemap("http://sitemap.internal/map.xml")
     assert result == []
     assert mocked.call_args.kwargs["max_bytes"] == 50 * 1024 * 1024
-    assert mocked.call_args.kwargs["trusted_origins"] == frozenset(
-        {"sitemap.internal"}
-    )
+    # (TASK-19556 (c)) This used to assert `frozenset({"sitemap.internal"})`
+    # -- i.e. it pinned the defect: the function trusted the origin of the
+    # very URL it was about to fetch, so the guard was a no-op for exactly
+    # the content-derived input it exists to catch. Trust is now the
+    # caller's to seed and defaults to none; see
+    # Tests/Web_Scraping/test_sitemap_crawl_trusted_origins.py.
+    assert mocked.call_args.kwargs["trusted_origins"] == frozenset()
 
 
 def test_scrape_article_signature_defaults_fail_closed():

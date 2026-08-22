@@ -8,6 +8,7 @@ from urllib.error import HTTPError, URLError
 
 import pytest
 
+from tldw_chatbook.Library import ingest_preflight
 from tldw_chatbook.Library.ingest_preflight import (
     _collect_files,
     _probe_url,
@@ -16,6 +17,21 @@ from tldw_chatbook.Library.ingest_preflight import (
 )
 from tldw_chatbook.Library.ingest_types import PreflightResult
 from tldw_chatbook.Local_Ingestion.local_file_ingestion import is_http_url
+
+
+@pytest.fixture
+def probing_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Opt into the URL probe and let the egress policy pass (TASK-19556).
+
+    The probe is OFF by default now -- it used to fire from the ingest
+    field's 0.8 s typing debounce, which made it an internal-host scanning
+    oracle -- and when on it consults ``check_url_or_raise`` before any
+    transport call. These tests are about the probe's TRANSPORT outcomes,
+    so both gates are opened here; the gates themselves are owned by
+    ``Tests/Library/test_ingest_preflight_egress.py``.
+    """
+    monkeypatch.setattr(ingest_preflight, "url_probe_enabled", lambda: True)
+    monkeypatch.setattr(ingest_preflight, "check_url_or_raise", lambda *a, **k: None)
 
 
 class TestSafeSize:
@@ -113,47 +129,47 @@ class TestCollectFiles:
 
 
 class TestProbeUrl:
-    def test_returns_none_on_success(self) -> None:
+    def test_returns_none_on_success(self, probing_allowed) -> None:
         mock_response = MagicMock()
         mock_response.__enter__ = MagicMock(return_value=mock_response)
         mock_response.__exit__ = MagicMock(return_value=False)
 
-        with patch("tldw_chatbook.Library.ingest_preflight.urlopen", return_value=mock_response):
+        with patch("tldw_chatbook.Library.ingest_preflight._open_probe", return_value=mock_response):
             probe = _probe_url("https://example.com/doc.pdf")
         assert probe.error is None
         assert probe.note is None
 
-    def test_returns_error_on_url_error(self) -> None:
+    def test_returns_error_on_url_error(self, probing_allowed) -> None:
         with patch(
-            "tldw_chatbook.Library.ingest_preflight.urlopen",
+            "tldw_chatbook.Library.ingest_preflight._open_probe",
             side_effect=URLError("connection refused"),
         ):
             probe = _probe_url("https://example.com/doc.pdf")
         assert probe.error is not None
         assert "unreachable" in probe.error.lower()
 
-    def test_returns_error_on_timeout(self) -> None:
+    def test_returns_error_on_timeout(self, probing_allowed) -> None:
         with patch(
-            "tldw_chatbook.Library.ingest_preflight.urlopen",
+            "tldw_chatbook.Library.ingest_preflight._open_probe",
             side_effect=TimeoutError(),
         ):
             probe = _probe_url("https://example.com/doc.pdf")
         assert probe.error is not None
         assert "timed out" in probe.error.lower()
 
-    def test_returns_error_on_unexpected_exception(self) -> None:
+    def test_returns_error_on_unexpected_exception(self, probing_allowed) -> None:
         with patch(
-            "tldw_chatbook.Library.ingest_preflight.urlopen",
+            "tldw_chatbook.Library.ingest_preflight._open_probe",
             side_effect=ValueError("boom"),
         ):
             probe = _probe_url("https://example.com/doc.pdf")
         assert probe.error is not None
         assert "failed" in probe.error.lower()
 
-    def test_returns_error_on_http_404(self) -> None:
+    def test_returns_error_on_http_404(self, probing_allowed) -> None:
         error = HTTPError("https://example.com/doc.pdf", 404, "Not Found", {}, None)
         with patch(
-            "tldw_chatbook.Library.ingest_preflight.urlopen",
+            "tldw_chatbook.Library.ingest_preflight._open_probe",
             side_effect=error,
         ):
             probe = _probe_url("https://example.com/doc.pdf")
@@ -161,7 +177,7 @@ class TestProbeUrl:
         assert "unreachable" in probe.error.lower()
 
     @pytest.mark.parametrize("status", [401, 403, 405, 429, 500])
-    def test_a_status_the_probe_cannot_interpret_does_not_veto(self, status: int) -> None:
+    def test_a_status_the_probe_cannot_interpret_does_not_veto(self, status: int, probing_allowed) -> None:
         """The probe may report doubt; it may not refuse the source.
 
         Any HTTP status proves the host resolved and answered. Sites routinely
@@ -172,18 +188,18 @@ class TestProbeUrl:
         """
         error = HTTPError("https://example.com/page", status, "Nope", {}, None)
         with patch(
-            "tldw_chatbook.Library.ingest_preflight.urlopen", side_effect=error
+            "tldw_chatbook.Library.ingest_preflight._open_probe", side_effect=error
         ):
             probe = _probe_url("https://example.com/page")
 
         assert probe.error is None, f"{status} must not block the source"
         assert probe.note is not None and str(status) in probe.note
 
-    def test_a_gone_resource_is_still_refused(self) -> None:
+    def test_a_gone_resource_is_still_refused(self, probing_allowed) -> None:
         """410 is the host stating the resource is not there, like 404."""
         error = HTTPError("https://example.com/page", 410, "Gone", {}, None)
         with patch(
-            "tldw_chatbook.Library.ingest_preflight.urlopen", side_effect=error
+            "tldw_chatbook.Library.ingest_preflight._open_probe", side_effect=error
         ):
             probe = _probe_url("https://example.com/page")
         assert probe.error is not None
@@ -315,12 +331,12 @@ class TestAnalyzePath:
         assert {"feature": "test", "group": "pdf"} in result.warnings
         assert not any(w["group"] == "unsupported" for w in result.warnings)
 
-    def test_reachable_url(self) -> None:
+    def test_reachable_url(self, probing_allowed) -> None:
         mock_response = MagicMock()
         mock_response.__enter__ = MagicMock(return_value=mock_response)
         mock_response.__exit__ = MagicMock(return_value=False)
 
-        with patch("tldw_chatbook.Library.ingest_preflight.urlopen", return_value=mock_response):
+        with patch("tldw_chatbook.Library.ingest_preflight._open_probe", return_value=mock_response):
             result = analyze_path("https://example.com/document.pdf")
 
         assert result.errors == []
@@ -328,9 +344,9 @@ class TestAnalyzePath:
         assert "pdf" in result.type_groups
         assert result.total_size == 0
 
-    def test_unreachable_url(self) -> None:
+    def test_unreachable_url(self, probing_allowed) -> None:
         with patch(
-            "tldw_chatbook.Library.ingest_preflight.urlopen",
+            "tldw_chatbook.Library.ingest_preflight._open_probe",
             side_effect=URLError("connection refused"),
         ):
             result = analyze_path("https://example.com/document.pdf")
@@ -339,12 +355,12 @@ class TestAnalyzePath:
         assert result.total_files == 0
         assert result.type_groups == {}
 
-    def test_url_with_video_extension(self) -> None:
+    def test_url_with_video_extension(self, probing_allowed) -> None:
         mock_response = MagicMock()
         mock_response.__enter__ = MagicMock(return_value=mock_response)
         mock_response.__exit__ = MagicMock(return_value=False)
 
-        with patch("tldw_chatbook.Library.ingest_preflight.urlopen", return_value=mock_response):
+        with patch("tldw_chatbook.Library.ingest_preflight._open_probe", return_value=mock_response):
             result = analyze_path("https://example.com/lecture.mp4")
 
         assert result.errors == []
@@ -386,10 +402,10 @@ class TestPathErrorsAreMarked:
         assert result.errors == []
         assert result.path_invalid is False
 
-    def test_unreachable_url_is_not_a_path_problem(self) -> None:
+    def test_unreachable_url_is_not_a_path_problem(self, probing_allowed) -> None:
         """A URL that failed to respond is worth retrying; a typo'd path isn't."""
         with patch(
-            "tldw_chatbook.Library.ingest_preflight.urlopen",
+            "tldw_chatbook.Library.ingest_preflight._open_probe",
             side_effect=URLError("connection refused"),
         ):
             result = analyze_path("https://example.com/document.pdf")
@@ -448,9 +464,13 @@ class TestUrlProbePlainLanguage:
     (``URL unreachable: <urlopen error [Errno 8] nodename nor servname
     provided, or not known>``) as the primary line."""
 
+    @pytest.fixture(autouse=True)
+    def _allow_probing(self, probing_allowed) -> None:
+        """Every test here drives `_probe_url` directly (TASK-19556 gates)."""
+
     def _probe_with(self, exc: Exception) -> object:
         with patch(
-            "tldw_chatbook.Library.ingest_preflight.urlopen",
+            "tldw_chatbook.Library.ingest_preflight._open_probe",
             side_effect=exc,
         ):
             return _probe_url("https://no-such-host.example/doc.pdf")

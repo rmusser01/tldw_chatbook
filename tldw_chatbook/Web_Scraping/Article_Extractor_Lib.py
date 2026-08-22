@@ -172,7 +172,6 @@ from tldw_chatbook.Utils.egress import (  # noqa: E402
     check_url_or_raise_async,
     collect_navigation_chain,
     guarded_fetch_requests,
-    origin_set,
     validate_navigation_chain_async,
 )
 from tldw_chatbook.Web_Scraping.exceptions import (  # noqa: E402
@@ -1027,14 +1026,37 @@ def scrape_by_url_level(base_url: str, level: int) -> list:
     return [article for link in filtered_links if (article := scrape_article(link))]
 
 
-def scrape_from_sitemap(sitemap_url: str) -> list:
-    """Scrape articles from a sitemap URL."""
-    origins = origin_set(sitemap_url)
+def scrape_from_sitemap(sitemap_url: str, *, trusted_origins=frozenset()) -> list:
+    """Scrape articles from a sitemap URL.
+
+    (TASK-19556 (c)) This used to compute ``origin_set(sitemap_url)`` and use
+    it both for its own fetch and for every URL the sitemap named. Both
+    halves contradicted the policy's stated contract:
+
+    * self-trusting the URL you are about to fetch defeats the check for
+      exactly the input it exists to catch -- ``Utils/egress.py``: "Shared
+      pipeline code must NEVER auto-trust its own input URL";
+    * ``config.py``'s ``[web_security]`` block names **sitemap discoveries**
+      among the content-derived URLs that "must resolve to public IPs", so
+      forwarding the sitemap host's trust to them is the same defect one
+      level down.
+
+    Trust is now the caller's to seed, defaults to none, and applies to the
+    sitemap fetch only -- never to what the sitemap CONTENT names.
+
+    Args:
+        sitemap_url: URL of the sitemap to fetch.
+        trusted_origins: Hostnames the caller has established as
+            user-intended. Applied to the sitemap fetch alone.
+
+    Returns:
+        The scraped articles, or ``[]`` if the sitemap could not be fetched.
+    """
     try:
         response = guarded_fetch_requests(
             sitemap_url,
             max_bytes=MAX_FETCH_BYTES_SITEMAP,
-            trusted_origins=origins,
+            trusted_origins=trusted_origins,
             timeout=30,
         )
         response.raise_for_status()
@@ -1045,7 +1067,7 @@ def scrape_from_sitemap(sitemap_url: str) -> list:
             for url in root.findall(
                 ".//{http://www.sitemaps.org/schemas/sitemap/0.9}loc"
             )
-            if (article := scrape_article(url.text, trusted_origins=origins))
+            if (article := scrape_article(url.text))
         ]
     except (EgressBlockedError, EgressFetchError) as e:
         logging.error(f"Sitemap fetch blocked or too large: {e}")
@@ -1062,15 +1084,25 @@ def scrape_from_sitemap(sitemap_url: str) -> list:
 # Sitemap/Crawling-related Functions
 
 
-def collect_internal_links(base_url: str) -> set:
+def collect_internal_links(base_url: str, *, trusted_origins=frozenset()) -> set:
     """
     Crawl a website and collect all internal links.
 
     This function performs a breadth-first crawl of a website,
     discovering all internal links within the same domain.
 
+    (TASK-19556 (c)) ``trusted_origins`` applies to ``base_url`` only. Links
+    found mid-crawl are content-derived, and ``config.py``'s
+    ``[web_security]`` block names "crawl discoveries" among the URLs that
+    must resolve to public IPs -- so they are re-checked with no trust, even
+    though the same-domain filter means they share the root's hostname. The
+    seam replaces an internal ``origin_set(base_url)``, which both
+    self-trusted the input URL and forwarded that trust to every discovery.
+
     Args:
         base_url (str): The starting URL for crawling
+        trusted_origins: Hostnames the caller has established as
+            user-intended. Applied to ``base_url``'s own fetch alone.
 
     Returns:
         set: Set of discovered internal URLs
@@ -1086,8 +1118,6 @@ def collect_internal_links(base_url: str) -> set:
         )
         return set()
 
-    origins = origin_set(base_url)
-
     visited = set()
     to_visit = {base_url}
 
@@ -1100,7 +1130,9 @@ def collect_internal_links(base_url: str) -> set:
             response = guarded_fetch_requests(
                 current_url,
                 max_bytes=MAX_FETCH_BYTES_PAGE,
-                trusted_origins=origins,
+                trusted_origins=(
+                    trusted_origins if current_url == base_url else frozenset()
+                ),
                 timeout=30,
             )
             response.raise_for_status()
@@ -1738,6 +1770,8 @@ async def recursive_scrape(
     user_agent: str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
     custom_cookies: Optional[List[Dict[str, Any]]] = None,
     progress_callback: Optional[callable] = None,
+    *,
+    trusted_origins=frozenset(),
 ) -> List[Dict]:
     # Ensure playwright is imported before it's dereferenced below. Preserves
     # pre-existing behavior when unavailable: this function has never guarded
@@ -1751,7 +1785,12 @@ async def recursive_scrape(
             "installed (pip install tldw_chatbook[websearch])."
         )
 
-    origins = origin_set(base_url)
+    # (TASK-19556 (c)) Was `origin_set(base_url)` -- shared pipeline code
+    # inventing its own trust from the URL it was handed, and then applying
+    # it to every page discovered mid-crawl. Trust is the caller's to seed,
+    # and reaches the root page only (see `_hop_trust`).
+    def _hop_trust(url: str):
+        return trusted_origins if url == base_url else frozenset()
 
     async def save_progress():
         temp_file = resume_file + ".tmp"
@@ -1812,7 +1851,7 @@ async def recursive_scrape(
                         await asyncio.sleep(random.uniform(delay * 0.8, delay * 1.2))
 
                         article_data = await scrape_article_async(
-                            context, current_url, trusted_origins=origins
+                            context, current_url, trusted_origins=_hop_trust(current_url)
                         )
 
                         if article_data and article_data["extraction_successful"]:
@@ -1823,14 +1862,14 @@ async def recursive_scrape(
                         if current_depth < max_depth:
                             page = await context.new_page()
                             await check_url_or_raise_async(
-                                current_url, trusted_origins=origins
+                                current_url, trusted_origins=_hop_trust(current_url)
                             )
                             nav_response = await page.goto(current_url)
                             await page.wait_for_load_state("networkidle")
 
                             await validate_navigation_chain_async(
                                 collect_navigation_chain(nav_response),
-                                trusted_origins=origins,
+                                trusted_origins=_hop_trust(current_url),
                             )
 
                             links = await page.eval_on_selector_all(

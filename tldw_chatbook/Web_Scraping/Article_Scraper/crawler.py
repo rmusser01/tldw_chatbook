@@ -65,7 +65,6 @@ from ...Utils.egress import (
     MAX_FETCH_BYTES_PAGE,
     MAX_FETCH_BYTES_SITEMAP,
     guarded_fetch_aiohttp,
-    origin_set,
 )
 #
 #######################################################################################################################
@@ -130,15 +129,28 @@ async def crawl_site(
     max_pages: int = 100,
     max_depth: int = 5,
     url_filter: Callable[[str], bool] = default_url_filter,
+    *,
+    trusted_origins=frozenset(),
 ) -> Set[str]:
     """
     Asynchronously crawls a website to discover internal links.
+
+    (TASK-19556 (c)) ``trusted_origins`` applies to ``base_url`` only. Pages
+    found mid-crawl are content-derived, and ``config.py``'s
+    ``[web_security]`` block names "crawl discoveries" among the URLs that
+    must resolve to public IPs. The seam replaces an internal
+    ``origin_set(base_url)``, which both self-trusted this function's own
+    input URL -- against ``Utils/egress.py``'s "shared pipeline code must
+    NEVER auto-trust its own input URL" -- and forwarded that trust to every
+    discovery.
 
     Args:
         base_url: The starting URL for the crawl.
         max_pages: The maximum number of pages to crawl.
         max_depth: The maximum depth to follow links from the base URL.
         url_filter: A function to decide if a URL should be included.
+        trusted_origins: Hostnames the caller has established as
+            user-intended. Applied to ``base_url``'s own fetch alone.
 
     Returns:
         A set of discovered and filtered URLs.
@@ -173,9 +185,6 @@ async def crawl_site(
     # Keep track of the domain to stay on the same site
     base_domain = urlparse(base_url).netloc
 
-    # Trust the crawl's own starting host (user-provided boundary) for the
-    # egress guard — never auto-trust arbitrary URLs discovered mid-crawl.
-    origins = origin_set(base_url)
 
     # Track statistics
     pages_crawled = 0
@@ -212,7 +221,9 @@ async def crawl_site(
                     current_url,
                     session=session,
                     max_bytes=MAX_FETCH_BYTES_PAGE,
-                    trusted_origins=origins,
+                    trusted_origins=(
+                        trusted_origins if current_url == base_url else frozenset()
+                    ),
                     timeout=10,
                 )
                 if response.status_code != 200:
@@ -323,14 +334,25 @@ async def crawl_site(
 
 
 async def get_urls_from_sitemap(
-    sitemap_url: str, url_filter: Callable[[str], bool] = default_url_filter
+    sitemap_url: str,
+    url_filter: Callable[[str], bool] = default_url_filter,
+    *,
+    trusted_origins=frozenset(),
 ) -> List[str]:
     """
     Fetches and parses a sitemap.xml file to extract a list of URLs.
 
+    (TASK-19556 (c)) This used to seed ``origin_set(sitemap_url)`` -- i.e.
+    it trusted the origin of the very URL it was about to fetch, which
+    defeats the check for exactly the input it exists to catch when that URL
+    came from fetched content. Trust is now the caller's to seed and
+    defaults to none.
+
     Args:
         sitemap_url: The URL of the sitemap.xml file.
         url_filter: A function to decide if a URL should be included.
+        trusted_origins: Hostnames the caller has established as
+            user-intended.
 
     Returns:
         A list of filtered URLs found in the sitemap.
@@ -349,12 +371,11 @@ async def get_urls_from_sitemap(
     try:
         async with aiohttp.ClientSession() as session:
             fetch_start = time.time()
-            origins = origin_set(sitemap_url)
             response = await guarded_fetch_aiohttp(
                 sitemap_url,
                 session=session,
                 max_bytes=MAX_FETCH_BYTES_SITEMAP,
-                trusted_origins=origins,
+                trusted_origins=trusted_origins,
                 timeout=30,
             )
             response.raise_for_status()

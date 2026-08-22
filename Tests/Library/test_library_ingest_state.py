@@ -1473,15 +1473,12 @@ def test_a_page_source_offers_its_scope_settings_in_the_canvas_state():
     """
     from tldw_chatbook.Library.ingest_capabilities import get_capabilities
     from tldw_chatbook.Library.ingest_preflight import analyze_path
-    from unittest.mock import MagicMock, patch
 
-    response = MagicMock()
-    response.__enter__ = MagicMock(return_value=response)
-    response.__exit__ = MagicMock(return_value=False)
-    with patch(
-        "tldw_chatbook.Library.ingest_preflight.urlopen", return_value=response
-    ):
-        preflight = analyze_path("https://example.com/some-post")
+    # (TASK-19556) The pre-flight no longer probes a URL by default -- that
+    # network call fired from the ingest field's typing debounce and made it
+    # an internal-host scanning oracle. Classification, which is what this
+    # test is about, needs no probe at all now.
+    preflight = analyze_path("https://example.com/some-post")
 
     assert list(preflight.type_groups) == ["web"], (
         "a page must reach the canvas as the web group, not as an unsupported file"

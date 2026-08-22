@@ -27513,7 +27513,11 @@ class LibraryScreen(BaseAppScreen):
         self._library_ingest_path_debounce_timer = None
         path = self._library_ingest_form.path.strip()
         if path and self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA:
-            self._trigger_library_ingest_preflight(path)
+            # (TASK-19556) allow_probe=False: this fire is a typing pause,
+            # not a request to contact anything. The URL is classified by
+            # name here; a network check, if the user has enabled one, runs
+            # from the deliberate triggers instead.
+            self._trigger_library_ingest_preflight(path, allow_probe=False)
 
     #: Max staged files probed for the duplicate forecast (task-2130:
     #: when hit, the forecast copy switches to "at least N").
@@ -27598,11 +27602,23 @@ class LibraryScreen(BaseAppScreen):
         # exists must not survive it -- submit/Clear/reset all route here.
         self._disarm_library_ingest_start_confirm()
 
-    def _trigger_library_ingest_preflight(self, path: str) -> None:
+    def _trigger_library_ingest_preflight(
+        self, path: str, *, allow_probe: bool = True
+    ) -> None:
         """Start (or restart) the pre-flight worker for ``path``.
 
         No-op for empty paths so stray focus/blur/enter events never scan
         the current working directory.
+
+        Args:
+            path: The staged source path or URL.
+            allow_probe: Whether a URL source may be probed over the
+                network. ``False`` on the while-typing path (TASK-19556):
+                a debounce fire is not the user asking to contact a host,
+                so it never does -- even when the (default-off) probe has
+                been opted in. The deliberate triggers -- blur, Enter,
+                Browse…, the retry button -- leave this at ``True`` and let
+                the config gate decide.
         """
         if not path.strip():
             self._library_ingest_form.preflight_checking = False
@@ -27616,11 +27632,13 @@ class LibraryScreen(BaseAppScreen):
         # click in flight.
         self._update_library_ingest_dynamic_regions()
         self._library_ingest_preflight_worker = self._run_library_ingest_preflight(
-            path, generation
+            path, generation, allow_probe
         )
 
     @work(thread=True)
-    def _run_library_ingest_preflight(self, path: str, generation: int) -> None:
+    def _run_library_ingest_preflight(
+        self, path: str, generation: int, allow_probe: bool = True
+    ) -> None:
         """Analyze ``path`` on a worker thread and apply the result."""
         raw_scan_limit = get_cli_setting("library.ingest_directory_scan_limit", 1000)
         try:
@@ -27628,7 +27646,11 @@ class LibraryScreen(BaseAppScreen):
         except (TypeError, ValueError):
             scan_limit = 1000
         try:
-            result = analyze_path(path, scan_limit=scan_limit)
+            result = analyze_path(
+                path,
+                scan_limit=scan_limit,
+                probe_url=None if allow_probe else False,
+            )
             result = self._annotate_preflight_duplicates(result)
         except Exception as exc:
             logger.opt(exception=True).debug(

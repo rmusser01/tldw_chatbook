@@ -765,6 +765,16 @@ def _guarded_get(
         or embedded secrets (e.g. a malformed-URL error message).
     """
     try:
+        # (TASK-19556 (c), checked and deliberately KEPT) This is the same
+        # SHAPE as the sitemap/crawl self-trust that task corrected, but not
+        # the same PROVENANCE. Every caller derives `url` from a base_url the
+        # user typed into this settings form -- `_probe_swarmui` and
+        # `_probe_reachability_only` pass it directly, `_probe_comfyui` via
+        # `normalize_comfyui_image_origin` -- so it is an explicitly
+        # configured URL, which `config.py`'s [web_security] contract permits
+        # to be private. The shipped default backend is a LOCALHOST SwarmUI
+        # instance; dropping the self-trust would break the zero-key default.
+        # A content-derived URL must never be handed to this helper.
         check_url_or_raise(url, trusted_origins=origin_set(url))
     except EgressBlockedError:
         return None, "Unreachable: blocked by egress policy"

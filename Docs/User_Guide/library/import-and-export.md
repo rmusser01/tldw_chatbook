@@ -51,9 +51,18 @@ In server mode the **Export** rail row is disabled, with the tooltip
   time), any "⚠" warnings about missing tooling, and — if some files
   can't be handled — "2 unsupported files will be skipped: …" (importing
   on the server, the same line reads "will fail", because that backend
-  records a failure row rather than skipping quietly). An
-  unreachable URL reports a plain reason ("URL unreachable — the server
-  name could not be found."), never a raw error dump. When the import is
+  records a failure row rather than skipping quietly). The pre-check does
+  **not** contact a URL: it reads the address, not the site, so nothing is
+  fetched while you are still typing one. A URL that turns out not to be
+  fetchable is reported by the import job itself, where the failure carries
+  a real reason. (You can turn a link check back on with `[library]
+  ingest_url_preflight_probe = true` in `config.toml`; it then runs only
+  when you leave the field, press Enter, pick with Browse…, or press
+  "Retry check" — never while you type — and an address it cannot check
+  reports one plain "The link could not be checked ahead of time. The
+  import will still be attempted." A link that answers but says the page
+  does not exist still reports "URL unreachable — the server says this page
+  does not exist (HTTP 404).") When the import is
   aimed at the server, the missing-tooling block is replaced by a single
   quiet note ("1 local component isn't installed — that affects imports
   on this machine only; this one runs on the server."): those extras
@@ -240,10 +249,12 @@ destination, or leaving the Import canvas cancels pending consent.
    path field (the "Browse…" picker selects single files only). Review the
    breakdown and size estimate — folder scans stop at 1,000 files and note
    " · more files not shown" — then press "Start import".
-3. **Import from a URL** — Paste the address into the path field. A link to
-   a video site imports as audio/video; a PDF link as a PDF; other pages
-   under "Web pages", where "What to fetch" / "Maximum pages" / "Maximum
-   depth" control how much gets scraped. Press "Start import".
+3. **Import from a URL** — Paste the address into the path field. Pasting
+   it does not contact the site; nothing is fetched until you press "Start
+   import". A link to a video site imports as audio/video; a PDF link as a
+   PDF; other pages under "Web pages", where "What to fetch" / "Maximum
+   pages" / "Maximum depth" control how much gets scraped. Press "Start
+   import".
 4. **Fix a "may fail to import" warning** — Press "Copy install command"
    right under the "⚠" warning in the pre-check summary. Quit the app, run
    the copied command in the environment the app is installed in,
@@ -744,3 +755,21 @@ are pinned by `Tests/Local_Ingestion/test_ingest_template_resolution.py`,
 `Tests/UI/test_library_ingest_template_picker.py`, and
 `Tests/Library/test_library_rechunk_service.py`. Template CRUD refuses
 the reserved name `auto` on create and rename.)*
+
+*Verified against task/19556-burn @ f12bb21ad — 2026-08-22 (TASK-19556 (a)):
+the import pre-check no longer contacts a URL. It used to fetch the address's
+headers 0.8 s after you stopped typing — before you had asked for anything to
+be imported — and the three answers it could get back (refused / answered
+with a status / clean) were each rendered differently in the summary, so
+pasting a link read out the state of whatever the address pointed at,
+including hosts on your own network. Pasting is now inert; the address is
+classified by name, exactly as a local path is classified by its extension.
+A link check remains available behind `[library]
+ingest_url_preflight_probe = true`, and in that mode it runs only from the
+deliberate triggers (leaving the field, Enter, Browse…, "Retry check"
+— note Textual also reports the field as left when the terminal itself
+loses focus), is
+routed through the `[web_security]` egress policy, follows no redirects, and
+reports one identical "could not be checked" note for every address the
+policy declines. Pinned by `Tests/Library/test_ingest_preflight_egress.py`
+and `Tests/Library/test_ingest_preflight.py`.*
