@@ -71,12 +71,12 @@ Its constructor is keyword-only. Dependencies are callables, not a screen or sib
 controller object. Its complete constructor contract is:
 
 - `pending_handoffs_accessor() -> PendingHandoffStore`;
-- `ensure_chat_store() -> ConsoleChatStore` and
-  `chat_store_accessor() -> ConsoleChatStore | None`;
+- `ensure_chat_store() -> ConsoleChatStore`;
+- `ensure_chat_controller() -> ConsoleChatController`;
 - `activate_workspace_for_session(session_id) -> None`;
-- `switch_chat_session(session_id) -> None`;
-- `schedule_native_console_sync() -> None`;
-- `ensure_agent_bridge() -> object | None`;
+- `switch_chat_session(session_id) -> ConsoleChatSession`;
+- `schedule_native_console_sync() -> Worker[None]`;
+- `ensure_agent_bridge() -> ConsoleAgentBridge | None`;
 - `wire_wake_coordinator() -> bool`, `seed_wake_from_marks() -> bool`, and
   `retry_wake_soon() -> None`;
 - `wake_has_pending(conversation_id) -> bool` and
@@ -86,7 +86,7 @@ controller object. Its complete constructor contract is:
 - `screen_mounted_accessor() -> bool`;
 - `active_session_id_accessor() -> str | None` and
   `chat_sessions_accessor() -> tuple[ConsoleChatSession, ...]`;
-- `defer_on_message_pump(callback) -> None` and
+- `defer_on_message_pump(callback) -> bool` and
   `start_transcript_sync_timer() -> None`;
 - `transcript_sync_timer_active() -> bool`;
 - `sync_native_console_ui() -> Awaitable[None]`;
@@ -98,7 +98,7 @@ controller object. Its complete constructor contract is:
   `run_marker_for_session(session_id) -> ConsoleRunMarker`;
 - `fleet_teardown_split() -> tuple[int, int]`,
   `leave_runtime() -> Awaitable[bool]`, and
-  `stage_teardown_notices(killed, surviving) -> None`;
+  `stage_teardown_notices(killed, surviving) -> tuple[None, None]`;
 - `fleet_unseen_revision_accessor() -> int`,
   `read_fleet_unseen_ids() -> frozenset[str]`, and
   `clear_fleet_unseen(conversation_id) -> bool`.
@@ -211,9 +211,11 @@ fleet state.
    retained.
 6. A missing match is acknowledged and dropped. An already-active match is also
    acknowledged without ensuring a chat controller, changing workspace, switching a
-   session, or scheduling a worker, and returns `True` after acknowledgement. Only a different active session performs the
-   existing order: activate its workspace, switch the chat session, then schedule the
-   exclusive console-sync worker.
+   session, or scheduling a worker, and returns `True` after acknowledgement. Only a
+   different active session performs the frozen order: ensure the chat controller,
+   activate its workspace, switch the chat session through that current controller,
+   then schedule the exclusive console-sync worker. If controller construction fails,
+   the claim is released before workspace activation and none of the later effects run.
 7. Exceptions release the exact claim for retry; every successful or missing-session
    path acknowledges exactly once.
 
@@ -313,8 +315,9 @@ it is neither a pass nor executed coverage. This amendment does not authorize a 
 full-suite run or changing raw failure/skip counts.
 
 1. Add no-mount controller tests for defaults, completion claim outcomes (including
-   exact-session precedence, last conversation match, and already-active `True` no-op), mount wake
-   claim, user-priority/display semantics, retry/delivery hooks, unseen cache/marker
+   exact-session precedence, last conversation match, already-active `True` no-op,
+   and controller-construction failure before workspace activation), mount wake claim,
+   user-priority/display semantics, retry/delivery hooks, unseen cache/marker
    precedence and the missing-controller `None` result, teardown gating, and survivor
    timer lifecycle. Pin unmounted delivery-start as a no-op, hidden-but-mounted
    delivery-start as an arm, and a raising selected-composer draft read as a propagated

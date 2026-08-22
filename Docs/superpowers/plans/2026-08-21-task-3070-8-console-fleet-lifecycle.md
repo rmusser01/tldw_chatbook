@@ -171,6 +171,7 @@ def test_completion_claim_prefers_exact_session_and_acknowledges_once(): ...
 def test_completion_claim_uses_last_conversation_match(): ...
 def test_already_active_completion_returns_true_without_side_effects(): ...
 def test_completion_exception_releases_claim_without_acknowledging(): ...
+def test_completion_controller_failure_releases_before_workspace_activation(): ...
 def test_mount_claim_reads_uncached_marks_before_wiring_and_retry(): ...
 def test_user_priority_propagates_a_selected_composer_draft_error(): ...
 def test_delivery_start_distinguishes_unmounted_from_hidden_mounted(): ...
@@ -235,10 +236,12 @@ Each mutation must fail for its intended ownership/DOM/sibling reason.
 
 Keep the existing six-controller `_EXPECTED_SLOTS` common-contract subset unchanged;
 its later tests intentionally assume every member has `app_instance` and
-`_chat_store_accessor`. Add a separate `_ALL_CONTROLLER_SLOTS` order/class inventory
-for all fourteen controllers, with `_fleet` after `_character` and before `_session`.
-Add a focused construction test that monkeypatches a screen dependency after
-`build_console_controllers` and proves the next `_fleet` call observes the replacement.
+its established common store accessor. Add a separate `_ALL_CONTROLLER_SLOTS`
+order/class inventory for all fourteen controllers, with `_fleet` after `_character`
+and before `_session`.
+Add a focused construction test that monkeypatches `ensure_chat_controller` on the
+screen after `build_console_controllers` and proves the next `_fleet` call observes the
+replacement.
 
 - [x] **Step 5: Run the exact RED set**
 
@@ -313,7 +316,9 @@ Move the completion claim and wake methods. Preserve:
 - last conversation match otherwise;
 - missing match acknowledgement/`False`;
 - already-active acknowledgement/`True` with no activation/controller/worker call;
-- different-session workspace activation → session switch → exclusive sync scheduling;
+- different-session chat-controller construction → workspace activation → session
+  switch through the current controller → exclusive sync scheduling;
+- controller-construction failure releases the claim before workspace activation;
 - exception release/`False`;
 - uncached mount mark read;
 - own-composer fallback on app/foreign resolver failure;
@@ -858,3 +863,19 @@ task completion.
   inconsistent with the unchanged four-failure/one-skip evidence. The contract and
   expected/closeout wording are now amended without changing any raw result. Task 5
   closeout, AC #3, and `Done` remain pending final specification/quality re-review.
+
+### Final-quality completion-order review (2026-08-22)
+
+- A focused no-mount regression failed first because a matched non-active completion
+  returned `True` after workspace activation even when controller construction was
+  replaced with a raising edge. The production fix swaps the unused fleet store
+  accessor for the late-bound `ensure_chat_controller` edge and freezes the order as
+  ensure → activate → switch through the current controller → schedule sync.
+- The new node is green at 1 passed / 1 warning. The exact Task 1 lifecycle plus four
+  architecture and two wiring nodes are green at 22 passed / 2 warnings; the complete
+  wiring file is green at 22 passed / 2 warnings. The screen remains 19,996 lines /
+  640 direct methods against the frozen 20,065 / 640 ceilings.
+- Every fleet constructor callback now has explicit arity and its truthful return
+  shape; no `Callable[..., Any]` or other ellipsis callable remains. Targeted Ruff
+  check/format-check, `py_compile` for `fleet.py` and `wiring.py`, and diff checks pass.
+  This review does not close Task 5, AC #3, or the task status.
