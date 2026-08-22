@@ -316,7 +316,7 @@ class ConsoleLeftRail(Vertical):
         self._manual_reaction_label = str(manual_reaction_label or "").strip()
         self._active_section_id: str | None = None
         self._active_reveal_generation = 0
-        self._pending_active_reveal: tuple[int, str, Widget | None] | None = None
+        self._pending_active_reveal: tuple[int, str, str | None, bool] | None = None
         self._allocation_reconcile_scheduled = False
         self._last_allocation_state: (
             tuple[bool, int, tuple[ConsoleBoundedSection, ...]] | None
@@ -421,7 +421,12 @@ class ConsoleLeftRail(Vertical):
         self._active_section_id = section_id
         self._active_reveal_generation += 1
         self._pending_active_reveal = (
-            (self._active_reveal_generation, section_id, reveal_target)
+            (
+                self._active_reveal_generation,
+                section_id,
+                reveal_target.id if reveal_target is not None else None,
+                reveal_target is not None,
+            )
             if deliberate_reveal
             else None
         )
@@ -508,8 +513,9 @@ class ConsoleLeftRail(Vertical):
 
         pending = self._pending_focus_recoveries.get(section_id)
         if pending is not None:
+            self._section_focus_history.pop(section_id, None)
             return pending
-        history = self._section_focus_history.get(section_id)
+        history = self._section_focus_history.pop(section_id, None)
         if history is None:
             return None
         incident = self._focus_recovery_incident(*history)
@@ -1022,11 +1028,13 @@ class ConsoleLeftRail(Vertical):
         self._pending_active_reveal = None
         if pending is None:
             return
-        generation, section_id, target = pending
-        self._queue_active_reveal(
+        generation, section_id, target_id, target_required = pending
+        self.call_after_refresh(
+            self._reveal_active_section,
+            generation,
             section_id,
-            target,
-            generation=generation,
+            target_id,
+            target_required,
         )
 
     def _queue_active_reveal(
@@ -1045,14 +1053,16 @@ class ConsoleLeftRail(Vertical):
             self._reveal_active_section,
             generation,
             section_id,
-            target,
+            target.id if target is not None else None,
+            target is not None,
         )
 
     def _active_reveal_is_current(
         self,
         generation: int,
         section_id: str,
-        target: Widget | None,
+        target_id: str | None,
+        target_required: bool,
     ) -> bool:
         """Reject delayed reveals after newer intent, focus change, or unmount."""
 
@@ -1062,21 +1072,32 @@ class ConsoleLeftRail(Vertical):
             or section_id != self._active_section_id
         ):
             return False
-        if target is not None and (
-            not target.is_mounted or self.app.focused is not target
-        ):
-            return False
+        if target_required:
+            if target_id is None:
+                return False
+            try:
+                target = self.query_one(f"#{target_id}", Widget)
+            except (NoMatches, QueryError):
+                return False
+            if not target.is_mounted or self.app.focused is not target:
+                return False
         return True
 
     def _reveal_active_section(
         self,
         generation: int,
         section_id: str,
-        target: Widget | None,
+        target_id: str | None,
+        target_required: bool,
     ) -> None:
         """Physically reveal the active header and first complete body rows."""
 
-        if not self._active_reveal_is_current(generation, section_id, target):
+        if not self._active_reveal_is_current(
+            generation,
+            section_id,
+            target_id,
+            target_required,
+        ):
             return
         try:
             outer = self.query_one("#console-left-rail-body", VerticalScroll)

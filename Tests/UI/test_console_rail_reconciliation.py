@@ -10,6 +10,7 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
 from textual.events import MouseDown, MouseScrollDown, MouseScrollUp, MouseUp
+from textual.widget import Widget
 from textual.widgets import Button, Static
 
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
@@ -75,6 +76,26 @@ def _drain_scheduler_callbacks(
             return
         callback, args = callbacks.pop(0)
         callback(*args)
+
+
+def _contains_widget_reference(value: object) -> bool:
+    """Return whether queued state recursively retains a Textual widget."""
+
+    if isinstance(value, Widget):
+        return True
+    if isinstance(value, dict):
+        return any(
+            _contains_widget_reference(item) for pair in value.items() for item in pair
+        )
+    if isinstance(value, (tuple, list, set)):
+        return any(_contains_widget_reference(item) for item in value)
+    dataclass_fields = getattr(value, "__dataclass_fields__", None)
+    if dataclass_fields is not None:
+        return any(
+            _contains_widget_reference(getattr(value, name))
+            for name in dataclass_fields
+        )
+    return False
 
 
 def _workspace_state() -> ConsoleWorkspaceContextState:
@@ -2053,6 +2074,92 @@ async def test_stale_context_focus_recovery_callback_cannot_consume_new_incident
 
         assert app.focused is second
         assert rail._pending_focus_recoveries == {"model": current_incident}
+
+
+@pytest.mark.asyncio
+async def test_semantic_focus_incident_releases_widget_history_before_unmount(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _RailHarness()
+
+    async with app.run_test(size=(60, 30)) as pilot:
+        await _settle(pilot)
+        rail = app.query_one(ConsoleLeftRail)
+        target = rail.query_one("#console-model-section-configure", Button)
+        target.focus()
+        await pilot.pause()
+
+        callbacks: list[tuple[Callable[..., None], tuple[object, ...]]] = []
+        monkeypatch.setattr(
+            rail,
+            "call_after_refresh",
+            lambda callback, *args: callbacks.append((callback, args)),
+        )
+        incident = rail._ensure_focus_recovery("model")
+
+        assert incident is not None
+        assert incident.target_id == target.id
+        assert "model" not in rail._section_focus_history
+        assert rail._pending_focus_recoveries == {"model": incident}
+        assert not _contains_widget_reference(rail._pending_focus_recoveries)
+
+        callback, args = next(
+            (callback, args)
+            for callback, args in callbacks
+            if callback.__name__ == "_recover_pending_focus"
+        )
+        await rail.remove()
+        assert not _contains_widget_reference(rail._pending_focus_recoveries)
+        callback(*args)
+
+        assert rail._section_focus_history == {}
+        assert rail._pending_focus_recoveries == {}
+
+
+@pytest.mark.asyncio
+async def test_active_reveal_queue_retains_only_identity_across_target_and_rail_removal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _RailHarness()
+
+    async with app.run_test(size=(60, 18)) as pilot:
+        await _settle(pilot, passes=8)
+        rail = app.query_one(ConsoleLeftRail)
+        outer = rail.query_one("#console-left-rail-body")
+        target = rail.query_one("#console-character-reaction-open", Button)
+        target.focus()
+        await pilot.pause()
+
+        callbacks: list[tuple[Callable[..., None], tuple[object, ...]]] = []
+        monkeypatch.setattr(
+            rail,
+            "call_after_refresh",
+            lambda callback, *args: callbacks.append((callback, args)),
+        )
+        rail.activate_section(
+            "character",
+            request_reconcile=False,
+            reveal_target=target,
+        )
+        assert rail._pending_active_reveal is not None
+        assert not _contains_widget_reference(rail._pending_active_reveal)
+
+        rail._queue_pending_active_reveal()
+        callback, args = callbacks.pop(0)
+        assert not _contains_widget_reference(args)
+        await target.remove()
+        outer.scroll_home(animate=False, immediate=True)
+        callback(*args)
+        assert outer.scroll_y == 0
+        assert rail._pending_active_reveal is None
+
+        rail.activate_section("model", request_reconcile=False)
+        rail._queue_pending_active_reveal()
+        callback, args = callbacks.pop(0)
+        assert not _contains_widget_reference(args)
+        await rail.remove()
+        callback(*args)
+        assert rail._pending_active_reveal is None
 
 
 @pytest.mark.asyncio
