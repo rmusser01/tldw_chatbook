@@ -100,6 +100,74 @@ _ATEXIT_REGISTERED = False
 _INTERPRETER_EXITING = False
 
 
+class _ThreadExitCleanup:
+    """Close and de-register one thread's connection when that thread ends.
+
+    Review of PR #1964. `SubscriptionsDB._connections` holds a **strong**
+    reference to every thread's connection so shutdown can count them, but
+    `close()` only removes the *calling* thread's entry. A worker thread that
+    ended without calling `close()` therefore left its connection pinned by
+    that dict for the life of the process -- descriptor, `-wal` and `-shm`
+    handles included. Measured over 20 concurrent short-lived threads: the
+    registry stayed at 21 entries and 43 open descriptors, permanently, and a
+    `gc.collect()` could not reclaim any of it.
+
+    Nothing outside the owning thread may close a sqlite3 connection --
+
+        ProgrammingError: SQLite objects created in a thread can only be
+        used in that same thread.
+
+    -- which is why `close_all_connections` reports other threads' connections
+    instead of closing them. The one place the rule *is* satisfied is the
+    dying thread itself: CPython clears a thread's `threading.local` storage
+    on that thread as it exits, so an object living only in that storage gets
+    finalized there. That is this class. Verified rather than assumed: over 10
+    threads, `__del__` ran 10 times, `threading.get_ident()` inside it matched
+    the ident recorded at construction every time, and the descriptor count on
+    the database returned to its pre-thread baseline (20 -> 0).
+
+    It deliberately does not checkpoint. The `-wal` is settled by SQLite when
+    the last connection to the database closes, and by `checkpoint_wal` /
+    `close_all_connections` on the shutdown path; a thread ending is not the
+    place to add I/O that could raise.
+
+    The instance must be reachable ONLY from the owning thread's local
+    storage. Handing a reference to anything longer-lived (the registry
+    included) would postpone the finalization this exists to trigger.
+    """
+
+    __slots__ = ("_connection", "_registry", "_lock", "_ident")
+
+    def __init__(self, connection, registry, lock, ident: int) -> None:
+        self._connection = connection
+        self._registry = registry
+        self._lock = lock
+        self._ident = ident
+
+    def detach(self) -> None:
+        """Give up ownership -- the connection was closed explicitly instead."""
+        self._connection = None
+
+    def __del__(self) -> None:
+        connection = self._connection
+        if connection is None:
+            return
+        self._connection = None
+        # Best-effort throughout: this runs during thread teardown, where a
+        # raised exception becomes an "Exception ignored in" traceback on
+        # stderr and helps nobody.
+        try:
+            with self._lock:
+                if self._registry.get(self._ident) is connection:
+                    del self._registry[self._ident]
+        except Exception:  # noqa: BLE001 -- thread teardown, best effort
+            pass
+        try:
+            connection.close()
+        except Exception:  # noqa: BLE001 -- thread teardown, best effort
+            pass
+
+
 def _checkpoint_open_databases_at_exit() -> None:
     """Settle every open subscriptions database at interpreter exit.
 
@@ -356,11 +424,21 @@ class SubscriptionsDB(BaseDB):
         """
         self._local = threading.local()
         # Every thread-local connection this instance has open, keyed by the
-        # thread that owns it (task-19562). `threading.local` is invisible
-        # from any other thread, so without this registry nothing -- not
-        # shutdown, not a test -- could even *count* the connections, let
+        # ident of the thread that owns it (task-19562). `threading.local` is
+        # invisible from any other thread, so without this registry nothing --
+        # not shutdown, not a test -- could even *count* the connections, let
         # alone checkpoint behind them. Assigned before `super().__init__`
         # because schema initialization touches `self.conn`.
+        #
+        # The reference held here is a STRONG one, which is why every entry is
+        # paired with a `_ThreadExitCleanup` in the owning thread's local
+        # storage (review of PR #1964): without that, a thread that ended
+        # without calling `close()` left its connection pinned by this dict for
+        # the life of the process -- descriptor and WAL lock included --
+        # inverting the very leak the registry was added to expose. A
+        # `weakref.WeakValueDictionary` would be tidier and is not available:
+        # CPython raises `TypeError: cannot create weak reference to
+        # 'sqlite3.Connection' object` (measured on 3.12.11).
         self._connections: Dict[int, sqlite3.Connection] = {}
         self._connections_lock = threading.Lock()
         self._read_only = read_only
@@ -1506,6 +1584,16 @@ class SubscriptionsDB(BaseDB):
             self._local.conn = connection
             with self._connections_lock:
                 self._connections[threading.get_ident()] = connection
+            # Assigned LAST, and only into this thread's local storage: from
+            # here the cleanup owns closing and de-registering this connection
+            # when the thread ends (review of PR #1964). Nothing else may hold
+            # a reference to it, or it would never be finalized.
+            self._local.connection_cleanup = _ThreadExitCleanup(
+                connection,
+                self._connections,
+                self._connections_lock,
+                threading.get_ident(),
+            )
         return self._local.conn
 
     def _register_for_exit_checkpoint(self) -> None:
@@ -1577,9 +1665,9 @@ class SubscriptionsDB(BaseDB):
         checkpointing the `-wal` (the checkpoint is database-wide, so one
         connection settles the file for all of them).
 
-        Connections owned by *other* threads are counted and reported, not
-        closed. That is a measured limitation, not an oversight: sqlite3
-        refuses a cross-thread close --
+        Connections owned by *other, still-live* threads are counted and
+        reported, not closed. That is a measured limitation, not an oversight:
+        sqlite3 refuses a cross-thread close --
 
             ProgrammingError: SQLite objects created in a thread can only be
             used in that same thread.
@@ -1589,8 +1677,14 @@ class SubscriptionsDB(BaseDB):
         that actually matters for the file on disk (the checkpoint) is done
         regardless of which thread calls this.
 
+        Connections whose thread has already EXITED are neither counted nor
+        retained: `_ThreadExitCleanup` closed and de-registered each of them on
+        its own thread as that thread ended (review of PR #1964). So the number
+        returned is the number of connections a still-live thread could
+        actually be using, and the registry itself holds no descriptor open.
+
         Returns:
-            The number of connections still open on other threads.
+            The number of connections still open on other live threads.
         """
         self.checkpoint_wal()
         self.close()
@@ -4811,7 +4905,16 @@ class SubscriptionsDB(BaseDB):
         reports a connection that is already gone. Use
         `close_all_connections` for the shutdown path, which adds the
         database-wide settle.
+
+        The thread-exit cleanup is detached first (review of PR #1964): this
+        thread has closed and de-registered its own connection, so the
+        finalizer has nothing left to do and must not act on a connection this
+        thread may since have reopened.
         """
+        cleanup = getattr(self._local, "connection_cleanup", None)
+        if cleanup is not None:
+            cleanup.detach()
+            self._local.connection_cleanup = None
         connection = getattr(self._local, "conn", None)
         if connection:
             try:

@@ -22,6 +22,22 @@ from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProj
 
 Handler = Callable[[dict[str, Any]], Coroutine[Any, Any, None]]
 
+#: Why a dispatch was late (`_report_lateness_cause`). These three strings are
+#: simultaneously branch outcomes, the `cause` label on the
+#: `scheduler_dispatch_late` counter, and the vocabulary
+#: `Docs/User_Guide/schedules.md` teaches users to read in the logs -- so they
+#: get one home rather than being retyped at each site (review of PR #1964).
+#: Renaming one here renames it in the metric, which is the point: a label the
+#: dashboards know and a branch condition can no longer drift apart.
+#:
+#: The scheduler was not running when the task was due.
+LATENESS_CAUSE_AWAY = "away"
+#: The scheduler was running and the preceding tick demonstrably held the loop.
+LATENESS_CAUSE_BUSY = "busy"
+#: The scheduler was running, and nothing it ran accounts for the delay --
+#: the process was not scheduled (suspend, sleep, starved event loop).
+LATENESS_CAUSE_STALLED = "stalled"
+
 
 class SchedulerLoop:
     """Polls the scheduled-task database and dispatches due tasks."""
@@ -168,23 +184,36 @@ class SchedulerLoop:
             pass
 
     async def run(self) -> None:
-        """Run the scheduler until :meth:`stop` is called."""
+        """Run the scheduler until :meth:`stop` is called.
+
+        The running window is closed HERE, not in `stop()` (review of PR
+        #1964). `stop()` is a request -- `app.py` calls it and only then
+        cancels the worker -- so it can land while a tick is still walking its
+        due list. Clearing `_running_since` there made every remaining dispatch
+        in that tick report `away`, i.e. claimed an absent scheduler for one
+        that was visibly dispatching. The `finally` closes the window at the
+        moment the loop actually leaves, including on cancellation, which is
+        the only instant the claim is true.
+        """
         self.running = True
         self._running_since = self.clock()
-        await asyncio.to_thread(self.queue.load)
-        self.report_configuration()
-        while self.running:
-            if (
-                self._tick_count > 0
-                and self._tick_count % self.queue_reload_interval_ticks == 0
-            ):
-                await asyncio.to_thread(self.queue.load)
-            if self._reload_requested:
-                self._reload_requested = False
-                await asyncio.to_thread(self.queue.load)
-            self._tick_count += 1
-            await self.tick()
-            await asyncio.sleep(self.poll_interval)
+        try:
+            await asyncio.to_thread(self.queue.load)
+            self.report_configuration()
+            while self.running:
+                if (
+                    self._tick_count > 0
+                    and self._tick_count % self.queue_reload_interval_ticks == 0
+                ):
+                    await asyncio.to_thread(self.queue.load)
+                if self._reload_requested:
+                    self._reload_requested = False
+                    await asyncio.to_thread(self.queue.load)
+                self._tick_count += 1
+                await self.tick()
+                await asyncio.sleep(self.poll_interval)
+        finally:
+            self._running_since = None
 
     async def tick(self) -> None:
         """Evaluate once and dispatch any due tasks.
@@ -371,16 +400,16 @@ class SchedulerLoop:
         running_since = self._running_since
         held_seconds = self._last_tick_dispatch_seconds
         if running_since is None or scheduled_at < running_since:
-            cause = "away"
+            cause = LATENESS_CAUSE_AWAY
         elif held_seconds > self.missed_fire_grace_seconds:
-            cause = "busy"
+            cause = LATENESS_CAUSE_BUSY
         else:
-            cause = "stalled"
+            cause = LATENESS_CAUSE_STALLED
         log_counter(
             "scheduler_dispatch_late",
             labels={"task_type": task_type, "cause": cause},
         )
-        if cause == "busy":
+        if cause == LATENESS_CAUSE_BUSY:
             logger.warning(
                 "Task {task_id} dispatched {late_by:.0f}s after its scheduled "
                 "time while the scheduler was running: the preceding tick "
@@ -390,7 +419,7 @@ class SchedulerLoop:
                 late_by=late_by,
                 held=held_seconds,
             )
-        elif cause == "stalled":
+        elif cause == LATENESS_CAUSE_STALLED:
             logger.warning(
                 "Task {task_id} dispatched {late_by:.0f}s after its scheduled "
                 "time while the scheduler was running, and no handler accounts "
@@ -464,9 +493,16 @@ class SchedulerLoop:
         return succeeded
 
     def stop(self) -> None:
-        """Signal the loop to exit after the current tick."""
+        """Signal the loop to exit after the current tick.
+
+        Deliberately does NOT clear `_running_since` (review of PR #1964).
+        This is a request, not the departure: `app.py` calls it and then
+        cancels the worker, so a tick can still be dispatching when it
+        returns. Clearing the window here made `_report_lateness_cause` read
+        `running_since is None` as proof the scheduler was away and label the
+        rest of that same tick `away` -- an absent scheduler asserted for one
+        that was demonstrably running. `run()`'s `finally` closes the window
+        when the loop actually leaves, which still covers the gap before the
+        next `run()`.
+        """
         self.running = False
-        # Cleared so a task scheduled during the gap before the next `run()`
-        # is correctly attributed to an absent scheduler rather than to a
-        # busy one.
-        self._running_since = None

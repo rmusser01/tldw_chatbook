@@ -6421,3 +6421,45 @@ argument's presence, probe **both** branches and record which is which; a
 single "instrumented a real call" line in a task file cannot be checked later
 by anyone, and this one was wrong in the direction that closes an
 investigation.
+
+## A sequential start/join thread loop hides per-thread leaks -- and "descriptors return to baseline" is the wrong assertion (PR #1964 review, 2026-08-22)
+
+**What happened.** Qodo found that `SubscriptionsDB._connections` held a
+strong reference to every thread's sqlite connection and only ever removed
+the *calling* thread's entry, so a worker that exited without calling
+`close()` pinned its connection -- descriptor and WAL lock -- for the life of
+the process. The first probe written to confirm it spawned 100 short-lived
+threads **one at a time** (`start(); join()`), and reported **no growth at
+all**: the registry stayed at 2 entries. The reason is that the OS recycles
+thread idents, so `self._connections[ident] = connection` overwrote the
+previous entry every iteration. The defect was real; the measurement designed
+to see it could not.
+
+Re-run with 20 threads held **concurrently** on a barrier, the same code gave
+registry 21 entries and 43 descriptors, permanently, and `gc.collect()` could
+not reclaim any of it (the sqlite3 statement cache is an `lru_cache` wrapping
+the connection, so every used connection sits in a reference cycle and is
+never freed by refcounting alone).
+
+Two further facts cost time and are worth writing down:
+
+* **`sqlite3.Connection` cannot be weak-referenced.** The obvious fix -- and
+  the one the review suggested -- is a `weakref.WeakValueDictionary`. CPython
+  3.12.11 raises `TypeError: cannot create weak reference to
+  'sqlite3.Connection' object`. Check weak-referenceability before designing
+  around it; C types often lack `tp_weaklistoffset`.
+* **Descriptors do not return to their pre-thread baseline even when every
+  connection is genuinely closed.** SQLite's unix VFS keeps closed
+  descriptors for an inode in a reuse pool while any connection to that file
+  remains open, releasing them together when the last one closes. Asserting
+  "fds back to baseline" would have failed against a correct fix. The
+  assertion that actually distinguishes fixed from broken is **"a second
+  round of threads costs no more descriptors than the first"**: fixed gave
+  13, 13, 13, 13, 13 over five rounds and 0 after the final close; broken
+  gave 23, 43, 63, 83.
+
+**What to do.** To measure anything keyed on thread identity, run the threads
+concurrently -- a sequential loop tests ident recycling, not your registry.
+And before asserting on file descriptors, establish what the *correct*
+steady state looks like by measuring a known-good control (here: the same
+code path with no registry at all), rather than assuming it is the baseline.

@@ -342,3 +342,133 @@ concurrent is a semantics change this task has no mandate for.
 `Tests/Subscriptions/test_watchlist_feed_api_in_flight_guard.py`,
 `Tests/Subscriptions/test_subscriptions_transaction_nesting.py`,
 `Tests/UI/test_schedules_missed_notice.py`.
+
+## Review follow-up (Qodo, PR #1964)
+
+Three findings. Two were real bugs and are fixed; the third was a fair
+maintainability call and is accepted.
+
+### 1. Leaked sqlite connections retained (HIGH) — real, fixed
+
+`_connections` held a **strong** reference to each thread's connection and
+`close()` removed only the *calling* thread's entry, so a worker thread that
+ended without closing left its connection pinned for the life of the process.
+That is the opposite of what this task set out to do.
+
+**The suggested fix does not exist.** `weakref.WeakValueDictionary` is
+impossible here: CPython 3.12.11 raises `TypeError: cannot create weak
+reference to 'sqlite3.Connection' object`. And nothing outside the owning
+thread may close a connection — the constraint this task already measured and
+pinned (`test_a_cross_thread_close_is_refused_by_sqlite`).
+
+The one place both constraints are satisfied is the dying thread itself:
+CPython clears a thread's `threading.local` storage **on that thread** as it
+exits. `_ThreadExitCleanup` lives only in that storage, so its `__del__` runs
+there and both closes the connection and drops the registry entry. `close()`
+detaches it first, so an explicit close is never double-handled. Verified,
+not assumed: over 10 threads `__del__` ran 10 times and
+`threading.get_ident()` inside it matched the ident recorded at construction
+every time.
+
+**Measurement (three arms, 20 concurrent threads, descriptors counted with
+`lsof`, numeric FD column only).** Arm A is the reviewed code, arm B the fix,
+arm C a control with no registry at all — the lifetime this class had before
+the registry existed:
+
+| arm | registry after | fds after | live `Connection` objects | `close_all_connections()` |
+|---|---|---|---|---|
+| A defect | 21 (was 1) | 43 (was 3) | 21 | reports 20 |
+| B fixed | 1 | 23 | 1 | reports 0 |
+| C control (pre-registry) | 1 | 23 | 1 | reports 0 |
+
+A `gc.collect()` reclaims **nothing** in arm A: the sqlite3 statement cache is
+an `lru_cache` wrapping the connection, so every used connection sits in a
+reference cycle and refcounting alone never frees it.
+
+**Repeated rounds (5 rounds x 10 threads) — the growth question directly:**
+
+    DEFECT  round 1..5 settled fds: 23, 43, 63, 83, 78   registry pinned at 11
+            close_all_connections() -> 10;  57 fds still open
+    FIXED   round 1..5 settled fds: 13, 13, 13, 13, 13   registry back to 1 every round
+            close_all_connections() -> 0;   0 fds open
+
+The fixed steady state is 13 rather than the 3-fd baseline, and that is
+correct, not residual leakage: SQLite's unix VFS keeps closed descriptors for
+an inode in a reuse pool while any connection to that file is still open, and
+releases them together when the last one closes — which the final line shows
+(0). The honest assertion is therefore "a second round costs no more
+descriptors than the first", which is what the new test makes.
+
+`close_all_connections()` and `checkpoint_wal()` are unchanged in behaviour;
+the count `close_all_connections()` returns is now the number of connections a
+**still-live** thread could actually be using.
+
+**Test changes.** `test_close_all_connections_settles_the_file_and_reports_the
+_rest` and `test_the_connection_registry_sees_worker_threads` both used to
+`join()` the worker before asserting that its connection was still registered
+— i.e. they asserted the leak. They now hold the worker alive for the
+assertion (`_worker_holding_a_connection`), which is what "connections other
+threads still have open" means. New:
+`test_threads_that_exit_leave_no_connection_behind`, born red — with
+`_ThreadExitCleanup.__del__` neutered it fails with `assert 6 == 1` and the six
+retained idents printed. `test_a_cross_thread_close_is_refused_by_sqlite` is
+untouched and still passes.
+
+### 2. `stop()` misattributes lateness — real, fixed
+
+`stop()` cleared `_running_since` immediately, and `_report_lateness_cause`
+treats `running_since is None` as proof the scheduler was away. `app.py` calls
+`scheduler_loop.stop()` and only *then* cancels the worker, so `stop()` can
+land while a tick is still walking its due list — and every remaining dispatch
+in that same tick was then reported `away`, for a loop visibly dispatching it.
+
+Same defect class as the one this branch's own review already caught (a
+suspended machine with zero handler time reported as `busy`): a cause asserted
+from something other than evidence the loop holds. `stop()` is a *request*, so
+it no longer touches the window; `run()` closes it in a `finally`, which is
+the moment the loop actually leaves and covers cancellation too.
+
+Born-red test `test_stop_during_an_in_flight_tick_is_not_reported_as_away`
+dispatches two equally overdue tasks in one live tick, with `stop()` called
+from the first one's handler. Before the fix:
+
+    [('stopper', 'stalled'), ('after-stop', 'away')]
+
+Two identical dispatches by the same live tick, disagreeing only because
+`stop()` ran in between. After the fix both report `stalled`.
+`test_run_records_running_since_and_stop_clears_it` is renamed to
+`..._and_the_loops_exit_clears_it` and now pins both halves: the window is
+still open immediately after `stop()`, and closed once `run()` returns.
+
+### 3. Lateness cause uses literals — accepted
+
+`away` / `busy` / `stalled` are simultaneously branch outcomes, the `cause`
+label on the `scheduler_dispatch_late` counter, and the vocabulary
+`Docs/User_Guide/schedules.md` teaches users to grep for. Three sites that must
+agree is exactly the case for named constants, so `LATENESS_CAUSE_AWAY`,
+`LATENESS_CAUSE_BUSY` and `LATENESS_CAUSE_STALLED` now live in
+`Scheduling/scheduler/loop.py` and are used by the loop and the tests. Renaming
+one renames the metric label with it, which is the point.
+
+### Verification
+
+* `Tests/Subscriptions/` + `Tests/Scheduling/` — **1186 passed, 1 skipped**
+  (1184/1 before; +2 new tests).
+* `Tests/Watchlists/` + the three `Tests/UI/test_schedules_*` files (the set
+  this task's earlier close-out counted) — **758 passed**, unchanged.
+  `Tests/Watchlists/` on its own is 702 of those.
+* Repo-wide `pytest --collect-only -q` — 55,657 collected, 1 error in
+  `Tests/UI/test_library_file_notes_workspace.py` ("function uses no argument
+  'push_phase'"). Pre-existing dev red in a file this branch does not touch
+  (last changed by `d3833708a`); it reproduces identically on the other open
+  branch.
+* `ruff check --isolated --select E402,F401,F811,F821,E731` clean on all four
+  changed files.
+
+### Files (review follow-up)
+
+`tldw_chatbook/DB/Subscriptions_DB.py`,
+`tldw_chatbook/Scheduling/scheduler/loop.py`,
+`Tests/Subscriptions/test_subscriptions_db_connection_lifecycle.py`,
+`Tests/Scheduling/test_scheduler_lateness_cause.py`,
+`backlog/docs/lessons-testing-evidence.md`.

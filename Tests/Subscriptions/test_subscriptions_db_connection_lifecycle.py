@@ -29,9 +29,12 @@ closed:
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import threading
 import time
+from contextlib import contextmanager
+from pathlib import Path
 
 import pytest
 
@@ -180,49 +183,159 @@ def test_close_forgets_the_connection_it_closed(db):
     assert threading.get_ident() not in db._connections
 
 
+@contextmanager
+def _worker_holding_a_connection(db):
+    """A worker thread that opens a connection and stays alive inside the block.
+
+    The thread is held open deliberately (review of PR #1964). Joining it first
+    would prove nothing about "connections other threads still have open": an
+    exited thread's connection is now closed and de-registered by
+    `_ThreadExitCleanup`, so an assertion made after `join()` would be
+    asserting the leak rather than the contract.
+    """
+    opened = threading.Event()
+    release = threading.Event()
+    failure: list[BaseException] = []
+
+    def worker():
+        try:
+            db.conn.execute("SELECT 1").fetchone()
+        except BaseException as exc:  # pragma: no cover - surfaced below
+            failure.append(exc)
+        finally:
+            opened.set()
+        release.wait(10)
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    try:
+        assert opened.wait(10), "worker never opened its connection"
+        assert not failure, failure
+        yield thread
+    finally:
+        release.set()
+        thread.join(10)
+        assert not thread.is_alive()
+
+
 def test_the_connection_registry_sees_worker_threads(db):
     """`threading.local` is invisible from outside; the registry is not.
 
     This is what makes the leak countable at all: before task-19562 nothing
     could observe that a worker thread had opened a connection.
     """
-    def touch():
+    with _worker_holding_a_connection(db) as worker:
+        assert len(db._connections) >= 1
+        assert worker.ident in db._connections
+
+
+def _round_of_short_lived_threads(db, count: int = 5) -> list[int]:
+    """Open a connection on `count` concurrent threads, then let them all exit.
+
+    Concurrent on purpose: a sequential start/join loop recycles thread idents,
+    so each registry entry overwrites the last and the retention is invisible.
+    That is not hypothetical -- the first run of the measurement behind this
+    test showed no growth for exactly that reason.
+    """
+    ready = threading.Barrier(count + 1)
+    release = threading.Event()
+    idents: list[int] = []
+    lock = threading.Lock()
+
+    def worker():
         db.conn.execute("SELECT 1").fetchone()
+        with lock:
+            idents.append(threading.get_ident())
+        ready.wait(30)
+        release.wait(30)
 
-    worker = threading.Thread(target=touch)
-    worker.start()
-    worker.join(5)
+    threads = [threading.Thread(target=worker) for _ in range(count)]
+    for thread in threads:
+        thread.start()
+    ready.wait(30)
+    release.set()
+    for thread in threads:
+        thread.join(30)
+        assert not thread.is_alive()
+    return idents
 
-    assert len(db._connections) >= 1
-    assert worker.ident in db._connections
+
+@pytest.mark.skipif(
+    not Path("/dev/fd").is_dir(), reason="descriptor census needs /dev/fd"
+)
+def test_threads_that_exit_leave_no_connection_behind(db, tmp_path):
+    """The registry must not outlive the threads whose connections it holds.
+
+    Review of PR #1964. `_connections` keeps a STRONG reference and `close()`
+    removes only the *calling* thread's entry, so a worker that ended without
+    calling `close()` left its connection pinned for the life of the process --
+    descriptor and WAL lock included, and unreclaimable even by `gc.collect()`.
+    Measured over five rounds of ten threads before the fix, descriptors on the
+    database climbed 23 -> 43 -> 63 -> 83 and `close_all_connections()` still
+    reported ten open; after it, every round settled back to the same registry
+    size and the same descriptor count.
+
+    `_ThreadExitCleanup` does the closing on the dying thread, which is the
+    only thread sqlite3 permits to close that connection.
+
+    The descriptor count does not return to the pre-thread baseline and is not
+    asserted to: SQLite's unix VFS keeps closed descriptors for an inode in a
+    reuse pool while any connection to that file is still open (they are
+    released together when the last one closes -- see
+    `test_close_all_connections_settles_the_file_and_reports_the_rest`). What
+    must hold is that a second round costs nothing more than the first.
+    """
+    db_file = tmp_path / "subs.db"
+    db.conn.execute("SELECT 1").fetchone()
+    registry_before = len(db._connections)
+
+    first_idents = _round_of_short_lived_threads(db)
+    assert len(set(first_idents)) == 5, "threads did not run concurrently"
+    assert len(db._connections) == registry_before, (
+        f"exited threads are still registered: {db._connections.keys()}"
+    )
+    assert not any(ident in db._connections for ident in first_idents)
+    settled_after_first = _descriptors_on(db_file)
+
+    _round_of_short_lived_threads(db)
+    assert len(db._connections) == registry_before
+    assert _descriptors_on(db_file) <= settled_after_first, (
+        "descriptors on the database grew with a second round of short-lived "
+        f"threads: {settled_after_first} -> {_descriptors_on(db_file)}"
+    )
+
+
+def _descriptors_on(path: Path) -> int:
+    """How many descriptors this process holds on `path`, compared by inode."""
+    target = path.stat()
+    count = 0
+    for entry in os.listdir("/dev/fd"):
+        try:
+            info = os.stat(f"/dev/fd/{entry}")
+        except OSError:
+            continue
+        if info.st_dev == target.st_dev and info.st_ino == target.st_ino:
+            count += 1
+    return count
 
 
 def test_close_all_connections_settles_the_file_and_reports_the_rest(db, tmp_path):
     """Shutdown: checkpoint for everyone, close what this thread may close."""
-    opened = threading.Event()
+    with _worker_holding_a_connection(db):
+        for index in range(300):
+            db.add_subscription(
+                name=f"s{index}", type="rss", source=f"https://e.invalid/{index}.xml"
+            )
 
-    def worker():
-        db.conn.execute("SELECT 1").fetchone()
-        opened.set()
+        remaining = db.close_all_connections()
 
-    thread = threading.Thread(target=worker)
-    thread.start()
-    thread.join(5)
-    assert opened.is_set()
-
-    for index in range(300):
-        db.add_subscription(
-            name=f"s{index}", type="rss", source=f"https://e.invalid/{index}.xml"
+        assert _wal_bytes(tmp_path) == 0, "shutdown left an un-checkpointed -wal"
+        assert remaining == 1, (
+            "the live worker thread's connection should be reported as still "
+            "open -- sqlite3 refuses a cross-thread close, got "
+            f"{remaining}"
         )
-
-    remaining = db.close_all_connections()
-
-    assert _wal_bytes(tmp_path) == 0, "shutdown left an un-checkpointed -wal"
-    assert remaining == 1, (
-        "the worker thread's connection should be reported as still open -- "
-        f"sqlite3 refuses a cross-thread close, got {remaining}"
-    )
-    assert threading.get_ident() not in db._connections
+        assert threading.get_ident() not in db._connections
 
 
 def test_a_cross_thread_close_is_refused_by_sqlite(db):
