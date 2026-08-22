@@ -215,3 +215,32 @@ Remaining 3, with evidence:
   (block_state non-None even for legacy prompts). Needs the editor's
   real edit seam (_change_field / per-lane publish), not textarea
   assignment.
+
+## Final tranche (2026-08-22, PR #1944 merged) — tracked failures cleared
+
+All three remaining fixed:
+- cancelled-import retry Undo: the Library source-snapshot worker
+  crashed (AttributeError: 'LibraryHarness' has no app_config) once the
+  test swapped screen.app_instance to the harness; the crash aborted
+  the post-import canvas sync so the receipt row never composed.
+  LibraryHarness now shares the real app's app_config. Diagnostic
+  lesson recorded: a spy on the snapshot coroutine PERTURBED the bug
+  away by stripping @work (the coroutine was never awaited -> no
+  worker -> no crash) -- instrumenting decorated methods requires
+  re-wrapping through the same decorator.
+- copy-lane x2: per-lane settle pacing (each programmatic lane write's
+  publish/preview-sync must settle before the next write).
+
+Six tranches total: ~50 deterministic failures -> 0 tracked, across
+PRs #1909/#1912/#1915/#1917/#1921/#1944, with 3 real product bugs
+fixed (headless kwargs NoActiveAppError, hidden-Back/control no-ops in
+wide focused-task mode x2 surfaces, prompt-field reader dropping
+unsaved edits) and every tranche differentially verified.
+
+Follow-up (NEW, from today's dev movement at e52e66c82, fails on
+pristine dev): test_library_prompts_restored_create_row_list_dispatches
+_browse_once and test_library_prompts_fresh_reentry_refetches_the_
+applied_scope_once -- dispatch/refetch counting; plus the known
+cross-suite order flakes (combined three-file runs surface them; CI
+shards files separately). File under TASK-18610's remainder or a new
+task.
