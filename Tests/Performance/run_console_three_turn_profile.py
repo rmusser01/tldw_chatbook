@@ -257,6 +257,23 @@ def _statistics_protocol(module: Any, *, error_code: str) -> dict[str, Any]:
         return nearest(values, fraction)
 
     try:
+        summary_parameters = inspect.signature(summary_builder).parameters
+        paired_parameters = inspect.signature(paired).parameters
+        resamples = summary_parameters["bootstrap_resamples"].default
+        seed = summary_parameters["bootstrap_seed"].default
+        if (
+            not isinstance(resamples, int)
+            or isinstance(resamples, bool)
+            or resamples < 1
+            or not isinstance(seed, int)
+            or isinstance(seed, bool)
+            or not isinstance(paired_parameters["resamples"].default, int)
+            or isinstance(paired_parameters["resamples"].default, bool)
+            or paired_parameters["resamples"].default < 1
+            or not isinstance(paired_parameters["seed"].default, int)
+            or isinstance(paired_parameters["seed"].default, bool)
+        ):
+            raise RuntimeError(error_code)
         nearest_probe = (
             nearest([4.0, 1.0, 3.0, 2.0], 0.5),
             nearest([4.0, 1.0, 3.0, 2.0], 0.75),
@@ -278,17 +295,52 @@ def _statistics_protocol(module: Any, *, error_code: str) -> dict[str, Any]:
         else:
             raise RuntimeError(error_code)
         blocks = [
-            {
-                "control": float(index + 1),
-                "disabled": float((index + 1) * (2 if index % 2 else 1)),
-                "enabled": float(index + 2),
-            }
-            for index in range(7)
+            {"control": 74.0, "disabled": 11.0, "enabled": 138.0},
+            {"control": 25.0, "disabled": 127.0, "enabled": 68.0},
+            {"control": 20.0, "disabled": 2.0, "enabled": 31.0},
         ]
-        first_bounds = paired(blocks, "disabled", resamples=32, seed=17)
-        if first_bounds != paired(blocks, "disabled", resamples=32, seed=17):
+        first_bounds = paired(
+            blocks, "disabled", resamples=resamples, seed=seed
+        )
+        if first_bounds != paired(
+            blocks, "disabled", resamples=resamples, seed=seed
+        ):
             raise RuntimeError(error_code)
-        alternate_bounds = paired(blocks, "disabled", resamples=32, seed=18)
+        alternate_bounds = paired(
+            blocks, "disabled", resamples=resamples, seed=seed + 1
+        )
+        distribution = (
+            1,
+            1,
+            1,
+            2,
+            2,
+            3,
+            5,
+            8,
+            13,
+            21,
+            34,
+            55,
+            89,
+            144,
+            233,
+            377,
+            610,
+            987,
+            1_597,
+            2_584,
+            4_181,
+            6_765,
+            10_946,
+            17_711,
+            28_657,
+            46_368,
+            75_025,
+            121_393,
+            196_418,
+            999_999,
+        )
         rows = [
             {
                 "phase": "measured",
@@ -296,7 +348,7 @@ def _statistics_protocol(module: Any, *, error_code: str) -> dict[str, Any]:
                 "arm": arm,
                 "metrics": {
                     metric: float(
-                        (iteration + 1) * (arm_index + 1) + metric_index
+                        distribution[iteration] * (arm_index + 1) + metric_index
                     )
                     for metric_index, metric in enumerate(module.REQUIRED_METRICS)
                 },
@@ -304,13 +356,28 @@ def _statistics_protocol(module: Any, *, error_code: str) -> dict[str, Any]:
             for iteration in range(30)
             for arm_index, arm in enumerate(module.ARMS)
         ]
+        summary_calls: list[tuple[int, int]] = []
+
+        def recording_paired(
+            _blocks: Sequence[Mapping[str, float]],
+            _candidate: str,
+            *,
+            resamples: int,
+            seed: int,
+        ) -> Any:
+            summary_calls.append((resamples, seed))
+            return first_bounds
+
         module.validate_run = lambda *_args, **_kwargs: ()
         module.nearest_rank_percentile = recording_nearest
+        module.paired_p95_ratio_bounds = recording_paired
         summary = summary_builder(
             rows,
-            bootstrap_resamples=32,
-            bootstrap_seed=17,
+            bootstrap_resamples=resamples,
+            bootstrap_seed=seed,
         )
+        if not summary_calls or set(summary_calls) != {(resamples, seed)}:
+            raise RuntimeError(error_code)
         matching_fractions = {
             fraction
             for fraction in fractions
@@ -334,12 +401,22 @@ def _statistics_protocol(module: Any, *, error_code: str) -> dict[str, Any]:
         p95_payload = {
             "probe": nearest_probe,
             "summary_fraction": fraction,
+            "summary": {
+                arm: {
+                    metric: summary["arms"][arm]["metrics"][metric]["p95"]
+                    for metric in module.REQUIRED_METRICS
+                }
+                for arm in module.ARMS
+            },
         }
         resampling_payload = {
-            "seed_17": first_bounds,
-            "seed_18": alternate_bounds,
+            "resamples": resamples,
+            "seed": seed,
+            "default_seed": first_bounds,
+            "alternate_seed": alternate_bounds,
             "summary": summary,
         }
+
         def digest(value: Any) -> str:
             return hashlib.sha256(
                 json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
@@ -349,6 +426,8 @@ def _statistics_protocol(module: Any, *, error_code: str) -> dict[str, Any]:
             "p95_fraction": fraction,
             "p95_behavior_sha256": digest(p95_payload),
             "resampling_method": "paired_complete_blocks",
+            "resamples": resamples,
+            "seed": seed,
             "resampling_behavior_sha256": digest(resampling_payload),
         }
     except Exception as exc:
@@ -358,6 +437,7 @@ def _statistics_protocol(module: Any, *, error_code: str) -> dict[str, Any]:
     finally:
         module.validate_run = validate
         module.nearest_rank_percentile = nearest
+        module.paired_p95_ratio_bounds = paired
 
 
 def confirmation_protocol(
@@ -409,7 +489,6 @@ def confirmation_protocol(
     statistics_protocol = _statistics_protocol(
         sys.modules[__name__], error_code="confirmation_protocol_statistics_invalid"
     )
-    bootstrap = inspect.signature(build_summary).parameters
     bounds = paired_p95_ratio_bounds(
         [
             {"control": float(index), "disabled": float(index), "enabled": float(index)}
@@ -453,8 +532,8 @@ def confirmation_protocol(
         "measured_blocks": MEASURED_BLOCKS,
         "resampling": {
             "method": statistics_protocol["resampling_method"],
-            "resamples": bootstrap["bootstrap_resamples"].default,
-            "seed": bootstrap["bootstrap_seed"].default,
+            "resamples": statistics_protocol["resamples"],
+            "seed": statistics_protocol["seed"],
             "behavior_sha256": statistics_protocol[
                 "resampling_behavior_sha256"
             ],
@@ -589,7 +668,6 @@ def load_original_protocol(
             )
         finally:
             original.nearest_rank_percentile = real_percentile
-        signature = inspect.signature(original.build_summary).parameters
         non_regression, improvement = _original_thresholds(original, rows)
         statistics_protocol = _statistics_protocol(
             original, error_code="original_protocol_invalid"
@@ -660,8 +738,8 @@ def load_original_protocol(
             ),
             "resampling": {
                 "method": statistics_protocol["resampling_method"],
-                "resamples": signature["bootstrap_resamples"].default,
-                "seed": signature["bootstrap_seed"].default,
+                "resamples": statistics_protocol["resamples"],
+                "seed": statistics_protocol["seed"],
                 "behavior_sha256": statistics_protocol[
                     "resampling_behavior_sha256"
                 ],

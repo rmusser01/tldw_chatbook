@@ -748,7 +748,7 @@ def test_confirmation_protocol_pins_every_original_machine_contract() -> None:
             "method": "nearest_rank",
             "fraction": 0.95,
             "behavior_sha256": (
-                "922773ccb034282e651537656c923f9405a073d65ab3875524ee548b6ca5fbe8"
+                "0d7a800a516a1394b7b86639678314b863603a22f3d139d57c2b41f0940fd742"
             ),
         },
         "measured_blocks": 30,
@@ -757,7 +757,7 @@ def test_confirmation_protocol_pins_every_original_machine_contract() -> None:
             "resamples": 10_000,
             "seed": 19_641,
             "behavior_sha256": (
-                "047c51bdaf04907ded8584fccf6e534da1d2e9ac49b3ac6bb0eb6269ad0aef5e"
+                "79cd4bb711ed33737ebe3ed28f0369ae44b29b5383bb95849edabcbfe0fb53eb"
             ),
         },
         "confidence_bounds": [
@@ -815,6 +815,58 @@ def test_current_summary_behavior_drift_mismatches_pinned_original(
         return result
 
     monkeypatch.setattr(profile, "build_summary", drifted_summary)
+    observed = _original_protocol()
+
+    assert "protocol_resampling_mismatch" in profile.protocol_mismatches(
+        expected, observed
+    )
+
+
+def test_current_resample_cap_mismatches_pinned_original(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _copy_original_evidence(tmp_path)
+    _materialize_original_runner(tmp_path)
+    expected = profile.load_original_protocol(tmp_path, tmp_path)
+    real_paired = profile.paired_p95_ratio_bounds
+
+    @functools.wraps(real_paired)
+    def capped_paired(blocks, candidate, *, resamples=10_000, seed=19_641):
+        return real_paired(
+            blocks,
+            candidate,
+            resamples=min(resamples, 32),
+            seed=seed,
+        )
+
+    monkeypatch.setattr(profile, "paired_p95_ratio_bounds", capped_paired)
+    observed = _original_protocol()
+
+    assert "protocol_resampling_mismatch" in profile.protocol_mismatches(
+        expected, observed
+    )
+
+
+def test_current_mean_summary_mismatches_pinned_original(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _copy_original_evidence(tmp_path)
+    _materialize_original_runner(tmp_path)
+    expected = profile.load_original_protocol(tmp_path, tmp_path)
+    real_build_summary = profile.build_summary
+
+    @functools.wraps(real_build_summary)
+    def mean_summary(rows, **kwargs):
+        summary = real_build_summary(rows, **kwargs)
+        measured = [row for row in rows if row.get("phase") == "measured"]
+        for arm in profile.ARMS:
+            arm_rows = [row for row in measured if row["arm"] == arm]
+            for metric, distribution in summary["arms"][arm]["metrics"].items():
+                values = [float(row["metrics"][metric]) for row in arm_rows]
+                distribution["median"] = sum(values) / len(values)
+        return summary
+
+    monkeypatch.setattr(profile, "build_summary", mean_summary)
     observed = _original_protocol()
 
     assert "protocol_resampling_mismatch" in profile.protocol_mismatches(
@@ -1067,6 +1119,18 @@ def test_original_protocol_discriminates_through_pinned_statistics_calls(
         name == "paired_p95_ratio_bounds"
         and kwargs.get("resamples") == 1
         and kwargs.get("seed") == 0
+        for name, kwargs in calls
+    )
+    assert any(
+        name == "paired_p95_ratio_bounds"
+        and kwargs.get("resamples") == 10_000
+        and kwargs.get("seed") == 19_641
+        for name, kwargs in calls
+    )
+    assert any(
+        name == "build_summary"
+        and kwargs.get("bootstrap_resamples") == 10_000
+        and kwargs.get("bootstrap_seed") == 19_641
         for name, kwargs in calls
     )
     assert sum(name == "build_summary" for name, _kwargs in calls) > 2
