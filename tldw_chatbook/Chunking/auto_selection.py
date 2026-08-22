@@ -52,6 +52,7 @@ from .template_runtime import resolve_template
 
 __all__ = [
     "AUTO_SENTINEL",
+    "KNOWN_INGEST_MEDIA_TYPES",
     "MEDIA_TYPE_MAP",
     "AutoDecision",
     "resolve_auto",
@@ -65,19 +66,119 @@ __all__ = [
 AUTO_SENTINEL = "auto"
 
 #: Chatbook ingest media-type string → the planner's normalized vocabulary
-#: (spec §5, implementation item §6.9). Starts as the identity map (any
-#: unmapped value rides through unchanged via ``.get(media_type,
-#: media_type)``) plus upstream's own web normalization
-#: (``_normalize_media_type`` in the vendored ``auto_planner``:
-#: ``web_document/webpage/article/html → "web"``). Task 3 freezes the full
-#: verified table here; until then the planner's internal normalization is
-#: the safety net for anything the table misses.
+#: (spec §5, implementation item §6.9). The frozen, verified table (Task 3):
+#: every string chatbook's ingest paths can produce appears here — identity
+#: entries included — so the planner's per-type plans can never be silently
+#: disabled by a vocabulary mismatch. Anything NOT in the table still rides
+#: through unchanged via the ``.get(media_type, media_type)`` call.
+#:
+#: The planner's own expectations (vendored ``engine/auto_planner.py``):
+#: ``_normalize_media_type`` folds ``web_document/webpage/article/html`` to
+#: ``"web"``; ``_choose_method`` then switches on ``ebook`` (chapter-based
+#: ``ebook_chapters``), ``email`` (message-friendly sentences AND a fixed
+#: 1000/150 sizing override), ``audio``/``video`` (transcript sentences),
+#: and ``document``/``pdf``/``web`` (structure-aware → semantic → sentence
+#: fallback); every other value gets the generic sentence plan. Mapping
+#: targets are therefore exactly: those recognized types, or identity.
+#:
+#: Sources for every entry are named inline; the companion
+#: ``Tests/Chunking/test_media_type_vocabulary.py`` fails loudly when either
+#: side drifts.
 MEDIA_TYPE_MAP: dict[str, str] = {
-    "web_document": "web",
-    "webpage": "web",
-    "article": "web",
+    # --- Local-file ingest family -------------------------------------------
+    # Local_Ingestion/local_file_ingestion.py: detect_file_type() /
+    # classify_ingest_source() results, persisted verbatim as Media.type by
+    # the persist seam ("media_type": file_type). The planner-recognized
+    # types pass through; html/article ride the planner's own web
+    # normalization (mapped here explicitly so the table is total).
+    "pdf": "pdf",
+    "document": "document",
+    "ebook": "ebook",
+    "audio": "audio",
+    "video": "video",
     "html": "web",
+    "article": "web",
+    "plaintext": "plaintext",  # no planner specialization → generic plan
+    "image": "image",  # OCR text; no planner specialization → generic plan
+    # --- Web-content aliases ------------------------------------------------
+    # Names chatbook gives web-extracted content that the planner's own
+    # normalization set does NOT cover — the load-bearing entries (spec §5:
+    # without them these types silently get the generic plan forever):
+    # "web_article" is the config-table key + URL-article job input family
+    # (Media/local_media_reading_service.py accepts
+    # article/web_article/webpage/html); "web_scraping" is the local
+    # web-scraping result label; "webpage"/"web_document" are the planner's
+    # own alias names (web_document kept from the Task-2 seed so a
+    # planner-side name arriving via stored metadata also normalizes).
+    "web_article": "web",
+    "web_scraping": "web",
+    "webpage": "web",
+    "web_document": "web",
+    # --- Media reading service family ---------------------------------------
+    # Media/local_media_reading_service.py. "email" is planner-recognized
+    # (message_boundaries + the 1000/150 sizing override); the rest have no
+    # planner specialization and map to themselves intentionally:
+    "email": "email",
+    "code": "code",  # process_code
+    "mediawiki_page": "mediawiki_page",  # ingest_mediawiki_dump persist
+    "mediawiki_dump": "mediawiki_dump",  # dump-processing job/result label
+    "reading": "reading",  # reading-import job label (rows keep origin_type)
+    "media": "media",  # reprocess/sync job label (sink_type fallback)
+    "unknown": "unknown",  # add_media/add_media_to_database normalization floor
+    # --- Book family ---------------------------------------------------------
+    # Local_Ingestion/Book_Ingestion_Lib.py: "book" is the text-file-as-book
+    # persist; "zip" is the epub-container result-row label (the extracted
+    # epubs persist as "ebook"). Neither has a planner equivalent → identity.
+    "book": "book",
+    "zip": "zip",
+    # --- XML family -----------------------------------------------------------
+    # Local_Ingestion/XML_Ingestion.py persists "xml_document"; "xml" is the
+    # local-ingest config/dispatch family label (currently unreachable —
+    # detect_file_type never returns it and the xml branch raises). No
+    # planner equivalent → identity.
+    "xml_document": "xml_document",
+    "xml": "xml",
 }
+
+#: Every media-type string chatbook's own ingest code can produce or label
+#: (the map's keys minus ``web_document``, which is the planner's own alias,
+#: not a chatbook producer). Frozen (Task 3): a new ingest family without a
+#: ``MEDIA_TYPE_MAP`` entry fails
+#: ``Tests/Chunking/test_media_type_vocabulary.py`` loudly instead of
+#: silently disabling tier-2 per-type plans (spec §6.9). Values not in this
+#: tuple can still arrive via the passthrough surfaces (``add_media(media_type=…)``,
+#: reading-import ``origin_type`` rows, chatbook-export imports) — those are
+#: arbitrary caller data and ride the map's identity fallback by design.
+KNOWN_INGEST_MEDIA_TYPES: tuple[str, ...] = (
+    # local-file family
+    "pdf",
+    "document",
+    "ebook",
+    "audio",
+    "video",
+    "html",
+    "article",
+    "plaintext",
+    "image",
+    # web-content aliases
+    "web_article",
+    "web_scraping",
+    "webpage",
+    # media reading service family
+    "email",
+    "code",
+    "mediawiki_page",
+    "mediawiki_dump",
+    "reading",
+    "media",
+    "unknown",
+    # book family
+    "book",
+    "zip",
+    # xml family
+    "xml_document",
+    "xml",
+)
 
 #: Spec §4.2 asks for the embeddings config's enabled state. No cheap
 #: reader exists at this layer: the planner's ``semantic`` METHOD is the

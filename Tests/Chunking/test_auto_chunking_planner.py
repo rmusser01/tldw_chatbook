@@ -4,13 +4,6 @@ import json
 
 import pytest
 
-# --- Ported (chunking-engine-parity Task 4) ---------------------------------
-# Upstream file: tldw_Server_API/tests/Chunking/test_auto_chunking_planner.py
-# Skipped: auto_planner is deferred to sub-project #3; not in the Phase-A vendored set. Remove this block when the module is vendored in
-# its own sub-project and re-sync the test from upstream.
-pytest.importorskip("tldw_chatbook.NoSuchDeferredModule",
-                    reason="skipped: auto_planner is deferred to sub-project #3; not in the Phase-A vendored set")
-
 from tldw_chatbook.Chunking.engine.auto_planner import (
     AutoChunkingPlan,
     AutoChunkingProfile,
