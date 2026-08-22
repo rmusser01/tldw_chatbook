@@ -9,6 +9,34 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## A completed Textual product contract can still be cancelled by test-loop teardown
+
+**TASK-19641, 2026-08-21.** The real-provider three-turn Console benchmark
+intermittently exited nonzero only on Change Review-enabled samples. The first
+failure wrote no terminal record because `asyncio.CancelledError` sits outside
+`Exception`; after preserving `BaseException` failures with a content-free
+traceback function name, the failure localized to Textual's
+`Screen._message_loop_exit`. Inspection of the retained failed profile showed
+all three user/assistant pairs, the confined `fs_write`, and review finalization
+were already durable. Textual 8.2.8 was propagating cancellation from a child
+widget message-loop during `App.run_test()` shutdown, not cancelling the
+benchmark task or leaving Change Review work alive. A six-sample smoke passed,
+but the first 93-sample attempt reproduced at sample 34; only the long run made
+the teardown flake undeniable.
+
+**What to do.** For long mounted Textual evidence runs, distinguish three states:
+the product contract completed, the caller task has a real pending cancellation,
+and an owned child loop cancelled during context-manager exit. Preserve
+`CancelledError` as a durable failure first, including only a privacy-safe origin.
+Suppress it only when the full terminal contract is already proven and
+`asyncio.current_task().cancelling() == 0`, then continue through explicit thread,
+provider, database, shadow-operation, and source-write ownership checks. Never
+blanket-swallow cancellation before the product assertions, and do not trust a
+short smoke as the sole oracle for a lifecycle race that appears after dozens of
+clean samples.
+
+---
+
 ## A display-only durable overlay belongs at the render boundary
 
 **TASK-19502, 2026-08-21.** Nonblocking Change Review publication needed the
