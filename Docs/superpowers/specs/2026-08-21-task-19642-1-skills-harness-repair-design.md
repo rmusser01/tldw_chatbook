@@ -114,7 +114,7 @@ implementation-time RED run exposes a contract not represented by those nodes.
 - Make the shared app factory default to an existing profile: broadens the
   change to unrelated tests and would make onboarding coverage easier to bypass
   accidentally.
-- Ignore Study/Quiz exceptions because production catches them: leaves hidden
+- Ignore Prompt/Study/Quiz exceptions because production catches them: leaves hidden
   background noise that can obscure future owner failures and violates this
   task's deterministic-fixture acceptance criterion.
 

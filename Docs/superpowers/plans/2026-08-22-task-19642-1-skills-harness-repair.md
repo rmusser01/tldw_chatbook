@@ -227,7 +227,17 @@ ordering of entering confirmation, typing, and cancelling. In
 typing step *after* the clean editor enters confirmation, then press Cancel so
 the production cancel handler snapshots the populated description and clears
 `description_derived`; a dirty editor correctly has no visible More/Delete
-path under TASK-19025.
+path under TASK-19025. Update that test's outdated recompose wording and assert
+the current in-place presentation contract:
+
+```python
+assert screen._library_skill_editor_state.description_derived is False
+hint = screen.query_one("#library-skill-description-hint", Static)
+assert hint.display is False
+```
+
+The hint stays mounted because the current lifecycle patches visibility
+without recomposing; DOM absence is no longer the contract.
 
 - [ ] **Step 4: Pin the accepted first-save trust guidance**
 
