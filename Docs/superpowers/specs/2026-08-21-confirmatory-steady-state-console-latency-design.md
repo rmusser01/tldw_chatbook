@@ -58,10 +58,14 @@ The compared production revisions remain exactly:
 
 The parent resolves and records both hashes once, creates detached worktrees for both,
 and executes target application imports only from those worktrees. Benchmark runner
-and validation changes may live at a later source revision, which is separately
-recorded as `harness_revision`; they cannot change the imported production target.
-Preflight repeats the arm-specific behavior fingerprints from TASK-19641 before any
-sample runs.
+and validation changes may live at a later source revision, but the runner refuses to
+start unless its source checkout is clean. Before provider preflight it records the
+resolved full `harness_revision` and SHA-256 of the tracked runner file, then verifies
+that `git status --porcelain --untracked-files=all` is empty and that the runner bytes
+still match the recorded digest. This pins the code that owns scheduling, validation,
+statistics, and evidence even though it is intentionally newer than the production
+candidate. Preflight repeats the arm-specific behavior fingerprints from TASK-19641
+before any sample runs.
 
 Before modifying the harness and again before retaining the confirmation, the task
 records SHA-256 values for all five original evidence files under
@@ -76,10 +80,15 @@ gate if those values differ from the following immutable baseline:
 | `real-provider-three-turn.raw.jsonl` | `82150cd55ba701b5a2680f87fce43b15676004fc1609f477f458a7abb2078319` |
 | `real-provider-three-turn.summary.json` | `edec5d347427748e26c93d21da7ecf121cccedb41ea7d304fb6cdad684f3668a` |
 
-Confirmation artifacts use the separate directory
-`Docs/superpowers/qa/console-three-turn-real-provider-confirmatory/`. A failed or
-partial attempt stays outside that retained directory unless explicitly labelled as
-failed diagnostic evidence.
+The runner writes each attempt to a new, uniquely named staging root outside
+`Docs/superpowers/qa/console-three-turn-real-provider-confirmatory/`; it never writes
+measurement files directly into that final retained directory. A staging root records
+an explicit running, complete, invalid, or failed attempt state and is preserved on
+failure with its last flushed boundary. Promotion is a separate, fail-closed command
+that copies the immutable completed artifacts into the final directory only after
+completeness, privacy, independent recomputation, original-evidence hashes, and
+independent review have all passed. Promotion refuses a non-complete staging root or a
+final directory containing anything other than its documentation README.
 
 ## Pre-registered schedule
 
@@ -128,6 +137,26 @@ target worktree or the harness while it is active. The manifest records runtime,
 provider, host-load, and listener-resource metadata at the same boundaries as the
 original run.
 
+Before any conversation, a pure protocol preflight loads the retained TASK-19641
+manifest and machine summary and compares them with the confirmatory harness's declared
+protocol. It fails closed unless all of the following match:
+
+- target revision hashes, provider kind, model, temperature, maximum tokens, reasoning
+  effort, stream options, fixture IDs, prompt hash, mutation hash, corpus digest, and
+  per-arm tool-definition hashes;
+- the exact six metric names visible in the original machine summary and the two
+  primary gate names;
+- nearest-rank p95, 30 measured blocks, paired complete-block resampling, 10,000
+  resamples, seed `19_641`, 95% two-sided and one-sided confidence levels, 1.10
+  non-regression ceiling, and 1.00 improvement ceiling as fixed by the committed
+  TASK-19641 design and original harness revision.
+
+The preflight derives prompt and mutation hashes from the current harness bytes rather
+than trusting labels, derives target-owned corpus and tool-definition hashes through
+the pinned target adapters, and checks that the original summary exposes exactly the
+expected metrics and gate structure. A mismatch makes the attempt invalid before a
+warmup; it cannot be accepted with a warning.
+
 ## Harness changes
 
 The smallest harness extension is preferred:
@@ -140,9 +169,16 @@ The smallest harness extension is preferred:
 4. Summary construction continues to select only `phase == "measured"`; tests prove a
    deliberately extreme burn-in value cannot change any summary or verdict field.
 5. Parent mode creates and removes detached control and candidate target worktrees,
-   while recording the later runner source as `harness_revision`.
-6. The manifest records the phase schedule, `burn_in_blocks: 5`, the exclusion rule,
-   the pinned original evidence hashes, and both target and harness revisions.
+   while rejecting a dirty harness and recording `harness_revision` plus the runner
+   file SHA-256.
+6. A pure protocol-equivalence guard checks the current declared protocol against the
+   immutable TASK-19641 manifest, summary, design, and original runner values before
+   sampling.
+7. The manifest records the phase schedule, `burn_in_blocks: 5`, the exclusion rule,
+   protocol-equivalence result, pinned original evidence hashes, target revisions,
+   harness revision, and runner digest.
+8. Parent mode owns unique staging-attempt state; a separate promotion path validates
+   and publishes already-complete immutable artifacts without recomputing them.
 
 The existing command remains backward-compatible with zero burn-in unless an explicit
 confirmatory option is supplied. A dedicated documented confirmatory command must make
@@ -209,7 +245,12 @@ Test-driven implementation adds focused tests for:
 - measured-only summary and bootstrap inputs, including extreme burn-in latency that
   leaves the entire summary byte-equivalent;
 - separate detached target revisions and recorded harness revision;
+- dirty-harness refusal and runner-file digest mismatch;
+- fixture, request-setting, metric, bootstrap, confidence-level, and threshold
+  protocol mismatches against the original retained evidence/design;
 - original-evidence SHA-256 guard and separate output-root enforcement;
+- unique staging state plus refusal to promote incomplete, invalid, unreviewed, or
+  privacy/recomputation-failing evidence;
 - manifest and privacy validation for the new phase and exclusion metadata.
 
 Before the long run, one confirmation smoke uses one warmup, one burn-in block, and one
