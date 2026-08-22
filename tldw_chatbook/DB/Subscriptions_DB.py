@@ -1392,14 +1392,51 @@ class SubscriptionsDB(BaseDB):
 
     @contextmanager
     def transaction(self):
-        """Context manager for database transactions."""
+        """Context manager for database transactions, safe to nest.
+
+        task-19562 part C. This used to commit unconditionally on exit. A
+        nested `with self.transaction()` therefore had its INNER exit
+        durably commit the OUTER transaction's work as well, so a later
+        failure in the outer scope could no longer roll back what the inner
+        block had already written -- silent partial persistence, with no
+        error anywhere.
+
+        Nesting is now tracked per thread (the connection is thread-local,
+        so the depth must be too), mirroring `ChaChaNotes_DB`'s
+        `TransactionContextManager`: only the OUTERMOST block commits or
+        rolls back, and an inner block simply yields the same connection. An
+        exception still propagates outward, so the outermost block rolls the
+        whole unit back as a caller would expect.
+
+        Measured note for the record: at the time this was written
+        `record_check_result` -- the call site the task named -- did **not**
+        nest (instrumented depth 1). The hazard was latent, not live; this
+        makes it structurally impossible rather than relying on no one ever
+        nesting.
+        """
         conn = self.conn
+        if not hasattr(self._local, "transaction_depth"):
+            self._local.transaction_depth = 0
+
+        if self._local.transaction_depth > 0:
+            # Inner block: join the outer transaction. No commit, no
+            # rollback -- the outermost owns both.
+            self._local.transaction_depth += 1
+            try:
+                yield conn
+            finally:
+                self._local.transaction_depth -= 1
+            return
+
+        self._local.transaction_depth = 1
         try:
             yield conn
             conn.commit()
         except Exception:
             conn.rollback()
             raise
+        finally:
+            self._local.transaction_depth = 0
 
     # --- Core Subscription Management ---
 
