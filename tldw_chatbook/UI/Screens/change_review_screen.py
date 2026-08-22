@@ -1044,9 +1044,20 @@ def _land_on_ui(app, callback: Callable, *args) -> None:
     try:
         app.call_from_thread(callback, *args)
     except RuntimeError:
+        # Qodo #2 (PR #1958): the exception TYPE alone cannot separate the
+        # two cases this guard straddles. `call_from_thread` raises
+        # RuntimeError for teardown AND re-raises whatever the callback
+        # raised -- so a genuine bug that happens to be a RuntimeError was
+        # read as shutdown and vanished into one misleading debug line.
+        # `App.is_running` is the real discriminator: it is exactly what
+        # `call_from_thread` consults before raising "App is not running",
+        # so a RuntimeError seen while the app is STILL running cannot be
+        # teardown and must stay loud.
+        if getattr(app, "is_running", False):
+            raise
         logger.debug(
-            "change_review: git-action landing skipped -- the app is no "
-            "longer accepting callbacks"
+            "change_review: app is no longer accepting callbacks; "
+            "dropping a worker landing"
         )
 
 
@@ -1729,7 +1740,11 @@ class ChangeReviewScreen(Screen):
                     "change_review: git detection failed; mode not offered"
                 )
                 detected = {}
-            app.call_from_thread(self._land_git_detection, detected)
+            # TASK-19703 AC #1: the same teardown-only guard every other
+            # landing uses, so a genuine bug in `_land_git_detection`
+            # surfaces as a WorkerFailed traceback rather than dying
+            # quietly on the worker thread.
+            _land_on_ui(app, self._land_git_detection, detected)
 
         self.run_worker(
             _detect,
@@ -2349,36 +2364,23 @@ class ChangeReviewScreen(Screen):
             from tldw_chatbook.Workspaces.git_workspace import GitWorkspaceError
 
             def _land(callback, *args) -> None:
-                """Hand a result back to the UI thread, tolerating teardown.
+                """Hand a per-root result back to the UI thread.
 
-                ``call_from_thread`` raises once the app is shutting down
-                -- which a status read can easily outlive, since it is a
-                git subprocess. Unhandled, that surfaces as a logged
-                ``WorkerFailed``; worse, raising out of a PER-ROOT landing
-                mid-loop would abort the roots after it and quietly break
-                the per-root isolation this loop exists to guarantee.
+                Delegates to the module-level :func:`_land_on_ui` rather
+                than repeating its policy. TASK-19703 / Qodo #2 (PR #1958)
+                is why: this helper carried a SECOND copy of the
+                teardown-vs-bug rule, and when that rule was sharpened to
+                consult ``App.is_running`` the copy here was left behind —
+                so a landing bug that raised ``RuntimeError`` still
+                vanished on exactly the path the fix was written for. One
+                implementation, one place to sharpen.
 
-                ``RuntimeError`` ONLY, deliberately (re-review round 2):
-                Textual signals teardown as
-                ``RuntimeError("App is not running")`` (``app.py``; a
-                closed loop reports ``RuntimeError`` too), while
-                ``call_from_thread`` ALSO re-raises whatever the landing
-                callback itself raised -- and the landings do real work
-                (tree queries, ``_populate_tree``, banner math). A bare
-                ``except Exception`` here would downgrade a genuine bug in
-                them to one debug line whose text ("app is no longer
-                accepting callbacks") would be an outright lie, instead of
-                the loud ``WorkerFailed`` traceback Textual gives it.
-                ``CancelledError`` is a ``BaseException`` and was never
-                caught here in either form.
+                The per-root isolation this loop guarantees is unchanged:
+                ``_land_on_ui`` swallows genuine teardown, so a shutdown
+                mid-loop still cannot abort the remaining roots, while a
+                real bug is now loud in both helpers alike.
                 """
-                try:
-                    app.call_from_thread(callback, *args)
-                except RuntimeError:
-                    logger.debug(
-                        "change_review: current-mode landing skipped -- "
-                        "the app is no longer accepting callbacks"
-                    )
+                _land_on_ui(app, callback, *args)
 
             statuses: list["CurrentRootStatus"] = []
             #: TASK-16801 T8 (spec §6): the PR link's availability per root,
@@ -4460,10 +4462,16 @@ class ChangeGitCommitModal(SafeModalDismissMixin, ModalScreen["dict | None"]):
                     "file_count": len(selected),
                 }
             )
-        except Exception:  # noqa: BLE001 -- never raise out of a handler
+        except Exception as exc:  # noqa: BLE001 -- never raise out of a handler
+            # TASK-19703 AC #2: returning silently here left the user
+            # pressing Commit with NOTHING happening -- no commit, no
+            # error, no dismissal, indistinguishable from a dead button.
+            # The broad catch stays (a handler must not raise into
+            # Textual); what changes is that the failure is now visible.
             logger.opt(exception=True).warning(
                 "change_review: commit modal submit failed"
             )
+            self._show_error(f"could not submit: {exc}")
 
     @on(Button.Pressed, "#change-git-commit-yes")
     def _confirm(self, event: Button.Pressed) -> None:
@@ -4738,10 +4746,23 @@ class ChangeGitPushModal(SafeModalDismissMixin, ModalScreen["dict | None"]):
                     "info": self._infos[root],
                 }
             )
-        except Exception:  # noqa: BLE001 -- never raise out of a handler
+        except Exception as exc:  # noqa: BLE001 -- never raise out of a handler
+            # TASK-19703 AC #2, as for the commit modal. This dialog has no
+            # inline error Static, so the report goes through `notify`
+            # rather than inventing a widget (and its CSS) for a path that
+            # only a bug reaches; the modal stays open so the user can
+            # cancel deliberately instead of guessing.
             logger.opt(exception=True).warning(
                 "change_review: push modal submit failed"
             )
+            try:
+                self.app.notify(
+                    f"Could not submit: {exc}", severity="error"
+                )
+            except Exception:  # noqa: BLE001 -- notify is best-effort
+                logger.opt(exception=True).debug(
+                    "change_review: push modal could not report its failure"
+                )
 
     @on(Button.Pressed, "#change-git-push-yes")
     def _confirm(self, event: Button.Pressed) -> None:

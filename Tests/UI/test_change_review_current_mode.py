@@ -34,6 +34,7 @@ from textual.worker import WorkerFailed
 import tldw_chatbook.config as config_module
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.UI.Screens.change_review_screen import (
+    _land_on_ui,
     CURRENT_MODE_SENTINEL,
     AgentRunsChangeReviewProvider,
     ChangeReviewDiffPane,
@@ -1003,47 +1004,38 @@ async def test_a_bug_inside_a_landing_is_not_swallowed(
     )
 
 
-@pytest.mark.asyncio
-async def test_teardown_runtime_error_from_a_landing_is_still_swallowed(
-    monkeypatch, git_review_fixture
-):
-    """The other half: the teardown case the guard exists for stays quiet.
+def test_land_on_ui_swallows_real_teardown_but_not_a_running_app_bug():
+    """The landing guard's two halves, against the REAL discriminator.
 
-    A status read is a git subprocess and can easily outlive the app; its
-    landing then hits `RuntimeError("App is not running")`. That must NOT
-    surface as a WorkerFailed traceback — it is an ordinary, expected race,
-    and the worker should simply finish.
+    Rewritten by TASK-19703 / Qodo #2 (PR #1958). The previous version
+    simulated teardown by having the callback raise
+    `RuntimeError("App is not running")` while the app was still running —
+    a proxy that was indistinguishable from a genuine bug, which is exactly
+    the hole Qodo found. Now that `_land_on_ui` consults `App.is_running`,
+    that proxy is (correctly) treated as a bug, so the test has to
+    simulate the real condition instead: an app that is NOT running.
+
+    Driven directly against `_land_on_ui` rather than through a mounted
+    app, because "the app is genuinely torn down" is not a state a live
+    `run_test` harness can hold still in.
     """
-    _patch_git_actions(monkeypatch, True)
-    provider, repo, _db, _run1, _run2 = git_review_fixture
 
-    def teardown_land(_token, _statuses):
+    class _StubApp:
+        def __init__(self, running: bool) -> None:
+            self.is_running = running
+
+        def call_from_thread(self, callback, *args):
+            return callback(*args)
+
+    def _raise_teardown() -> None:
         raise RuntimeError("App is not running")
 
-    app = _Harness(provider)
-    async with app.run_test(size=(160, 48)) as pilot:
-        screen = await _open_screen(pilot, app)
-        await _wait_for_detection(pilot, screen)
-        screen._land_current_mode = teardown_land
+    # Genuine teardown: swallowed, so a per-root loop is never aborted.
+    _land_on_ui(_StubApp(running=False), _raise_teardown)
 
-        screen.query_one(
-            "#change-review-turn-select", Select
-        ).value = CURRENT_MODE_SENTINEL
-        await _wait_idle(pilot, app, "change-review-current")
-        await pilot.pause()
-
-        assert app._exception is None, (
-            "a teardown RuntimeError must not tear the app down; got "
-            f"{app._exception!r}"
-        )
-        states = {
-            w.state.name
-            for w in app.workers
-            if w.group == "change-review-current"
-        }
-        assert "ERROR" not in states, (
-            f"the worker must finish rather than fail; states={states}"
-        )
+    # Same exception type, app still alive: a real bug, and it must be loud.
+    with pytest.raises(RuntimeError, match="App is not running"):
+        _land_on_ui(_StubApp(running=True), _raise_teardown)
 
 
 @pytest.mark.asyncio
@@ -1347,3 +1339,48 @@ async def test_a_tracked_cwd_is_not_disclosed(monkeypatch, tmp_path):
         text = str(screen.query_one("#change-review-banner", Static).renderable)
 
     assert "not tracked here" not in text, text
+
+
+@pytest.mark.asyncio
+async def test_a_landing_bug_that_raises_RuntimeError_is_not_read_as_teardown(
+    monkeypatch, git_review_fixture
+):
+    """Qodo #2 (PR #1958): exception TYPE alone cannot separate the two.
+
+    `_land_on_ui` tolerates `RuntimeError` because that is how Textual
+    signals teardown — but `call_from_thread` also re-raises whatever the
+    callback raised, so a genuine bug that happens to be a `RuntimeError`
+    (a `dict` misuse, a Textual API called out of order, a library raising
+    it) was indistinguishable from shutdown and vanished into one
+    misleading debug line.
+
+    `App.is_running` is the real discriminator: it is exactly what
+    `call_from_thread` consults before raising "App is not running", so a
+    RuntimeError seen while the app is STILL running cannot be teardown.
+    """
+    _patch_git_actions(monkeypatch, True)
+    provider, repo, _db, _run1, _run2 = git_review_fixture
+    boom = RuntimeError("a real bug that happens to be a RuntimeError")
+
+    def exploding_land(_token, _statuses):
+        raise boom
+
+    app = _Harness(provider)
+    with pytest.raises(WorkerFailed) as excinfo:
+        async with app.run_test(size=(160, 48)) as pilot:
+            screen = await _open_screen(pilot, app)
+            await _wait_for_detection(pilot, screen)
+            screen._land_current_mode = exploding_land
+            screen.query_one(
+                "#change-review-turn-select", Select
+            ).value = CURRENT_MODE_SENTINEL
+            await _wait_for(
+                pilot,
+                lambda: app._exception is not None,
+                "the app to record the landing failure",
+                timeout=5.0,
+            )
+
+    assert excinfo.value.error is boom, (
+        f"the original RuntimeError must survive; got {excinfo.value.error!r}"
+    )

@@ -1400,3 +1400,50 @@ async def test_a_stale_diff_is_not_served_after_the_commit_reload(
             "the commit reload must bump the diff-cache generation "
             f"({generation_before} -> {screen._diff_cache_generation})"
         )
+
+
+@pytest.mark.asyncio
+async def test_a_bug_inside_commit_submit_reports_itself(
+    monkeypatch, commit_fixture
+):
+    """TASK-19703 AC #2: a bug inside `_submit` must not leave the confirm
+    button silently inert.
+
+    The handler wraps its body in a broad `except` so it can never raise
+    out of a Textual event handler — correct — but it then returned
+    silently, so the user pressed Commit and NOTHING happened: no commit,
+    no error, no dismissal, indistinguishable from a dead button. Same
+    silent-masking class this workstream has repeatedly caught.
+    """
+    _patch_git_actions(monkeypatch, True)
+    provider, repo = commit_fixture
+    app = _Harness(provider, workspace_roots=[str(repo)])
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _enter_current_mode(pilot, app)
+        modal = await _open_commit_modal(pilot, app, screen)
+
+        def _explode(*_a, **_kw):
+            raise RuntimeError("SYNTHETIC-19703 submit bug")
+
+        # Break something `_submit` uses AFTER its validation passes, so the
+        # broad except is what catches it rather than a validation return.
+        monkeypatch.setattr(type(modal), "dismiss", _explode, raising=True)
+        modal.query_one("#change-git-commit-message", Input).value = "msg"
+        await pilot.pause()
+
+        errors: list[str] = []
+        monkeypatch.setattr(
+            type(modal),
+            "_show_error",
+            lambda self, m: errors.append(m),
+            raising=True,
+        )
+        notes: list[tuple] = []
+        app.notify = lambda *a, **kw: notes.append((a, kw))
+
+        modal._submit()
+        await pilot.pause()
+
+    assert errors or notes, (
+        "a bug in submit must tell the user something, not sit inert"
+    )

@@ -280,15 +280,25 @@ Button `Commit…` + binding, visible/enabled only in current mode with
    - warnings (never blocks): detached HEAD ("commit will not be on
      any branch"), branch in `{main, master}` ("committing directly
      to <branch>");
-   - an operation in progress (`rev-parse --verify -q` on
-     `MERGE_HEAD`, `REBASE_HEAD`, `CHERRY_PICK_HEAD` — check=False)
-     → commit REFUSED with reason ("finish or abort the
-     merge/rebase/cherry-pick first") — git refuses a partial
-     (pathspec) commit during a merge OR a cherry-pick, and the raw
-     git error is worse copy.
+   - (the in-progress refusal is NOT a modal-open check — see step 4;
+     amended by TASK-19703 to match what shipped.)
 4. **Engine** (`commit_selected(root, files, message, new_branch)`)
    runs per-step, stopping at the first failure, each step an
    outcome row:
+   - `in-progress-check`: `rev-parse --verify -q` on `MERGE_HEAD`,
+     `REBASE_HEAD`, `CHERRY_PICK_HEAD` (check=False); any exit 0 ⇒ a
+     failed outcome, "finish or abort the merge/rebase/cherry-pick
+     first" (git refuses a partial pathspec commit during a merge or a
+     cherry-pick, and the raw git error is worse copy).
+     **Placement amended by TASK-19703.** This spec first listed the
+     check as a modal-open gate under step 3. It shipped engine-side,
+     and the engine is the right home: the repository can enter a merge
+     between modal-open and submit, so a pre-modal check could only ever
+     be advisory — and an advisory check that PASSES and is then refused
+     at submit is more confusing than one honest refusal. Duplicating it
+     in both places would invite the two copies to drift. The cost is
+     accepted knowingly: the user learns of the refusal after filling in
+     the dialog rather than before it opens.
    - optional: `git check-ref-format --branch <name>` (validation +
      option-injection guard, §2 probe 3) then
      `git checkout -b <name>`;

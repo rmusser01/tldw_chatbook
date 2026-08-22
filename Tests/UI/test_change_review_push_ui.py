@@ -1556,3 +1556,35 @@ async def test_push_is_disabled_with_a_reason_for_an_option_shaped_branch(
             f"got {push_btn.tooltip!r}"
         )
         assert notes and PUSH_OPTION_BRANCH_REASON in notes[0], notes
+
+
+@pytest.mark.asyncio
+async def test_a_bug_inside_push_submit_reports_itself(monkeypatch, tmp_path):
+    """TASK-19703 AC #2, push side.
+
+    Same shape as the commit modal's: the broad `except` that keeps a
+    Textual handler from raising also swallowed genuine bugs, leaving the
+    confirm button inert. This modal has no inline error Static, so the
+    report goes through `notify`.
+    """
+    _patch_git_actions(monkeypatch, True)
+    repo, _bare = _repo_with_remote(tmp_path)
+    (repo / "a.txt").write_text("changed\n")
+    provider, _db, _service = _make_provider(tmp_path, "conv-submit-bug")
+    app = _Harness(provider, workspace_roots=[str(repo)])
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _enter_current_mode(pilot, app)
+        screen.action_git_push()
+        modal = await _wait_for_push_modal(pilot, app)
+
+        def _explode(*_a, **_kw):
+            raise RuntimeError("SYNTHETIC-19703 push submit bug")
+
+        monkeypatch.setattr(type(modal), "dismiss", _explode, raising=True)
+        notes = _capture_notifies(app)
+        modal._submit()
+        await pilot.pause()
+
+    assert any("Could not submit" in note for note in notes), (
+        f"a bug in push submit must tell the user; got {notes!r}"
+    )
