@@ -786,15 +786,23 @@ def find_root_binding_conflict(
     # (1) `root` IS a protected path itself -- the most direct, most
     # actionable case, checked before either containment direction so it
     # always wins when several apply at once.
+    # TASK-19800 / Qodo (PR #1936): this gate enforces the same
+    # protected-path policy as `is_sensitive_path`, so it compares through
+    # the same case-folded key. It is NOT a confinement check -- folding
+    # here reports MORE conflicts (fails safe); see `_compare_key`.
     for protected in tuple(protected_dirs) + tuple(protected_files):
-        if root == protected:
+        if _same_path(root, protected):
             return protected
 
     # (2) `root` is nested INSIDE a protected directory. Several enclosing
     # directories can match at once (e.g. the skill-trust subtree nested
     # inside `get_user_data_dir()`); the one with the MOST path parts is
     # the deepest/closest enclosing directory, hence the most specific.
-    nested_inside = [protected for protected in protected_dirs if protected in root.parents]
+    nested_inside = [
+        protected
+        for protected in protected_dirs
+        if _is_within(root, protected) and not _same_path(root, protected)
+    ]
     if nested_inside:
         return max(nested_inside, key=lambda candidate: len(candidate.parts))
 
@@ -804,8 +812,16 @@ def find_root_binding_conflict(
     # inside it); the one with the FEWEST path parts is the shallowest/
     # nearest contained path, hence the most immediate, least obscure one
     # to report.
-    contains = [protected for protected in protected_dirs if root in protected.parents]
-    contains.extend(protected for protected in protected_files if root in protected.parents)
+    contains = [
+        protected
+        for protected in protected_dirs
+        if _is_within(protected, root) and not _same_path(protected, root)
+    ]
+    contains.extend(
+        protected
+        for protected in protected_files
+        if _is_within(protected, root) and not _same_path(protected, root)
+    )
     if contains:
         return min(contains, key=lambda candidate: len(candidate.parts))
 

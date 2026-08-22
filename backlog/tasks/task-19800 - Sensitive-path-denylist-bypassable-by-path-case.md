@@ -34,6 +34,7 @@ denylist shared it showed that it did.
 - [x] #2 Ancestry and lookalike behaviour are unchanged: `~/.sshfoo` is still not `~/.ssh`
 - [x] #3 The end-to-end tool path (`fs_read`) refuses a case-variant of a denylisted file, not just the predicate
 - [x] #4 Confinement checks are explicitly NOT case-folded, with the reasoning recorded, since folding those would admit paths rather than refuse them
+- [x] #5 The folder-binding overlap gate (`find_root_binding_conflict`) uses the same folded comparison, since it enforces the same protected-path policy at bind time
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -81,6 +82,16 @@ Windows-only — on POSIX `.ssh.` is a genuinely different directory, so
 stripping there would over-refuse for no security gain — and it wants a
 platform-gated rule of its own rather than being folded into the
 case-comparison change.
+
+**Qodo round (PR #1936):** one High, correct and missed by me —
+`find_root_binding_conflict()` enforces the same protected-path policy at
+folder-bind time and was still comparing case-sensitively, so a case-variant
+spelling could bind a workspace root overlapping a protected directory and
+widen tool reachability into it. All three of its cases (root IS protected,
+root nested inside protected, root contains protected) now compare through
+the same folded key, with equality excluded from the two ancestry cases so
+the "most specific match" reporting is unchanged. Qodo also explicitly
+agreed confinement should stay unfolded.
 
 **Files:** `tldw_chatbook/Utils/sensitive_paths.py`,
 `Tests/Tools/test_local_tool_sensitive_paths.py`.

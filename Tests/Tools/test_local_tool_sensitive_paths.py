@@ -873,3 +873,36 @@ def test_case_folding_does_not_deny_an_unrelated_lookalike():
     (home / ".sshfoo" / "notes.txt").write_text("ordinary\n")
     assert not is_sensitive_path(home / ".sshfoo" / "notes.txt")
     assert not is_sensitive_path(home / ".SSHFOO" / "notes.txt")
+
+
+def test_binding_gate_detects_a_case_variant_conflict():
+    """Qodo #1 (PR #1936): `find_root_binding_conflict` enforces the SAME
+    protected-path policy at folder-bind time, and was still comparing
+    case-sensitively — so a case-variant spelling could bind a workspace
+    root that overlaps a protected directory, widening tool reachability
+    into it.
+
+    Not a confinement check: this is the denylist's own overlap gate, so
+    folding it fails safe (more conflicts reported) exactly as elsewhere.
+    """
+    from tldw_chatbook.Utils.sensitive_paths import find_root_binding_conflict
+
+    _plant_ssh_key()
+    home = _home()
+
+    # (1) the root IS a protected directory, spelled differently
+    assert find_root_binding_conflict(home / ".SSH") is not None
+
+    # (3) the root CONTAINS a protected path, reached by a cased ancestor
+    upper_home = Path(str(home).upper())
+    assert find_root_binding_conflict(upper_home) is not None, (
+        "a cased spelling of an ancestor still contains the protected paths"
+    )
+
+
+def test_binding_gate_still_allows_an_unrelated_root():
+    from tldw_chatbook.Utils.sensitive_paths import find_root_binding_conflict
+
+    plain = _home() / "projects" / "myapp"
+    plain.mkdir(parents=True, exist_ok=True)
+    assert find_root_binding_conflict(plain) is None
