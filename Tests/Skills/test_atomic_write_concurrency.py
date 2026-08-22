@@ -27,6 +27,7 @@ from __future__ import annotations
 import errno
 import json
 import os
+import secrets
 import stat
 import threading
 from pathlib import Path
@@ -287,23 +288,98 @@ class TestOwnerOnlyTempCreation:
         assert mode_during_replace == [0o600]
         assert _mode(target) == 0o600
 
-    def test_owner_only_existing_temp_is_preserved_and_target_is_not_created(
-        self, tmp_path
+    def test_owner_only_collision_uses_fresh_sibling_and_preserves_existing_temp(
+        self, tmp_path, monkeypatch
     ):
         target = tmp_path / "trust.json"
         temp = aw.unique_temp_path(target, hidden=True)
+        alternate = temp.with_name(f"{temp.name}.0123456789abcdef")
         sentinel = b"do-not-overwrite-this-temp"
         temp.write_bytes(sentinel)
+        written_paths: list[Path] = []
 
-        with pytest.raises(FileExistsError):
-            aw.replace_atomically(
-                temp,
-                target,
-                lambda path: path.write_bytes(b"replacement"),
-                owner_only=True,
+        monkeypatch.setattr(
+            secrets, "token_hex", lambda size: "0123456789abcdef"
+        )
+
+        def write(path: Path) -> None:
+            written_paths.append(path)
+            path.write_bytes(b"replacement")
+
+        aw.replace_atomically(temp, target, write, owner_only=True)
+
+        assert written_paths == [alternate]
+        assert temp.read_bytes() == sentinel
+        assert target.read_bytes() == b"replacement"
+        assert not alternate.exists()
+        if os.name == "posix":
+            assert _mode(target) == 0o600
+
+    def test_owner_only_collision_retry_is_bounded_and_preserves_unowned_paths(
+        self, tmp_path, monkeypatch
+    ):
+        target = tmp_path / "trust.json"
+        temp = aw.unique_temp_path(target, hidden=True)
+        collisions: list[FileExistsError] = []
+        opened: list[Path] = []
+        writer_calls: list[Path] = []
+        cleanup_calls: list[Path] = []
+
+        monkeypatch.setattr(
+            secrets, "token_hex", lambda size: f"{len(opened):016x}"
+        )
+
+        def collide(path, flags, mode):
+            del flags, mode
+            opened.append(Path(path))
+            error = FileExistsError(
+                errno.EEXIST, f"collision-{len(opened)}", path
             )
+            collisions.append(error)
+            raise error
+
+        def record_unlink(self, *, missing_ok=False):
+            del missing_ok
+            cleanup_calls.append(self)
+
+        monkeypatch.setattr(aw.os, "open", collide)
+        monkeypatch.setattr(Path, "unlink", record_unlink)
+
+        with pytest.raises(FileExistsError) as exc_info:
+            aw.replace_atomically(temp, target, writer_calls.append, owner_only=True)
+
+        assert exc_info.value is collisions[-1]
+        assert len(opened) == 8
+        assert len(set(opened)) == 8
+        assert opened[0] == temp
+        assert all(candidate.parent == temp.parent for candidate in opened)
+        assert all(candidate.name.startswith(temp.name) for candidate in opened)
+        assert writer_calls == []
+        assert cleanup_calls == []
+        assert not target.exists()
+
+    def test_owner_only_alternate_writer_failure_cleans_only_owned_sibling(
+        self, tmp_path, monkeypatch
+    ):
+        target = tmp_path / "trust.json"
+        temp = aw.unique_temp_path(target, hidden=True)
+        alternate = temp.with_name(f"{temp.name}.fedcba9876543210")
+        sentinel = b"unowned"
+        temp.write_bytes(sentinel)
+        monkeypatch.setattr(
+            secrets, "token_hex", lambda size: "fedcba9876543210"
+        )
+
+        def fail(path: Path) -> None:
+            assert path == alternate
+            path.write_bytes(b"partial")
+            raise RuntimeError("alternate writer failed")
+
+        with pytest.raises(RuntimeError, match="alternate writer failed"):
+            aw.replace_atomically(temp, target, fail, owner_only=True)
 
         assert temp.read_bytes() == sentinel
+        assert not alternate.exists()
         assert not target.exists()
 
     def test_owner_only_writer_failure_cleans_owned_temp(self, tmp_path):
