@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import importlib
 import importlib.metadata as importlib_metadata
+import importlib.util
 import json
 import math
 import random
@@ -17,6 +18,7 @@ import sqlite3
 import statistics
 import subprocess
 import sys
+import threading
 import time
 import traceback
 from collections.abc import Callable, Sequence
@@ -31,6 +33,36 @@ from urllib.request import Request
 
 ARMS = ("control", "disabled", "enabled")
 CONTROL_SHA = "5f720a40417eaa78f33619d5cbc82effc470104b"
+ORIGINAL_HARNESS_SHA = "eb8225a32f88ea43c337aff99804d360384e7668"
+ORIGINAL_RUNNER_SHA256 = (
+    "fbca69703b771f7b7b27fa78ef9bf095fb30712435743877e20fcb01bb6d06ae"
+)
+CANDIDATE_SHA = ORIGINAL_HARNESS_SHA
+REQUEST_SETTINGS = {
+    "temperature": 0.0,
+    "max_tokens": 512,
+    "reasoning_effort": "none",
+    "streaming": True,
+    "include_usage": True,
+}
+ORIGINAL_EVIDENCE_SHA256 = {
+    "README.md": "724be0f80eff3c9a2eced35b86ae4ce2e6f9a7524d44016cd3f49b61752bd491",
+    "real-provider-three-turn-summary.md": (
+        "fdb4528bd82a33f244b4e6fbcfe3b739bd2374006cfea2df878f2e0d27a7d5c2"
+    ),
+    "real-provider-three-turn.manifest.json": (
+        "f5dec9153845b585d32660ca87f8d4aef7ad31be4dc431bb52e64fdc29187bb6"
+    ),
+    "real-provider-three-turn.raw.jsonl": (
+        "82150cd55ba701b5a2680f87fce43b15676004fc1609f477f458a7abb2078319"
+    ),
+    "real-provider-three-turn.summary.json": (
+        "edec5d347427748e26c93d21da7ecf121cccedb41ea7d304fb6cdad684f3668a"
+    ),
+}
+_ORIGINAL_EVIDENCE_RELATIVE = Path(
+    "Docs/superpowers/qa/console-three-turn-real-provider"
+)
 FIXED_MUTATION = b"task-19641 deterministic mutation\n"
 TURN_PROMPTS = (
     "Reply with exactly turn one complete and do not use any tools.",
@@ -135,6 +167,209 @@ _CHILD_SPEC_KEYS = frozenset(
         "evidence_path",
     }
 )
+_CHILD_SPEC_KEYS_WITH_MODE = _CHILD_SPEC_KEYS | {"mode"}
+
+
+def _sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def verify_original_evidence(candidate_root: Path) -> dict[str, str]:
+    """Require the complete original TASK-20009 artifact set byte-for-byte."""
+    evidence_root = candidate_root.resolve() / _ORIGINAL_EVIDENCE_RELATIVE
+    for name in ORIGINAL_EVIDENCE_SHA256:
+        path = evidence_root / name
+        if not path.is_file() or path.is_symlink():
+            raise RuntimeError(f"original_evidence_missing:{name}")
+    observed_names = {path.name for path in evidence_root.iterdir()}
+    if observed_names != set(ORIGINAL_EVIDENCE_SHA256):
+        raise RuntimeError("original_evidence_set_mismatch")
+    for name, expected in ORIGINAL_EVIDENCE_SHA256.items():
+        if _sha256_file(evidence_root / name) != expected:
+            raise RuntimeError(f"original_evidence_hash_mismatch:{name}")
+    return dict(ORIGINAL_EVIDENCE_SHA256)
+
+
+def load_original_runner(candidate_root: Path) -> Any:
+    """Digest-check and isolate the original benchmark statistics module."""
+    path = (
+        candidate_root.resolve()
+        / "Tests/Performance/run_console_three_turn_profile.py"
+    )
+    if not path.is_file() or path.is_symlink():
+        raise RuntimeError("original_runner_missing")
+    if _sha256_file(path) != ORIGINAL_RUNNER_SHA256:
+        raise RuntimeError("original_runner_hash_mismatch")
+    name = "task_20009_original_runner"
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("original_runner_load_failed")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(name, None)
+        raise
+    for function_name in ("validate_sample", "validate_run", "build_summary"):
+        if not callable(getattr(module, function_name, None)):
+            raise RuntimeError("original_runner_contract_mismatch")
+    return module
+
+
+_PROTOCOL_MISMATCH_CODES = {
+    "revisions": "protocol_revisions_mismatch",
+    "provider_kind": "protocol_provider_kind_mismatch",
+    "provider_server": "protocol_provider_server_mismatch",
+    "runtime": "protocol_runtime_mismatch",
+    "model_alias": "protocol_model_alias_mismatch",
+    "request_settings": "protocol_request_settings_mismatch",
+    "fixture_ids": "protocol_fixture_ids_mismatch",
+    "fixture_hashes": "protocol_fixture_hashes_mismatch",
+    "metric_names": "protocol_metric_names_mismatch",
+    "primary_gate_names": "protocol_primary_gate_names_mismatch",
+    "p95": "protocol_p95_mismatch",
+    "measured_blocks": "protocol_measured_blocks_mismatch",
+    "resampling": "protocol_resampling_mismatch",
+    "confidence_bounds": "protocol_confidence_bounds_mismatch",
+    "non_regression_ceiling": "protocol_non_regression_ceiling_mismatch",
+    "improvement_ceiling": "protocol_improvement_ceiling_mismatch",
+}
+
+
+def confirmation_protocol(
+    *,
+    revisions: Mapping[str, Any],
+    provider_kind: str,
+    provider_server: Mapping[str, Any],
+    runtime: Mapping[str, Any],
+    model_alias: str,
+    workspace_content_tree_digest: str,
+    tool_definition_sha256_by_arm: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Return the complete machine-only confirmatory protocol contract."""
+    if (
+        set(revisions) != {"control", "candidate"}
+        or any(not re.fullmatch(r"[0-9a-f]{40}", str(value)) for value in revisions.values())
+        or not provider_kind
+        or not model_alias
+        or provider_server.get("model_alias") != model_alias
+        or not _SHA256.fullmatch(workspace_content_tree_digest)
+        or set(tool_definition_sha256_by_arm) != set(ARMS)
+        or any(
+            not isinstance(value, str) or not _SHA256.fullmatch(value)
+            for value in tool_definition_sha256_by_arm.values()
+        )
+    ):
+        raise RuntimeError("confirmation_protocol_invalid")
+
+    def clone(value: Any) -> Any:
+        return json.loads(json.dumps(value))
+
+    return {
+        "revisions": clone(revisions),
+        "provider_kind": provider_kind,
+        "provider_server": clone(provider_server),
+        "runtime": clone(runtime),
+        "model_alias": model_alias,
+        "request_settings": clone(REQUEST_SETTINGS),
+        "fixture_ids": {
+            "turn_prompts": "task-19641-three-turn-prompts-v1",
+            "tool_schema": "local:fs_write-target-definition-v1",
+            "mutation": "task-19641-confined-fs-write-v1",
+            "workspace_corpus": "task-19641-workspace-corpus-v1",
+        },
+        "fixture_hashes": {
+            "turn_prompts_sha256": hashlib.sha256(
+                json.dumps(TURN_PROMPTS, separators=(",", ":")).encode("utf-8")
+            ).hexdigest(),
+            "mutation_sha256": hashlib.sha256(FIXED_MUTATION).hexdigest(),
+            "workspace_content_tree_digest": workspace_content_tree_digest,
+            "tool_definition_sha256_by_arm": clone(
+                tool_definition_sha256_by_arm
+            ),
+        },
+        "metric_names": list(REQUIRED_METRICS),
+        "primary_gate_names": list(NON_REGRESSION_METRICS),
+        "p95": {"method": "nearest_rank", "fraction": 0.95},
+        "measured_blocks": 30,
+        "resampling": {
+            "method": "paired_complete_blocks",
+            "resamples": 10_000,
+            "seed": 19_641,
+        },
+        "confidence_bounds": [
+            "two_sided_95",
+            "one_sided_lower_95",
+            "one_sided_upper_95",
+        ],
+        "non_regression_ceiling": 1.10,
+        "improvement_ceiling": 1.00,
+    }
+
+
+def protocol_mismatches(
+    expected: Mapping[str, Any], observed: Mapping[str, Any]
+) -> tuple[str, ...]:
+    """Compare the complete protocol without defaults or partial matching."""
+    if set(expected) != set(_PROTOCOL_MISMATCH_CODES) or set(observed) != set(
+        _PROTOCOL_MISMATCH_CODES
+    ):
+        return ("protocol_schema_mismatch",)
+    return tuple(
+        code
+        for key, code in _PROTOCOL_MISMATCH_CODES.items()
+        if observed[key] != expected[key]
+    )
+
+
+def load_original_protocol(candidate_root: Path) -> dict[str, Any]:
+    """Load the digest-verified original JSON manifest as protocol input."""
+    verify_original_evidence(candidate_root)
+    manifest_path = (
+        candidate_root.resolve()
+        / _ORIGINAL_EVIDENCE_RELATIVE
+        / "real-provider-three-turn.manifest.json"
+    )
+    try:
+        manifest = json.loads(manifest_path.read_bytes())
+        original = load_original_runner(candidate_root)
+        hashes = manifest["fixture_hashes"]
+        server = manifest["provider_server"]
+        return {
+            "revisions": manifest["revisions"],
+            "provider_kind": manifest["provider"],
+            "provider_server": server,
+            "runtime": manifest["runtime"],
+            "model_alias": server["model_alias"],
+            "request_settings": {
+                "temperature": manifest["temperature"],
+                "max_tokens": manifest["max_tokens"],
+                "reasoning_effort": manifest["reasoning_effort"],
+                "streaming": True,
+                "include_usage": manifest["stream_options"]["include_usage"],
+            },
+            "fixture_ids": manifest["fixture_ids"],
+            "fixture_hashes": hashes,
+            "metric_names": list(original.REQUIRED_METRICS),
+            "primary_gate_names": list(original.NON_REGRESSION_METRICS),
+            "p95": {"method": "nearest_rank", "fraction": 0.95},
+            "measured_blocks": 30,
+            "resampling": {
+                "method": "paired_complete_blocks",
+                "resamples": 10_000,
+                "seed": 19_641,
+            },
+            "confidence_bounds": [
+                "two_sided_95",
+                "one_sided_lower_95",
+                "one_sided_upper_95",
+            ],
+            "non_regression_ceiling": 1.10,
+            "improvement_ceiling": 1.00,
+        }
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise RuntimeError("original_protocol_invalid") from exc
 
 
 @dataclass(frozen=True)
@@ -840,6 +1075,7 @@ _FORBIDDEN_KEYS = frozenset(
         "content",
         "tool_result",
         "file_content",
+        "pid",
     }
 )
 _WINDOWS_ABSOLUTE = re.compile(r"^[A-Za-z]:[\\/]")
@@ -852,7 +1088,11 @@ def privacy_violations(value: Any, *, location: str = "$") -> tuple[str, ...]:
         for key, nested in value.items():
             key_text = str(key).lower()
             child = f"{location}.{key}"
-            if key_text in _FORBIDDEN_KEYS or key_text.endswith("_api_key"):
+            if (
+                key_text in _FORBIDDEN_KEYS
+                or key_text.endswith("_api_key")
+                or key_text.endswith("_pid")
+            ):
                 violations.append(f"sensitive_key:{child}")
             violations.extend(privacy_violations(nested, location=child))
     elif isinstance(value, (list, tuple)):
@@ -1006,7 +1246,7 @@ def assert_child_environment(
 
 def write_child_spec(path: Path, spec: Mapping[str, Any]) -> None:
     """Persist one parent-owned child specification with an exact schema."""
-    if set(spec) != _CHILD_SPEC_KEYS:
+    if set(spec) not in {_CHILD_SPEC_KEYS, _CHILD_SPEC_KEYS_WITH_MODE}:
         raise RuntimeError("child_spec_invalid")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -1021,11 +1261,21 @@ def read_child_spec(path: Path) -> dict[str, Any]:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise RuntimeError("child_spec_invalid") from exc
-    if not isinstance(value, dict) or set(value) != _CHILD_SPEC_KEYS:
+    if not isinstance(value, dict) or set(value) not in {
+        _CHILD_SPEC_KEYS,
+        _CHILD_SPEC_KEYS_WITH_MODE,
+    }:
         raise RuntimeError("child_spec_invalid")
+    mode = value.get("mode", "sample")
+    phases = (
+        {"protocol_preflight"}
+        if mode == "protocol_preflight"
+        else {"warmup", "burn_in", "measured"}
+    )
     if (
-        value.get("arm") not in ARMS
-        or value.get("phase") not in {"warmup", "measured"}
+        mode not in {"sample", "protocol_preflight"}
+        or value.get("arm") not in ARMS
+        or value.get("phase") not in phases
         or not isinstance(value.get("iteration"), int)
         or not isinstance(value.get("sample_id"), str)
         or any(
@@ -1067,12 +1317,13 @@ def write_child_config(sample_root: Path, *, endpoint: str, model: str) -> Path:
                 "[api_settings.llama_cpp]",
                 f"api_url = {json.dumps(endpoint)}",
                 f"model = {json.dumps(model)}",
-                "temperature = 0.0",
-                "max_tokens = 512",
-                'reasoning_effort = "none"',
+                f"temperature = {REQUEST_SETTINGS['temperature']}",
+                f"max_tokens = {REQUEST_SETTINGS['max_tokens']}",
+                "reasoning_effort = "
+                f"{json.dumps(REQUEST_SETTINGS['reasoning_effort'])}",
                 "timeout = 120",
                 "retries = 0",
-                "streaming = true",
+                f"streaming = {json.dumps(REQUEST_SETTINGS['streaming'])}",
                 "",
             )
         ),
@@ -1300,6 +1551,111 @@ def provider_server_metadata(
     return result
 
 
+def current_harness_identity(
+    repository_root: Path,
+    *,
+    runner_path: Path | None = None,
+    run_command: Any = subprocess.run,
+) -> dict[str, str]:
+    """Require a clean harness and retain its full commit and runner digest."""
+    status = run_command(
+        ["git", "status", "--porcelain", "--untracked-files=all"],
+        cwd=repository_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if status.returncode != 0:
+        raise RuntimeError("harness_status_failed")
+    if status.stdout:
+        raise RuntimeError("harness_worktree_dirty")
+    revision_result = run_command(
+        ["git", "rev-parse", "--verify", "HEAD^{commit}"],
+        cwd=repository_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    revision = revision_result.stdout.strip()
+    if revision_result.returncode != 0 or not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise RuntimeError("harness_revision_failed")
+    runner = (runner_path or Path(__file__)).resolve()
+    if not runner.is_file() or runner.is_symlink():
+        raise RuntimeError("harness_runner_missing")
+    return {"revision": revision, "runner_sha256": _sha256_file(runner)}
+
+
+def listener_identity(
+    endpoint: str,
+    *,
+    run_command: Any = subprocess.run,
+) -> dict[str, Any]:
+    """Hash listener PID/start identity without retaining either raw value."""
+    parsed = urlsplit(endpoint.strip())
+    if (
+        parsed.scheme != "http"
+        or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
+        or parsed.port is None
+    ):
+        raise ValueError("listener_endpoint_refused")
+    lookup = run_command(
+        [
+            "lsof",
+            "-nP",
+            "-t",
+            f"-iTCP:{parsed.port}",
+            "-sTCP:LISTEN",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    inventory = {
+        line.strip() for line in lookup.stdout.splitlines() if line.strip()
+    }
+    if (
+        lookup.returncode != 0
+        or not inventory
+        or any(not pid.isdecimal() for pid in inventory)
+    ):
+        raise RuntimeError("listener_identity_failed")
+    pids = sorted(inventory, key=int)
+    identities = []
+    for pid in pids:
+        sample = run_command(
+            ["ps", "-o", "pid=,lstart=", "-p", pid],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        fields = sample.stdout.strip().split(maxsplit=1)
+        if (
+            sample.returncode != 0
+            or len(fields) != 2
+            or fields[0] != pid
+            or not fields[1].strip()
+        ):
+            raise RuntimeError("listener_identity_failed")
+        identities.append(f"{pid}\0{fields[1].strip()}")
+    fingerprint = hashlib.sha256("\n".join(identities).encode("utf-8")).hexdigest()
+    return {"listener_count": len(identities), "fingerprint_sha256": fingerprint}
+
+
+def verify_listener_identity(
+    endpoint: str,
+    expected_fingerprint: str,
+    *,
+    run_command: Any = subprocess.run,
+) -> dict[str, Any]:
+    """Fail the attempt if the exact listener changes at a boundary."""
+    if not _SHA256.fullmatch(expected_fingerprint):
+        raise RuntimeError("listener_identity_invalid")
+    observed = listener_identity(endpoint, run_command=run_command)
+    if observed["fingerprint_sha256"] != expected_fingerprint:
+        raise RuntimeError("listener_identity_changed")
+    return observed
+
+
 def listener_resource_snapshot(
     endpoint: str,
     *,
@@ -1506,19 +1862,27 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     return parser.parse_args(arguments)
 
 
-def prepare_control_worktree(
+def prepare_target_worktree(
     repository_root: Path,
     run_root: Path,
     *,
-    control_sha: str,
+    name: str,
+    revision: str,
     run_command: Any = subprocess.run,
 ) -> Path:
-    """Create one detached control worktree beneath the explicit run root."""
-    target = (run_root / "control-worktree").resolve()
+    """Create one named detached target owned by the explicit run root."""
+    if name not in {"control", "candidate"} or not re.fullmatch(
+        r"[0-9a-f]{40}", revision
+    ):
+        raise RuntimeError("target_worktree_invalid")
+    root = run_root.resolve()
+    target = (root / name).resolve()
+    if target.parent != root:
+        raise RuntimeError("target_worktree_invalid")
     if target.exists():
-        raise RuntimeError("control_worktree_failed: target already exists")
+        raise RuntimeError(f"target_worktree_failed:{name}:target_exists")
     target.parent.mkdir(parents=True, exist_ok=True)
-    command = ["git", "worktree", "add", "--detach", str(target), control_sha]
+    command = ["git", "worktree", "add", "--detach", str(target), revision]
     completed = run_command(
         command,
         cwd=repository_root,
@@ -1527,8 +1891,18 @@ def prepare_control_worktree(
         text=True,
     )
     if completed.returncode != 0 or not target.is_dir():
-        detail = completed.stderr.strip()
-        raise RuntimeError(f"control_worktree_failed:{detail}")
+        run_command(
+            ["git", "worktree", "remove", "--force", str(target)],
+            cwd=repository_root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if target.is_symlink():
+            target.unlink()
+        elif target.exists():
+            shutil.rmtree(target)
+        raise RuntimeError(f"target_worktree_failed:{name}")
     return target
 
 
@@ -1717,6 +2091,83 @@ def prepare_workspace_runtime(
             hub.input_schema,
         ),
     )
+
+
+def protocol_preflight_ownership(
+    baseline_thread_ids: set[int],
+) -> dict[str, Any]:
+    """Measure content-free ownership after protocol-preflight cleanup."""
+    survivors = [
+        thread
+        for thread in threading.enumerate()
+        if id(thread) not in baseline_thread_ids and thread.is_alive()
+    ]
+    if survivors:
+        raise RuntimeError("protocol_preflight_thread_survivor")
+    return {
+        "live_threads": 0,
+        "provider_closed": True,
+        "sqlite_closed": True,
+        "shadow_operations_pending": 0,
+    }
+
+
+def protocol_preflight(
+    target_root: Path,
+    sample_root: Path,
+    *,
+    arm: str,
+    adapter_factory: Callable[[Path, str], Any] = TargetAdapter.for_arm,
+    runtime_factory: Callable[..., Any] = prepare_workspace_runtime,
+    corpus_generator: Callable[[Path], Mapping[str, Any]] = generate_corpus,
+    ownership_probe: Callable[[set[int]], Mapping[str, Any]] = (
+        protocol_preflight_ownership
+    ),
+) -> dict[str, Any]:
+    """Derive target behavior/tool fixtures without mounting a conversation."""
+    baseline_thread_ids = {id(thread) for thread in threading.enumerate()}
+    adapter = adapter_factory(target_root.resolve(), arm)
+    runtime: Any | None = None
+    result: dict[str, Any] | None = None
+    try:
+        runtime = runtime_factory(sample_root.resolve(), arm=arm)
+        corpus = corpus_generator(runtime.workspace_root)
+        corpus_digest = corpus.get("content_tree_digest")
+        tool_digest = runtime.permission_definition_hash
+        if (
+            not isinstance(corpus_digest, str)
+            or not _SHA256.fullmatch(corpus_digest)
+            or not isinstance(tool_digest, str)
+            or not _SHA256.fullmatch(tool_digest)
+        ):
+            raise RuntimeError("protocol_preflight_hash_invalid")
+        behavior = {
+            "target_revision_kind": adapter.revision_kind,
+            "review_state": runtime.review_state,
+            "review_ready": runtime.review_ready,
+        }
+        result = {
+            "event": "protocol_preflight",
+            "arm": arm,
+            "target_revision_kind": adapter.revision_kind,
+            "behavior_sha256": hashlib.sha256(
+                json.dumps(
+                    behavior, sort_keys=True, separators=(",", ":")
+                ).encode("utf-8")
+            ).hexdigest(),
+            "workspace_content_tree_digest": corpus_digest,
+            "tool_definition_sha256": tool_digest,
+        }
+    finally:
+        try:
+            if runtime is not None:
+                runtime.close()
+        finally:
+            adapter.close()
+    if result is None:
+        raise RuntimeError("protocol_preflight_failed")
+    result["final_ownership"] = dict(ownership_probe(baseline_thread_ids))
+    return result
 
 
 async def run_scripted_mounted_sample(
@@ -2408,12 +2859,12 @@ async def run_mounted_sample(
             "llama_cpp": {
                 "api_url": endpoint,
                 "model": model,
-                "temperature": 0.0,
-                "max_tokens": 512,
-                "reasoning_effort": "none",
+                "temperature": REQUEST_SETTINGS["temperature"],
+                "max_tokens": REQUEST_SETTINGS["max_tokens"],
+                "reasoning_effort": REQUEST_SETTINGS["reasoning_effort"],
                 "timeout": 120,
                 "retries": 0,
-                "streaming": True,
+                "streaming": REQUEST_SETTINGS["streaming"],
             }
         }
         app.app_config.setdefault("console", {})["workspace_root"] = str(
@@ -2437,7 +2888,9 @@ async def run_mounted_sample(
         def usage_enabled_payload(*args: Any, **kwargs: Any) -> dict[str, Any]:
             payload = original_payload_builder(*args, **kwargs)
             if payload.get("stream") is True:
-                payload["stream_options"] = {"include_usage": True}
+                payload["stream_options"] = {
+                    "include_usage": REQUEST_SETTINGS["include_usage"]
+                }
             return payload
 
         gateway_module.build_llamacpp_chat_payload = usage_enabled_payload
@@ -2538,10 +2991,10 @@ async def run_mounted_sample(
                 active_session_id,
                 dataclass_replace(
                     session_settings,
-                    temperature=0.0,
-                    max_tokens=512,
-                    reasoning_effort="none",
-                    streaming=True,
+                    temperature=REQUEST_SETTINGS["temperature"],
+                    max_tokens=REQUEST_SETTINGS["max_tokens"],
+                    reasoning_effort=REQUEST_SETTINGS["reasoning_effort"],
+                    streaming=REQUEST_SETTINGS["streaming"],
                 ),
             )
 
@@ -2794,13 +3247,32 @@ def run_child_mode(args: argparse.Namespace) -> int:
                 sample_root / "config" / "tldw_cli" / "config.toml"
             ).resolve():
                 raise RuntimeError("child_environment_mismatch:config")
-            adapter = TargetAdapter.for_arm(target_root, str(spec["arm"]))
             install_target_root(target_root)
             imported = assert_target_modules(TARGET_MODULES, target_root)
             target_modules = {
                 name: Path(path).relative_to(target_root).as_posix()
                 for name, path in imported.items()
             }
+            if spec.get("mode", "sample") == "protocol_preflight":
+                result = protocol_preflight(
+                    target_root,
+                    sample_root,
+                    arm=str(spec["arm"]),
+                )
+                result.update(
+                    {
+                        "sample_id": spec["sample_id"],
+                        "phase": spec["phase"],
+                        "iteration": spec["iteration"],
+                        "arm": spec["arm"],
+                        "target_modules": target_modules,
+                    }
+                )
+                if privacy_violations(result):
+                    raise RuntimeError("protocol_preflight_privacy_violation")
+                write_boundary_event(evidence, result)
+                return 0
+            adapter = TargetAdapter.for_arm(target_root, str(spec["arm"]))
             sample = asyncio.run(
                 run_mounted_sample(
                     sample_root,
@@ -2856,8 +3328,20 @@ def _write_json(path: Path, value: Mapping[str, Any]) -> None:
     )
 
 
-def _remove_control_worktree(repository_root: Path, target: Path) -> None:
-    completed = subprocess.run(
+def _remove_target_worktree(
+    repository_root: Path,
+    run_root: Path,
+    *,
+    name: str,
+    run_command: Any = subprocess.run,
+) -> None:
+    root = run_root.resolve()
+    if name not in {"control", "candidate"}:
+        raise RuntimeError("target_worktree_invalid")
+    target = (root / name).resolve()
+    if target.parent != root or not target.is_dir():
+        raise RuntimeError("target_worktree_invalid")
+    completed = run_command(
         ["git", "worktree", "remove", "--force", str(target)],
         cwd=repository_root,
         check=False,
@@ -2865,7 +3349,30 @@ def _remove_control_worktree(repository_root: Path, target: Path) -> None:
         text=True,
     )
     if completed.returncode != 0:
-        raise RuntimeError("control_worktree_cleanup_failed")
+        raise RuntimeError(f"target_worktree_cleanup_failed:{name}")
+
+
+def _remove_target_worktrees(
+    repository_root: Path,
+    run_root: Path,
+    *,
+    names: Sequence[str],
+    run_command: Any = subprocess.run,
+) -> None:
+    """Attempt every owned worktree removal before reporting cleanup failure."""
+    failures = []
+    for name in names:
+        try:
+            _remove_target_worktree(
+                repository_root,
+                run_root,
+                name=name,
+                run_command=run_command,
+            )
+        except RuntimeError:
+            failures.append(name)
+    if failures:
+        raise RuntimeError("target_worktree_cleanup_failed")
 
 
 def prepare_output_root(path: Path) -> None:
@@ -2903,18 +3410,35 @@ def run_parent_mode(args: argparse.Namespace) -> int:
     runtime = runtime_metadata()
     host_before = host_load_snapshot()
     listener_before = listener_resource_snapshot(args.endpoint)
-    control_root = prepare_control_worktree(
+    initial_listener = listener_identity(args.endpoint)
+    control_root = prepare_target_worktree(
         repository_root,
         run_root,
-        control_sha=revisions["control"],
+        name="control",
+        revision=revisions["control"],
     )
+    candidate_root: Path | None = None
     rows: list[dict[str, Any]] = []
     runner = Path(__file__).resolve()
+    statistics_module: Any = sys.modules[__name__]
     try:
+        candidate_root = prepare_target_worktree(
+            repository_root,
+            run_root,
+            name="candidate",
+            revision=revisions["candidate"],
+        )
+        if revisions["candidate"] == CANDIDATE_SHA:
+            verify_original_evidence(candidate_root)
+            statistics_module = load_original_runner(candidate_root)
         for index, plan in enumerate(sample_schedule(args.iterations)):
+            verify_listener_identity(
+                args.endpoint,
+                initial_listener["fingerprint_sha256"],
+            )
             sample_id = f"{plan.phase}-{plan.iteration}-{plan.arm}"
             sample_root = run_root / "samples" / f"{index:03d}-{sample_id}"
-            target_root = control_root if plan.arm == "control" else repository_root
+            target_root = control_root if plan.arm == "control" else candidate_root
             environment = build_child_environment(os.environ, sample_root)
             write_child_config(sample_root, endpoint=args.endpoint, model=args.model)
             spec_path = sample_root / "child-spec.json"
@@ -2958,6 +3482,10 @@ def run_parent_mode(args: argparse.Namespace) -> int:
                 environment=environment,
                 cwd=target_root,
             )
+            verify_listener_identity(
+                args.endpoint,
+                initial_listener["fingerprint_sha256"],
+            )
             last = child.last_event
             if (
                 child.status != "complete"
@@ -2976,7 +3504,7 @@ def run_parent_mode(args: argparse.Namespace) -> int:
                     },
                 )
                 return 1
-            errors = validate_sample(last)
+            errors = statistics_module.validate_sample(last)
             if errors or privacy_violations(last):
                 raise RuntimeError("parent_sample_validation_failed")
             rows.append(last)
@@ -2991,13 +3519,24 @@ def run_parent_mode(args: argparse.Namespace) -> int:
                 },
             )
     finally:
-        _remove_control_worktree(repository_root, control_root)
+        cleanup_names = (
+            ("candidate", "control")
+            if candidate_root is not None
+            else ("control",)
+        )
+        _remove_target_worktrees(
+            repository_root,
+            run_root,
+            names=cleanup_names,
+        )
 
     samples_root = run_root / "samples"
     if samples_root.is_dir():
         samples_root.rmdir()
 
-    validation_errors = validate_run(rows, expected_iterations=args.iterations)
+    validation_errors = statistics_module.validate_run(
+        rows, expected_iterations=args.iterations
+    )
     if validation_errors:
         raise RuntimeError("parent_run_validation_failed")
     corpus_digests = {
@@ -3022,10 +3561,12 @@ def run_parent_mode(args: argparse.Namespace) -> int:
         "revisions": revisions,
         "model": args.model,
         "provider": "llama_cpp",
-        "temperature": 0.0,
-        "max_tokens": 512,
-        "reasoning_effort": "none",
-        "stream_options": {"include_usage": True},
+        "temperature": REQUEST_SETTINGS["temperature"],
+        "max_tokens": REQUEST_SETTINGS["max_tokens"],
+        "reasoning_effort": REQUEST_SETTINGS["reasoning_effort"],
+        "stream_options": {
+            "include_usage": REQUEST_SETTINGS["include_usage"]
+        },
         "fixture_ids": {
             "turn_prompts": "task-19641-three-turn-prompts-v1",
             "tool_schema": "local:fs_write-target-definition-v1",
@@ -3059,9 +3600,10 @@ def run_parent_mode(args: argparse.Namespace) -> int:
             "before": listener_before,
             "after": listener_after,
         },
+        "listener_identity": initial_listener,
     }
     summary = (
-        build_summary(rows)
+        statistics_module.build_summary(rows)
         if args.iterations >= 2
         else {
             "overall_verdict": "smoke",

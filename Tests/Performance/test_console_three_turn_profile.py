@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import io
 import json
 import os
@@ -486,6 +487,409 @@ def test_validate_confirmation_rows_validates_every_row_including_burn_in() -> N
     assert seen_positions == list(range(108))
 
 
+def _materialize_original_runner(candidate_root: Path) -> Path:
+    repository_root = Path(__file__).resolve().parents[2]
+    completed = subprocess.run(
+        [
+            "git",
+            "show",
+            f"{profile.ORIGINAL_HARNESS_SHA}:Tests/Performance/"
+            "run_console_three_turn_profile.py",
+        ],
+        cwd=repository_root,
+        check=True,
+        capture_output=True,
+    )
+    runner = candidate_root / "Tests/Performance/run_console_three_turn_profile.py"
+    runner.parent.mkdir(parents=True)
+    runner.write_bytes(completed.stdout)
+    return runner
+
+
+def _copy_original_evidence(destination_root: Path) -> Path:
+    repository_root = Path(__file__).resolve().parents[2]
+    relative = Path("Docs/superpowers/qa/console-three-turn-real-provider")
+    destination = destination_root / relative
+    destination.mkdir(parents=True)
+    for name in profile.ORIGINAL_EVIDENCE_SHA256:
+        (destination / name).write_bytes((repository_root / relative / name).read_bytes())
+    return destination
+
+
+def test_original_runner_and_evidence_pins_are_exact() -> None:
+    assert profile.ORIGINAL_HARNESS_SHA == (
+        "eb8225a32f88ea43c337aff99804d360384e7668"
+    )
+    assert profile.ORIGINAL_RUNNER_SHA256 == (
+        "fbca69703b771f7b7b27fa78ef9bf095fb30712435743877e20fcb01bb6d06ae"
+    )
+    assert profile.CANDIDATE_SHA == profile.ORIGINAL_HARNESS_SHA
+    assert profile.ORIGINAL_EVIDENCE_SHA256 == {
+        "README.md": "724be0f80eff3c9a2eced35b86ae4ce2e6f9a7524d44016cd3f49b61752bd491",
+        "real-provider-three-turn-summary.md": (
+            "fdb4528bd82a33f244b4e6fbcfe3b739bd2374006cfea2df878f2e0d27a7d5c2"
+        ),
+        "real-provider-three-turn.manifest.json": (
+            "f5dec9153845b585d32660ca87f8d4aef7ad31be4dc431bb52e64fdc29187bb6"
+        ),
+        "real-provider-three-turn.raw.jsonl": (
+            "82150cd55ba701b5a2680f87fce43b15676004fc1609f477f458a7abb2078319"
+        ),
+        "real-provider-three-turn.summary.json": (
+            "edec5d347427748e26c93d21da7ecf121cccedb41ea7d304fb6cdad684f3668a"
+        ),
+    }
+
+
+def test_original_evidence_guard_rejects_altered_missing_and_extra_files(
+    tmp_path: Path,
+) -> None:
+    verify_original_evidence = getattr(profile, "verify_original_evidence", None)
+    evidence = _copy_original_evidence(tmp_path)
+
+    assert callable(verify_original_evidence)
+    assert verify_original_evidence(tmp_path) == profile.ORIGINAL_EVIDENCE_SHA256
+
+    altered = evidence / "README.md"
+    altered.write_bytes(altered.read_bytes() + b"altered")
+    with pytest.raises(RuntimeError, match="original_evidence_hash_mismatch:README.md"):
+        verify_original_evidence(tmp_path)
+    altered.write_bytes(
+        (Path(__file__).resolve().parents[2] / evidence.relative_to(tmp_path) / "README.md").read_bytes()
+    )
+
+    missing = evidence / "real-provider-three-turn.summary.json"
+    missing.unlink()
+    with pytest.raises(RuntimeError, match="original_evidence_missing"):
+        verify_original_evidence(tmp_path)
+    missing.write_bytes(
+        (
+            Path(__file__).resolve().parents[2]
+            / evidence.relative_to(tmp_path)
+            / missing.name
+        ).read_bytes()
+    )
+
+    (evidence / "unexpected.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="original_evidence_set_mismatch"):
+        verify_original_evidence(tmp_path)
+
+
+def test_original_runner_loads_isolated_and_exposes_direct_statistics(
+    tmp_path: Path,
+) -> None:
+    load_original_runner = getattr(profile, "load_original_runner", None)
+    _materialize_original_runner(tmp_path)
+
+    assert callable(load_original_runner)
+    original = load_original_runner(tmp_path)
+
+    assert original.__name__ == "task_20009_original_runner"
+    assert original is not profile
+    assert original.validate_sample(_valid_sample("control")) == ()
+    rows = _valid_run()
+    assert original.validate_run(rows) == ()
+    assert original.build_summary(rows, bootstrap_resamples=10)["overall_verdict"]
+
+
+def test_original_runner_rejects_digest_drift(tmp_path: Path) -> None:
+    load_original_runner = getattr(profile, "load_original_runner", None)
+    runner = _materialize_original_runner(tmp_path)
+    runner.write_bytes(runner.read_bytes() + b"\n# altered\n")
+
+    assert callable(load_original_runner)
+    with pytest.raises(RuntimeError, match="original_runner_hash_mismatch"):
+        load_original_runner(tmp_path)
+
+
+def test_burn_in_summary_is_byte_equivalent_when_only_excluded_metrics_change(
+    tmp_path: Path,
+) -> None:
+    load_original_runner = getattr(profile, "load_original_runner", None)
+    _materialize_original_runner(tmp_path)
+    original = load_original_runner(tmp_path)
+    schedule, rows = _valid_confirmation_rows()
+
+    errors, measured = profile.validate_confirmation_rows(
+        rows,
+        schedule,
+        validate_sample=original.validate_sample,
+    )
+    assert errors == ()
+    assert original.validate_run(measured) == ()
+    before = json.dumps(
+        original.build_summary(measured, bootstrap_resamples=20),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+
+    for row in rows:
+        if row["phase"] == "burn_in":
+            row["metrics"] = {name: 10**18 for name in profile.REQUIRED_METRICS}
+    errors, changed_measured = profile.validate_confirmation_rows(
+        rows,
+        schedule,
+        validate_sample=original.validate_sample,
+    )
+    assert errors == ()
+    after = json.dumps(
+        original.build_summary(changed_measured, bootstrap_resamples=20),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+
+    assert after == before
+
+
+def _original_protocol() -> dict[str, object]:
+    repository_root = Path(__file__).resolve().parents[2]
+    manifest = json.loads(
+        (
+            repository_root
+            / "Docs/superpowers/qa/console-three-turn-real-provider/"
+            "real-provider-three-turn.manifest.json"
+        ).read_bytes()
+    )
+    return profile.confirmation_protocol(
+        revisions=manifest["revisions"],
+        provider_kind=manifest["provider"],
+        provider_server=manifest["provider_server"],
+        runtime=manifest["runtime"],
+        model_alias=manifest["provider_server"]["model_alias"],
+        workspace_content_tree_digest=manifest["fixture_hashes"][
+            "workspace_content_tree_digest"
+        ],
+        tool_definition_sha256_by_arm=manifest["fixture_hashes"][
+            "tool_definition_sha256_by_arm"
+        ],
+    )
+
+
+def test_confirmation_protocol_pins_every_original_machine_contract() -> None:
+    protocol = _original_protocol()
+
+    assert protocol == {
+        "revisions": {
+            "control": profile.CONTROL_SHA,
+            "candidate": profile.CANDIDATE_SHA,
+        },
+        "provider_kind": "llama_cpp",
+        "provider_server": {
+            "build_info": "b8795-c0de6eda7",
+            "model_alias": "gemma-4-26B-A4B-it-ultra-uncensored-heretic-Q4_K_M.gguf",
+            "total_slots": 1,
+            "context_tokens": 64_000,
+            "endpoints": {"metrics": False, "slots": True, "props": False},
+            "is_sleeping": False,
+            "modalities": {"vision": False, "audio": False},
+        },
+        "runtime": {
+            "python": {"implementation": "cpython", "version": "3.12.11"},
+            "sqlite": "3.49.1",
+            "dependencies": {
+                "httpx": "0.28.1",
+                "pydantic": "2.12.5",
+                "rich": "14.3.3",
+                "textual": "8.2.8",
+            },
+        },
+        "model_alias": "gemma-4-26B-A4B-it-ultra-uncensored-heretic-Q4_K_M.gguf",
+        "request_settings": {
+            "temperature": 0.0,
+            "max_tokens": 512,
+            "reasoning_effort": "none",
+            "streaming": True,
+            "include_usage": True,
+        },
+        "fixture_ids": {
+            "turn_prompts": "task-19641-three-turn-prompts-v1",
+            "tool_schema": "local:fs_write-target-definition-v1",
+            "mutation": "task-19641-confined-fs-write-v1",
+            "workspace_corpus": "task-19641-workspace-corpus-v1",
+        },
+        "fixture_hashes": {
+            "turn_prompts_sha256": (
+                "3f6b88ffa37b4f6b9673878288b93d81e965c50cba1fb2ce7bbb4dfadb5245ac"
+            ),
+            "mutation_sha256": (
+                "04630906249e9f2fe123d406404dc8577d2b998484217f9c48d64f7368198ce6"
+            ),
+            "workspace_content_tree_digest": (
+                "f7d3e52271c125417208dbad8c1f7a3aadc1e80a5c7f1856db787c9132873ea6"
+            ),
+            "tool_definition_sha256_by_arm": {
+                arm: "be1dec3a1a1a7f31c8fd33956eab6ba5c6100c9b3649e55b928764911476d0bf"
+                for arm in profile.ARMS
+            },
+        },
+        "metric_names": list(profile.REQUIRED_METRICS),
+        "primary_gate_names": list(profile.NON_REGRESSION_METRICS),
+        "p95": {"method": "nearest_rank", "fraction": 0.95},
+        "measured_blocks": 30,
+        "resampling": {
+            "method": "paired_complete_blocks",
+            "resamples": 10_000,
+            "seed": 19_641,
+        },
+        "confidence_bounds": [
+            "two_sided_95",
+            "one_sided_lower_95",
+            "one_sided_upper_95",
+        ],
+        "non_regression_ceiling": 1.10,
+        "improvement_ceiling": 1.00,
+    }
+
+
+@pytest.mark.parametrize(
+    ("path", "replacement", "code"),
+    [
+        (("revisions", "candidate"), "0" * 40, "protocol_revisions_mismatch"),
+        (("provider_kind",), "other", "protocol_provider_kind_mismatch"),
+        *((
+            ("provider_server", *path),
+            replacement,
+            "protocol_provider_server_mismatch",
+        ) for path, replacement in [
+            (("build_info",), "other"),
+            (("model_alias",), "other.gguf"),
+            (("total_slots",), 2),
+            (("context_tokens",), 32_000),
+            (("endpoints", "metrics"), True),
+            (("endpoints", "slots"), False),
+            (("endpoints", "props"), True),
+            (("is_sleeping",), True),
+            (("modalities", "vision"), True),
+            (("modalities", "audio"), True),
+        ]),
+        *((
+            ("runtime", *path),
+            "changed",
+            "protocol_runtime_mismatch",
+        ) for path in [
+            ("python", "implementation"),
+            ("python", "version"),
+            ("sqlite",),
+            ("dependencies", "httpx"),
+            ("dependencies", "pydantic"),
+            ("dependencies", "rich"),
+            ("dependencies", "textual"),
+        ]),
+        (("model_alias",), "other.gguf", "protocol_model_alias_mismatch"),
+        *((
+            ("request_settings", key),
+            replacement,
+            "protocol_request_settings_mismatch",
+        ) for key, replacement in [
+            ("temperature", 0.1),
+            ("max_tokens", 511),
+            ("reasoning_effort", "low"),
+            ("streaming", False),
+            ("include_usage", False),
+        ]),
+        *((
+            ("fixture_ids", key),
+            "changed",
+            "protocol_fixture_ids_mismatch",
+        ) for key in ("turn_prompts", "tool_schema", "mutation", "workspace_corpus")),
+        *((
+            ("fixture_hashes", *path),
+            "0" * 64,
+            "protocol_fixture_hashes_mismatch",
+        ) for path in [
+            ("turn_prompts_sha256",),
+            ("mutation_sha256",),
+            ("workspace_content_tree_digest",),
+            ("tool_definition_sha256_by_arm", "control"),
+            ("tool_definition_sha256_by_arm", "disabled"),
+            ("tool_definition_sha256_by_arm", "enabled"),
+        ]),
+        (("metric_names",), [], "protocol_metric_names_mismatch"),
+        (("primary_gate_names",), [], "protocol_primary_gate_names_mismatch"),
+        (("p95", "method"), "linear", "protocol_p95_mismatch"),
+        (("p95", "fraction"), 0.9, "protocol_p95_mismatch"),
+        (("measured_blocks",), 29, "protocol_measured_blocks_mismatch"),
+        (("resampling", "method"), "rows", "protocol_resampling_mismatch"),
+        (("resampling", "resamples"), 9_999, "protocol_resampling_mismatch"),
+        (("resampling", "seed"), 1, "protocol_resampling_mismatch"),
+        (("confidence_bounds",), [], "protocol_confidence_bounds_mismatch"),
+        (("non_regression_ceiling",), 1.11, "protocol_non_regression_ceiling_mismatch"),
+        (("improvement_ceiling",), 1.01, "protocol_improvement_ceiling_mismatch"),
+    ],
+)
+def test_protocol_comparison_fails_closed_with_stable_mismatch_codes(
+    path: tuple[str, ...], replacement: object, code: str
+) -> None:
+    expected = _original_protocol()
+    observed = copy.deepcopy(expected)
+    target = observed
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = replacement
+
+    assert profile.protocol_mismatches(expected, observed) == (code,)
+
+
+def test_original_protocol_loader_never_parses_markdown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _copy_original_evidence(tmp_path)
+    _materialize_original_runner(tmp_path)
+    original_read_text = Path.read_text
+
+    def guarded_read_text(path: Path, *args, **kwargs):
+        if path.suffix == ".md":
+            pytest.fail("Markdown must not be parsed as protocol input")
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", guarded_read_text)
+
+    assert profile.load_original_protocol(tmp_path) == _original_protocol()
+
+
+def test_original_protocol_is_independent_from_current_harness_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _copy_original_evidence(tmp_path)
+    _materialize_original_runner(tmp_path)
+    monkeypatch.setattr(profile, "TURN_PROMPTS", ("drifted prompt",))
+    monkeypatch.setattr(profile, "FIXED_MUTATION", b"drifted mutation")
+    monkeypatch.setattr(profile, "REQUIRED_METRICS", ("drifted_metric",))
+    monkeypatch.setattr(
+        profile,
+        "REQUEST_SETTINGS",
+        {
+            "temperature": 0.1,
+            "max_tokens": 511,
+            "reasoning_effort": "low",
+            "streaming": False,
+            "include_usage": False,
+        },
+        raising=False,
+    )
+    expected = profile.load_original_protocol(tmp_path)
+    observed = _original_protocol()
+
+    assert expected["fixture_hashes"]["turn_prompts_sha256"] == (
+        "3f6b88ffa37b4f6b9673878288b93d81e965c50cba1fb2ce7bbb4dfadb5245ac"
+    )
+    assert expected["metric_names"] == [
+        "third_send_to_worker_ns",
+        "event_loop_lag_p95_ns",
+        "assistant_durable_to_release_ns",
+        "terminal_to_third_provider_ns",
+        "provider_total_ns",
+        "conversation_wall_ns",
+    ]
+    assert profile.protocol_mismatches(expected, observed) == (
+        "protocol_request_settings_mismatch",
+        "protocol_fixture_hashes_mismatch",
+        "protocol_metric_names_mismatch",
+    )
+
+
 def test_validate_run_requires_thirty_complete_unique_rotation_blocks() -> None:
     validate_run = getattr(profile, "validate_run", None)
     rows = _valid_run()
@@ -550,6 +954,8 @@ def test_build_summary_invalidates_before_statistics() -> None:
         {"tool_result": "body"},
         {"error": "/Users/alice/work/app.py:12"},
         {"path": "/tmp/absolute.txt"},
+        {"pid": 42},
+        {"listener_pid": 42},
     ],
 )
 def test_privacy_violations_reject_sensitive_keys_and_absolute_paths(payload) -> None:
@@ -1115,6 +1521,135 @@ def test_listener_resource_snapshot_retains_counts_not_process_identity() -> Non
     assert all("42" not in row and "84" not in row for row in result["processes"])
 
 
+@pytest.mark.parametrize("status", (" M tracked.py\n", "?? untracked.txt\n"))
+def test_current_harness_identity_refuses_any_dirty_file(
+    tmp_path: Path, status: str
+) -> None:
+    commands = []
+
+    def fake_run(command, **_kwargs):
+        commands.append(command)
+        return SimpleNamespace(returncode=0, stdout=status, stderr="")
+
+    runner = tmp_path / "runner.py"
+    runner.write_text("fixture", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="harness_worktree_dirty"):
+        profile.current_harness_identity(
+            tmp_path,
+            runner_path=runner,
+            run_command=fake_run,
+        )
+    assert commands == [
+        ["git", "status", "--porcelain", "--untracked-files=all"]
+    ]
+
+
+def test_current_harness_identity_retains_full_revision_and_runner_digest(
+    tmp_path: Path,
+) -> None:
+    revision = "1" * 40
+    runner = tmp_path / "runner.py"
+    runner.write_bytes(b"runner fixture")
+    commands = []
+
+    def fake_run(command, **_kwargs):
+        commands.append(command)
+        stdout = "" if command[1] == "status" else f"{revision}\n"
+        return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
+
+    result = profile.current_harness_identity(
+        tmp_path,
+        runner_path=runner,
+        run_command=fake_run,
+    )
+
+    assert result == {
+        "revision": revision,
+        "runner_sha256": hashlib.sha256(b"runner fixture").hexdigest(),
+    }
+    assert commands == [
+        ["git", "status", "--porcelain", "--untracked-files=all"],
+        ["git", "rev-parse", "--verify", "HEAD^{commit}"],
+    ]
+
+
+def _listener_run(identity: str):
+    def fake_run(command, **_kwargs):
+        if command[0] == "lsof":
+            return SimpleNamespace(returncode=0, stdout="42\n", stderr="")
+        assert command == ["ps", "-o", "pid=,lstart=", "-p", "42"]
+        return SimpleNamespace(
+            returncode=0,
+            stdout=f"42 {identity}\n",
+            stderr="",
+        )
+
+    return fake_run
+
+
+def test_listener_identity_hashes_pid_and_start_without_retaining_them() -> None:
+    started = "Fri Aug 22 11:00:00 2026"
+    result = profile.listener_identity(
+        "http://127.0.0.1:9099",
+        run_command=_listener_run(started),
+    )
+
+    assert result == {
+        "listener_count": 1,
+        "fingerprint_sha256": hashlib.sha256(
+            f"42\0{started}".encode()
+        ).hexdigest(),
+    }
+    retained = json.dumps(result, sort_keys=True)
+    assert "pid" not in result
+    assert started not in retained
+    assert "command" not in retained
+    assert "model" not in retained
+    assert "/Users/" not in retained
+    assert "secret" not in retained
+
+
+def test_listener_identity_is_verified_at_repeated_boundaries() -> None:
+    started = "Fri Aug 22 11:00:00 2026"
+    first = profile.listener_identity(
+        "http://127.0.0.1:9099",
+        run_command=_listener_run(started),
+    )
+
+    for _boundary in range(6):
+        assert profile.verify_listener_identity(
+            "http://127.0.0.1:9099",
+            first["fingerprint_sha256"],
+            run_command=_listener_run(started),
+        ) == first
+
+
+def test_changed_listener_identity_invalidates_the_attempt() -> None:
+    first = profile.listener_identity(
+        "http://127.0.0.1:9099",
+        run_command=_listener_run("Fri Aug 22 11:00:00 2026"),
+    )
+
+    with pytest.raises(RuntimeError, match="listener_identity_changed"):
+        profile.verify_listener_identity(
+            "http://127.0.0.1:9099",
+            first["fingerprint_sha256"],
+            run_command=_listener_run("Fri Aug 22 11:01:00 2026"),
+        )
+
+
+def test_listener_identity_rejects_malformed_inventory_with_stable_code() -> None:
+    def fake_run(command, **_kwargs):
+        assert command[0] == "lsof"
+        return SimpleNamespace(returncode=0, stdout="not-a-pid\n", stderr="")
+
+    with pytest.raises(RuntimeError, match="listener_identity_failed"):
+        profile.listener_identity(
+            "http://127.0.0.1:9099",
+            run_command=fake_run,
+        )
+
+
 @pytest.mark.parametrize(
     "endpoint",
     (
@@ -1212,6 +1747,225 @@ def test_child_spec_round_trip_rejects_unknown_fields(tmp_path: Path) -> None:
     path.write_text(json.dumps({**spec, "api_key": "forbidden"}))
     with pytest.raises(RuntimeError, match="child_spec_invalid"):
         read_child_spec(path)
+
+
+@pytest.mark.parametrize("mode", ("sample", "protocol_preflight"))
+def test_child_spec_accepts_only_exact_extended_modes(
+    tmp_path: Path, mode: str
+) -> None:
+    spec = {
+        "mode": mode,
+        "sample_id": (
+            "protocol_preflight-disabled"
+            if mode == "protocol_preflight"
+            else "burn_in-0-disabled"
+        ),
+        "phase": "protocol_preflight" if mode == "protocol_preflight" else "burn_in",
+        "iteration": -1 if mode == "protocol_preflight" else 0,
+        "arm": "disabled",
+        "target_root": str((tmp_path / "target").resolve()),
+        "sample_root": str((tmp_path / "sample").resolve()),
+        "run_root": str(tmp_path.resolve()),
+        "evidence_path": str((tmp_path / "raw.jsonl").resolve()),
+    }
+    path = tmp_path / f"{mode}.json"
+
+    profile.write_child_spec(path, spec)
+    assert profile.read_child_spec(path) == spec
+
+    path.write_text(json.dumps({**spec, "mode": "unknown"}), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="child_spec_invalid"):
+        profile.read_child_spec(path)
+
+
+def test_protocol_preflight_derives_content_free_fingerprints_and_tears_down(
+    tmp_path: Path,
+) -> None:
+    closed: list[str] = []
+    runtime = SimpleNamespace(
+        workspace_root=tmp_path / "workspace",
+        permission_definition_hash="d" * 64,
+        review_state="enabled",
+        review_ready=True,
+        close=lambda: closed.append("runtime"),
+    )
+    adapter = SimpleNamespace(
+        revision_kind="candidate",
+        close=lambda: closed.append("adapter"),
+    )
+
+    result = profile.protocol_preflight(
+        tmp_path / "target",
+        tmp_path / "sample",
+        arm="enabled",
+        adapter_factory=lambda *_args: adapter,
+        runtime_factory=lambda *_args, **_kwargs: runtime,
+        corpus_generator=lambda _root: {"content_tree_digest": "c" * 64},
+    )
+
+    assert result == {
+        "event": "protocol_preflight",
+        "arm": "enabled",
+        "target_revision_kind": "candidate",
+        "behavior_sha256": result["behavior_sha256"],
+        "workspace_content_tree_digest": "c" * 64,
+        "tool_definition_sha256": "d" * 64,
+        "final_ownership": {
+            "live_threads": 0,
+            "provider_closed": True,
+            "sqlite_closed": True,
+            "shadow_operations_pending": 0,
+        },
+    }
+    assert len(result["behavior_sha256"]) == 64
+    assert closed == ["runtime", "adapter"]
+    assert not profile.privacy_violations(result)
+
+
+def test_protocol_preflight_measures_ownership_only_after_cleanup(tmp_path: Path) -> None:
+    closed: list[str] = []
+    runtime = SimpleNamespace(
+        workspace_root=tmp_path / "workspace",
+        permission_definition_hash="d" * 64,
+        review_state="disabled",
+        review_ready=False,
+        close=lambda: closed.append("runtime"),
+    )
+    adapter = SimpleNamespace(
+        revision_kind="candidate",
+        close=lambda: closed.append("adapter"),
+    )
+
+    def ownership_probe(_baseline):
+        assert closed == ["runtime", "adapter"]
+        return {
+            "live_threads": 0,
+            "provider_closed": True,
+            "sqlite_closed": True,
+            "shadow_operations_pending": 0,
+        }
+
+    result = profile.protocol_preflight(
+        tmp_path / "target",
+        tmp_path / "sample",
+        arm="disabled",
+        adapter_factory=lambda *_args: adapter,
+        runtime_factory=lambda *_args, **_kwargs: runtime,
+        corpus_generator=lambda _root: {"content_tree_digest": "c" * 64},
+        ownership_probe=ownership_probe,
+    )
+
+    assert result["final_ownership"] == ownership_probe(set())
+
+
+def test_protocol_preflight_restores_adapter_when_runtime_close_fails(
+    tmp_path: Path,
+) -> None:
+    closed: list[str] = []
+
+    def runtime_close() -> None:
+        closed.append("runtime")
+        raise RuntimeError("runtime-close-failed")
+
+    runtime = SimpleNamespace(
+        workspace_root=tmp_path / "workspace",
+        permission_definition_hash="d" * 64,
+        review_state="enabled",
+        review_ready=True,
+        close=runtime_close,
+    )
+    adapter = SimpleNamespace(
+        revision_kind="candidate",
+        close=lambda: closed.append("adapter"),
+    )
+
+    with pytest.raises(RuntimeError, match="runtime-close-failed"):
+        profile.protocol_preflight(
+            tmp_path / "target",
+            tmp_path / "sample",
+            arm="enabled",
+            adapter_factory=lambda *_args: adapter,
+            runtime_factory=lambda *_args, **_kwargs: runtime,
+            corpus_generator=lambda _root: {"content_tree_digest": "c" * 64},
+        )
+    assert closed == ["runtime", "adapter"]
+
+
+def test_protocol_preflight_child_never_mounts_a_conversation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_root = tmp_path / "run"
+    sample_root = run_root / "preflight"
+    target_root = tmp_path / "target"
+    evidence = run_root / "raw.jsonl"
+    sample_root.mkdir(parents=True)
+    target_root.mkdir()
+    config_path = sample_root / "config/tldw_cli/config.toml"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text("", encoding="utf-8")
+    spec_path = sample_root / "child-spec.json"
+    profile.write_child_spec(
+        spec_path,
+        {
+            "mode": "protocol_preflight",
+            "sample_id": "protocol_preflight-enabled",
+            "phase": "protocol_preflight",
+            "iteration": -1,
+            "arm": "enabled",
+            "target_root": str(target_root),
+            "sample_root": str(sample_root),
+            "run_root": str(run_root),
+            "evidence_path": str(evidence),
+        },
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(profile, "assert_child_environment", lambda *_args: None)
+    monkeypatch.setattr(profile, "install_target_root", lambda *_args: None)
+    monkeypatch.setattr(
+        profile,
+        "assert_target_modules",
+        lambda *_args: {
+            name: str(target_root / "fixture.py") for name in profile.TARGET_MODULES
+        },
+    )
+    monkeypatch.setattr(
+        profile,
+        "protocol_preflight",
+        lambda *_args, **_kwargs: {
+            "event": "protocol_preflight",
+            "arm": "enabled",
+            "behavior_sha256": "b" * 64,
+            "workspace_content_tree_digest": "c" * 64,
+            "tool_definition_sha256": "d" * 64,
+            "final_ownership": {
+                "live_threads": 0,
+                "provider_closed": True,
+                "sqlite_closed": True,
+                "shadow_operations_pending": 0,
+            },
+        },
+        raising=False,
+    )
+
+    async def mounted(*_args, **_kwargs):
+        pytest.fail("protocol preflight must not mount a conversation")
+
+    monkeypatch.setattr(profile, "run_mounted_sample", mounted)
+    args = SimpleNamespace(
+        child_spec=spec_path,
+        output_root=run_root,
+        endpoint="http://127.0.0.1:9099",
+        model="fixture.gguf",
+    )
+
+    assert profile.run_child_mode(args) == 0
+    rows = [json.loads(line) for line in evidence.read_text().splitlines()]
+    assert [row["event"] for row in rows] == [
+        "child_start",
+        "protocol_preflight",
+    ]
+    assert rows[-1]["sample_id"] == "protocol_preflight-enabled"
 
 
 def test_child_mode_preserves_async_cancellation_as_terminal_failure(
@@ -1343,8 +2097,14 @@ def test_safe_error_code_retains_only_stable_body_free_tokens() -> None:
     )
 
 
-def test_prepare_control_worktree_uses_detached_exact_hash(tmp_path: Path) -> None:
-    prepare_control_worktree = getattr(profile, "prepare_control_worktree", None)
+@pytest.mark.parametrize(
+    ("name", "revision"),
+    (("control", profile.CONTROL_SHA), ("candidate", profile.CANDIDATE_SHA)),
+)
+def test_prepare_target_worktree_uses_fixed_name_and_detached_exact_hash(
+    tmp_path: Path, name: str, revision: str
+) -> None:
+    prepare_target_worktree = getattr(profile, "prepare_target_worktree", None)
     calls = []
 
     def fake_run(command, **kwargs):
@@ -1352,38 +2112,152 @@ def test_prepare_control_worktree_uses_detached_exact_hash(tmp_path: Path) -> No
         Path(command[-2]).mkdir(parents=True)
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
-    assert callable(prepare_control_worktree)
-    target = prepare_control_worktree(
+    assert callable(prepare_target_worktree)
+    target = prepare_target_worktree(
         tmp_path / "repository",
         tmp_path / "run",
-        control_sha=profile.CONTROL_SHA,
+        name=name,
+        revision=revision,
         run_command=fake_run,
     )
-    assert target == (tmp_path / "run" / "control-worktree").resolve()
+    assert target == (tmp_path / "run" / name).resolve()
     assert calls[0][0] == [
         "git",
         "worktree",
         "add",
         "--detach",
         str(target),
-        profile.CONTROL_SHA,
+        revision,
     ]
 
 
-def test_prepare_control_worktree_preserves_command_failure(tmp_path: Path) -> None:
-    prepare_control_worktree = getattr(profile, "prepare_control_worktree", None)
+@pytest.mark.parametrize(
+    ("name", "revision"),
+    (("../escape", profile.CONTROL_SHA), ("control", "HEAD")),
+)
+def test_prepare_target_worktree_rejects_unsafe_name_or_revision(
+    tmp_path: Path, name: str, revision: str
+) -> None:
+    prepare_target_worktree = getattr(profile, "prepare_target_worktree", None)
+
+    assert callable(prepare_target_worktree)
+    with pytest.raises(RuntimeError, match="target_worktree_invalid"):
+        prepare_target_worktree(
+            tmp_path / "repository",
+            tmp_path / "run",
+            name=name,
+            revision=revision,
+            run_command=lambda *_args, **_kwargs: pytest.fail("must not run git"),
+        )
+
+
+def test_prepare_target_worktree_preserves_command_failure(tmp_path: Path) -> None:
+    prepare_target_worktree = getattr(profile, "prepare_target_worktree", None)
 
     def fake_run(command, **kwargs):
         return subprocess.CompletedProcess(command, 2, stdout="", stderr="busy")
 
-    assert callable(prepare_control_worktree)
-    with pytest.raises(RuntimeError, match="control_worktree_failed"):
-        prepare_control_worktree(
+    assert callable(prepare_target_worktree)
+    with pytest.raises(RuntimeError, match="target_worktree_failed:candidate"):
+        prepare_target_worktree(
             tmp_path / "repository",
             tmp_path / "run",
-            control_sha=profile.CONTROL_SHA,
+            name="candidate",
+            revision=profile.CANDIDATE_SHA,
             run_command=fake_run,
         )
+
+
+def test_prepare_target_worktree_cleans_partial_add_failure(tmp_path: Path) -> None:
+    target = (tmp_path / "run/candidate").resolve()
+    calls = []
+
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+        if command[2] == "add":
+            target.mkdir(parents=True)
+            return subprocess.CompletedProcess(command, 2, stdout="", stderr="busy")
+        return subprocess.CompletedProcess(command, 1, stdout="", stderr="unregistered")
+
+    with pytest.raises(RuntimeError, match="target_worktree_failed:candidate"):
+        profile.prepare_target_worktree(
+            tmp_path / "repository",
+            tmp_path / "run",
+            name="candidate",
+            revision=profile.CANDIDATE_SHA,
+            run_command=fake_run,
+        )
+
+    assert calls == [
+        ["git", "worktree", "add", "--detach", str(target), profile.CANDIDATE_SHA],
+        ["git", "worktree", "remove", "--force", str(target)],
+    ]
+    assert not target.exists()
+
+
+def test_remove_target_worktree_only_removes_owned_fixed_target(tmp_path: Path) -> None:
+    remove_target_worktree = getattr(profile, "_remove_target_worktree", None)
+    run_root = tmp_path / "run"
+    target = run_root / "candidate"
+    target.mkdir(parents=True)
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    assert callable(remove_target_worktree)
+    remove_target_worktree(
+        tmp_path / "repository",
+        run_root,
+        name="candidate",
+        run_command=fake_run,
+    )
+    assert calls[0][0] == [
+        "git",
+        "worktree",
+        "remove",
+        "--force",
+        str(target.resolve()),
+    ]
+    with pytest.raises(RuntimeError, match="target_worktree_invalid"):
+        remove_target_worktree(
+            tmp_path / "repository",
+            run_root,
+            name="outside",
+            run_command=fake_run,
+        )
+
+
+def test_remove_target_worktrees_attempts_both_when_first_cleanup_fails(
+    tmp_path: Path,
+) -> None:
+    run_root = tmp_path / "run"
+    for name in ("control", "candidate"):
+        (run_root / name).mkdir(parents=True)
+    calls = []
+
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(
+            command,
+            1 if command[-1].endswith("candidate") else 0,
+            stdout="",
+            stderr="busy",
+        )
+
+    with pytest.raises(RuntimeError, match="target_worktree_cleanup_failed"):
+        profile._remove_target_worktrees(
+            tmp_path / "repository",
+            run_root,
+            names=("candidate", "control"),
+            run_command=fake_run,
+        )
+
+    assert [Path(command[-1]).name for command in calls] == [
+        "candidate",
+        "control",
+    ]
 
 
 def _write_fingerprint_tree(root: Path, *, candidate: bool) -> None:
