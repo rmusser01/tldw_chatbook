@@ -2,7 +2,7 @@
 
 Date: 2026-08-21
 
-Status: Approved direction; pending written-spec review
+Status: Approved; amended after implementation-time RED evidence
 
 Task: TASK-19642.1
 
@@ -14,8 +14,9 @@ without reverting accepted Library or Skill-editor behavior.
 
 ## Evidence and root causes
 
-The exact two-file baseline is 29 failed and 5 passed. The failures fall into
-three test-contract drifts:
+The exact two-file baseline is 29 failed and 5 passed. The initial failures and
+the two latent assertions exposed after repairing the rail fall into four
+test-contract drifts:
 
 1. Both Skills files import the shared `TldwCli` test factory directly. That
    factory truthfully admits a newly created test profile to the Library
@@ -37,6 +38,12 @@ three test-contract drifts:
    Delete is revealed under More actions, and the first create-save reports that
    trust review is required. Several older end-to-end tests still press hidden
    or inactive controls and assert the superseded generic `Saved.` copy.
+4. The first complete two-file gate after the planned changes exposed two
+   additional stale assertions that had been hidden behind the earlier
+   full-rail failure. A newly trusted clean Skill now collapses healthy trust
+   actions behind `View details`, and allowed tools now live in the advanced
+   editor as a `SelectionList` rather than a basic-mode `Input`. Both failures
+   reproduce in isolation and their direct production owner tests pass.
 
 The focused production owner checks for these lifecycle states pass. The
 repair therefore belongs in the integration harness/tests, not production.
@@ -98,6 +105,9 @@ Older scenarios will be updated to drive the accepted lifecycle:
   Delete control before pressing it;
 - create-save scenarios expect
   `Saved. Review trust before using this Skill with the agent.`;
+- the trust-bootstrap scenario opens healthy trust details before asserting
+  the normal actions, and the blank-create scenario switches to Advanced
+  before verifying its empty allowed-tools selection;
 - assertions continue to verify the durable service result, trust posture,
   list membership/count, and real runtime-policy path.
 
@@ -132,6 +142,9 @@ Only tests related to the modified harness/functionality will run:
    - `test_handle_library_skill_delete_enters_confirm_state`
    - `test_create_save_success_consumes_scroll_receipt_after_recompose`
    - `test_mark_dirty_clears_stale_saved_status`
+   - `test_skill_editor_healthy_trust_is_compact_until_details_are_requested`
+   - `test_skill_editor_advanced_tool_picker_is_bounded_unique_and_lossless`
+   - `test_library_skill_mode_switch_is_targeted_and_remembered`
 4. Run Ruff on the two modified test files and `git diff --check`. The current
    baseline has two small Ruff findings in `test_skills_library_flow.py`
    (one unused local import and one semicolon-separated pause); because that

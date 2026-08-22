@@ -283,6 +283,30 @@ git commit -m "test(skills): follow current editor lifecycle"
 
 ## Task 3: Prove the repair and its inverse
 
+### Implementation-time RED amendment
+
+The first full two-file gate after Tasks 1 and 2 produced `2 failed, 32 passed`.
+Both nodes failed identically in isolation, so this was not order pollution or
+timing noise:
+
+- `test_uninitialized_trust_shows_setup_state_and_bootstrap_enables_approve_flow`
+  expected healthy trust actions to remain expanded after bootstrap, but the
+  accepted compact trust panel now requires `View details` first;
+- `test_library_shell_create_skill_row_opens_blank_editor` queried the removed
+  basic-mode `#library-skill-allowed-tools` input, while allowed tools now use
+  the advanced `#library-skill-tool-picker` selection list.
+
+Before continuing the original Task 3 steps, align only these two stale
+assertions with their passing production-owner contracts. In the bootstrap
+test, assert `#library-skill-trust-view-details`, press it, and wait for the
+Unlock control before retaining the Unlock/Review/Approve assertions. In the
+blank-create test, assert the advanced region is initially hidden, press
+`#library-skill-editor-mode`, wait for the advanced region to display, then
+assert the allowed-tools `SelectionList` has no selected values and the
+captured-value `Static` is empty. Re-run the two nodes and commit only the
+existing flow test as `test(skills): follow progressive editor disclosure`.
+This remains test-only and changes no accepted UI, trust, or policy behavior.
+
 **Files:**
 
 - Verify: `Tests/Skills/test_skills_import.py`
@@ -313,10 +337,13 @@ Run:
   Tests/UI/test_library_skills_canvas.py::test_handle_library_skill_delete_enters_confirm_state \
   Tests/UI/test_library_skills_canvas.py::test_create_save_success_consumes_scroll_receipt_after_recompose \
   Tests/UI/test_library_skills_canvas.py::test_mark_dirty_clears_stale_saved_status \
+  Tests/UI/test_library_skills_canvas.py::test_skill_editor_healthy_trust_is_compact_until_details_are_requested \
+  Tests/UI/test_library_skills_canvas.py::test_skill_editor_advanced_tool_picker_is_bounded_unique_and_lossless \
+  Tests/UI/test_library_skills_canvas.py::test_library_skill_mode_switch_is_targeted_and_remembered \
   --tb=short
 ```
 
-Expected: 9 passed because the lifecycle test is parameterized into five cases.
+Expected: 12 passed because the lifecycle test is parameterized into five cases.
 
 - [ ] **Step 3: Run static checks without bulk formatting**
 
@@ -373,9 +400,9 @@ Search `backlog/docs/lessons-testing-evidence.md` for an existing returning-user
 
 Check all three ACs only after Task 3 is green. Add Implementation Notes containing:
 
-- the three confirmed drift classes;
+- the four confirmed drift classes;
 - the test-only files changed and explicit no-production-code result;
-- exact `34 passed` two-file evidence and `9 passed` owner evidence;
+- exact `34 passed` two-file evidence and `12 passed` owner evidence;
 - Ruff and `git diff --check` results;
 - the pre-existing two-file formatter baseline, without claiming formatter success;
 - all three inverse failures and successful restoration;
