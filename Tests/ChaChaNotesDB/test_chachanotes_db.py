@@ -297,21 +297,28 @@ class TestDBInitialization:
         conv_id = migrated.add_conversation(
             {"character_id": char_id, "title": "Migration check"}
         )
-        before_log_count = migrated_conn.execute(
-            "SELECT COUNT(*) AS n FROM sync_log WHERE entity = 'conversations' AND entity_id = ?",
-            (conv_id,),
-        ).fetchone()["n"]
+        # task-19564 replaced the row-count proxy this used to assert. The
+        # v45 retention triggers drop superseded `sync_log` versions, so the
+        # total no longer grows by one -- but "the trigger fired, with the new
+        # column in its payload" is what the test is actually for, and the
+        # frontier row states that directly instead of by arithmetic.
         current = migrated.get_conversation_by_id(conv_id)
         migrated.update_conversation(
             conv_id,
             {"system_prompt": "Migrated prompt."},
             expected_version=current["version"],
         )
-        after_log_count = migrated_conn.execute(
-            "SELECT COUNT(*) AS n FROM sync_log WHERE entity = 'conversations' AND entity_id = ?",
+        latest_entry = migrated_conn.execute(
+            "SELECT operation, version, payload FROM sync_log "
+            "WHERE entity = 'conversations' AND entity_id = ? "
+            "ORDER BY change_id DESC LIMIT 1",
             (conv_id,),
-        ).fetchone()["n"]
-        assert after_log_count == before_log_count + 1
+        ).fetchone()
+        assert latest_entry["operation"] == "update"
+        assert latest_entry["version"] == current["version"] + 1
+        assert (
+            json.loads(latest_entry["payload"])["system_prompt"] == "Migrated prompt."
+        )
         assert (
             migrated.get_conversation_by_id(conv_id)["system_prompt"]
             == "Migrated prompt."
@@ -732,6 +739,50 @@ class TestConversationsAndMessages:
         results = db_instance.search_messages_by_content("UniqueMessageContentAlpha")
         assert len(results) == 1
         assert results[0]["id"] == msg1_data["id"]
+
+    def test_search_messages_by_content_unscoped_excludes_deleted_conversations(
+        self, db_instance: CharactersRAGDB, char_id
+    ):
+        """task-19567 A: the shape that is one caller away from a leak.
+
+        Soft-deleting a conversation leaves its messages at `deleted = 0`, and
+        this method filtered only `m.deleted = 0` without joining
+        `conversations` -- while its sibling `search_conversations_by_content`
+        filtered both. It was not exploitable at the time only because the one
+        live caller always passed a `conversation_id` obtained from that
+        already-filtered sibling. Called UNSCOPED, as any new caller would,
+        it returned the deleted conversation's messages.
+        """
+        needle = "UniqueDeletedConversationBodyOmega"
+        kept_conv = db_instance.add_conversation(
+            {"character_id": char_id, "title": "KeptConv"}
+        )
+        dropped_conv = db_instance.add_conversation(
+            {"character_id": char_id, "title": "DroppedConv"}
+        )
+        kept_message = db_instance.add_message(
+            {"conversation_id": kept_conv, "sender": "user", "content": needle}
+        )
+        db_instance.add_message(
+            {"conversation_id": dropped_conv, "sender": "user", "content": needle}
+        )
+        assert len(db_instance.search_messages_by_content(needle)) == 2
+
+        db_instance.soft_delete_conversation(dropped_conv, expected_version=1)
+
+        unscoped = db_instance.search_messages_by_content(needle)
+        assert [row["id"] for row in unscoped] == [kept_message]
+        # ... and it now agrees with the sibling it used to diverge from.
+        assert [
+            row["id"] for row in db_instance.search_conversations_by_content(needle)
+        ] == [kept_conv]
+        # Scoping to the deleted conversation must not reopen the hole.
+        assert (
+            db_instance.search_messages_by_content(
+                needle, conversation_id=dropped_conv
+            )
+            == []
+        )
 
     def test_update_message_usage_local_leaves_version_and_last_modified_untouched(
         self, db_instance: CharactersRAGDB, char_id

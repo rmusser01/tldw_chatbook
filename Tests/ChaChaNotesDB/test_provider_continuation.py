@@ -689,8 +689,11 @@ def test_discard_and_variant_ownership_stay_on_exact_assistant_rows(
         .fetchone()
     )
     assert tuple(blank_raw) == (1, blank_before["version"] + 1, None)
+    # task-19564: tombstoning the row purges its superseded content-bearing
+    # `create` intent -- nothing can reach a version below a tombstone, and
+    # leaving it there was how a deleted message's plaintext survived the
+    # delete. The tombstone itself carries no content and is retained.
     assert [entry["operation"] for entry in _message_sync_entries(db, blank_id)] == [
-        "create",
         "delete",
     ]
 

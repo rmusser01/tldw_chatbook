@@ -1,4 +1,14 @@
-"""ChaChaNotes v44 -> v45 portable Actor Pack persistence coverage."""
+"""ChaChaNotes v44 -> v45 portable Actor Pack persistence coverage.
+
+This module carried the repo's EXACT current-schema-version pin while v45 was
+the newest migration. TASK-19564's `sync_log` retention step was renumbered to
+v45 -> v46 after landing concurrently, so the pin moved on to
+`Tests/DB/test_chachanotes_sync_log_retention_migration.py` and the assertions
+here relaxed to `>= 45`. That is TASK-19554's convention, repaired by
+TASK-19568: the exact pin belongs to the NEWEST migration's own file, and an
+older file that keeps a literal `==` reds on version arithmetic and
+short-circuits the real column/row assertions below it.
+"""
 
 from __future__ import annotations
 
@@ -71,8 +81,10 @@ def test_real_v44_upgrade_installs_actor_pack_tables(tmp_path: Path) -> None:
     migrated = CharactersRAGDB(path, client_id="actor-pack-v45")
     try:
         connection = migrated.get_connection()
-        assert _version(connection) == 45
-        assert CharactersRAGDB._CURRENT_SCHEMA_VERSION == 45
+        # Dynamic, not a literal 45: this reopen is unpatched, so it replays
+        # the chain to whatever the current version is (v46 since TASK-19564).
+        assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
+        assert CharactersRAGDB._CURRENT_SCHEMA_VERSION >= 45
         assert TABLES <= _tables(connection)
         for table, expected in EXPECTED_COLUMNS.items():
             columns = tuple(
@@ -87,7 +99,7 @@ def test_real_v44_upgrade_installs_actor_pack_tables(tmp_path: Path) -> None:
 def test_fresh_database_contains_same_v45_schema(tmp_path: Path) -> None:
     db = CharactersRAGDB(tmp_path / "fresh.db", client_id="actor-pack-fresh")
     try:
-        assert _version(db.get_connection()) == 45
+        assert _version(db.get_connection()) >= 45
         assert TABLES <= _tables(db.get_connection())
     finally:
         db.close_connection()

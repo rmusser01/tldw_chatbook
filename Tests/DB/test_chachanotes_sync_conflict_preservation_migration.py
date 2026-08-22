@@ -6,12 +6,13 @@ it, so the discarded text was unrecoverable. This migration adds the three
 columns (``losing_side``, ``losing_content``, ``preserved_file_path``) that
 make the row a real second copy behind the on-disk sidecar.
 
-This module also carries the repo's EXACT current-schema-version pin, which
-moved here from ``test_chachanotes_message_exchanges.py`` when v44 landed:
-the pin belongs to the newest migration's own file, so a schema bump touches
-the file that caused it rather than an unrelated older one (older files assert
-``>= their own version`` instead). Updating the number here is a deliberate
-schema-review act.
+The repo's EXACT current-schema-version pin used to live here. It has since
+moved on twice -- to ``Tests/ChaChaNotesDB/test_actor_pack_migration.py`` with
+v45, and to ``Tests/DB/test_chachanotes_sync_log_retention_migration.py`` with
+v46 -- because the pin belongs to the NEWEST migration's own file, so a schema
+bump touches the file that caused it rather than an unrelated older one
+(TASK-19554's convention, repaired by TASK-19568). This module now asserts
+``>= 44``, which is what an older migration file is entitled to claim.
 """
 
 from __future__ import annotations
@@ -50,7 +51,13 @@ def db(tmp_path: Path):
 
 
 def test_schema_version_includes_v44_preservation(db):
-    """The current schema includes the v44 preservation migration."""
+    """This migration's own floor, not a current-schema pin.
+
+    The exact ``==`` pin belongs to the NEWEST migration's own test file
+    (TASK-19554's convention, repaired by TASK-19568), so it has moved on past
+    this one twice now; an older file asserts only that its own step is
+    present. Kept as ``>=`` so a schema bump touches the file that caused it.
+    """
     assert _version(db.get_connection()) >= 44
     assert CharactersRAGDB._CURRENT_SCHEMA_VERSION >= 44
 

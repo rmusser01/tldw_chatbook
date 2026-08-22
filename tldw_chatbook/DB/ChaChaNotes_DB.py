@@ -63,7 +63,11 @@ from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 # Third-Party Libraries
 #
 # Local Imports
-from .sql_validation import validate_table_name, validate_column_name
+from .sql_validation import (
+    escape_identifier,
+    validate_table_name,
+    validate_column_name,
+)
 from .sql_logging import preview_params
 from .private_sqlite import backup_connection_to_private, connect_private_sqlite
 from tldw_chatbook.Utils.private_paths import PrivatePathError, lexical_path
@@ -447,7 +451,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 45  # Portable Actor Pack identity and Persona intents (TASK-19057).
+    _CURRENT_SCHEMA_VERSION = 46  # `sync_log` bounded to its reachable frontier (task-19564).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -5929,6 +5933,93 @@ UPDATE db_schema_version
                 f"Migration from V44 to V45 failed for '{self._SCHEMA_NAME}': {exc}"
             ) from exc
 
+    def _migrate_from_v45_to_v46(self, conn: sqlite3.Connection) -> None:
+        """Bound ``sync_log`` to the frontier its readers can actually reach.
+
+        task-19564: 35 triggers wrote the complete row as JSON into
+        ``sync_log`` and nothing ever removed one, so every edit left the
+        previous full text behind forever and a soft delete left the user's
+        plaintext in the database indefinitely. The migration file installs
+        eighteen retention triggers -- covering all nine entities the schema
+        writes ``sync_log`` rows for, under two rules -- and performs the
+        one-time purge that existing databases need. See its header for the
+        reachability analysis, for why the content columns are retained rather
+        than retired (three readers with live non-test callers compare the
+        payload to the ``messages`` row field by field), and for the
+        order-independence argument the second rule rests on.
+
+        Authored as v44->v45 and renumbered when TASK-19057 (portable Actor
+        Pack identity) merged to dev claiming v45 first; this step now runs
+        after it.
+
+        Args:
+            conn: The active connection, inside ``_initialize_schema``'s
+                transaction.
+
+        Raises:
+            SchemaError: If the database is not at v45, the file cannot be
+                read/split, or the version bump does not land.
+        """
+        self._require_migration_entry_version(conn, 45, "V45→V46")
+        logger.info(
+            f"Migrating schema from V45 to V46 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
+        )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v45_to_v46_sync_log_retention.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                purged_before = cursor.execute(
+                    "SELECT COUNT(*) FROM sync_log"
+                ).fetchone()[0]
+                # ``_execute_migration_statements`` rather than a bare
+                # per-statement loop: it drops a same-named trigger before
+                # each bare ``CREATE TRIGGER``, so a database left
+                # half-migrated by an interrupted run re-enters cleanly
+                # (task-19553).
+                self._execute_migration_statements(
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V45→V46",
+                )
+                purged_after = cursor.execute(
+                    "SELECT COUNT(*) FROM sync_log"
+                ).fetchone()[0]
+                version_cursor = cursor.execute(
+                    """
+                    UPDATE db_schema_version
+                       SET version = 46
+                     WHERE schema_name = ?
+                       AND version = 45
+                    """,
+                    (self._SCHEMA_NAME,),
+                )
+                if version_cursor.rowcount != 1:
+                    raise SchemaError(
+                        f"[{self._SCHEMA_NAME} V45→V46] Migration version update was not applied"
+                    )
+
+            final_version = self._get_db_version(conn)
+            if final_version != 46:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V45→V46] Migration version check failed. "
+                    f"Expected 46, got: {final_version}"
+                )
+            logger.info(
+                f"[{self._SCHEMA_NAME} V45→V46] Migration completed successfully for DB: "
+                f"{self.db_path_str}. Purged {purged_before - purged_after} unreachable "
+                f"sync_log row(s) of {purged_before}."
+            )
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V45→V46] Migration failed: {exc}"
+            )
+            raise SchemaError(
+                f"Migration from V45 to V46 failed for '{self._SCHEMA_NAME}': {exc}"
+            ) from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -6112,6 +6203,7 @@ UPDATE db_schema_version
                     42: self._migrate_from_v42_to_v43,
                     43: self._migrate_from_v43_to_v44,
                     44: self._migrate_from_v44_to_v45,
+                    45: self._migrate_from_v45_to_v46,
                 }
 
                 if current_db_version == 0:
@@ -11921,8 +12013,17 @@ UPDATE db_schema_version
         Searches messages by content using FTS.
 
         Matches against the 'content' field in `messages_fts`.
-        Optionally filters by `conversation_id`. Returns non-deleted messages,
-        ordered by relevance (rank).
+        Optionally filters by `conversation_id`. Returns non-deleted messages
+        of non-deleted conversations, ordered by relevance (rank).
+
+        task-19567: this used to filter `m.deleted = 0` without joining
+        `conversations`, so soft-deleting a conversation left its messages
+        searchable -- its sibling `search_conversations_by_content` filters
+        both. It was not exploitable unscoped at the time, because the one
+        live caller always passed a `conversation_id` obtained from the
+        already-filtered sibling; the asymmetry between the two siblings is
+        exactly what produces the caller that would leak, so the filter is
+        now symmetric.
 
         Args:
             content_query: The search term for content. Supports FTS query syntax.
@@ -11945,8 +12046,10 @@ UPDATE db_schema_version
                             m.usage_json, m.metadata_json
                      FROM messages_fts fts
                               JOIN messages m ON fts.rowid = m.rowid
+                              JOIN conversations c ON m.conversation_id = c.id
                      WHERE fts.messages_fts MATCH ? \
                        AND m.deleted = 0 \
+                       AND c.deleted = 0 \
                      """
         params_list: List[Any] = [content_query]
         if conversation_id:
@@ -14785,6 +14888,314 @@ UPDATE db_schema_version
         except CharactersRAGDBError as e:
             logger.error(f"Error fetching latest sync log change_id: {e}")
             raise
+
+    # --- Sync Log Retention (task-19564) ---
+    #
+    # ``sync_log`` stores the COMPLETE row as JSON, so before task-19564 an
+    # unpruned log was a full-content shadow copy of the user's conversations,
+    # notes and lorebooks that survived deletion. Retention is enforced
+    # primarily by the ``sync_log_prune_*`` triggers added in v45 -- they run
+    # on every write, so the bound holds without anyone remembering to call
+    # anything. These methods are the maintenance surface: parity with what
+    # ``Client_Media_DB_v2`` already exposes, plus ``prune_sync_log`` as the
+    # explicit sweep the v44->v45 migration performs once.
+    #
+    # ``sync_log`` is written for NINE entities and all nine are covered, under
+    # two rules. Whichever rule applies, the entity's covered-ness is asserted
+    # against the schema's own writers by
+    # ``Tests/DB/test_chachanotes_sync_log_retention.py``'s census, so a tenth
+    # writer cannot ship without retention.
+    #
+    # RULE 1 -- VERSIONED (``_SYNC_LOG_RETENTION_SCOPES``). A row is reachable
+    # only via a JOIN to its live entity row on ``entity_id`` AND ``version``:
+    #   * messages, live    -> {v, v-1}  (v-1 feeds the base-hash lookup in
+    #                          ``_previous_committed_chat_payload_hash``)
+    #   * messages, deleted -> {v} only  (the tombstone; it carries no content)
+    #   * every other entity -> {v} only (nothing reads them)
+    #   * orphans (entity row gone) -> nothing
+    _SYNC_LOG_RETENTION_SCOPES: Tuple[Tuple[str, str, str, bool, bool], ...] = (
+        # (sync_log entity, table, entity-id column, id is INTEGER, keep v-1)
+        ("messages", "messages", "id", False, True),
+        ("conversations", "conversations", "id", False, False),
+        ("notes", "notes", "id", False, False),
+        ("character_cards", "character_cards", "id", True, False),
+        ("keywords", "keywords", "id", True, False),
+        ("keyword_collections", "keyword_collections", "id", True, False),
+    )
+
+    # RULE 2 -- LATEST-ONLY (``_SYNC_LOG_LATEST_ONLY_SCOPES``, task-19564
+    # follow-up to Qodo's review of PR #1974). Version alone cannot express
+    # reachability for these three, so the rule is anchored to the log row
+    # itself: at most ONE content-bearing row survives per entity -- the most
+    # recently emitted one -- and only while the entity is live. Content-free
+    # ``delete`` tombstones are kept as the delete proof.
+    #   * ``chat_dictionaries``: its ``last_modified`` timestamp trigger fires
+    #     the update emitter, so a full-payload ``update`` row can be written
+    #     AT the tombstone's own version -- ``version < NEW.version`` leaves
+    #     the deleted dictionary's plaintext behind. Reproduced in
+    #     ``test_soft_deleting_a_chat_dictionary_removes_its_text...``.
+    #   * ``world_books``: same shape, same rule, for uniformity.
+    #   * ``world_book_entries``: has NO ``version`` and NO ``deleted`` column
+    #     (every sync row is written at the literal version 1) and its only
+    #     delete path is a hard ``DELETE``, so a version rule is entirely
+    #     inert for it.
+    _SYNC_LOG_LATEST_ONLY_SCOPES: Tuple[Tuple[str, str, str, bool, bool], ...] = (
+        # (entity, table, id column, id is INTEGER, entity is soft-deletable)
+        ("chat_dictionaries", "chat_dictionaries", "id", True, True),
+        ("world_books", "world_books", "id", True, True),
+        ("world_book_entries", "world_book_entries", "id", True, False),
+    )
+
+    @staticmethod
+    def _sync_log_scope_identifiers(table: str, id_column: str) -> Tuple[str, str]:
+        """Validate and quote the two identifiers a retention sweep interpolates.
+
+        Qodo flagged ``prune_sync_log`` for building SQL with f-string
+        identifiers outside ``sql_validation``. The values are class constants,
+        so this is hardening rather than a live injection -- but the point of a
+        central validator is that the NEXT edit cannot quietly introduce a
+        non-literal, so both go through it.
+
+        Only these two fragments are identifiers. The rest of each retention
+        query -- the version floor, the liveness clause, the tombstone
+        exclusion -- are fixed SQL literals selected by a ``bool`` in the scope
+        tuple, never strings carried in the table, so an identifier checker
+        cannot validate them and does not need to: there is no string for a
+        caller to influence.
+
+        Args:
+            table: The entity's base table.
+            id_column: The base table's primary-key column.
+
+        Returns:
+            The double-quoted ``(table, id_column)`` pair, safe to interpolate.
+
+        Raises:
+            CharactersRAGDBError: If either identifier fails validation.
+        """
+        if not validate_table_name(table, "chachanotes"):
+            raise CharactersRAGDBError(
+                f"Invalid sync_log retention table name: {table!r}"
+            )
+        if not validate_column_name(id_column, table):
+            raise CharactersRAGDBError(
+                f"Invalid sync_log retention id column: {table!r}.{id_column!r}"
+            )
+        return escape_identifier(table), escape_identifier(id_column)
+
+    def delete_sync_log_entries(self, change_ids: List[int]) -> int:
+        """Delete specific sync log entries by ``change_id``.
+
+        Parity with ``Client_Media_DB_v2.delete_sync_log_entries``, which
+        ChaChaNotes never had.
+
+        Args:
+            change_ids: The ``change_id`` values to delete.
+
+        Returns:
+            The number of rows actually deleted.
+
+        Raises:
+            ValueError: If ``change_ids`` is not a list of integers.
+            CharactersRAGDBError: If the deletion fails.
+        """
+        if not change_ids:
+            return 0
+        if not all(type(cid) is int for cid in change_ids):
+            raise ValueError("change_ids must be a list of integers.")
+        placeholders = ",".join("?" * len(change_ids))
+        query = f"DELETE FROM sync_log WHERE change_id IN ({placeholders})"
+        try:
+            with self.transaction() as conn:
+                deleted = conn.execute(query, tuple(change_ids)).rowcount
+            logger.info(f"Deleted {deleted} sync_log entries from {self.db_path_str}.")
+            return deleted
+        except (CharactersRAGDBError, sqlite3.Error) as e:
+            logger.error(f"Error deleting sync_log entries: {e}")
+            raise CharactersRAGDBError("Failed to delete sync log entries") from e
+
+    def delete_sync_log_entries_before(self, change_id_threshold: int) -> int:
+        """Delete sync log entries at or below ``change_id_threshold``.
+
+        Parity with ``Client_Media_DB_v2.delete_sync_log_entries_before``.
+        Prefer :meth:`prune_sync_log`, which removes exactly the unreachable
+        rows rather than everything below a watermark.
+
+        Args:
+            change_id_threshold: Maximum ``change_id`` (inclusive) to delete.
+
+        Returns:
+            The number of rows actually deleted.
+
+        Raises:
+            ValueError: If the threshold is not a non-negative integer.
+            CharactersRAGDBError: If the deletion fails.
+        """
+        if type(change_id_threshold) is not int or change_id_threshold < 0:
+            raise ValueError("change_id_threshold must be a non-negative integer.")
+        try:
+            with self.transaction() as conn:
+                deleted = conn.execute(
+                    "DELETE FROM sync_log WHERE change_id <= ?",
+                    (change_id_threshold,),
+                ).rowcount
+            logger.info(
+                f"Deleted {deleted} sync_log entries at or below change_id "
+                f"{change_id_threshold} from {self.db_path_str}."
+            )
+            return deleted
+        except (CharactersRAGDBError, sqlite3.Error) as e:
+            logger.error(f"Error deleting sync_log entries before threshold: {e}")
+            raise CharactersRAGDBError(
+                "Failed to delete sync log entries before threshold"
+            ) from e
+
+    def prune_sync_log(self) -> int:
+        """Delete every ``sync_log`` row no reader can reach, for all nine writers.
+
+        The same sweep the v44->v45 migration performs once. The v45 triggers
+        keep the log at this bound on every subsequent write, so this is a
+        maintenance/repair entry point rather than something the app must
+        schedule.
+
+        "Reachable" means one of two things, depending on the entity, and the
+        set of entities is asserted against the schema's own ``INSERT INTO
+        sync_log`` triggers by the census in
+        ``Tests/DB/test_chachanotes_sync_log_retention.py`` -- so this method
+        covers every writer, and a tenth writer cannot ship without retention:
+
+        * ``_SYNC_LOG_RETENTION_SCOPES`` (messages, conversations, notes,
+          character_cards, keywords, keyword_collections) -- a row is reachable
+          only through a JOIN to its live entity row on ``entity_id`` AND
+          ``version``. Live messages keep ``{v, v-1}``; everything else keeps
+          ``{v}``; orphans keep nothing.
+        * ``_SYNC_LOG_LATEST_ONLY_SCOPES`` (chat_dictionaries, world_books,
+          world_book_entries) -- version cannot express reachability for these
+          (see that constant), so at most ONE content-bearing row survives per
+          entity, the most recently emitted, and only while the entity is live.
+
+        What this does NOT remove, in either family: the content-free
+        ``delete`` tombstone that proves a delete happened, and the content of
+        a LIVE row's frontier entry -- ``sync_log`` never holds text that the
+        entity table does not, but for a live row it still holds a second
+        copy. Removing that needs the payload to carry a content hash instead,
+        which is a format change to a live sync proof; it is recommended as a
+        follow-up in task-19564's notes, not attempted here.
+
+        Returns:
+            The number of rows removed.
+
+        Raises:
+            CharactersRAGDBError: If an identifier fails validation, or if the
+                sweep fails.
+        """
+        # Validated BEFORE the try, so a rejected identifier surfaces as
+        # itself rather than as a generic "failed to prune" -- the point of
+        # routing these through sql_validation is that the caller can tell an
+        # unsafe scope from a database error.
+        versioned = [
+            (entity, *self._sync_log_scope_identifiers(table, id_column), id_is_int, flag)
+            for entity, table, id_column, id_is_int, flag in (
+                self._SYNC_LOG_RETENTION_SCOPES
+            )
+        ]
+        latest_only = [
+            (entity, *self._sync_log_scope_identifiers(table, id_column), id_is_int, flag)
+            for entity, table, id_column, id_is_int, flag in (
+                self._SYNC_LOG_LATEST_ONLY_SCOPES
+            )
+        ]
+        removed = 0
+        try:
+            with self.transaction() as conn:
+                for (
+                    entity,
+                    q_table,
+                    q_id,
+                    id_is_int,
+                    keep_previous,
+                ) in versioned:
+                    id_ref = f"src.{q_id}"
+                    id_expr = f"CAST({id_ref} AS TEXT)" if id_is_int else id_ref
+                    floor_expr = (
+                        "CASE WHEN src.deleted = 1 THEN src.version "
+                        "ELSE src.version - 1 END"
+                        if keep_previous
+                        else "src.version"
+                    )
+                    removed += conn.execute(
+                        f"""
+                        DELETE FROM sync_log
+                         WHERE entity = ?
+                           AND change_id IN (
+                                SELECT s.change_id
+                                  FROM sync_log AS s
+                                  LEFT JOIN {q_table} AS src
+                                         ON {id_expr} = s.entity_id
+                                 WHERE s.entity = ?
+                                   AND (src.rowid IS NULL
+                                        OR s.version < ({floor_expr}))
+                           )
+                        """,
+                        (entity, entity),
+                    ).rowcount
+
+                for (
+                    entity,
+                    q_table,
+                    q_id,
+                    id_is_int,
+                    soft_deletable,
+                ) in latest_only:
+                    id_ref = f"src.{q_id}"
+                    id_expr = f"CAST({id_ref} AS TEXT)" if id_is_int else id_ref
+                    # Fixed literals chosen by a bool -- never a stored string.
+                    dead_clause = (
+                        "OR src.deleted = 1" if soft_deletable else ""
+                    )
+                    version_clause = (
+                        "OR s.version < src.version" if soft_deletable else ""
+                    )
+                    # A soft-deletable entity's tombstone is superseded by a
+                    # later version's, so its orphan/version rules cover every
+                    # operation; an unversioned hard-delete-only entity keeps
+                    # every tombstone, because the tombstone IS the only record
+                    # that the delete happened.
+                    tombstone_clause = (
+                        "" if soft_deletable else "AND s.operation <> 'delete'"
+                    )
+                    removed += conn.execute(
+                        f"""
+                        DELETE FROM sync_log
+                         WHERE entity = ?
+                           AND change_id IN (
+                                SELECT s.change_id
+                                  FROM sync_log AS s
+                                  LEFT JOIN {q_table} AS src
+                                         ON {id_expr} = s.entity_id
+                                 WHERE s.entity = ?
+                                   {tombstone_clause}
+                                   AND (src.rowid IS NULL
+                                        {version_clause}
+                                        OR (s.operation <> 'delete'
+                                            AND (s.change_id < (
+                                                    SELECT MAX(s2.change_id)
+                                                      FROM sync_log AS s2
+                                                     WHERE s2.entity = s.entity
+                                                       AND s2.entity_id = s.entity_id
+                                                       AND s2.operation <> 'delete')
+                                                 {dead_clause})))
+                           )
+                        """,
+                        (entity, entity),
+                    ).rowcount
+            logger.info(
+                f"Pruned {removed} unreachable sync_log row(s) from {self.db_path_str}."
+            )
+            return removed
+        except (CharactersRAGDBError, sqlite3.Error) as e:
+            logger.error(f"Error pruning sync_log: {e}")
+            raise CharactersRAGDBError("Failed to prune sync log") from e
 
     def close(self) -> None:
         """Alias for close_connection() to maintain consistency with BaseDB."""
