@@ -205,3 +205,57 @@ Modified: `tldw_chatbook/Utils/sensitive_paths.py`,
 `tldw_chatbook/Tools/local_tool_impls.py` (docstring),
 `backlog/docs/lessons-testing-evidence.md`. Added:
 `Tests/Tools/test_git_tool_sensitive_paths.py`.
+
+## Independent review addendum (2026-08-22)
+
+Reviewed adversarially against `d4f3f9776`. The fix itself held everywhere it
+was attacked: 22 pathspec-magic forms (`:(exclude)`, `:!`, `:^`, `:(icase)`,
+`:(glob)*`/`**`, `:(attr:)`, `:(top)`, bare `:`, `:/`, `:(exclude,literal)`,
+nested `:(literal):(exclude)`, and glob/newline filenames) were driven through
+`git_diff`/`git_log`/`git_blame`/`git_status`, each with and without a
+`commit_range`; **every one leaked at base and none leaks on this branch**. An
+oracle probe planting 40 files and comparing `is_sensitive_path`'s verdict
+against what git actually emitted found **0 disagreements in either direction**
+(base: 8 leaks) — covering nesting under a subtree rule, nesting 1 and 2 levels
+under a `direct_children` container, untracked and ignored files, a merge
+commit, rename detection in both directions, binaries, submodules (both as
+parent and as workspace root), and the name-rule near misses. `git blame`'s
+plain-PATH claim was verified directly (`fatal: no such path
+':(literal)notes.txt' in HEAD`), as was the `GIT_LITERAL_PATHSPECS` silent mode
+(exit 0, branch header only) — with the additional finding that
+`_git_environment` building from scratch means an AMBIENT setting cannot reach
+git at all, and that adding one reds 15 tests, not just the env pin.
+
+Two mutation survivors were found and fixed here:
+
+1. **`icase` on the LOCATION exclusions was load-bearing but unpinned.**
+   `test_exclusions_survive_a_case_variant_spelling` only exercises the NAME
+   rule's `**/<name>` form; dropping `icase` from the `subtree`/`file` branch of
+   `_denylist_pathspecs` left the whole suite GREEN while a repo recording
+   `.SSH/id_rsa` — which `is_sensitive_path` refuses via TASK-19800 — returned
+   its CONTENT through `git_diff` and its NAME through `stat`/`status`
+   (measured). Added
+   `test_a_location_exclusion_survives_a_case_variant_directory_spelling`.
+2. **The AST tripwire covered only `git_log` after the fix.** It inspected
+   `.extend([...])` arguments only and waved every `*splat` through, so
+   `git_status` (whole argv as one literal passed to `_run_git_checked`) and
+   `git_diff` (splats a local `pathspecs` list) were both uncovered — splicing a
+   bare model-supplied value into either left it green. It now walks every list
+   literal containing `"--"` and follows a splatted local list back to its
+   `append`/`extend` sources. Verified red against six evasions: bare value in
+   `git_diff`, bare value in `git_status`'s literal, an f-string, a different
+   helper, a bare `git_log` splice, and the original base shape.
+
+Neither survivor was exploitable as shipped (the exclusions still apply even
+when the scoping pathspec is bare, so the tripwire is defence in depth); the
+`icase` one was a live leak the moment anyone touched that line.
+
+Still unpinned, judged acceptable and recorded rather than fixed: the
+fail-closed `("subtree", "")` return for an unresolvable root, and
+`_relative_within` using `_is_within` rather than `Path.relative_to` — both
+correct as written, neither reachable through `prepare_repository` today.
+
+Evidence note for the record: the new test module imports `_denylist_pathspecs`
+at module scope, so at `d4f3f9776` it does not COLLECT at all — "10 of the 19
+fail at base" is only reproducible with those imports shimmed (13 fail, 7 pass
+that way). The behavioural failures do each carry the leaked bytes, as claimed.

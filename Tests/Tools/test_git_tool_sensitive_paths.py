@@ -263,14 +263,26 @@ def test_pathspec_magic_in_the_path_argument_cannot_invert_the_scope(
 
 
 def test_every_pathspec_this_family_builds_carries_explicit_magic() -> None:
-    """Structural pin: no bare pathspec may be spliced after ``--``.
+    """Structural pin: no bare value may reach a pathspec position.
 
     ``--`` ends OPTION parsing, not pathspec-magic parsing, so a bare
-    value in a pathspec position is a repository-supplied injection point.
-    Every argv element this module places after ``--`` must therefore
-    start with an explicit magic prefix -- except ``git_blame``'s, which
-    takes a plain PATH and rejects magic outright (verified: ``fatal: no
-    such path ':(literal)a.txt' in HEAD``).
+    value after it is a repository-supplied injection point: a file
+    legitimately named ``:(exclude)notes.txt`` inverts the scope of
+    whatever command it lands in. Only two shapes are allowed through --
+    ``_literal_pathspec(...)``, which disables magic for one value, and a
+    splat of ``_denylist_pathspecs(...)``, which renders its own.
+
+    Checked over EVERY list literal in the module that contains ``"--"``,
+    and THROUGH a local list that is splatted into one. An earlier form of
+    this test only inspected ``.extend([...])`` arguments and waved every
+    ``*splat`` through, which post-fix left both leaking tools uncovered:
+    ``git_status`` builds its whole argv as one literal handed to
+    ``_run_git_checked``, and ``git_diff`` accumulates into a local
+    ``pathspecs`` list and splats that. Measured: splicing a bare
+    model-supplied value into either left the old test green. ``git_blame``
+    stays exempt -- it takes a plain PATH, not a pathspec, and rejects
+    magic outright (verified: ``fatal: no such path ':(literal)a.txt' in
+    HEAD``).
     """
     import ast
 
@@ -278,39 +290,86 @@ def test_every_pathspec_this_family_builds_carries_explicit_magic() -> None:
 
     source = Path(git_tool_impls.__file__).read_text()
     tree = ast.parse(source)
-    offenders: list[str] = []
-    for node in tree.body:
-        if not isinstance(node, ast.FunctionDef):
-            continue
-        if node.name == "git_blame":
-            continue  # plain path, see the docstring above
-        for call in ast.walk(node):
-            if not isinstance(call, ast.Call):
-                continue
-            if not (isinstance(call.func, ast.Attribute) and call.func.attr == "extend"):
-                continue
-            for arg in call.args:
-                if not isinstance(arg, (ast.List, ast.Tuple)):
-                    continue
-                elements = list(arg.elts)
-                if not elements:
-                    continue
-                first = elements[0]
-                if not (isinstance(first, ast.Constant) and first.value == "--"):
-                    continue
-                for element in elements[1:]:
-                    if isinstance(element, ast.Starred):
-                        continue  # _denylist_pathspecs' own output, pinned below
-                    if isinstance(element, ast.Call) and isinstance(
-                        element.func, ast.Name
+
+    def _is_call_to(node: ast.AST, names: set[str]) -> bool:
+        return (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in names
+        )
+
+    def _local_list_is_safe(func: ast.FunctionDef, name: str) -> list[str]:
+        """Every value that can reach the local list ``name``."""
+        bad: list[str] = []
+        for node in ast.walk(func):
+            # Rebinding it to anything but a fresh empty list hides the flow.
+            targets: list[ast.AST] = []
+            if isinstance(node, ast.Assign):
+                targets = list(node.targets)
+            elif isinstance(node, ast.AnnAssign):
+                targets = [node.target]
+            for target in targets:
+                if isinstance(target, ast.Name) and target.id == name:
+                    value = node.value  # type: ignore[union-attr]
+                    if value is not None and not (
+                        isinstance(value, ast.List) and not value.elts
                     ):
-                        if element.func.id in {"_literal_pathspec"}:
-                            continue
-                    offenders.append(f"{node.name}: {ast.dump(element)[:120]}")
+                        bad.append(f"{name} = {ast.dump(value)[:100]}")
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == name
+            ):
+                continue
+            allowed = (
+                {"_literal_pathspec"}
+                if node.func.attr == "append"
+                else {"_denylist_pathspecs"}
+            )
+            if node.func.attr not in {"append", "extend"}:
+                bad.append(f"{name}.{node.func.attr}(...)")
+                continue
+            for arg in node.args:
+                if not _is_call_to(arg, allowed):
+                    bad.append(f"{name}.{node.func.attr}({ast.dump(arg)[:100]})")
+        return bad
+
+    offenders: list[str] = []
+    for func in tree.body:
+        if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if func.name == "git_blame":
+            continue  # plain path, see the docstring above
+        for literal in ast.walk(func):
+            if not isinstance(literal, (ast.List, ast.Tuple)):
+                continue
+            elements = list(literal.elts)
+            separators = [
+                index
+                for index, element in enumerate(elements)
+                if isinstance(element, ast.Constant) and element.value == "--"
+            ]
+            if not separators:
+                continue
+            for element in elements[separators[0] + 1 :]:
+                if _is_call_to(element, {"_literal_pathspec"}):
+                    continue
+                if isinstance(element, ast.Starred):
+                    if _is_call_to(element.value, {"_denylist_pathspecs"}):
+                        continue
+                    if isinstance(element.value, ast.Name):
+                        offenders.extend(
+                            f"{func.name}: via *{element.value.id} -- {reason}"
+                            for reason in _local_list_is_safe(func, element.value.id)
+                        )
+                        continue
+                offenders.append(f"{func.name}: {ast.dump(element)[:120]}")
+
     assert not offenders, (
-        "these values are spliced into a pathspec position without explicit "
-        "magic, so a repository file named ':(exclude)x' can invert the "
-        f"command's scope: {offenders}"
+        "these values reach a pathspec position without explicit magic, so a "
+        "repository file named ':(exclude)x' can invert the command's scope: "
+        f"{offenders}"
     )
 
 
@@ -542,6 +601,65 @@ def test_exclusions_survive_a_case_variant_spelling(tmp_path: Path) -> None:
     )
     assert ".NETRC" not in out
     assert "keep.txt" in out
+
+
+def test_a_location_exclusion_survives_a_case_variant_directory_spelling() -> None:
+    """The same fold, on the LOCATION rules -- the case that was unpinned.
+
+    The test above covers the name rule's ``:(exclude,glob,icase)**/<name>``
+    form. Nothing covered ``:(exclude,literal,icase)<rel>``, which renders
+    ``_SENSITIVE_DIRS`` and the resolved single-file denials -- and that is
+    the form the module docstring's own headline example depends on:
+    the rule is spelled ``~/.ssh``, git records whatever spelling the path
+    was ADDED under, and on the case-insensitive filesystems this app ships
+    on ``~/.SSH/id_rsa`` opens the very same file. ``is_sensitive_path``
+    folds and refuses that spelling (TASK-19800); the pathspec rendered
+    from it has to reach the same verdict or the denial is decorative.
+
+    Found by mutation while reviewing TASK-19632: dropping ``icase`` from
+    the ``subtree``/``file`` branch of ``_denylist_pathspecs`` left the
+    whole suite GREEN while ``git_diff`` returned the key's content and
+    ``stat``/``status`` returned its name. This test is what reds instead.
+    """
+    from tldw_chatbook.Utils.sensitive_paths import is_sensitive_path
+
+    home = _home()
+    _init(home)
+    # `.SSH`, not `.ssh`: the denylist's spelling and git's must differ.
+    key = home / ".SSH" / "id_rsa"
+    key.parent.mkdir(parents=True, exist_ok=True)
+    key.write_text(f"-----BEGIN OPENSSH PRIVATE KEY-----\n{SSH_MARKER}\n")
+    (home / "keep.txt").write_text("v1\n")
+    _git(home, "add", "-A", "-f")
+    _git(home, "commit", "-m", "initial")
+    key.write_text(f"-----BEGIN OPENSSH PRIVATE KEY-----\n{SSH_MARKER}\nROTATED\n")
+    (home / "keep.txt").write_text("v1\nv2\n")
+    _git(home, "add", "-A", "-f")
+    _git(home, "commit", "-m", "second")
+
+    # The premise: the denylist itself already refuses this spelling, so
+    # any disclosure below is the git rendering disagreeing with it.
+    assert is_sensitive_path(key), (
+        "premise broken: the denylist must already refuse the case variant "
+        "(TASK-19800) for this test to be about the pathspec rendering"
+    )
+
+    _assert_no_leak(
+        git_diff(home, commit_range="HEAD~1..HEAD"),
+        "git_diff(commit_range) on a case-variant location",
+    )
+    _assert_no_leak(
+        git_diff(home, commit_range="HEAD~1..HEAD", stat=True),
+        "git_diff(stat) on a case-variant location",
+    )
+    key.write_text(f"-----BEGIN OPENSSH PRIVATE KEY-----\n{SSH_MARKER}\nAGAIN\n")
+    (home / "keep.txt").write_text("v1\nv2\nv3\n")
+    _assert_no_leak(git_diff(home), "git_diff(worktree) on a case-variant location")
+    _assert_no_leak(git_status(home), "git_status on a case-variant location")
+
+    # Not vacuous: the ordinary file beside it is still reported.
+    assert "keep.txt" in git_diff(home)
+    assert "keep.txt" in git_status(home)
 
 
 def test_every_exclusion_kind_the_denylist_emits_can_be_rendered(
