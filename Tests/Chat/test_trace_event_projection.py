@@ -689,3 +689,26 @@ def test_large_linear_causal_chain_does_not_use_python_recursion() -> None:
     assert [record.event_id for record in records] == [
         f"agent-run:{index}" for index in range(5001)
     ]
+
+
+def test_transitive_diamond_keeps_each_dag_node_in_its_own_component() -> None:
+    runs = [
+        {"id": "a", "turn_id": "t1", "created_at": 1},
+        {
+            "id": "b",
+            "turn_id": "t1",
+            "created_at": 3,
+            "parent_event_id": "agent-run:a",
+        },
+        {
+            "id": "c",
+            "turn_id": "t1",
+            "created_at": 2,
+            "parent_event_id": "agent-run:a",
+            "source_event_id": "agent-run:b",
+        },
+    ]
+
+    ids = [record.event_id for record in _records(_snapshot(agent_runs=runs))]
+
+    assert ids == ["agent-run:a", "agent-run:b", "agent-run:c"]

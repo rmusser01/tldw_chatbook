@@ -1154,17 +1154,18 @@ def _strong_components(
         if root in visited:
             continue
         visited.add(root)
-        stack: list[tuple[str, bool]] = [(root, False)]
+        stack: list[tuple[str, Any]] = [(root, iter(sorted(edges[root])))]
         while stack:
-            node, exiting = stack.pop()
-            if exiting:
+            node, children = stack[-1]
+            try:
+                child = next(children)
+            except StopIteration:
+                stack.pop()
                 finish.append(node)
                 continue
-            stack.append((node, True))
-            for child in reversed(sorted(edges[node])):
-                if child not in visited:
-                    visited.add(child)
-                    stack.append((child, False))
+            if child not in visited:
+                visited.add(child)
+                stack.append((child, iter(sorted(edges[child]))))
 
     reverse_edges: dict[str, set[str]] = {node: set() for node in nodes}
     for before, children in edges.items():
