@@ -15,6 +15,8 @@ line by line with diff coloring, never markup-parsed: file content is data
 
 from __future__ import annotations
 
+import os
+
 import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Sequence
@@ -3279,18 +3281,24 @@ class ChangeReviewScreen(Screen):
     def _refresh_untracked_writable_banner(self) -> None:
         """Disclose an agent-writable root that change review cannot see.
 
-        TASK-19702 AC #3. `[console] workspace_root` is the CONFINEMENT
-        root for the agent's file tools (`console_chat_controller` reads
-        it, and falls back to the process CWD when it is unset), while
-        change tracking follows the workspace's BOUND folders. Nothing
-        keeps those two in agreement, so an agent can edit files that this
-        screen will never show — a silent gap exactly where the user comes
-        to check what the agent did.
+        TASK-19702 AC #3. The agent's file tools confine to
+        `tool_configuration["workspace_root"]` or `[console]
+        workspace_root`, and **fall back to the process CWD when neither is
+        set** (`Chat/console_chat_controller.py`), while change tracking
+        follows the workspace's BOUND folders. Nothing keeps those in
+        agreement, so an agent can edit files this screen will never show —
+        a silent gap exactly where the user comes to check what it did.
 
-        Rather than paper over it by treating the configured root as
-        reviewable (AC #2 forbids that: it would offer confirmed commit
-        and push against a repository the workspace never bound), the
-        mismatch is stated.
+        Qodo #3 (PR #1941): the first version returned early when the
+        config key was unset, which is PRECISELY when the CWD fallback
+        applies — omitting the disclosure in the case that needed it most.
+        The effective root is resolved the same way the controller resolves
+        it, so the two cannot drift.
+
+        Rather than paper the gap over by treating that root as reviewable
+        (AC #2 forbids it: that would offer confirmed commit and push
+        against a repository the workspace never bound), the mismatch is
+        stated.
         """
         self._untracked_writable_banners = []
         try:
@@ -3300,17 +3308,35 @@ class ChangeReviewScreen(Screen):
                 get_cli_setting("console", "workspace_root", "") or ""
             ).strip()
         except Exception:  # noqa: BLE001 -- a bad config never breaks review
+            # Qodo #4 (PR #1941): a swallowed failure here silently drops a
+            # disclosure, which is the same masking class this screen is
+            # meant to prevent. Log it rather than vanish.
+            logger.opt(exception=True).debug(
+                "change_review: could not read [console] workspace_root for "
+                "the untracked-writable disclosure"
+            )
             return
-        if not configured:
-            return
-        from pathlib import Path as _Path
 
+        # Mirrors the controller's own resolution, CWD fallback included.
+        raw = configured or os.getcwd()
         try:
-            target = _Path(configured).expanduser().resolve()
+            # Qodo #2 (PR #1941): route through the shared boundary rather
+            # than an ad-hoc `Path(...).resolve()`. `validate_path_simple`
+            # is the base-less member of that family -- there is no
+            # confinement root to check against here (the whole point is
+            # that this directory may legitimately sit anywhere), only a
+            # path to normalise safely before comparing.
+            from tldw_chatbook.Utils.path_validation import validate_path_simple
+
+            target = validate_path_simple(raw)
             tracked = {
-                _Path(r).expanduser().resolve() for r in self._workspace_roots
+                validate_path_simple(root) for root in self._workspace_roots
             }
-        except (OSError, RuntimeError, ValueError):
+        except (ValueError, OSError, RuntimeError) as exc:
+            logger.debug(
+                f"change_review: skipping untracked-writable disclosure "
+                f"for {raw!r}: {exc}"
+            )
             return
         if any(target == root or root in target.parents for root in tracked):
             return

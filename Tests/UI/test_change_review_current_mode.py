@@ -1190,6 +1190,13 @@ async def test_unborn_head_renders_a_STAGED_add_through_the_preview_path(
 async def test_empty_review_without_tracked_roots_explains_why(
     monkeypatch, tmp_path
 ):
+    """With nothing tracked, the empty state must name the CAUSE.
+
+    "No file changes recorded for this conversation." is a claim the app
+    can only support when the conversation HAS tracked roots; with none it
+    never watched anything, so asserting the stronger thing is the same
+    dishonest-empty-state class spec §8 forbids elsewhere on this screen.
+    """
     _patch_git_actions(monkeypatch, True)
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
@@ -1275,3 +1282,68 @@ async def test_untracked_agent_writable_root_is_disclosed(
         f"the writable-but-untracked root must be named: {text!r}"
     )
     assert "not tracked" in text.lower(), text
+
+
+@pytest.mark.asyncio
+async def test_untracked_cwd_is_disclosed_when_workspace_root_is_unset(
+    monkeypatch, tmp_path
+):
+    """Qodo #3 (PR #1941): with `[console] workspace_root` UNSET the agent's
+    file tools fall back to `os.getcwd()` — which is precisely the case the
+    first version of this banner returned early on, omitting the disclosure
+    exactly where it was needed. The PR text described that fallback while
+    the code skipped it.
+    """
+    _patch_git_actions(monkeypatch, True)
+    loose = tmp_path / "process_cwd"
+    loose.mkdir()
+    tracked = _init_repo(tmp_path / "tracked_repo_cwd")
+    monkeypatch.chdir(loose)
+    monkeypatch.setattr(
+        "tldw_chatbook.config.get_cli_setting",
+        lambda section, key, default=None: (
+            "" if (section, key) == ("console", "workspace_root") else default
+        ),
+    )
+
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    provider = AgentRunsChangeReviewProvider(
+        db=db, service=service, conversation_id="cwd-conv"
+    )
+    app = _Harness(provider, workspace_roots=[str(tracked)])
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _open_screen(pilot, app)
+        await _wait_for_detection(pilot, screen)
+        text = str(screen.query_one("#change-review-banner", Static).renderable)
+
+    assert "process_cwd" in text, (
+        f"an untracked CWD an agent can write to must be disclosed: {text!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_tracked_cwd_is_not_disclosed(monkeypatch, tmp_path):
+    """Control: when the fallback root IS tracked there is no gap to warn
+    about, and a spurious warning would train users to ignore the banner."""
+    _patch_git_actions(monkeypatch, True)
+    tracked = _init_repo(tmp_path / "tracked_and_cwd")
+    monkeypatch.chdir(tracked)
+    monkeypatch.setattr(
+        "tldw_chatbook.config.get_cli_setting",
+        lambda section, key, default=None: (
+            "" if (section, key) == ("console", "workspace_root") else default
+        ),
+    )
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    provider = AgentRunsChangeReviewProvider(
+        db=db, service=service, conversation_id="cwd-tracked-conv"
+    )
+    app = _Harness(provider, workspace_roots=[str(tracked)])
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _open_screen(pilot, app)
+        await _wait_for_detection(pilot, screen)
+        text = str(screen.query_one("#change-review-banner", Static).renderable)
+
+    assert "not tracked here" not in text, text
