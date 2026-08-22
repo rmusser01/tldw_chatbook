@@ -7,7 +7,7 @@ import json
 import re
 import sqlite3
 from collections.abc import Callable, Collection, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import PurePosixPath
 from typing import Any
@@ -129,6 +129,24 @@ class PersonaVisualGraph:
 
 
 @dataclass(frozen=True, slots=True)
+class PersonaVisualExportAsset:
+    """One immutable asset plus its trusted profile-relative storage key."""
+
+    record: PersonaVisualAssetRecord
+    storage_key: str = field(repr=False)
+
+
+@dataclass(frozen=True, slots=True)
+class PersonaVisualExportGraph:
+    """Bounded active graph material needed only by local export."""
+
+    graph: PersonaVisualGraph
+    source_context: tuple[tuple[str, str], ...]
+    assets: tuple[PersonaVisualExportAsset, ...]
+    manifest_bytes: bytes = field(repr=False)
+
+
+@dataclass(frozen=True, slots=True)
 class AssetWrite:
     asset_key: str
     role: str
@@ -155,6 +173,71 @@ class PersonaVisualRepository:
         try:
             with self.db.transaction():
                 return self._get_active_persona_pack(persona_id)
+        except (UnicodeError, RecursionError, TypeError, OverflowError):
+            raise ValueError("persona_visual_graph_invalid") from None
+        except (sqlite3.Error, CharactersRAGDBError):
+            raise ValueError("persona_visual_repository_read_failed") from None
+
+    def get_active_persona_pack_for_export(
+        self, persona_id: str
+    ) -> PersonaVisualExportGraph | None:
+        """Return one exact active graph with bounded private export metadata."""
+
+        _validate_persona_id(persona_id)
+        try:
+            with self.db.transaction():
+                graph = self._get_active_persona_pack(persona_id)
+                if graph is None:
+                    return None
+                pack_row = _fetchone(
+                    self.db.execute_query(
+                        "SELECT source_context_json FROM persona_visual_packs WHERE id = ?",
+                        (graph.pack.id,),
+                    )
+                )
+                version_row = _fetchone(
+                    self.db.execute_query(
+                        "SELECT manifest_json FROM persona_visual_pack_versions WHERE id = ?",
+                        (graph.version.id,),
+                    )
+                )
+                storage_rows = _fetchall(
+                    self.db.execute_query(
+                        """
+                        SELECT id, storage_relpath
+                          FROM persona_visual_assets
+                         WHERE pack_id = ? AND pack_version_id = ?
+                         ORDER BY asset_key, id
+                        """,
+                        (graph.pack.id, graph.version.id),
+                    )
+                )
+                if (
+                    pack_row is None
+                    or version_row is None
+                    or len(storage_rows) != len(graph.assets)
+                ):
+                    raise ValueError("persona_visual_graph_invalid")
+                export_assets: list[PersonaVisualExportAsset] = []
+                for asset, row in zip(graph.assets, storage_rows, strict=True):
+                    if _db_positive_int(row["id"]) != asset.id:
+                        raise ValueError("persona_visual_graph_invalid")
+                    export_assets.append(
+                        PersonaVisualExportAsset(
+                            record=asset,
+                            storage_key=_decode_storage_relpath(row["storage_relpath"]),
+                        )
+                    )
+                return PersonaVisualExportGraph(
+                    graph=graph,
+                    source_context=_decode_stored_source_context(
+                        pack_row["source_context_json"]
+                    ),
+                    assets=tuple(export_assets),
+                    manifest_bytes=_db_text(
+                        version_row["manifest_json"], 2 * 1024 * 1024
+                    ).encode("utf-8"),
+                )
         except (UnicodeError, RecursionError, TypeError, OverflowError):
             raise ValueError("persona_visual_graph_invalid") from None
         except (sqlite3.Error, CharactersRAGDBError):
@@ -719,6 +802,10 @@ def _source_context_json(value: object) -> str:
 
 
 def _validate_stored_source_context(value: object) -> None:
+    _decode_stored_source_context(value)
+
+
+def _decode_stored_source_context(value: object) -> tuple[tuple[str, str], ...]:
     try:
         parsed = json.loads(
             str(value),
@@ -729,6 +816,7 @@ def _validate_stored_source_context(value: object) -> None:
             raise ValueError
         _validate_source_context_content(parsed)
         _json_dump(parsed)
+        return tuple(sorted(parsed.items()))
     except (TypeError, ValueError, UnicodeError, RecursionError):
         raise ValueError("persona_visual_source_context_invalid") from None
 

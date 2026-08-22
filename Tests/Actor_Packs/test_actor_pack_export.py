@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
+import os
 import uuid
 from pathlib import Path
 
@@ -19,7 +21,13 @@ from tldw_chatbook.Actor_Packs.repository import ActorPackRepository
 from tldw_chatbook.Character_Chat.local_character_persona_service import (
     LocalCharacterPersonaService,
 )
+from tldw_chatbook.Character_Chat.visual_identity import (
+    SAMIRA_MANIFEST_SCHEMA_ID,
+    compute_pack_content_sha256,
+)
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
+from tldw_chatbook.Persona_Visual.repository import PersonaVisualRepository
 
 
 PORTABLE_UUID = "123e4567-e89b-42d3-a456-426614174000"
@@ -29,6 +37,80 @@ def _png(color: str = "red") -> bytes:
     output = io.BytesIO()
     Image.new("RGB", (8, 8), color).save(output, format="PNG")
     return output.getvalue()
+
+
+def _persona_visual_manifest() -> dict[str, object]:
+    states = {
+        state: {"animation_id": "idle"}
+        for state in ("idle", "listening", "thinking", "speaking", "error")
+    }
+    return {
+        "renderer_type": "sprite_frames",
+        "manifest_version": 1,
+        "states": states,
+        "animations": {
+            "idle": {
+                "frames": [{"asset_id": "idle"}],
+                "preview_asset_id": "idle",
+            }
+        },
+        "state_catalog": {},
+        "fallbacks": {},
+        "authored_triggers": [],
+    }
+
+
+def _shared_visual_manifest(data: bytes, storage_key: str) -> dict[str, object]:
+    asset: dict[str, object] = {
+        "expression_key": "neutral",
+        "original_label": "neutral",
+        "display_label": "Neutral",
+        "storage_relpath": storage_key,
+        "content_type": "image/png",
+        "bytes": len(data),
+        "width": 8,
+        "height": 8,
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "is_animated": False,
+        "frame_count": 1,
+        "duration_ms": None,
+    }
+    manifest: dict[str, object] = {
+        "schema_id": SAMIRA_MANIFEST_SCHEMA_ID,
+        "pack_id": "user.export.pack",
+        "title": "Export reactions",
+        "license": "MIT",
+        "default_expression_key": "neutral",
+        "assets": [asset],
+    }
+    manifest["pack_content_sha256"] = compute_pack_content_sha256(manifest)
+    return manifest
+
+
+def _activate_shared_visual(
+    database: CharactersRAGDB,
+    *,
+    actor_kind: str,
+    actor_id: int | str,
+    data: bytes,
+    storage_key: str,
+) -> dict[str, object]:
+    manifest = _shared_visual_manifest(data, storage_key)
+    asset = dict(manifest["assets"][0])  # type: ignore[index]
+    asset["original_expression_key"] = asset.pop("original_label")
+    asset["source_filename"] = "neutral.png"
+    return VisualIdentityRepository(database).activate_pack(
+        pack={
+            "title": "Export reactions",
+            "default_expression_key": "neutral",
+            "source_kind": "manual",
+            "source_context": {"provenance": "local-authoring"},
+        },
+        manifest=manifest,
+        assets=[asset],
+        actor_kind=actor_kind,
+        actor_id=actor_id,
+    )
 
 
 @pytest.fixture
@@ -191,3 +273,195 @@ def test_deleted_persona_is_not_exportable(export_components) -> None:
         export.capture_snapshot("persona", persona["id"], source="local")
 
     assert repository.get_identity("persona", persona["id"]) is None
+
+
+def test_persona_visual_section_is_self_contained(
+    export_components, tmp_path: Path
+) -> None:
+    _export, repository, local_service, database = export_components
+    portrait_id = database.add_character_card(
+        {"name": "Portrait", "image": _png("blue")}
+    )
+    persona = local_service.create_persona_profile(
+        {
+            "id": "persona-visual-export",
+            "name": "Visual Persona",
+            "character_card_id": portrait_id,
+        }
+    )
+    visual_bytes = _png("green")
+    storage_key = "persona_visual/export/idle.png"
+    asset_path = tmp_path / storage_key
+    asset_path.parent.mkdir(parents=True)
+    asset_path.write_bytes(visual_bytes)
+    visual_repository = PersonaVisualRepository(database)
+    active = visual_repository.activate_new_pack(
+        persona_id=persona["id"],
+        title="Runtime states",
+        source_context={"license": "CC0-1.0", "provenance": "local"},
+        manifest=_persona_visual_manifest(),
+        manifest_storage_relpath="persona_visual/export/manifest.json",
+        assets=[
+            {
+                "asset_key": "idle",
+                "role": "frame",
+                "storage_relpath": storage_key,
+                "mime_type": "image/png",
+                "bytes": len(visual_bytes),
+                "sha256": hashlib.sha256(visual_bytes).hexdigest(),
+                "width": 8,
+                "height": 8,
+                "frame_count": 1,
+                "duration_ms": None,
+            }
+        ],
+        expected_persona_revision=int(persona["version"]),
+        authority_guard=lambda: True,
+    )
+    export = ActorPackExportService(
+        database,
+        local_service,
+        repository,
+        persona_visual_repository=visual_repository,
+        visual_identity_repository=VisualIdentityRepository(database),
+        profile_root=tmp_path,
+    )
+
+    snapshot = export.capture_snapshot("persona", persona["id"], source="local")
+
+    assert len(snapshot.sections) == 1
+    section = snapshot.sections[0]
+    assert section.kind == "persona-runtime"
+    assert section.graph_identity == active.identity
+    assert section.license == "CC0-1.0"
+    assert section.provenance == "local"
+    assert section.manifest_path == "persona-runtime/manifest.json"
+    assert section.assets[0].path == "persona-runtime/assets/asset-0001.png"
+    assert section.assets[0].data == visual_bytes
+    assert storage_key not in repr(snapshot)
+
+    shared_bytes = _png("yellow")
+    shared_storage = "persona/shared/neutral.png"
+    shared_path = tmp_path / "visual_identities" / shared_storage
+    shared_path.parent.mkdir(parents=True)
+    shared_path.write_bytes(shared_bytes)
+    _activate_shared_visual(
+        database,
+        actor_kind="persona",
+        actor_id=persona["id"],
+        data=shared_bytes,
+        storage_key=shared_storage,
+    )
+    both = export.capture_snapshot("persona", persona["id"], source="local")
+    assert tuple(item.kind for item in both.sections) == (
+        "shared-visual-identity",
+        "persona-runtime",
+    )
+
+    def change_binding(phase: str) -> None:
+        if phase == "visuals_loaded":
+            database.get_connection().execute(
+                "UPDATE persona_visual_bindings SET version = version + 1 WHERE id = ?",
+                (active.binding.id,),
+            )
+            database.get_connection().commit()
+
+    with pytest.raises(
+        ActorPackExportError, match="actor_pack_export_authority_changed"
+    ):
+        export.capture_snapshot(
+            "persona",
+            persona["id"],
+            source="local",
+            phase_hook=change_binding,
+        )
+
+    asset_path.unlink()
+    with pytest.raises(
+        ActorPackExportError, match="actor_pack_export_asset_unavailable"
+    ):
+        export.capture_snapshot("persona", persona["id"], source="local")
+
+
+def test_character_shared_visual_section_remaps_private_storage(
+    export_components, tmp_path: Path
+) -> None:
+    _export, repository, local_service, database = export_components
+    character_id = database.add_character_card(
+        {"name": "Shared Visual", "image": _png("blue")}
+    )
+    visual_bytes = _png("yellow")
+    storage_key = "visual_identity/private/neutral.png"
+    asset_path = tmp_path / "visual_identities" / storage_key
+    asset_path.parent.mkdir(parents=True)
+    asset_path.write_bytes(visual_bytes)
+    active = _activate_shared_visual(
+        database,
+        actor_kind="character",
+        actor_id=character_id,
+        data=visual_bytes,
+        storage_key=storage_key,
+    )
+    export = ActorPackExportService(
+        database,
+        local_service,
+        repository,
+        visual_identity_repository=VisualIdentityRepository(database),
+        profile_root=tmp_path,
+    )
+
+    snapshot = export.capture_snapshot("character", str(character_id), source="local")
+
+    assert len(snapshot.sections) == 1
+    section = snapshot.sections[0]
+    assert section.kind == "shared-visual-identity"
+    assert section.graph_identity[4] == active["version"]["id"]
+    assert section.license == "MIT"
+    assert section.provenance == "local-authoring"
+    assert section.assets[0].path == "shared-visual-identity/assets/asset-0001.png"
+    exported_manifest = json.loads(section.manifest_bytes)
+    assert exported_manifest["assets"][0]["storage_relpath"] == section.assets[0].path
+    assert storage_key not in section.manifest_bytes.decode()
+    assert storage_key not in repr(snapshot)
+
+    replacement = _png("purple")
+
+    def replace_after_materialization(phase: str) -> None:
+        if phase == "visuals_loaded":
+            asset_path.write_bytes(replacement)
+
+    with pytest.raises(
+        ActorPackExportError, match="actor_pack_export_asset_unavailable"
+    ):
+        export.capture_snapshot(
+            "character",
+            str(character_id),
+            source="local",
+            phase_hook=replace_after_materialization,
+        )
+
+    asset_path.write_bytes(visual_bytes)
+
+    def substitute_same_bytes(phase: str) -> None:
+        if phase == "visuals_loaded":
+            replacement_path = asset_path.with_name("replacement.png")
+            replacement_path.write_bytes(visual_bytes)
+            os.replace(replacement_path, asset_path)
+
+    with pytest.raises(
+        ActorPackExportError, match="actor_pack_export_authority_changed"
+    ):
+        export.capture_snapshot(
+            "character",
+            str(character_id),
+            source="local",
+            phase_hook=substitute_same_bytes,
+        )
+
+    database.get_connection().execute(
+        "UPDATE visual_identity_pack_versions SET manifest_json = '{}' WHERE id = ?",
+        (active["version"]["id"],),
+    )
+    database.get_connection().commit()
+    with pytest.raises(ActorPackExportError, match="actor_pack_export_visual_invalid"):
+        export.capture_snapshot("character", str(character_id), source="local")

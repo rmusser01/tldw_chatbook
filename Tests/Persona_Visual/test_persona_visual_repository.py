@@ -16,6 +16,7 @@ from loguru import logger
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Persona_Visual.contracts import ALLOWED_ASSET_ROLES
 from tldw_chatbook.Persona_Visual.repository import (
+    PersonaVisualExportGraph,
     PersonaVisualGraph,
     PersonaVisualIdentity,
     PersonaVisualRepository,
@@ -1232,6 +1233,66 @@ def test_source_context_accepts_only_bounded_scalar_provenance(
         "license": "CC0-1.0",
         "source_server_commit": "abcdef1234",
     }
+
+
+def test_export_graph_exposes_bounded_provenance_and_repr_hidden_storage(
+    repository: PersonaVisualRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    active = repository.activate_new_pack(
+        persona_id="persona-export",
+        title="Exportable",
+        source_context={
+            "provenance": "local-import",
+            "license": "CC0-1.0",
+        },
+        manifest=_valid_manifest(),
+        manifest_storage_relpath="persona_visual/export/manifest.json",
+        assets=[_asset(storage_relpath="persona_visual/export/idle.png")],
+        expected_persona_revision=3,
+        authority_guard=lambda: True,
+    )
+    original_transaction = repository.db.transaction
+    transaction_calls = 0
+
+    def tracked_transaction(*args, **kwargs):
+        nonlocal transaction_calls
+        transaction_calls += 1
+        return original_transaction(*args, **kwargs)
+
+    monkeypatch.setattr(repository.db, "transaction", tracked_transaction)
+
+    exported = repository.get_active_persona_pack_for_export("persona-export")
+
+    assert type(exported) is PersonaVisualExportGraph
+    assert exported.graph == active
+    assert exported.source_context == (
+        ("license", "CC0-1.0"),
+        ("provenance", "local-import"),
+    )
+    assert exported.assets[0].record == active.assets[0]
+    assert exported.assets[0].storage_key == "persona_visual/export/idle.png"
+    assert "persona_visual/export/idle.png" not in repr(exported)
+    assert not hasattr(active.assets[0], "storage_key")
+    assert transaction_calls == 1
+
+
+def test_export_graph_rejects_corrupt_private_storage(
+    repository: PersonaVisualRepository,
+    db: CharactersRAGDB,
+) -> None:
+    active = _activate(repository)
+    connection = db.get_connection()
+    connection.execute("PRAGMA ignore_check_constraints = ON")
+    connection.execute(
+        "UPDATE persona_visual_assets SET storage_relpath = '../private' WHERE id = ?",
+        (active.assets[0].id,),
+    )
+    connection.commit()
+    connection.execute("PRAGMA ignore_check_constraints = OFF")
+
+    with pytest.raises(ValueError, match="^persona_visual_graph_invalid$"):
+        repository.get_active_persona_pack_for_export(active.identity.persona_id)
 
 
 @pytest.mark.parametrize(
