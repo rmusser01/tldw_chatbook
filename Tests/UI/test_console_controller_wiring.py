@@ -132,11 +132,50 @@ def test_fleet_controller_is_constructed_with_late_bound_screen_edges() -> None:
         "_fleet was never wired"
     )
 
-    screen._console_composer_or_none = lambda: SimpleNamespace(
-        draft_text=lambda: " replacement draft "
+    composer = SimpleNamespace(draft_text=lambda: " replacement draft ")
+    screen._console_composer_or_none = lambda: composer
+    displayed_draft = controller._displayed_composer_draft_accessor()
+    assert displayed_draft == " replacement draft "
+    assert displayed_draft is not composer
+    assert controller._console_wake_user_priority("session-a") is True
+
+    pending_handoffs = object()
+    sessions = (SimpleNamespace(id="late-session"),)
+    store = SimpleNamespace(
+        active_session_id="late-session",
+        sessions=lambda: sessions,
+    )
+    screen.app_instance.pending_handoffs = pending_handoffs
+    screen._ensure_console_chat_store = lambda: store
+    screen._console_chat_store = store
+
+    assert controller._pending_handoffs_accessor() is pending_handoffs
+    assert controller._ensure_chat_store() is store
+    assert controller._chat_store_accessor() is store
+    assert controller._active_session_id_accessor() == "late-session"
+    assert controller._chat_sessions_accessor() is sessions
+
+    wake_calls: list[object] = []
+    wake = SimpleNamespace(
+        wire=lambda **kwargs: wake_calls.append(("wire", kwargs.get("app"))) or True,
+        seed_from_marks=lambda: wake_calls.append("seed") or True,
+        retry_soon=lambda: wake_calls.append("retry"),
+        has_pending=lambda conversation_id: conversation_id == "conversation-a",
+        delivering_conversation_id=lambda: "conversation-a",
+    )
+    screen._console_chat_controller = SimpleNamespace(
+        fleet_wake=wake,
+        fleet_has_unsettled_children=lambda: True,
     )
 
-    assert controller._console_wake_user_priority("session-a") is True
+    assert controller._chat_controller_available() is True
+    assert controller._wire_wake_coordinator() is True
+    assert controller._seed_wake_from_marks() is True
+    controller._retry_wake_soon()
+    assert controller._wake_has_pending("conversation-a") is True
+    assert controller._wake_delivering_conversation_id() == "conversation-a"
+    assert controller._fleet_has_unsettled_children() is True
+    assert wake_calls == [("wire", screen.app_instance), "seed", "retry"]
 
 
 def test_retrieval_controller_is_constructed_with_late_bound_screen_edges():

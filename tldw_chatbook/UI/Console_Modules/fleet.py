@@ -24,7 +24,7 @@ class ConsoleFleetLifecycleController:
         retry_wake_soon: Callable[..., Any],
         wake_has_pending: Callable[..., Any],
         wake_delivering_conversation_id: Callable[..., Any],
-        displayed_composer_draft_accessor: Callable[..., Any],
+        displayed_composer_draft_accessor: Callable[[], str | None],
         screen_displayed_accessor: Callable[..., Any],
         screen_mounted_accessor: Callable[..., Any],
         active_session_id_accessor: Callable[..., Any],
@@ -92,7 +92,7 @@ class ConsoleFleetLifecycleController:
     def _console_wake_user_priority(self, session_id: str) -> bool:
         return False
 
-    def _console_wake_probe_composer(self) -> None:
+    def _console_wake_probe_composer(self) -> str | None:
         return None
 
     def _console_screen_displayed(self) -> bool:

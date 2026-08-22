@@ -1762,6 +1762,20 @@ def _assert_fleet_method_boundaries(methods: dict[str, ast.AST]) -> None:
     assert not dom_offenders, (
         f"fleet controller methods query DOM: {sorted(dom_offenders)}"
     )
+    composer_widget_offenders = {
+        name
+        for name, method in methods.items()
+        if any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "draft_text"
+            for node in ast.walk(method)
+        )
+    }
+    assert not composer_widget_offenders, (
+        "fleet controller methods reach composer widgets: "
+        f"{sorted(composer_widget_offenders)}"
+    )
 
     forbidden_owners = frozenset(
         {
@@ -1930,6 +1944,8 @@ def test_fleet_move_oracles_are_non_vacuous() -> None:
         "        return self.query_one('#composer')\n"
         "    def sibling_reach_through(self):\n"
         "        return self._workspace._poke_console_wake_retry()\n"
+        "    def leaked_composer_widget(self):\n"
+        "        return self._displayed_composer_draft_accessor().draft_text()\n"
     ).body[0]
     assert isinstance(controller_mutant, ast.ClassDef)
     mutant_methods = _methods_from_class(controller_mutant)
@@ -1939,6 +1955,11 @@ def test_fleet_move_oracles_are_non_vacuous() -> None:
     with pytest.raises(AssertionError, match="screen/sibling owners"):
         _assert_fleet_method_boundaries(
             {"sibling_reach_through": mutant_methods["sibling_reach_through"]}
+        )
+
+    with pytest.raises(AssertionError, match="composer widgets"):
+        _assert_fleet_method_boundaries(
+            {"leaked_composer_widget": mutant_methods["leaked_composer_widget"]}
         )
 
 

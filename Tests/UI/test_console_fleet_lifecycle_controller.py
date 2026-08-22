@@ -229,6 +229,34 @@ def test_completion_exception_releases_claim_without_acknowledging() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    "sessions",
+    [
+        (),
+        (_session("unrelated", conversation_id="conversation-b"),),
+    ],
+    ids=["empty", "unrelated"],
+)
+def test_completion_claim_acknowledges_missing_session_without_side_effects(
+    sessions: tuple[SimpleNamespace, ...],
+) -> None:
+    edges, claim = _completion_edges(
+        sessions=sessions,
+        active_session_id="unrelated",
+        target=ConsoleFleetCompletionTarget(conversation_id="conversation-a"),
+    )
+
+    result = edges.controller.consume_pending_console_fleet_completion()
+
+    assert result is False
+    assert edges.calls == [
+        ("pending_handoffs_accessor", ()),
+        ("claim", (HandoffChannel.CONSOLE_FLEET_COMPLETION,)),
+        ("ensure_chat_store", ()),
+        ("acknowledge", (claim,)),
+    ]
+
+
 def test_mount_claim_reads_uncached_marks_before_wiring_and_retry() -> None:
     edges = _Edges()
     edges.replace("read_fleet_unseen_ids", lambda: frozenset({"conversation-a"}))
@@ -331,6 +359,33 @@ def test_pending_wake_defers_view_clear_and_live_marker_outranks_unseen() -> Non
     assert "clear_fleet_unseen" not in edges.call_names
 
 
+def test_fleet_unseen_cache_reuses_revision_and_refreshes_after_change() -> None:
+    edges = _Edges()
+    revision = 4
+    durable_ids = frozenset({"conversation-a"})
+    edges.replace("fleet_unseen_revision_accessor", lambda: revision)
+    edges.replace("read_fleet_unseen_ids", lambda: durable_ids)
+
+    first = edges.controller._console_fleet_unseen_ids()
+    same_revision = edges.controller._console_fleet_unseen_ids()
+    revision = 5
+    durable_ids = frozenset({"conversation-b"})
+    changed_revision = edges.controller._console_fleet_unseen_ids()
+
+    assert edges.call_names == [
+        "fleet_unseen_revision_accessor",
+        "read_fleet_unseen_ids",
+        "fleet_unseen_revision_accessor",
+        "fleet_unseen_revision_accessor",
+        "read_fleet_unseen_ids",
+    ]
+    assert (first, same_revision, changed_revision) == (
+        frozenset({"conversation-a"}),
+        frozenset({"conversation-a"}),
+        frozenset({"conversation-b"}),
+    )
+
+
 @pytest.mark.asyncio
 async def test_teardown_stages_counts_only_after_a_truthy_leave() -> None:
     false_edges = _Edges()
@@ -380,11 +435,22 @@ async def test_survivor_tick_is_idempotent_and_final_paints_after_stop() -> None
     survivors_live = False
     await edges.controller._console_fleet_survivor_tick()
 
-    assert edges.call_names.count("create_interval") == 1
-    assert edges.call_names.count("record_timer_created") == 1
+    assert [call for call in edges.calls if call[0] == "create_interval"] == [
+        (
+            "create_interval",
+            (1.0, edges.controller._console_fleet_survivor_tick),
+        )
+    ]
+    assert [call for call in edges.calls if call[0] == "record_timer_created"] == [
+        ("record_timer_created", ("console-fleet-survivor-tick",))
+    ]
     assert edges.call_names[-3:] == [
         "timer.stop",
         "record_timer_stopped",
         "sync_native_console_ui",
     ]
+    assert edges.calls[-2] == (
+        "record_timer_stopped",
+        ("console-fleet-survivor-tick",),
+    )
     assert edges.controller._console_fleet_survivor_timer is None
