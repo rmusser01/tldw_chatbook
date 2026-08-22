@@ -348,3 +348,76 @@ is 3F/69P on both sides (the commit message says 2 integration reds; it is
 3, all pre-existing). Post-review sweep across
 `Tests/{Library,Web_Scraping,Local_Ingestion,Utils}` + the image-gen
 settings suite: **3685 passed / 5 skipped / 0 failed**.
+
+### Qodo review follow-up on PR #1967 (two findings closed)
+
+**Finding 1 -- `trusted_origins` untyped.** All five sites this task added
+the keyword to were annotated `frozenset[str] = frozenset()`:
+`Article_Scraper/crawler.crawl_site`, `crawler.get_urls_from_sitemap`,
+`Article_Extractor_Lib.scrape_from_sitemap`,
+`.collect_internal_links`, `.recursive_scrape`. `frozenset[str]` rather than
+bare `frozenset` because that is what the values actually are --
+`Utils/egress.origin_set()` (the function this parameter's callers most
+often seed it from) returns a `frozenset` of lowercased hostname strings,
+and `check_url_or_raise`/`evaluate_url_policy` iterate it as
+`str(h) for h in trusted_origins`. It also matches the more recently
+written egress call sites in this same programme
+(`Model_Artifacts/acquisition.py`, `Model_Artifacts/fetch.py`,
+`Local_Ingestion/parakeet_v2_artifact.py`), all `frozenset[str]`, over the
+older bare-`frozenset` spelling still on a few of `Utils/egress.py`'s own
+signatures and pre-existing call sites this task didn't touch (`scrape_article`
+at `Article_Extractor_Lib.py:370`, `get_page_title`) -- left alone, since the
+finding and this fix are scoped to what this branch added. The video seam
+(`video_processing.check_media_url_egress`) never took a `trusted_origins`
+parameter -- it computes `origin_set(url)` internally -- so there was
+nothing to annotate there.
+
+**Finding 2 -- the egress-adoption census was regex-over-text.**
+`Tests/Utils/test_egress_adoption_census.py` was rewritten from
+`re.Pattern.search` over raw source to an AST scan: it resolves real
+`import`/`from...import` bindings (including `as` aliases and
+`from pkg import module` + `module.symbol(...)` attribute calls, the shape
+`Image_Generation/http_client.py` and `Media_Playback/stream_resolve.py`
+use for the egress side) and matches actual `ast.Call` targets, so a mention
+inside a comment or docstring produces no `Name`/`Attribute` node and is
+structurally invisible to it. Proven in both directions plus the original
+demonstration, all three new tests in the file: a comment/docstring-only
+opener mention is not flagged (no false red;
+`test_docstring_or_comment_opener_mention_is_not_flagged`); a comment
+*naming the real egress function* next to a genuine unguarded `urlopen`
+call is still flagged, closing Qodo's exact bypass (no false green;
+`test_comment_mentioning_the_real_egress_symbol_does_not_launder_an_unguarded_opener`);
+and mechanically un-fixing the current source of `Library/ingest_preflight.py`
+and `Local_Ingestion/video_processing.py` (deleting the `check_url_or_raise`
+import, blanking the call site) is still independently rediscovered by the
+census (`test_census_rediscovers_the_original_two_seams_when_their_egress_calls_are_removed`),
+re-proving the census's original demonstration against the rewrite. All
+four tests were also run against a temporarily reintroduced regex-style
+`_analyze_source` (mutation probe, reverted before commit): three of the
+new tests failed under it, and the rediscovery test failed for a real
+reason, not a contrived one -- `video_processing.py`'s own docstring quotes
+`guarded_fetch_requests(...)` in prose describing the audio arm, which the
+old regex read as "this module still consults the policy" even with the
+real call deleted.
+
+**Stated gap.** The AST version cannot follow dynamic dispatch --
+`getattr(urllib.request, "urlopen")(u)` is not a `Name`/`Attribute` chain a
+static resolver can trace, so it would not be flagged, whereas the old
+regex would have (the string literal `"urlopen"` is still text in the
+file). No opener in this codebase is reached that way today (checked at
+rewrite time), so this costs nothing currently, but it is a real,
+if obscure, trade against the false-green/false-red bypass closed. Also
+scoped as before: the census only covers `urllib.request` and
+`yt_dlp.YoutubeDL`, not bare `requests`/`httpx`, for the same
+noise-vs-signal reason recorded in the file's own docstring.
+
+Verification: `Tests/{Library,Web_Scraping,Local_Ingestion,Utils}` --
+**3689 passed / 5 skipped / 0 failed** (up from 3685 because the census
+file grew from 4 tests to 7; the image-gen settings suite from the prior
+sweep was not re-run here, out of this follow-up's scope). Repo-wide
+`--collect-only`: 55993 collected, 1 pre-existing error
+(`Tests/UI/test_library_file_notes_workspace.py`, zero diff on this
+branch, unrelated to either finding). Modified:
+`tldw_chatbook/Web_Scraping/Article_Scraper/crawler.py`,
+`tldw_chatbook/Web_Scraping/Article_Extractor_Lib.py`,
+`Tests/Utils/test_egress_adoption_census.py`.

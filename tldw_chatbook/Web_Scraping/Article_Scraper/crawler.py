@@ -130,7 +130,7 @@ async def crawl_site(
     max_depth: int = 5,
     url_filter: Callable[[str], bool] = default_url_filter,
     *,
-    trusted_origins=frozenset(),
+    trusted_origins: frozenset[str] = frozenset(),
 ) -> Set[str]:
     """
     Asynchronously crawls a website to discover internal links.
@@ -337,7 +337,7 @@ async def get_urls_from_sitemap(
     sitemap_url: str,
     url_filter: Callable[[str], bool] = default_url_filter,
     *,
-    trusted_origins=frozenset(),
+    trusted_origins: frozenset[str] = frozenset(),
 ) -> List[str]:
     """
     Fetches and parses a sitemap.xml file to extract a list of URLs.

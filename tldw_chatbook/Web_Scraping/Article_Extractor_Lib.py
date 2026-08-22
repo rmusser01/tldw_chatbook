@@ -1026,7 +1026,7 @@ def scrape_by_url_level(base_url: str, level: int) -> list:
     return [article for link in filtered_links if (article := scrape_article(link))]
 
 
-def scrape_from_sitemap(sitemap_url: str, *, trusted_origins=frozenset()) -> list:
+def scrape_from_sitemap(sitemap_url: str, *, trusted_origins: frozenset[str] = frozenset()) -> list:
     """Scrape articles from a sitemap URL.
 
     (TASK-19556 (c)) This used to compute ``origin_set(sitemap_url)`` and use
@@ -1084,7 +1084,7 @@ def scrape_from_sitemap(sitemap_url: str, *, trusted_origins=frozenset()) -> lis
 # Sitemap/Crawling-related Functions
 
 
-def collect_internal_links(base_url: str, *, trusted_origins=frozenset()) -> set:
+def collect_internal_links(base_url: str, *, trusted_origins: frozenset[str] = frozenset()) -> set:
     """
     Crawl a website and collect all internal links.
 
@@ -1771,7 +1771,7 @@ async def recursive_scrape(
     custom_cookies: Optional[List[Dict[str, Any]]] = None,
     progress_callback: Optional[callable] = None,
     *,
-    trusted_origins=frozenset(),
+    trusted_origins: frozenset[str] = frozenset(),
 ) -> List[Dict]:
     # Ensure playwright is imported before it's dereferenced below. Preserves
     # pre-existing behavior when unavailable: this function has never guarded
