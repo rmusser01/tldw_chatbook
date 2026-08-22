@@ -2031,6 +2031,7 @@ class ConsoleProviderGateway:
         reasoning_effort: str | None = None,
         thinking_budget_tokens: int | None = None,
         api_key: str | None = None,
+        on_fallback_retry: "Callable[[dict[str, Any], str], None] | None" = None,
     ) -> AsyncIterator[str]:
         """Stream OpenAI-compatible chat completion chunks from llama.cpp.
 
@@ -2117,6 +2118,33 @@ class ConsoleProviderGateway:
             thinking_budget_tokens=thinking_budget_tokens,
             api_key=api_key,
         )
+        # task-19324: this retry is a SECOND HTTP request to the server. It
+        # is made below the Console capture seam (which wraps stream_chat's
+        # one call), so without this hook a turn that really made two calls
+        # showed only one in the Inspector -- understating what was sent, on
+        # exactly the degraded turn a user opens the Inspector to inspect.
+        if on_fallback_retry is not None:
+            try:
+                on_fallback_retry(
+                    build_llamacpp_chat_payload(
+                        model=model,
+                        messages=messages,
+                        stream=False,
+                        temperature=temperature,
+                        top_p=top_p,
+                        min_p=min_p,
+                        top_k=top_k,
+                        max_tokens=max_tokens,
+                        reasoning_effort=reasoning_effort,
+                        thinking_budget_tokens=thinking_budget_tokens,
+                    ),
+                    fallback or "",
+                )
+            except Exception:
+                # Capture must never break a send (task-18300 contract).
+                logger.opt(exception=False).warning(
+                    "exchange_capture_fallback_failed"
+                )
         if fallback:
             yield fallback
             return
@@ -2546,6 +2574,45 @@ class ConsoleProviderGateway:
                         yield completion
                     completed = True
                     return
+                def _capture_llamacpp_fallback(
+                    wire_payload: dict[str, Any], text: str
+                ) -> None:
+                    """Give the stream->complete retry its own capture (task-19324).
+
+                    The retry is a second HTTP request issued *inside*
+                    ``stream_llamacpp_chat``, below the seam that captures
+                    ``stream_chat``'s own call. It gets a fresh call-scoped
+                    signals view off the aggregate so it lands as its own
+                    row rather than being folded into the streaming call it
+                    replaced. Needs the aggregate: a caller that handed us
+                    an already-scoped view has no second call to open.
+                    """
+                    if signals is None or isinstance(
+                        signals, ConsoleProviderCallSignals
+                    ):
+                        return
+                    retry_signals = signals.new_usage_call()
+                    capture_request, omitted = build_request_capture(
+                        {"model": resolution.model}
+                    )
+                    capture_request["wire_payload"] = stub_binary_strings(
+                        wire_payload
+                    )
+                    capture_request["retry_of"] = (
+                        "llama.cpp stream produced no content; "
+                        "retried non-streaming"
+                    )
+                    retry_signals.begin_exchange(
+                        provider=str(resolution.provider or ""),
+                        model=str(resolution.model or ""),
+                        endpoint=normalize_llamacpp_base_url(resolution.base_url),
+                        request=capture_request,
+                        omitted_keys=omitted,
+                    )
+                    if text:
+                        retry_signals.record_exchange_content(text)
+                    retry_signals.close_exchange(status="complete")
+
                 try:
                     async for chunk in self.stream_llamacpp_chat(
                         base_url=resolution.base_url,
@@ -2559,6 +2626,7 @@ class ConsoleProviderGateway:
                         reasoning_effort=resolution.reasoning_effort,
                         thinking_budget_tokens=resolution.thinking_budget_tokens,
                         api_key=resolution.api_key,
+                        on_fallback_retry=_capture_llamacpp_fallback,
                     ):
                         if call_signals is not None:
                             call_signals.record_exchange_content(chunk)
