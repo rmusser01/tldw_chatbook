@@ -553,6 +553,61 @@ def resolve_sensitive_context() -> SensitivePathContext:
     )
 
 
+def _compare_key(path: Path) -> tuple[str, ...]:
+    """The form two paths are compared in by the denylist (TASK-19800).
+
+    macOS and Windows filesystems are case-insensitive by DEFAULT, and
+    ``Path.resolve()`` does NOT canonicalise case on them -- it resolves
+    symlinks and ``..`` but preserves whatever spelling the caller typed.
+    So ``~/.SSH/id_rsa`` opens the very same file as ``~/.ssh/id_rsa``
+    while comparing unequal to every entry in the denylist. Verified
+    end-to-end before this fix: reading ``TLDW_CLI/config.toml`` through
+    ``fs_read`` returned the user's real config -- the file holding their
+    provider API keys -- while the lowercase spelling was refused.
+
+    Casefolding is applied UNCONDITIONALLY rather than gated on the
+    platform or probed per volume. Platform is only a proxy for the real
+    question (macOS can be configured case-sensitive; Linux can mount a
+    case-insensitive volume), a per-path probe would add I/O to a check
+    that runs on every candidate, and the two error directions are not
+    symmetric: over-refusing a genuinely distinct ``~/.SSH`` on a
+    case-sensitive filesystem costs one explained refusal of a very
+    unusual path, while under-refusing leaks a credential. A denylist
+    should fail in the cheap direction.
+
+    Comparison stays COMPONENT-wise, so ancestry and lookalike behaviour
+    are unchanged: ``~/.sshfoo`` is still not ``~/.ssh``.
+
+    **Do not reuse this for CONFINEMENT checks.** The two fail in opposite
+    directions. For a denylist ("is this path forbidden?") folding produces
+    extra refusals -- it fails safe. For confinement ("is this path inside
+    the allowed root?") folding produces extra ADMISSIONS: on a
+    case-sensitive filesystem ``/Root/evil`` would start counting as inside
+    ``/root``, which is a loosening, not a hardening. ``is_within`` in
+    ``Tools/file_operation_tools.py`` is deliberately left case-sensitive
+    for exactly that reason.
+
+    Args:
+        path: An already-resolved absolute path.
+
+    Returns:
+        The path's components, each casefolded.
+    """
+    return tuple(part.casefold() for part in path.parts)
+
+
+def _same_path(a: Path, b: Path) -> bool:
+    """Whether two resolved paths denote the same file (see :func:`_compare_key`)."""
+    return _compare_key(a) == _compare_key(b)
+
+
+def _is_within(child: Path, ancestor: Path) -> bool:
+    """Whether ``child`` is ``ancestor`` or below it (see :func:`_compare_key`)."""
+    child_key = _compare_key(child)
+    ancestor_key = _compare_key(ancestor)
+    return child_key[: len(ancestor_key)] == ancestor_key
+
+
 def is_sensitive_path(
     candidate: Path, context: SensitivePathContext | None = None
 ) -> bool:
@@ -602,18 +657,21 @@ def is_sensitive_path(
 
     ctx = context if context is not None else resolve_sensitive_context()
 
+    # Every comparison below goes through `_compare_key` (TASK-19800): a
+    # case-variant spelling reaches the same file on a case-insensitive
+    # filesystem and must reach the same verdict.
     for target in ctx.files:
-        if resolved == target:
+        if _same_path(resolved, target):
             return True
 
     for db_path in ctx.db_paths:
-        if resolved == db_path:
+        if _same_path(resolved, db_path):
             return True
-        if resolved in _db_sidecar_paths(db_path):
+        if any(_same_path(resolved, s) for s in _db_sidecar_paths(db_path)):
             return True
 
     for root in ctx.dirs:
-        if resolved == root or root in resolved.parents:
+        if _is_within(resolved, root):
             return True
 
     # Finding 2 (substrate review), generalized beyond `get_user_data_dir()`
@@ -647,7 +705,7 @@ def is_sensitive_path(
     # never by loosening this check's own "is a directory" gate (which
     # would break every legitimate container above).
     for denied_parent in ctx.direct_child_denied_dirs:
-        if resolved.parent == denied_parent and not resolved.is_dir():
+        if _same_path(resolved.parent, denied_parent) and not resolved.is_dir():
             return True
 
     return False
