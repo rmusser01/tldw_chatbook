@@ -382,6 +382,7 @@ from .Actor_Packs.persona_coordinator import (
     PersonaActorPackCoordinator,
     PersonaActorPackCoordinatorError,
 )
+from .Actor_Packs.creation import ActorPackCreationService
 from .Actor_Packs.repository import ActorPackRepository
 from .Persona_Buddy import (
     PersonaBuddyController,
@@ -6606,6 +6607,11 @@ class TldwCli(
                     "Actor Pack recovery retained quarantined intents: "
                     "actor_pack_recovery_blocked"
                 )
+        self.actor_pack_creation_service = ActorPackCreationService(
+            self.chachanotes_db,
+            self.actor_pack_repository,
+            self.persona_actor_pack_coordinator,
+        )
         self.character_persona_scope_service = CharacterPersonaScopeService(
             local_service=self.local_character_persona_service,
             server_service=self.server_character_persona_service,

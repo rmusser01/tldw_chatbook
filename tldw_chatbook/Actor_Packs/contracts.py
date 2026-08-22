@@ -514,6 +514,19 @@ def _validate_portrait(path: str, data: bytes) -> bool:
     return True
 
 
+def validate_actor_portrait(path: str, data: bytes) -> None:
+    """Validate one bounded raster portrait using the Actor Pack contract."""
+
+    if (
+        type(path) is not str
+        or type(data) is not bytes
+        or not data
+        or len(data) > MAX_PORTRAIT_BYTES
+        or not _validate_portrait(path, data)
+    ):
+        raise ActorPackValidationError("actor_pack_portrait_invalid")
+
+
 try:
     from PIL.Image import DecompressionBombError
 except ImportError:  # pragma: no cover - Pillow is a required project dependency.
@@ -581,5 +594,6 @@ __all__ = [
     "canonical_json_bytes",
     "canonical_member_order",
     "canonicalize_actor_payload",
+    "validate_actor_portrait",
     "validate_actor_pack_document",
 ]

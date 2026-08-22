@@ -6450,61 +6450,12 @@ UPDATE db_schema_version
             ConflictError: If a character card with the same 'name' already exists.
             CharactersRAGDBError: For other database-related errors during insertion.
         """
-        required_fields = ["name"]
-        for field in required_fields:
-            if field not in card_data or not card_data[field]:
-                raise InputError(f"Required field '{field}' is missing or empty.")
-
-        now = self._get_current_utc_timestamp_iso()
-
-        # Ensure JSON fields are strings or None
-        def get_json_field_as_string(field_value):
-            if isinstance(field_value, str):
-                # Assume it's already a JSON string if it's a string
-                return field_value
-            return self._ensure_json_string(field_value)
-
-        alt_greetings_json = get_json_field_as_string(
-            card_data.get("alternate_greetings")
-        )
-        tags_json = get_json_field_as_string(card_data.get("tags"))
-        extensions_json = get_json_field_as_string(card_data.get("extensions"))
-
-        query = """
-                INSERT INTO character_cards (name, description, personality, scenario, image, post_history_instructions, \
-                                             first_message, message_example, creator_notes, system_prompt, \
-                                             alternate_greetings, tags, creator, character_version, extensions, \
-                                             created_at, last_modified, client_id, version, deleted) \
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0) \
-                """  # created_at added
-        params = (
-            card_data["name"],
-            card_data.get("description"),
-            card_data.get("personality"),
-            card_data.get("scenario"),
-            card_data.get("image"),
-            card_data.get("post_history_instructions"),
-            card_data.get("first_message"),
-            card_data.get("message_example"),
-            card_data.get("creator_notes"),
-            card_data.get("system_prompt"),
-            alt_greetings_json,
-            tags_json,
-            card_data.get("creator"),
-            card_data.get("character_version"),
-            extensions_json,
-            now,
-            now,
-            self.client_id,  # created_at, last_modified, client_id
-        )
-
         start_time = time.time()
         try:
-            with self.transaction() as conn:
-                cursor = conn.execute(
-                    query, params
-                )  # execute_query not needed due to conn from context
-                char_id = cursor.lastrowid
+            with self.transaction() as cursor:
+                char_id = self._insert_character_card_in_transaction(
+                    cursor, card_data
+                )
                 logger.info(
                     f"Added character card '{card_data['name']}' with ID: {char_id}."
                 )
@@ -6573,6 +6524,67 @@ UPDATE db_schema_version
             )
             raise
         return None  # Should not be reached
+
+    def _insert_character_card_in_transaction(
+        self,
+        cursor: sqlite3.Cursor,
+        card_data: Dict[str, Any],
+        *,
+        require_outermost: bool = False,
+    ) -> int:
+        """Insert one Character inside a manager-owned transaction."""
+
+        connection = self.get_connection()
+        depth = getattr(self._local, "transaction_depth", 0)
+        if (
+            type(cursor) is not sqlite3.Cursor
+            or cursor.connection is not connection
+            or not connection.in_transaction
+            or depth < 1
+            or (require_outermost and depth != 1)
+        ):
+            raise CharactersRAGDBError("Character transaction is not owned.")
+        if "name" not in card_data or not card_data["name"]:
+            raise InputError("Required field 'name' is missing or empty.")
+
+        def json_field(value: object) -> str | None:
+            return value if isinstance(value, str) else self._ensure_json_string(value)
+
+        now = self._get_current_utc_timestamp_iso()
+        cursor.execute(
+            """
+            INSERT INTO character_cards(
+                name, description, personality, scenario, image,
+                post_history_instructions, first_message, message_example,
+                creator_notes, system_prompt, alternate_greetings, tags, creator,
+                character_version, extensions, created_at, last_modified,
+                client_id, version, deleted
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0)
+            """,
+            (
+                card_data["name"],
+                card_data.get("description"),
+                card_data.get("personality"),
+                card_data.get("scenario"),
+                card_data.get("image"),
+                card_data.get("post_history_instructions"),
+                card_data.get("first_message"),
+                card_data.get("message_example"),
+                card_data.get("creator_notes"),
+                card_data.get("system_prompt"),
+                json_field(card_data.get("alternate_greetings")),
+                json_field(card_data.get("tags")),
+                card_data.get("creator"),
+                card_data.get("character_version"),
+                json_field(card_data.get("extensions")),
+                now,
+                now,
+                self.client_id,
+            ),
+        )
+        if cursor.lastrowid is None:
+            raise CharactersRAGDBError("Character insert did not return an ID.")
+        return int(cursor.lastrowid)
 
     def get_character_card_by_id(self, character_id: int) -> Optional[Dict[str, Any]]:
         """

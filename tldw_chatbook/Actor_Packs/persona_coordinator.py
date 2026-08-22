@@ -71,6 +71,7 @@ class PersonaActorPackCoordinator:
         operation: str = "create",
         source_portable_uuid: str | None = None,
         cancel_requested: Callable[[], bool] = lambda: False,
+        authority_guard: Callable[[], bool] = lambda: True,
         phase_hook: Callable[[str], None] | None = None,
     ) -> PersonaActorPackCreationResult:
         """Create/update one pack-ready Persona with compensating rollback."""
@@ -99,6 +100,7 @@ class PersonaActorPackCoordinator:
             else:
                 old_registry_uuid = None
             self._raise_if_cancelled(cancel_requested)
+            self._require_authority(authority_guard)
             intent = self.repository.prepare_persona_intent(
                 persona_id=plan.persona_id,
                 operation=operation,
@@ -121,14 +123,17 @@ class PersonaActorPackCoordinator:
         try:
             self._phase(phase_hook, "prepared")
             self._raise_if_cancelled(cancel_requested)
+            self._require_authority(authority_guard)
             self.local_service._actor_pack_apply_persona_plan(plan)
             applied = True
             self._phase(phase_hook, "profile_replaced")
             self._raise_if_cancelled(cancel_requested)
+            self._require_authority(authority_guard)
             identity, _ = self.repository.commit_persona_intent(
                 intent.intent_id,
                 authority_guard=lambda: (
-                    self.local_service._actor_pack_store_state(
+                    self._authority_is_current(authority_guard)
+                    and self.local_service._actor_pack_store_state(
                         old_store_sha256=intent.old_store_sha256,
                         new_store_sha256=intent.new_store_sha256,
                     )
@@ -249,6 +254,22 @@ class PersonaActorPackCoordinator:
     def _raise_if_cancelled(cancel_requested: Callable[[], bool]) -> None:
         if cancel_requested():
             raise PersonaActorPackCoordinatorError("actor_pack_creation_cancelled")
+
+    @staticmethod
+    def _authority_is_current(authority_guard: Callable[[], bool]) -> bool:
+        try:
+            return authority_guard() is True
+        except BaseException as exc:
+            if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                raise
+            return False
+
+    @classmethod
+    def _require_authority(cls, authority_guard: Callable[[], bool]) -> None:
+        if not cls._authority_is_current(authority_guard):
+            raise PersonaActorPackCoordinatorError(
+                "actor_pack_creation_authority_changed"
+            )
 
     def _compensate_failed_creation(
         self, intent: PersonaActorPackIntent, *, applied: bool

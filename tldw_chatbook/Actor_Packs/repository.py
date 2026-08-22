@@ -148,6 +148,11 @@ class ActorPackRepository:
         except (TypeError, ValueError, UnicodeError, OverflowError):
             raise ActorPackRepositoryError("actor_pack_identity_invalid") from None
 
+    def _new_portable_uuid(self) -> str:
+        """Return one validated UUID for a package-owned coordinated write."""
+
+        return _generated_uuid(self._uuid_factory)
+
     def prepare_persona_intent(
         self,
         *,
