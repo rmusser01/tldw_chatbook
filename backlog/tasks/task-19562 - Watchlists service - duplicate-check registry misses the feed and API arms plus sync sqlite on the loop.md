@@ -63,7 +63,7 @@ away".
       once
 - [x] An overlapping check produces exactly one alert notification and one set
       of statistics — pinned by a test that actually overlaps the two triggers
-- [ ] The 22 `async def` methods no longer execute synchronous sqlite on the
+- [x] The 22 `async def` methods no longer execute synchronous sqlite on the
       event loop
 - [ ] The `busy_timeout` question is **measured, not assumed**: either a writer
       collision is shown to stall the loop and a timeout is set, or the concern
@@ -154,11 +154,25 @@ relying on nobody ever nesting -- and is red-proofed: against the unfixed
 context manager, the nested write survives a deliberate failure in the outer
 scope.
 
+**B also shipped (2026-08-21).** All 22 async methods now route their sqlite
+through the existing `db_offload.run_db_off_loop` helper rather than a new
+mechanism. The four `transaction()` sites were handled differently on purpose:
+that helper's contract forbids holding a transaction open across the thread
+boundary, so each block was extracted whole into an offloaded function rather
+than offloading statements inside an open transaction.
+
+Count note: an AST sweep for `db.<method>()` / `self._db().<method>()` found
+19 methods; three more (`get_alert_rule`, `list_runs`, `list_alert_rules`)
+reach the database through a bare `db.conn.cursor()` and were invisible to
+that pattern. Adding them gives 22 -- matching this task's original figure,
+which the narrower scan would have under-reported. Verified after the change:
+**zero** inline db calls remain in any `async def` in the file.
+
+Red-proofed: reverting `cancel_run`'s offload fails its test with
+`cancel_run's transaction opened on the event-loop thread`. `Tests/
+Subscriptions/` 781 passed (from a 759 baseline, +22 new tests).
+
 **Still open:**
 
-* **B** -- the 22 `async def` methods doing synchronous sqlite on the loop.
-  See this task's own busy_timeout measurement above: the 5s stall exposure is
-  writer-vs-writer only (WAL), but every one of the 22 still blocks the loop
-  for its own query duration.
 * **C residue** -- the leaked thread-local connection that is never closed and
   never checkpoints the `-wal`. Untouched here.
