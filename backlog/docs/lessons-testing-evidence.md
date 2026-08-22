@@ -6025,3 +6025,84 @@ credential file was not dirty in that scenario, so the inverted scope had
 nothing to leak. Reading the base-run PASS list rather than only the FAILED list
 is what caught it. A born-red test that passes at base is a defect in the test
 until you have explained why.
+
+---
+
+## A guard that cannot report is not a gate — check where it runs, not just that it runs
+
+**TASK-19572, 2026-08-21.** The repo carried three real derived-artifact
+guards and a nightly full-suite cron, and none of them had produced a verdict
+in weeks. Two separate mechanisms, both invisible from the workflow file:
+
+1. **A cron on a non-default branch never fires.** `.github/workflows/test.yml`
+   on `dev` declares `schedule: cron '30 8 * * *'` with a `nightly-deep` job.
+   `gh run list --workflow=test.yml --event=schedule` returns **`[]`** for the
+   entire retained history. GitHub schedules cron only from the *default*
+   branch's copy of the workflow, and this repo's default branch is `main` —
+   last updated 2026-07-11, **10,933 commits behind `dev`**, with no
+   `schedule:` block in its `test.yml` at all. The nightly the repo believed it
+   had has never run once.
+
+2. **Completion is governed by queue time, not job time.** `css-bundle-guard`
+   is one stdlib script with no install. Its `pull_request` runs over the last
+   100: **61 cancelled, 19 success**, and the successes are bimodal — ten
+   finished in 16–398 s, nine took **1.9–5.6 hours**. The job did not get
+   slower; it waited for a runner. The `Tests` workflow fans out ~20 jobs
+   (2 core legs + 12 UI shards + 3 lease legs + …) on every push and PR, at
+   23–50 merges/day, and starves everything else — including itself.
+
+**What to do.** Before claiming a guard covers something, ask where its verdict
+lands. Check `gh run list --workflow=<f> --event=<e>` for the event you think
+fires it, and read the *default branch's* copy of the file when the trigger is
+`schedule`. When you measure a workflow, measure `createdAt → updatedAt` (wall,
+including queue), not the job's own duration — cheap jobs on a saturated pool
+are not fast verdicts. And if a check is meant to be **required** under branch
+protection, it must not be path-filtered: a skipped run reports nothing, so
+GitHub parks the PR on "Expected — waiting for status to be reported" forever.
+That is why `derived-artifacts.yml` runs unconditionally while
+`css-bundle-guard.yml` beside it does not.
+
+---
+
+## A content digest over raw source text fires on re-indentation — and `git diff` is the wrong tool to investigate it
+
+**TASK-19572 pre-merge review, 2026-08-22.** The production diagnostic
+inventory keys each logger call on a SHA of its own source segment, precisely so
+that *moving* a call is not a review event (task-3750). But
+`ast.get_source_segment` keeps the continuation lines' absolute indentation, so
+a call that merely shifts nesting level — because someone wrapped the
+surrounding block in a new `if` or `try` — produces a different digest with
+identical text.
+
+The incident: `Chat/console_fleet_wake.py` showed as `11/9df8f371… ->
+11/44b53292…`, and the checker's report labelled it *"reworded / re-levelled /
+new args"*. All three were wrong. Dev had landed a 328-line change (248
+insertions) that re-indented exactly two `logger` calls; **not one diagnostic
+statement had changed**. Whitespace-normalizing both sides proved it in one
+line.
+
+**Two things generalise.**
+
+1. **A digest taken over raw source text is not a content digest.** If you build
+   one, normalize what you do not want to review — or make the reporting layer
+   pair off layout-only changes explicitly. Otherwise the artifact's own stated
+   contract ("movement is not a review event") is false, and every false alarm
+   teaches the reviewer to regenerate without reading, which is the one failure
+   the artifact exists to prevent.
+
+2. **Never investigate an AST-keyed artifact with a line diff.** The report's
+   original trailer said `git diff $base -- <path>`; following it buried two
+   re-indented calls inside an unrelated refactor. Recover the statements by
+   running the *checker's own scanner* over both revisions' git blobs and
+   diffing the resulting `(method, digest)` multisets — the same keys the pin
+   moves. That turns a 328-line read into
+   `moved/re-indented only: 2   removed: 0   added: 0`. The checker now ships
+   this as `--statements <path> --since <rev>`; use it, and check multiset
+   counts, not set membership, or a deleted duplicate of an identical call is
+   invisible.
+
+Corollary on scope: when a rebase resolves the pin conflict by taking the other
+side wholesale, **verify the taken pin reproduces from its own tree before
+concluding anything** — and separately review the delta between it and the pin
+you last reviewed. Those are two different questions, and the first being green
+does not answer the second.
