@@ -6149,3 +6149,133 @@ being wired up." A negative-path test (`transport_must_not_run`,
 "assert this was never called") is the most dangerous case: it can go on
 reporting green forever while checking nothing, because a disconnected mock
 and a correctly-guarded code path are indistinguishable from the outside.
+
+---
+
+## A retained child can still lose typing when its parent recomposes it (TASK-19003, 2026-08-20)
+
+The reviewed Notes import canvas learned to patch its destination `Input` in
+place, and its bare-widget typing test passed. The production Library pilot
+still turned a burst of `i`, `n`, `b`, `o`, `x` into only `x`: the retained
+parent `LibraryNotesCanvas` recomposed the entire import child after the first
+`Input.Changed`, so the remaining key events targeted a detached widget.
+
+For live inputs, a child-level identity assertion is not enough. Drive a burst
+through the production wrapper and handler, then assert both the complete value
+and the exact `Input` identity. Every retained ancestor that synchronizes the
+field must preserve the same-mode child; one recomposing ancestor defeats all
+in-place work below it.
+
+## `exclusive=True` does not cancel work already handed to `to_thread` (TASK-19003, 2026-08-20)
+
+The first import handler scheduled an exclusive Textual worker. A repeated
+activation could cancel that worker's await while the executor already running
+in `asyncio.to_thread` continued mutating Notes. The controller then cleared its
+cancel-event reference and remained in `IMPORTING`, so the UI had lost the task
+that still owned mutation authority.
+
+Tests for off-thread mutation must gate the executor after admission, activate
+the command twice, and prove exactly one executor call reaches settlement.
+Claim authority synchronously before scheduling, reject duplicates instead of
+using cancellation as admission control, and shield/join admitted thread work
+when an outer UI task is cancelled. Cancelling the awaitable is not evidence the
+thread stopped.
+
+## `CREATE IF NOT EXISTS` can adopt foreign schema objects (TASK-19004, 2026-08-21)
+
+The first lasting-sync migration validated its required tables after running
+`CREATE TABLE IF NOT EXISTS`. A nonempty v0 database was therefore silently
+adopted, and a pinned v1 database could carry an unrelated trigger into v2.
+Both cases passed shape checks while preserving behavior the private owner had
+never authorized.
+
+Before migrating or reopening an owner-exclusive SQLite database, census all
+user tables, indexes, and triggers. Reject unexpected objects before any DDL;
+allow only explicitly repairable omissions and SQLite-owned internals. Tests
+must assert the rejected database is unchanged. Post-migration shape checks
+alone cannot prove provenance, because idempotent DDL preserves whatever was
+already using the requested names.
+
+## Native rename flags and post-commit errors need real platform probes (TASK-19005, 2026-08-21)
+
+The first guarded Notes move used rename flag `1` as “no replace” on every
+POSIX platform. That is correct for Linux `renameat2`, but on Darwin flag `1`
+means `RENAME_SECLUDE`; an actual macOS probe replaced the destination and
+removed the source. Unit tests around a mocked rename seam had made the code
+look safe without testing the host primitive's semantics.
+
+The same review found errors after atomic exchange/rename reported as ordinary
+refusals. Callers could retry even though new bytes were already installed or a
+source had already moved, and cleanup paths could delete the displaced bytes.
+
+For native mutation primitives, test the real supported platform constants and
+collision behavior, not only wrapper calls. Mark the exact linearization point
+in code: failures before it are bounded refusals; every unverified outcome after
+it is a distinct partial state, with displaced authority preserved until the
+commit is durably verified. A successful syscall is not proof that the whole
+method may still report an ordinary failure.
+
+## A lock pathname is not the locked inode, and release has a commit point (TASK-19006, 2026-08-21)
+
+The first lasting-sync coordinator correctly held an OS lock, but it trusted the
+fixed lock pathname afterward. Replacing that regular file or its private
+directory let a second process lock a new inode while the first admission still
+reported write authority. A separate interleaving let `close_admission()` return
+while another thread had removed the handle from shared state but had not yet
+called OS unlock.
+
+For path-addressed advisory locks, persist and revalidate the opened handle,
+path, parent directory, protected resource, modes, owner, and link identities;
+pathname equality alone does not preserve authority. Model release explicitly
+as running, committed, or failed. Clearing a shared handle is not release
+completion, and every concurrent close/release caller must wait for the same OS
+unlock/close outcome before reporting that ownership ended.
+
+## Canonical spelling is not filesystem identity on case-insensitive roots (TASK-19008, 2026-08-21)
+
+The legacy Notes migrator resolved candidate and private paths before comparing
+them. On the actual APFS volume, a case-variant spelling of the application data
+directory resolved successfully and referred to the same inode, but the
+sensitive-path string comparison returned no conflict. The private directory was
+then accepted as a paused sync candidate.
+
+When path ownership is a security boundary, test real aliases on the supported
+filesystem and compare existing objects with filesystem identity (`samefile` or
+verified device/inode), including ancestor relationships. Resolution removes
+`..` and symlink spellings; it does not guarantee case, mount, or lexical aliases
+have one string representation. Identity-comparison failures must also reject,
+not fall back to a spelling-based allow decision.
+
+## Reopening the database is not restart evidence if the request survives (TASK-19007, 2026-08-21)
+
+The first durable sync executor tests reopened the private SQLite store after
+each injected journal-stage failure, but then resumed with the original
+in-memory execution request. Those tests passed while fresh reconstruction
+still trusted corrupted recovery bytes, accepted a same-content file on a new
+inode, and dropped a persisted direction override. A real process restart would
+have rebuilt all three authorities from private recovery and current Notes/file
+observations, so the reused request hid exactly the unsafe boundary under test.
+
+For resumable work, a restart test must discard the controller, executor,
+request, snapshots, and service fakes that carry reviewed authority. Construct
+a fresh store and executor, enumerate incomplete operations, reconstruct only
+from durable intent plus fresh authority observations, and then exercise every
+advertised Resume, Restore, and Disconnect path. Reopening SQLite alone proves
+storage durability; it does not prove process-durable reconstruction.
+
+## A green lifecycle matrix can still miss the transitions between its states (TASK-19009, 2026-08-21)
+
+The first gated lasting-sync runtime passed its inert, active, recovery, watcher,
+and shutdown tests independently. Adversarial overlap probes still found that a
+hint arriving during reconciliation was lost, a dead watcher continued admitting
+automatic work, shutdown could race startup and reopen admission, and persisted
+Failed/Partial status could be ignored or suppress the operation ID of an
+incomplete journal. Each state looked correct in isolation; the broken behavior
+lived in the handoff between two correct-looking states.
+
+For an application-owned durable runtime, test transitions as overlapping event
+pairs: hint-during-reconcile, shutdown-during-start, watcher-death-then-hint,
+status-plus-incomplete-journal on reopen, and explicit-check-while-recovery-is
+unresolved. Assert both authorities after each interleaving: the in-memory
+admission/next action and the durable journal/status. A state matrix is necessary,
+but it is not concurrency or restart evidence until the edges are executed.

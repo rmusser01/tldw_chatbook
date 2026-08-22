@@ -1,0 +1,1712 @@
+"""Single connection, migration, and transaction owner for Notes device state."""
+
+from __future__ import annotations
+
+import asyncio
+import sqlite3
+import time
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
+from dataclasses import dataclass
+from pathlib import Path
+from types import MappingProxyType
+from weakref import WeakValueDictionary
+
+from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+from tldw_chatbook.Notes import notes_device_state_schema
+from tldw_chatbook.Notes.notes_sync_models import (
+    NotesSyncBindingState,
+    NotesSyncDirection,
+    NotesSyncOperationState,
+    NotesSyncRecoveryAdmission,
+    NotesSyncRootState,
+    NotesSyncSerializationProfile,
+    normalize_notes_sync_relative_path,
+    validate_notes_sync_digest,
+    validate_notes_sync_opaque_id,
+    validate_notes_sync_reason_code,
+)
+
+
+_ROOT_TRANSITIONS: Mapping[NotesSyncRootState, frozenset[NotesSyncRootState]] = (
+    MappingProxyType(
+        {
+            NotesSyncRootState.PENDING: frozenset(
+                {
+                    NotesSyncRootState.ACTIVE,
+                    NotesSyncRootState.PAUSED,
+                    NotesSyncRootState.DISCONNECTED,
+                }
+            ),
+            NotesSyncRootState.ACTIVE: frozenset(
+                {NotesSyncRootState.PAUSED, NotesSyncRootState.DISCONNECTED}
+            ),
+            NotesSyncRootState.PAUSED: frozenset(
+                {NotesSyncRootState.ACTIVE, NotesSyncRootState.DISCONNECTED}
+            ),
+            NotesSyncRootState.DISCONNECTED: frozenset(),
+        }
+    )
+)
+_BINDING_TRANSITIONS: Mapping[
+    NotesSyncBindingState, frozenset[NotesSyncBindingState]
+] = MappingProxyType(
+    {
+        NotesSyncBindingState.CANDIDATE: frozenset(
+            {NotesSyncBindingState.ACTIVE, NotesSyncBindingState.DISCONNECTED}
+        ),
+        NotesSyncBindingState.ACTIVE: frozenset(
+            {
+                NotesSyncBindingState.PAUSED,
+                NotesSyncBindingState.NEEDS_ATTENTION,
+                NotesSyncBindingState.DISCONNECTED,
+            }
+        ),
+        NotesSyncBindingState.PAUSED: frozenset(
+            {
+                NotesSyncBindingState.ACTIVE,
+                NotesSyncBindingState.NEEDS_ATTENTION,
+                NotesSyncBindingState.DISCONNECTED,
+            }
+        ),
+        NotesSyncBindingState.NEEDS_ATTENTION: frozenset(
+            {
+                NotesSyncBindingState.ACTIVE,
+                NotesSyncBindingState.PAUSED,
+                NotesSyncBindingState.DISCONNECTED,
+            }
+        ),
+        NotesSyncBindingState.DISCONNECTED: frozenset(),
+    }
+)
+_OPERATION_TRANSITIONS: Mapping[
+    NotesSyncOperationState, frozenset[NotesSyncOperationState]
+] = MappingProxyType(
+    {
+        NotesSyncOperationState.PENDING: frozenset(
+            {
+                NotesSyncOperationState.RECOVERY_ADMITTED,
+                NotesSyncOperationState.NEEDS_ATTENTION,
+            }
+        ),
+        NotesSyncOperationState.RECOVERY_ADMITTED: frozenset(
+            {
+                NotesSyncOperationState.FIRST_AUTHORITY_APPLIED,
+                NotesSyncOperationState.NEEDS_ATTENTION,
+            }
+        ),
+        NotesSyncOperationState.FIRST_AUTHORITY_APPLIED: frozenset(
+            {
+                NotesSyncOperationState.SECOND_AUTHORITY_APPLIED,
+                NotesSyncOperationState.NEEDS_ATTENTION,
+            }
+        ),
+        NotesSyncOperationState.SECOND_AUTHORITY_APPLIED: frozenset(
+            {
+                NotesSyncOperationState.BINDING_UPDATED,
+                NotesSyncOperationState.NEEDS_ATTENTION,
+            }
+        ),
+        NotesSyncOperationState.BINDING_UPDATED: frozenset(
+            {
+                NotesSyncOperationState.VERIFIED,
+                NotesSyncOperationState.NEEDS_ATTENTION,
+            }
+        ),
+        NotesSyncOperationState.VERIFIED: frozenset(
+            {
+                NotesSyncOperationState.COMPLETED,
+                NotesSyncOperationState.NEEDS_ATTENTION,
+            }
+        ),
+        NotesSyncOperationState.NEEDS_ATTENTION: frozenset(
+            {NotesSyncOperationState.RECOVERY_ADMITTED}
+        ),
+        NotesSyncOperationState.COMPLETED: frozenset(),
+    }
+)
+_SETTING_KEYS = frozenset({"cutover_marker", "recovery_capacity"})
+
+
+def _now() -> int:
+    return max(1, time.time_ns())
+
+
+def _validate_optional_opaque_id(value: object, *, field_name: str) -> str | None:
+    if value is None:
+        return None
+    return validate_notes_sync_opaque_id(value, field_name=field_name)
+
+
+def _validate_optional_bounded_private_text(
+    value: object,
+    *,
+    field_name: str,
+    maximum: int,
+) -> str | None:
+    if value is None:
+        return None
+    if type(value) is not str or not value or len(value) > maximum or "\x00" in value:
+        raise ValueError(f"{field_name} must be a bounded private string.")
+    return value
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class NotesSyncRootRecord:
+    """Private durable configuration for one lasting root."""
+
+    root_id: str
+    note_scope_id: str
+    logical_folder_id: str | None
+    canonical_path: str
+    direction: NotesSyncDirection
+    state: NotesSyncRootState
+    remote_origin_id: str | None = None
+    cursor: str | None = None
+    last_status_code: str | None = None
+
+    def __post_init__(self) -> None:
+        validate_notes_sync_opaque_id(self.root_id, field_name="root_id")
+        validate_notes_sync_opaque_id(self.note_scope_id, field_name="note_scope_id")
+        _validate_optional_opaque_id(
+            self.logical_folder_id,
+            field_name="logical_folder_id",
+        )
+        _validate_optional_opaque_id(
+            self.remote_origin_id, field_name="remote_origin_id"
+        )
+        if (
+            type(self.canonical_path) is not str
+            or not self.canonical_path
+            or len(self.canonical_path) > 4096
+            or "\x00" in self.canonical_path
+        ):
+            raise ValueError("canonical_path must be a bounded non-empty private path.")
+        if type(self.direction) is not NotesSyncDirection:
+            raise TypeError("direction must be a NotesSyncDirection.")
+        if type(self.state) is not NotesSyncRootState:
+            raise TypeError("state must be a NotesSyncRootState.")
+        _validate_optional_bounded_private_text(
+            self.cursor,
+            field_name="cursor",
+            maximum=4096,
+        )
+        validate_notes_sync_reason_code(self.last_status_code)
+
+    def __repr__(self) -> str:
+        return f"NotesSyncRootRecord(root_id={self.root_id!r}, state={self.state!r})"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class NotesSyncBindingRecord:
+    """Private durable ownership binding between one path and Database Note."""
+
+    binding_id: str
+    root_id: str
+    note_scope_id: str
+    note_id: str
+    normalized_relative_path: str
+    stable_identity_digest: str
+    state: NotesSyncBindingState
+    serialization: NotesSyncSerializationProfile
+    content_digest: str
+    note_version: int
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("binding_id", self.binding_id),
+            ("root_id", self.root_id),
+            ("note_scope_id", self.note_scope_id),
+            ("note_id", self.note_id),
+        ):
+            validate_notes_sync_opaque_id(value, field_name=name)
+        object.__setattr__(
+            self,
+            "normalized_relative_path",
+            normalize_notes_sync_relative_path(self.normalized_relative_path),
+        )
+        validate_notes_sync_digest(
+            self.stable_identity_digest,
+            field_name="stable_identity_digest",
+        )
+        validate_notes_sync_digest(self.content_digest, field_name="content_digest")
+        if type(self.state) is not NotesSyncBindingState:
+            raise TypeError("state must be a NotesSyncBindingState.")
+        if type(self.serialization) is not NotesSyncSerializationProfile:
+            raise TypeError("serialization must be a NotesSyncSerializationProfile.")
+        if type(self.note_version) is not int or self.note_version < 0:
+            raise ValueError("note_version must be non-negative.")
+
+    def __repr__(self) -> str:
+        return (
+            f"NotesSyncBindingRecord(binding_id={self.binding_id!r}, "
+            f"state={self.state!r})"
+        )
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class NotesSyncOperationRecord:
+    """Privacy-safe durable journal metadata; payload bytes live in recovery."""
+
+    operation_id: str
+    root_id: str
+    binding_id: str | None
+    kind: str
+    state: NotesSyncOperationState
+    reason_code: str | None
+    observation_token: str
+    expected_note_version: int | None
+    expected_file_digest: str | None
+
+    def __post_init__(self) -> None:
+        validate_notes_sync_opaque_id(self.operation_id, field_name="operation_id")
+        validate_notes_sync_opaque_id(self.root_id, field_name="root_id")
+        _validate_optional_opaque_id(self.binding_id, field_name="binding_id")
+        validate_notes_sync_reason_code(self.kind)
+        if type(self.state) is not NotesSyncOperationState:
+            raise TypeError("state must be a NotesSyncOperationState.")
+        validate_notes_sync_reason_code(self.reason_code)
+        validate_notes_sync_opaque_id(
+            self.observation_token,
+            field_name="observation_token",
+        )
+        if self.expected_note_version is not None and (
+            type(self.expected_note_version) is not int
+            or self.expected_note_version < 0
+        ):
+            raise ValueError("expected_note_version must be non-negative.")
+        if self.expected_file_digest is not None:
+            validate_notes_sync_digest(
+                self.expected_file_digest,
+                field_name="expected_file_digest",
+            )
+
+    def __repr__(self) -> str:
+        return (
+            f"NotesSyncOperationRecord(operation_id={self.operation_id!r}, "
+            f"state={self.state!r})"
+        )
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class NotesSyncRecoveryRecord:
+    """Private recovery material retained by one journal operation."""
+
+    recovery_id: str
+    operation_id: str
+    payload: bytes
+    metadata: bytes
+    expires_at: int
+
+    def __post_init__(self) -> None:
+        validate_notes_sync_opaque_id(self.recovery_id, field_name="recovery_id")
+        validate_notes_sync_opaque_id(self.operation_id, field_name="operation_id")
+        if type(self.payload) is not bytes or type(self.metadata) is not bytes:
+            raise TypeError("recovery payload and metadata must be bytes.")
+        if type(self.expires_at) is not int or self.expires_at <= 0:
+            raise ValueError("expires_at must be positive.")
+
+    def __repr__(self) -> str:
+        return f"NotesSyncRecoveryRecord(recovery_id={self.recovery_id!r})"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class NotesSyncLegacyMigrationRecord:
+    """Bounded record for one later legacy-migration review."""
+
+    migration_id: str
+    source_fingerprint: str
+    state: str
+    reason_code: str | None
+
+    def __post_init__(self) -> None:
+        validate_notes_sync_opaque_id(self.migration_id, field_name="migration_id")
+        validate_notes_sync_digest(
+            self.source_fingerprint,
+            field_name="source_fingerprint",
+        )
+        if self.state not in {"pending_review", "reviewed", "rejected"}:
+            raise ValueError("state must be a supported legacy migration state.")
+        validate_notes_sync_reason_code(self.reason_code)
+
+    def __repr__(self) -> str:
+        return (
+            f"NotesSyncLegacyMigrationRecord(migration_id={self.migration_id!r}, "
+            f"state={self.state!r})"
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class NotesSyncStoreSetting:
+    """One allowlisted, bounded store setting."""
+
+    key: str
+    value: str
+
+    def __post_init__(self) -> None:
+        if self.key not in _SETTING_KEYS:
+            raise ValueError("setting key is not supported.")
+        if type(self.value) is not str or not self.value or len(self.value) > 256:
+            raise ValueError("setting value must be between 1 and 256 characters.")
+        if self.key == "recovery_capacity":
+            if (
+                not self.value.isascii()
+                or not self.value.isdecimal()
+                or self.value.startswith("0")
+                or len(self.value) > 19
+                or int(self.value) > 2**63 - 1
+            ):
+                raise ValueError(
+                    "recovery_capacity setting must be a canonical positive decimal."
+                )
+        elif self.key == "cutover_marker":
+            try:
+                validate_notes_sync_opaque_id(
+                    self.value,
+                    field_name="cutover_marker setting",
+                )
+            except ValueError:
+                raise ValueError(
+                    "cutover_marker setting must be a bounded machine token."
+                ) from None
+
+
+@dataclass(frozen=True, slots=True)
+class NotesSyncRootSummary:
+    """Path-free public projection of one root."""
+
+    root_id: str
+    direction: NotesSyncDirection
+    state: NotesSyncRootState
+    last_status_code: str | None
+
+    def __post_init__(self) -> None:
+        validate_notes_sync_opaque_id(self.root_id, field_name="root_id")
+        if type(self.direction) is not NotesSyncDirection:
+            raise TypeError("direction must be a NotesSyncDirection.")
+        if type(self.state) is not NotesSyncRootState:
+            raise TypeError("state must be a NotesSyncRootState.")
+        validate_notes_sync_reason_code(self.last_status_code)
+
+
+@dataclass(frozen=True, slots=True)
+class NotesSyncBindingSummary:
+    """Path- and hash-free public projection of one binding."""
+
+    binding_id: str
+    root_id: str
+    note_scope_id: str
+    note_id: str
+    state: NotesSyncBindingState
+    note_version: int
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("binding_id", self.binding_id),
+            ("root_id", self.root_id),
+            ("note_scope_id", self.note_scope_id),
+            ("note_id", self.note_id),
+        ):
+            validate_notes_sync_opaque_id(value, field_name=name)
+        if type(self.state) is not NotesSyncBindingState:
+            raise TypeError("state must be a NotesSyncBindingState.")
+        if type(self.note_version) is not int or self.note_version < 0:
+            raise ValueError("note_version must be non-negative.")
+
+
+class NotesDeviceStateError(RuntimeError):
+    """A device-state operation failed without disclosing private values."""
+
+
+class NotesDeviceStateStore:
+    """Own the sole private connection and transaction seam for notes.sync_state."""
+
+    def __init__(self, database_path: str | Path) -> None:
+        self._database_path = Path(database_path)
+        self._operation_locks: WeakValueDictionary[str, asyncio.Lock] = (
+            WeakValueDictionary()
+        )
+
+    def __repr__(self) -> str:
+        return "NotesDeviceStateStore(<private>)"
+
+    def operation_lock(self, operation_id: str) -> asyncio.Lock:
+        """Return the process-local lock shared by executors using this store."""
+
+        validate_notes_sync_opaque_id(operation_id, field_name="operation_id")
+        lock = self._operation_locks.get(operation_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._operation_locks[operation_id] = lock
+        return lock
+
+    def _connect(
+        self,
+        *,
+        read_only: bool = False,
+        must_exist: bool = False,
+    ) -> sqlite3.Connection:
+        connection = connect_private_sqlite(
+            "notes.sync_state",
+            self._database_path,
+            read_only=read_only,
+            must_exist=must_exist,
+        )
+        connection.execute("PRAGMA foreign_keys = ON")
+        return connection
+
+    @contextmanager
+    def transaction(self, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:
+        """Yield one writable connection inside a schema-ready transaction."""
+
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
+            notes_device_state_schema.initialize_notes_device_schema(connection)
+            yield connection
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    def initialize(self) -> None:
+        """Atomically initialize or migrate this isolated private owner."""
+
+        try:
+            with self.transaction(immediate=True):
+                pass
+        except notes_device_state_schema.NotesDeviceSchemaError as error:
+            message = str(error)
+            if message.startswith("Unsupported"):
+                raise NotesDeviceStateError(message) from None
+            if "incompatible" in message:
+                raise NotesDeviceStateError(message) from None
+            raise NotesDeviceStateError(
+                "The private Notes device schema could not be initialized safely."
+            ) from None
+        except Exception:
+            raise NotesDeviceStateError(
+                "The private Notes device schema could not be initialized safely."
+            ) from None
+
+    def create_root(self, record: NotesSyncRootRecord) -> NotesSyncRootRecord:
+        if type(record) is not NotesSyncRootRecord:
+            raise TypeError("record must be a NotesSyncRootRecord.")
+        timestamp = _now()
+        with self.transaction(immediate=True) as connection:
+            connection.execute(
+                """
+                INSERT INTO notes_sync_roots (
+                    root_id, note_scope_id, logical_folder_id, canonical_path,
+                    remote_origin_id, direction, state, cursor, last_status_code,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.root_id,
+                    record.note_scope_id,
+                    record.logical_folder_id,
+                    record.canonical_path,
+                    record.remote_origin_id,
+                    record.direction.value,
+                    record.state.value,
+                    record.cursor,
+                    record.last_status_code,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+        return record
+
+    def get_root(self, root_id: str) -> NotesSyncRootRecord:
+        validate_notes_sync_opaque_id(root_id, field_name="root_id")
+        with self.transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT root_id, note_scope_id, logical_folder_id, canonical_path,
+                       direction, state, remote_origin_id, cursor, last_status_code
+                FROM notes_sync_roots WHERE root_id = ?
+                """,
+                (root_id,),
+            ).fetchone()
+        if row is None:
+            raise NotesDeviceStateError("The requested sync root does not exist.")
+        return NotesSyncRootRecord(
+            root_id=row[0],
+            note_scope_id=row[1],
+            logical_folder_id=row[2],
+            canonical_path=row[3],
+            direction=NotesSyncDirection(row[4]),
+            state=NotesSyncRootState(row[5]),
+            remote_origin_id=row[6],
+            cursor=row[7],
+            last_status_code=row[8],
+        )
+
+    def assign_root_folder(self, root_id: str, logical_folder_id: str) -> None:
+        validate_notes_sync_opaque_id(root_id, field_name="root_id")
+        validate_notes_sync_opaque_id(
+            logical_folder_id,
+            field_name="logical_folder_id",
+        )
+        with self.transaction(immediate=True) as connection:
+            changed = connection.execute(
+                """
+                UPDATE notes_sync_roots
+                SET logical_folder_id = ?, updated_at = ?
+                WHERE root_id = ? AND state != 'disconnected'
+                """,
+                (logical_folder_id, _now(), root_id),
+            ).rowcount
+        if changed != 1:
+            raise NotesDeviceStateError("The sync root cannot accept a folder owner.")
+
+    def record_root_activation_recovery(
+        self, root_id: str, logical_folder_id: str
+    ) -> NotesSyncRootRecord:
+        """Durably retain an orphan-risk folder under a revisitable root."""
+
+        validate_notes_sync_opaque_id(root_id, field_name="root_id")
+        validate_notes_sync_opaque_id(logical_folder_id, field_name="logical_folder_id")
+        with self.transaction(immediate=True) as connection:
+            root = connection.execute(
+                """
+                SELECT root_id, note_scope_id, canonical_path, direction,
+                       remote_origin_id, cursor
+                FROM notes_sync_roots
+                WHERE root_id = ? AND state IN ('pending', 'paused')
+                """,
+                (root_id,),
+            ).fetchone()
+            if root is None:
+                raise NotesDeviceStateError(
+                    "The activation recovery owner could not be retained."
+                )
+            changed = connection.execute(
+                """
+                UPDATE notes_sync_roots
+                SET logical_folder_id = ?, state = 'paused',
+                    last_status_code = 'activation_recovery_required', updated_at = ?
+                WHERE root_id = ? AND state IN ('pending', 'paused')
+                """,
+                (logical_folder_id, _now(), root_id),
+            ).rowcount
+        if changed != 1:
+            raise NotesDeviceStateError(
+                "The activation recovery owner could not be retained."
+            )
+        return NotesSyncRootRecord(
+            root_id=root[0],
+            note_scope_id=root[1],
+            logical_folder_id=logical_folder_id,
+            canonical_path=root[2],
+            direction=NotesSyncDirection(root[3]),
+            state=NotesSyncRootState.PAUSED,
+            remote_origin_id=root[4],
+            cursor=root[5],
+            last_status_code="activation_recovery_required",
+        )
+
+    def activate_migration_candidate(
+        self,
+        root_id: str,
+        logical_folder_id: str,
+        binding_ids: tuple[str, ...],
+    ) -> NotesSyncRootRecord:
+        """Atomically admit one reviewed migrated root and its exact candidates."""
+
+        validate_notes_sync_opaque_id(root_id, field_name="root_id")
+        validate_notes_sync_opaque_id(logical_folder_id, field_name="logical_folder_id")
+        if type(binding_ids) is not tuple:
+            raise TypeError("binding_ids must be a tuple.")
+        for binding_id in binding_ids:
+            validate_notes_sync_opaque_id(binding_id, field_name="binding_id")
+        if len(set(binding_ids)) != len(binding_ids):
+            raise ValueError("binding_ids must be unique.")
+        with self.transaction(immediate=True) as connection:
+            root = connection.execute(
+                """
+                SELECT root_id, note_scope_id, logical_folder_id, canonical_path,
+                       direction, state, remote_origin_id, cursor, last_status_code
+                FROM notes_sync_roots WHERE root_id = ?
+                """,
+                (root_id,),
+            ).fetchone()
+            if (
+                root is None
+                or root[5] != NotesSyncRootState.PAUSED.value
+                or root[8] != "migration_review_required"
+                or root[2] not in (None, logical_folder_id)
+            ):
+                raise NotesDeviceStateError(
+                    "The migrated sync root is not awaiting activation review."
+                )
+            current = tuple(
+                row[0]
+                for row in connection.execute(
+                    """
+                    SELECT binding_id FROM notes_sync_bindings
+                    WHERE root_id = ? AND state = 'candidate'
+                    ORDER BY binding_id
+                    """,
+                    (root_id,),
+                ).fetchall()
+            )
+            total = connection.execute(
+                "SELECT COUNT(*) FROM notes_sync_bindings WHERE root_id = ?",
+                (root_id,),
+            ).fetchone()[0]
+            if current != tuple(sorted(binding_ids)) or total != len(binding_ids):
+                raise NotesDeviceStateError(
+                    "The reviewed migration candidate set is stale."
+                )
+            timestamp = _now()
+            connection.execute(
+                """
+                UPDATE notes_sync_roots
+                SET logical_folder_id = ?, state = 'active',
+                    last_status_code = 'activating', updated_at = ?
+                WHERE root_id = ? AND state = 'paused'
+                """,
+                (logical_folder_id, timestamp, root_id),
+            )
+            connection.execute(
+                """
+                UPDATE notes_sync_bindings
+                SET state = 'active', updated_at = ?
+                WHERE root_id = ? AND state = 'candidate'
+                """,
+                (timestamp, root_id),
+            )
+            activated = NotesSyncRootRecord(
+                root_id=root[0],
+                note_scope_id=root[1],
+                logical_folder_id=logical_folder_id,
+                canonical_path=root[3],
+                direction=NotesSyncDirection(root[4]),
+                state=NotesSyncRootState.ACTIVE,
+                remote_origin_id=root[6],
+                cursor=root[7],
+                last_status_code="activating",
+            )
+        return activated
+
+    def transition_root(
+        self,
+        root_id: str,
+        state: NotesSyncRootState,
+    ) -> NotesSyncRootRecord:
+        validate_notes_sync_opaque_id(root_id, field_name="root_id")
+        if type(state) is not NotesSyncRootState:
+            raise TypeError("state must be a NotesSyncRootState.")
+        with self.transaction(immediate=True) as connection:
+            row = connection.execute(
+                """
+                SELECT state, logical_folder_id
+                FROM notes_sync_roots WHERE root_id = ?
+                """,
+                (root_id,),
+            ).fetchone()
+            if row is None:
+                raise NotesDeviceStateError("The requested sync root does not exist.")
+            current_state = NotesSyncRootState(row[0])
+            if state not in _ROOT_TRANSITIONS[current_state]:
+                raise NotesDeviceStateError(
+                    "The requested root transition is not allowed."
+                )
+            if state is NotesSyncRootState.ACTIVE and row[1] is None:
+                raise NotesDeviceStateError(
+                    "The requested root transition requires a logical folder owner."
+                )
+            timestamp = _now()
+            if state is NotesSyncRootState.PAUSED:
+                connection.execute(
+                    """
+                    UPDATE notes_sync_bindings
+                    SET state = 'paused', updated_at = ?
+                    WHERE root_id = ? AND state = 'active'
+                    """,
+                    (timestamp, root_id),
+                )
+            elif state is NotesSyncRootState.ACTIVE:
+                connection.execute(
+                    """
+                    UPDATE notes_sync_bindings
+                    SET state = 'active', updated_at = ?
+                    WHERE root_id = ? AND state = 'paused'
+                    """,
+                    (timestamp, root_id),
+                )
+            elif state is NotesSyncRootState.DISCONNECTED:
+                connection.execute(
+                    """
+                    UPDATE notes_sync_bindings
+                    SET state = 'disconnected', updated_at = ?
+                    WHERE root_id = ? AND state != 'disconnected'
+                    """,
+                    (timestamp, root_id),
+                )
+            changed = connection.execute(
+                """
+                UPDATE notes_sync_roots SET state = ?, updated_at = ?
+                WHERE root_id = ? AND state = ?
+                """,
+                (state.value, timestamp, root_id, current_state.value),
+            ).rowcount
+        if changed != 1:
+            raise NotesDeviceStateError("The requested root transition is stale.")
+        return self.get_root(root_id)
+
+    def update_root_status(
+        self,
+        root_id: str,
+        status_code: str,
+    ) -> NotesSyncRootRecord:
+        """Persist one bounded path-free runtime status for a known root."""
+
+        validate_notes_sync_opaque_id(root_id, field_name="root_id")
+        validate_notes_sync_reason_code(status_code)
+        with self.transaction(immediate=True) as connection:
+            changed = connection.execute(
+                """
+                UPDATE notes_sync_roots
+                SET last_status_code = ?, updated_at = ?
+                WHERE root_id = ?
+                """,
+                (status_code, _now(), root_id),
+            ).rowcount
+        if changed != 1:
+            raise NotesDeviceStateError("The requested sync root does not exist.")
+        return self.get_root(root_id)
+
+    def list_root_summaries(self) -> tuple[NotesSyncRootSummary, ...]:
+        with self.transaction() as connection:
+            rows = connection.execute(
+                """
+                SELECT root_id, direction, state, last_status_code
+                FROM notes_sync_roots ORDER BY root_id
+                """
+            ).fetchall()
+        return tuple(
+            NotesSyncRootSummary(
+                root_id=row[0],
+                direction=NotesSyncDirection(row[1]),
+                state=NotesSyncRootState(row[2]),
+                last_status_code=row[3],
+            )
+            for row in rows
+        )
+
+    def create_binding(self, record: NotesSyncBindingRecord) -> NotesSyncBindingRecord:
+        if type(record) is not NotesSyncBindingRecord:
+            raise TypeError("record must be a NotesSyncBindingRecord.")
+        timestamp = _now()
+        with self.transaction(immediate=True) as connection:
+            root = connection.execute(
+                """
+                SELECT note_scope_id, state, logical_folder_id
+                FROM notes_sync_roots WHERE root_id = ?
+                """,
+                (record.root_id,),
+            ).fetchone()
+            if root is None or root[0] != record.note_scope_id:
+                raise NotesDeviceStateError(
+                    "A binding note scope must match its parent root."
+                )
+            if record.state is NotesSyncBindingState.ACTIVE:
+                if root[1] != NotesSyncRootState.ACTIVE.value or root[2] is None:
+                    raise NotesDeviceStateError(
+                        "An active binding requires an active root with a folder owner."
+                    )
+            connection.execute(
+                """
+                INSERT INTO notes_sync_bindings (
+                    binding_id, root_id, note_scope_id, note_id,
+                    normalized_relative_path, stable_identity_digest, state,
+                    utf8_bom, newline, final_newline, file_mode,
+                    content_digest, note_version, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.binding_id,
+                    record.root_id,
+                    record.note_scope_id,
+                    record.note_id,
+                    record.normalized_relative_path,
+                    record.stable_identity_digest,
+                    record.state.value,
+                    int(record.serialization.utf8_bom),
+                    record.serialization.newline,
+                    int(record.serialization.final_newline),
+                    record.serialization.mode,
+                    record.content_digest,
+                    record.note_version,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+        return record
+
+    @staticmethod
+    def _binding_from_row(row: tuple[object, ...]) -> NotesSyncBindingRecord:
+        return NotesSyncBindingRecord(
+            binding_id=str(row[0]),
+            root_id=str(row[1]),
+            note_scope_id=str(row[2]),
+            note_id=str(row[3]),
+            normalized_relative_path=str(row[4]),
+            stable_identity_digest=str(row[5]),
+            state=NotesSyncBindingState(str(row[6])),
+            serialization=NotesSyncSerializationProfile(
+                utf8_bom=bool(row[7]),
+                newline=str(row[8]),
+                final_newline=bool(row[9]),
+                mode=int(row[10]),
+            ),
+            content_digest=str(row[11]),
+            note_version=int(row[12]),
+        )
+
+    def get_binding(self, binding_id: str) -> NotesSyncBindingRecord:
+        validate_notes_sync_opaque_id(binding_id, field_name="binding_id")
+        with self.transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT binding_id, root_id, note_scope_id, note_id,
+                       normalized_relative_path, stable_identity_digest, state,
+                       utf8_bom, newline, final_newline, file_mode,
+                       content_digest, note_version
+                FROM notes_sync_bindings WHERE binding_id = ?
+                """,
+                (binding_id,),
+            ).fetchone()
+        if row is None:
+            raise NotesDeviceStateError("The requested sync binding does not exist.")
+        return self._binding_from_row(row)
+
+    def list_bindings(self, root_id: str) -> tuple[NotesSyncBindingRecord, ...]:
+        validate_notes_sync_opaque_id(root_id, field_name="root_id")
+        with self.transaction() as connection:
+            rows = connection.execute(
+                """
+                SELECT binding_id, root_id, note_scope_id, note_id,
+                       normalized_relative_path, stable_identity_digest, state,
+                       utf8_bom, newline, final_newline, file_mode,
+                       content_digest, note_version
+                FROM notes_sync_bindings WHERE root_id = ? ORDER BY binding_id
+                """,
+                (root_id,),
+            ).fetchall()
+        return tuple(self._binding_from_row(row) for row in rows)
+
+    def list_binding_summaries(
+        self,
+        root_id: str,
+    ) -> tuple[NotesSyncBindingSummary, ...]:
+        validate_notes_sync_opaque_id(root_id, field_name="root_id")
+        with self.transaction() as connection:
+            rows = connection.execute(
+                """
+                SELECT binding_id, root_id, note_scope_id, note_id,
+                       state, note_version
+                FROM notes_sync_bindings WHERE root_id = ? ORDER BY binding_id
+                """,
+                (root_id,),
+            ).fetchall()
+        return tuple(
+            NotesSyncBindingSummary(
+                binding_id=row[0],
+                root_id=row[1],
+                note_scope_id=row[2],
+                note_id=row[3],
+                state=NotesSyncBindingState(row[4]),
+                note_version=row[5],
+            )
+            for row in rows
+        )
+
+    def transition_binding(
+        self,
+        binding_id: str,
+        state: NotesSyncBindingState,
+    ) -> NotesSyncBindingRecord:
+        current = self.get_binding(binding_id)
+        if (
+            type(state) is not NotesSyncBindingState
+            or state not in _BINDING_TRANSITIONS[current.state]
+        ):
+            raise NotesDeviceStateError(
+                "The requested binding transition is not allowed."
+            )
+        with self.transaction(immediate=True) as connection:
+            if state is NotesSyncBindingState.ACTIVE:
+                active_root = connection.execute(
+                    """
+                    SELECT 1 FROM notes_sync_roots
+                    WHERE root_id = ? AND state = 'active'
+                          AND logical_folder_id IS NOT NULL
+                    """,
+                    (current.root_id,),
+                ).fetchone()
+                if active_root is None:
+                    raise NotesDeviceStateError(
+                        "An active binding requires an active root with a folder owner."
+                    )
+            changed = connection.execute(
+                """
+                UPDATE notes_sync_bindings SET state = ?, updated_at = ?
+                WHERE binding_id = ? AND state = ?
+                """,
+                (state.value, _now(), binding_id, current.state.value),
+            ).rowcount
+        if changed != 1:
+            raise NotesDeviceStateError("The requested binding transition is stale.")
+        return self.get_binding(binding_id)
+
+    def create_operation(
+        self,
+        record: NotesSyncOperationRecord,
+    ) -> NotesSyncOperationRecord:
+        if type(record) is not NotesSyncOperationRecord:
+            raise TypeError("record must be a NotesSyncOperationRecord.")
+        if record.state is not NotesSyncOperationState.PENDING:
+            raise NotesDeviceStateError(
+                "A new sync operation must enter through the pending stage."
+            )
+        timestamp = _now()
+        with self.transaction(immediate=True) as connection:
+            if record.binding_id is not None:
+                binding_root = connection.execute(
+                    "SELECT root_id FROM notes_sync_bindings WHERE binding_id = ?",
+                    (record.binding_id,),
+                ).fetchone()
+                if binding_root is None or binding_root[0] != record.root_id:
+                    raise NotesDeviceStateError(
+                        "A journal operation and its binding must use the same root."
+                    )
+            connection.execute(
+                """
+                INSERT INTO notes_sync_operations (
+                    operation_id, root_id, binding_id, kind, state, reason_code,
+                    observation_token, expected_note_version,
+                    expected_file_digest, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.operation_id,
+                    record.root_id,
+                    record.binding_id,
+                    record.kind,
+                    record.state.value,
+                    record.reason_code,
+                    record.observation_token,
+                    record.expected_note_version,
+                    record.expected_file_digest,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+        return record
+
+    def admit_operation_recovery(
+        self,
+        operation: NotesSyncOperationRecord,
+        recovery: NotesSyncRecoveryRecord,
+        *,
+        capacity_bytes: int,
+        now: int | None = None,
+    ) -> NotesSyncRecoveryAdmission:
+        """Atomically reserve recovery capacity and persist mutation intent."""
+
+        if type(operation) is not NotesSyncOperationRecord:
+            raise TypeError("operation must be a NotesSyncOperationRecord.")
+        if type(recovery) is not NotesSyncRecoveryRecord:
+            raise TypeError("recovery must be a NotesSyncRecoveryRecord.")
+        if operation.state is not NotesSyncOperationState.PENDING:
+            raise NotesDeviceStateError(
+                "A new sync operation must enter through the pending stage."
+            )
+        if recovery.operation_id != operation.operation_id:
+            raise NotesDeviceStateError(
+                "Recovery and journal operation identifiers must match."
+            )
+        if type(capacity_bytes) is not int or capacity_bytes <= 0:
+            raise ValueError("capacity_bytes must be positive.")
+        if now is None:
+            now = _now()
+        elif type(now) is not int or now <= 0:
+            raise ValueError("now must be positive.")
+
+        required = len(recovery.payload) + len(recovery.metadata)
+        timestamp = _now()
+        with self.transaction(immediate=True) as connection:
+            existing_operation = connection.execute(
+                """
+                SELECT root_id, binding_id, kind, state, reason_code,
+                       observation_token, expected_note_version,
+                       expected_file_digest
+                FROM notes_sync_operations WHERE operation_id = ?
+                """,
+                (operation.operation_id,),
+            ).fetchone()
+            existing_recovery = connection.execute(
+                """
+                SELECT recovery_id, operation_id, payload, metadata, expires_at
+                FROM notes_sync_recovery WHERE operation_id = ?
+                """,
+                (operation.operation_id,),
+            ).fetchone()
+            if existing_operation is not None or existing_recovery is not None:
+                exact_operation = existing_operation == (
+                    operation.root_id,
+                    operation.binding_id,
+                    operation.kind,
+                    NotesSyncOperationState.RECOVERY_ADMITTED.value,
+                    None,
+                    operation.observation_token,
+                    operation.expected_note_version,
+                    operation.expected_file_digest,
+                )
+                exact_recovery = existing_recovery == (
+                    recovery.recovery_id,
+                    recovery.operation_id,
+                    recovery.payload,
+                    recovery.metadata,
+                    recovery.expires_at,
+                )
+                if not exact_operation or not exact_recovery:
+                    raise NotesDeviceStateError(
+                        "The recovery admission conflicts with durable state."
+                    )
+                used = connection.execute(
+                    """
+                    SELECT COALESCE(SUM(length(payload) + length(metadata)), 0)
+                    FROM notes_sync_recovery
+                    """
+                ).fetchone()[0]
+                return NotesSyncRecoveryAdmission(
+                    admitted=True,
+                    reason_code=None,
+                    required_bytes=required,
+                    available_bytes=max(
+                        0,
+                        capacity_bytes - (int(used) - required),
+                    ),
+                )
+            connection.execute(
+                """
+                DELETE FROM notes_sync_recovery
+                WHERE expires_at <= ?
+                  AND operation_id IN (
+                      SELECT operation_id FROM notes_sync_operations
+                      WHERE state = 'completed'
+                  )
+                """,
+                (now,),
+            )
+            used = connection.execute(
+                """
+                SELECT COALESCE(SUM(length(payload) + length(metadata)), 0)
+                FROM notes_sync_recovery
+                """
+            ).fetchone()[0]
+            available = max(0, capacity_bytes - int(used))
+            if required > available:
+                return NotesSyncRecoveryAdmission(
+                    admitted=False,
+                    reason_code="recovery_capacity_exceeded",
+                    required_bytes=required,
+                    available_bytes=available,
+                )
+            if operation.binding_id is not None:
+                binding_root = connection.execute(
+                    "SELECT root_id FROM notes_sync_bindings WHERE binding_id = ?",
+                    (operation.binding_id,),
+                ).fetchone()
+                if binding_root is None or binding_root[0] != operation.root_id:
+                    raise NotesDeviceStateError(
+                        "A journal operation and its binding must use the same root."
+                    )
+            connection.execute(
+                """
+                INSERT INTO notes_sync_operations (
+                    operation_id, root_id, binding_id, kind, state, reason_code,
+                    observation_token, expected_note_version,
+                    expected_file_digest, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    operation.operation_id,
+                    operation.root_id,
+                    operation.binding_id,
+                    operation.kind,
+                    operation.state.value,
+                    operation.reason_code,
+                    operation.observation_token,
+                    operation.expected_note_version,
+                    operation.expected_file_digest,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO notes_sync_recovery (
+                    recovery_id, operation_id, payload, metadata,
+                    expires_at, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    recovery.recovery_id,
+                    recovery.operation_id,
+                    recovery.payload,
+                    recovery.metadata,
+                    recovery.expires_at,
+                    timestamp,
+                ),
+            )
+            connection.execute(
+                """
+                UPDATE notes_sync_operations
+                SET state = 'recovery_admitted', updated_at = ?
+                WHERE operation_id = ? AND state = 'pending'
+                """,
+                (timestamp, operation.operation_id),
+            )
+        return NotesSyncRecoveryAdmission(
+            admitted=True,
+            reason_code=None,
+            required_bytes=required,
+            available_bytes=available,
+        )
+
+    def find_operation(self, operation_id: str) -> NotesSyncOperationRecord | None:
+        """Return one operation, distinguishing absence from store failure."""
+
+        validate_notes_sync_opaque_id(operation_id, field_name="operation_id")
+        with self.transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT operation_id, root_id, binding_id, kind, state,
+                       reason_code, observation_token, expected_note_version,
+                       expected_file_digest
+                FROM notes_sync_operations WHERE operation_id = ?
+                """,
+                (operation_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return NotesSyncOperationRecord(
+            operation_id=row[0],
+            root_id=row[1],
+            binding_id=row[2],
+            kind=row[3],
+            state=NotesSyncOperationState(row[4]),
+            reason_code=row[5],
+            observation_token=row[6],
+            expected_note_version=row[7],
+            expected_file_digest=row[8],
+        )
+
+    def get_operation(self, operation_id: str) -> NotesSyncOperationRecord:
+        operation = self.find_operation(operation_id)
+        if operation is None:
+            raise NotesDeviceStateError("The requested sync operation does not exist.")
+        return operation
+
+    def list_incomplete_operations(self) -> tuple[NotesSyncOperationRecord, ...]:
+        """Return durable work that still requires completion or attention."""
+
+        with self.transaction() as connection:
+            rows = connection.execute(
+                """
+                SELECT operation_id, root_id, binding_id, kind, state,
+                       reason_code, observation_token, expected_note_version,
+                       expected_file_digest
+                FROM notes_sync_operations
+                WHERE state != 'completed'
+                ORDER BY created_at, operation_id
+                """
+            ).fetchall()
+        return tuple(
+            NotesSyncOperationRecord(
+                operation_id=row[0],
+                root_id=row[1],
+                binding_id=row[2],
+                kind=row[3],
+                state=NotesSyncOperationState(row[4]),
+                reason_code=row[5],
+                observation_token=row[6],
+                expected_note_version=row[7],
+                expected_file_digest=row[8],
+            )
+            for row in rows
+        )
+
+    def transition_operation(
+        self,
+        operation_id: str,
+        state: NotesSyncOperationState,
+    ) -> NotesSyncOperationRecord:
+        current = self.get_operation(operation_id)
+        if (
+            type(state) is not NotesSyncOperationState
+            or state not in _OPERATION_TRANSITIONS[current.state]
+        ):
+            raise NotesDeviceStateError(
+                "The requested operation transition is not allowed."
+            )
+        with self.transaction(immediate=True) as connection:
+            changed = connection.execute(
+                """
+                UPDATE notes_sync_operations
+                SET state = ?, reason_code = NULL, updated_at = ?
+                WHERE operation_id = ? AND state = ?
+                """,
+                (state.value, _now(), operation_id, current.state.value),
+            ).rowcount
+        if changed != 1:
+            raise NotesDeviceStateError("The requested operation transition is stale.")
+        return self.get_operation(operation_id)
+
+    def mark_operation_attention(
+        self,
+        operation_id: str,
+        reason_code: str,
+    ) -> NotesSyncOperationRecord:
+        """Durably fence an admitted operation from automatic replay."""
+
+        validate_notes_sync_opaque_id(operation_id, field_name="operation_id")
+        selected_reason = validate_notes_sync_reason_code(reason_code)
+        if selected_reason is None:
+            raise ValueError("reason_code is required.")
+        with self.transaction(immediate=True) as connection:
+            changed = connection.execute(
+                """
+                UPDATE notes_sync_operations
+                SET state = 'needs_attention', reason_code = ?, updated_at = ?
+                WHERE operation_id = ? AND state != 'completed'
+                """,
+                (selected_reason, _now(), operation_id),
+            ).rowcount
+        if changed != 1:
+            raise NotesDeviceStateError(
+                "The requested operation cannot enter attention."
+            )
+        return self.get_operation(operation_id)
+
+    def mark_operation_partial_attention(
+        self,
+        operation_id: str,
+        recovery_id: str,
+        reason_code: str,
+        metadata: bytes,
+        *,
+        capacity_bytes: int,
+    ) -> NotesSyncOperationRecord:
+        """Atomically persist private cleanup authority and fence replay."""
+
+        validate_notes_sync_opaque_id(operation_id, field_name="operation_id")
+        validate_notes_sync_opaque_id(recovery_id, field_name="recovery_id")
+        selected_reason = validate_notes_sync_reason_code(reason_code)
+        if selected_reason is None:
+            raise ValueError("reason_code is required.")
+        if type(metadata) is not bytes:
+            raise TypeError("metadata must be bytes.")
+        if type(capacity_bytes) is not int or capacity_bytes <= 0:
+            raise ValueError("capacity_bytes must be positive.")
+        with self.transaction(immediate=True) as connection:
+            current = connection.execute(
+                """
+                SELECT length(metadata) FROM notes_sync_recovery
+                WHERE recovery_id = ? AND operation_id = ?
+                """,
+                (recovery_id, operation_id),
+            ).fetchone()
+            if current is None:
+                raise NotesDeviceStateError(
+                    "The requested recovery record does not exist."
+                )
+            used = int(
+                connection.execute(
+                    """
+                    SELECT COALESCE(SUM(length(payload) + length(metadata)), 0)
+                    FROM notes_sync_recovery
+                    """
+                ).fetchone()[0]
+            )
+            if used - int(current[0]) + len(metadata) > capacity_bytes:
+                raise NotesDeviceStateError(
+                    "The private recovery capacity cannot admit cleanup authority."
+                )
+            updated = connection.execute(
+                """
+                UPDATE notes_sync_recovery SET metadata = ?
+                WHERE recovery_id = ? AND operation_id = ?
+                """,
+                (metadata, recovery_id, operation_id),
+            ).rowcount
+            fenced = connection.execute(
+                """
+                UPDATE notes_sync_operations
+                SET state = 'needs_attention', reason_code = ?, updated_at = ?
+                WHERE operation_id = ? AND state != 'completed'
+                """,
+                (selected_reason, _now(), operation_id),
+            ).rowcount
+            if updated != 1 or fenced != 1:
+                raise NotesDeviceStateError(
+                    "The requested partial operation cannot enter attention."
+                )
+        return self.get_operation(operation_id)
+
+    def commit_binding_stage(
+        self,
+        operation_id: str,
+        *,
+        expected: NotesSyncBindingRecord,
+        replacement: NotesSyncBindingRecord,
+    ) -> NotesSyncOperationRecord:
+        """Atomically update one binding baseline and its journal stage."""
+
+        validate_notes_sync_opaque_id(operation_id, field_name="operation_id")
+        if type(expected) is not NotesSyncBindingRecord:
+            raise TypeError("expected must be a NotesSyncBindingRecord.")
+        if type(replacement) is not NotesSyncBindingRecord:
+            raise TypeError("replacement must be a NotesSyncBindingRecord.")
+        if (
+            replacement.binding_id != expected.binding_id
+            or replacement.root_id != expected.root_id
+            or replacement.note_scope_id != expected.note_scope_id
+            or replacement.note_id != expected.note_id
+        ):
+            raise NotesDeviceStateError("A binding baseline cannot change ownership.")
+        timestamp = _now()
+        with self.transaction(immediate=True) as connection:
+            changed = connection.execute(
+                """
+                UPDATE notes_sync_bindings
+                SET normalized_relative_path = ?, stable_identity_digest = ?,
+                    state = ?, utf8_bom = ?, newline = ?, final_newline = ?,
+                    file_mode = ?, content_digest = ?, note_version = ?,
+                    updated_at = ?
+                WHERE binding_id = ? AND root_id = ? AND note_scope_id = ?
+                  AND note_id = ? AND normalized_relative_path = ?
+                  AND stable_identity_digest = ? AND state = ?
+                  AND utf8_bom = ? AND newline = ? AND final_newline = ?
+                  AND file_mode = ? AND content_digest = ? AND note_version = ?
+                """,
+                (
+                    replacement.normalized_relative_path,
+                    replacement.stable_identity_digest,
+                    replacement.state.value,
+                    int(replacement.serialization.utf8_bom),
+                    replacement.serialization.newline,
+                    int(replacement.serialization.final_newline),
+                    replacement.serialization.mode,
+                    replacement.content_digest,
+                    replacement.note_version,
+                    timestamp,
+                    expected.binding_id,
+                    expected.root_id,
+                    expected.note_scope_id,
+                    expected.note_id,
+                    expected.normalized_relative_path,
+                    expected.stable_identity_digest,
+                    expected.state.value,
+                    int(expected.serialization.utf8_bom),
+                    expected.serialization.newline,
+                    int(expected.serialization.final_newline),
+                    expected.serialization.mode,
+                    expected.content_digest,
+                    expected.note_version,
+                ),
+            ).rowcount
+            if changed != 1:
+                raise NotesDeviceStateError("The requested binding baseline is stale.")
+            advanced = connection.execute(
+                """
+                UPDATE notes_sync_operations
+                SET state = 'binding_updated', updated_at = ?
+                WHERE operation_id = ? AND binding_id = ?
+                  AND state = 'second_authority_applied'
+                """,
+                (timestamp, operation_id, expected.binding_id),
+            ).rowcount
+            if advanced != 1:
+                raise NotesDeviceStateError("The requested journal stage is stale.")
+        return self.get_operation(operation_id)
+
+    def create_binding_stage(
+        self,
+        operation_id: str,
+        record: NotesSyncBindingRecord,
+    ) -> NotesSyncOperationRecord:
+        """Atomically activate one reviewed binding and its journal stage."""
+
+        validate_notes_sync_opaque_id(operation_id, field_name="operation_id")
+        if type(record) is not NotesSyncBindingRecord:
+            raise TypeError("record must be a NotesSyncBindingRecord.")
+        if record.state is not NotesSyncBindingState.ACTIVE:
+            raise NotesDeviceStateError("A new sync binding must be active.")
+        timestamp = _now()
+        with self.transaction(immediate=True) as connection:
+            root = connection.execute(
+                """
+                SELECT note_scope_id, state, logical_folder_id
+                FROM notes_sync_roots WHERE root_id = ?
+                """,
+                (record.root_id,),
+            ).fetchone()
+            if (
+                root is None
+                or root[0] != record.note_scope_id
+                or root[1] != NotesSyncRootState.ACTIVE.value
+                or root[2] is None
+            ):
+                raise NotesDeviceStateError(
+                    "An active binding requires its reviewed active root."
+                )
+            connection.execute(
+                """
+                INSERT INTO notes_sync_bindings (
+                    binding_id, root_id, note_scope_id, note_id,
+                    normalized_relative_path, stable_identity_digest, state,
+                    utf8_bom, newline, final_newline, file_mode,
+                    content_digest, note_version, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.binding_id,
+                    record.root_id,
+                    record.note_scope_id,
+                    record.note_id,
+                    record.normalized_relative_path,
+                    record.stable_identity_digest,
+                    record.state.value,
+                    int(record.serialization.utf8_bom),
+                    record.serialization.newline,
+                    int(record.serialization.final_newline),
+                    record.serialization.mode,
+                    record.content_digest,
+                    record.note_version,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+            advanced = connection.execute(
+                """
+                UPDATE notes_sync_operations
+                SET binding_id = ?, state = 'binding_updated', updated_at = ?
+                WHERE operation_id = ? AND binding_id IS NULL
+                  AND state = 'second_authority_applied'
+                """,
+                (record.binding_id, timestamp, operation_id),
+            ).rowcount
+            if advanced != 1:
+                raise NotesDeviceStateError("The requested journal stage is stale.")
+        return self.get_operation(operation_id)
+
+    def resolve_operation_disconnect(
+        self,
+        operation_id: str,
+        *,
+        binding_id: str,
+    ) -> NotesSyncOperationRecord:
+        """Atomically relinquish one binding and settle its attention entry."""
+
+        validate_notes_sync_opaque_id(operation_id, field_name="operation_id")
+        validate_notes_sync_opaque_id(binding_id, field_name="binding_id")
+        timestamp = _now()
+        with self.transaction(immediate=True) as connection:
+            disconnected = connection.execute(
+                """
+                UPDATE notes_sync_bindings
+                SET state = 'disconnected', updated_at = ?
+                WHERE binding_id = ? AND state != 'disconnected'
+                """,
+                (timestamp, binding_id),
+            ).rowcount
+            completed = connection.execute(
+                """
+                UPDATE notes_sync_operations
+                SET state = 'completed', reason_code = NULL, updated_at = ?
+                WHERE operation_id = ? AND binding_id = ?
+                  AND state = 'needs_attention'
+                """,
+                (timestamp, operation_id, binding_id),
+            ).rowcount
+            if disconnected != 1 or completed != 1:
+                raise NotesDeviceStateError(
+                    "The requested disconnect resolution is stale."
+                )
+        return self.get_operation(operation_id)
+
+    def resolve_unbound_operation_disconnect(
+        self,
+        operation_id: str,
+    ) -> NotesSyncOperationRecord:
+        """Settle one reviewed create without claiming either created authority."""
+
+        validate_notes_sync_opaque_id(operation_id, field_name="operation_id")
+        with self.transaction(immediate=True) as connection:
+            completed = connection.execute(
+                """
+                UPDATE notes_sync_operations
+                SET state = 'completed', reason_code = NULL, updated_at = ?
+                WHERE operation_id = ? AND binding_id IS NULL
+                  AND state = 'needs_attention'
+                """,
+                (_now(), operation_id),
+            ).rowcount
+            if completed != 1:
+                raise NotesDeviceStateError(
+                    "The requested unbound disconnect resolution is stale."
+                )
+        return self.get_operation(operation_id)
+
+    def put_recovery(self, record: NotesSyncRecoveryRecord) -> None:
+        if type(record) is not NotesSyncRecoveryRecord:
+            raise TypeError("record must be a NotesSyncRecoveryRecord.")
+        with self.transaction(immediate=True) as connection:
+            connection.execute(
+                """
+                INSERT INTO notes_sync_recovery (
+                    recovery_id, operation_id, payload, metadata,
+                    expires_at, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.recovery_id,
+                    record.operation_id,
+                    record.payload,
+                    record.metadata,
+                    record.expires_at,
+                    _now(),
+                ),
+            )
+
+    def load_recovery(self, recovery_id: str) -> NotesSyncRecoveryRecord:
+        validate_notes_sync_opaque_id(recovery_id, field_name="recovery_id")
+        with self.transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT recovery_id, operation_id, payload, metadata, expires_at
+                FROM notes_sync_recovery WHERE recovery_id = ?
+                """,
+                (recovery_id,),
+            ).fetchone()
+        if row is None:
+            raise NotesDeviceStateError("The requested recovery record does not exist.")
+        if type(row[2]) is not bytes or type(row[3]) is not bytes:
+            raise NotesDeviceStateError("The requested recovery record is corrupt.")
+        return NotesSyncRecoveryRecord(
+            recovery_id=row[0],
+            operation_id=row[1],
+            payload=row[2],
+            metadata=row[3],
+            expires_at=row[4],
+        )
+
+    def find_operation_recovery(
+        self,
+        operation_id: str,
+    ) -> NotesSyncRecoveryRecord | None:
+        """Find the private recovery owned by an operation, preserving absence."""
+
+        validate_notes_sync_opaque_id(operation_id, field_name="operation_id")
+        with self.transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT recovery_id FROM notes_sync_recovery
+                WHERE operation_id = ?
+                """,
+                (operation_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return self.load_recovery(row[0])
+
+    def load_operation_recovery(
+        self,
+        operation_id: str,
+    ) -> NotesSyncRecoveryRecord:
+        """Load the sole private recovery record owned by one operation."""
+
+        recovery = self.find_operation_recovery(operation_id)
+        if recovery is None:
+            raise NotesDeviceStateError("The requested recovery record does not exist.")
+        return recovery
+
+    def record_legacy_migration(
+        self,
+        record: NotesSyncLegacyMigrationRecord,
+    ) -> None:
+        if type(record) is not NotesSyncLegacyMigrationRecord:
+            raise TypeError("record must be a NotesSyncLegacyMigrationRecord.")
+        timestamp = _now()
+        with self.transaction(immediate=True) as connection:
+            connection.execute(
+                """
+                INSERT INTO notes_sync_legacy_migrations (
+                    migration_id, source_fingerprint, state, reason_code,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.migration_id,
+                    record.source_fingerprint,
+                    record.state,
+                    record.reason_code,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+
+    def set_setting(self, setting: NotesSyncStoreSetting) -> None:
+        if type(setting) is not NotesSyncStoreSetting:
+            raise TypeError("setting must be a NotesSyncStoreSetting.")
+        with self.transaction(immediate=True) as connection:
+            connection.execute(
+                """
+                INSERT INTO notes_sync_store_settings (
+                    setting_key, setting_value, updated_at
+                ) VALUES (?, ?, ?)
+                ON CONFLICT(setting_key) DO UPDATE SET
+                    setting_value = excluded.setting_value,
+                    updated_at = excluded.updated_at
+                """,
+                (setting.key, setting.value, _now()),
+            )
+
+    def get_setting(self, key: str) -> NotesSyncStoreSetting | None:
+        if key not in _SETTING_KEYS:
+            raise ValueError("setting key is not supported.")
+        with self.transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT setting_key, setting_value
+                FROM notes_sync_store_settings WHERE setting_key = ?
+                """,
+                (key,),
+            ).fetchone()
+        if row is None:
+            return None
+        return NotesSyncStoreSetting(key=row[0], value=row[1])
+
+
+__all__ = [
+    "NotesDeviceStateError",
+    "NotesDeviceStateStore",
+    "NotesSyncBindingRecord",
+    "NotesSyncBindingSummary",
+    "NotesSyncLegacyMigrationRecord",
+    "NotesSyncOperationRecord",
+    "NotesSyncRecoveryRecord",
+    "NotesSyncRecoveryAdmission",
+    "NotesSyncRootRecord",
+    "NotesSyncRootSummary",
+    "NotesSyncStoreSetting",
+]

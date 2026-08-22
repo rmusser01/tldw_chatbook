@@ -11,7 +11,7 @@ import re
 import sqlite3
 import time
 from collections.abc import Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import dataclass, field
 from enum import Enum
 from itertools import islice
@@ -19,7 +19,6 @@ from pathlib import Path
 from types import MappingProxyType
 from uuid import uuid4
 
-from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 from tldw_chatbook.Notes.note_import_execution_models import (
     MAX_RECEIPT_LEDGER_ROWS,
     ApprovedNoteImportPlan,
@@ -41,8 +40,13 @@ from tldw_chatbook.Notes.note_import_plan_models import (
     NoteImportPlan,
 )
 from tldw_chatbook.Notes.note_import_planner import PriorImportObservation
+from tldw_chatbook.Notes.notes_device_state_schema import (
+    LATEST_NOTES_DEVICE_SCHEMA_VERSION,
+    NotesDeviceSchemaError,
+)
+from tldw_chatbook.Notes.notes_device_state_store import NotesDeviceStateStore
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = LATEST_NOTES_DEVICE_SCHEMA_VERSION
 _MIN_BATCH_SIZE = 1
 _MAX_BATCH_SIZE = 100
 _MAX_TRANSITIONS = MAX_IMPORT_ENTRIES
@@ -56,6 +60,13 @@ _PAYLOAD_TABLE = "import_payload_effects"
 _FOLDER_TABLE = "import_folder_effects"
 _MEMBERSHIP_TABLE = "import_membership_effects"
 _EFFECT_TABLES = frozenset({_PAYLOAD_TABLE, _FOLDER_TABLE, _MEMBERSHIP_TABLE})
+_REQUIRED_IMPORT_TABLES = frozenset(
+    {
+        "import_sessions",
+        "import_items",
+        *_EFFECT_TABLES,
+    }
+)
 
 
 SESSION_STATE_TRANSITIONS: Mapping[
@@ -287,180 +298,6 @@ class EffectTransition:
     observed_version: int | None = None
 
 
-_SCHEMA_TABLE_STATEMENTS = (
-    """
-    CREATE TABLE IF NOT EXISTS import_sessions (
-        session_id TEXT PRIMARY KEY,
-        approval_id TEXT NOT NULL UNIQUE,
-        plan_digest TEXT NOT NULL,
-        state TEXT NOT NULL DEFAULT 'pending'
-            CHECK (state IN ('pending', 'running', 'cancelled', 'completed', 'needs_attention')),
-        batch_size INTEGER NOT NULL CHECK (batch_size BETWEEN 1 AND 100),
-        total_count INTEGER NOT NULL CHECK (total_count >= 0),
-        reason_code TEXT CHECK (
-            reason_code IS NULL OR (
-                length(reason_code) BETWEEN 1 AND 64
-                AND reason_code NOT GLOB '*[^a-z0-9_]*'
-                AND substr(reason_code, 1, 1) GLOB '[a-z]'
-            )
-        ),
-        created_at INTEGER NOT NULL CHECK (created_at > 0),
-        updated_at INTEGER NOT NULL CHECK (updated_at > 0),
-        CHECK (length(session_id) BETWEEN 1 AND 256),
-        CHECK (length(approval_id) = 36),
-        CHECK (length(plan_digest) = 64 AND plan_digest NOT GLOB '*[^0-9a-f]*')
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS import_items (
-        session_id TEXT NOT NULL,
-        item_id TEXT NOT NULL,
-        source_locator_digest TEXT NOT NULL,
-        selected_action TEXT NOT NULL
-            CHECK (selected_action IN ('skip', 'create_new', 'update_existing')),
-        outcome_count INTEGER NOT NULL CHECK (outcome_count > 0),
-        outcome TEXT NOT NULL DEFAULT 'pending'
-            CHECK (outcome IN ('pending', 'imported', 'updated', 'skipped', 'failed')),
-        target_note_id TEXT,
-        expected_version INTEGER CHECK (expected_version IS NULL OR expected_version >= 0),
-        observed_version INTEGER CHECK (observed_version IS NULL OR observed_version >= 0),
-        reason_code TEXT CHECK (
-            reason_code IS NULL OR (
-                length(reason_code) BETWEEN 1 AND 64
-                AND reason_code NOT GLOB '*[^a-z0-9_]*'
-                AND substr(reason_code, 1, 1) GLOB '[a-z]'
-            )
-        ),
-        retryable INTEGER NOT NULL DEFAULT 0 CHECK (retryable IN (0, 1)),
-        created_at INTEGER NOT NULL CHECK (created_at > 0),
-        updated_at INTEGER NOT NULL CHECK (updated_at > 0),
-        PRIMARY KEY (session_id, item_id),
-        FOREIGN KEY (session_id) REFERENCES import_sessions(session_id) ON DELETE CASCADE,
-        CHECK (length(item_id) BETWEEN 1 AND 256),
-        CHECK (
-            length(source_locator_digest) = 64
-            AND source_locator_digest NOT GLOB '*[^0-9a-f]*'
-        ),
-        CHECK (target_note_id IS NULL OR length(target_note_id) BETWEEN 1 AND 256),
-        CHECK (outcome = 'failed' OR retryable = 0)
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS import_payload_effects (
-        effect_id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        item_id TEXT NOT NULL,
-        payload_index INTEGER NOT NULL CHECK (payload_index >= 0),
-        payload_digest TEXT NOT NULL,
-        effect_kind TEXT NOT NULL CHECK (effect_kind IN ('create_note', 'replace_content')),
-        state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'applied', 'failed')),
-        target_note_id TEXT,
-        expected_version INTEGER CHECK (expected_version IS NULL OR expected_version >= 0),
-        observed_version INTEGER CHECK (observed_version IS NULL OR observed_version >= 0),
-        reason_code TEXT CHECK (
-            reason_code IS NULL OR (
-                length(reason_code) BETWEEN 1 AND 64
-                AND reason_code NOT GLOB '*[^a-z0-9_]*'
-                AND substr(reason_code, 1, 1) GLOB '[a-z]'
-            )
-        ),
-        retryable INTEGER NOT NULL DEFAULT 0 CHECK (retryable IN (0, 1)),
-        created_at INTEGER NOT NULL CHECK (created_at > 0),
-        updated_at INTEGER NOT NULL CHECK (updated_at > 0),
-        FOREIGN KEY (session_id, item_id)
-            REFERENCES import_items(session_id, item_id) ON DELETE CASCADE,
-        UNIQUE (session_id, item_id, payload_index, effect_kind),
-        CHECK (length(effect_id) BETWEEN 1 AND 256),
-        CHECK (length(payload_digest) = 64 AND payload_digest NOT GLOB '*[^0-9a-f]*'),
-        CHECK (target_note_id IS NULL OR length(target_note_id) BETWEEN 1 AND 256),
-        CHECK (state = 'failed' OR retryable = 0)
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS import_folder_effects (
-        effect_id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        folder_ordinal INTEGER NOT NULL CHECK (folder_ordinal >= 0),
-        path_digest TEXT NOT NULL,
-        parent_effect_id TEXT,
-        effect_kind TEXT NOT NULL DEFAULT 'ensure_folder' CHECK (effect_kind = 'ensure_folder'),
-        state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'applied', 'failed')),
-        target_folder_id TEXT,
-        reason_code TEXT CHECK (
-            reason_code IS NULL OR (
-                length(reason_code) BETWEEN 1 AND 64
-                AND reason_code NOT GLOB '*[^a-z0-9_]*'
-                AND substr(reason_code, 1, 1) GLOB '[a-z]'
-            )
-        ),
-        retryable INTEGER NOT NULL DEFAULT 0 CHECK (retryable IN (0, 1)),
-        created_at INTEGER NOT NULL CHECK (created_at > 0),
-        updated_at INTEGER NOT NULL CHECK (updated_at > 0),
-        FOREIGN KEY (session_id) REFERENCES import_sessions(session_id) ON DELETE CASCADE,
-        FOREIGN KEY (parent_effect_id)
-            REFERENCES import_folder_effects(effect_id) ON DELETE RESTRICT,
-        UNIQUE (session_id, path_digest),
-        UNIQUE (session_id, folder_ordinal),
-        CHECK (length(effect_id) BETWEEN 1 AND 256),
-        CHECK (length(path_digest) = 64 AND path_digest NOT GLOB '*[^0-9a-f]*'),
-        CHECK (target_folder_id IS NULL OR length(target_folder_id) BETWEEN 1 AND 256),
-        CHECK (state = 'failed' OR retryable = 0)
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS import_membership_effects (
-        effect_id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        item_id TEXT NOT NULL,
-        payload_index INTEGER NOT NULL CHECK (payload_index >= 0),
-        membership_ordinal INTEGER NOT NULL CHECK (membership_ordinal >= 0),
-        folder_path_digest TEXT NOT NULL,
-        effect_kind TEXT NOT NULL DEFAULT 'attach_membership'
-            CHECK (effect_kind = 'attach_membership'),
-        state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'applied', 'failed')),
-        target_note_id TEXT,
-        target_folder_id TEXT,
-        reason_code TEXT CHECK (
-            reason_code IS NULL OR (
-                length(reason_code) BETWEEN 1 AND 64
-                AND reason_code NOT GLOB '*[^a-z0-9_]*'
-                AND substr(reason_code, 1, 1) GLOB '[a-z]'
-            )
-        ),
-        retryable INTEGER NOT NULL DEFAULT 0 CHECK (retryable IN (0, 1)),
-        created_at INTEGER NOT NULL CHECK (created_at > 0),
-        updated_at INTEGER NOT NULL CHECK (updated_at > 0),
-        FOREIGN KEY (session_id, item_id)
-            REFERENCES import_items(session_id, item_id) ON DELETE CASCADE,
-        UNIQUE (session_id, item_id, payload_index, membership_ordinal),
-        CHECK (length(effect_id) BETWEEN 1 AND 256),
-        CHECK (
-            length(folder_path_digest) = 64
-            AND folder_path_digest NOT GLOB '*[^0-9a-f]*'
-        ),
-        CHECK (target_note_id IS NULL OR length(target_note_id) BETWEEN 1 AND 256),
-        CHECK (target_folder_id IS NULL OR length(target_folder_id) BETWEEN 1 AND 256),
-        CHECK (state = 'failed' OR retryable = 0)
-    )
-    """,
-)
-
-_SCHEMA_INDEX_STATEMENTS = (
-    "CREATE INDEX IF NOT EXISTS idx_import_items_outcome ON import_items(session_id, outcome)",
-    "CREATE INDEX IF NOT EXISTS idx_import_payload_state ON import_payload_effects(session_id, state)",
-    "CREATE INDEX IF NOT EXISTS idx_import_folder_state ON import_folder_effects(session_id, state)",
-    "CREATE INDEX IF NOT EXISTS idx_import_membership_state ON import_membership_effects(session_id, state)",
-    "CREATE INDEX IF NOT EXISTS idx_import_payload_target ON import_payload_effects(session_id, target_note_id)",
-    "CREATE INDEX IF NOT EXISTS idx_import_folder_target ON import_folder_effects(session_id, target_folder_id)",
-    "CREATE INDEX IF NOT EXISTS idx_import_membership_path ON import_membership_effects(session_id, folder_path_digest, item_id)",
-    "CREATE INDEX IF NOT EXISTS idx_import_folder_parent ON import_folder_effects(session_id, parent_effect_id)",
-    "CREATE INDEX IF NOT EXISTS idx_import_items_target ON import_items(session_id, target_note_id, selected_action)",
-    "CREATE INDEX IF NOT EXISTS idx_import_items_source_session ON import_items(source_locator_digest, session_id, item_id)",
-)
-
-_SCHEMA_STATEMENTS = (*_SCHEMA_TABLE_STATEMENTS, *_SCHEMA_INDEX_STATEMENTS)
-
-
 def _now() -> int:
     return max(1, time.time_ns())
 
@@ -601,18 +438,25 @@ def _assert_compatible_authority(
 
 
 class NoteImportReceiptRepository:
-    """Own the profile-local schema-v1 import receipt ledger."""
+    """Own import receipts within the shared profile-local Notes state store."""
 
     def __init__(self, database_path: str | Path) -> None:
         self._database_path = Path(database_path)
+        self._store = NotesDeviceStateStore(self._database_path)
 
     def __repr__(self) -> str:
         return "NoteImportReceiptRepository(<private>)"
 
-    def _connect(self) -> sqlite3.Connection:
-        connection = connect_private_sqlite("notes.sync_state", self._database_path)
-        connection.execute("PRAGMA foreign_keys = ON")
-        return connection
+    def _connect(
+        self,
+        *,
+        read_only: bool = False,
+        must_exist: bool = False,
+    ) -> sqlite3.Connection:
+        return self._store._connect(
+            read_only=read_only,
+            must_exist=must_exist,
+        )
 
     @contextmanager
     def transaction(
@@ -632,35 +476,16 @@ class NoteImportReceiptRepository:
             Exception: Re-raises operation errors after rolling back.
         """
 
-        connection = self._connect()
         try:
-            connection.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
-            self._initialize_schema(connection)
-            yield connection
-            connection.commit()
-        except Exception:
-            connection.rollback()
-            raise
-        finally:
-            connection.close()
-
-    @staticmethod
-    def _initialize_schema(connection: sqlite3.Connection) -> None:
-        current_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-        if current_version not in {0, _SCHEMA_VERSION}:
-            raise ImportReceiptError("Unsupported private receipt schema version.")
-        if current_version == _SCHEMA_VERSION:
-            try:
-                for statement in _SCHEMA_INDEX_STATEMENTS:
-                    connection.execute(statement)
-            except sqlite3.Error:
-                raise ImportReceiptError(
-                    "The private receipt schema is incompatible with canonical v1."
-                ) from None
-            return
-        for statement in _SCHEMA_STATEMENTS:
-            connection.execute(statement)
-        connection.execute("PRAGMA user_version = 1")
+            with self._store.transaction(immediate=immediate) as connection:
+                yield connection
+        except NotesDeviceSchemaError as error:
+            message = str(error)
+            if message.startswith("Unsupported") or "incompatible" in message:
+                raise ImportReceiptError(message) from None
+            raise ImportReceiptError(
+                "The private receipt schema could not be initialized safely."
+            ) from None
 
     def begin(
         self,
@@ -2320,6 +2145,58 @@ class NoteImportReceiptRepository:
     ) -> tuple[PriorImportObservation, ...]:
         """Return latest exact single-note observations for current plan sources."""
 
+        return self._prior_observations_for_plan(plan, self.transaction())
+
+    def prior_observations_for_plan_read_only(
+        self,
+        plan: NoteImportPlan,
+    ) -> tuple[PriorImportObservation, ...]:
+        """Inspect an existing ledger without creating or migrating its schema."""
+
+        if type(plan) is not NoteImportPlan:
+            raise TypeError("plan must be a NoteImportPlan.")
+        if not plan.items or not self._database_path.exists():
+            return ()
+        connection: sqlite3.Connection | None = None
+        try:
+            connection = self._connect(read_only=True, must_exist=True)
+            if not self._read_only_schema_is_available(connection):
+                return ()
+            return self._prior_observations_for_plan(plan, nullcontext(connection))
+        except ImportReceiptError:
+            raise
+        except sqlite3.Error:
+            raise ImportReceiptError(
+                "Private receipt observations are unavailable."
+            ) from None
+        finally:
+            if connection is not None:
+                connection.close()
+
+    @staticmethod
+    def _read_only_schema_is_available(connection: sqlite3.Connection) -> bool:
+        current_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+        if current_version not in {0, 1, _SCHEMA_VERSION}:
+            raise ImportReceiptError("Unsupported private receipt schema version.")
+        tables = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_schema WHERE type = 'table'"
+            ).fetchall()
+        }
+        if not _REQUIRED_IMPORT_TABLES <= tables:
+            return False
+        if current_version not in {1, _SCHEMA_VERSION}:
+            raise ImportReceiptError("Unsupported private receipt schema version.")
+        return True
+
+    def _prior_observations_for_plan(
+        self,
+        plan: NoteImportPlan,
+        connection_context: AbstractContextManager[sqlite3.Connection],
+    ) -> tuple[PriorImportObservation, ...]:
+        """Project planner observations using a caller-owned connection context."""
+
         if type(plan) is not NoteImportPlan:
             raise TypeError("plan must be a NoteImportPlan.")
         try:
@@ -2338,7 +2215,7 @@ class NoteImportReceiptRepository:
             str,
             tuple[tuple[int, int], str, list[tuple[object, ...]]],
         ] = {}
-        with self.transaction() as connection:
+        with connection_context as connection:
             digests = tuple(digest_items)
             chunk_size = _prior_observation_chunk_size(connection)
             for offset in range(0, len(digests), chunk_size):

@@ -895,7 +895,7 @@ def test_removal_settings_inputs_treat_missing_stored_draft_as_no_draft() -> Non
 
 
 @pytest.mark.asyncio
-async def test_app_lifecycle_shutdown_drains_artifact_coordinator_first() -> None:
+async def test_app_lifecycle_shutdown_drains_all_owners_in_authority_order() -> None:
     calls: list[str] = []
 
     class Coordinator:
@@ -917,24 +917,34 @@ async def test_app_lifecycle_shutdown_drains_artifact_coordinator_first() -> Non
         # of asserting the ordering it exists for.
         calls.append("console-runtime")
 
+    async def notes_sync_shutdown() -> None:
+        calls.append("notes-sync")
+
+    async def persona_buddy_shutdown() -> None:
+        calls.append("persona-buddy")
+
     async def notes_shutdown() -> None:
         calls.append("notes")
 
     owner = SimpleNamespace(
         _audio_cpp_artifact_lease_coordinator=Coordinator(),
         audio_cpp_model_install_owner=InstallOwner(),
+        _shutdown_notes_sync_runtime=notes_sync_shutdown,
         _shutdown_console_image_edits=image_shutdown,
         _shutdown_console_runtime=console_runtime_shutdown,
+        _shutdown_persona_buddy=persona_buddy_shutdown,
         _shutdown_file_notes_session_owner=notes_shutdown,
     )
 
     await TldwCli._shutdown_app_owned_lifecycles(owner)
 
     assert calls == [
+        "notes-sync",
+        "console-runtime",
+        "persona-buddy",
         "coordinator",
         "install",
         "image",
-        "console-runtime",
         "notes",
     ]
 

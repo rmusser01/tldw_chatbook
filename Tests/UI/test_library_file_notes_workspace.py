@@ -8,6 +8,7 @@ import threading
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import replace
+from itertools import product
 from pathlib import Path
 from time import perf_counter
 from unittest.mock import AsyncMock, patch
@@ -36,6 +37,7 @@ from tldw_chatbook.Library.library_shell_state import (  # noqa: E402
 from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica  # noqa: E402
 from tldw_chatbook.Notes.file_notes_session_owner import (  # noqa: E402
     FileNotesSessionOwner,
+    SessionChange,
 )
 from tldw_chatbook.Notes.file_notes_service import (  # noqa: E402
     INTERACTIVE_FILE_CHARS,
@@ -321,6 +323,15 @@ def _painted_style_of_text(app: App, region, needle: str):
     return None
 
 
+def _painted_text_in_region(app: App, region) -> str:
+    """Return only compositor cells painted inside ``region``."""
+    strips = list(app.screen._compositor.render_strips())
+    return "\n".join(
+        strips[y].crop(region.x, region.right).text.rstrip()
+        for y in range(region.y, region.bottom)
+    )
+
+
 def _assert_legible_painted_text(
     app: App,
     widget,
@@ -384,7 +395,7 @@ def _tree_node_count(tree: Tree) -> int:
 
 
 @pytest.mark.asyncio
-async def test_file_notes_field_labels_persist_and_follow_path_context(
+async def test_file_notes_field_labels_persist_across_path_context(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "notes"
@@ -404,7 +415,8 @@ async def test_file_notes_field_labels_persist_and_follow_path_context(
         path = workspace.query_one("#file-notes-path", Input)
 
         assert str(search_label.renderable) == "Search"
-        assert str(path_label.renderable) == "New path"
+        expected_label = "Target path · New / Move / Save copy"
+        assert str(path_label.renderable) == expected_label
         workspace._navigator_mode = "git"
         workspace._sync_navigator_mode()
         assert not workspace.query_one("#file-notes-search-row").display
@@ -415,17 +427,35 @@ async def test_file_notes_field_labels_persist_and_follow_path_context(
         path.value = "created.md"
         await pilot.pause()
         assert str(search_label.renderable) == "Search"
-        assert str(path_label.renderable) == "New path"
+        assert str(path_label.renderable) == expected_label
 
         assert await workspace.open_path("open.md")
-        assert str(path_label.renderable) == "New / move path"
+        assert str(path_label.renderable) == expected_label
         path.value = "moved.md"
         await pilot.pause()
-        assert str(path_label.renderable) == "New / move path"
+        assert str(path_label.renderable) == expected_label
+
+        for save_state in ("dirty", "conflict", "error"):
+            workspace._set_save_state(save_state)
+            assert str(path_label.renderable) == expected_label
+
+        workspace._opened = replace(workspace._opened, protected=True)
+        workspace._update_controls()
+        assert str(path_label.renderable) == expected_label
+
+        workspace._opened = replace(
+            workspace._opened,
+            protected=False,
+            editable=False,
+            is_excerpt=True,
+            read_only_reason="large_file",
+        )
+        workspace._update_controls()
+        assert str(path_label.renderable) == expected_label
 
         workspace._deleted_paths = ("deleted.md",)
         assert workspace.select_deleted("deleted.md")
-        assert str(path_label.renderable) == "Restore path"
+        assert str(path_label.renderable) == expected_label
         assert path.value == "deleted.md"
 
     await workspace.shutdown()
@@ -471,7 +501,10 @@ async def test_file_notes_field_labels_preserve_input_geometry_and_tab_access(
         assert path.has_focus
         assert path_label.region.width > 0
         assert path.region.width >= 10
-        assert path_label.region.right <= path.region.x
+        assert path_label.render_line(0).text.strip() == (
+            "Target path · New / Move / Save copy"
+        )
+        assert path_label.region.bottom <= path.region.y
         assert path.region.right <= workspace.region.right
 
     await workspace.shutdown()
@@ -492,6 +525,17 @@ def _visible_editor_action_ids(
         for button in toolbar.query(Button)
         if button.display and button.id is not None
     }
+
+
+def _visible_primary_action_labels(
+    workspace: LibraryFileNotesWorkspace,
+) -> tuple[str, ...]:
+    """Return visible primary action labels in keyboard/DOM order."""
+    return tuple(
+        str(button.label)
+        for button in workspace.query_one("#file-notes-file-actions").query(Button)
+        if button.display
+    )
 
 
 def _assert_visible_editor_actions_fit(
@@ -596,40 +640,147 @@ def _root_transition_workspace(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_files_mode_carries_a_placement_sentence_relating_it_to_sync(
+async def test_folder_files_authority_row_tracks_root_save_and_session_git(
     tmp_path: Path,
 ) -> None:
-    """LIB-19: Database mode, Files mode (this surface), and the Sync
-    sub-canvas were never related to each other anywhere in the UI --
-    Files mode's own placement sentence names Sync and states the actual
-    behavioral difference (edits the folder directly vs. mirrors it in)."""
+    """One pinned row projects facts already owned by each update choke point."""
+    root = tmp_path / "notes"
+    root.mkdir()
     replica = FileNotesReplica(":memory:")
     workspace = LibraryFileNotesWorkspace(root=None, replica=replica)
     async with _WorkspaceHarness(workspace).run_test() as pilot:
         await pilot.pause()
-        purpose = _static_text(workspace, "#file-notes-purpose")
-        assert "Files" in purpose
-        assert "directly" in purpose
-        assert "Sync" in purpose
+        authority = workspace.query_one("#file-notes-authority", Static)
+        assert workspace.children[0] is authority
+        assert authority._render_markup is False
+        assert _static_text(workspace, "#file-notes-authority") == (
+            "Folder files · No folder selected · Next: Choose folder."
+        )
+
+        workspace._root = root
+        workspace._root_offline = False
+        workspace._update_root_surface()
+        assert "Folder: notes" in _static_text(
+            workspace,
+            "#file-notes-authority",
+        )
+
+        workspace._set_save_state("error", "permission denied")
+        save_failure = _static_text(workspace, "#file-notes-authority")
+        assert "Save failed" in save_failure
+        assert "permission denied" not in save_failure
+        assert "permission denied" in _static_text(
+            workspace,
+            "#file-notes-save-status",
+        )
+        assert "Next: Retry/copy." in save_failure
+
+        workspace._set_save_state("saved")
+        workspace._push_phase = "needs_attention"
+        workspace._render_session_git_label(2)
+        git_attention = _static_text(workspace, "#file-notes-authority")
+        assert "Saved" in git_attention
+        assert "Session Git: 2 · Push attention" in git_attention
+        assert "Next: Review changes." in git_attention
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_folder_files_authority_status_survives_in_surface_navigation(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(root=root, replica=replica, poll_interval=10)
+
+    async with _WorkspaceHarness(workspace).run_test() as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        workspace._push_phase = "needs_attention"
+        workspace._render_session_git_label(3)
+        expected = _static_text(workspace, "#file-notes-authority")
+
+        workspace._navigator_mode = "git"
+        workspace._sync_navigator_mode()
+        workspace._navigator_mode = "files"
+        workspace._sync_navigator_mode()
+        await pilot.pause()
+
+        assert _static_text(workspace, "#file-notes-authority") == expected
+        assert "Push attention" in expected
+        assert "Next: Review changes." in expected
+
+    await workspace.shutdown()
     replica.close()
 
 
 @pytest.mark.parametrize(
-    ("size", "expected_height"),
-    (((160, 45), 1), ((120, 40), 1), ((60, 20), 2)),
+    ("save_state", "save_detail"),
+    (("error", "permission denied"), ("conflict", "disk changed")),
 )
+@pytest.mark.parametrize("git_first", (True, False))
+@pytest.mark.asyncio
+async def test_folder_files_authority_merges_save_and_git_in_either_update_order(
+    tmp_path: Path,
+    save_state: str,
+    save_detail: str,
+    git_first: bool,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    owner = FileNotesSessionOwner()
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        session_owner=owner,
+        poll_interval=10,
+    )
+
+    async with _WorkspaceHarness(workspace).run_test() as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        binding = workspace._session_binding
+        assert binding is not None
+        assert owner.record_change(binding, SessionChange("modified", "draft.md"))
+        if git_first:
+            workspace._render_session_git_label()
+            workspace._set_save_state(save_state, save_detail)
+        else:
+            workspace._set_save_state(save_state, save_detail)
+            workspace._render_session_git_label()
+
+        expected = _static_text(workspace, "#file-notes-authority")
+        assert "Folder: notes" in expected
+        assert (
+            "Conflict" if save_state == "conflict" else "Save failed"
+        ) in expected
+        assert save_detail not in expected
+        assert save_detail in _static_text(workspace, "#file-notes-save-status")
+        assert "Session Git: 1 change" in expected
+        assert "Next:" in expected
+
+        workspace._navigator_mode = "git"
+        workspace._sync_navigator_mode()
+        workspace._navigator_mode = "files"
+        workspace._sync_navigator_mode()
+        await pilot.pause()
+        assert _static_text(workspace, "#file-notes-authority") == expected
+
+    await workspace.shutdown()
+    replica.close()
+
+
+@pytest.mark.parametrize("size", ((160, 45), (120, 40), (60, 20)))
 @pytest.mark.asyncio
 async def test_file_notes_authority_copy_is_complete_and_bounded(
     tmp_path: Path,
     size: tuple[int, int],
-    expected_height: int,
 ) -> None:
     """Verify authority copy uses bounded rows at supported terminal sizes.
 
     Args:
         tmp_path: Temporary directory used as the linked File Notes root.
         size: Terminal dimensions used to mount the workspace.
-        expected_height: Expected rendered height of the authority copy.
     """
     root = tmp_path / "notes"
     root.mkdir()
@@ -640,20 +791,121 @@ async def test_file_notes_authority_copy_is_complete_and_bounded(
         poll_interval=10,
     )
     expected = (
-        "Files edits this folder directly. Sync mirrors files into Library."
+        "Folder files · Folder: notes · Ready "
+        "Session Git: 0 changes · Next: Choose/new file."
     )
 
     async with _WorkspaceHarness(workspace).run_test(size=size) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
-        purpose = workspace.query_one("#file-notes-purpose")
+        purpose = workspace.query_one("#file-notes-authority")
         rendered = " ".join(
             purpose.render_line(row).text.strip()
             for row in range(purpose.region.height)
         )
         assert " ".join(rendered.split()) == expected
-        assert purpose.region.height == expected_height
-        assert purpose.region.height <= 2
+        assert purpose.region.height == 2
         assert workspace.query_one("#file-notes-body").region.height >= 8
+
+    replica.close()
+
+
+def test_configured_root_authority_state_table_is_two_line_and_bounded(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "Research notes with a very long private directory name"
+    root.mkdir()
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(root=root, replica=replica)
+    root_states = (
+        (False, "", ""),
+        (None, "", "Checking"),
+        (True, "", "Offline"),
+        (True, "Replica warning", "Offline+Warning"),
+        (False, "Replica warning", "Warning"),
+    )
+    transitions = (
+        (False, False, ""),
+        (True, False, "Changing folder"),
+        (False, True, "File operation"),
+    )
+    save_states = (
+        ("idle", ""),
+        ("dirty", "Unsaved"),
+        ("saving", "Saving"),
+        ("saved", "Saved"),
+        ("conflict", "Conflict"),
+        ("error", "Save failed"),
+    )
+    push_states = (
+        ("idle", ""),
+        ("checking", "Check push"),
+        ("pushing", "Pushing"),
+        ("needs_attention", "Push attention"),
+    )
+
+    for root_state, transition, save_state, push_state, git_count in product(
+        root_states,
+        transitions,
+        save_states,
+        push_states,
+        (0, 1, 125),
+    ):
+        offline, warning, root_copy = root_state
+        root_transitioning, path_transitioning, transition_copy = transition
+        save_value, save_copy = save_state
+        push_value, push_copy = push_state
+        workspace._root_offline = offline
+        workspace._runtime_warning = warning
+        workspace._root_transitioning = root_transitioning
+        workspace._path_transitioning = path_transitioning
+        workspace._save_state = save_value
+        workspace._push_phase = push_value
+        authority = workspace._authority_copy(git_count)
+        lines = authority.splitlines()
+        context = (root_state, transition, save_state, push_state, git_count)
+
+        assert len(lines) == 2, context
+        assert all(cell_len(line) <= 60 for line in lines), (context, lines)
+        assert "Folder files" in lines[0], context
+        assert "Folder:" in lines[0], context
+        state_copy = transition_copy or root_copy
+        if state_copy:
+            assert state_copy in lines[0], context
+        if save_copy:
+            assert save_copy in lines[0], context
+        elif not state_copy:
+            assert "Ready" in lines[0], context
+        expected_count = "99+" if git_count > 99 else str(git_count)
+        assert f"Session Git: {expected_count}" in lines[1], context
+        if push_copy:
+            assert push_copy in lines[1], context
+        assert "Next:" in lines[1], context
+
+        if root_transitioning:
+            next_copy = "Wait for change."
+        elif path_transitioning:
+            next_copy = "Wait for file."
+        elif offline is None:
+            next_copy = "Wait for check."
+        elif offline is True:
+            next_copy = "Reconnect/change."
+        elif warning:
+            next_copy = "Open Details."
+        elif save_value == "conflict":
+            next_copy = "Resolve/copy."
+        elif save_value == "error":
+            next_copy = "Retry/copy."
+        elif save_value == "saving":
+            next_copy = "Wait for save."
+        elif save_value == "dirty":
+            next_copy = "Keep editing."
+        elif push_value != "idle" or git_count:
+            next_copy = "Review changes."
+        elif save_value == "saved":
+            next_copy = "Keep editing."
+        else:
+            next_copy = "Choose/new file."
+        assert f"Next: {next_copy}" in lines[1], context
 
     replica.close()
 
@@ -963,9 +1215,59 @@ async def test_wide_files_task_return_reuses_the_existing_leave_guard() -> None:
         assert screen.query_one("#library-notes-source-database", Button)
         assert screen.query_one("#library-rail").display is True
 
+
+@pytest.mark.asyncio
+async def test_initial_root_scan_projects_checking_authority_while_actions_are_gated(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    scan_started = threading.Event()
+    release_scan = threading.Event()
+    original_scan = FileNotesService.scan
+
+    def delayed_scan(service: FileNotesService):
+        scan_started.set()
+        assert release_scan.wait(timeout=5)
+        return original_scan(service)
+
+    monkeypatch.setattr(FileNotesService, "scan", delayed_scan)
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(root=root, replica=replica, poll_interval=10)
+
+    async with _WorkspaceHarness(workspace).run_test(size=(60, 20)) as pilot:
+        try:
+            await _wait_until(
+                pilot,
+                scan_started.is_set,
+                "initial root scan did not start",
+            )
+            assert "Checking" in _static_text(
+                workspace,
+                "#file-notes-root-status",
+            )
+            authority = _static_text(workspace, "#file-notes-authority")
+            assert "Checking" in authority
+            assert "Ready" not in authority
+            assert "Next: Wait for check." in authority
+            assert workspace.query_one("#file-notes-new", Button).disabled
+        finally:
+            release_scan.set()
+
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+
     replica.close()
 
 
+@pytest.mark.parametrize(
+    ("save_state", "save_copy"),
+    (("error", "Save failed"), ("conflict", "Conflict")),
+)
+@pytest.mark.parametrize(
+    ("push_phase", "push_copy", "git_count"),
+    (("idle", "", 0), ("needs_attention", "Push attention", 1)),
+)
 @pytest.mark.asyncio
 async def test_wide_files_task_return_restores_database_browse_receipt() -> None:
     """Files returns to the prior Database row and both independent scroll owners."""
@@ -1064,6 +1366,97 @@ async def test_wide_files_task_return_restores_database_browse_receipt() -> None
 
 
 @pytest.mark.asyncio
+async def test_path_transition_authority_names_file_operation_and_settles(
+    tmp_path: Path,
+    save_state: str,
+    save_copy: str,
+    push_phase: str,
+    push_copy: str,
+    git_count: int,
+) -> None:
+    root = tmp_path / "Research notes with a very long private directory name"
+    root.mkdir()
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(root=root, replica=replica, poll_interval=10)
+
+    async with _CssTrueWorkspaceHarness(workspace).run_test(size=(60, 20)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        workspace._set_save_state(save_state, "a long private filesystem detail")
+        workspace._push_phase = push_phase
+
+        with workspace._hold_path_transition() as transition:
+            assert transition is not None
+            workspace._render_session_git_label(git_count)
+            await pilot.pause()
+            authority = workspace.query_one("#file-notes-authority", Static)
+            authority_copy = _static_text(workspace, "#file-notes-authority")
+            painted = _painted_text_in_region(pilot.app, authority.region)
+            assert authority.region.height == 2
+            assert len(authority_copy.splitlines()) == 2
+            assert all(
+                cell_len(row) <= authority.region.width
+                for row in authority_copy.splitlines()
+            )
+            assert "Folder: Rese…" in painted
+            assert "File operation" in painted
+            assert save_copy in painted
+            assert "Changing folder" not in painted
+            assert f"Session Git: {git_count}" in painted
+            if push_copy:
+                assert push_copy in painted
+            assert "Next: Wait for file." in painted
+
+        await pilot.pause()
+        authority = _static_text(workspace, "#file-notes-authority")
+        assert "File operation" not in authority
+        assert save_copy in authority
+
+    replica.close()
+
+
+@pytest.mark.parametrize(
+    ("push_phase", "push_copy"),
+    (("idle", ""), ("needs_attention", "Push attention")),
+)
+@pytest.mark.asyncio
+async def test_saved_authority_with_session_git_paints_at_60x20(
+    tmp_path: Path,
+    push_phase: str,
+    push_copy: str,
+) -> None:
+    root = tmp_path / "Research notes with a very long private directory name"
+    root.mkdir()
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(root=root, replica=replica, poll_interval=10)
+
+    async with _CssTrueWorkspaceHarness(workspace).run_test(size=(60, 20)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        workspace._set_save_state("saved")
+        workspace._push_phase = push_phase
+        workspace._render_session_git_label(1)
+        await pilot.pause()
+
+        authority = workspace.query_one("#file-notes-authority", Static)
+        authority_copy = _static_text(workspace, "#file-notes-authority")
+        painted = _painted_text_in_region(pilot.app, authority.region)
+        assert authority.region.height == 2
+        assert len(authority_copy.splitlines()) == 2
+        assert all(
+            cell_len(row) <= authority.region.width
+            for row in authority_copy.splitlines()
+        )
+        assert "Folder files" in painted
+        assert "Folder: Rese…" in painted
+        assert "Saved" in painted
+        assert "Session Git: 1" in painted
+        if push_copy:
+            assert push_copy in painted
+        assert "Next: Review changes." in painted
+
+    replica.close()
+
+
+@pytest.mark.asyncio
 async def test_root_transition_retains_and_freezes_old_document_until_scan_finishes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1116,6 +1509,9 @@ async def test_root_transition_retains_and_freezes_old_document_until_scan_finis
         assert editor.read_only
         assert workspace.query_one("#file-notes-new", Button).disabled
         assert workspace.query_one("#file-notes-search", Input).disabled
+        authority = _static_text(workspace, "#file-notes-authority")
+        assert "Changing folder" in authority
+        assert "Next: Wait for change." in authority
         assert (old_root / "old.md").read_text(encoding="utf-8") == (
             "saved before root change"
         )
@@ -2109,8 +2505,8 @@ async def test_save_status_names_local_folder_and_preserved_draft(
             "Conflict: draft preserved in editor; file changed on disk"
         )
         save_copy = workspace.query_one("#file-notes-save-copy", Button)
-        assert str(save_copy.label) == "Save draft as copy"
-        assert not save_copy.display
+        assert str(save_copy.label) == "Save copy"
+        assert save_copy.display
         resolve = workspace.query_one("#file-notes-resolve-conflict", Button)
         assert resolve.display
         assert str(resolve.label) == "Resolve conflict"
@@ -2148,7 +2544,7 @@ async def test_maintenance_disclosure_keeps_secondary_file_actions_reachable(
         assert toggle.render_line(0).text.strip() == "More file actions"
         assert toggle.region.right <= workspace.region.right
         assert not maintenance.display
-        assert not workspace.query_one("#file-notes-move", Button).display
+        assert workspace.query_one("#file-notes-move", Button).display
         assert not workspace.query_one("#file-notes-protect", Button).display
 
         toggle.focus()
@@ -2164,14 +2560,16 @@ async def test_maintenance_disclosure_keeps_secondary_file_actions_reachable(
             for button in maintenance.query(Button)
             if button.display
         } == {
-            "file-notes-move",
             "file-notes-protect",
-            "file-notes-reload",
             "file-notes-refresh",
         }
+        assert workspace.query_one("#file-notes-reload", Button).display
         _assert_visible_editor_actions_fit(workspace)
 
-        assert toggle.has_focus, repr(workspace.app.focused)
+        protect = workspace.query_one("#file-notes-protect", Button)
+        protect.focus()
+        await pilot.pause()
+        assert protect.has_focus
         toggle.press()
         await pilot.pause()
         assert str(toggle.label) == "More file actions"
@@ -2863,7 +3261,7 @@ async def test_conflict_resolution_discloses_only_safe_choices(
         await workspace.refresh_files()
         assert workspace.save_state == "conflict"
         assert resolve.display and not resolve.disabled
-        assert not workspace.query_one("#file-notes-save-copy", Button).display
+        assert workspace.query_one("#file-notes-save-copy", Button).display
 
         resolve.focus()
         resolve.press()
@@ -2876,6 +3274,10 @@ async def test_conflict_resolution_discloses_only_safe_choices(
         save_new = workspace.query_one(
             "#file-notes-resolution-save-new",
             Button,
+        )
+        assert save_new.tooltip == (
+            "Write the complete draft to the Target path without replacing "
+            "an existing file"
         )
         discard = workspace.query_one(
             "#file-notes-resolution-discard",
@@ -2896,11 +3298,17 @@ async def test_conflict_resolution_discloses_only_safe_choices(
         assert _static_text(workspace, "#file-notes-resolution-copy") == (
             "Choose a safe next step. No option overwrites the disk file."
         )
-        assert _static_text(workspace, "#file-notes-path-label") == "New note path"
+        assert _static_text(workspace, "#file-notes-path-label") == (
+            "Target path · New / Move / Save copy"
+        )
         assert workspace.query_one("#file-notes-compare", Button).display
         assert not workspace.query_one("#file-notes-delete", Button).display
         for choice in choices:
             assert choice.display and not choice.disabled
+            choice.focus()
+            choice.scroll_visible(animate=False)
+            await pilot.pause()
+            assert choice.has_focus
             assert choice.render_line(0).text.strip() == str(choice.label)
             assert choice.region.right <= workspace.region.right
             assert choice.region.bottom <= workspace.region.bottom
@@ -3129,7 +3537,7 @@ async def test_conflict_reload_requires_keyboard_confirmation_in_library_shell(
 
         await _show_maintenance_actions(workspace, pilot)
         reload_button = workspace.query_one("#file-notes-reload", Button)
-        assert str(reload_button.label) == "Discard draft and reload"
+        assert str(reload_button.label) == "Reload from disk"
         assert reload_button.display
         assert not reload_button.disabled
         for _ in range(120):
@@ -3251,6 +3659,7 @@ async def test_reload_confirmation_rejects_stale_editor_identity(
             lambda: workspace.reload_confirmation_active,
             "reload confirmation did not open",
         )
+        assert not workspace.has_class("-reload-confirming")
 
         if stale_axis == "root":
             workspace._session_owner.select_root(tmp_path / "other-root")
@@ -3704,11 +4113,11 @@ async def test_library_notes_source_choices_render_and_switch_by_keyboard(
         assert strip.content_region.contains_region(separator.region)
         assert strip.content_region.contains_region(files.region)
         assert separator.region.width == 1
-        assert str(database.label) == "Database (selected)"
+        assert str(database.label) == "Library notes"
         assert database.has_class("-selected")
         assert not database.disabled
         assert database.can_focus
-        assert str(files.label) == "Files"
+        assert str(files.label) == "Folder files"
         assert not files.disabled
         assert files.can_focus
 
@@ -3779,9 +4188,9 @@ async def test_library_notes_source_choices_render_and_switch_by_keyboard(
         files = screen.query_one("#library-notes-source-files", Button)
         assert strip.content_region.contains_region(database.region)
         assert strip.content_region.contains_region(files.region)
-        assert str(database.label) == "Database"
+        assert str(database.label) == "Library notes"
         assert not database.disabled
-        assert str(files.label) == "Files (selected)"
+        assert str(files.label) == "Folder files"
         assert files.has_class("-selected")
         assert not files.disabled
 
@@ -3825,7 +4234,7 @@ async def test_library_notes_source_choices_render_and_switch_by_keyboard(
                     Button,
                 ).label
             )
-            == "Database (selected)"
+            == "Library notes"
         )
 
     await workspace.shutdown()
@@ -3918,6 +4327,217 @@ async def test_file_notes_production_shell_preserves_canvas_across_breakpoints(
                 task_return = screen.query_one("#library-notes-task-return", Button)
                 assert task_return.display is True
                 assert str(task_return.label) == "‹ Library / Notes"
+
+    await workspace.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_file_notes_authority_is_painted_and_contained_at_60x20_shell(
+    tmp_path: Path,
+) -> None:
+    """The real Library hierarchy paints the complete pinned Files authority."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica_path=tmp_path / "owned.sqlite",
+        poll_interval=10,
+    )
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        notes=[{"title": "Database note", "id": "db-note-1"}],
+    )
+    screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
+
+    async with LibraryHarness(app, screen=screen).run_test(size=(60, 20)) as pilot:
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        await _wait_until(
+            pilot,
+            lambda: bool(screen.query("#library-notes-source-files")),
+            "Notes source strip did not compose",
+        )
+        screen.query_one("#library-notes-source-files", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: workspace.initialized and workspace.is_mounted,
+            "File Notes workspace did not mount",
+        )
+        await pilot.pause()
+
+        authority = workspace.query_one("#file-notes-authority", Static)
+        canvas = screen.query_one("#library-canvas")
+        assert authority in pilot.app.screen._compositor.visible_widgets
+        assert workspace.content_region.contains_region(authority.region)
+        assert canvas.content_region.contains_region(workspace.region)
+        assert 0 < authority.region.height <= 2
+        assert _painted_style_of_text(pilot.app, authority.region, "Folder files")
+        assert _painted_style_of_text(pilot.app, authority.region, "Next:")
+
+    await workspace.shutdown()
+
+
+@pytest.mark.parametrize(
+    ("save_state", "state_copy", "next_copy"),
+    (
+        ("error", "Save failed", "Next: Retry/copy."),
+        ("conflict", "Conflict", "Next: Resolve/copy."),
+    ),
+)
+@pytest.mark.asyncio
+async def test_file_notes_merged_recovery_authority_paints_at_60x20_shell(
+    tmp_path: Path,
+    save_state: str,
+    state_copy: str,
+    next_copy: str,
+) -> None:
+    """Long save failures keep all authority facts and recovery above the fold."""
+    root = tmp_path / "Research notes with a very long private directory name"
+    root.mkdir()
+    detail = (
+        "permission denied while writing an unusually long private filesystem path"
+    )
+    owner = FileNotesSessionOwner()
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica_path=tmp_path / "owned.sqlite",
+        session_owner=owner,
+        poll_interval=10,
+    )
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        notes=[{"title": "Database note", "id": "db-note-1"}],
+    )
+    screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
+
+    async with LibraryHarness(app, screen=screen).run_test(size=(60, 20)) as pilot:
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        await _wait_until(
+            pilot,
+            lambda: bool(screen.query("#library-notes-source-files")),
+            "Notes source strip did not compose",
+        )
+        screen.query_one("#library-notes-source-files", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: workspace.initialized and workspace.is_mounted,
+            "File Notes workspace did not mount",
+        )
+        binding = workspace._session_binding
+        assert binding is not None
+        assert owner.record_change(binding, SessionChange("modified", "draft.md"))
+        workspace._set_save_state(save_state, detail)
+        workspace._render_session_git_label()
+        await pilot.pause()
+
+        authority = workspace.query_one("#file-notes-authority", Static)
+        canvas = screen.query_one("#library-canvas")
+        painted = _painted_text_in_region(pilot.app, authority.region)
+        assert authority in pilot.app.screen._compositor.visible_widgets
+        assert workspace.content_region.contains_region(authority.region)
+        assert canvas.content_region.contains_region(workspace.region)
+        assert authority.region.height == 2
+        assert "Folder files" in painted
+        assert "Folder: Rese…" in painted
+        assert state_copy in painted
+        assert "Session Git: 1 change" in painted
+        assert next_copy in painted
+        assert detail not in _static_text(workspace, "#file-notes-authority")
+        assert detail in _static_text(workspace, "#file-notes-save-status")
+
+    await workspace.shutdown()
+
+
+@pytest.mark.parametrize("root_state", ("offline", "warning"))
+@pytest.mark.parametrize("save_state", ("error", "conflict"))
+@pytest.mark.asyncio
+async def test_file_notes_combined_non_ready_authority_matrix_paints_at_60x20(
+    tmp_path: Path,
+    root_state: str,
+    save_state: str,
+) -> None:
+    """Root, save, Git, push, and recovery remain painted in two rows."""
+    root = tmp_path / "Research notes with a very long private directory name"
+    root.mkdir()
+    owner = FileNotesSessionOwner()
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica_path=tmp_path / "owned.sqlite",
+        session_owner=owner,
+        poll_interval=10,
+    )
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        notes=[{"title": "Database note", "id": "db-note-1"}],
+    )
+    screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
+
+    async with LibraryHarness(app, screen=screen).run_test(size=(60, 20)) as pilot:
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        await _wait_until(
+            pilot,
+            lambda: bool(screen.query("#library-notes-source-files")),
+            "Notes source strip did not compose",
+        )
+        screen.query_one("#library-notes-source-files", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: workspace.initialized and workspace.is_mounted,
+            "File Notes workspace did not mount",
+        )
+        binding = workspace._session_binding
+        assert binding is not None
+        assert owner.record_change(binding, SessionChange("modified", "draft.md"))
+        workspace._root_offline = root_state == "offline"
+        workspace._runtime_warning = (
+            "" if root_state == "offline" else "Replica recovery unavailable"
+        )
+        workspace._update_root_surface()
+        workspace._set_save_state(
+            save_state,
+            "permission denied while writing a long private filesystem path",
+        )
+
+        for push_phase, push_copy in (
+            ("idle", ""),
+            ("checking", "Check push"),
+            ("pushing", "Pushing"),
+            ("needs_attention", "Push attention"),
+        ):
+            workspace._push_phase = push_phase
+            workspace._render_session_git_label()
+            await pilot.pause()
+
+            authority = workspace.query_one("#file-notes-authority", Static)
+            authority_copy = _static_text(workspace, "#file-notes-authority")
+            painted = _painted_text_in_region(pilot.app, authority.region)
+            assert authority.region.height == 2, (root_state, save_state, push_phase)
+            assert len(authority_copy.splitlines()) == 2
+            assert all(
+                cell_len(row) <= authority.region.width
+                for row in authority_copy.splitlines()
+            )
+            assert "Folder files" in painted
+            assert "Folder: Rese…" in painted
+            assert ("Offline" if root_state == "offline" else "Warning") in painted
+            assert ("Conflict" if save_state == "conflict" else "Save failed") in painted
+            assert "Session Git: 1" in painted
+            if push_copy:
+                assert push_copy in painted
+            expected_next = (
+                "Next: Reconnect/change."
+                if root_state == "offline"
+                else "Next: Open Details."
+            )
+            assert expected_next in painted
 
     await workspace.shutdown()
 
@@ -4323,6 +4943,212 @@ async def test_file_notes_focus_is_content_safe_under_production_css(
     replica.close()
 
 
+@pytest.mark.parametrize(
+    ("editor_state", "expected_primary"),
+    (
+        ("normal", ("New", "Move", "Delete", "More file actions")),
+        (
+            "dirty",
+            ("New", "Move", "Save copy", "Delete", "More file actions"),
+        ),
+        (
+            "conflict",
+            (
+                "New",
+                "Move",
+                "Compare",
+                "Resolve conflict",
+                "Reload from disk",
+                "Save copy",
+                "Delete",
+                "More file actions",
+            ),
+        ),
+        (
+            "error",
+            (
+                "New",
+                "Move",
+                "Discard draft and reload",
+                "Save copy",
+                "Delete",
+                "More file actions",
+            ),
+        ),
+        ("deleted", ("New", "Restore", "More file actions")),
+        ("protected", ("New", "Move", "Delete", "More file actions")),
+        (
+            "excerpt",
+            (
+                "New",
+                "Move",
+                "Export exact copy",
+                "Delete",
+                "More file actions",
+            ),
+        ),
+    ),
+)
+@pytest.mark.asyncio
+async def test_file_notes_primary_actions_follow_editor_state(
+    tmp_path: Path,
+    editor_state: str,
+    expected_primary: tuple[str, ...],
+) -> None:
+    """State-critical recovery actions outrank disclosed maintenance actions."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "state.md").write_text("saved\n", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        autosave_delay=10,
+        poll_interval=10,
+    )
+
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        assert await workspace.open_path("state.md")
+
+        if editor_state in {"dirty", "conflict", "error"}:
+            workspace._set_save_state(editor_state)
+        elif editor_state == "deleted":
+            workspace._deleted_paths = ("state.md",)
+            assert workspace.select_deleted("state.md")
+        elif editor_state == "protected":
+            workspace._opened = replace(workspace._opened, protected=True)
+            workspace._update_controls()
+        elif editor_state == "excerpt":
+            workspace._opened = replace(
+                workspace._opened,
+                editable=False,
+                is_excerpt=True,
+                read_only_reason="large_file",
+            )
+            workspace._update_controls()
+
+        assert _static_text(workspace, "#file-notes-path-label") == (
+            "Target path · New / Move / Save copy"
+        )
+        assert _visible_primary_action_labels(workspace) == expected_primary
+        assert not workspace.query_one("#file-notes-maintenance-actions").display
+        reload_button = workspace.query_one("#file-notes-reload", Button)
+        assert reload_button.parent is workspace.query_one(
+            "#file-notes-file-actions"
+        )
+        if editor_state in {"dirty", "conflict", "error"}:
+            assert workspace.query_one("#file-notes-save-copy", Button).display
+
+    await workspace.shutdown()
+    replica.close()
+
+
+@pytest.mark.parametrize("size", ((120, 40), (40, 20)))
+@pytest.mark.parametrize("save_state", ("conflict", "error"))
+@pytest.mark.asyncio
+async def test_reload_confirmation_keeps_target_and_save_copy_reachable(
+    tmp_path: Path,
+    size: tuple[int, int],
+    save_state: str,
+) -> None:
+    """A destructive reload decision must not hide the safe copy escape hatch."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    source = root / "state.md"
+    source.write_text("disk\n", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        autosave_delay=10,
+        poll_interval=10,
+    )
+
+    async with _production_workspace_context(workspace, size=size) as pilot:
+        assert await workspace.open_path("state.md")
+        editor = workspace.query_one("#file-notes-editor", TextArea)
+        _replace_editor_text(editor, "draft to preserve")
+        workspace._set_save_state(save_state)
+        path = workspace.query_one("#file-notes-path", Input)
+        path.value = "saved-copy.md"
+        reload_button = workspace.query_one("#file-notes-reload", Button)
+
+        await workspace._reload_file(Button.Pressed(reload_button))
+        await _wait_until(
+            pilot,
+            lambda: workspace.reload_confirmation_active,
+            "reload confirmation did not open",
+        )
+        cancel = workspace.query_one("#file-notes-reload-cancel", Button)
+        confirm = workspace.query_one("#file-notes-reload-confirm", Button)
+        await _wait_until(
+            pilot,
+            lambda: cancel.has_focus,
+            "reload confirmation did not focus safe Cancel",
+        )
+        assert str(confirm.label) == "Discard draft and load disk"
+        assert confirm.display and not confirm.disabled
+        assert source.read_text(encoding="utf-8") == "disk\n"
+        assert editor.text == "draft to preserve"
+
+        path_label = workspace.query_one("#file-notes-path-label", Static)
+        save_copy = workspace.query_one("#file-notes-save-copy", Button)
+        assert path_label.display and path.display
+        assert _static_text(workspace, "#file-notes-path-label") == (
+            "Target path · New / Move / Save copy"
+        )
+        assert save_copy.display and not save_copy.disabled
+        workspace.query_one("#file-notes-save-status").scroll_visible(
+            animate=False,
+            top=True,
+        )
+        await pilot.pause()
+        path.focus(scroll_visible=False)
+        await pilot.pause()
+        assert path.has_focus
+        assert (
+            workspace.query_one("#file-notes-save-status").region.bottom
+            <= path_label.region.y
+        )
+        for control, copy in (
+            (path_label, "Target path · New / Move / Save copy"),
+            (path, "saved-copy.md"),
+        ):
+            assert workspace.region.contains_region(control.region)
+            assert copy in _painted_text_in_region(pilot.app, control.region)
+
+        save_copy.focus()
+        save_copy.scroll_visible(animate=False)
+        await pilot.pause()
+        assert save_copy.has_focus
+        assert workspace.region.contains_region(save_copy.region)
+        assert "Save copy" in _painted_text_in_region(
+            pilot.app,
+            save_copy.region,
+        )
+
+        save_copy.press()
+        await _wait_until(
+            pilot,
+            lambda: (root / "saved-copy.md").exists(),
+            "Save copy did not preserve the draft during reload confirmation",
+        )
+        await _wait_until(
+            pilot,
+            lambda: not workspace.reload_confirmation_active,
+            "Save copy did not dismiss the reload confirmation",
+        )
+        assert (root / "saved-copy.md").read_text(encoding="utf-8") == (
+            "draft to preserve\n"
+        )
+        assert source.read_text(encoding="utf-8") == "disk\n"
+        assert not workspace.reload_confirmation_active
+
+    await workspace.shutdown()
+    replica.close()
+
+
 @pytest.mark.asyncio
 async def test_file_notes_discloses_actions_by_editor_state_and_redirects_focus(
     tmp_path: Path,
@@ -4346,11 +5172,12 @@ async def test_file_notes_discloses_actions_by_editor_state_and_redirects_focus(
         }
 
         assert await workspace.open_path("state.md")
-        assert _visible_editor_action_ids(workspace) == {
-            "file-notes-new",
-            "file-notes-delete",
-            "file-notes-maintenance-toggle",
-        }
+        assert _visible_primary_action_labels(workspace) == (
+            "New",
+            "Move",
+            "Delete",
+            "More file actions",
+        )
 
         delete = workspace.query_one("#file-notes-delete", Button)
         editor = workspace.query_one("#file-notes-editor", TextArea)
@@ -4373,6 +5200,7 @@ async def test_file_notes_discloses_actions_by_editor_state_and_redirects_focus(
         )
         assert _visible_editor_action_ids(workspace) == {
             "file-notes-new",
+            "file-notes-move",
             "file-notes-delete",
             "file-notes-save-copy",
             "file-notes-maintenance-toggle",
@@ -4405,6 +5233,11 @@ async def test_file_notes_discloses_actions_by_editor_state_and_redirects_focus(
             "file-notes-restore",
             "file-notes-maintenance-toggle",
         }
+        await _wait_until(
+            pilot,
+            lambda: workspace.app.focused is not None,
+            "focus did not redirect after delete",
+        )
         focused = workspace.app.focused
         assert focused is not None
         assert not delete.has_focus
@@ -4431,11 +5264,11 @@ async def test_file_notes_discloses_actions_by_editor_state_and_redirects_focus(
 @pytest.mark.parametrize("size", ((120, 40), (40, 20)))
 @pytest.mark.asyncio
 @pytest.mark.allow_network
-async def test_file_notes_delete_is_last_and_spatially_separated_from_new(
+async def test_file_notes_delete_is_spatially_separated_from_new(
     tmp_path: Path,
     size: tuple[int, int],
 ) -> None:
-    """Verify Delete stays last in keyboard order and away from routine actions.
+    """Verify Delete stays away from the routine New action.
 
     Args:
         tmp_path: Temporary directory used as the File Notes root.
@@ -4462,10 +5295,16 @@ async def test_file_notes_delete_is_last_and_spatially_separated_from_new(
         new = workspace.query_one("#file-notes-new", Button)
         delete = workspace.query_one("#file-notes-delete", Button)
         spacer = workspace.query_one("#file-notes-delete-spacer", Static)
-        button_ids = [button.id for button in toolbar.query(Button)]
+        button_ids = [
+            button.id for button in toolbar.query(Button) if button.display
+        ]
 
-        assert button_ids[0] == "file-notes-new"
-        assert button_ids[-1] == "file-notes-delete"
+        assert button_ids == [
+            "file-notes-new",
+            "file-notes-move",
+            "file-notes-delete",
+            "file-notes-maintenance-toggle",
+        ]
         assert new.display and delete.display
         assert new.render_line(0).text.strip() == "New"
         assert delete.render_line(0).text.strip() == "Delete"
@@ -4473,7 +5312,7 @@ async def test_file_notes_delete_is_last_and_spatially_separated_from_new(
             assert not workspace.has_class("-stack-editor-actions")
             assert spacer.display
             assert delete.region.x > new.region.right
-            assert delete.region.right == toolbar.content_region.right
+            assert delete.region.right <= toolbar.content_region.right
         else:
             assert workspace.has_class("-stack-editor-actions")
             assert not spacer.display
@@ -4723,6 +5562,181 @@ async def test_file_notes_disclosed_actions_fit_wide_and_compact_layouts(
         await pilot.pause()
         _assert_visible_editor_actions_fit(workspace)
 
+    replica.close()
+
+
+@pytest.mark.parametrize("size", ((120, 40), (40, 20)))
+@pytest.mark.asyncio
+async def test_production_folder_files_path_and_recovery_actions_are_painted(
+    tmp_path: Path,
+    size: tuple[int, int],
+) -> None:
+    """The shipped Library hierarchy keeps compact recovery controls reachable."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "layout.md").write_text("layout\n", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        autosave_delay=10,
+        poll_interval=10,
+    )
+
+    async with _production_workspace_context(workspace, size=size) as pilot:
+        assert await workspace.open_path("layout.md")
+        workspace._set_save_state("conflict", "file changed on disk")
+        await pilot.pause()
+
+        path_label = workspace.query_one("#file-notes-path-label", Static)
+        path = workspace.query_one("#file-notes-path", Input)
+        path.focus()
+        path.scroll_visible(animate=False)
+        await pilot.pause()
+        assert path.has_focus
+        assert path_label.region.bottom <= path.region.y
+        assert workspace.region.contains_region(path_label.region)
+        assert workspace.region.contains_region(path.region)
+        assert "Target path · New / Move / Save copy" in _painted_text_in_region(
+            pilot.app,
+            path_label.region,
+        )
+
+        for selector, expected_label in (
+            ("#file-notes-move", "Move"),
+            ("#file-notes-reload", "Reload from disk"),
+            ("#file-notes-save-copy", "Save copy"),
+            ("#file-notes-delete", "Delete"),
+            ("#file-notes-maintenance-toggle", "More file actions"),
+        ):
+            button = workspace.query_one(selector, Button)
+            assert button.display and not button.disabled
+            button.scroll_visible(animate=False)
+            await pilot.pause()
+            button.focus()
+            await pilot.pause()
+            assert button.has_focus
+            assert workspace.region.contains_region(button.region)
+            assert expected_label in _painted_text_in_region(
+                pilot.app,
+                button.region,
+            )
+
+    await workspace.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_production_compact_folder_files_disclosure_and_states_are_painted(
+    tmp_path: Path,
+) -> None:
+    """The 40-column product path paints disclosed and contextual actions."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "states.md").write_text("states\n", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        autosave_delay=10,
+        poll_interval=10,
+    )
+
+    async with _production_workspace_context(workspace, size=(40, 20)) as pilot:
+        assert await workspace.open_path("states.md")
+        opened = workspace.current_document
+        assert opened is not None
+
+        toggle = workspace.query_one("#file-notes-maintenance-toggle", Button)
+        toggle.focus()
+        await pilot.press("enter")
+        await _wait_until(
+            pilot,
+            lambda: workspace.query_one(
+                "#file-notes-maintenance-actions"
+            ).display,
+            "More file actions did not disclose compact maintenance actions",
+        )
+        for selector, label in (
+            ("#file-notes-reload", "Reload"),
+            ("#file-notes-protect", "Protect"),
+            ("#file-notes-refresh", "Refresh"),
+        ):
+            action = workspace.query_one(selector, Button)
+            assert action.display and not action.disabled
+            await pilot.press("tab")
+            await pilot.pause()
+            assert action.has_focus
+            assert workspace.region.contains_region(action.region)
+            assert label in _painted_text_in_region(pilot.app, action.region)
+
+        workspace._opened = replace(opened, protected=True)
+        workspace._update_controls()
+        unprotect = workspace.query_one("#file-notes-protect", Button)
+        unprotect.scroll_visible(animate=False)
+        await pilot.pause()
+        unprotect.focus()
+        await pilot.pause()
+        assert "Unprotect" in _painted_text_in_region(
+            pilot.app,
+            unprotect.region,
+        )
+
+        workspace._maintenance_expanded = False
+        workspace._opened = replace(
+            opened,
+            editable=False,
+            is_excerpt=True,
+            read_only_reason="large_file",
+        )
+        workspace._update_controls()
+        export = workspace.query_one("#file-notes-save-copy", Button)
+        export.scroll_visible(animate=False)
+        await pilot.pause()
+        export.focus()
+        await pilot.pause()
+        assert export.display and not export.disabled and export.has_focus
+        assert "Export exact copy" in _painted_text_in_region(
+            pilot.app,
+            export.region,
+        )
+
+        workspace._opened = opened
+        workspace._set_save_state("conflict")
+        resolve = workspace.query_one("#file-notes-resolve-conflict", Button)
+        resolve.press()
+        await _wait_until(
+            pilot,
+            lambda: workspace.conflict_resolution_active,
+            "compact conflict resolution did not open",
+        )
+        for selector, label in (
+            ("#file-notes-resolution-keep", "Keep editing"),
+            ("#file-notes-resolution-save-new", "Save draft as new note"),
+            ("#file-notes-resolution-discard", "Discard draft and load disk"),
+        ):
+            action = workspace.query_one(selector, Button)
+            action.scroll_visible(animate=False)
+            await pilot.pause()
+            action.focus()
+            await pilot.pause()
+            assert action.has_focus
+            assert workspace.region.contains_region(action.region)
+            assert label in _painted_text_in_region(pilot.app, action.region)
+
+        workspace._set_conflict_resolution(False)
+        workspace._deleted_paths = ("states.md",)
+        assert workspace.select_deleted("states.md")
+        restore = workspace.query_one("#file-notes-restore", Button)
+        restore.scroll_visible(animate=False)
+        await pilot.pause()
+        restore.focus()
+        await pilot.pause()
+        assert restore.display and not restore.disabled and restore.has_focus
+        assert workspace.region.contains_region(restore.region)
+        assert "Restore" in _painted_text_in_region(pilot.app, restore.region)
+
+    await workspace.shutdown()
     replica.close()
 
 

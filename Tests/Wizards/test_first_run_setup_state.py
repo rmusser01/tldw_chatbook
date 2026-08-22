@@ -461,7 +461,6 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     active_step_ids,
     build_appearance_commit,
     build_model_commit,
-    build_notes_commit,
     build_provider_commit,
     build_rag_commit,
     build_tools_commit,
@@ -558,20 +557,6 @@ class TestCommitBuilders:
         assert commit == {
             "tools": {"read_file_enabled": True, "write_file_enabled": False}
         }
-
-    def test_notes_commit(self):
-        commit = build_notes_commit(sync_directory="~/Notes", auto_sync_enabled=True)
-        assert commit == {
-            "notes": {"sync_directory": "~/Notes", "auto_sync_enabled": True}
-        }
-
-    def test_notes_commit_disable_only_omits_directory(self):
-        """No sync_directory passed -> not present in the commit at all, so
-        a merge-only writer never clobbers the persisted directory with an
-        empty string when only the enabled flag flips off."""
-        commit = build_notes_commit(auto_sync_enabled=False)
-        assert commit == {"notes": {"auto_sync_enabled": False}}
-        assert "sync_directory" not in commit["notes"]
 
     def test_appearance_commit_with_splash(self):
         commit = build_appearance_commit(
@@ -1536,7 +1521,6 @@ class TestSectionAllowlist:
             build_model_commit(provider_value="OpenAI", model_id="m"),
             build_rag_commit(default_model_id="e5-small-v2"),
             build_tools_commit(gate_values={"read_file_enabled": True}),
-            build_notes_commit(sync_directory="~/n", auto_sync_enabled=False),
             build_appearance_commit(default_theme="t", splash_card="c"),
             build_wizard_state_commit(started=True),
             build_speech_transcription_commit(
@@ -1700,7 +1684,6 @@ class TestWizardPrefill:
     def test_reads_current_values(self):
         cfg = {
             "chat_defaults": {"provider": "Anthropic", "model": "claude-opus-5"},
-            "notes": {"sync_directory": "~/N", "auto_sync_enabled": True},
             "general": {"default_theme": "textual-light"},
             "tools": {"read_file_enabled": True},
             "splash_screen": {"card_selection": "matrix"},
@@ -1708,8 +1691,6 @@ class TestWizardPrefill:
         prefill = read_wizard_prefill(cfg)
         assert prefill.provider_value == "Anthropic"
         assert prefill.model_id == "claude-opus-5"
-        assert prefill.sync_directory == "~/N"
-        assert prefill.auto_sync_enabled is True
         assert prefill.default_theme == "textual-light"
         assert ("read_file_enabled", True) in prefill.tool_gates
         assert prefill.card_selection == "matrix"

@@ -25,7 +25,6 @@ from tldw_chatbook.Library.library_fts_query import (
     build_fts_match_query,
     build_prefix_match_query,
 )
-from tldw_chatbook.Library.library_notes_sync_state import count_noun
 from tldw_chatbook.Library.library_rag_service import LibraryRagSearchOutcome
 from tldw_chatbook.Library.library_rag_state import (
     LIBRARY_RAG_EMPTY_STATE_SELECTOR,
@@ -1408,7 +1407,10 @@ def _conversation_row(item: Mapping[str, Any]) -> dict[str, Any]:
         "source_id": str(item.get("id", "")),
         "chunk_id": "",
         "title": item.get("title") or "",
-        "snippet": f"Matched conversation · {count_noun(message_count, 'message')}",
+        "snippet": (
+            f"Matched conversation · {message_count} "
+            f"{'message' if message_count == 1 else 'messages'}"
+        ),
         # C1: keyword-mode rows show no score, uniformly with notes/media --
         # `relevance_score`/`best_rank` are an FTS ranking artifact, not a
         # retrieval similarity score, so surfacing it here was misleading.

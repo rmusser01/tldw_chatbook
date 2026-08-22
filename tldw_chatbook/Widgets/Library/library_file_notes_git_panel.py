@@ -48,8 +48,10 @@ from tldw_chatbook.Notes.file_notes_git_push import (
     PushReviewProjection,
 )
 from tldw_chatbook.Notes.file_notes_session_owner import (
+    FileSystemIdentity,
     HeadIdentity,
     PushCandidateAvailability,
+    RepositoryIdentity,
     SessionGitRow,
     SessionGitStatus,
 )
@@ -178,12 +180,14 @@ class CommitPanelReviewProjection:
     """Sanitized review facts paired with explicit note change types."""
 
     review: CommitReviewProjection
+    repository: RepositoryIdentity
     included_notes: tuple[CommitReviewNoteProjection, ...]
 
     def __post_init__(self) -> None:
         included_notes = tuple(self.included_notes)
         if (
-            tuple(item.note for item in included_notes)
+            type(self.repository) is not RepositoryIdentity
+            or tuple(item.note for item in included_notes)
             != self.review.included_notes
         ):
             raise ValueError(
@@ -229,10 +233,12 @@ class PushPanelReviewProjection:
 
     review: PushReviewProjection
     availability: PushCandidateAvailability
+    repository: RepositoryIdentity
 
     def __post_init__(self) -> None:
         if (
-            self.review.candidate != self.availability.candidate
+            type(self.repository) is not RepositoryIdentity
+            or self.review.candidate != self.availability.candidate
             or len(self.review.candidate.included_notes)
             != len(self.availability.change_types)
         ):
@@ -419,6 +425,13 @@ def _push_destination_summary(destination: PushDestinationProjection) -> str:
         f"{destination.scheme} · {principal}:{destination.port} · "
         f"{destination.repository_path}"
     )
+
+
+def _filesystem_identity_summary(identity: FileSystemIdentity) -> str:
+    """Format one already-owned filesystem identity for audit display."""
+    device = "?" if identity.device is None else str(identity.device)
+    inode = "?" if identity.inode is None else str(identity.inode)
+    return f"{device}:{inode}"
 
 
 def _row_primary_copy(row: SessionGitRow) -> str:
@@ -789,12 +802,13 @@ class LibraryFileNotesGitPanel(Vertical):
         text-wrap: wrap;
     }
 
-    .file-notes-git-push-review-heading {
+    .file-notes-git-review-heading {
         text-style: bold;
         margin-top: 1;
     }
 
-    #file-notes-git-push-review-what-changes-heading {
+    #file-notes-git-commit-review-what-heading,
+    #file-notes-git-push-review-what-heading {
         margin-top: 0;
     }
 
@@ -805,6 +819,7 @@ class LibraryFileNotesGitPanel(Vertical):
         background: $surface-darken-1;
     }
 
+    #file-notes-git-commit-review-technical,
     #file-notes-git-push-review-technical {
         height: auto;
         min-height: 1;
@@ -813,6 +828,7 @@ class LibraryFileNotesGitPanel(Vertical):
         background: transparent;
     }
 
+    #file-notes-git-commit-review-technical > CollapsibleTitle,
     #file-notes-git-push-review-technical > CollapsibleTitle {
         height: 1;
         min-height: 1;
@@ -822,6 +838,7 @@ class LibraryFileNotesGitPanel(Vertical):
         color: $text;
     }
 
+    #file-notes-git-commit-review-technical > CollapsibleTitle:focus,
     #file-notes-git-push-review-technical > CollapsibleTitle:focus {
         border: none;
         outline: heavy $accent;
@@ -830,6 +847,7 @@ class LibraryFileNotesGitPanel(Vertical):
         text-style: bold underline;
     }
 
+    #file-notes-git-commit-review-technical > Contents,
     #file-notes-git-push-review-technical > Contents {
         height: auto;
         padding: 1 0 0 0;
@@ -1369,9 +1387,12 @@ class LibraryFileNotesGitPanel(Vertical):
                     classes="file-notes-git-commit-phase",
                 ):
                     yield Static(
-                        "",
-                        id="file-notes-git-commit-review-branch",
-                        classes="file-notes-git-commit-copy",
+                        "What",
+                        id="file-notes-git-commit-review-what-heading",
+                        classes=(
+                            "file-notes-git-commit-copy "
+                            "file-notes-git-review-heading"
+                        ),
                         markup=False,
                     )
                     yield Static(
@@ -1383,6 +1404,36 @@ class LibraryFileNotesGitPanel(Vertical):
                         "",
                         id="file-notes-git-commit-review-message",
                         classes="file-notes-git-commit-copy",
+                        markup=False,
+                    )
+                    yield Static(
+                        "Where",
+                        id="file-notes-git-commit-review-where-heading",
+                        classes=(
+                            "file-notes-git-commit-copy "
+                            "file-notes-git-review-heading"
+                        ),
+                        markup=False,
+                    )
+                    yield Static(
+                        "",
+                        id="file-notes-git-commit-review-repository",
+                        classes="file-notes-git-commit-copy",
+                        markup=False,
+                    )
+                    yield Static(
+                        "",
+                        id="file-notes-git-commit-review-branch",
+                        classes="file-notes-git-commit-copy",
+                        markup=False,
+                    )
+                    yield Static(
+                        "Impact",
+                        id="file-notes-git-commit-review-impact-heading",
+                        classes=(
+                            "file-notes-git-commit-copy "
+                            "file-notes-git-review-heading"
+                        ),
                         markup=False,
                     )
                     yield Static(
@@ -1441,6 +1492,37 @@ class LibraryFileNotesGitPanel(Vertical):
                         classes="file-notes-git-commit-copy",
                         markup=False,
                     )
+                    yield Static(
+                        "Recovery",
+                        id="file-notes-git-commit-review-recovery-heading",
+                        classes=(
+                            "file-notes-git-commit-copy "
+                            "file-notes-git-review-heading"
+                        ),
+                        markup=False,
+                    )
+                    yield Static(
+                        "",
+                        id="file-notes-git-commit-review-recovery",
+                        classes="file-notes-git-commit-copy",
+                        markup=False,
+                    )
+                    with Collapsible(
+                        title="Technical details",
+                        collapsed=True,
+                        id="file-notes-git-commit-review-technical",
+                    ):
+                        for widget_id in (
+                            "worktree-identity",
+                            "git-directory",
+                            "git-common-directory",
+                        ):
+                            yield Static(
+                                "",
+                                id=f"file-notes-git-commit-review-{widget_id}",
+                                classes="file-notes-git-commit-copy",
+                                markup=False,
+                            )
 
                 with Vertical(
                     id="file-notes-git-commit-execution",
@@ -1538,51 +1620,27 @@ class LibraryFileNotesGitPanel(Vertical):
                     classes="file-notes-git-push-phase",
                 ):
                     yield Static(
-                        "What changes",
-                        id="file-notes-git-push-review-what-changes-heading",
+                        "What",
+                        id="file-notes-git-push-review-what-heading",
                         classes=(
                             "file-notes-git-push-copy "
-                            "file-notes-git-push-review-heading"
+                            "file-notes-git-review-heading"
                         ),
                         markup=False,
                     )
-                    for widget_id in ("lead", "subject"):
+                    for widget_id in (
+                        "lead",
+                        "subject",
+                        "candidate",
+                        "transition",
+                        "counts",
+                    ):
                         yield Static(
                             "",
                             id=f"file-notes-git-push-review-{widget_id}",
                             classes="file-notes-git-push-copy",
                             markup=False,
                         )
-                    yield Static(
-                        "Where it goes",
-                        id="file-notes-git-push-review-destination-heading",
-                        classes=(
-                            "file-notes-git-push-copy "
-                            "file-notes-git-push-review-heading"
-                        ),
-                        markup=False,
-                    )
-                    yield Static(
-                        "",
-                        id="file-notes-git-push-review-destination",
-                        classes="file-notes-git-push-copy",
-                        markup=False,
-                    )
-                    yield Static(
-                        "Exact scope",
-                        id="file-notes-git-push-review-scope-heading",
-                        classes=(
-                            "file-notes-git-push-copy "
-                            "file-notes-git-push-review-heading"
-                        ),
-                        markup=False,
-                    )
-                    yield Static(
-                        "",
-                        id="file-notes-git-push-review-counts",
-                        classes="file-notes-git-push-copy",
-                        markup=False,
-                    )
                     yield TextArea(
                         "",
                         id="file-notes-git-push-review-notes",
@@ -1591,38 +1649,82 @@ class LibraryFileNotesGitPanel(Vertical):
                         tab_behavior="focus",
                     )
                     yield Static(
-                        "Side effects",
-                        id="file-notes-git-push-review-effects-heading",
+                        "Where",
+                        id="file-notes-git-push-review-where-heading",
                         classes=(
                             "file-notes-git-push-copy "
-                            "file-notes-git-push-review-heading"
+                            "file-notes-git-review-heading"
                         ),
                         markup=False,
                     )
-                    for widget_id in ("effects", "later-edits"):
+                    for widget_id in (
+                        "repository",
+                        "local-branch",
+                        "destination",
+                        "remote",
+                        "ref",
+                        "endpoint",
+                        "lease",
+                        "transport",
+                        "authentication",
+                    ):
                         yield Static(
                             "",
                             id=f"file-notes-git-push-review-{widget_id}",
                             classes="file-notes-git-push-copy",
                             markup=False,
                         )
+                    yield Button(
+                        "Endpoint details",
+                        id="file-notes-git-push-review-details",
+                        compact=True,
+                    )
+                    yield Static(
+                        "Impact",
+                        id="file-notes-git-push-review-impact-heading",
+                        classes=(
+                            "file-notes-git-push-copy "
+                            "file-notes-git-review-heading"
+                        ),
+                        markup=False,
+                    )
+                    for widget_id in (
+                        "effects",
+                        "later-edits",
+                        "local-hooks",
+                        "objects",
+                    ):
+                        yield Static(
+                            "",
+                            id=f"file-notes-git-push-review-{widget_id}",
+                            classes="file-notes-git-push-copy",
+                            markup=False,
+                        )
+                    yield Static(
+                        "Recovery",
+                        id="file-notes-git-push-review-recovery-heading",
+                        classes=(
+                            "file-notes-git-push-copy "
+                            "file-notes-git-review-heading"
+                        ),
+                        markup=False,
+                    )
+                    yield Static(
+                        "",
+                        id="file-notes-git-push-review-recovery",
+                        classes="file-notes-git-push-copy",
+                        markup=False,
+                    )
                     with Collapsible(
                         title="Technical details",
                         collapsed=True,
                         id="file-notes-git-push-review-technical",
                     ):
                         for widget_id in (
-                            "candidate",
-                            "transition",
-                            "local-branch",
-                            "remote",
-                            "ref",
-                            "endpoint",
-                            "lease",
-                            "transport",
-                            "authentication",
-                            "local-hooks",
-                            "objects",
+                            "worktree-identity",
+                            "git-directory",
+                            "git-common-directory",
+                            "refspec-audit",
                         ):
                             yield Static(
                                 "",
@@ -1630,11 +1732,6 @@ class LibraryFileNotesGitPanel(Vertical):
                                 classes="file-notes-git-push-copy",
                                 markup=False,
                             )
-                        yield Button(
-                            "Endpoint details",
-                            id="file-notes-git-push-review-details",
-                            compact=True,
-                        )
 
                 with Vertical(
                     id="file-notes-git-push-result",
@@ -1952,6 +2049,7 @@ class LibraryFileNotesGitPanel(Vertical):
         review = projection.review
         candidate = review.candidate
         destination = review.destination
+        repository = projection.repository
         branch = destination.destination_ref.removeprefix("refs/heads/")
         values = {
             "lead": (
@@ -1959,6 +2057,10 @@ class LibraryFileNotesGitPanel(Vertical):
                 f"{candidate.included_note_count} session notes."
             ),
             "subject": f"Commit subject: {candidate.subject}",
+            "repository": (
+                "Local repository: "
+                f"{_repository_path_for_display(repository.worktree_root)}"
+            ),
             "destination": f"{review.configured_remote_label}/{branch}",
             "counts": (
                 f"{candidate.included_note_count} session notes: "
@@ -2001,6 +2103,26 @@ class LibraryFileNotesGitPanel(Vertical):
                 "Git publishes the reviewed commit and required Git objects; "
                 "this list is provenance, not a separate note-transfer selection"
             ),
+            "recovery": (
+                "Back leaves this review without pushing. If the result is "
+                "uncertain, Check remote again never pushes."
+            ),
+            "worktree-identity": (
+                "Worktree identity: "
+                f"{_filesystem_identity_summary(repository.worktree_identity)}"
+            ),
+            "git-directory": (
+                "Git directory: "
+                f"{_repository_path_for_display(repository.git_dir)} · identity "
+                f"{_filesystem_identity_summary(repository.git_dir_identity)}"
+            ),
+            "git-common-directory": (
+                "Git common directory: "
+                f"{_repository_path_for_display(repository.git_common_dir)} "
+                "· identity "
+                f"{_filesystem_identity_summary(repository.git_common_dir_identity)}"
+            ),
+            "refspec-audit": f"Exact refspec: {review.exact_refspec}",
         }
         for widget_id, copy in values.items():
             self.query_one(
@@ -2246,11 +2368,19 @@ class LibraryFileNotesGitPanel(Vertical):
         """Render one immutable, literal review without owning its authority."""
         self._commit_review = projection
         review = projection.review
+        repository = projection.repository
         branch = _repository_path_for_display(review.branch)
+        self.query_one(
+            "#file-notes-git-commit-review-repository",
+            Static,
+        ).update(
+            "Repository: "
+            f"{_repository_path_for_display(repository.worktree_root)}"
+        )
         self.query_one(
             "#file-notes-git-commit-review-branch",
             Static,
-        ).update(f"Branch: {branch} · Parent: {review.old_commit[:12]}")
+        ).update(f"Branch: {branch} · Parent: {review.old_commit}")
         self.query_one(
             "#file-notes-git-commit-review-message",
             Static,
@@ -2319,6 +2449,41 @@ class LibraryFileNotesGitPanel(Vertical):
             "Included notes use their complete staged file state, "
             "not only edits made in Chatbook"
         )
+        self.query_one(
+            "#file-notes-git-commit-review-recovery",
+            Static,
+        ).update(
+            "Edit message or cancel before the commit starts. If the result "
+            "is uncertain, Check again verifies without retrying."
+        )
+        self.query_one(
+            "#file-notes-git-commit-review-worktree-identity",
+            Static,
+        ).update(
+            "Worktree identity: "
+            f"{_filesystem_identity_summary(repository.worktree_identity)}"
+        )
+        self.query_one(
+            "#file-notes-git-commit-review-git-directory",
+            Static,
+        ).update(
+            "Git directory: "
+            f"{_repository_path_for_display(repository.git_dir)} · identity "
+            f"{_filesystem_identity_summary(repository.git_dir_identity)}"
+        )
+        self.query_one(
+            "#file-notes-git-commit-review-git-common-directory",
+            Static,
+        ).update(
+            "Git common directory: "
+            f"{_repository_path_for_display(repository.git_common_dir)} "
+            "· identity "
+            f"{_filesystem_identity_summary(repository.git_common_dir_identity)}"
+        )
+        self.query_one(
+            "#file-notes-git-commit-review-technical",
+            Collapsible,
+        ).collapsed = True
 
         self._commit_notes = projection.included_notes
         self._commit_included_expanded = False

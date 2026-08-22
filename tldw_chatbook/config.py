@@ -877,7 +877,9 @@ def coerce_int_setting(
     # default like every other unusable input.
     if value is None:
         return default
-    if isinstance(value, float) and (value != value or value in (float("inf"), float("-inf"))):
+    if isinstance(value, float) and (
+        value != value or value in (float("inf"), float("-inf"))
+    ):
         return default
     try:
         coerced = _get_typed_value({"value": value}, "value", default, int)
@@ -3988,12 +3990,9 @@ show_analysis_button = true
 model_download_dir = "~/Downloads/tldw_models"  # Legacy read-only scan root for Installed models
 
 [notes]
-# Default settings for the Notes tab
-sync_directory = "~/Documents/Notes"  # Default directory for notes synchronization
-auto_sync_enabled = false            # Enable automatic sync on startup
-sync_on_close = false               # Sync when closing the app
-conflict_resolution = "newer_wins"   # Default conflict resolution: newer_wins, ask, disk_wins, db_wins
-sync_direction = "bidirectional"     # Default sync direction: bidirectional, disk_to_db, db_to_disk
+# Device-private lasting-sync settings. Legacy sync keys are intentionally not
+# emitted for fresh profiles; already-present keys remain migration input only.
+recovery_capacity_bytes = 268435456  # Device-private lasting-sync recovery capacity (256 MiB)
 
 # Auto-save settings
 auto_save_enabled = true             # Enable auto-save feature
@@ -6647,6 +6646,40 @@ def get_notes_sync_state_db_path() -> Path:
     return get_user_data_dir() / "tldw_chatbook_notes_sync_state.db"
 
 
+NOTES_SYNC_RECOVERY_CAPACITY_BYTES_DEFAULT = 256 * 1024 * 1024
+_NOTES_SYNC_RECOVERY_CAPACITY_ENV = "TLDW_NOTES_SYNC_RECOVERY_CAPACITY_BYTES"
+
+
+def get_notes_sync_recovery_capacity_bytes(
+    config_data: Mapping[str, Any] | None = None,
+) -> int:
+    """Return the one bounded device-private sync recovery capacity."""
+
+    selected = (
+        load_cli_config_and_ensure_existence() if config_data is None else config_data
+    )
+    env_value = os.getenv(_NOTES_SYNC_RECOVERY_CAPACITY_ENV)
+    notes = selected.get("notes")
+    capacity: object
+    if env_value is not None:
+        try:
+            capacity = int(env_value)
+        except ValueError:
+            raise ValueError(
+                "notes.recovery_capacity_bytes must be a positive integer."
+            ) from None
+    elif isinstance(notes, Mapping):
+        capacity = notes.get(
+            "recovery_capacity_bytes",
+            NOTES_SYNC_RECOVERY_CAPACITY_BYTES_DEFAULT,
+        )
+    else:
+        capacity = NOTES_SYNC_RECOVERY_CAPACITY_BYTES_DEFAULT
+    if type(capacity) is not int or not 1 <= capacity <= 2**63 - 1:
+        raise ValueError("notes.recovery_capacity_bytes must be a positive integer.")
+    return capacity
+
+
 def get_prompts_db_path(*, ignore_override: bool = False) -> Path:
     """Get the resolved path for the Prompts database.
 
@@ -6841,9 +6874,7 @@ def seed_builtin_content(db: CharactersRAGDB) -> CharactersRAGDB:
 
         ensure_builtin_samira(db)
     except Exception as exc:  # noqa: BLE001 - bundled content cannot prevent boot
-        logger.warning(
-            "builtin_profile_seed_failed category={}", type(exc).__name__
-        )
+        logger.warning("builtin_profile_seed_failed category={}", type(exc).__name__)
     return db
 
 

@@ -9718,34 +9718,7 @@ async def test_tools_step_on_to_off_transition_writes_false():
 
 
 @pytest.mark.asyncio
-async def test_notes_step_commit_writes_directory_and_toggle():
-    from types import SimpleNamespace
-    from unittest.mock import AsyncMock
-
-    wizard = SimpleNamespace(
-        app_instance=MagicMock(app_config={}),
-        commit_config=AsyncMock(return_value=True),
-        rerun=False,
-    )
-    step = NotesSyncStep(
-        wizard=wizard,
-        config=WizardStepConfig(id="notes", title="Notes sync", step_number=6),
-    )
-    app = _StepHost(step)
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        step.query_one("#setup-notes-enable", Switch).value = True
-        step.query_one("#setup-notes-directory", Input).value = "~/MyNotes"
-        ok, _ = await step.commit()
-        assert ok
-        committed = wizard.commit_config.call_args.args[0]
-        assert committed == {
-            "notes": {"sync_directory": "~/MyNotes", "auto_sync_enabled": True}
-        }
-
-
-@pytest.mark.asyncio
-async def test_notes_step_disabled_commits_nothing():
+async def test_notes_step_is_informational_and_never_writes_legacy_sync_config():
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
@@ -9764,39 +9737,9 @@ async def test_notes_step_disabled_commits_nothing():
         ok, _ = await step.commit()
         assert ok
         wizard.commit_config.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_notes_step_enabled_to_disabled_writes_auto_sync_false():
-    """Re-run prefills the toggle ON from a previously-enabled sync;
-    turning it off must persist auto_sync_enabled=False while leaving
-    sync_directory untouched (final-review finding 3)."""
-    from types import SimpleNamespace
-    from unittest.mock import AsyncMock
-
-    wizard = SimpleNamespace(
-        app_instance=MagicMock(
-            app_config={
-                "notes": {"sync_directory": "~/Notes", "auto_sync_enabled": True}
-            }
-        ),
-        commit_config=AsyncMock(return_value=True),
-        rerun=True,
-    )
-    step = NotesSyncStep(
-        wizard=wizard,
-        config=WizardStepConfig(id="notes", title="Notes sync", step_number=6),
-    )
-    app = _StepHost(step)
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        switch = step.query_one("#setup-notes-enable", Switch)
-        assert switch.value is True  # prefilled ON from config
-        switch.value = False  # user disables sync
-        ok, _ = await step.commit()
-        assert ok
-        committed = wizard.commit_config.call_args.args[0]
-        assert committed == {"notes": {"auto_sync_enabled": False}}
+        assert step.get_step_data() == {}
+        assert not step.query("#setup-notes-enable")
+        assert not step.query("#setup-notes-directory")
 
 
 @pytest.mark.asyncio
@@ -11263,8 +11206,7 @@ async def test_model_step_subtitle_display_cases_provider_and_marks_recommended(
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
-    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import ModelStep, SetupRadioButton
-    from tldw_chatbook.UI.Wizards.BaseWizard import WizardStepConfig
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import SetupRadioButton
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={}),
