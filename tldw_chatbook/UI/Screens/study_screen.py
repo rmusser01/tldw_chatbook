@@ -1529,6 +1529,7 @@ class StudyScreen(BaseAppScreen):
                         scope_context, study_window=study_window
                     ),
                     exclusive=True,
+                    group="study-apply-scope-context",
                 )
                 return
         open_study = getattr(self.app_instance, "open_study_screen", None)
@@ -1564,6 +1565,7 @@ class StudyScreen(BaseAppScreen):
                         scope_context, study_window=study_window
                     ),
                     exclusive=True,
+                    group="study-apply-scope-context",
                 )
                 return
         open_study = getattr(self.app_instance, "open_study_screen", None)
@@ -1612,7 +1614,11 @@ class StudyScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#study-generate-source-pack")
     def handle_generate_source_pack(self) -> None:
-        self.run_worker(self._generate_source_study_pack(), exclusive=True)
+        self.run_worker(
+            self._generate_source_study_pack(),
+            exclusive=True,
+            group="study-generate-source-pack",
+        )
 
     @on(Button.Pressed, "#study-resume-last")
     def handle_resume_last_session(self) -> None:

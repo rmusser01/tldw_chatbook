@@ -1,5 +1,6 @@
 """Handler for dictionary/world book operations in the Personas screen."""
 
+from functools import partial
 from typing import TYPE_CHECKING, Optional, Dict, Any, List
 from loguru import logger
 from textual import work
@@ -75,16 +76,23 @@ class CCPDictionaryHandler:
         """
         logger.info(f"Starting dictionary load for {dictionary_id}")
 
-        # Run the sync database operation in a worker thread
+        # Run the sync database operation in a worker thread.
+        # TASK-19563: worker arguments travel with the callable (a
+        # `functools.partial`, as in `CCPCharacterHandler.load_character`) --
+        # passing them positionally to `run_worker` binds them to
+        # `run_worker`'s own `name`/`group` parameters instead, which then
+        # collides with the explicit `name=` keyword and raises `TypeError`.
         self.window.run_worker(
-            self._load_dictionary_sync,
-            dictionary_id,
+            partial(self._load_dictionary_sync, dictionary_id),
             thread=True,
             exclusive=True,
+            group="ccp-load-dictionary",
             name=f"load_dictionary_{dictionary_id}",
         )
 
-    @work(thread=True)
+    # TASK-19563: no `@work` decorator -- it asserts `isinstance(self,
+    # DOMNode)` and this handler is a plain object that merely holds a window.
+    # The worker is started by `load_dictionary` through `window.run_worker`.
     def _load_dictionary_sync(self, dictionary_id: int) -> None:
         """Sync method to load dictionary data in a worker thread.
 

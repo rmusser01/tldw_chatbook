@@ -221,7 +221,7 @@ class AudioTroubleshootingDialog(ModalScreen[bool]):
         """Initialize when dialog is shown."""
         self.run_worker(self._initialize_audio())
 
-    @work(exclusive=True)
+    @work(exclusive=True, group="audio-troubleshooting-initialize")
     async def _initialize_audio(self):
         """Initialize audio system and enumerate devices."""
         log = self.query_one("#diagnostic-log", RichLog)

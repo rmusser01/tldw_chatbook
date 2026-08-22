@@ -319,7 +319,7 @@ class SkillsScreen(BaseAppScreen):
         # BaseAppScreen.on_mount separately for this Mount event.
         self._refresh_local_skills_context()
 
-    @work(exclusive=True)
+    @work(exclusive=True, group="skills-refresh-local-context")
     async def _refresh_local_skills_context(self) -> None:
         records, lookup_error, recovery_state = await self._list_local_skills()
         self._apply_local_skills_context(records, lookup_error, recovery_state)

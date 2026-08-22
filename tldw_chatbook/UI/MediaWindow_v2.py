@@ -1552,7 +1552,11 @@ class MediaWindow(Container):
     def handle_read_it_later_toggle(self, event: MediaReadItLaterToggleEvent) -> None:
         """Handle viewer save/remove actions in a worker."""
         event.stop()
-        self.run_worker(self._handle_read_it_later_toggle_async(event), exclusive=True)
+        self.run_worker(
+            self._handle_read_it_later_toggle_async(event),
+            exclusive=True,
+            group="media-read-it-later-toggle",
+        )
 
     async def _handle_read_it_later_toggle_async(
         self, event: MediaReadItLaterToggleEvent
@@ -1981,14 +1985,20 @@ class MediaWindow(Container):
                 await self._reset_analysis_failure_state(event.media_id)
 
         # Run the analysis in a worker
-        self.run_worker(perform_analysis(), exclusive=True)
+        self.run_worker(
+            perform_analysis(), exclusive=True, group="media-analysis-generate"
+        )
 
     @on(MediaAnalysisSaveEvent)
     def handle_analysis_save(self, event: MediaAnalysisSaveEvent) -> None:
         """Handle saving new analysis."""
         event.stop()
         event.type_slug = self.active_media_type or ""
-        self.run_worker(self._handle_analysis_save_async(event), exclusive=True)
+        self.run_worker(
+            self._handle_analysis_save_async(event),
+            exclusive=True,
+            group="media-analysis-save",
+        )
 
     async def _handle_analysis_save_async(self, event: MediaAnalysisSaveEvent) -> None:
         """Persist a new analysis version via the shared seam."""
@@ -2077,7 +2087,11 @@ class MediaWindow(Container):
         """Handle overwriting existing analysis."""
         event.stop()
         event.type_slug = self.active_media_type or ""
-        self.run_worker(self._handle_analysis_overwrite_async(event), exclusive=True)
+        self.run_worker(
+            self._handle_analysis_overwrite_async(event),
+            exclusive=True,
+            group="media-analysis-overwrite",
+        )
 
     async def _handle_analysis_overwrite_async(
         self, event: MediaAnalysisOverwriteEvent
@@ -2128,7 +2142,11 @@ class MediaWindow(Container):
         """Handle deleting an analysis version."""
         event.stop()
         event.type_slug = self.active_media_type or ""
-        self.run_worker(self._handle_analysis_delete_async(event), exclusive=True)
+        self.run_worker(
+            self._handle_analysis_delete_async(event),
+            exclusive=True,
+            group="media-analysis-delete",
+        )
 
     async def _handle_analysis_delete_async(
         self, event: MediaAnalysisDeleteEvent

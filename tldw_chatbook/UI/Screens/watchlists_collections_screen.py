@@ -4383,20 +4383,32 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self.set_timer(0.05, self._open_sources_import_opml)
 
     def _load_active_section_data(self) -> None:
-        """Start the loader owned by the currently visible section."""
+        """Start the loader owned by the currently visible section.
+
+        Every branch names its own group. TASK-19559: for four releases only
+        the `items` and `artifacts` branches did -- the hazard comment below
+        sat directly above four siblings it did not actually protect, so
+        switching to Rules/Runs/Sources/Notifications cancelled whatever
+        default-group worker was in flight (a source create, a rule save, a
+        run cancellation, ...).
+        """
         if self.active_section == "items":
             # Own group (task-2513), as in `watch_tree_scope`:
             # `exclusive=True` in the default group would cancel every
             # in-flight default-group worker (`_create_source`, ...).
             self.run_worker(self._load_items(), exclusive=True, group="wc_items")
         elif self.active_section == "rules":
-            self.run_worker(self._load_rules(), exclusive=True)
+            self.run_worker(self._load_rules(), exclusive=True, group="wc_rules")
         elif self.active_section == "runs":
-            self.run_worker(self._load_runs(), exclusive=True)
+            self.run_worker(self._load_runs(), exclusive=True, group="wc_runs")
         elif self.active_section == "sources":
-            self.run_worker(self._load_sources(), exclusive=True)
+            self.run_worker(self._load_sources(), exclusive=True, group="wc_sources")
         elif self.active_section == "notifications":
-            self.run_worker(self._load_notifications(), exclusive=True)
+            self.run_worker(
+                self._load_notifications(),
+                exclusive=True,
+                group="wc_notifications",
+            )
         elif self.active_section == "artifacts":
             # Own group (TASK-1362): `exclusive=True` without one cancels
             # every other worker in the default group, which here would
@@ -5000,7 +5012,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # THEN, not at the one this submission happened to use.
         self._source_create_draft_type = None
         self._source_create_draft_destination = None
-        self.run_worker(self._create_source(event.payload), exclusive=True)
+        self.run_worker(
+            self._create_source(event.payload),
+            exclusive=True,
+            group="wc_create_source",
+        )
 
     async def _create_source(self, payload: dict[str, Any]) -> None:
         # TASK-2302: the destination is not part of the source record -- it
@@ -5096,7 +5112,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     @on(CancelRunRequested)
     def handle_cancel_run_requested(self, event: CancelRunRequested) -> None:
         event.stop()
-        self.run_worker(self._cancel_run(event.run_id), exclusive=True)
+        self.run_worker(
+            self._cancel_run(event.run_id),
+            exclusive=True,
+            group="wc_cancel_run",
+        )
 
     async def _cancel_run(self, run_id: Any) -> None:
         try:
@@ -5120,7 +5140,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # A coroutine worker, never thread=True — this launches a check, so
         # the in-flight guard's single-loop invariant applies (see
         # `handle_check_now_requested`'s launch site).
-        self.run_worker(self._rerun_run(event.source_id), exclusive=True)
+        self.run_worker(
+            self._rerun_run(event.source_id),
+            exclusive=True,
+            group="wc_rerun_run",
+        )
 
     async def _rerun_run(self, source_id: Any) -> None:
         try:
@@ -5144,7 +5168,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         entity = event.entity
         if entity is None:
             return
-        self.run_worker(self._preview_source(entity), exclusive=True)
+        self.run_worker(
+            self._preview_source(entity),
+            exclusive=True,
+            group="wc_preview_source",
+        )
 
     async def _preview_source(self, source: dict[str, Any]) -> None:
         notify = getattr(self.app_instance, "notify", None)
@@ -5569,7 +5597,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 f"kind={entity.get('entity_kind')!r}); refusing."
             )
             return
-        self.run_worker(self._resume_source(entity), exclusive=True)
+        self.run_worker(
+            self._resume_source(entity),
+            exclusive=True,
+            group="wc_resume_source",
+        )
 
     async def _resume_source(self, source: dict[str, Any]) -> None:
         """Clear an auto-paused source's pause via the real service (AC#2/#3).
@@ -5661,7 +5693,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     @on(ExportOpmlRequested)
     def handle_export_opml_requested(self, event: ExportOpmlRequested) -> None:
         event.stop()
-        self.run_worker(self._export_opml(), exclusive=True)
+        self.run_worker(self._export_opml(), exclusive=True, group="wc_export_opml")
 
     async def _export_opml(self) -> None:
         notify = getattr(self.app_instance, "notify", None)
@@ -5958,7 +5990,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self, event: RefreshNotificationsRequested
     ) -> None:
         event.stop()
-        self.run_worker(self._load_notifications(), exclusive=True)
+        self.run_worker(
+            self._load_notifications(),
+            exclusive=True,
+            group="wc_notifications",
+        )
 
     @on(MarkNotificationReadRequested)
     def handle_mark_notification_read_requested(
@@ -5966,7 +6002,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     ) -> None:
         event.stop()
         self.run_worker(
-            self._mark_notification_read(event.notification_id), exclusive=True
+            self._mark_notification_read(event.notification_id),
+            exclusive=True,
+            group="wc_mark_notification_read",
         )
 
     async def _mark_notification_read(self, notification_id: int) -> None:
@@ -5982,7 +6020,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     ) -> None:
         event.stop()
         self.run_worker(
-            self._dismiss_notification(event.notification_id), exclusive=True
+            self._dismiss_notification(event.notification_id),
+            exclusive=True,
+            group="wc_dismiss_notification",
         )
 
     async def _dismiss_notification(self, notification_id: int) -> None:
@@ -10156,7 +10196,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     @on(RefreshRulesRequested)
     def handle_refresh_rules_requested(self, event: RefreshRulesRequested) -> None:
         event.stop()
-        self.run_worker(self._load_rules(), exclusive=True)
+        self.run_worker(self._load_rules(), exclusive=True, group="wc_rules")
 
     @on(SaveRuleRequested)
     def handle_save_rule_requested(self, event: SaveRuleRequested) -> None:
@@ -10173,7 +10213,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # chain that can recompose.
         self._rule_form_open = False
         self._rule_form_editing = None
-        self.run_worker(self._save_rule(event.payload), exclusive=True)
+        self.run_worker(
+            self._save_rule(event.payload),
+            exclusive=True,
+            group="wc_save_rule",
+        )
 
     @on(EditRuleRequested)
     def handle_edit_rule_requested(self, event: EditRuleRequested) -> None:
@@ -10694,7 +10738,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             logger.opt(exception=True).warning("Failed to save alert rule.")
             if callable(notify):
                 notify("Failed to save alert rule.", severity="error")
-        self.run_worker(self._load_rules(), exclusive=True)
+        self.run_worker(self._load_rules(), exclusive=True, group="wc_rules")
         self._refresh_overview_data()
 
     @on(DeleteRequested)
@@ -10744,11 +10788,23 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return
         entity_type = InspectorPane._entity_type(entity)
         if entity_type == "source":
-            self.run_worker(self._delete_source(entity.get("id")), exclusive=True)
+            self.run_worker(
+                self._delete_source(entity.get("id")),
+                exclusive=True,
+                group="wc_delete_source",
+            )
         elif entity_type == "run":
-            self.run_worker(self._delete_run(entity.get("id")), exclusive=True)
+            self.run_worker(
+                self._delete_run(entity.get("id")),
+                exclusive=True,
+                group="wc_delete_run",
+            )
         elif entity_type == "rule":
-            self.run_worker(self._delete_rule(entity.get("id")), exclusive=True)
+            self.run_worker(
+                self._delete_rule(entity.get("id")),
+                exclusive=True,
+                group="wc_delete_rule",
+            )
         # No `item` branch: items never reach this dialog any more -- see the
         # Minor 2 note in `handle_delete_requested`.
 
@@ -10825,7 +10881,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify("Failed to delete alert rule.", severity="error")
-        self.run_worker(self._load_rules(), exclusive=True)
+        self.run_worker(self._load_rules(), exclusive=True, group="wc_rules")
         self._refresh_overview_data()
 
     def action_switch_section(self, section_id: str) -> None:

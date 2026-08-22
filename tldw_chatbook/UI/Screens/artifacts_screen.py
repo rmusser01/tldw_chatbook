@@ -156,7 +156,7 @@ class ArtifactsScreen(BaseAppScreen):
                 type(exc).__name__,
             )
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True, group="artifacts-refresh-chatbook-context", thread=True)
     def _refresh_chatbook_context(
         self,
         generation: int,

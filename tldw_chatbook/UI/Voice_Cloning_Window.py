@@ -315,7 +315,7 @@ class VoiceCloningWindow(DataTableClickSelectMixin, Vertical):
             logger.error(f"Error initializing backends: {e}")
             self.notify(f"Failed to initialize backends: {e}", severity="error")
 
-    @work(exclusive=True)
+    @work(exclusive=True, group="voice-cloning-load-profiles")
     async def _load_profiles(self) -> None:
         """Load profiles for the current backend"""
         if self._loading:

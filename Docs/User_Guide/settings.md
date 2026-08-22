@@ -486,7 +486,7 @@ state: "Last validated: not validated" / "current text" / "stale after edits".
 | Button | What it does |
 |---|---|
 | **Validate Raw TOML** | Checks the editor text. |
-| **Load Backup** | Loads the backup copy into the editor **without saving it** — a preview you still have to validate. |
+| **Load Backup** | Loads the backup copy into the editor **without saving it** — a preview you still have to validate. Reading the backup happens in the background, and if you carry on typing while it loads, your edits win: the result line reads "not applied — the editor changed while the backup was loading; unsaved edits were kept". Press **Load Backup** again once you have finished typing. |
 | **Save Raw TOML** | Blocked until the text you are looking at is the exact text that last validated. Writes atomically, keeping a `.bak` backup of the previous file, then reloads. |
 
 ### Domain Defaults — Image Gen
@@ -708,3 +708,12 @@ list, verified by mounted-settings tests driving `kimi-k2.6` and `glm-5.3`;
 preserved thinking is documented for the versioned Kimi family per wire
 probes, with `kimi-latest` excluded; the rest of this page's content
 unchanged from the prior stamp).*
+*Advanced Config — Load Backup's row updated against TASK-19559 —
+2026-08-22 (the backup read is a background thread worker whose completion
+callback used to overwrite the editor unconditionally; it now compares the
+editor text against what it saw at dispatch and refuses to clobber typing
+that arrived in between, reporting "not applied … unsaved edits were kept".
+Verified by a mounted-settings test that holds the off-loop read open,
+types into the live `TextArea`, and asserts the keystroke survives — the
+same test reds with the exact clobbering diff when the check is removed;
+the rest of this page's content unchanged from the prior stamp).*

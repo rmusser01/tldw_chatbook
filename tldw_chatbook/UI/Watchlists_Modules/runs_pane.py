@@ -509,7 +509,7 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
     def _start_run_poll(self, run: dict[str, Any]) -> None:
         self.run_poll(run)
 
-    @work(exclusive=True)
+    @work(exclusive=True, group="watchlists-runs-poll")
     async def run_poll(self, run: dict[str, Any]) -> None:
         """Poll the selected run while it is running.
 

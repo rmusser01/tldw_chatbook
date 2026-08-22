@@ -201,7 +201,11 @@ class SchedulesWorkbench(BaseAppScreen):
         self._refresh_conflicts_tab()
         table = self.query_one("#scheduling-task-table", DataTable)
         table.add_columns("Title", "Type", "Status", "Next Run")
-        self.run_worker(self.load_tasks, exclusive=True)  # type: ignore[arg-type]
+        self.run_worker(
+            self.load_tasks,
+            exclusive=True,
+            group="schedules-load-tasks",
+        )  # type: ignore[arg-type]
 
     def _sync_responsive_workbench(self) -> None:
         """Keep the primary queue and detail action visible at narrow widths."""
@@ -495,7 +499,11 @@ class SchedulesWorkbench(BaseAppScreen):
                 )
             await self.load_tasks()
 
-        self.run_worker(_delete_and_refresh, exclusive=True)  # type: ignore[arg-type]
+        self.run_worker(
+            _delete_and_refresh,
+            exclusive=True,
+            group="schedules-delete-task",
+        )  # type: ignore[arg-type]
 
     @on(Button.Pressed, "#schedules-follow-in-console")
     def follow_latest_schedule_run_in_console(self, event: Button.Pressed) -> None:
@@ -578,7 +586,11 @@ class SchedulesWorkbench(BaseAppScreen):
                 )
             await self.load_tasks()
 
-        self.run_worker(_save_and_refresh, exclusive=True)  # type: ignore[arg-type]
+        self.run_worker(
+            _save_and_refresh,
+            exclusive=True,
+            group="schedules-save-reminder",
+        )  # type: ignore[arg-type]
 
     @on(EditTaskRequested)
     def _on_edit_task_requested(self, event: EditTaskRequested) -> None:
@@ -665,7 +677,11 @@ class SchedulesWorkbench(BaseAppScreen):
                 )
             await self.load_tasks()
 
-        self.run_worker(_run_and_refresh, exclusive=True)  # type: ignore[arg-type]
+        self.run_worker(
+            _run_and_refresh,
+            exclusive=True,
+            group="schedules-run-reminder-now",
+        )  # type: ignore[arg-type]
 
     def _set_reminder_enabled(self, task: ReminderTask, enabled: bool) -> None:
         """Update a reminder's enabled state and refresh the queue."""
@@ -692,7 +708,11 @@ class SchedulesWorkbench(BaseAppScreen):
                 )
             await self.load_tasks()
 
-        self.run_worker(_update_and_refresh, exclusive=True)  # type: ignore[arg-type]
+        self.run_worker(
+            _update_and_refresh,
+            exclusive=True,
+            group="schedules-set-reminder-enabled",
+        )  # type: ignore[arg-type]
 
     def _refresh_owner_select(self) -> None:
         status = self.query_one("#scheduling-sync-status", SyncStatusWidget)
@@ -806,7 +826,7 @@ class SchedulesWorkbench(BaseAppScreen):
             app_config=self.app_instance.app_config,
         )
         self._refresh_owner_select()
-        self.run_worker(self.load_tasks, exclusive=True)
+        self.run_worker(self.load_tasks, exclusive=True, group="schedules-load-tasks")
         self._refresh_conflicts_tab()
 
     @on(Button.Pressed, "#scheduling-clear-error")
@@ -822,7 +842,7 @@ class SchedulesWorkbench(BaseAppScreen):
         self._sync_running = False
         self.app_instance.notify("Sync completed.", severity="information")
         self._refresh_owner_select()
-        self.run_worker(self.load_tasks, exclusive=True)
+        self.run_worker(self.load_tasks, exclusive=True, group="schedules-load-tasks")
         self._refresh_conflicts_tab()
 
     @on(SyncFailed)
@@ -830,12 +850,12 @@ class SchedulesWorkbench(BaseAppScreen):
         self._sync_running = False
         self.app_instance.notify(f"Sync failed: {event.error}", severity="error")
         self._refresh_owner_select()
-        self.run_worker(self.load_tasks, exclusive=True)
+        self.run_worker(self.load_tasks, exclusive=True, group="schedules-load-tasks")
         self._refresh_conflicts_tab()
 
     @on(ConflictsTab.ConflictResolved)
     def _on_conflict_resolved(self, event: ConflictsTab.ConflictResolved) -> None:
-        self.run_worker(self.load_tasks, exclusive=True)
+        self.run_worker(self.load_tasks, exclusive=True, group="schedules-load-tasks")
         self._refresh_conflicts_tab()
 
     def _refresh_conflicts_tab(self) -> None:
@@ -912,7 +932,11 @@ class SchedulesWorkbench(BaseAppScreen):
             self._marked_ids.clear()
             await self.load_tasks()
 
-        self.run_worker(_bulk_delete, exclusive=True)  # type: ignore[arg-type]
+        self.run_worker(
+            _bulk_delete,
+            exclusive=True,
+            group="schedules-bulk-delete",
+        )  # type: ignore[arg-type]
 
     def _selected_task(self) -> ReminderTask | ScheduledTask | None:
         """Return the task under the queue cursor, if any."""
@@ -1001,7 +1025,11 @@ class SchedulesWorkbench(BaseAppScreen):
                 self._marked_ids.clear()
                 await self.load_tasks()
 
-            self.run_worker(_bulk_toggle, exclusive=True)  # type: ignore[arg-type]
+            self.run_worker(
+                _bulk_toggle,
+                exclusive=True,
+                group="schedules-bulk-toggle",
+            )  # type: ignore[arg-type]
             return
 
         task = self._selected_task()
@@ -1039,7 +1067,7 @@ class SchedulesWorkbench(BaseAppScreen):
             )
             return
         self._sync_running = True
-        self.run_worker(self._run_sync, exclusive=True)
+        self.run_worker(self._run_sync, exclusive=True, group="schedules-sync-now")
 
     async def _run_sync(self) -> None:
         service = self._service()
