@@ -195,15 +195,41 @@ def _violations_in_tree(tree: ast.Module) -> list[tuple[int, str, str]]:
         # variable or an expression) may be, so it must still name a group.
         if isinstance(exclusive, ast.Constant) and exclusive.value is False:
             continue
-        if group is not None:
+        # A `group=` whose value cannot be read from the AST (a constant, an
+        # f-string, an attribute) is accepted: the site has named *something*,
+        # and the name is the reviewable artefact. But three literal values are
+        # NOT names, and each defeats the guard while looking like it satisfies
+        # it, so they are reported as if no group had been given at all:
+        #
+        # * `group="default"` IS the shared bucket this whole guard exists to
+        #   keep sites out of -- it is byte-for-byte what omitting `group=`
+        #   produces (`Worker.__init__`/`work()`/`run_worker` all default to
+        #   the string "default"). It is the likeliest wrong "fix" for a guard
+        #   failure, and this repo already spells that shape by hand at
+        #   `UI/Console_Modules/agent.py` (non-exclusive there, so benign).
+        # * `group=""` / `group=None` are falsy, and `WorkerManager.add_worker`
+        #   reads `if exclusive and worker.group:` -- a falsy group skips
+        #   `cancel_group` entirely, so the site silently gets NO exclusivity
+        #   despite asking for it. That is a different bug, not a fix.
+        group_is_a_name = group is not None and not (
+            isinstance(group, ast.Constant) and group.value in ("default", "", None)
+        )
+        if group_is_a_name:
             continue
 
         shown = "**kwargs" if exclusive is None else ast.unparse(exclusive)
+        if group is None:
+            detail = f"{scheduler}(exclusive={shown}) with no group="
+        else:
+            detail = (
+                f"{scheduler}(exclusive={shown}, group={ast.unparse(group)}) "
+                "-- that is not a group name"
+            )
         violations.append(
             (
                 node.lineno,
                 owners.get(node.lineno, "<module>"),
-                f"{scheduler}(exclusive={shown}) with no group=",
+                detail,
             )
         )
     return violations
@@ -330,6 +356,64 @@ def test_name_keyword_does_not_satisfy_the_guard() -> None:
         "        )\n"
     )
     assert len(_violations_in_tree(tree)) == 1
+
+
+def test_group_default_does_not_satisfy_the_guard() -> None:
+    """`group="default"` is the shared bucket, not an escape from it.
+
+    Found in review: the guard originally accepted any `group=` node without
+    reading its value, so the likeliest wrong "fix" for a guard failure --
+    pasting in `group="default"` -- silenced the guard while changing the
+    runtime behaviour not at all. `Worker`, `work()` and `run_worker` all
+    default `group` to the literal string `"default"`, so this call is
+    byte-for-byte the ungrouped one.
+    """
+    tree = ast.parse(
+        "from textual.widget import Widget\n\n"
+        "class ScratchWidget(Widget):\n"
+        "    def _start(self) -> None:\n"
+        "        self.run_worker(self._work, exclusive=True, group='default')\n"
+    )
+    violations = _violations_in_tree(tree)
+    assert len(violations) == 1
+    assert "not a group name" in violations[0][2]
+
+
+def test_falsy_group_does_not_satisfy_the_guard() -> None:
+    """`group=""`/`group=None` silently disable exclusivity altogether.
+
+    `WorkerManager.add_worker` reads ``if exclusive and worker.group:`` before
+    calling ``cancel_group``, so a falsy group means the site asked for
+    exclusivity and received none -- a different bug wearing the fix's clothes.
+    """
+    for literal in ("''", "None"):
+        tree = ast.parse(
+            "from textual.widget import Widget\n\n"
+            "class ScratchWidget(Widget):\n"
+            "    def _start(self) -> None:\n"
+            f"        self.run_worker(self._work, exclusive=True, group={literal})\n"
+        )
+        violations = _violations_in_tree(tree)
+        assert len(violations) == 1, literal
+        assert "not a group name" in violations[0][2], literal
+
+
+def test_non_literal_group_is_accepted() -> None:
+    """A constant or f-string group is a name; the guard must not reject it.
+
+    33 real sites name their group through a module constant or an f-string
+    (`f"console-run-{session_id}"`). Those are named groups and stay clean --
+    only the three literals above are rejected.
+    """
+    tree = ast.parse(
+        "from textual.widget import Widget\n"
+        "GROUP = 'scratch-load'\n\n"
+        "class ScratchWidget(Widget):\n"
+        "    def _start(self, key) -> None:\n"
+        "        self.run_worker(self._a, exclusive=True, group=GROUP)\n"
+        "        self.run_worker(self._b, exclusive=True, group=f'scratch-{key}')\n"
+    )
+    assert _violations_in_tree(tree) == []
 
 
 def test_non_exclusive_worker_needs_no_group() -> None:
