@@ -54,7 +54,6 @@ from tldw_chatbook.Widgets.Console.console_conversation_inspector import (
     ConsoleConversationInspector,
 )
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
-from tldw_chatbook.Widgets.Console.console_context_modal import ConsoleContextModal
 from tldw_chatbook.Widgets.Console.console_run_inspector import ConsoleRunInspector
 
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
