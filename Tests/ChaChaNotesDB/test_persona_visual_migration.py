@@ -154,15 +154,34 @@ def _insert_pack_version(connection: sqlite3.Connection, title: str) -> tuple[in
 def test_real_v40_upgrade_installs_separate_persona_visual_schema(
     tmp_path: Path,
 ) -> None:
-    assert CharactersRAGDB._CURRENT_SCHEMA_VERSION == 41
+    """Applying just the v40->v41 step installs the persona-visual schema.
+
+    task-19568: this used to open the path as a plain, unpatched
+    ``CharactersRAGDB`` and gate the whole body behind
+    ``assert CharactersRAGDB._CURRENT_SCHEMA_VERSION == 41`` as its FIRST
+    statement -- so once a later migration bumped the global version past
+    41 (persona-visual is no longer the newest migration), that assertion
+    failed immediately and the migration exercise, the table census, the
+    five ``EXPECTED_COLUMNS`` checks, the index assertions, and the
+    foreign-key matrix below it never ran at all. Using
+    ``chachanotes_db_at_version(path, 41, ...)`` instead exercises the
+    v40->v41 step in isolation -- the production chain still stops exactly
+    at 41 regardless of how high ``_CURRENT_SCHEMA_VERSION`` has since
+    climbed, so the test asserts the behaviour of *its own* migration, not
+    the global current version, and there is no upfront version equality
+    to short-circuit the rest of the body.
+
+    Args:
+        tmp_path: pytest-provided temporary directory holding the seeded v40
+            database and the persona JSON the v40->v41 step reads.
+    """
     path = tmp_path / "persona-visual-v40.db"
     persona_json = tmp_path / "personas.json"
     persona_bytes = b'{"personas":[{"id":"local-1","revision":7}]}'
     persona_json.write_bytes(persona_bytes)
     shared_schema, shared_row = _seed_v40(path)
 
-    db = CharactersRAGDB(path, client_id="persona-visual-v41")
-    try:
+    with chachanotes_db_at_version(path, 41, client_id="persona-visual-v41") as db:
         connection = db.get_connection()
         assert _version(connection) == 41
         assert PERSONA_VISUAL_TABLES <= _tables(connection)
@@ -219,8 +238,6 @@ def test_real_v40_upgrade_installs_separate_persona_visual_schema(
             )
             == shared_row
         )
-    finally:
-        db.close_connection()
 
 
 def test_persona_visual_schema_enforces_immutable_graph_relationships(
