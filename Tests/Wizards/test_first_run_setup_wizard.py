@@ -10545,7 +10545,7 @@ def test_first_chat_stage_failure_leaves_mounted_console_byte_exact(monkeypatch)
 def test_generation_advance_after_stage_before_consume_never_mutates_console(
     monkeypatch,
 ):
-    import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
+    import tldw_chatbook.UI.Console_Modules.session as session_module
     import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
@@ -10585,7 +10585,7 @@ def test_generation_advance_after_stage_before_consume_never_mutates_console(
         lambda: current[0],
     )
     monkeypatch.setattr(
-        chat_screen_module,
+        session_module,
         "get_runtime_config_snapshot",
         lambda: current[0],
     )
@@ -10602,7 +10602,7 @@ def test_generation_advance_after_stage_before_consume_never_mutates_console(
     assert container._stage_console_first_chat_handoff() is True
     assert store.active_session_id == session.id
     assert _first_chat_store_snapshot(store) == sessions_before
-    assert console.consume_pending_console_first_chat_intent() is False
+    assert console._session.consume_pending_console_first_chat_intent() is False
     assert store.active_session_id == session.id
     assert _first_chat_store_snapshot(store) == sessions_before
     claim = pending.claim(HandoffChannel.CONSOLE_FIRST_CHAT)
