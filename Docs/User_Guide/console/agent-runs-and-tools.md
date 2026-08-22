@@ -379,6 +379,90 @@ comment reads `📝 Diff feedback attached — a.py @@ -1,4 +1,6 @@ line:
 "note"` — one line per note, oldest first, byte-identical whether you're
 watching it happen live or reading it back after a resume.
 
+#### Git actions in change review
+
+The Review screen's turn selector can carry one more entry above the
+recorded turns: **Working tree (current)** — the real, live state of your
+repository's working tree, read fresh from disk each time you open it
+(**not** a `change_snapshots` row, and not something an agent turn wrote).
+Selecting it swaps the file tree and diff pane over from "what this turn
+changed" to "what's different right now" — you get **`g` commit**, **`p`
+push**, and **`P` open PR** in place of the turn-mode revert/comment keys,
+spelled out in the footer while you're in this mode.
+
+**When it appears.** Two things both have to be true:
+
+- The workspace root — a folder bound to this conversation's workspace
+  (see [Sessions, tabs & workspaces](sessions-tabs-workspaces.md) for
+  where those bindings are set), or the root a recorded turn already
+  wrote to — must itself **be** a git repository's toplevel. A folder
+  that is merely *inside* a repository (a subdirectory of a real
+  checkout) is refused with "workspace is inside a repository — git
+  actions need the workspace root to be the repository root"; bind the
+  repository's own root instead.
+- **`[change_review] git_actions`** in `config.toml` must be on (default
+  **`true`** — the feature ships on). Turning it off makes the whole
+  `current` entry, and every action below, disappear; nothing else about
+  Change Review changes.
+
+With no repository detected at all (or the switch off), the selector only
+ever lists recorded turns, exactly as before this feature existed.
+
+**Commit (`g` / the Commit… button).** Opens a checklist built from a
+**fresh** read of the working tree taken the moment you press `g` — never
+the possibly-stale list you're looking at — with every changed file
+pre-checked (uncheck to exclude one). A commit message is required; an
+optional "create branch first" field checks out a new branch before
+staging. The dialog also shows non-blocking **warnings** — they never stop
+the commit — for a detached HEAD ("this commit will not be on any
+branch") and for committing straight to `main` or `master`. Committing is
+**refused outright** (before the dialog even opens) while an agent run is
+active on that workspace, and separately while the repository is mid
+merge, rebase, or cherry-pick — finish or abort that operation first.
+
+**Push (`p` / the Push… button).** Always confirms in a dialog first,
+naming the repository, the branch, and where it's going. A branch with no
+upstream yet gets one set on this push; with an upstream already
+configured, push targets exactly that upstream's remote and ref — never
+"whatever the repository's push configuration would have done" (see the
+no-force guarantee below).
+Unlike commit, **push is not refused while an agent run is active** — it
+only ships state you (or the agent) already committed and never touches
+the working tree, so there is nothing for a concurrent run to collide
+with. A credential failure (no non-interactive credential helper or SSH
+agent available) reports its own reason with a hint rather than hanging
+the app waiting on a prompt that can never appear.
+
+**Open PR (`P` / the Open PR button).** Opens your browser to a
+compare/new-merge-request page on **github.com**, **gitlab.com**,
+**bitbucket.org**, or **codeberg.org** — whichever the branch's upstream
+remote points at. The branch must already be pushed (has an upstream) or
+this refuses with "push the branch first". Any other host answers
+honestly that PR links only support those four.
+
+**The no-force guarantee.** None of these three actions ever force-pushes
+or rewrites history — not `--force`, not `--force-with-lease`, not an
+amend. Nor can your repository's own configuration turn one of these
+pushes into a force: each push names one exact source and destination ref
+on the command line, which supersedes any `remote.<name>.push` refspec or
+`push.default` setting in `.git/config` (and a `remote.<name>.mirror`
+remote is *rejected* outright rather than silently honoured — git refuses
+to combine `--mirror` with a refspec). So exactly one branch is ever
+updated, and only as a fast-forward. The one thing a push can add beyond
+that branch is tags: with `push.followTags = true` set in your config, git
+also publishes annotated tags reachable from the commits you just pushed.
+That is additive only — it creates tags the remote does not have and can
+never move or delete one it already has. A push that the remote rejects
+(e.g. it's behind) reports git's own rejection message rather than
+retrying with force; you resolve it from a terminal exactly as you would
+any other rejected push.
+
+**What the diff pane shows is your real diff.** The pane never renders a
+custom diff driver's output, so a `diff.external` program or a
+`.gitattributes` `textconv` driver configured in the repository cannot
+substitute its own text for a file's real change, blank the pane for a
+file the list shows as changed, or colour-code it into unreadability.
+
 ### Parallel sub-agents (the fleet)
 
 Sub-agents the supervisor spawns within a **single reply** no longer run one
@@ -1506,3 +1590,72 @@ cached-summary/guard machinery and `_open_change_review` opener, the
 `Tests/Chat/test_console_agent_bridge.py`, 414 passed — again a docs-only
 pass against shipped code and the whole-suite test run, not an
 interactive live-tmux walkthrough.)*
+
+*"Git actions in change review" added @ `3e3497555`, re-verified @
+`d0f385b80` after the arc's final fix wave, on
+`feat/console-review-git-modes` (based on dev @ `2a74a7b31`) — 2026-08-21
+(TASK-16801 arc B, Task 9: the `Working tree (current)` entry, its
+appearance conditions, commit/push/PR, and the no-force guarantee. Every
+claim checked against the shipped code — `Workspaces/git_workspace.py`'s
+`detect_git_workspace` (the inside-a-repository refusal literal),
+`commit_selected` (run-active refusal,
+in-progress-merge/rebase/cherry-pick refusal, pathspec add+commit,
+`_commit_warnings`' detached-HEAD/main-master copy), `push_current`
+(never passes `--force`/`--force-with-lease`, sets upstream via
+`push -u` only when `info.upstream is None`, `_push_failure_detail`'s
+credential-hint classifier), `pr_compare_url` (the four supported hosts
+and the `push the branch first` refusal), and
+`UI/Screens/change_review_screen.py`'s `BINDINGS` (`g`/`p`/`P`),
+`git_actions_enabled` (the `[change_review] git_actions` kill switch,
+default on), `action_git_commit`/`action_git_push`/`action_git_pr` (push
+is deliberately NOT gated on `run_active()`, unlike commit).
+Docs-only pass, not an interactive live-tmux walkthrough, confirmed by
+the arc's regression sweep —
+`Tests/UI/test_change_review_push_ui.py`,
+`Tests/UI/test_change_review_commit_ui.py`,
+`Tests/UI/test_change_review_current_mode.py`,
+`Tests/UI/test_change_review_screen.py`,
+`Tests/UI/test_change_review_git_provider.py`,
+`Tests/UI/test_console_modal_dismissal.py`,
+`Tests/UI/test_change_review_opener_roots.py` (new, T9's own opener-wiring
+pin), and `Tests/Workspaces/`, 624 passed in 260.12s — plus a
+`--collect-only` sweep of the whole `Tests/` tree, 52,273 collected with
+zero collection errors. Three paragraphs changed in the final fix wave:
+the no-force guarantee now also states that repository CONFIG
+(`remote.<name>.push` superseded, `remote.<name>.mirror` rejected,
+`push.default` irrelevant) cannot turn one of these pushes into a force —
+true only because `push_current` now carries an explicit fully-qualified
+refspec — with the one honest exception, `push.followTags`, verified
+additive-only against real git (a re-pointed `v9` was NOT pushed over the
+remote's existing `v9`); the rename/staged-deletion "Known limitation"
+paragraph was DELETED, because `commit_selected` now filters the add
+pathspec to worktree-present paths and both gestures commit; and a new
+"What the diff pane shows is your real diff" paragraph records the
+machine-safe diff flags (`--no-ext-diff`/`--no-textconv`/`--no-color` at
+both `git diff` sites, matching `Tools/git_tool_impls.py`'s precedent),
+without which `diff.external` rendered `TOTALLY FABRICATED DIFF OUTPUT`
+and a constant-output textconv driver rendered 0 bytes for a file the
+same read counted as `1 1`. One correction against this task's own brief: the
+brief described the live workspace root as driven by `[console]
+workspace_root`; on a real mounted Console session that config key is
+NOT what feeds `current` mode's live candidate root — the wired
+`_turn_context_provider`
+(`UI/Console_Modules/session.py`'s `_build_console_turn_execution_context`)
+derives it from the conversation's WORKSPACE folder bindings instead
+(`Tools/workspace_file_roots.py`'s `folder_binding_roots`), the same
+roots the change-tracker itself tracks a turn's writes against; the
+`[console] workspace_root`-only fallback in
+`Chat/console_chat_controller.py`'s `resolve_turn_execution_context`
+only runs for a controller built without that override, which a
+mounted `ChatScreen` never is. This page describes the folder-binding
+source; see [Sessions, tabs & workspaces](sessions-tabs-workspaces.md)
+for where those bindings are set. One thing this pass could NOT verify:
+whether `current` mode is reachable at all from a conversation on the
+**Default** workspace, since `Workspaces/registry_service.py` refuses
+runtime bindings ("Default workspace does not allow runtime bindings")
+and always reads back zero for it — a recorded turn's own tracked root
+is the only candidate left there, so a brand-new Default-workspace
+conversation with no turns yet may show no `current` entry; this is a
+pre-existing characteristic of the change-tracking roots this arc reused
+verbatim, not something Task 9 changed, and it is not re-verified live
+here.)*

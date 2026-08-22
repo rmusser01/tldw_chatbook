@@ -33,6 +33,8 @@ from tldw_chatbook.Chat.console_session_settings import (
 )
 from tldw_chatbook.Prompt_Management.prompt_variables import PromptVariableApplication
 from tldw_chatbook.UI.Screens.change_review_screen import (
+    ChangeGitCommitModal,
+    ChangeGitPushModal,
     ChangeReviewScreen,
     ChangeRevertConfirmModal,
 )
@@ -772,6 +774,34 @@ TASK4_MODAL_CONTRACTS = (
         "none",
         _RESTORE_OPENER,
     ),
+    # TASK-16801 arc B (T7): the git commit confirm modal -- the surface
+    # that writes to the user's REAL repository. Cancels to None (the
+    # mixin's default cancel result), so an abandoned dialog can never be
+    # mistaken for an empty commit request.
+    _Task4ModalContract(
+        ChangeGitCommitModal,
+        "#change-git-commit",
+        None,
+        "request_safe_cancel",
+        "ChangeReviewScreen commit action",
+        None,
+        "none",
+        _RESTORE_OPENER,
+    ),
+    # TASK-16801 arc B (T8): the push / PR target-confirmation modal -- the
+    # surface that confirms a write to a REMOTE. Cancels to None (the
+    # mixin's default cancel result), so an abandoned dialog can never be
+    # mistaken for a confirmed push.
+    _Task4ModalContract(
+        ChangeGitPushModal,
+        "#change-git-push",
+        None,
+        "request_safe_cancel",
+        "ChangeReviewScreen push / open-PR actions",
+        None,
+        "none",
+        _RESTORE_OPENER,
+    ),
 )
 
 
@@ -904,7 +934,13 @@ _DIRECT_SHARED_MODAL_TYPES = tuple(
     # Shared modals the Console root does NOT construct itself: each is
     # declared on the edge of the owner that actually opens it
     # (ChangeReviewScreen; the workspace create dialog -- task-18810).
-    if contract.modal_type not in {ChangeRevertConfirmModal, SelectDirectory}
+    if contract.modal_type
+    not in {
+        ChangeRevertConfirmModal,
+        ChangeGitCommitModal,
+        ChangeGitPushModal,
+        SelectDirectory,
+    }
 )
 CONSOLE_MODAL_LAUNCH_EDGES = (
     _ModalLaunchEdge(
@@ -957,9 +993,13 @@ CONSOLE_MODAL_LAUNCH_EDGES = (
         (TrajectoryScreen, EnhancedFileOpen),
         ("tldw_chatbook/UI/Screens/trajectory_screen.py",),
     ),
+    # TASK-16801 arc B (T7): the review screen also opens the git commit
+    # confirm modal (`_land_commit_preflight`), which is where a commit into
+    # the user's REAL repository is confirmed -- declared here so this walk
+    # keeps covering every modal reachable from the Console.
     _ModalLaunchEdge(
         ChangeReviewScreen,
-        (ChangeRevertConfirmModal,),
+        (ChangeRevertConfirmModal, ChangeGitCommitModal, ChangeGitPushModal),
         ("tldw_chatbook/UI/Screens/change_review_screen.py",),
     ),
 )
@@ -1260,10 +1300,12 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
         for node in reachable
         if inspect.isclass(node) and issubclass(node, ModalScreen)
     }
-    # dev baseline 43, minus the two Console modals this task unwires
-    # (ConsoleCostModal/ConsoleContextModal), plus the inspector that
-    # replaced them.
-    assert len(reachable_modal_types) == 42
+    # dev baseline 42 (43 minus the two Console modals another task
+    # unwires -- ConsoleCostModal/ConsoleContextModal -- plus the
+    # inspector that replaced them); 43 since TASK-16801 arc B added the
+    # review screen's git commit modal, and 44 since its push /
+    # open-PR confirmation modal (T8).
+    assert len(reachable_modal_types) == 44
     all_contract_types = console_contract_types | {
         contract.modal_type for contract in TASK4_MODAL_CONTRACTS
     } | {TrajectoryScreen}
@@ -1493,7 +1535,7 @@ def test_task3_modal_contract_table_is_complete_and_adopted() -> None:
 
 
 def test_task4_transitive_modal_contract_table_is_complete_and_adopted() -> None:
-    assert len(TASK4_MODAL_CONTRACTS) == 11
+    assert len(TASK4_MODAL_CONTRACTS) == 13
     assert {contract.modal_type.__name__ for contract in TASK4_MODAL_CONTRACTS} == {
         "WorkbenchHelpPanel",
         "DictionaryPicker",
@@ -1504,6 +1546,8 @@ def test_task4_transitive_modal_contract_table_is_complete_and_adopted() -> None
         "EnhancedFileSave",
         "VideoPlayerScreen",
         "ChangeRevertConfirmModal",
+        "ChangeGitCommitModal",
+        "ChangeGitPushModal",
         "WorkspaceCreateModal",
         "SelectDirectory",
     }
@@ -1525,6 +1569,16 @@ def test_task4_transitive_modal_contract_table_is_complete_and_adopted() -> None
     launch_source = inspect.getsource(ChangeReviewScreen._confirm_and_revert)
     launch_source += inspect.getsource(ChangeReviewScreen.action_undo_all)
     assert "ChangeRevertConfirmModal(" in launch_source
+
+    # TASK-16801 arc B: the two git modals are launched from ONE method
+    # each -- pinning the launch SITE (not just the class's existence) is
+    # what makes an accidental move to an undeclared opener show up here.
+    assert "ChangeGitCommitModal(" in inspect.getsource(
+        ChangeReviewScreen._land_commit_preflight
+    )
+    assert "ChangeGitPushModal(" in inspect.getsource(
+        ChangeReviewScreen._land_git_target_preflight
+    )
 
 
 def test_capacity_modal_uses_guarded_safe_dismissal_contract() -> None:
