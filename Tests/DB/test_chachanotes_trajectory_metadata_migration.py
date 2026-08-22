@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
+from Tests.ChaChaNotesDB.historical_bootstrap import (
+    chachanotes_db_at_version,
+    open_current_chachanotes_from_legacy,
+)
 
 from tldw_chatbook.DB.ChaChaNotes_DB import (
     CharactersRAGDB,
@@ -204,16 +207,12 @@ def test_get_trajectory_rows_includes_soft_deleted_messages(
     assert len(rows) == 1
 
 
-def test_v37_database_upgrades(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    with monkeypatch.context() as v37_patch:
-        v37_patch.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", 37)
-        seed = CharactersRAGDB(tmp_path / "seed.db", client_id="seed")
-        conversation_id = seed.add_conversation({"title": "seed"})
-        seed.add_message(
-            {"conversation_id": conversation_id, "sender": "user", "content": "hi"}
-        )
-        seed.close()
-    db = CharactersRAGDB(tmp_path / "seed.db", client_id="upgraded")
+def test_v37_database_upgrades(tmp_path: Path) -> None:
+    with chachanotes_db_at_version(tmp_path / "seed.db", 37, client_id="seed"):
+        pass
+    db = open_current_chachanotes_from_legacy(
+        tmp_path / "seed.db", client_id="upgraded"
+    )
     connection = db.get_connection()
     assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
     cols = {row["name"] for row in connection.execute(

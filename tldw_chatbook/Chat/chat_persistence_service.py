@@ -19,6 +19,15 @@ from tldw_chatbook.Chat.console_dispatch_repository import ConsoleDispatchReposi
 from tldw_chatbook.Chat.console_library_policy_repository import (
     ConsoleLibraryPolicyRepository,
 )
+from tldw_chatbook.Chat.console_library_policy import (
+    ConsoleLibraryPolicyCandidate,
+    ConsoleLibraryPolicySnapshot,
+    ConsoleLibraryPolicyWriteStatus,
+)
+from tldw_chatbook.Chat.console_transaction_contribution import (
+    ConsoleTransactionContribution,
+    _scoped_console_transaction_writer,
+)
 from tldw_chatbook.Chat.console_prefill import PINNED_PREFILL_METADATA_KEY
 from tldw_chatbook.Chat.console_roleplay_metadata import (
     ConsoleRoleplayContext,
@@ -222,6 +231,7 @@ class ChatPersistenceService:
     def create_conversation(
         self,
         *,
+        conversation_id: str | None = None,
         character_id: Optional[int] = None,
         character_name: Optional[str] = None,
         assistant_kind: Optional[str] = None,
@@ -304,6 +314,8 @@ class ChatPersistenceService:
             "system_prompt": system_prompt,
             "client_id": self.db.client_id,
         }
+        if conversation_id is not None:
+            conversation_data["id"] = conversation_id
         if assistant_authority_id is not _ASSISTANT_AUTHORITY_UNSET:
             conversation_data["assistant_authority_id"] = assistant_authority_id
         initial_metadata = (
@@ -335,6 +347,96 @@ class ChatPersistenceService:
                 self._discard_created_conversation(conversation_id)
                 raise
         return conversation_id
+
+    def persist_console_conversation_with_policy(
+        self,
+        *,
+        conversation_id: str,
+        policy_candidate: ConsoleLibraryPolicyCandidate,
+        conversation_kwargs: Mapping[str, object],
+    ) -> ConsoleLibraryPolicySnapshot:
+        """Commit a first conversation row and its Library policy together."""
+        with self.db.transaction(immediate=True):
+            created_id = self.create_conversation(
+                conversation_id=conversation_id,
+                **dict(conversation_kwargs),
+            )
+            if created_id != conversation_id:
+                raise RuntimeError("Persistence returned an unexpected conversation id.")
+            result = self.console_library_policy_repository.insert(
+                conversation_id,
+                policy_candidate,
+            )
+            if result.status is not ConsoleLibraryPolicyWriteStatus.COMMITTED:
+                raise RuntimeError(
+                    "Console Library policy could not be committed with conversation."
+                )
+        return result.snapshot
+
+    def promote_console_conversation_bundle(
+        self,
+        *,
+        conversation_id: str,
+        policy_candidate: ConsoleLibraryPolicyCandidate,
+        conversation_kwargs: Mapping[str, object],
+        messages: Sequence[Mapping[str, object]],
+        active_leaf_message_id: str | None,
+        context_summary: str | None = None,
+        context_summary_boundary_message_id: str | None = None,
+        contributions: Sequence[ConsoleTransactionContribution] = (),
+    ) -> ConsoleLibraryPolicySnapshot:
+        """Commit one temporary Console transcript and all Task-7 sidecars."""
+        with self.db.transaction(immediate=True) as cursor:
+            created_id = self.create_conversation(
+                conversation_id=conversation_id,
+                **dict(conversation_kwargs),
+            )
+            if created_id != conversation_id:
+                raise RuntimeError("Persistence returned an unexpected conversation id.")
+            policy_result = self.console_library_policy_repository.insert(
+                conversation_id,
+                policy_candidate,
+            )
+            if policy_result.status is not ConsoleLibraryPolicyWriteStatus.COMMITTED:
+                raise RuntimeError(
+                    "Console Library policy could not be committed with conversation."
+                )
+            message_ids: dict[str, str] = {}
+            for prepared in messages:
+                native_id = str(prepared["native_id"])
+                kwargs = dict(prepared["create_kwargs"])
+                persisted_id = self.create_message(
+                    conversation_id=conversation_id,
+                    **kwargs,
+                )
+                expected_id = str(kwargs["message_id"])
+                if persisted_id != expected_id:
+                    raise RuntimeError("Persistence returned an unexpected message id.")
+                message_ids[native_id] = persisted_id
+                role = str(kwargs["sender"])
+                if role in {"user", "assistant"}:
+                    message_ids[role] = persisted_id
+            self.db.set_conversation_active_leaf(
+                conversation_id,
+                active_leaf_message_id,
+            )
+            self.db.set_conversation_context_summary(
+                conversation_id,
+                context_summary,
+                context_summary_boundary_message_id,
+            )
+            if contributions:
+                with _scoped_console_transaction_writer(
+                    cursor,
+                    conversation_id,
+                ) as writer:
+                    for contribution in contributions:
+                        contribution.write(
+                            writer=writer,
+                            conversation_id=conversation_id,
+                            message_ids=message_ids,
+                        )
+        return policy_result.snapshot
 
     def fork_conversation_into_workspace(
         self,

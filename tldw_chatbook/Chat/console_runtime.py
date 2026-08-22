@@ -580,6 +580,9 @@ class ConsoleRuntime:
             ChatPersistenceService,
         )
         from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+        from tldw_chatbook.Chat.console_library_policy_coordinator import (
+            ConsoleLibraryPolicyCoordinator,
+        )
 
         persistence = None
         db = getattr(self._app, "chachanotes_db", None)
@@ -607,6 +610,13 @@ class ConsoleRuntime:
             persistence=persistence,
             workspace_context=workspace_context,
             on_scope_flushed=on_scope_flushed,
+            library_policy_coordinator=(
+                ConsoleLibraryPolicyCoordinator(
+                    persistence.console_library_policy_repository
+                )
+                if persistence is not None
+                else None
+            ),
         )
         self._bind_view_hooks()
         return self._chat_store

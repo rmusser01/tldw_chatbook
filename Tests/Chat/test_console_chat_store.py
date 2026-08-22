@@ -11,6 +11,12 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleWorkspaceContext,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
+from tldw_chatbook.Chat.console_library_policy import (
+    ConsoleAssistantLibraryAccess,
+    ConsoleAutoRetrieve,
+    ConsoleLibraryPolicyCandidate,
+    ConsoleLibraryPolicyDefaults,
+)
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
 from tldw_chatbook.Chat.console_roleplay_identity import (
     resolve_console_message_presentation,
@@ -68,6 +74,29 @@ def test_initial_chat_one_is_pristine_until_the_user_types():
     assert store.is_pristine_session(session.id, expected_settings=defaults)
 
     store.set_session_draft(session.id, "typed work")
+    assert not store.is_pristine_session(session.id, expected_settings=defaults)
+
+
+def test_default_library_policy_does_not_dirty_pristine_tab_but_explicit_edit_does():
+    defaults = _pristine_defaults()
+    store = ConsoleChatStore(
+        library_policy_defaults=ConsoleLibraryPolicyDefaults(
+            auto_retrieve=ConsoleAutoRetrieve.AUTOMATIC,
+            assistant_access=ConsoleAssistantLibraryAccess.ALLOWED,
+        )
+    )
+    session = _pristine_session(store, defaults)
+
+    assert store.is_pristine_session(session.id, expected_settings=defaults)
+
+    store.stage_session_library_policy(
+        session.id,
+        ConsoleLibraryPolicyCandidate(
+            auto_retrieve=ConsoleAutoRetrieve.AUTOMATIC,
+            assistant_access=ConsoleAssistantLibraryAccess.ALLOWED,
+        ),
+    )
+
     assert not store.is_pristine_session(session.id, expected_settings=defaults)
 
 

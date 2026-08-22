@@ -51,6 +51,22 @@ SCHEMA_NAME = CharactersRAGDB._SCHEMA_NAME
 MINIMUM_BOOTSTRAP_VERSION = 4
 
 
+def open_current_chachanotes_from_legacy(
+    db_path: str | os.PathLike[str],
+    *,
+    client_id: str,
+    auto_retrieve_on_send: bool = False,
+) -> CharactersRAGDB:
+    """Open a pre-v45 fixture with the explicit sanitized migration seed."""
+    return CharactersRAGDB(
+        str(db_path),
+        client_id=client_id,
+        console_library_migration_seed=ConsoleLibraryMigrationSeed(
+            auto_retrieve_on_send=auto_retrieve_on_send
+        ),
+    )
+
+
 @contextmanager
 def chachanotes_db_at_version(
     db_path: str | os.PathLike[str],

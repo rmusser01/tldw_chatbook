@@ -6,6 +6,10 @@ from pathlib import Path
 
 import pytest
 
+from Tests.ChaChaNotesDB.historical_bootstrap import (
+    open_current_chachanotes_from_legacy,
+)
+
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 
 
@@ -320,6 +324,10 @@ FOREIGN_KEY_CONTRACT = {
 
 
 def _fresh_db(path: Path) -> CharactersRAGDB:
+    if path.exists():
+        return open_current_chachanotes_from_legacy(
+            path, client_id="citation-migration-test"
+        )
     return CharactersRAGDB(path, client_id="citation-migration-test")
 
 

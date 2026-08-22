@@ -154,6 +154,11 @@ from ...Chat.console_expression_state import (
     CharacterEmoteHistoryIdentity,
     resolve_console_expression_state,
 )
+from ...Chat.console_library_policy import (
+    ConsoleAssistantLibraryAccess,
+    ConsoleAutoRetrieve,
+    ConsoleLibraryPolicyDefaults,
+)
 from ...Chat.console_image_view import resolve_react_character_expressions
 from ...Chat.console_roleplay_identity import (
     ChatDisplayNameError,
@@ -2119,6 +2124,45 @@ class ConsoleSessionController:
                     severity="warning",
                 )
 
+    def _refresh_console_library_policy_defaults(self) -> None:
+        """Load the defaults captured by the next locally created session."""
+        app_config = self._provider_readiness_app_config()
+        console_config = (
+            app_config.get("console", {}) if isinstance(app_config, Mapping) else {}
+        )
+        chat_defaults = (
+            app_config.get("chat_defaults", {})
+            if isinstance(app_config, Mapping)
+            else {}
+        )
+        if not isinstance(console_config, Mapping):
+            console_config = {}
+        if not isinstance(chat_defaults, Mapping):
+            chat_defaults = {}
+        self._ensure_console_chat_store().set_library_policy_defaults(
+            ConsoleLibraryPolicyDefaults(
+                auto_retrieve=(
+                    ConsoleAutoRetrieve.AUTOMATIC
+                    if coerce_bool_setting(
+                        chat_defaults.get("rag_auto_retrieve_on_send", False),
+                        False,
+                    )
+                    else ConsoleAutoRetrieve.NEVER
+                ),
+                assistant_access=(
+                    ConsoleAssistantLibraryAccess.ALLOWED
+                    if coerce_bool_setting(
+                        console_config.get(
+                            "assistant_library_access_default",
+                            False,
+                        ),
+                        False,
+                    )
+                    else ConsoleAssistantLibraryAccess.BLOCKED
+                ),
+            )
+        )
+
     async def _create_native_console_session_from_active_context(
         self, *, ephemeral: bool = False
     ) -> None:
@@ -2131,6 +2175,7 @@ class ConsoleSessionController:
         # first so the deferred draft swap attributes settle-window typing
         # to the new tab instead of clobbering it.
         self._capture_console_draft_switch_snapshot()
+        self._refresh_console_library_policy_defaults()
         self._ensure_console_chat_controller().new_session(
             settings=(
                 self._active_console_session_settings()
@@ -2886,6 +2931,7 @@ class ConsoleSessionController:
                 except ValueError:
                     session = None
             if session is None:
+                self._refresh_console_library_policy_defaults()
                 session = store.create_session(
                     title=f"Chat with {seed.name}",
                     workspace_id=CONSOLE_GLOBAL_WORKSPACE_ID,

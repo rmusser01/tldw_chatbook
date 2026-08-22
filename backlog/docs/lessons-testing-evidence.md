@@ -7458,6 +7458,24 @@ the run collected nothing, printed only a warnings block, and the compound
 command still exited 0. It looked like a completed A/B. Inline the command
 substitution, and read the passed-count before believing any comparison.
 
+## Mandatory migration inputs require a real historical-reopen sweep (TASK-19900.1, 2026-08-22)
+
+Delivery 1 made the v47→v48 Console Library seed explicit and fail-closed. Its
+named 203-test foundation battery passed, but the controller-required complete
+`Tests/DB/ Tests/ChaChaNotesDB/` sweep then produced 100 failures and four
+setup errors: historical v4–v47 fixtures reopened through bare
+`CharactersRAGDB(...)` calls, so they never supplied the new sanitized seed.
+The same sweep also found stale v48 table/index/version inventories. A shared
+`open_current_chachanotes_from_legacy(...)` test boundary fixed the reopeners;
+the final sweep had no Delivery-1-induced failures.
+
+When a schema upgrade adds mandatory constructor or migration authority, run
+the complete database-owner subtree, not only the new migration tests. Give
+historical fixtures one explicit opener that supplies sanitized authority at
+the legacy-to-current boundary, while leaving the production missing-input
+guard strict. Refresh absolute schema-version, table, index, and trigger
+inventories in the same delivery.
+
 ---
 
 ## UI lifecycle tests must stop before optional native backends (TASK-21201, 2026-08-23)

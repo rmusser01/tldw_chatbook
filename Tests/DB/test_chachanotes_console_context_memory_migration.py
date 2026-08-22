@@ -8,6 +8,10 @@ import sqlite3
 
 import pytest
 
+from Tests.ChaChaNotesDB.historical_bootstrap import (
+    open_current_chachanotes_from_legacy,
+)
+
 from tldw_chatbook.Chat.console_context_policy import (
     ConsoleContextPolicyOverrides,
     ContextBudgetMode,
@@ -120,7 +124,7 @@ def test_migration_preserves_valid_legacy_summary_as_inactive_memory(
     path = tmp_path / "legacy.db"
     conversation_id, boundary_id = _seed_v32_database(path, monkeypatch)
 
-    db = CharactersRAGDB(path, client_id="v33-open")
+    db = open_current_chachanotes_from_legacy(path, client_id="v33-open")
     row = (
         db.get_connection()
         .execute(
@@ -156,7 +160,7 @@ def test_v33_policy_migrates_with_inherited_text_representation(
     path = tmp_path / "v33-policy.db"
     conversation_id = _seed_v33_database(path, monkeypatch)
 
-    db = CharactersRAGDB(path, client_id="v34-open")
+    db = open_current_chachanotes_from_legacy(path, client_id="v34-open")
     result = ConsoleContextRepository(db).load_policy(conversation_id)
 
     assert _version(db) == db._CURRENT_SCHEMA_VERSION

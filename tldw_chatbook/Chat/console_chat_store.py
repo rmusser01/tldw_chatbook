@@ -54,6 +54,21 @@ from tldw_chatbook.Chat.console_chat_models import (
     MessageAttachment,
 )
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
+from tldw_chatbook.Chat.console_library_policy import (
+    ConsoleAssistantLibraryAccess,
+    ConsoleAutoRetrieve,
+    ConsoleLibraryPolicyCandidate,
+    ConsoleLibraryPolicyDefaults,
+    ConsoleLibraryPolicyHolder,
+    ConsoleLibraryPolicySnapshot,
+    ConsoleLibraryPolicyWriteResult,
+)
+from tldw_chatbook.Chat.console_library_policy_coordinator import (
+    ConsoleLibraryPolicyCoordinator,
+)
+from tldw_chatbook.Chat.console_transaction_contribution import (
+    ConsoleTransactionContribution,
+)
 from tldw_chatbook.Chat.console_exchange_capture import capture_to_blob
 from tldw_chatbook.Chat.console_roleplay_identity import (
     ConsolePresentationContext,
@@ -62,7 +77,11 @@ from tldw_chatbook.Chat.console_roleplay_identity import (
     normalize_chat_display_name,
     resolve_console_message_presentation,
 )
-from tldw_chatbook.Chat.console_roleplay_metadata import ConsoleRoleplayContext
+from tldw_chatbook.Chat.console_roleplay_metadata import (
+    ConsoleRoleplayContext,
+    merge_console_roleplay_context,
+)
+from tldw_chatbook.Chat.console_prefill import PINNED_PREFILL_METADATA_KEY
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
@@ -88,7 +107,7 @@ from tldw_chatbook.Chat.provider_continuation import (
     read_provider_continuation_json,
     transition_provider_call,
 )
-from tldw_chatbook.Chat.rag_scope import RagScope, SessionScopeHolder
+from tldw_chatbook.Chat.rag_scope import RagScope, SessionScopeHolder, serialize_scope
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 from tldw_chatbook.TTS.profile_errors import ProfileValidationError
 from tldw_chatbook.TTS.profile_types import CharacterRef
@@ -229,6 +248,25 @@ class ConsoleRoleplayProjectionPersistenceResult:
     system_prompt: str | None
     system_prompt_persisted: bool
     message_outcomes: tuple[_RoleplayMessageProjectionPersistenceOutcome, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleStagedConversationIdentity:
+    """Preallocated durable identity published only after transaction commit."""
+
+    conversation_id: str
+    title: str
+
+
+def _default_library_policy_holder() -> ConsoleLibraryPolicyHolder:
+    return ConsoleLibraryPolicyHolder(
+        ConsoleLibraryPolicySnapshot(
+            auto_retrieve=ConsoleAutoRetrieve.NEVER,
+            assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+            policy_revision=None,
+            source="new_session",
+        )
+    )
 
 
 class ConsoleChatPersistence(Protocol):
@@ -563,6 +601,9 @@ class ConsoleChatSession:
     )
     #: Bounded persistence diagnostic for a corrupt/unreadable stored policy.
     context_policy_error: str | None = None
+    library_policy_holder: ConsoleLibraryPolicyHolder = field(
+        default_factory=_default_library_policy_holder
+    )
     draft: str = ""
     #: Session-lifetime evidence that the composer has held user-authored text.
     #: Clearing the draft does not make that work safe to overwrite.
@@ -684,6 +725,8 @@ def is_untouched_default_session(
         or session.rag_scope_holder.scope is not None
         or not session.context_policy_overrides.is_empty
         or session.context_policy_error is not None
+        or session.library_policy_holder.explicitly_staged
+        or session.library_policy_holder.save_pending
         or session.runtime_backend != "local"
         or session.assistant_kind != "generic"
         or session.assistant_id != "console"
@@ -712,6 +755,8 @@ class ConsoleChatStore:
         sync_v2_authenticated_principal_id: str | None = None,
         sync_v2_workspace_scope: str | None = None,
         on_scope_flushed: Callable[[str, "RagScope | None"], None] | None = None,
+        library_policy_defaults: ConsoleLibraryPolicyDefaults | None = None,
+        library_policy_coordinator: ConsoleLibraryPolicyCoordinator | None = None,
     ) -> None:
         """Initialize the Console chat store.
 
@@ -747,6 +792,20 @@ class ConsoleChatStore:
         self.sync_v2_authenticated_principal_id = sync_v2_authenticated_principal_id
         self.sync_v2_workspace_scope = sync_v2_workspace_scope
         self.on_scope_flushed = on_scope_flushed
+        self._library_policy_defaults = library_policy_defaults or (
+            ConsoleLibraryPolicyDefaults(
+                auto_retrieve=ConsoleAutoRetrieve.NEVER,
+                assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+            )
+        )
+        repository = getattr(
+            persistence,
+            "console_library_policy_repository",
+            None,
+        )
+        self.library_policy_coordinator = library_policy_coordinator
+        if self.library_policy_coordinator is None and repository is not None:
+            self.library_policy_coordinator = ConsoleLibraryPolicyCoordinator(repository)
         self.active_session_id: str | None = None
         self._active_session_epoch = 0
         self._speech_preference_epoch_sequence = 0
@@ -793,6 +852,7 @@ class ConsoleChatStore:
         #: None)`` = no summary. Write-through is ``_persist_context_summary``.
         self._context_summary_by_session: dict[str, tuple[str | None, str | None]] = {}
         self._deferred_project_instruction_state_session_ids: set[str] = set()
+        self._unresolved_promotion_operations: dict[str, str] = {}
         self._pending_persistence_message_ids: set[str] = set()
         self._terminal_citation_finalizers: dict[str, TerminalCitationFinalizer] = {}
         self._provisional_terminal_selection_ids: set[str] = set()
@@ -1034,6 +1094,14 @@ class ConsoleChatStore:
                 if project_instruction_state is not None
                 else ProjectInstructionControlState.new_session()
             ),
+            library_policy_holder=ConsoleLibraryPolicyHolder(
+                ConsoleLibraryPolicySnapshot(
+                    auto_retrieve=self._library_policy_defaults.auto_retrieve,
+                    assistant_access=self._library_policy_defaults.assistant_access,
+                    policy_revision=None,
+                    source="temporary" if ephemeral else "new_session",
+                )
+            ),
         )
         self._sessions[session.id] = session
         self._messages_by_session[session.id] = []
@@ -1042,6 +1110,12 @@ class ConsoleChatStore:
         self._active_leaf_by_session[session.id] = None
         self._context_summary_by_session[session.id] = (None, None)
         self._conversation_context_epochs[session.id] = 0
+        if self.library_policy_coordinator is not None:
+            self.library_policy_coordinator.register_holder(
+                session.id,
+                None,
+                session.library_policy_holder,
+            )
         if activate:
             self._activate_session(session.id)
         return session
@@ -1379,6 +1453,18 @@ class ConsoleChatStore:
             project_instruction_state=project_instruction_state,
         )
         session.persisted_conversation_id = str(persisted_conversation_id)
+        coordinator = self.library_policy_coordinator
+        if coordinator is not None:
+            policy_result = coordinator.repository.read(
+                session.persisted_conversation_id
+            )
+            session.library_policy_holder.snapshot = policy_result.snapshot
+            session.library_policy_holder.explicitly_staged = False
+            coordinator.register_holder(
+                session.id,
+                session.persisted_conversation_id,
+                session.library_policy_holder,
+            )
         self._restore_speech_preferences(session)
         self._resolve_context_policy_on_resume(session.id)
         restored_nodes = self._hydrate_provider_continuations_from_persistence(
@@ -1749,6 +1835,9 @@ class ConsoleChatStore:
         self._conversation_context_epochs.pop(session_id, None)
         self._speech_preference_epochs.pop(session_id, None)
         self._character_emote_feed_by_session.pop(session_id, None)
+        self._unresolved_promotion_operations.pop(session_id, None)
+        if self.library_policy_coordinator is not None:
+            self.library_policy_coordinator.unregister_holder(session_id)
         self._sessions.pop(session_id, None)
 
         if self.active_session_id != session_id:
@@ -1767,6 +1856,94 @@ class ConsoleChatStore:
     def sessions(self) -> list[ConsoleChatSession]:
         """Return native Console sessions in creation order."""
         return list(self._sessions.values())
+
+    def set_library_policy_defaults(
+        self,
+        defaults: ConsoleLibraryPolicyDefaults,
+    ) -> None:
+        """Replace defaults used only by subsequently created sessions."""
+        if not isinstance(defaults, ConsoleLibraryPolicyDefaults):
+            raise TypeError("defaults must be ConsoleLibraryPolicyDefaults")
+        self._library_policy_defaults = defaults
+
+    def stage_session_library_policy(
+        self,
+        session_id: str,
+        candidate: ConsoleLibraryPolicyCandidate,
+    ) -> ConsoleLibraryPolicyHolder:
+        """Stage an explicit edit without creating a durable conversation."""
+        if not isinstance(candidate, ConsoleLibraryPolicyCandidate):
+            raise TypeError("candidate must be ConsoleLibraryPolicyCandidate")
+        session = self._session_or_raise(session_id)
+        current = session.library_policy_holder.snapshot
+        session.library_policy_holder.snapshot = ConsoleLibraryPolicySnapshot(
+            auto_retrieve=candidate.auto_retrieve,
+            assistant_access=candidate.assistant_access,
+            policy_revision=current.policy_revision,
+            source=current.source,
+            error_code=current.error_code,
+        )
+        session.library_policy_holder.explicitly_staged = True
+        self._bump_payload_revision(session_id)
+        return session.library_policy_holder
+
+    async def save_session_library_policy(
+        self,
+        session_id: str,
+    ) -> ConsoleLibraryPolicyWriteResult:
+        """Persist an explicit policy edit through the shared coordinator."""
+        session = self._session_or_raise(session_id)
+        coordinator = self.library_policy_coordinator
+        if coordinator is None or session.persisted_conversation_id is None:
+            raise ValueError("A durable conversation is required for policy save.")
+        snapshot = session.library_policy_holder.snapshot
+        result = await coordinator.save(
+            session_id,
+            ConsoleLibraryPolicyCandidate(
+                auto_retrieve=snapshot.auto_retrieve,
+                assistant_access=snapshot.assistant_access,
+            ),
+        )
+        if result.status.value == "committed":
+            session.library_policy_holder.explicitly_staged = False
+        return result
+
+    def set_unresolved_promotion_operation(
+        self,
+        session_id: str,
+        operation_id: str | None,
+    ) -> None:
+        """Expose the narrow unresolved-operation guard needed by later tasks."""
+        self._session_or_raise(session_id)
+        if operation_id is None:
+            self._unresolved_promotion_operations.pop(session_id, None)
+            return
+        if type(operation_id) is not str or not operation_id.strip():
+            raise ValueError("operation_id must be non-empty text or None")
+        self._unresolved_promotion_operations[session_id] = operation_id
+
+    def stage_first_persistence(
+        self,
+        session_id: str,
+    ) -> ConsoleStagedConversationIdentity:
+        """Reserve first-persistence identity without touching live session state."""
+        session = self._session_or_raise(session_id)
+        return ConsoleStagedConversationIdentity(
+            conversation_id=str(uuid4()),
+            title=session.title,
+        )
+
+    def publish_committed_identity(
+        self,
+        session_id: str,
+        identity: ConsoleStagedConversationIdentity,
+    ) -> None:
+        """Publish identity only after its caller-owned transaction exits."""
+        if not isinstance(identity, ConsoleStagedConversationIdentity):
+            raise TypeError("identity must be ConsoleStagedConversationIdentity")
+        session = self._session_or_raise(session_id)
+        session.persisted_conversation_id = identity.conversation_id
+        session.title = identity.title
 
     def session_settings(self, session_id: str) -> ConsoleSessionSettings | None:
         """Return in-memory settings for a native Console session."""
@@ -6131,7 +6308,41 @@ class ConsoleChatStore:
                     "Persistence adapter cannot store staged reply-speech preferences."
                 )
             create_kwargs["speech_preferences"] = session.speech_preferences
-        session.persisted_conversation_id = create_conversation(**create_kwargs)
+        staged_identity = self.stage_first_persistence(session_id)
+        policy_snapshot = session.library_policy_holder.snapshot
+        policy_candidate = ConsoleLibraryPolicyCandidate(
+            auto_retrieve=policy_snapshot.auto_retrieve,
+            assistant_access=policy_snapshot.assistant_access,
+        )
+        atomic_first_persist = getattr(
+            self.persistence,
+            "persist_console_conversation_with_policy",
+            None,
+        )
+        if callable(atomic_first_persist):
+            committed_policy = atomic_first_persist(
+                conversation_id=staged_identity.conversation_id,
+                policy_candidate=policy_candidate,
+                conversation_kwargs=create_kwargs,
+            )
+            committed_identity = staged_identity
+        else:
+            created_id = create_conversation(**create_kwargs)
+            committed_identity = ConsoleStagedConversationIdentity(
+                conversation_id=created_id,
+                title=staged_identity.title,
+            )
+            committed_policy = None
+        self.publish_committed_identity(session_id, committed_identity)
+        if isinstance(committed_policy, ConsoleLibraryPolicySnapshot):
+            session.library_policy_holder.snapshot = committed_policy
+            session.library_policy_holder.explicitly_staged = False
+            if self.library_policy_coordinator is not None:
+                self.library_policy_coordinator.register_holder(
+                    session.id,
+                    committed_identity.conversation_id,
+                    session.library_policy_holder,
+                )
         if (
             session.user_display_name_override is not None
             or session.character_system_template is not None
@@ -6271,7 +6482,12 @@ class ConsoleChatStore:
         error = getattr(result, "error", None)
         session.context_policy_error = error if isinstance(error, str) else None
 
-    def promote_ephemeral_session(self, session_id: str) -> str | None:
+    def promote_ephemeral_session(
+        self,
+        session_id: str,
+        *,
+        contributions: Sequence[ConsoleTransactionContribution] = (),
+    ) -> str | None:
         """Save a temporary conversation to durable storage, all or nothing.
 
         Clears ``ephemeral`` first -- that is what opens the gate in
@@ -6321,6 +6537,25 @@ class ConsoleChatStore:
             return None
         if self.persistence is None:
             return None
+        if session_id in self._unresolved_promotion_operations:
+            raise RuntimeError(
+                "Finish or discard the pending turn before saving."
+            )
+
+        atomic_promote = getattr(
+            self.persistence,
+            "promote_console_conversation_bundle",
+            None,
+        )
+        if callable(atomic_promote) and "persist_session_if_needed" not in self.__dict__:
+            return self._promote_ephemeral_session_atomically(
+                session,
+                contributions=contributions,
+            )
+        if contributions:
+            raise RuntimeError(
+                "Persistence adapter cannot atomically store Console contributions."
+            )
 
         messages = self._tree_nodes_parent_first(session_id)
         db = getattr(self.persistence, "db", None)
@@ -6414,6 +6649,168 @@ class ConsoleChatStore:
             self._deferred_project_instruction_state_session_ids.discard(session_id)
         self._persist_project_instruction_state(session)
         return conversation_id
+
+    def _promote_ephemeral_session_atomically(
+        self,
+        session: ConsoleChatSession,
+        *,
+        contributions: Sequence[ConsoleTransactionContribution],
+    ) -> str:
+        """Stage a complete temporary transcript and publish after commit only."""
+        if self.persistence is None:
+            raise RuntimeError("Console persistence is unavailable.")
+        session_id = session.id
+        messages = self._tree_nodes_parent_first(session_id)
+        identity = self.stage_first_persistence(session_id)
+        staged_message_ids = {message.id: str(uuid4()) for message in messages}
+        prepared_messages: list[dict[str, object]] = []
+        for message in messages:
+            native_parent = self._native_parent_by_message.get(message.id)
+            create_kwargs: dict[str, object] = {
+                "sender": message.role.value,
+                "content": message.content,
+                "message_id": staged_message_ids[message.id],
+                "parent_message_id": (
+                    staged_message_ids[native_parent]
+                    if native_parent is not None
+                    else None
+                ),
+                "feedback": message.feedback,
+            }
+            if message.attachments:
+                create_kwargs["attachments"] = [
+                    {
+                        "position": attachment.position,
+                        "data": attachment.data,
+                        "mime_type": attachment.mime_type,
+                        "display_name": attachment.display_name,
+                    }
+                    for attachment in message.attachments
+                    if attachment.data is not None
+                ]
+                create_kwargs["image_data"] = None
+                create_kwargs["image_mime_type"] = None
+            else:
+                create_kwargs["image_data"] = message.image_data
+                create_kwargs["image_mime_type"] = message.image_mime_type
+            if message.generation_metadata:
+                create_kwargs["generation_metadata"] = [
+                    metadata.to_row(attachment.position)
+                    for attachment, metadata in zip(
+                        message.attachments,
+                        message.generation_metadata,
+                    )
+                ]
+            if message.usage is not None:
+                create_kwargs["usage_json"] = message.usage.to_json()
+            if message.video_metadata is not None:
+                create_kwargs["metadata_json"] = message.video_metadata.to_json()
+            elif message.metadata is not None and not message.metadata.is_empty:
+                create_kwargs["metadata_json"] = message.metadata.to_json()
+            prepared_messages.append(
+                {"native_id": message.id, "create_kwargs": create_kwargs}
+            )
+
+        scope_type, workspace_id = self._persistence_scope(session)
+        metadata: dict[str, object] = {}
+        if session.rag_scope_holder.scope is not None:
+            metadata["rag_scope"] = serialize_scope(
+                session.rag_scope_holder.scope
+            )
+        pinned_prefill = (
+            session.settings.pinned_prefill if session.settings is not None else None
+        )
+        if pinned_prefill:
+            metadata[PINNED_PREFILL_METADATA_KEY] = pinned_prefill
+        if (
+            session.user_display_name_override is not None
+            or session.character_system_template is not None
+        ):
+            metadata = json.loads(
+                merge_console_roleplay_context(
+                    metadata,
+                    ConsoleRoleplayContext(
+                        user_name_override=session.user_display_name_override,
+                        character_system_template=session.character_system_template,
+                    ),
+                )
+            )
+        local_character_id = session.local_character_id()
+        conversation_kwargs: dict[str, object] = {
+            "conversation_title": identity.title,
+            "workspace_id": workspace_id,
+            "scope_type": scope_type,
+            "system_prompt": (
+                session.settings.system_prompt
+                if session.settings is not None
+                else None
+            ),
+            "runtime_backend": session.runtime_backend,
+            "assistant_kind": session.assistant_kind,
+            "assistant_id": session.assistant_id,
+            "assistant_authority_id": session.assistant_authority_id,
+            "character_id": local_character_id,
+            "character_name": (
+                session.character_name if local_character_id is not None else None
+            ),
+            "metadata": metadata or None,
+            "speech_preferences": session.speech_preferences,
+        }
+        policy = session.library_policy_holder.snapshot
+        summary, boundary_native_id = self._context_summary_by_session.get(
+            session_id,
+            (None, None),
+        )
+        committed_policy = self.persistence.promote_console_conversation_bundle(
+            conversation_id=identity.conversation_id,
+            policy_candidate=ConsoleLibraryPolicyCandidate(
+                auto_retrieve=policy.auto_retrieve,
+                assistant_access=policy.assistant_access,
+            ),
+            conversation_kwargs=conversation_kwargs,
+            messages=prepared_messages,
+            active_leaf_message_id=(
+                staged_message_ids[self._active_leaf_by_session[session_id]]
+                if self._active_leaf_by_session.get(session_id) is not None
+                else None
+            ),
+            context_summary=summary,
+            context_summary_boundary_message_id=(
+                staged_message_ids[boundary_native_id]
+                if boundary_native_id is not None
+                else None
+            ),
+            contributions=contributions,
+        )
+
+        self.publish_committed_identity(session_id, identity)
+        session.ephemeral = False
+        session.library_policy_holder.snapshot = committed_policy
+        session.library_policy_holder.explicitly_staged = False
+        session.library_policy_holder.save_pending = False
+        if self.library_policy_coordinator is not None:
+            self.library_policy_coordinator.register_holder(
+                session_id,
+                identity.conversation_id,
+                session.library_policy_holder,
+            )
+        for message in messages:
+            message.persisted_message_id = staged_message_ids[message.id]
+            native_parent = self._native_parent_by_message.get(message.id)
+            message.parent_message_id = (
+                staged_message_ids[native_parent]
+                if native_parent is not None
+                else None
+            )
+        held_scope = session.rag_scope_holder.scope
+        session.rag_scope_holder.set(None)
+        if held_scope is not None and self.on_scope_flushed is not None:
+            try:
+                self.on_scope_flushed(identity.conversation_id, held_scope)
+            except Exception:
+                logger.exception("on_scope_flushed callback failed after promotion.")
+        self._persist_project_instruction_state(session)
+        return identity.conversation_id
 
     def set_session_system_prompt(
         self,
