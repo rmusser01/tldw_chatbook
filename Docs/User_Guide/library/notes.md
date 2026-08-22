@@ -176,32 +176,6 @@ shown first—for example **Review migration**, **Review attention**, **Sync
 now**, **Pause**, or **Resume**. **Retarget** and **Disconnect** remain visibly
 disabled with an unavailable-in-this-release reason; no files or notes change.
 
-#### What a conflict policy does to the copy that loses
-
-A conflict is when the same note changed **both** in the Library and in
-the file on disk since the last sync. One copy has to give way, and the
-one that does is always saved first:
-
-| Policy | Which copy is kept as the note/file | What happens to the other one |
-|---|---|---|
-| **Newer wins** | Whichever was edited more recently | Saved beside the file, then replaced |
-| **Disk wins** | The file on disk | The Library's version is saved beside the file, then replaced |
-| **Library wins** | The note in the Library | The file's version is saved beside the file, then replaced |
-
-The saved copy is a plain file next to the original, named
-`your-note.md.conflict-20260821T203015Z-disk.bak` (`-disk` for the file's
-version, `-db` for the Library's). It holds the replaced text exactly, so
-recovering it is a rename — nothing is added to it. The sync never picks
-these files up again, so they will not turn into extra notes.
-
-If that copy cannot be written for any reason, **the sync does not
-overwrite anything**: both versions are left exactly as they are and the
-run reports an error instead.
-
-The activity log tells you which happened: "1 conflict resolved (Disk
-wins)" and "Replaced copy saved as …", or "1 conflict left unresolved —
-both copies kept as they are" when the run did not change either side.
-
 ### Import once
 
 **Import once** copies supported note files into local Database Notes. It is
@@ -403,11 +377,3 @@ the version-checked service seam.)*
 rail; database editing and Files use one focused workbench with a guarded
 `‹ Library / Notes` return; exact browse identity and independent scroll
 positions survive return and compact/wide breakpoint crossings.*
-
-*Verified against dev @ 5f720a404 — 2026-08-21 (TASK-19554): the conflict
-policies now describe what actually happens to the losing copy. "Disk wins"
-applies the disk copy (it previously applied nothing at all while reporting
-the conflict as resolved), and every policy that overwrites a side saves that
-side as a `.conflict-…bak` file next to the note first — fail-closed, so no
-overwrite happens when the copy cannot be saved. Covered end-to-end by
-`Tests/Notes/test_sync_conflict_preservation.py`.*
