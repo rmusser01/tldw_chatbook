@@ -91,6 +91,58 @@ both default to `ConflictResolution.ASK` when called with no explicit
 value. The panel never relies on that default: it always resolves and
 passes one of its three exposed policies explicitly.
 
+### What each policy does to the losing copy
+
+A resolution that overwrites one side always keeps that side first
+(task-19554). What each offered policy does on a `both_changed` conflict:
+
+| Policy | Winner | What happens to the other copy |
+|---|---|---|
+| Newer wins | The side with the later timestamp (note `last_modified` vs. file mtime) | Saved as a sidecar next to the note file, then overwritten |
+| Disk wins | The file on disk | The note body is saved as a sidecar, then replaced |
+| Library wins | The note in the Library | The file's text is saved as a sidecar, then overwritten |
+| Ask (engine-only, never offered by the panel) | Neither | Nothing is written; the conflict row stays open |
+
+The sidecar is named
+`<file name>.conflict-<UTC timestamp>-<db|disk>.bak` and holds the
+discarded text **verbatim** — no header, no diff markers — so recovering
+it is a rename. Sidecars are excluded from every subsequent scan, so a
+preserved copy never becomes a note of its own. Recognition
+(`NotesSyncEngine.is_conflict_sidecar`) requires the `.conflict-` marker
+**and** the `.bak` suffix together: the `.bak` suffix alone already keeps
+sidecars out of the default `['.md', '.txt']` scan set, and the marker
+alone would silently un-sync a user's own note named something like
+`meeting.conflict-notes.md` — a silent filter must not over-match.
+
+The name is claimed with `O_CREAT | O_EXCL` through
+`PinnedSyncRoot.create_new_text`, the never-replace counterpart to
+`write_text` (which renames over its target). Checking for a free name
+and then writing it would leave a window in which a concurrent sync run
+takes the same name, and the rename would then destroy that run's
+preserved copy. A taken name raises `FileExistsError`, the writer
+advances to the next ordinal (`…-2-disk.bak`), and an exhausted name
+space raises rather than overwriting anything.
+
+The same text is also written to the conflict's own row —
+`sync_conflicts.losing_side` / `losing_content` /
+`preserved_file_path` — so the discarded version survives the sidecar
+being moved or deleted. Those columns are written **only when a side is
+actually discarded**, never on mere detection, so the table does not
+become a second unbounded content shadow of `notes`.
+
+Preservation is fail-closed: if the sidecar cannot be written (an
+unwritable root, a rejected path), the overwrite does **not** happen. The
+conflict is left open, an error is recorded on the run, and both copies
+survive.
+
+Direction narrows which side a policy may write, and a policy whose
+winner cannot be written in the chosen direction applies nothing rather
+than pretending to have settled anything — e.g. "Disk wins" during a
+`db_to_disk` push has nothing to do, because the disk copy already
+stands. `SyncConflict.applied` is the engine-level fact behind this, and
+the panel's activity log distinguishes "N conflicts resolved" from "N
+conflicts left unresolved — both copies kept as they are" on it.
+
 ## Path safety
 
 Every read and write goes through `PinnedSyncRoot`
@@ -125,6 +177,20 @@ Plus two standalone tables the engine writes on every run:
 policy, status, file/conflict/error counts) and `sync_conflicts` (one row
 per detected conflict, linked to its session).
 
+`sync_conflicts` also carries the preservation columns added in schema
+v44:
+
+```sql
+losing_side TEXT,          -- 'db' | 'disk' -- which side was discarded
+losing_content TEXT,       -- that side's text, verbatim
+preserved_file_path TEXT   -- the sidecar written next to the note file
+```
+
+All three stay `NULL` for a conflict nothing was discarded for.
+`resolution` (`use_db` / `use_disk`, or `NULL` while open) and
+`resolved_at` are stamped by the engine only once a side was actually
+applied.
+
 None of `is_externally_synced`, `file_path_on_disk`, or the other sync
 columns currently drive any per-note UI indicator — the Library notes list
 shows no synced/conflict badge on individual rows (confirmed: nothing in
@@ -139,22 +205,33 @@ and `sync_conflicts` directly, beyond the `sync_folder()` call the panel
 uses:
 
 - `get_sync_history(limit=50)` — recent sessions from `sync_sessions`.
-- `get_conflicts_for_session(session_id)` — conflict rows for one session.
+- `get_conflicts_for_session(session_id)` — conflict rows for one session,
+  including `losing_side` / `losing_content` / `preserved_file_path`.
+- `get_preserved_conflict_copies(limit=50)` — every conflict whose
+  discarded side was kept, newest first, across all sessions. This is the
+  recovery entry point that does not need a session id: after an
+  unattended auto-sync pass a user knows only that a note changed under
+  them. Each row carries the discarded text itself as well as the sidecar
+  path, so recovery works whether or not the folder still has the file.
 - `resolve_conflict(conflict_id, resolution, user_id)` — records a
   resolution string on a `sync_conflicts` row. **It does not currently
   apply the resolution** — the method body has a standing
   `# TODO: Implement actual resolution logic based on resolution type`;
-  it only marks the row resolved.
+  it only marks the row resolved. It matches only rows with a `NULL`
+  resolution, i.e. conflicts the engine left open.
 - `get_notes_sync_status(root_folder=None)` — computes a per-note status
   (`synced` / `file_changed` / `db_changed` / `conflict` / `file_missing`
   / `file_error`) by re-hashing each synced note's current DB content and
   its file on disk.
 
-None of these four are called anywhere outside `sync_service.py` itself —
+None of these five are called anywhere outside `sync_service.py` itself —
 there is no history browser, conflict-review list, or per-note status
 view in the running app today. They exist as service-layer API surface;
 the Library panel's own activity log (capped at 20 entries, in-memory,
-not backed by these tables) is what a user actually sees.
+not backed by these tables) is what a user actually sees, and the sidecar
+file in the sync folder is what a user actually recovers from. A
+conflict-review surface that renders these rows is an open product
+question, not shipped.
 
 ## Configuration
 

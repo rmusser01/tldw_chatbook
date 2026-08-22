@@ -28,6 +28,33 @@ from .sync_paths import PinnedSyncRoot, SafeSyncFile, SyncPathError
 # Classes and Functions:
 
 
+# --- Conflict preservation (task-19554) ----------------------------------
+#
+# A resolution that overwrites one side writes that side's text, verbatim,
+# to a sidecar next to the note file BEFORE the overwrite happens, so
+# recovery is a rename. A sidecar is recognized by the marker AND the
+# ``.bak`` suffix together (``is_conflict_sidecar``), and ``_scan_directory``
+# drops what it recognizes, so a preserved copy can never be re-ingested as a
+# note -- which would turn every conflict into a duplicate note, and every
+# subsequent pass into another one. Requiring both halves is what keeps that
+# filter from eating a real note whose own name contains ``.conflict-``; the
+# ``.bak`` suffix additionally sits outside the default ``['.md', '.txt']``
+# scan set, so the marker only has to hold for a caller passing custom
+# extensions.
+CONFLICT_SIDECAR_MARKER = ".conflict-"
+CONFLICT_SIDECAR_SUFFIX = ".bak"
+_CONFLICT_SIDECAR_ATTEMPTS = 64
+
+#: The two sides a conflict has: used both for the winner a strategy
+#: picks and for the side a resolution throws away.
+SIDE_DB = "db"
+SIDE_DISK = "disk"
+
+#: Values ``sync_conflicts.resolution`` accepts (its CHECK constraint).
+RESOLUTION_USE_DB = "use_db"
+RESOLUTION_USE_DISK = "use_disk"
+
+
 class SyncDirection(Enum):
     """Enumeration for sync directions."""
 
@@ -68,7 +95,24 @@ class SyncFileInfo:
 
 @dataclass
 class SyncConflict:
-    """Represents a sync conflict."""
+    """Represents a sync conflict.
+
+    The last four fields record what the run actually DID about it, which is
+    not the same thing as the policy that was selected (task-19554: every
+    strategy but ``NEWER_WINS`` used to apply nothing on a ``both_changed``
+    conflict while the UI reported it as resolved).
+
+    Attributes:
+        applied: Whether this run changed a side because of this conflict.
+            ``False`` means the conflict is still open -- never report it as
+            resolved.
+        resolution: The value stamped into ``sync_conflicts.resolution``:
+            ``"use_db"``, ``"use_disk"``, or ``None`` when nothing was applied.
+        preserved_path: Absolute path of the sidecar holding the discarded
+            side, when one was discarded.
+        row_id: ``sync_conflicts.id`` of the recorded row, so the outcome can
+            be stamped back onto it.
+    """
 
     note_id: Optional[str]
     file_path: Path
@@ -79,6 +123,10 @@ class SyncConflict:
     disk_hash: Optional[str] = None
     db_modified: Optional[datetime] = None
     disk_modified: Optional[float] = None
+    applied: bool = False
+    resolution: Optional[str] = None
+    preserved_path: Optional[Path] = None
+    row_id: Optional[int] = None
 
 
 @dataclass
@@ -94,6 +142,22 @@ class SyncProgress:
     created_files: List[Path] = field(default_factory=list)
     updated_files: List[Path] = field(default_factory=list)
     skipped_items: List[Tuple[str, str]] = field(default_factory=list)  # (item, reason)
+    # Sidecars holding a discarded side. Deliberately NOT in
+    # ``created_files``: they are not synced notes and must never be counted
+    # as changes the run made to the user's content.
+    preserved_files: List[Path] = field(default_factory=list)
+
+    @property
+    def applied_conflicts(self) -> List[SyncConflict]:
+        """Conflicts this run actually resolved by changing a side."""
+
+        return [conflict for conflict in self.conflicts if conflict.applied]
+
+    @property
+    def unresolved_conflicts(self) -> List[SyncConflict]:
+        """Conflicts this run recorded but left for the user to settle."""
+
+        return [conflict for conflict in self.conflicts if not conflict.applied]
 
 
 class NotesSyncEngine:
@@ -246,9 +310,17 @@ class NotesSyncEngine:
         finally:
             if owns_root:
                 selected_root.__exit__(None, None, None)
+        # Preserved conflict copies are never sync candidates. Their ``.bak``
+        # suffix already keeps them out of the default extension set, but the
+        # check is what holds if a caller passes custom extensions: ingesting
+        # one would create a duplicate note per conflict, and its own file on
+        # the next pass. ``is_conflict_sidecar`` requires the marker AND the
+        # suffix precisely because this filter is SILENT -- an over-match here
+        # removes a real note from sync with nothing to show for it.
         files_map = {
             relative_path: self._from_safe_file(safe_file)
             for relative_path, safe_file in safe_files.items()
+            if not self.is_conflict_sidecar(relative_path)
         }
         files_failed = len(issues)
         if progress is not None:
@@ -413,14 +485,30 @@ class NotesSyncEngine:
                 values,
             )
 
-    def _record_conflict(self, session_id: str, conflict: SyncConflict):
-        """Record a sync conflict in the database."""
+    def _record_conflict(self, session_id: str, conflict: SyncConflict) -> Optional[int]:
+        """Record a sync conflict in the database.
+
+        Only the detection facts are written here -- the discarded side's text
+        is written later, by ``_resolve_with_preservation``, and only if a side
+        is actually discarded. Recording content on mere DETECTION would make
+        this table a second unbounded full-content shadow of ``notes``
+        (``sync_log`` already is one) and would store a "backup" of text
+        nothing was going to destroy.
+
+        Args:
+            session_id: The sync session recording the conflict.
+            conflict: The conflict; its ``row_id`` is set from the new row.
+
+        Returns:
+            The new ``sync_conflicts.id``, or ``None`` if SQLite did not
+            report one.
+        """
         with self.db.transaction() as conn:
-            conn.execute(
+            cursor = conn.execute(
                 """
                 INSERT INTO sync_conflicts
                 (session_id, note_id, file_path, conflict_type,
-                 db_content_hash, disk_content_hash, 
+                 db_content_hash, disk_content_hash,
                  db_modified_time, disk_modified_time)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
@@ -435,6 +523,370 @@ class NotesSyncEngine:
                     conflict.disk_modified,
                 ),
             )
+            conflict.row_id = cursor.lastrowid
+        return conflict.row_id
+
+    def _update_conflict_record(
+        self,
+        conflict: SyncConflict,
+        *,
+        losing_side: Optional[str] = None,
+        losing_content: Optional[str] = None,
+        preserved_path: Optional[Path] = None,
+        resolution: Optional[str] = None,
+    ) -> None:
+        """Stamp a recorded conflict with what was preserved and/or applied.
+
+        ``resolution`` is left NULL until a side is genuinely applied, which is
+        what keeps ``NotesSyncService.resolve_conflict`` (``WHERE resolution IS
+        NULL``) able to find the conflicts that are still open.
+
+        Args:
+            conflict: The conflict whose row to update (no-op without a
+                ``row_id``).
+            losing_side: ``"db"``/``"disk"``, the side being discarded.
+            losing_content: That side's text, verbatim.
+            preserved_path: Absolute path of the sidecar holding it.
+            resolution: ``"use_db"``/``"use_disk"`` once applied.
+        """
+        if conflict.row_id is None:
+            return
+        with self.db.transaction() as conn:
+            conn.execute(
+                """
+                UPDATE sync_conflicts
+                   SET losing_side = ?,
+                       losing_content = ?,
+                       preserved_file_path = ?,
+                       resolution = ?,
+                       resolved_at = ?
+                 WHERE id = ?
+            """,
+                (
+                    losing_side,
+                    losing_content,
+                    str(preserved_path) if preserved_path is not None else None,
+                    resolution,
+                    (
+                        datetime.now(timezone.utc).isoformat()
+                        if resolution is not None
+                        else None
+                    ),
+                    conflict.row_id,
+                ),
+            )
+
+    @staticmethod
+    def is_conflict_sidecar(relative_path: Path) -> bool:
+        """Return whether a scanned entry is one of our preserved copies.
+
+        Both halves are required. Matching the marker alone silently un-synced
+        a user's own note if its name happened to contain ``.conflict-`` --
+        ``meeting.conflict-notes.md`` was dropped from every scan with no
+        error and no skip row, which is a worse failure than the one the
+        filter exists to prevent. Every sidecar this engine writes ends in
+        ``.bak``, so requiring the suffix as well keeps the never-re-ingest
+        guarantee intact while leaving real notes alone.
+
+        Args:
+            relative_path: A scanned entry's path relative to the sync root.
+
+        Returns:
+            Whether the entry is a preserved conflict copy.
+        """
+        name = relative_path.name
+        return name.endswith(CONFLICT_SIDECAR_SUFFIX) and (
+            CONFLICT_SIDECAR_MARKER in name
+        )
+
+    def _write_conflict_sidecar(
+        self,
+        pinned_root: PinnedSyncRoot,
+        relative_path: Path,
+        side: str,
+        content: str,
+    ) -> Path:
+        """Write the discarded side next to the note file, byte-exact.
+
+        Verbatim content and nothing else -- no header, no diff markers -- so
+        recovering the lost text is a rename, not an edit. Which side it holds
+        and when it was taken are carried by the NAME
+        (``note.md.conflict-20260821T203015Z-disk.bak``), which also sorts
+        directly beside the file it came from.
+
+        The write goes through the same ``PinnedSyncRoot`` boundary as every
+        other sync write, so a swapped root or a symlinked path fails closed
+        here exactly as it does for a note file.
+
+        Args:
+            pinned_root: The entered sync root.
+            relative_path: The note file's path relative to that root.
+            side: ``"db"`` or ``"disk"``.
+            content: The text being discarded.
+
+        Returns:
+            Absolute path of the sidecar just written.
+
+        Raises:
+            SyncPathError: If a free name cannot be found, or the write is
+                refused by the boundary.
+            OSError: Propagated from the write.
+        """
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        for attempt in range(_CONFLICT_SIDECAR_ATTEMPTS):
+            # Second-resolution stamps repeat within one run and across
+            # concurrent runs, so the name has to be CLAIMED, not merely
+            # checked: ``create_new_text`` does it with O_CREAT|O_EXCL, one
+            # syscall, and reports a taken name as FileExistsError. The
+            # previous shape here -- ``if not path.exists(): write_text(...)``
+            # -- had a window between the two in which another run could
+            # create the file, and ``write_text`` renames over its target, so
+            # the winner of that race destroyed the loser's preserved copy:
+            # the one kind of data loss this whole code path exists to
+            # prevent. It also put a raw filesystem probe on a constructed
+            # path outside the module's path boundary; there is now no
+            # filesystem call here at all, only ``PinnedSyncRoot``.
+            ordinal = "" if attempt == 0 else f"-{attempt + 1}"
+            candidate = relative_path.with_name(
+                f"{relative_path.name}{CONFLICT_SIDECAR_MARKER}"
+                f"{stamp}{ordinal}-{side}{CONFLICT_SIDECAR_SUFFIX}"
+            )
+            try:
+                return pinned_root.create_new_text(candidate, content).absolute_path
+            except FileExistsError:
+                continue
+        # Never fall back to a replacing write: the caller treats a raise as
+        # "could not preserve" and leaves both sides alone, which is the
+        # recoverable outcome. Overwriting someone else's copy is not.
+        raise SyncPathError("conflict_sidecar_name_exhausted", relative_path)
+
+    def _resolve_with_preservation(
+        self,
+        *,
+        conflict: SyncConflict,
+        progress: SyncProgress,
+        pinned_root: PinnedSyncRoot,
+        relative_path: Path,
+        losing_side: str,
+        losing_content: str,
+        resolution: str,
+        apply_winner: Callable[[], None],
+    ) -> bool:
+        """Save the losing side, then apply the winner. Fail closed.
+
+        The ordering is the whole point: if the discarded text cannot be
+        written somewhere recoverable, the overwrite does **not** happen. A
+        run that cannot preserve reports an error and leaves both sides alone,
+        which is always recoverable; the alternative -- destroying anyway --
+        never is.
+
+        Args:
+            conflict: The recorded conflict, updated in place with the outcome.
+            progress: The run's progress, for the sidecar and any error.
+            pinned_root: The entered sync root.
+            relative_path: The note file's path relative to that root.
+            losing_side: ``"db"``/``"disk"``, the side about to be discarded.
+            losing_content: That side's text.
+            resolution: ``"use_db"``/``"use_disk"`` to stamp once applied.
+            apply_winner: Performs the destructive write. May raise; the
+                caller's handler records it and the conflict stays unresolved
+                with its copy already saved.
+
+        Returns:
+            Whether the winner was applied.
+        """
+        try:
+            preserved = self._write_conflict_sidecar(
+                pinned_root, relative_path, losing_side, losing_content
+            )
+        except Exception as exc:
+            logger.error(
+                "Refusing to resolve conflict: the losing side could not be "
+                "preserved (side={}, error_type={})",
+                losing_side,
+                type(exc).__name__,
+            )
+            log_counter(
+                "sync_engine_conflict_preservation_failed",
+                labels={"losing_side": losing_side},
+            )
+            progress.errors.append((str(relative_path), exc))
+            return False
+
+        conflict.preserved_path = preserved
+        progress.preserved_files.append(preserved)
+        # Persist the copy BEFORE the overwrite too, so an apply that dies
+        # part-way still leaves the discarded text reconstructible from the
+        # row (with a NULL resolution saying the run never finished).
+        self._update_conflict_record(
+            conflict,
+            losing_side=losing_side,
+            losing_content=losing_content,
+            preserved_path=preserved,
+        )
+
+        apply_winner()
+
+        conflict.applied = True
+        conflict.resolution = resolution
+        self._update_conflict_record(
+            conflict,
+            losing_side=losing_side,
+            losing_content=losing_content,
+            preserved_path=preserved,
+            resolution=resolution,
+        )
+        log_counter(
+            "sync_engine_conflict_resolved",
+            labels={"resolution": resolution, "losing_side": losing_side},
+        )
+        return True
+
+    def _resolve_both_changed(
+        self,
+        *,
+        conflict: SyncConflict,
+        conflict_resolution: ConflictResolution,
+        progress: SyncProgress,
+        pinned_root: PinnedSyncRoot,
+        relative_path: Path,
+        root_path: Path,
+        user_id: str,
+        db_note: Dict[str, Any],
+        disk_file: SyncFileInfo,
+        may_write_disk: bool,
+        may_write_db: bool,
+        include_title: bool = False,
+    ) -> None:
+        """Apply the selected strategy to a ``both_changed`` conflict.
+
+        One implementation for all three directions; the direction only
+        restricts which side may be written (``may_write_*``). A strategy whose
+        winner cannot be written in this direction applies nothing and leaves
+        the conflict OPEN rather than pretending to have settled it -- e.g.
+        "Disk wins" during a Library → Disk push has nothing to do, because the
+        disk copy already stands.
+
+        Args:
+            conflict: The recorded conflict, updated in place.
+            conflict_resolution: The selected strategy.
+            progress: The run's progress.
+            pinned_root: The entered sync root.
+            relative_path: The note file's path relative to that root.
+            root_path: The canonical sync root.
+            user_id: User whose notes are being synced.
+            db_note: The note row (content, version, id, last_modified).
+            disk_file: The scanned file.
+            may_write_disk: Whether this direction may overwrite the file.
+            may_write_db: Whether this direction may overwrite the note.
+            include_title: Whether applying the disk side also renames the note
+                from the file stem (the disk → DB direction does; the
+                bidirectional path never did).
+        """
+        winner = self._both_changed_winner(
+            conflict_resolution, db_note, disk_file
+        )
+
+        if winner == SIDE_DB and may_write_disk:
+
+            def apply_db_content() -> None:
+                new_file_info = self._write_file_info(
+                    pinned_root, relative_path, db_note["content"]
+                )
+                self._update_note_sync_metadata(
+                    db_note["id"],
+                    new_file_info,
+                    root_path,
+                    user_id,
+                    db_note["version"],
+                )
+                progress.updated_files.append(new_file_info.absolute_path)
+
+            self._resolve_with_preservation(
+                conflict=conflict,
+                progress=progress,
+                pinned_root=pinned_root,
+                relative_path=relative_path,
+                losing_side=SIDE_DISK,
+                losing_content=disk_file.content,
+                resolution=RESOLUTION_USE_DB,
+                apply_winner=apply_db_content,
+            )
+            return
+
+        if winner == SIDE_DISK and may_write_db:
+
+            def apply_disk_content() -> None:
+                update_data: Dict[str, Any] = {"content": disk_file.content}
+                if include_title:
+                    update_data["title"] = disk_file.absolute_path.stem
+                success = self.notes_service.update_note(
+                    user_id=user_id,
+                    note_id=db_note["id"],
+                    update_data=update_data,
+                    expected_version=db_note["version"],
+                )
+                if not success:
+                    raise ConflictError(
+                        f"Version mismatch applying disk content to note "
+                        f"{db_note['id']}"
+                    )
+                updated_note = self.notes_service.get_note_by_id(
+                    user_id, db_note["id"]
+                )
+                if updated_note:
+                    self._update_note_sync_metadata(
+                        db_note["id"],
+                        disk_file,
+                        root_path,
+                        user_id,
+                        updated_note["version"],
+                    )
+                progress.updated_notes.append(db_note["id"])
+
+            self._resolve_with_preservation(
+                conflict=conflict,
+                progress=progress,
+                pinned_root=pinned_root,
+                relative_path=relative_path,
+                losing_side=SIDE_DB,
+                losing_content=db_note["content"],
+                resolution=RESOLUTION_USE_DISK,
+                apply_winner=apply_disk_content,
+            )
+            return
+
+        logger.info(
+            "Conflict left unresolved (strategy={}, winner={}, "
+            "may_write_disk={}, may_write_db={})",
+            conflict_resolution.value,
+            winner,
+            may_write_disk,
+            may_write_db,
+        )
+
+    def _both_changed_winner(
+        self,
+        conflict_resolution: ConflictResolution,
+        db_note: Dict[str, Any],
+        disk_file: SyncFileInfo,
+    ) -> Optional[str]:
+        """Return which side a strategy picks, or ``None`` for "don't touch".
+
+        ``ASK`` is the only strategy with no winner: it records the conflict
+        for a human and changes nothing. (Nothing in the shipped UI offers it
+        -- see the Library sync panel -- which is exactly why every other
+        strategy has to actually apply.)
+        """
+        if conflict_resolution == ConflictResolution.DB_WINS:
+            return SIDE_DB
+        if conflict_resolution == ConflictResolution.DISK_WINS:
+            return SIDE_DISK
+        if conflict_resolution == ConflictResolution.NEWER_WINS:
+            db_modified = self._coerce_aware_datetime(db_note["last_modified"])
+            disk_modified = datetime.fromtimestamp(disk_file.mtime, tz=timezone.utc)
+            return SIDE_DB if db_modified > disk_modified else SIDE_DISK
+        return None
 
     def _update_note_sync_metadata(
         self,
@@ -595,6 +1047,7 @@ class NotesSyncEngine:
                     conflict_resolution,
                     user_id,
                     progress,
+                    pinned_root,
                 )
             elif direction == SyncDirection.DB_TO_DISK:
                 await self._sync_db_to_disk(
@@ -631,6 +1084,11 @@ class NotesSyncEngine:
                 "created_files": len(progress.created_files),
                 "updated_files": len(progress.updated_files),
                 "conflicts": len(progress.conflicts),
+                # Split out so a session's record can never imply the run
+                # settled a conflict it only wrote down (task-19554).
+                "conflicts_applied": len(progress.applied_conflicts),
+                "conflicts_unresolved": len(progress.unresolved_conflicts),
+                "preserved_files": len(progress.preserved_files),
                 "errors": len(progress.errors),
                 "skipped": len(progress.skipped_items),
             }
@@ -697,8 +1155,17 @@ class NotesSyncEngine:
         conflict_resolution: ConflictResolution,
         user_id: str,
         progress: SyncProgress,
+        pinned_root: PinnedSyncRoot,
     ):
-        """Sync from disk to database."""
+        """Sync from disk to database.
+
+        task-19554: this direction used to treat "the file changed" as
+        sufficient reason to overwrite the note, without ever asking whether
+        the NOTE had changed too. A note edited in the app and a file edited
+        outside it is the same ``both_changed`` conflict the other two
+        directions detect, and the note body went silently. It is now detected,
+        preserved, and resolved by the selected strategy like everywhere else.
+        """
         for rel_path, file_info in disk_files.items():
             if self.is_cancelled(session_id):
                 break
@@ -723,33 +1190,67 @@ class NotesSyncEngine:
                 elif file_info.content_hash != db_note.get(
                     "last_synced_disk_file_hash"
                 ):
-                    # File changed on disk -> Update note in DB
-                    success = self.notes_service.update_note(
-                        user_id=user_id,
-                        note_id=db_note["id"],
-                        update_data={
-                            "content": file_info.content,
-                            "title": file_info.absolute_path.stem,
-                        },
-                        expected_version=db_note["version"],
-                    )
+                    last_synced_hash = db_note.get("last_synced_disk_file_hash")
+                    db_changed = db_note["content_hash"] != last_synced_hash
 
-                    if success:
-                        # Get updated version
-                        updated_note = self.notes_service.get_note_by_id(
-                            user_id, db_note["id"]
+                    if db_changed:
+                        # Both sides moved since the baseline -- a conflict,
+                        # not a one-way pull.
+                        conflict = SyncConflict(
+                            note_id=db_note["id"],
+                            file_path=rel_path,
+                            conflict_type="both_changed",
+                            db_content=db_note["content"],
+                            disk_content=file_info.content,
+                            db_hash=db_note["content_hash"],
+                            disk_hash=file_info.content_hash,
                         )
-                        if updated_note:
-                            self._update_note_sync_metadata(
-                                db_note["id"],
-                                file_info,
-                                root_path,
-                                user_id,
-                                updated_note["version"],
-                            )
-                            progress.updated_notes.append(db_note["id"])
-                            logger.info(f"Updated note from file: {rel_path}")
+                        progress.conflicts.append(conflict)
+                        self._record_conflict(session_id, conflict)
+                        self._resolve_both_changed(
+                            conflict=conflict,
+                            conflict_resolution=conflict_resolution,
+                            progress=progress,
+                            pinned_root=pinned_root,
+                            relative_path=rel_path,
+                            root_path=root_path,
+                            user_id=user_id,
+                            db_note=db_note,
+                            disk_file=file_info,
+                            may_write_disk=False,
+                            may_write_db=True,
+                            include_title=True,
+                        )
+                    else:
+                        # Only the file changed -> Update note in DB
+                        success = self.notes_service.update_note(
+                            user_id=user_id,
+                            note_id=db_note["id"],
+                            update_data={
+                                "content": file_info.content,
+                                "title": file_info.absolute_path.stem,
+                            },
+                            expected_version=db_note["version"],
+                        )
 
+                        if success:
+                            # Get updated version
+                            updated_note = self.notes_service.get_note_by_id(
+                                user_id, db_note["id"]
+                            )
+                            if updated_note:
+                                self._update_note_sync_metadata(
+                                    db_note["id"],
+                                    file_info,
+                                    root_path,
+                                    user_id,
+                                    updated_note["version"],
+                                )
+                                progress.updated_notes.append(db_note["id"])
+                                logger.info(f"Updated note from file: {rel_path}")
+
+            except SyncPathError as exc:
+                self._record_path_skip(progress, rel_path, exc)
             except Exception as e:
                 logger.error(f"Error syncing {rel_path}: {e}")
                 progress.errors.append((str(rel_path), e))
@@ -774,15 +1275,24 @@ class NotesSyncEngine:
                 progress.conflicts.append(conflict)
                 self._record_conflict(session_id, conflict)
 
-                # Auto-unlink if not asking
+                # Auto-unlink if not asking. Nothing is destroyed here -- the
+                # note keeps its content and simply stops being mirrored --
+                # so there is no losing side to preserve, but the outcome is
+                # still stamped so the run cannot over-claim.
                 if conflict_resolution != ConflictResolution.ASK:
                     try:
                         self._unlink_note_from_sync(db_note["id"], db_note["version"])
+                        conflict.applied = True
+                        conflict.resolution = RESOLUTION_USE_DISK
+                        self._update_conflict_record(
+                            conflict, resolution=RESOLUTION_USE_DISK
+                        )
                         logger.info(
                             f"Unlinked note {db_note['id']} - file deleted on disk"
                         )
                     except Exception as e:
                         logger.error(f"Error unlinking note {db_note['id']}: {e}")
+                        progress.errors.append((str(rel_path), e))
 
     async def _sync_db_to_disk(
         self,
@@ -847,23 +1357,24 @@ class NotesSyncEngine:
                             progress.conflicts.append(conflict)
                             self._record_conflict(session_id, conflict)
 
-                            # Resolve based on strategy
-                            if conflict_resolution == ConflictResolution.DB_WINS:
-                                new_file_info = self._write_file_info(
-                                    pinned_root,
-                                    rel_path,
-                                    db_note["content"],
-                                )
-                                self._update_note_sync_metadata(
-                                    db_note["id"],
-                                    new_file_info,
-                                    root_path,
-                                    user_id,
-                                    db_note["version"],
-                                )
-                                progress.updated_files.append(
-                                    new_file_info.absolute_path
-                                )
+                            # Resolve based on strategy. Only DB_WINS had a
+                            # branch here before task-19554, so NEWER_WINS
+                            # silently declined to push even when the note WAS
+                            # the newer side -- and the DB_WINS push destroyed
+                            # the file's text with no copy kept.
+                            self._resolve_both_changed(
+                                conflict=conflict,
+                                conflict_resolution=conflict_resolution,
+                                progress=progress,
+                                pinned_root=pinned_root,
+                                relative_path=rel_path,
+                                root_path=root_path,
+                                user_id=user_id,
+                                db_note=db_note,
+                                disk_file=disk_file,
+                                may_write_disk=True,
+                                may_write_db=False,
+                            )
                         else:
                             # Only DB changed
                             new_file_info = self._write_file_info(
@@ -948,7 +1459,12 @@ class NotesSyncEngine:
                     progress.conflicts.append(conflict)
                     self._record_conflict(session_id, conflict)
 
-                    # Auto-resolve based on strategy
+                    # Auto-resolve based on strategy. Only DB_WINS acts; the
+                    # other strategies genuinely have no defined answer for a
+                    # vanished file (there is no disk mtime to compare, and
+                    # "the disk wins" would mean guessing that the user meant
+                    # to delete the note). They leave it OPEN -- see
+                    # ``applied`` -- rather than reporting it as settled.
                     if conflict_resolution == ConflictResolution.DB_WINS:
                         # Recreate file
                         new_file_info = self._write_file_info(
@@ -964,6 +1480,11 @@ class NotesSyncEngine:
                             db_note["version"],
                         )
                         progress.created_files.append(new_file_info.absolute_path)
+                        conflict.applied = True
+                        conflict.resolution = RESOLUTION_USE_DB
+                        self._update_conflict_record(
+                            conflict, resolution=RESOLUTION_USE_DB
+                        )
 
                 elif disk_file and db_note:
                     # Exists in both - check for changes
@@ -1030,61 +1551,23 @@ class NotesSyncEngine:
                         progress.conflicts.append(conflict)
                         self._record_conflict(session_id, conflict)
 
-                        # Auto-resolve if not asking
-                        if conflict_resolution == ConflictResolution.NEWER_WINS:
-                            # Compare timestamps. ``last_modified`` normally
-                            # comes back as the raw TEXT column, but
-                            # sqlite3.PARSE_DECLTYPES (set on every
-                            # CharactersRAGDB connection) auto-converts a
-                            # TIMESTAMP-declared column to a real
-                            # ``datetime`` for some call paths -- accept
-                            # both instead of assuming a string.
-                            db_modified = self._coerce_aware_datetime(
-                                db_note["last_modified"]
-                            )
-                            disk_modified = datetime.fromtimestamp(
-                                disk_file.mtime, tz=timezone.utc
-                            )
-
-                            if db_modified > disk_modified:
-                                # DB is newer
-                                new_file_info = self._write_file_info(
-                                    pinned_root,
-                                    rel_path,
-                                    db_note["content"],
-                                )
-                                self._update_note_sync_metadata(
-                                    db_note["id"],
-                                    new_file_info,
-                                    root_path,
-                                    user_id,
-                                    db_note["version"],
-                                )
-                                progress.updated_files.append(
-                                    new_file_info.absolute_path
-                                )
-                            else:
-                                # Disk is newer
-                                success = self.notes_service.update_note(
-                                    user_id=user_id,
-                                    note_id=db_note["id"],
-                                    update_data={"content": disk_file.content},
-                                    expected_version=db_note["version"],
-                                )
-                                if success:
-                                    updated_note = self.notes_service.get_note_by_id(
-                                        user_id,
-                                        db_note["id"],
-                                    )
-                                    if updated_note:
-                                        self._update_note_sync_metadata(
-                                            db_note["id"],
-                                            disk_file,
-                                            root_path,
-                                            user_id,
-                                            updated_note["version"],
-                                        )
-                                    progress.updated_notes.append(db_note["id"])
+                        # Auto-resolve if not asking. Before task-19554 only
+                        # NEWER_WINS was implemented here, and it overwrote the
+                        # losing side with no copy kept; DB_WINS and DISK_WINS
+                        # recorded the conflict and applied nothing at all.
+                        self._resolve_both_changed(
+                            conflict=conflict,
+                            conflict_resolution=conflict_resolution,
+                            progress=progress,
+                            pinned_root=pinned_root,
+                            relative_path=rel_path,
+                            root_path=root_path,
+                            user_id=user_id,
+                            db_note=db_note,
+                            disk_file=disk_file,
+                            may_write_disk=True,
+                            may_write_db=True,
+                        )
 
             except SyncPathError as exc:
                 self._record_path_skip(progress, rel_path, exc)

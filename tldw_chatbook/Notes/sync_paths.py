@@ -361,6 +361,9 @@ class PinnedSyncRoot:
     def _before_replace(self, _relative_path: Path) -> None:
         """Test seam immediately before identity rechecks and replacement."""
 
+    def _before_create(self, _relative_path: Path) -> None:
+        """Test seam immediately before the exclusive create in ``create_new_text``."""
+
     def _existing_target(
         self,
         parent_fd: int,
@@ -389,6 +392,93 @@ class PinnedSyncRoot:
             if written <= 0:
                 raise OSError("short write")
             remaining = remaining[written:]
+
+    def create_new_text(
+        self,
+        relative_path: Path | str,
+        content: str,
+    ) -> SafeSyncFile:
+        """Create a NEW file beneath the pinned root; never replace one.
+
+        The counterpart to ``write_text`` for content that must not collide
+        with content already at the target. ``write_text`` writes a temporary
+        file and renames it over the destination, which is atomic but
+        **replacing** -- correct for a synced note (the file IS the note), and
+        wrong for a preserved conflict copy, where the thing already at that
+        name is another run's saved copy of user text.
+
+        The name is claimed with ``O_CREAT | O_EXCL`` (plus the usual
+        ``O_NOFOLLOW``), so the claim and the check are one syscall: two
+        concurrent runs cannot both decide a name is free. The loser gets
+        ``FileExistsError`` and is expected to pick another name rather than
+        overwrite. Anything that goes wrong after the create unlinks the file
+        this call made, so a caller never sees a half-written file it was told
+        had failed.
+
+        Args:
+            relative_path: Destination relative to the pinned root.
+            content: Text to write, encoded UTF-8.
+
+        Returns:
+            The created file, described the same way ``write_text`` describes
+            a replaced one.
+
+        Raises:
+            FileExistsError: If the name is already taken. This is the signal
+                to try another name -- it is NOT a boundary violation.
+            SyncPathError: If the path, its parent, or the resulting file
+                fails the pinned-root checks.
+            OSError: Propagated from the create or the write.
+        """
+        selected = self._validate_relative(relative_path)
+        self._require_supported()
+        self._verify_root_path_identity()
+        parent_fd = self._open_parent(selected, create=False)
+        created = False
+        try:
+            self._before_create(selected)
+            file_fd = os.open(
+                selected.name,
+                _FILE_WRITE_FLAGS,
+                0o600,
+                dir_fd=parent_fd,
+            )
+            created = True
+            try:
+                self._write_all(file_fd, content.encode("utf-8"))
+                os.fchmod(file_fd, 0o600)
+                os.fsync(file_fd)
+                opened = os.fstat(file_fd)
+            finally:
+                os.close(file_fd)
+
+            self._verify_root_path_identity()
+            self._verify_parent_identity(selected, parent_fd)
+            current = os.stat(selected.name, dir_fd=parent_fd, follow_symlinks=False)
+            if not _same_identity(opened, current):
+                raise SyncPathError("target_identity_changed", selected)
+            if not stat.S_ISREG(current.st_mode) or current.st_nlink != 1:
+                raise SyncPathError("multiple_links", selected)
+            if not self._same_device(current):
+                raise SyncPathError("cross_device", selected)
+            return SafeSyncFile(
+                absolute_path=self.canonical_root / selected,
+                relative_path=selected,
+                content=content,
+                mtime=current.st_mtime,
+                extension=selected.suffix.lower(),
+            )
+        except Exception:
+            # Only ever our own file: ``created`` is False when the create
+            # itself failed, so a name someone else holds is never unlinked.
+            if created:
+                try:
+                    os.unlink(selected.name, dir_fd=parent_fd)
+                except OSError:
+                    pass
+            raise
+        finally:
+            os.close(parent_fd)
 
     def write_text(
         self,

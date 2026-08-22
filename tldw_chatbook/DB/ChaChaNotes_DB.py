@@ -447,7 +447,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 43  # Local message_exchanges captures (task-18300, Console Conversation Inspector).
+    _CURRENT_SCHEMA_VERSION = 44  # Recoverable copy of a discarded Notes-sync side (task-19554).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -5813,6 +5813,76 @@ UPDATE db_schema_version
                 f"Migration from V42 to V43 failed for '{self._SCHEMA_NAME}': {exc}"
             ) from exc
 
+    def _migrate_from_v43_to_v44(self, conn: sqlite3.Connection) -> None:
+        """Give ``sync_conflicts`` room for the side a resolution discards.
+
+        task-19554: the Notes sync engine overwrote the losing side of a
+        ``both_changed`` conflict wholesale while persisting only its SHA-256,
+        so the discarded text was unrecoverable. The three columns added here
+        (``losing_side``, ``losing_content``, ``preserved_file_path``) are the
+        durable second copy behind the on-disk sidecar; see the migration
+        file's header for why they are written only on actual destruction.
+
+        Args:
+            conn: The active connection, inside ``_initialize_schema``'s
+                transaction.
+
+        Raises:
+            SchemaError: If the database is not at v43, the file cannot be
+                read/split, or the version bump does not land.
+        """
+        self._require_migration_entry_version(conn, 43, "V43→V44")
+        logger.info(
+            f"Migrating schema from V43 to V44 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
+        )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v43_to_v44_sync_conflict_preservation.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                # ``_execute_migration_statements`` rather than a bare
+                # per-statement loop: it carries task-19553's
+                # already-applied ``ADD COLUMN`` skip, so a database left
+                # half-migrated by an interrupted run re-enters cleanly
+                # instead of aborting on ``duplicate column name``.
+                self._execute_migration_statements(
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V43→V44",
+                )
+                version_cursor = cursor.execute(
+                    """
+                    UPDATE db_schema_version
+                       SET version = 44
+                     WHERE schema_name = ?
+                       AND version = 43
+                    """,
+                    (self._SCHEMA_NAME,),
+                )
+                if version_cursor.rowcount != 1:
+                    raise SchemaError(
+                        f"[{self._SCHEMA_NAME} V43→V44] Migration version update was not applied"
+                    )
+
+            final_version = self._get_db_version(conn)
+            if final_version != 44:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V43→V44] Migration version check failed. "
+                    f"Expected 44, got: {final_version}"
+                )
+            logger.info(
+                f"[{self._SCHEMA_NAME} V43→V44] Migration completed successfully for DB: {self.db_path_str}."
+            )
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V43→V44] Migration failed: {exc}"
+            )
+            raise SchemaError(
+                f"Migration from V43 to V44 failed for '{self._SCHEMA_NAME}': {exc}"
+            ) from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -5994,6 +6064,7 @@ UPDATE db_schema_version
                     40: self._migrate_from_v40_to_v41,
                     41: self._migrate_from_v41_to_v42,
                     42: self._migrate_from_v42_to_v43,
+                    43: self._migrate_from_v43_to_v44,
                 }
 
                 if current_db_version == 0:
