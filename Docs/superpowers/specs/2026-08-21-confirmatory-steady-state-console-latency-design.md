@@ -1,7 +1,7 @@
 # Confirmatory steady-state three-turn Console latency design
 
 Date: 2026-08-21
-Task: TASK-19642
+Task: TASK-20010
 Status: approved after independent written-spec review
 
 ## Context
