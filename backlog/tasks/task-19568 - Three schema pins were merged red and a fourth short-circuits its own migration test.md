@@ -228,3 +228,82 @@ derived-schema guard test (only `chachanotes` does):
 required-status-check enforcement (TASK-19572, still To Do) and extending
 the `VALID_TABLES` guard to `media`/`prompts` (reported above, recommend a
 follow-up task).
+
+## Independent Review Addendum
+
+Reviewed adversarially against base `3193816e7`. Every claim above was
+re-derived from scratch rather than read: the stale-literal-vs-wrong-schema
+call for all three repaired pins was re-checked against the migration DDL
+itself (`chachanotes_v40_to_v41_persona_visual.sql` lines 89-93,
+`chachanotes_v42_to_v43_message_exchanges.sql` line 29) rather than against
+the live schema or the census failure message's ready-to-paste literal —
+which matters, because that paste-line is *derived from the live schema* and
+would happily bless a wrong index. All three are confirmed stale literals.
+The MUT-INDEX mutation, the two literal-drop mutations, the coverage-hole
+proof and the column-mismatch proof were all re-run independently and
+reproduced the reported results exactly, including the byte-identical
+`assert 44 == 41` that proves the old test was blind. Base/branch failure
+sets diffed: `1360 passed / 10 failed / 1 skipped` -> `1364 / 6 / 1`, delta
+exactly the four target pins; the six `test_core_sqlite_owner_privacy.py`
+failures are present identically on `origin/dev`.
+
+**Two review findings, both fixed here:**
+
+1. *(introduced by this commit)* `test_index_census.py`'s module docstring
+   said "every one of the ten is treated as integrity-bearing" while listing
+   twelve bullets — the commit added two `unique=True` pins (base: 10 `True`
+   pins, branch: 12) without updating the count. In a module whose entire
+   value is that its literal is a reviewed inventory, a wrong count in its
+   own docstring is the wrong kind of drift. Corrected to "twelve".
+
+2. *(latent, pre-existing, and mis-described above)* The note that
+   `test_chachanotes_sync_conflict_preservation_migration.py` carries "the
+   ONE exact `== 44` pin" is not accurate: the file carried **three**
+   version equalities. Verifying "the convention held" at the *current*
+   version cannot detect this — it only shows up on the *next* bump. A
+   simulated v45 (raise `_CURRENT_SCHEMA_VERSION`, register a no-op
+   `_migrate_from_v44_to_v45`, restored afterwards) reds three tests in that
+   file, and in two of them the version equality sits **mid-body**, before
+   the `NEW_COLUMNS` checks and the row-survival assertion — the identical
+   short-circuit shape this task exists to remove, waiting to fire on the
+   next migration. Both were reopening the DB **unpatched** (so they migrate
+   to whatever the current version is) while pinning the literal `44`, so
+   the literal was pure version arithmetic. Changed both to compare against
+   `CharactersRAGDB._CURRENT_SCHEMA_VERSION`, matching the dynamic form ~30
+   sibling migration tests in `Tests/DB/` already use; the v43->v44
+   specificity is carried by the pre-migration "columns must NOT exist"
+   assertion and the `NEW_COLUMNS` checks, and the file's one deliberate
+   exact pin stays in `test_schema_version_is_44`. Re-running the v45
+   simulation after the fix reds exactly that one test — a single-statement
+   body with nothing below it to short-circuit — which is precisely what the
+   convention intends.
+
+**Caveat on AC #5**, left ticked but worth stating plainly: what shipped is
+the *removal* of the offending assertions, not a repo-level guard that makes
+the pattern hard to reintroduce. Finding 2 is the proof — nothing stopped
+the same shape from being written into the newest migration's file, and
+nothing would have caught it until the v45 bump. A grep/AST meta-test over
+`Tests/**/test_*migration*.py` for a version equality positioned ahead of
+other assertions would close this properly; recommend filing it alongside
+the `media`/`prompts` `VALID_TABLES` follow-up.
+
+**Verified unchanged:** the `media`/`prompts` `VALID_TABLES` drift was
+re-measured against live `MediaDatabase`/`PromptsDatabase` instances and
+matches the report exactly (media: `ChunkingTemplates`,
+`MediaReadItLaterState`, `ReadingProgress` missing; `IngestionTriggerTracking`,
+`MediaModifications`, `MediaVersion`, `Keywords_fts`, `MediaChunks_fts`,
+`Media_fts` stale — live FTS is `keyword_fts`/`media_fts`; prompts: only
+`Prompts` and `sync_log` match, live `PromptKeywordsTable`/
+`PromptKeywordLinks` are unallowlisted). The "no callers" claim holds in
+both halves: neither `_get_next_version` is referenced anywhere outside its
+own definition, the only dynamic `getattr(self, ...)` dispatch in either
+module resolves migration-table entries (`_apply_schema_v1`,
+`_apply_migration_vX_to_vY`) and never these, `get_safe_table_name` has no
+production caller at all, and the two live `validate_table_name(table,
+"media")` sites iterate a hardcoded four-name literal. Severity call
+(follow-up, not defect) upheld — and note the residual drift fails *closed*
+(an unallowlisted live table would raise, not be interpolated).
+
+**Rebase check:** `3193816e7..origin/dev` touches nothing under
+`tldw_chatbook/DB`, `Tests/DB` or `Tests/ChaChaNotesDB`, and none of the
+files this branch modifies; `git merge-tree` is clean.

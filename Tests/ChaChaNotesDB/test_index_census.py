@@ -30,8 +30,8 @@ divergence the parity sweep normalizes away is also caught.
 
 UNIQUE-ness decisions (AC #2): the UNIQUE flag is pinned for ALL indexes via
 ``IndexPin.unique`` — losing UNIQUE silently legalizes duplicate rows that
-application code assumes cannot exist, so every one of the ten is treated as
-integrity-bearing:
+application code assumes cannot exist, so every one of the twelve is treated
+as integrity-bearing:
 
 * ``idx_message_trajectory_conv_seq`` — (conversation_id, seq) is the
   trajectory ledger's ordering identity; duplicate seq rows would corrupt

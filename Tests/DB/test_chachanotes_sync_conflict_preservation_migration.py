@@ -103,7 +103,13 @@ def test_upgrade_from_a_real_v43_database_adds_the_columns(tmp_path: Path):
     migrated = CharactersRAGDB(db_path, client_id="v44-upgrade")
     try:
         connection = migrated.get_connection()
-        assert _version(connection) == 44
+        # Dynamic, not a literal 44: this reopen is UNPATCHED, so it replays
+        # the chain to whatever the current version is. Pinning the literal
+        # here made a schema bump red this test on version arithmetic and
+        # short-circuit the column/row assertions below it -- the exact shape
+        # task-19568 removed from the persona-visual migration test. The one
+        # deliberate exact pin stays in ``test_schema_version_is_44``.
+        assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
         columns = _columns(connection)
         for name in NEW_COLUMNS:
             assert name in columns
@@ -139,7 +145,13 @@ def test_upgrade_is_re_enterable_after_a_half_applied_run(tmp_path: Path):
 
     migrated = CharactersRAGDB(db_path, client_id="v44-reentry")
     try:
-        assert _version(migrated.get_connection()) == 44
+        # Dynamic for the same reason as the sibling test above: the reopen
+        # is unpatched, so the literal would red on the next schema bump and
+        # skip the NEW_COLUMNS check below it.
+        assert (
+            _version(migrated.get_connection())
+            == CharactersRAGDB._CURRENT_SCHEMA_VERSION
+        )
         columns = _columns(migrated.get_connection())
         for name in NEW_COLUMNS:
             assert name in columns
