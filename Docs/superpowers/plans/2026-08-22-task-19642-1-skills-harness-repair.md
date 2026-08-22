@@ -410,11 +410,21 @@ not supersede an earlier `library_skills_trust_posture` worker. Add
 `test_missing_trust_service_supersedes_in_flight_posture_worker`: gate a real
 posture callable in its `asyncio.to_thread` hop, remove the trust service, run
 the no-service refresh, release the old callable, and assert the old worker is
-cancelled and the only projected posture is `""`. Verify RED first as
-`["", "ready"]`, then minimally call
+cancelled and no already-clear list repaint occurs. Verify RED first as a stale
+`["ready"]` projection, then minimally call
 `self.workers.cancel_group(self, "library_skills_trust_posture")` before the
 existing unconditional clear. Do not add a request token unless this real
 Textual cancellation fails to block publication.
+
+### Qodo no-op repaint amendment
+
+Repeated no-service refreshes currently strict-sync an already-empty Skills
+list even when no trust header is mounted. Add
+`test_missing_trust_service_already_clear_list_skips_repaint` first and verify
+RED with one sync. Preserve worker-group cancellation and state clearing, but
+strict-sync only when the prior posture is nonempty or a trust header is still
+mounted. Keep `allow_screen_fallback=False` and all route, generation, focus,
+security, and runtime-policy behavior unchanged.
 
 - [ ] **Step 1: Add the deterministic mounted-owner RED test**
 
@@ -521,6 +531,7 @@ Run:
   Tests/UI/test_library_entry_compose_once.py::test_skills_rail_starts_trust_posture_after_canvas_mount \
   Tests/UI/test_library_entry_compose_once.py::test_skills_rail_without_trust_service_clears_mounted_header \
   Tests/UI/test_library_entry_compose_once.py::test_missing_trust_service_supersedes_in_flight_posture_worker \
+  Tests/UI/test_library_entry_compose_once.py::test_missing_trust_service_already_clear_list_skips_repaint \
   'Tests/UI/test_library_entry_compose_once.py::test_automatic_entry_worker_composes_screen_once_and_routes_in_place[skills-size0]' \
   'Tests/UI/test_library_entry_compose_once.py::test_automatic_entry_worker_composes_screen_once_and_routes_in_place[skills-size1]' \
   Tests/UI/test_library_entry_compose_once.py::test_stale_skills_posture_cannot_project_after_route_switch \
@@ -531,7 +542,7 @@ Run:
   --tb=short
 ```
 
-Expected: 10 passed. The compose-once cases must still report no screen-level
+Expected: 11 passed. The compose-once cases must still report no screen-level
 recompose after the mounted owner exists.
 
 - [ ] **Step 6: Run scoped static checks**
@@ -570,8 +581,11 @@ fails with one recorded sync against the open editor. Restore the list-mode
 guard, rerun that regression to 1 passed, then require `git diff --check` green.
 Finally remove only the no-service `cancel_group` call and run
 `test_missing_trust_service_supersedes_in_flight_posture_worker`; require RED
-with `["", "ready"]`. Restore cancellation, rerun to 1 passed, and require the
-worker to be cancelled with only `[""]` projected.
+with `["ready"]`. Restore cancellation, rerun to 1 passed, and require the
+worker to be cancelled with no posture projected. Temporarily restore an
+unconditional no-service list sync and run
+`test_missing_trust_service_already_clear_list_skips_repaint`; require RED with
+one recorded sync, then restore the stale-state/header guard.
 
 - [ ] **Step 8: Commit the ordering repair**
 
@@ -638,7 +652,7 @@ git diff --check origin/dev...HEAD
 git status --short
 ```
 
-Expected: `10 passed` ordering/reconciliation and lifecycle-regression owners, three separate
+Expected: `11 passed` ordering/reconciliation and lifecycle-regression owners, three separate
 `34 passed` two-file runs, `14 passed` editor/trust lifecycle owners, Ruff green, the recorded
 five-file formatter baseline only, no whitespace errors, and an empty status.
 Do not run a repository-wide suite.
@@ -659,7 +673,7 @@ Check all three ACs only after Steps 3-4 are green. Add Implementation Notes con
   and no-service editor lifecycle regression;
 - all modified files, including the narrow production sequencing change;
 - three consecutive `34 passed` two-file runs, `14 passed` editor/trust lifecycle owners, and
-  `10 passed` ordering/reconciliation and lifecycle-regression owners;
+  `11 passed` ordering/reconciliation and lifecycle-regression owners;
 - Ruff and `git diff --check` results;
 - the pre-existing five-file formatter baseline, without claiming formatter success;
 - all six representative causal RED/inverse failures and successful restoration;

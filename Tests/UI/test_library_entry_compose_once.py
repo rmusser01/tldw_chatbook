@@ -1207,6 +1207,7 @@ async def test_late_broad_snapshot_cannot_replace_the_dedicated_prompt_page(
 async def test_skills_rail_starts_trust_posture_after_canvas_mount(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Start trust-posture work only after the Skills canvas is mounted."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
     app.skills_scope_service = _FakeSkillsScopeService(
@@ -1251,6 +1252,7 @@ async def test_skills_rail_starts_trust_posture_after_canvas_mount(
 
 @pytest.mark.asyncio
 async def test_skills_rail_without_trust_service_clears_mounted_header() -> None:
+    """Clear a mounted stale trust header when its service disappears."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
     app.skills_scope_service = _FakeSkillsScopeService(
@@ -1282,6 +1284,7 @@ async def test_skills_rail_without_trust_service_clears_mounted_header() -> None
 async def test_missing_trust_service_supersedes_in_flight_posture_worker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Cancel stale posture work before it can repopulate cleared state."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
     app.skills_scope_service = _FakeSkillsScopeService(
@@ -1342,9 +1345,61 @@ async def test_missing_trust_service_supersedes_in_flight_posture_worker(
         await pilot.pause()
 
         assert posture_worker.is_cancelled
-        assert projected_postures == [""]
+        assert projected_postures == []
         assert active_screen._library_skills_trust_posture == ""
         assert not active_screen.query("#library-skills-trust-header")
+
+
+@pytest.mark.asyncio
+async def test_missing_trust_service_already_clear_list_skips_repaint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Avoid repainting an already-clear Skills list without a trust service."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    app.skills_scope_service = _FakeSkillsScopeService(
+        available=[{"name": "code-review"}]
+    )
+    app.local_skill_trust_service = None
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        active_screen = _active_library_screen(host)
+        await _wait_for_library_shell(active_screen, pilot)
+        await active_screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SKILLS)
+        await _wait_for_selector(active_screen, pilot, "#library-skills-canvas")
+        await active_screen.workers.wait_for_complete()
+        canvas = active_screen.query_one(
+            "#library-skills-canvas", LibrarySkillsListCanvas
+        )
+        sync_calls: list[None] = []
+        original_sync_state = canvas.sync_state
+
+        def record_sync_state(*args, **kwargs) -> None:
+            sync_calls.append(None)
+            original_sync_state(*args, **kwargs)
+
+        monkeypatch.setattr(canvas, "sync_state", record_sync_state)
+        cancelled_groups: list[str] = []
+        original_cancel_group = active_screen.workers.cancel_group
+
+        def record_cancel_group(node, group: str):
+            cancelled_groups.append(group)
+            return original_cancel_group(node, group)
+
+        monkeypatch.setattr(
+            active_screen.workers,
+            "cancel_group",
+            record_cancel_group,
+        )
+
+        active_screen._refresh_library_skills_trust_posture()
+        await pilot.pause()
+
+        assert active_screen._library_skills_trust_posture == ""
+        assert not active_screen.query("#library-skills-trust-header")
+        assert cancelled_groups == ["library_skills_trust_posture"]
+        assert sync_calls == []
 
 
 @pytest.mark.asyncio

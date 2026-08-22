@@ -12869,18 +12869,24 @@ class LibraryScreen(BaseAppScreen):
         Hidden (``""``) rather than fetched at all when the trust service
         is absent or doesn't expose ``trust_posture`` (server mode / no
         local trust service wired). The mounted Browse Skills list is
-        repainted so a prior header cannot linger; an open editor is not,
-        because it has no posture header and owns unsaved live fields.
+        repainted when stale state or a stale header remains; an already-clear
+        list and an open editor are not, because neither has stale posture UI
+        to remove and the editor owns unsaved live fields.
         """
         service = getattr(self.app_instance, "local_skill_trust_service", None)
         posture_fn = getattr(service, "trust_posture", None)
         if not callable(posture_fn):
-            self.workers.cancel_group(self, "library_skills_trust_posture")
-            self._library_skills_trust_posture = ""
-            if (
+            should_repaint = (
                 self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
                 and self._library_skills_view == "list"
-            ):
+                and (
+                    bool(self._library_skills_trust_posture)
+                    or bool(self.query("#library-skills-trust-header"))
+                )
+            )
+            self.workers.cancel_group(self, "library_skills_trust_posture")
+            self._library_skills_trust_posture = ""
+            if should_repaint:
                 _sync_library_canvas(
                     self,
                     "skills",

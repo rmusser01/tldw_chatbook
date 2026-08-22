@@ -1445,9 +1445,9 @@ async def _open_real_skill_editor(host, pilot, skill_name: str) -> LibraryScreen
 
 @pytest.mark.asyncio
 async def test_missing_trust_service_snapshot_preserves_open_skill_draft(
-    tmp_path,
-    monkeypatch,
-):
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A missing posture service must not rebuild live editor fields."""
     local_service = LocalSkillsService(
         store_dir=tmp_path,

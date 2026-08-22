@@ -161,10 +161,13 @@ its captured callable through `asyncio.to_thread`, so cancelling its task
 prevents that coroutine from resuming into posture publication even though the
 underlying thread may finish. The no-service refresh will repaint through the
 same strict targeted sync with `allow_screen_fallback=False` only while the
-Browse Skills list owns the mounted canvas. This prevents a posture from the
-prior visit or an earlier in-flight read remaining visible without recomposing
-an open editor from stale screen state or changing any route, generation,
-focus, trust, or runtime-policy contract.
+Browse Skills list owns the mounted canvas and either cached posture or a
+mounted trust header is stale. An already-empty list with no header still
+cancels stale work and clears state, but skips the unnecessary canvas
+recompose. This prevents a posture from the prior visit or an earlier in-flight
+read remaining visible without recomposing an open editor or already-clear
+list from stale screen state, or changing any route, generation, focus, trust,
+or runtime-policy contract.
 
 ## Alternatives rejected
 
@@ -212,12 +215,15 @@ Only tests related to the modified harness/functionality will run:
    - `test_missing_trust_service_supersedes_in_flight_posture_worker` proves a
      no-service refresh cancels an earlier gated posture worker before it can
      republish stale state;
+   - `test_missing_trust_service_already_clear_list_skips_repaint` proves a
+     repeated no-service refresh still cancels the posture group and clears
+     state without syncing an already-empty list that has no header;
    - `test_missing_trust_service_snapshot_preserves_open_skill_draft` proves a
      background snapshot clears cached posture without syncing the editor or
      losing its live draft, widget identity, or focus.
    Re-run the directly related compose-once, stale-route, stale-generation,
    callback-composition, and editor-lifecycle owners. This focused
-   ordering/reconciliation gate contains 10 cases. The 12 base editor-owner
+   ordering/reconciliation gate contains 11 cases. The 12 base editor-owner
    cases plus the two no-service lifecycle regressions form a 14-case
    editor/trust lifecycle gate.
 5. Run the exact two-file gate three consecutive times from clean HEAD, then
@@ -236,9 +242,11 @@ Only tests related to the modified harness/functionality will run:
    moving the posture refresh back before canvas mounting must also fail the
    mounted-owner test. Restoring the unconditional no-service canvas sync must
    fail the editor snapshot regression by observing a sync/recompose against
-   the live draft. Removing the no-service worker-group cancellation must fail
-   the gated overlap with projections `["", "ready"]`; restore it and require
-   the old worker to remain cancelled with only `[""]` projected.
+   the live draft. Restoring an unconditional no-service list repaint must fail
+   the already-clear list regression with one sync. Removing the no-service
+   worker-group cancellation must fail the gated overlap with projection
+   `["ready"]`; restore it and require the old worker to remain cancelled with
+   no projection.
 
 No repository-wide pytest claim will be made.
 
