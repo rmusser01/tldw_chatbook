@@ -2,10 +2,20 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from typing import Protocol, cast
+
+
+_SIMPLE_IDENTIFIER = r"[A-Za-z_][A-Za-z0-9_]*"
+_INSERT_VALUES_PATTERN = re.compile(
+    rf"\A\s*INSERT\s+INTO\s+{_SIMPLE_IDENTIFIER}\s*"
+    rf"\(\s*(?P<columns>{_SIMPLE_IDENTIFIER}(?:\s*,\s*{_SIMPLE_IDENTIFIER})*)\s*\)"
+    rf"\s*VALUES\s*\(\s*(?P<placeholders>\?(?:\s*,\s*\?)*)\s*\)\s*\Z",
+    re.ASCII | re.IGNORECASE,
+)
 
 
 class ConsoleTransactionWriter(Protocol):
@@ -46,9 +56,14 @@ class _CursorConsoleTransactionWriter:
     def execute(self, statement: str, parameters: tuple[object, ...], /) -> None:
         """Execute one validated parameterized INSERT."""
         self.__require_active()
-        self.__validate_statement(statement)
+        arity = self.__statement_arity(statement)
         if type(parameters) is not tuple:
             raise TypeError("Console transaction parameters must be a tuple.")
+        if len(parameters) != arity:
+            raise ValueError(
+                "Console INSERT columns, placeholders, and parameters require the "
+                "same non-zero arity."
+            )
         self.__cursor.execute(statement, parameters)
 
     def executemany(
@@ -59,10 +74,14 @@ class _CursorConsoleTransactionWriter:
     ) -> None:
         """Execute validated parameterized INSERT rows."""
         self.__require_active()
-        self.__validate_statement(statement)
+        arity = self.__statement_arity(statement)
         rows = tuple(parameter_rows)
         if any(type(row) is not tuple for row in rows):
             raise TypeError("Console transaction parameter rows must be tuples.")
+        if not rows or any(len(row) != arity for row in rows):
+            raise ValueError(
+                "Console INSERT executemany requires non-empty rows of matching arity."
+            )
         self.__cursor.executemany(statement, rows)
 
     def _revoke(self) -> None:
@@ -73,20 +92,23 @@ class _CursorConsoleTransactionWriter:
             raise RuntimeError("Console writer requires an active contribution.")
 
     @staticmethod
-    def __validate_statement(statement: str) -> None:
+    def __statement_arity(statement: str) -> int:
         if type(statement) is not str:
             raise TypeError("Console transaction statement must be a string.")
-        normalized = statement.strip()
-        first_token = normalized.split(maxsplit=1)[0].upper() if normalized else ""
-        if (
-            not normalized
-            or first_token != "INSERT"
-            or ";" in normalized
-            or "?" not in normalized
-        ):
+        match = _INSERT_VALUES_PATTERN.fullmatch(statement)
+        if match is None:
             raise ValueError(
-                "Console transaction writer accepts one parameterized INSERT."
+                "Console transaction writer accepts one parameterized INSERT INTO "
+                "simple columns VALUES placeholders statement."
             )
+        column_count = match.group("columns").count(",") + 1
+        placeholder_count = match.group("placeholders").count(",") + 1
+        if column_count != placeholder_count:
+            raise ValueError(
+                "Console INSERT columns, placeholders, and parameters require the "
+                "same non-zero arity."
+            )
+        return column_count
 
 
 @contextmanager

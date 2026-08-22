@@ -124,6 +124,7 @@ class BatchContribution:
 @dataclass
 class StatementContribution:
     statement: str
+    parameters: tuple[object, ...] = ()
 
     def write(
         self,
@@ -133,7 +134,23 @@ class StatementContribution:
         message_ids: Mapping[str, str],
     ) -> None:
         del conversation_id, message_ids
-        writer.execute(self.statement, ())
+        writer.execute(self.statement, self.parameters)
+
+
+@dataclass
+class BatchStatementContribution:
+    statement: str
+    parameter_rows: tuple[tuple[object, ...], ...]
+
+    def write(
+        self,
+        *,
+        writer: ConsoleTransactionWriter,
+        conversation_id: str,
+        message_ids: Mapping[str, str],
+    ) -> None:
+        del conversation_id, message_ids
+        writer.executemany(self.statement, self.parameter_rows)
 
 
 def _acceptance(
@@ -187,6 +204,15 @@ def _service(path: Path) -> tuple[ChatPersistenceService, str]:
         )
         """
     )
+    connection.execute(
+        """
+        CREATE TABLE writer_probe(
+            value TEXT UNIQUE,
+            other TEXT
+        )
+        """
+    )
+    connection.execute("CREATE TABLE single_value_probe(value TEXT UNIQUE)")
     connection.commit()
     return ChatPersistenceService(db), conversation_id
 
@@ -353,24 +379,50 @@ def test_contribution_cannot_escape_the_caller_owned_transaction(
 
 
 @pytest.mark.parametrize(
-    "statement",
+    ("statement", "parameters"),
     [
-        "BEGIN IMMEDIATE",
-        "COMMIT",
-        "ROLLBACK",
-        "SAVEPOINT contribution",
-        "RELEASE contribution",
-        "ATTACH DATABASE ':memory:' AS escaped",
-        "DETACH DATABASE escaped",
-        "UPDATE contribution_probe SET user_id = 'escaped'",
-        "DELETE FROM contribution_probe",
-        "INSERT INTO contribution_probe VALUES ('x', 'y', 'z')",
-        "INSERT INTO contribution_probe VALUES ('x', 'y', 'z'); COMMIT",
+        ("BEGIN IMMEDIATE", ()),
+        ("COMMIT", ()),
+        ("ROLLBACK", ()),
+        ("SAVEPOINT contribution", ()),
+        ("RELEASE contribution", ()),
+        ("ATTACH DATABASE ':memory:' AS escaped", ()),
+        ("DETACH DATABASE escaped", ()),
+        ("UPDATE contribution_probe SET user_id = 'escaped'", ()),
+        ("DELETE FROM contribution_probe", ()),
+        ("INSERT INTO single_value_probe VALUES (?)", ("x",)),
+        ("INSERT INTO single_value_probe(value) VALUES ('literal ?')", ()),
+        ("INSERT INTO single_value_probe(value) VALUES ('literal') -- ?", ()),
+        ("INSERT INTO single_value_probe(value) VALUES ('literal') /* ? */", ()),
+        ("INSERT OR REPLACE INTO single_value_probe(value) VALUES (?)", ("x",)),
+        ("INSERT OR IGNORE INTO single_value_probe(value) VALUES (?)", ("x",)),
+        (
+            "INSERT INTO single_value_probe(value) VALUES (?) "
+            "ON CONFLICT(value) DO UPDATE SET value=excluded.value",
+            ("x",),
+        ),
+        (
+            "INSERT INTO single_value_probe(value) VALUES (?) "
+            "ON CONFLICT(value) DO NOTHING",
+            ("x",),
+        ),
+        ("INSERT INTO single_value_probe(value) SELECT ?", ("x",)),
+        (
+            "INSERT INTO single_value_probe(value) VALUES (?) RETURNING value",
+            ("x",),
+        ),
+        ("INSERT INTO single_value_probe(value) VALUES (?), (?)", ("x", "y")),
+        ('INSERT INTO "single_value_probe"(value) VALUES (?)', ("x",)),
+        ('INSERT INTO single_value_probe("value") VALUES (?)', ("x",)),
+        ("INSERT INTO main.single_value_probe(value) VALUES (?)", ("x",)),
+        ("INSERT INTO ſingle_value_probe(value) VALUES (?)", ("x",)),
+        ("INSERT INTO single_value_probe(value) VALUES (?); COMMIT", ("x",)),
     ],
 )
-def test_writer_rejects_transaction_control_and_non_insert_sql(
+def test_writer_rejects_every_statement_outside_the_exact_insert_values_grammar(
     tmp_path: Path,
     statement: str,
+    parameters: tuple[object, ...],
 ) -> None:
     service, conversation_id = _service(tmp_path / "rejected-statement.sqlite")
 
@@ -378,7 +430,10 @@ def test_writer_rejects_transaction_control_and_non_insert_sql(
         with service.db.transaction(immediate=True) as cursor:
             service.console_dispatch_repository.insert_with_messages(
                 cursor,
-                _acceptance(conversation_id, StatementContribution(statement)),
+                _acceptance(
+                    conversation_id,
+                    StatementContribution(statement, parameters),
+                ),
             )
 
     connection = service.db.get_connection()
@@ -386,3 +441,86 @@ def test_writer_rejects_transaction_control_and_non_insert_sql(
     assert connection.execute(
         "SELECT COUNT(*) FROM console_dispatch_checkpoints"
     ).fetchone()[0] == 0
+
+
+@pytest.mark.parametrize(
+    ("statement", "parameters"),
+    [
+        ("INSERT INTO writer_probe(value, other) VALUES (?)", ("x",)),
+        ("INSERT INTO writer_probe(value) VALUES (?, ?)", ("x", "y")),
+        ("INSERT INTO writer_probe(value) VALUES (?)", ()),
+        ("INSERT INTO writer_probe(value) VALUES (?)", ("x", "y")),
+    ],
+)
+def test_writer_rejects_column_placeholder_and_execute_tuple_arity_mismatches(
+    tmp_path: Path,
+    statement: str,
+    parameters: tuple[object, ...],
+) -> None:
+    service, conversation_id = _service(tmp_path / "execute-arity.sqlite")
+
+    with pytest.raises(ValueError, match="same non-zero arity"):
+        with service.db.transaction(immediate=True) as cursor:
+            service.console_dispatch_repository.insert_with_messages(
+                cursor,
+                _acceptance(
+                    conversation_id,
+                    StatementContribution(statement, parameters),
+                ),
+            )
+
+    connection = service.db.get_connection()
+    assert connection.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
+    assert connection.execute("SELECT COUNT(*) FROM writer_probe").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize(
+    "parameter_rows",
+    [
+        (),
+        (("x",),),
+        (("x", "y"), ("only-one",)),
+        (("x", "y", "extra"),),
+    ],
+)
+def test_writer_rejects_empty_or_wrong_arity_executemany_rows(
+    tmp_path: Path,
+    parameter_rows: tuple[tuple[object, ...], ...],
+) -> None:
+    service, conversation_id = _service(tmp_path / "executemany-arity.sqlite")
+    contribution = BatchStatementContribution(
+        "INSERT INTO writer_probe(value, other) VALUES (?, ?)",
+        parameter_rows,
+    )
+
+    with pytest.raises(ValueError, match="non-empty rows of matching arity"):
+        with service.db.transaction(immediate=True) as cursor:
+            service.console_dispatch_repository.insert_with_messages(
+                cursor,
+                _acceptance(conversation_id, contribution),
+            )
+
+    connection = service.db.get_connection()
+    assert connection.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
+    assert connection.execute("SELECT COUNT(*) FROM writer_probe").fetchone()[0] == 0
+
+
+def test_writer_accepts_exact_insert_values_grammar_with_ordinary_whitespace(
+    tmp_path: Path,
+) -> None:
+    service, conversation_id = _service(tmp_path / "ordinary-whitespace.sqlite")
+    contribution = StatementContribution(
+        "insert\ninto writer_probe\n( value, other )\nvalues\n( ?, ? )",
+        ("first", "second"),
+    )
+
+    with service.db.transaction(immediate=True) as cursor:
+        service.console_dispatch_repository.insert_with_messages(
+            cursor,
+            _acceptance(conversation_id, contribution),
+        )
+
+    row = service.db.get_connection().execute(
+        "SELECT value, other FROM writer_probe"
+    ).fetchone()
+    assert tuple(row) == ("first", "second")

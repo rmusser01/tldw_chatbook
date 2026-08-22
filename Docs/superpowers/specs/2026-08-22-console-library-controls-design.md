@@ -455,7 +455,14 @@ The same foundation repository owns explicit dispatch-checkpoint primitives:
 Generic sidecar contributions do not receive the repository's raw
 `sqlite3.Cursor`. The transaction owner supplies a narrowly typed
 `ConsoleTransactionWriter` capability with only parameterized, insert-only
-`execute(...)` and `executemany(...)` operations. The writer exposes no cursor,
+`execute(...)` and `executemany(...)` operations. Its complete accepted grammar is
+one statement using unquoted ASCII simple identifiers, of the form
+`INSERT INTO table_name (column_name, ...) VALUES (?, ...)`, with exactly one
+`VALUES` row and equal non-zero column, placeholder, and parameter arity.
+`executemany(...)` additionally requires at least one tuple and the same arity for
+every row. INSERT conflict modifiers/clauses, literals or comments standing in for
+placeholders, INSERT...SELECT, RETURNING, multiple VALUES rows, quoted or qualified
+identifiers, and every extra clause are rejected. The writer exposes no cursor,
 connection, authorizer, transaction/savepoint control, ATTACH/DETACH path,
 commit/rollback method, repository/session/publication state, or connection
 factory. Control statements, multi-statement SQL, and non-INSERT SQL are rejected

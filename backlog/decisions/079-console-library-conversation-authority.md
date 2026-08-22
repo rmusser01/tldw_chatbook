@@ -199,12 +199,17 @@ one-shot bypass never changes future policy.
 
 Sidecar contributions participate through an insert-only
 `ConsoleTransactionWriter`, not a raw `sqlite3.Cursor`. The persistence owner keeps
-the cursor private and supplies only parameterized single-row/batch INSERT methods;
-the capability exposes no connection, authorizer, transaction/savepoint or
-ATTACH/DETACH control, commit/rollback, connection factory, or publication/session
-state. Contribution exceptions propagate through the same caller-owned
-`BEGIN IMMEDIATE` transaction. This is a public API capability boundary for trusted
-in-process components, not a claim that Python code is a hostile-code sandbox.
+the cursor private and supplies only the exact grammar
+`INSERT INTO simple_table (simple_column, ...) VALUES (?, ...)`, with one VALUES
+row, unquoted/unqualified ASCII identifiers, and equal non-zero column, placeholder, and
+tuple arity; batch writes require at least one same-arity tuple. Conflict
+modifiers/clauses, literal or comment pseudo-placeholders, INSERT...SELECT,
+RETURNING, multiple VALUES rows, and extra clauses are outside the capability. It
+also exposes no connection, authorizer, transaction/savepoint or ATTACH/DETACH
+control, commit/rollback, connection factory, or publication/session state.
+Contribution exceptions propagate through the same caller-owned `BEGIN IMMEDIATE`
+transaction. This is a public API capability boundary for trusted in-process
+components, not a claim that Python code is a hostile-code sandbox.
 
 Assistant Library use is reviewable but is not evidence staging. Capture a
 bounded `library_activity` event in the existing device-local

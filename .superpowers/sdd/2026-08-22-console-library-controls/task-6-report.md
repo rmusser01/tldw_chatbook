@@ -114,6 +114,124 @@ The final 49-test GREEN run after restoration proves no mutation remained.
 - `Tests/Chat/test_console_library_policy_coordinator.py`
 - `Tests/Chat/test_console_transaction_contribution.py`
 
+## Fix round 3 — exact transaction-writer INSERT grammar
+
+### Finding verification and contract clarification
+
+The review finding reproduced against fix-round-2 source. With a temporary in-memory
+SQLite database, both
+`INSERT INTO probe(value) VALUES ('literal ?')` with an empty parameter tuple and
+`INSERT ... ON CONFLICT(value) DO UPDATE ...` executed through the writer. The old
+validator looked only for an `INSERT` first token, any `?` character, and absence of
+a semicolon. It therefore confused question marks in SQL text with bind parameters
+and treated every SQLite INSERT extension as part of the capability.
+
+The intended narrow capability is now stated consistently in the design spec,
+frozen plan/ledger, ADR-079, and Task 6 brief: one statement of the exact form
+`INSERT INTO simple_table (simple_column, ...) VALUES (?, ...)`, with ordinary
+whitespace, unquoted and unqualified ASCII identifiers, one VALUES row, and equal non-zero
+column, placeholder, and parameter arity. `executemany` requires at least one tuple
+and matching arity for every row. This clarifies the already-approved insert-only
+boundary; it does not expand the public writer interface.
+
+### RED and GREEN evidence
+
+All new regressions were written before the production validator changed. The
+contribution-file RED run completed with:
+
+```text
+22 failed, 19 passed, 1 warning
+```
+
+The 22 failures covered literal and line/block-comment question marks; missing
+column lists; INSERT OR REPLACE/IGNORE; ON CONFLICT DO UPDATE/DO NOTHING;
+INSERT...SELECT; RETURNING; multiple VALUES rows; quoted/qualified identifiers;
+column/placeholder/execute-tuple arity mismatches; and empty or wrong-arity
+`executemany` rows. Existing transaction-control and non-INSERT rejections remained
+green, and the wished-for ordinary-whitespace canonical INSERT already succeeded.
+
+The first corrected contribution-file run completed with:
+
+```text
+41 passed, 1 warning
+```
+
+Self-review then exposed Python regular-expression Unicode case-folding: without an
+ASCII flag, the nominal `[A-Z]` identifier range admitted `ſ`. The added regression
+failed as intended with `1 failed, 24 passed`; adding `re.ASCII` made all 25 statement
+cases pass. The final contribution file therefore contains 42 passing tests.
+
+The four-file Task 6 focused suite then completed with:
+
+```text
+109 passed, 1 warning in 15.99s
+```
+
+The unchanged adjacent suite completed with:
+
+```text
+118 passed, 1 warning in 14.76s
+```
+
+The warning is the environment's existing `requests` dependency-version warning.
+All SQLite databases were in-memory or pytest temporary databases; the profile
+database was never opened. No full suite was run.
+
+### Mutation and control evidence
+
+The exact implementation was replaced with the old permissive first-token/substring
+heuristic and the real statement matrix was rerun with bytecode disabled. Fourteen
+formerly executable noncanonical INSERT forms each failed with `DID NOT RAISE`,
+including both reviewer escapes, both conflict actions, comments/literals, SELECT,
+RETURNING, multi-row VALUES, and quoted/qualified identifiers:
+
+```text
+14 failed, 10 passed, 1 warning
+```
+
+After restoration, the statement, execute-arity, executemany-arity, and raw
+clear-authorizer/connection control cases completed together with:
+
+```text
+33 passed, 1 warning
+```
+
+The raw-cursor control continues to raise `AttributeError` before a contribution can
+reach a connection or authorizer; this round did not reintroduce a cursor or SQLite
+authorizer mechanism.
+
+### Implementation and self-review
+
+- A small anchored, case-insensitive standard-library regular expression accepts
+  only the frozen grammar and ordinary whitespace/newlines. No SQL-parser dependency
+  was added.
+- The validator derives column and placeholder counts from the matched grammar.
+  `execute` validates its exact tuple length; `executemany` materializes rows,
+  rejects an empty batch, retains the tuple-only boundary, and validates every row
+  before any write is delegated.
+- The test tables make every SQL-valid prohibited INSERT form executable in real
+  SQLite under the old heuristic, so those rejection cases do not pass merely
+  because SQLite rejects malformed SQL. The separate Unicode case specifically
+  proves that the validator rejects a non-ASCII identifier before SQLite lookup.
+- Scoped Ruff over all ten Task 6 production/test files passed. Source proof found
+  the anchored full-match and arity guards, consistent exact-grammar terminology in
+  all four authorities, and no old first-token heuristic, authorizer, or raw-cursor
+  contribution path. `git diff --check` passed.
+- Final self-review found no grammar ambiguity or compatibility concern for the
+  planned preparation/activity tables, whose table and column names are ordinary
+  underscore identifiers and whose contributions need only single-row or batch
+  placeholder VALUES inserts.
+
+### Fix round 3 changed files
+
+- `.superpowers/sdd/2026-08-22-console-library-controls/task-6-brief.md`
+- `.superpowers/sdd/2026-08-22-console-library-controls/task-6-report.md`
+- `Docs/superpowers/plans/2026-08-22-console-library-controls.md`
+- `Docs/superpowers/specs/2026-08-22-console-library-controls-design.md`
+- `backlog/decisions/079-console-library-conversation-authority.md`
+- `tldw_chatbook/Chat/console_transaction_contribution.py`
+- `Tests/Chat/test_console_transaction_contribution.py`
+
 ## Fix round 2 — transaction-writer capability correction
 
 ### Reviewer escape verification and superseded interpretation
