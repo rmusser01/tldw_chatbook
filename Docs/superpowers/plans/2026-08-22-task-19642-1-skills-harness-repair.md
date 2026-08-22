@@ -574,9 +574,46 @@ return to systematic debugging.
 
 Search `backlog/docs/lessons-testing-evidence.md` for an existing returning-user/fresh-profile harness incident. If none exists, add one concise entry naming the repeated TASK-19579/TASK-19642.1 incident and the evidence: the shared factory correctly admitted a fresh profile, while destination integration tests assumed the full returning-user rail. If an equivalent lesson exists, do not duplicate it; state that in Implementation Notes.
 
-- [ ] **Step 2: Update task acceptance criteria and notes**
+- [ ] **Step 2: Rebase onto current development**
 
-Check all three ACs only after Task 4 Step 9 is green. Add Implementation Notes containing:
+Keep the task In Progress. Run:
+
+```bash
+git fetch origin
+git rebase origin/dev
+```
+
+Resolve only conflicts in this task's owned files. If current development has
+changed the mounted-owner contract, stop and return to design review instead of
+forcing the old ordering patch through.
+
+- [ ] **Step 3: Run the complete post-rebase focused gate**
+
+After rebase, run Task 4 Steps 5-6, run the exact two-file command from Task 4
+Step 9 three consecutive times, and run the 12 editor-owner cases from Task 3
+Step 2. Then run:
+
+```bash
+git diff --check origin/dev...HEAD
+git status --short
+```
+
+Expected: `7 passed` ordering/reconciliation owners, three separate
+`34 passed` two-file runs, `12 passed` editor owners, Ruff green, the recorded
+four-file formatter baseline only, no whitespace errors, and an empty status.
+Do not run a repository-wide suite.
+
+- [ ] **Step 4: Obtain final independent code review**
+
+Use `superpowers:verification-before-completion` and
+`superpowers:requesting-code-review` against `origin/dev...HEAD`. Address all
+Critical and Important findings through `superpowers:receiving-code-review`,
+rerun the affected focused gates, and obtain approval before changing task
+status.
+
+- [ ] **Step 5: Update task acceptance criteria and notes**
+
+Check all three ACs only after Steps 3-4 are green. Add Implementation Notes containing:
 
 - the four confirmed test-contract drift classes and mounted-owner ordering race;
 - all modified files, including the narrow production sequencing change;
@@ -585,12 +622,14 @@ Check all three ACs only after Task 4 Step 9 is green. Add Implementation Notes 
 - Ruff and `git diff --check` results;
 - the pre-existing four-file formatter baseline, without claiming formatter success;
 - all four representative causal inverse failures and successful restoration;
-- explicit confirmation that the focused output contained no Prompt/Study/Quiz
-  backend exception or local Library snapshot failure warning;
+- explicit confirmation that the repaired two-file Skills gate output contained
+  no Prompt/Study/Quiz backend exception or local Library snapshot failure
+  warning; do not extend that claim to the separate reconciliation-owner
+  harness;
 - ADR-076 reuse and no-new-ADR decision;
 - lesson outcome.
 
-- [ ] **Step 3: Mark the task Done through Backlog.md**
+- [ ] **Step 6: Mark the task Done through Backlog.md**
 
 Run:
 
@@ -606,7 +645,7 @@ backlog task 19642.1 --plain
 
 Expected: status Done, all ACs checked, plan/notes/ADR evidence present.
 
-- [ ] **Step 4: Commit closeout documentation**
+- [ ] **Step 7: Commit closeout documentation**
 
 ```bash
 git add \
@@ -617,7 +656,7 @@ git commit -m "docs: complete TASK-19642.1"
 
 If the lessons file was not changed, omit it from `git add`.
 
-- [ ] **Step 5: Run final scoped verification from clean HEAD**
+- [ ] **Step 8: Run final scoped verification from clean HEAD**
 
 Run Task 3 Steps 1-3 and Task 4 Steps 5-6 again after the closeout commit, then:
 
@@ -628,20 +667,15 @@ git diff --check origin/dev...HEAD
 
 Expected: empty status, focused tests/Ruff green, and no whitespace errors. Do not run the repository-wide suite.
 
+If this clean-HEAD gate fails, immediately return the task to In Progress,
+uncheck ACs 1-2, record the failure, and resume systematic debugging.
+
 ## Execution and review handoff
 
-After implementation, use `superpowers:verification-before-completion`, then
-`superpowers:requesting-code-review`. Address technically valid review feedback
-through `superpowers:receiving-code-review`.
-
-Before creating the PR, fetch and rebase onto current `origin/dev`. After the
-rebase, run Task 4 Steps 5-6, run the exact two-file gate from Task 4 Step 9
-three consecutive times, run the 12 editor-owner cases from Task 3 Step 2, and
-require `git diff --check origin/dev...HEAD` plus an empty status. Do not run a
-repository-wide suite.
-
-Push and create the PR only after that post-rebase focused evidence is green.
+Push and create the PR only after Task 5 is complete.
 Inspect Qodo and all PR review threads, apply only technically valid feedback
 through the receiving-review workflow, rerun the affected focused gates, and
-resolve the threads. Use `superpowers:finishing-a-development-branch` before
-merging.
+resolve the threads. If review changes code or exposes a failed acceptance
+criterion, immediately reopen TASK-19642.1, uncheck the affected ACs, and repeat
+Task 5's focused verification/review/closeout sequence. Use
+`superpowers:finishing-a-development-branch` before merging.
