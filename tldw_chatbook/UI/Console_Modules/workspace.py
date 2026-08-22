@@ -566,6 +566,9 @@ class ConsoleWorkspaceController:
         """Apply one input change and schedule its canonical browser refresh."""
         if disabled or query == self._console_conversation_browser_query:
             return
+        if not query.strip():
+            self.clear_console_conversation_browser_search()
+            return
         self._console_conversation_browser_query = query
         self._console_conversation_browser_search_token += 1
         token = self._console_conversation_browser_search_token

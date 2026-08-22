@@ -8493,12 +8493,14 @@ async def test_console_workspace_conversation_search_blank_query_clears_error_ca
             "Workspace conversation search is unavailable.",
         )
 
-        console.query_one("#console-workspace-conversation-search", Input)
-        await _set_console_conversation_browser_search(console, pilot, "")
+        search = console.query_one("#console-workspace-conversation-search", Input)
+        search.value = ""
+        console.on_console_workspace_conversation_search_changed(_InputChangedEvent(""))
 
         assert console._console_workspace_conversation_search_rows == ()
         assert console._console_workspace_conversation_search_total is None
         assert console._console_workspace_conversation_search_error == ""
+        await pilot.pause(0.3)
 
 
 @pytest.mark.asyncio
