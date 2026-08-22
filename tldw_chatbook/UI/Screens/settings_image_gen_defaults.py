@@ -767,14 +767,30 @@ def _guarded_get(
     try:
         # (TASK-19556 (c), checked and deliberately KEPT) This is the same
         # SHAPE as the sitemap/crawl self-trust that task corrected, but not
-        # the same PROVENANCE. Every caller derives `url` from a base_url the
-        # user typed into this settings form -- `_probe_swarmui` and
-        # `_probe_reachability_only` pass it directly, `_probe_comfyui` via
-        # `normalize_comfyui_image_origin` -- so it is an explicitly
-        # configured URL, which `config.py`'s [web_security] contract permits
-        # to be private. The shipped default backend is a LOCALHOST SwarmUI
-        # instance; dropping the self-trust would break the zero-key default.
-        # A content-derived URL must never be handed to this helper.
+        # the same PROVENANCE: `url` is always an OPERATOR-CONFIGURED value,
+        # which `config.py`'s [web_security] contract permits to be private.
+        # The shipped default backend is a LOCALHOST SwarmUI instance, so
+        # dropping the self-trust would break the zero-key default probe.
+        #
+        # All FIVE callers, enumerated (independent review: the original note
+        # listed only the first three, omitting the two that also attach a
+        # credential header -- which are the ones that matter most):
+        #   `_probe_swarmui`, `_probe_reachability_only` -- `base_url` as-is;
+        #   `_probe_comfyui`  -- via `normalize_comfyui_image_origin`;
+        #   `_probe_openai_compatible`, `_probe_gemini` -- `{base_url}/models`
+        #     plus an `Authorization`/`x-goog-api-key` header. The GET below
+        #     sets `follow_redirects=False`, so that credential cannot be
+        #     carried to a host other than the configured one.
+        #
+        # Where `base_url` comes from, exactly (`settings_screen.
+        # _image_gen_test_form_values`): the live Input when the user has
+        # edited it, else `effective_placeholder(...)` -- the resolved
+        # `[image_generation]` value from config.toml (or its shipped
+        # default). So "typed this session" is NOT required; "explicitly
+        # configured by the operator" is, and both sources satisfy it. No
+        # discovery response, server-provided default, or imported document
+        # writes that section. A content-derived URL must never be handed to
+        # this helper.
         check_url_or_raise(url, trusted_origins=origin_set(url))
     except EgressBlockedError:
         return None, "Unreachable: blocked by egress policy"

@@ -38,6 +38,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
+from urllib.request import BaseHandler
 
 import pytest
 
@@ -357,3 +358,158 @@ def test_the_deliberate_retry_trigger_does_not_forbid_probing() -> None:
     LibraryScreen._trigger_preflight(stand_in, "http://example.com/a.pdf")
 
     assert calls == [("http://example.com/a.pdf", {})]
+
+
+def test_the_worker_translates_allow_probe_into_the_analyze_path_keyword(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The middle link of the chain, which nothing else pins.
+
+    (Independent review) `_run_debounced_...` -> `_trigger_...(allow_probe=
+    False)` is pinned above, and `analyze_path(probe_url=False)`'s behaviour
+    is pinned at the top of this module -- but the step that JOINS them,
+    `_run_library_ingest_preflight`'s `probe_url=None if allow_probe else
+    False`, was covered by neither. Rewriting it to a bare `probe_url=None`
+    left `Tests/Library/`, `Tests/UI/test_library_ingest_*` and the census
+    entirely green (509 passed, only the pre-existing red), while silently
+    putting an opted-in user back on a probe per 0.8 s typing pause -- the
+    exact behaviour AC 3 exists to prevent.
+
+    Driven against the undecorated function (`@work(thread=True)`'s
+    `__wrapped__`) with a stand-in `self`, matching the two tests above:
+    the assertion is about the keyword translation, not about running a
+    worker.
+    """
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Screens import library_screen as library_screen_module
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    seen: list[dict] = []
+    monkeypatch.setattr(
+        library_screen_module,
+        "analyze_path",
+        lambda path, **kwargs: seen.append(kwargs) or PreflightResult(
+            type_groups={}, warnings=[], errors=[], total_size=0,
+            truncated=False, total_files=0,
+        ),
+    )
+    run = LibraryScreen._run_library_ingest_preflight.__wrapped__
+    stand_in = SimpleNamespace(
+        _annotate_preflight_duplicates=lambda result: result,
+        _apply_library_ingest_preflight_result=lambda *a: None,
+        app=SimpleNamespace(call_from_thread=lambda fn, *a: fn(*a)),
+    )
+
+    run(stand_in, INTERNAL_URL, 1, False)
+    assert seen[-1].get("probe_url") is False, (
+        "the while-typing worker must forbid probing outright, not defer to "
+        f"the config gate: {seen[-1]}"
+    )
+
+    run(stand_in, INTERNAL_URL, 2, True)
+    assert seen[-1].get("probe_url") is None, (
+        "a deliberate trigger must defer to the config gate, not force a "
+        f"probe and not forbid one: {seen[-1]}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 6. The probe follows no redirects (TASK-19556's second stated hardening)
+# ---------------------------------------------------------------------------
+
+
+class _FakeRedirectingHTTPHandler(BaseHandler):
+    """A real `urllib` handler that answers 302 once, then 200.
+
+    Deliberately NOT the `fake_transport` fixture above: that one patches
+    `OpenerDirector.open`, which is the very method whose handler chain
+    performs redirect following -- so it can never observe whether the
+    chain follows one. This substitutes the *transport* handler instead
+    and leaves `OpenerDirector.open` real.
+    """
+
+    opened: list[str] = []
+
+    def http_open(self, req):  # noqa: ANN001
+        import io
+        from email.message import Message
+        from urllib.response import addinfourl
+
+        url = req.full_url
+        type(self).opened.append(url)
+        headers = Message()
+        if url == PUBLIC_REDIRECTOR:
+            headers["Location"] = INTERNAL_REDIRECT_TARGET
+            response = addinfourl(io.BytesIO(b""), headers, url, 302)
+            response.msg = "Found"
+            return response
+        response = addinfourl(io.BytesIO(b""), headers, url, 200)
+        response.msg = "OK"
+        return response
+
+
+#: A public host the egress policy would allow, answering a 302 that points
+#: at an internal one. The base's bare `urlopen` followed it, so the check
+#: that had just passed on the public target was walked into private space.
+PUBLIC_REDIRECTOR = "http://public.example.test/doc.pdf"
+INTERNAL_REDIRECT_TARGET = "http://10.0.0.5:8080/"
+
+
+def test_the_probe_does_not_follow_a_redirect_into_internal_space(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(Independent review) Nothing pinned this hardening.
+
+    Reverting `_open_probe` to `build_opener()` -- i.e. dropping
+    `_NoRedirectHandler`, restoring `urlopen`'s own redirect following --
+    left all of `Tests/Library/` plus the census green (2252 passed, 0
+    failed), because every other test in this module patches
+    `OpenerDirector.open` and therefore never reaches the handler chain.
+
+    A 302 must surface as an `HTTPError` about the host the user typed,
+    and the `Location` target must never be opened.
+    """
+    import urllib.request
+    from urllib.request import Request
+
+    _FakeRedirectingHTTPHandler.opened = []
+    monkeypatch.setattr(
+        urllib.request, "HTTPHandler", _FakeRedirectingHTTPHandler, raising=True
+    )
+
+    with pytest.raises(HTTPError) as excinfo:
+        ingest_preflight._open_probe(Request(PUBLIC_REDIRECTOR, method="HEAD"))
+
+    assert excinfo.value.code == 302
+    assert _FakeRedirectingHTTPHandler.opened == [PUBLIC_REDIRECTOR], (
+        "the probe followed the redirect into internal space: "
+        f"{_FakeRedirectingHTTPHandler.opened}"
+    )
+    network_guard.drain_blocked_attempts()
+
+
+def test_the_probe_reports_a_redirect_as_an_answered_status_not_an_error(
+    probe_enabled: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The user-visible half: a 3xx reads as "the site answered 302".
+
+    That is an outcome about the public host the user typed and nothing
+    else -- it must not become a clean result (which would imply the probe
+    verified something it never fetched).
+    """
+    import urllib.request
+
+    _FakeRedirectingHTTPHandler.opened = []
+    monkeypatch.setattr(
+        urllib.request, "HTTPHandler", _FakeRedirectingHTTPHandler, raising=True
+    )
+    monkeypatch.setattr(ingest_preflight, "check_url_or_raise", lambda *a, **k: None)
+
+    result = analyze_path(PUBLIC_REDIRECTOR)
+    network_guard.drain_blocked_attempts()
+
+    assert result.errors == []
+    assert [w.get("label") for w in result.warnings] == ["Could not check the link"]
+    assert "302" in result.warnings[0]["hint"]
+    assert _FakeRedirectingHTTPHandler.opened == [PUBLIC_REDIRECTOR]

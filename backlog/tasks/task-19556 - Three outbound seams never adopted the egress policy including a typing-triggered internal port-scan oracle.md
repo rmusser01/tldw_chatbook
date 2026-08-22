@@ -276,3 +276,75 @@ Tests added: `Tests/Library/test_ingest_preflight_egress.py`,
 `Tests/Local_Ingestion/test_video_egress_guard.py`,
 `Tests/Web_Scraping/test_sitemap_crawl_trusted_origins.py`,
 `Tests/Utils/test_egress_adoption_census.py`.
+
+### Independent review (2026-08-22, adversarial)
+
+The oracle closure was re-verified from scratch against base `f12bb21ad`,
+not taken on report. Confirmed independently, with in-process transports
+and a stubbed resolver (no real sockets):
+
+* **Both halves hold.** Gate off by default -> `analyze_path` on a URL
+  issues zero transport calls *and* zero DNS lookups. Opted in, the typing
+  path (`probe_url=False`) still issues neither, while a deliberate trigger
+  does. No third caller reaches `analyze_path`/`_probe_url`: six call sites
+  in `library_screen`, one of them the typing timer with `allow_probe=False`.
+* **The vocabulary really is collapsed.** Fourteen declined targets --
+  private/loopback/CGNAT/multicast/metadata literals, the same via DNS, a
+  DNS failure, `metadata.google.internal`, `[::1]`, and an IPv4-mapped v6
+  private address -- produce ONE identical observable, and none of them
+  reaches the transport at all.
+* **No usable timing distinguisher.** Nothing connects for a declined
+  address, so there is no connect latency to time. The only latency split
+  is "IP literal (no DNS)" vs "hostname (one DNS lookup)", which discloses
+  nothing an attacker choosing the address does not already know.
+* **Both incidental findings reproduce at base and are closed here.**
+  `http://user:secret@example.com/doc.pdf` -> at base: `errors=[]`,
+  `warnings=[]`, classified `pdf`, and the credential-bearing URL recorded
+  on the wire; now `path_invalid=True` and nothing is opened. The 302 walk:
+  at base the probe opened `http://public.example.test/doc.pdf` **and then**
+  `http://10.0.0.5:8080/`; now only the first, surfaced as an answered-302
+  note.
+
+**Two gaps found and closed** (AC 6 says "mutation-checked"; these two
+survived mutation):
+
+1. `_run_library_ingest_preflight`'s `probe_url=None if allow_probe else
+   False` -- the step that JOINS the debounce wiring to `analyze_path` --
+   was pinned by nothing. Rewriting it to a bare `probe_url=None` left 509
+   tests green (only the pre-existing red) while putting an opted-in user
+   back on a per-0.8 s-pause probe.
+2. The no-redirect opener was pinned by nothing. Reverting `_open_probe` to
+   `build_opener()` left 2252 tests green, because every other test in the
+   module patches `OpenerDirector.open` and so never reaches the handler
+   chain that would follow a redirect.
+
+Three tests added to `Tests/Library/test_ingest_preflight_egress.py`; each
+is born-red at `f12bb21ad` and red under its mutation. Module: 13 tests,
+12F/1P at base.
+
+**Residual, filed rather than changed here:** `Input.Blurred` is posted by
+Textual on `AppBlur` (terminal focus loss) as well as on a focus move --
+demonstrated live -- so for an *opted-in* user, alt-tabbing away with a URL
+staged fires the probe with `allow_probe=True`. Same category as the
+debounce (not a gesture aimed at the field), far lower frequency, and inert
+under the default-off gate; changing that blur handler is a behaviour change
+with its own live-verification cost (its docstring records a prior reversal
+after an xhigh review + live-verify round). Recommended as a separate LOW
+follow-up rather than folded in here; no task id minted by the reviewer, to
+avoid an id collision against `origin/dev`.
+
+Also corrected: the `settings_image_gen_defaults` provenance comment
+enumerated three of its five callers (omitting `_probe_openai_compatible`
+and `_probe_gemini`, the two that attach a credential header) and said
+"typed into this settings form" when a blank field falls back to the
+resolved `[image_generation]` config value. The exception's CONCLUSION
+survives -- every source is operator-configured, and the only writer of that
+config section is the Settings screen's own save -- but the reasoning as
+written did not match the code.
+
+Baselines re-measured, not accepted: `Tests/UI/test_library_ingest_*` is
+9F/233P on BOTH sides with identical failure sets, and `Tests/integration`
+is 3F/69P on both sides (the commit message says 2 integration reds; it is
+3, all pre-existing). Post-review sweep across
+`Tests/{Library,Web_Scraping,Local_Ingestion,Utils}` + the image-gen
+settings suite: **3685 passed / 5 skipped / 0 failed**.
