@@ -6505,11 +6505,15 @@ paragraph.
 
 **What to do.**
 
-1. **Verify a version-sensitive fix on both ends of the supported range**, not on the
-   one you are sitting at. `uv python find 3.11` / `3.12` / `3.13` are all available on
-   this machine, and running the same digest under each is a few seconds of work.
+1. **Verify a version-sensitive fix across the whole supported range**, not on the one
+   you are sitting at, and not only at the two ends. All four matter here: the `ast.dump`
+   split falls **between 3.12 and 3.13**, so an ends-only check (3.11 and 3.14) would
+   have seen two disagreeing answers without locating the boundary, while the f-string
+   break is visible **only at the floor**. `uv python find 3.11` / `3.12` / `3.13`
+   resolve the three you are not running; re-running the same digest under each is
+   seconds of work.
 2. **An artifact that freezes interpreter output must pin the rendering, not chase it.**
-   `Tests/ast_shape.stable_dump()` forces the pre-3.13 rendering (`show_empty=True`
+   `stable_dump()` in `Tests/ast_shape.py` forces the pre-3.13 rendering (`show_empty=True`
    where supported, nothing below 3.13 where empty fields always rendered), so all four
    interpreters reproduce the committed digest. Regenerating the ledger against the new
    rendering was the tempting alternative and the wrong one: it invalidates a large set
