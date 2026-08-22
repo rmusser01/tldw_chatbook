@@ -12868,13 +12868,30 @@ class LibraryScreen(BaseAppScreen):
 
         Hidden (``""``) rather than fetched at all when the trust service
         is absent or doesn't expose ``trust_posture`` (server mode / no
-        local trust service wired) -- the list canvas already renders no
-        header for ``""``.
+        local trust service wired). The mounted Browse Skills list is
+        repainted when stale state or a stale header remains; an already-clear
+        list and an open editor are not, because neither has stale posture UI
+        to remove and the editor owns unsaved live fields.
         """
         service = getattr(self.app_instance, "local_skill_trust_service", None)
         posture_fn = getattr(service, "trust_posture", None)
         if not callable(posture_fn):
+            should_repaint = (
+                self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
+                and self._library_skills_view == "list"
+                and (
+                    bool(self._library_skills_trust_posture)
+                    or bool(self.query("#library-skills-trust-header"))
+                )
+            )
+            self.workers.cancel_group(self, "library_skills_trust_posture")
             self._library_skills_trust_posture = ""
+            if should_repaint:
+                _sync_library_canvas(
+                    self,
+                    "skills",
+                    allow_screen_fallback=False,
+                )
             return
         self.run_worker(
             self._load_library_skills_trust_posture(posture_fn),
@@ -17254,13 +17271,6 @@ class LibraryScreen(BaseAppScreen):
             # skill-editor field itself, so it needs no preceding
             # ``_reset_library_skill_editor_state()`` call here.
             self._enter_library_skill_create_editor()
-        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS:
-            # Task 5: refresh the adaptive trust header's posture on every
-            # entry into the skills LIST view (never on Create > New skill,
-            # which lands straight in the editor and has no header to
-            # refresh) -- read off-thread, see
-            # ``_refresh_library_skills_trust_posture``'s docstring for why.
-            self._refresh_library_skills_trust_posture()
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS:
             self._request_library_prompts_browse(
                 self._library_prompt_browse_controller.mutation_refresh_scope,
@@ -17287,6 +17297,12 @@ class LibraryScreen(BaseAppScreen):
         self._library_selected_row_id = shell.selected_row_id
         if not await self._replace_library_browse_canvas(shell):
             await self.recompose()
+        if (
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
+            and self._library_skills_view == "list"
+        ):
+            # The strict posture projection requires its retained owner to exist.
+            self._refresh_library_skills_trust_posture()
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA:
             self._request_library_media_browse(
                 self._library_media_browse_controller.mutation_refresh_scope,

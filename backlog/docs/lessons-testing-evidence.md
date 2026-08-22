@@ -6298,3 +6298,12 @@ Rule: source-tree AST/file sweeps must prune environment and tool directories
 (`.venv`, virtualenvs, caches) explicitly; `.gitignore` does not affect
 `Path.rglob`. When such a gate fails in dependency code, print the exact
 discovered path before changing production CSS or blaming version drift.
+
+## A truthful fresh-profile factory is not a returning-user destination harness (TASK-19579/TASK-19642.1, 2026-08-22)
+
+**Incident.** The shared Library app factory correctly admitted a fresh profile,
+while destination integration tests assumed the complete returning-user rail.
+The mismatch first recurred in TASK-19579 and then made the Skills import flow
+look broken because the expected Skills row was absent. Choose the factory whose
+profile posture matches the destination contract; do not redefine a truthful
+fresh-profile factory merely to satisfy returning-user tests.
