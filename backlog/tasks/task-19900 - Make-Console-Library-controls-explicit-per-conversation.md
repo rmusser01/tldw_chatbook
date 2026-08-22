@@ -31,8 +31,8 @@ that ambiguity with locally stored per-conversation policy, truthful runtime
 disclosure, fail-closed assistant access, and separate review surfaces for
 staged/cited evidence and assistant Library activity.
 
-This task also subsumes the still-open zero-result disclosure defect recorded
-by TASK-3504.
+This task supersedes the narrower zero-result notice proposal in TASK-3504;
+TASK-19900.3 owns the replacement persistent sent-turn disclosure.
 
 ## Acceptance Criteria
 
@@ -42,9 +42,9 @@ by TASK-3504.
       Search Library remains available in every combination.
 - [ ] Shipped defaults for newly created local sessions are Never and Blocked;
       global defaults seed only newly created local sessions, existing
-      conversations preserve their upgrade-time effective behavior, and a
-      synced/imported conversation with no device-local policy fails closed to
-      Never and Blocked.
+      conversations receive their prior effective behavior inside one
+      sanitized-seed migration transaction, and a synced/imported conversation
+      with no device-local policy fails closed to Never and Blocked.
 - [ ] When assistant access is Blocked, no built-in Library provider is
       available to the primary agent or subagents. All 18 direct Library names
       plus `search_library_rag` remain reserved against Skill and MCP
@@ -60,27 +60,40 @@ by TASK-3504.
 - [ ] Automatic retrieval visibly prepares before provider dispatch. Failure
       or timeout pauses with Retry, Send once without Library, and Cancel;
       zero matches proceeds only with a persistent disclosure that the turn
-      was sent without Library evidence. Draft and conversation policy remain
-      unchanged by all one-shot recovery actions.
-- [ ] One immutable policy/tool-mode snapshot governs each executed turn,
-      including queued turns and every subagent spawned by that turn. Policy
-      changes during a run affect only later executed turns.
+      was sent without Library evidence. A store-owned exactly-once state
+      machine preserves draft, attachments, staged evidence, queue ownership,
+      conversation policy, ordinary-session persistence identity, and title
+      through every recovery action and injected commit failure. One bounded
+      row in a dedicated device-local dispatch-checkpoint table and its
+      assistant owner make post-commit Retry/Discard explicit without retaining
+      or auto-replaying a provider request; terminal/Discard settlement is
+      atomic, while ephemeral recovery stays in memory and blocks promotion
+      until settled. A synced closed assistant-generation state makes unresolved
+      remote/imported owners inert and truthful, and an atomic handoff leaves
+      ADR-063 as the sole owner before any durable tool continuation executes.
+- [ ] Durable policy is re-read at actual execution, then combined with a
+      gateway-resolved conservative destination record into one immutable turn
+      context governing queued turns and every subagent. Policy/destination
+      changes after capture affect only later executed turns.
 - [ ] Assistant-initiated Library reads produce bounded, content-minimized,
-      local-only `library_activity` records attributed to the durable turn,
+      device-local `library_activity` records attributed to the durable turn,
       run, and actor. Activity never enters staged evidence, Sources, prompts,
       model context, sync, or ordinary logs, and default trajectory export
       redacts its query/source details.
 - [ ] The Console presents one fixed-order two-axis status chip, separate
       Library Access and Search Library modals, one-row-per-source evidence,
       and a Selected turn Inspector group that distinguishes Cited sources
-      from Library activity. Save, conflict, unavailable, narrow-viewport,
-      keyboard, focus, and dirty-dismiss states are explicit and truthful.
+      from Library activity. Canonical Settings owns future-session defaults;
+      missing-row, Save, conflict, unavailable, narrow-viewport, keyboard,
+      focus, and dirty-dismiss states are explicit and truthful.
 - [ ] Migration, policy lifecycle, CAS conflicts, first persistence,
-      ephemeral promotion rollback, four policy combinations, Direct/RAG
-      selection, name reservation, queued/subagent snapshots, automatic-send
-      recovery, activity minimization/attribution/projection, and the real
-      Textual composition are covered by targeted automated tests and a live
-      Console walkthrough.
+      repository-level hard-purge cascade, ephemeral execution/promotion
+      rollback, four policy combinations, Direct/RAG selection, name
+      reservation, queued/subagent snapshots, destination classification,
+      preparation races, activity minimization/attribution/projection, and the
+      real Textual composition are covered by targeted automated tests; the
+      live Console walkthrough covers only actions the Console exposes,
+      including soft delete/restore rather than hard purge.
 
 ## Implementation Plan
 
@@ -97,7 +110,7 @@ the long-lived Console review model.
 2. Write the detailed Superpowers implementation plan and re-check the task
    and ADR identifiers against all refs before implementation.
 3. Deliver the approved design as dependency-ordered atomic subtasks:
-   TASK-19900.1 policy storage/lifecycle; TASK-19900.2 runtime enforcement;
+   TASK-19900.1 policy/checkpoint storage, Sync compatibility, and lifecycle; TASK-19900.2 runtime enforcement;
    TASK-19900.3 automatic send gate; TASK-19900.4 policy/search/source UI;
    TASK-19900.5 activity capture/review; TASK-19900.6 documentation and
    production-path qualification.
