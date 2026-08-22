@@ -55,6 +55,19 @@ def test_headless_buddy_modules_have_no_textual_or_ui_imports() -> None:
             )
 
 
+def test_buddy_rendering_loads_image_dependencies_only_on_use() -> None:
+    tree = _tree(BUDDY_ROOT / "rendering.py")
+    top_level_imports: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            top_level_imports.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            top_level_imports.add(node.module or "")
+
+    assert "PIL" not in top_level_imports
+    assert "rich_pixels" not in top_level_imports
+
+
 def test_controller_has_no_model_or_emote_parser_boundary() -> None:
     path = BUDDY_ROOT / "controller.py"
     tree = _tree(path)
@@ -110,9 +123,32 @@ def test_public_snapshots_and_logs_exclude_private_payload_fields() -> None:
             ):
                 continue
             if (
+                isinstance(node.func.value, ast.Call)
+                and isinstance(node.func.value.func, ast.Attribute)
+                and isinstance(node.func.value.func.value, ast.Name)
+                and node.func.value.func.value.id == "logger"
+                and node.func.value.func.attr == "bind"
+            ):
+                assert len(node.args) == 1 and not node.keywords
+                message = node.args[0]
+                assert isinstance(message, ast.Constant) and isinstance(
+                    message.value, str
+                )
+                assert FIXED_CATEGORY.fullmatch(message.value), (
+                    f"{path.relative_to(REPO_ROOT)} logs non-category Buddy detail"
+                )
+                continue
+            if (
                 not isinstance(node.func.value, ast.Name)
                 or node.func.value.id != "logger"
             ):
+                continue
+            if node.func.attr == "bind":
+                assert not node.args
+                assert len(node.keywords) == 1
+                keyword = node.keywords[0]
+                assert keyword.arg == "exception_type"
+                assert isinstance(keyword.value, ast.Name)
                 continue
             assert len(node.args) == 1 and not node.keywords
             message = node.args[0]

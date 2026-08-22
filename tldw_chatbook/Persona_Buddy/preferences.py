@@ -192,8 +192,10 @@ def persist_persona_buddy_preferences(
             {"persona_buddy": serialize_persona_buddy_preferences(preferences)}
         )
     except Exception as error:
-        logger.error(
-            "persona_buddy_preferences_save_failed exception_type={}",
-            type(error).__name__,
+        exception_type = type(error).__name__
+        if re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", exception_type) is None:
+            exception_type = "Exception"
+        logger.bind(exception_type=exception_type).error(
+            "persona_buddy_preferences_save_failed"
         )
         return False

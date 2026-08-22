@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
+from functools import lru_cache
 from io import BytesIO
-
-from PIL import Image
-from rich_pixels import Pixels
+from typing import TYPE_CHECKING, Any
 
 from tldw_chatbook.Persona_Visual.contracts import MAX_ASSET_DIMENSION
 from tldw_chatbook.Persona_Visual.repository import PersonaVisualIdentity
@@ -17,6 +16,9 @@ from tldw_chatbook.Persona_Visual.runtime import (
     PersonaVisualPortrait,
     PersonaVisualResolvedFrame,
 )
+
+if TYPE_CHECKING:
+    from rich_pixels import Pixels
 
 
 PERSONA_BUDDY_FRAME_UNAVAILABLE = "persona_buddy_frame_unavailable"
@@ -35,6 +37,19 @@ class PersonaBuddyFrameError(ValueError):
     def __init__(self) -> None:
         self.category = PERSONA_BUDDY_FRAME_UNAVAILABLE
         super().__init__(self.category)
+
+
+@lru_cache(maxsize=1)
+def _render_dependencies() -> tuple[Any, type[Any]]:
+    """Load required image modules only when Buddy rendering is used."""
+
+    from tldw_chatbook.Utils.optional_deps import require_dependency
+
+    require_dependency("PIL", "pillow")
+    pixels_module = require_dependency("rich_pixels")
+    from PIL import Image
+
+    return Image, pixels_module.Pixels
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +85,7 @@ def prepare_persona_buddy_frame(
     """
 
     try:
+        Image, Pixels = _render_dependencies()
         if (
             type(resolved_frame) is not PersonaVisualResolvedFrame
             or type(resolution_cache_identity) is not PersonaVisualCacheIdentity
@@ -164,6 +180,7 @@ def prepare_persona_buddy_portrait(
     """Prepare the validated local Persona portrait fallback."""
 
     try:
+        Image, Pixels = _render_dependencies()
         if (
             type(portrait) is not PersonaVisualPortrait
             or type(resolution_cache_identity) is not PersonaVisualCacheIdentity

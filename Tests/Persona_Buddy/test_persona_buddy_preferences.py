@@ -147,7 +147,10 @@ def test_preference_failure_is_path_free(
         assert persona_id not in repr(preferences)
 
     messages: list[str] = []
-    sink = logger.add(messages.append, format="{message}")
+    sink = logger.add(
+        messages.append,
+        format="{message} exception_type={extra[exception_type]}",
+    )
     try:
 
         def fail(_section_values: object) -> bool:
@@ -186,6 +189,36 @@ def test_preferences_require_exact_string_local_source() -> None:
     assert preferences.selection is None
     with pytest.raises(ValueError, match="^persona_buddy_preferences_invalid$"):
         PersonaBuddySelection(source, "p-1")  # type: ignore[arg-type]
+
+
+def test_preference_failure_normalizes_unsafe_exception_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    unsafe_error = type("/private/profile/SecretError", (RuntimeError,), {})
+
+    def fail(_section_values: object) -> bool:
+        raise unsafe_error("/private/profile/config.toml")
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Persona_Buddy.preferences.save_settings_to_cli_config",
+        fail,
+    )
+    messages: list[str] = []
+    sink = logger.add(
+        messages.append,
+        format="{message} exception_type={extra[exception_type]}",
+    )
+    try:
+        assert persist_persona_buddy_preferences(PersonaBuddyPreferences()) is False
+    finally:
+        logger.remove(sink)
+
+    rendered = "".join(messages)
+    assert (
+        rendered.strip()
+        == "persona_buddy_preferences_save_failed exception_type=Exception"
+    )
+    assert "/private/" not in rendered
 
 
 def test_never_positioned_geometry_is_distinct_from_persisted_top_left() -> None:
