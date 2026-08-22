@@ -2,14 +2,24 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 from textual import events
 from textual.widget import Widget
 from textual.widgets import Button, Input, Static
 
+from tldw_chatbook.Chat.console_display_state import (
+    ConsoleDisplayRow,
+    ConsoleStagedContextState,
+)
 from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
 from tldw_chatbook.Widgets.Console.console_bounded_section import (
     ConsoleBoundedSection,
+)
+from tldw_chatbook.Widgets.Console.console_run_inspector import ConsoleRunInspector
+from tldw_chatbook.Widgets.Console.console_staged_context import (
+    ConsoleStagedContextTray,
 )
 
 from Tests.UI.test_console_right_rail import (
@@ -20,6 +30,78 @@ from Tests.UI.test_console_right_rail import (
 
 INSPECTOR_OUTER_HINT = "▼ more sections — scroll"
 INSPECTOR_OUTER_HINT_ID = "console-inspector-outer-scroll-hint"
+STAGED_ONE_ROW_TEST_CSS = """
+#console-right-rail {
+    height: 13;
+    min-height: 13;
+    max-height: 13;
+}
+#console-inspector-rail-body {
+    height: 1fr;
+    min-height: 0;
+}
+ConsoleBoundedSection {
+    height: auto;
+    min-height: 0;
+}
+.console-staged-context-header {
+    height: auto;
+    min-height: 1;
+}
+.console-staged-source-row {
+    height: auto;
+    min-height: 1;
+    max-height: 1;
+    margin: 0;
+}
+"""
+STAGED_OVERFLOW_TEST_CSS = """
+#console-right-rail {
+    height: 100%;
+    min-height: 20;
+}
+#console-inspector-rail-body {
+    height: 1fr;
+    min-height: 0;
+}
+ConsoleBoundedSection {
+    height: auto;
+    min-height: 0;
+}
+.console-staged-context-header {
+    height: auto;
+    min-height: 1;
+}
+.console-staged-source-row {
+    height: 2;
+    min-height: 2;
+    max-height: 2;
+    margin: 0;
+}
+"""
+RUN_OWNER_TEST_CSS = """
+#console-right-rail {
+    height: 100%;
+    min-height: 20;
+}
+#console-inspector-rail-body {
+    height: 1fr;
+    min-height: 0;
+}
+#console-run-inspector,
+#console-run-inspector-state {
+    height: auto;
+    min-height: 0;
+}
+.console-bounded-section-viewport {
+    height: auto;
+    min-height: 0;
+}
+ConsoleBoundedSection {
+    height: auto;
+    min-height: 0;
+}
+"""
 
 
 def _inside(widget, owner) -> bool:
@@ -29,6 +111,8 @@ def _inside(widget, owner) -> bool:
 async def _open_inspector(pilot):
     if not pilot.app.screen.query_one("#console-right-rail").display:
         await pilot.click("#console-inspector-rail-open")
+    await pilot.pause()
+    pilot.app.screen._stop_console_transcript_sync_timer()
     await pilot.pause()
     return pilot.app.screen.query_one("#console-right-rail")
 
@@ -41,6 +125,25 @@ async def _overflow(section: ConsoleBoundedSection, rows: int = 21) -> None:
 
 def _wheel_down(widget: Widget) -> events.MouseScrollDown:
     return events.MouseScrollDown(widget, 0, 0, 0, 1, 0, False, False, False)
+
+
+def _fully_inside_outer(header: Widget, outer: Widget) -> bool:
+    return (
+        header.region.y >= outer.content_region.y
+        and header.region.bottom <= outer.content_region.bottom
+    )
+
+
+def _staged_state(row_count: int) -> ConsoleStagedContextState:
+    return ConsoleStagedContextState(
+        heading="Sources",
+        summary="",
+        rows=tuple(
+            ConsoleDisplayRow(f"Source {index}", f"value {index}")
+            for index in range(row_count)
+        ),
+        source_count=row_count,
+    )
 
 
 @pytest.mark.asyncio
@@ -57,62 +160,132 @@ async def test_outer_hint_is_pinned_third_child_with_exact_nonfocusable_copy():
 
 
 @pytest.mark.asyncio
-async def test_outer_hint_uses_counterfactual_ten_eleven_ten_transition():
+async def test_terminal_resize_drives_counterfactual_hint_without_feedback_loop():
+    async with make_console_pilot(size=(160, 80)) as pilot:
+        rail = await _open_inspector(pilot)
+        body = rail.query_one("#console-inspector-rail-body")
+        hint = rail.query_one(f"#{INSPECTOR_OUTER_HINT_ID}", Static)
+        await body.remove_children()
+        child = Static("fixed demand", id="outer-fixed-child")
+        child.styles.height = 30
+        await body.mount(child)
+        await pilot.resize_terminal(160, 79)
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: (
+                not rail._outer_reconcile_scheduled
+                and hint.display is False
+                and body.content_region.height >= 30
+            ),
+            description="fixed demand fitting counterfactual viewport",
+        )
+        fitting_terminal_height = pilot.app.size.height - (
+            body.content_region.height - 30
+        )
+        await pilot.resize_terminal(160, fitting_terminal_height)
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: (
+                not rail._outer_reconcile_scheduled
+                and hint.display is False
+                and body.content_region.height == 30
+            ),
+            description="fixed demand exactly fitting counterfactual viewport",
+        )
+        settled_count = rail._outer_reconcile_count
+        await pilot.pause()
+        await pilot.pause()
+        assert rail._outer_reconcile_count == settled_count
+
+        await pilot.resize_terminal(160, fitting_terminal_height - 1)
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: (
+                not rail._outer_reconcile_scheduled
+                and hint.display is True
+                and body.content_region.height == 28
+            ),
+            description="terminal shrink reserving one outer hint row",
+        )
+        assert str(hint.renderable) == INSPECTOR_OUTER_HINT
+        assert hint.region.height == 1
+
+        body.scroll_end(animate=False, immediate=True)
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: body.scroll_y == body.max_scroll_y and str(hint.renderable) == "",
+            description="outer hint blanking at the terminal-resize scroll end",
+        )
+
+        await pilot.resize_terminal(160, fitting_terminal_height)
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: (
+                not rail._outer_reconcile_scheduled
+                and hint.display is False
+                and body.content_region.height >= 30
+            ),
+            description="terminal growth removing the counterfactual slot",
+        )
+        assert body.scroll_y == 0
+
+
+@pytest.mark.asyncio
+async def test_virtual_size_only_body_update_invalidates_owner_and_settles_cue(
+    monkeypatch,
+):
     async with make_console_pilot(size=(160, 45)) as pilot:
         rail = await _open_inspector(pilot)
         body = rail.query_one("#console-inspector-rail-body")
         hint = rail.query_one(f"#{INSPECTOR_OUTER_HINT_ID}", Static)
         await body.remove_children()
-        # The rail's one-cell border leaves 11 content rows: one header and
-        # the exact ten-row counterfactual body viewport exercised below.
-        rail.styles.height = 12
-        child = Static("ten", id="outer-fixed-child")
-        child.styles.height = 10
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: (
+                body.content_region.height > 0 and not rail._outer_reconcile_scheduled
+            ),
+            description="empty outer owner geometry",
+        )
+
+        virtual_only_updates = []
+        owner_invalidations = []
+        original_size_updated = body._size_updated
+        original_owner_callback = body._on_geometry_changed
+
+        def observe_size_updated(size, virtual_size, container_size, layout=True):
+            previous_size = body.size
+            previous_virtual_size = body.virtual_size
+            updated = original_size_updated(
+                size,
+                virtual_size,
+                container_size,
+                layout,
+            )
+            if previous_size == size and previous_virtual_size != virtual_size:
+                virtual_only_updates.append((previous_virtual_size, virtual_size))
+            return updated
+
+        def observe_owner_invalidation():
+            owner_invalidations.append(body.virtual_size)
+            original_owner_callback()
+
+        monkeypatch.setattr(body, "_size_updated", observe_size_updated)
+        monkeypatch.setattr(body, "_on_geometry_changed", observe_owner_invalidation)
+        child = Static("virtual owner", id="outer-virtual-size-child")
+        child.styles.height = body.content_region.height + 2
         await body.mount(child)
-        rail.request_outer_reconcile()
 
         await _wait_for_right_rail_condition(
             pilot,
-            lambda: not rail._outer_reconcile_scheduled and hint.display is False,
-            description="ten rows without an outer hint slot",
+            lambda: (
+                bool(virtual_only_updates)
+                and bool(owner_invalidations)
+                and hint.display is True
+                and not rail._outer_reconcile_scheduled
+            ),
+            description="virtual-size invalidation settling the outer cue",
         )
-
-        child.styles.height = 11
-        child.refresh(layout=True)
-        rail.request_outer_reconcile()
-        await _wait_for_right_rail_condition(
-            pilot,
-            lambda: not rail._outer_reconcile_scheduled and hint.display is True,
-            description="eleven rows with an outer hint slot",
-        )
-        assert str(hint.renderable) == INSPECTOR_OUTER_HINT
-        assert hint.region.height == 1
-
-        child.styles.height = 10
-        child.refresh(layout=True)
-        rail.request_outer_reconcile()
-        await _wait_for_right_rail_condition(
-            pilot,
-            lambda: not rail._outer_reconcile_scheduled and hint.display is False,
-            description="ten rows after shrink without a sticky hint slot",
-        )
-        assert body.scroll_y == 0
-
-        child.styles.height = 11
-        child.refresh(layout=True)
-        rail.styles.height = 12
-        rail.request_outer_reconcile()
-        await _wait_for_right_rail_condition(
-            pilot,
-            lambda: hint.display is True and not rail._outer_reconcile_scheduled,
-            description="fixed child overflowing after terminal shrink",
-        )
-        rail.styles.height = 13
-        await _wait_for_right_rail_condition(
-            pilot,
-            lambda: hint.display is False and not rail._outer_reconcile_scheduled,
-            description="fixed child fitting after terminal growth",
-        )
+        assert body.virtual_size.height > body.content_region.height
 
 
 @pytest.mark.asyncio
@@ -137,6 +310,143 @@ async def test_outer_hint_slot_stays_but_copy_blanks_at_scroll_end():
         )
         assert hint.display is True
         assert hint.region.height == 1
+
+
+@pytest.mark.asyncio
+async def test_staged_owner_sync_drives_ten_eleven_ten_cue_and_clamp():
+    async with make_console_pilot(size=(160, 80), css=STAGED_ONE_ROW_TEST_CSS) as pilot:
+        rail = await _open_inspector(pilot)
+        outer = rail.query_one("#console-inspector-rail-body")
+        hint = rail.query_one(f"#{INSPECTOR_OUTER_HINT_ID}", Static)
+        tray = rail.query_one("#console-staged-context-tray", ConsoleStagedContextTray)
+        for child in tuple(outer.children):
+            if child is not tray:
+                await child.remove()
+
+        tray.sync_state(_staged_state(10))
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: (
+                tray.query_one(
+                    "#console-bounded-section-sources", ConsoleBoundedSection
+                ).desired_content_lines
+                == 10
+            ),
+            description="ten-source local owner reconciliation",
+        )
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: (
+                tray.region.height == outer.content_region.height
+                and not rail._outer_reconcile_scheduled
+                and hint.display is False
+            ),
+            description="ten-source counterfactual fit",
+        )
+        ten_row_demand = tray.query_one(
+            "#console-bounded-section-sources", ConsoleBoundedSection
+        ).desired_content_lines
+
+        tray.sync_state(_staged_state(11))
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: (
+                tray.query_one(
+                    "#console-bounded-section-sources", ConsoleBoundedSection
+                ).desired_content_lines
+                > ten_row_demand
+            ),
+            description="eleven-source local owner reconciliation",
+        )
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: hint.display is True and not rail._outer_reconcile_scheduled,
+            description="eleven-source outer owner overflow after local",
+        )
+        overflow_count = rail._outer_reconcile_count
+        await pilot.pause()
+        assert hint.display is True
+        assert outer.virtual_size.height > outer.content_region.height
+        assert rail._outer_reconcile_count == overflow_count
+        outer.scroll_end(animate=False, immediate=True)
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: outer.scroll_y == outer.max_scroll_y,
+            description="outer offset before owner shrink",
+        )
+
+        tray.sync_state(_staged_state(10))
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: (
+                tray.query_one(
+                    "#console-bounded-section-sources", ConsoleBoundedSection
+                ).desired_content_lines
+                == ten_row_demand
+                and hint.display is False
+                and outer.scroll_y == 0
+                and not rail._outer_reconcile_scheduled
+            ),
+            description="ten-source owner shrink removing slot and clamping",
+        )
+
+
+@pytest.mark.asyncio
+async def test_scroll_owner_cue_preserves_bold_and_clears_without_stale_underline():
+    css = """
+    .console-rail-section-title { text-style: bold; }
+    .console-rail-collapse-button:focus { text-style: bold underline; }
+    """
+    async with make_console_pilot(size=(160, 45), css=css) as pilot:
+        rail = await _open_inspector(pilot)
+        outer = rail.query_one("#console-inspector-rail-body")
+        collapse = rail.query_one("#console-inspector-rail-collapse", Button)
+        sources = rail.query_one(
+            "#console-bounded-section-sources", ConsoleBoundedSection
+        )
+        source_title = rail.query_one("#console-staged-context-title", Static)
+        await _overflow(sources)
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: sources.viewport.can_focus,
+            description="overflowing source owner for focus styling",
+        )
+
+        assert source_title.get_visual_style().bold
+        assert not source_title.get_visual_style().underline
+        sources.viewport.focus()
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: source_title.get_visual_style().underline,
+            description="active local header underline",
+        )
+        assert source_title.get_visual_style().bold
+
+        collapse.focus()
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: (
+                collapse.get_visual_style().bold
+                and collapse.get_visual_style().underline
+            ),
+            description="collapse focus declarative bold underline",
+        )
+        assert not source_title.get_visual_style().underline
+
+        outer.focus()
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: collapse.get_visual_style().underline,
+            description="outer owner title underline",
+        )
+        outside = pilot.app.screen.query_one("#console-native-composer")
+        outside.focus()
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: not collapse.get_visual_style().underline,
+            description="declarative collapse style restored on focus leave",
+        )
+        assert not source_title.get_visual_style().underline
 
 
 @pytest.mark.asyncio
@@ -217,16 +527,8 @@ async def test_navigation_from_scope_uses_first_following_boundary():
 
         await _wait_for_right_rail_condition(
             pilot,
-            lambda: (
-                _inside(
-                    pilot.app.focused,
-                    rail.query_one(
-                        "#console-bounded-section-run", ConsoleBoundedSection
-                    ),
-                )
-                or pilot.app.focused.id == "console-inspector-rail-body"
-            ),
-            description="Scope navigating to the following Run boundary",
+            lambda: pilot.app.focused is rail.query_one("#console-inspector-rail-body"),
+            description="Scope navigating exactly to outer body for inert Run",
         )
 
         run_status = rail.query_one("#console-inspector-run-status-summary")
@@ -237,6 +539,176 @@ async def test_navigation_from_scope_uses_first_following_boundary():
             pilot,
             lambda: pilot.app.focused is sources.viewport,
             description="run-status compact row navigating backward",
+        )
+
+
+@pytest.mark.asyncio
+async def test_navigation_focuses_overflow_viewport_contains_header_and_preserves_state():
+    async with make_console_pilot(
+        size=(160, 30), css=STAGED_OVERFLOW_TEST_CSS
+    ) as pilot:
+        rail = await _open_inspector(pilot)
+        outer = rail.query_one("#console-inspector-rail-body")
+        tray = rail.query_one("#console-staged-context-tray", ConsoleStagedContextTray)
+        tray.sync_state(_staged_state(12))
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: (
+                bool(
+                    list(
+                        tray.query(
+                            "#console-bounded-section-sources",
+                        )
+                    )
+                )
+                and tray.query_one(
+                    "#console-bounded-section-sources", ConsoleBoundedSection
+                ).viewport.can_focus
+            ),
+            description="real staged-source owner overflow",
+        )
+        sources = tray.query_one(
+            "#console-bounded-section-sources", ConsoleBoundedSection
+        )
+        sources.viewport.scroll_to(y=2, animate=False, immediate=True)
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: sources.viewport.scroll_y == 2,
+            description="target local offset before navigation",
+        )
+        tray_display = tray.display
+        section_display = sources.display
+
+        outer.focus()
+        await pilot.press("n")
+        header = sources.parent.children[0]
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: pilot.app.focused is sources.viewport,
+            description="overflowing target focuses its viewport exactly",
+        )
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: _fully_inside_outer(header, outer),
+            description="navigated external header fully contained",
+        )
+        assert sources.viewport.scroll_y == 2
+        assert tray.display is tray_display
+        assert sources.display is section_display
+
+
+@pytest.mark.asyncio
+async def test_navigation_focuses_first_enabled_visible_control_in_nonoverflow_target():
+    async with make_console_pilot(size=(160, 45)) as pilot:
+        rail = await _open_inspector(pilot)
+        inspector = rail.query_one("#console-run-inspector-state", ConsoleRunInspector)
+        actions = tuple(
+            replace(action, enabled=True, disabled_reason="")
+            if action.widget_id == "console-inspector-save-chatbook"
+            else action
+            for action in inspector.state.actions
+        )
+        rows = tuple(
+            row
+            for row in inspector.state.rows
+            if row.label
+            not in {
+                "Selected conversation",
+                "Conversation source",
+                "Workspace",
+                "Resume state",
+                "Prefill (next send only)",
+                "Prefill (pinned)",
+                "Session provider",
+                "Session model",
+                "Session endpoint",
+                "Session sampling",
+                "Session persona",
+                "Selected message",
+                "Message actions",
+                "Keyboard",
+                "Variants",
+                "Excerpt",
+                "Delete confirmation",
+            }
+        )
+        inspector.sync_state(
+            replace(
+                inspector.state,
+                rows=rows,
+                actions=actions,
+                dictionary_rows=(),
+                dictionary_actions=(),
+                world_book_rows=(),
+                world_book_actions=(),
+            )
+        )
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: (
+                bool(list(rail.query("#console-inspector-save-chatbook")))
+                and not rail.query_one(
+                    "#console-inspector-save-chatbook", Button
+                ).disabled
+                and rail.query_one("#console-inspector-save-chatbook", Button).display
+            ),
+            description="real enabled Artifacts control",
+        )
+        artifacts = rail.query_one("#console-inspector-save-chatbook", Button)
+        artifacts.focus()
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: pilot.app.focused is artifacts,
+            description="enabled Artifacts control focus anchor",
+        )
+        await pilot.press("n")
+        settings_control = rail.query_one("#console-settings-open", Button)
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: pilot.app.focused is settings_control,
+            description="first enabled visible control in nonoverflow Settings",
+        )
+
+
+@pytest.mark.asyncio
+async def test_interior_direct_boundaries_n_then_p_do_not_wrap():
+    async with make_console_pilot(
+        size=(160, 45), css=STAGED_OVERFLOW_TEST_CSS
+    ) as pilot:
+        rail = await _open_inspector(pilot)
+        tray = rail.query_one("#console-staged-context-tray", ConsoleStagedContextTray)
+        tray.sync_state(_staged_state(12))
+        run = rail.query_one("#console-bounded-section-run", ConsoleBoundedSection)
+        run.set_allocation(1)
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: (
+                tray.query_one(
+                    "#console-bounded-section-sources", ConsoleBoundedSection
+                ).viewport.can_focus
+                and run.viewport.can_focus
+            ),
+            description="two real interior direct boundaries overflow",
+        )
+        sources = tray.query_one(
+            "#console-bounded-section-sources", ConsoleBoundedSection
+        )
+        sources.viewport.focus()
+        await pilot.press("n")
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: pilot.app.focused is run.viewport,
+            description="interior direct boundary next",
+        )
+        assert _fully_inside_outer(
+            run.parent.children[0], rail.query_one("#console-inspector-rail-body")
+        )
+
+        await pilot.press("p")
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: pilot.app.focused is sources.viewport,
+            description="interior direct boundary previous",
         )
 
 
@@ -517,7 +989,7 @@ async def test_pointer_wheel_hands_from_local_boundary_to_outer_body():
 
 
 @pytest.mark.asyncio
-async def test_local_offset_survives_collapse_reopen_then_clamps_without_extra_writes(
+async def test_local_offset_survives_collapse_reopen_without_extra_writes(
     monkeypatch,
 ):
     async with make_console_pilot(size=(160, 45)) as pilot:
@@ -555,22 +1027,190 @@ async def test_local_offset_survives_collapse_reopen_then_clamps_without_extra_w
             description="same-mounted rail offset after reopen",
         )
         assert len(writes) == 2
+        await pilot.pause()
+        assert len(writes) == 2
 
-        content = section.viewport.children[0]
-        content.update("one\ntwo\nthree")
-        content.refresh(layout=True)
-        section.request_reconcile()
-        rail.request_outer_reconcile()
+
+@pytest.mark.asyncio
+async def test_run_sync_preserves_in_place_offsets_then_structural_shrink_clamps():
+    async with make_console_pilot(size=(160, 60), css=RUN_OWNER_TEST_CSS) as pilot:
+        rail = await _open_inspector(pilot)
+        outer = rail.query_one("#console-inspector-rail-body")
+        hint = rail.query_one(f"#{INSPECTOR_OUTER_HINT_ID}", Static)
+        inspector = rail.query_one("#console-run-inspector-state", ConsoleRunInspector)
+        run_wrapper = inspector.parent
+        for child in tuple(outer.children):
+            if child is not run_wrapper:
+                await child.remove()
+        for child in tuple(run_wrapper.children):
+            if child is not inspector:
+                await child.remove()
+        await pilot.resize_terminal(160, 59)
+        await pilot.resize_terminal(160, 60)
+        large_rows = tuple(
+            ConsoleDisplayRow(f"Dictionary {index}", f"value {index}")
+            for index in range(25)
+        )
+        base_rows = tuple(
+            row
+            for row in inspector.state.rows
+            if row.label
+            not in {
+                "Selected conversation",
+                "Conversation source",
+                "Workspace",
+                "Resume state",
+                "Prefill (next send only)",
+                "Prefill (pinned)",
+                "Session provider",
+                "Session model",
+                "Session endpoint",
+                "Session sampling",
+                "Session persona",
+                "Selected message",
+                "Message actions",
+                "Keyboard",
+                "Variants",
+                "Excerpt",
+                "Delete confirmation",
+            }
+        )
+        large_state = replace(
+            inspector.state,
+            rows=base_rows,
+            dictionary_rows=large_rows,
+            dictionary_actions=(),
+            world_book_rows=(),
+            world_book_actions=(),
+        )
+        before_growth_recompose = inspector.recompose_count
+        inspector.sync_state(large_state)
         await _wait_for_right_rail_condition(
             pilot,
             lambda: (
-                section.viewport.scroll_y == 0
+                inspector.recompose_count > before_growth_recompose
+                and "value 0"
+                in str(
+                    rail.query_one(
+                        "#console-inspector-dictionaries-row-0", Static
+                    ).renderable
+                )
+            ),
+            description="real structural Run owner growth committed",
+        )
+        section = rail.query_one(
+            "#console-bounded-section-chat-dictionaries", ConsoleBoundedSection
+        )
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: section.desired_content_lines >= 25,
+            description="Run dynamic rows measured through local owner",
+        )
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: (
+                section.viewport.max_scroll_y >= 4 and not section._reconcile_scheduled
+            ),
+            description="Run local owner geometry before outer",
+        )
+        desired = max(
+            child.virtual_region_with_margin.bottom
+            for child in outer.children
+            if child.display
+        )
+        without_hint = outer.content_region.height + (
+            hint.region.height if hint.display else 0
+        )
+        spacer_height = max(0, without_hint - desired + 2)
+        if spacer_height:
+            spacer = Static("", id="run-owner-fixed-spacer")
+            spacer.styles.height = spacer_height
+            await outer.mount(spacer)
+            await pilot.resize_terminal(160, 59)
+            await pilot.resize_terminal(160, 60)
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: (
+                outer.max_scroll_y >= 2
+                and hint.display is True
+                and not rail._outer_reconcile_scheduled
+            ),
+            description="Run outer owner geometry after local",
+        )
+        section.viewport.scroll_to(y=4, animate=False, immediate=True)
+        outer.scroll_to(y=2, animate=False, immediate=True)
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: section.viewport.scroll_y == 4 and outer.scroll_y == 2,
+            description="local and outer offsets before in-place sync",
+        )
+
+        updated_state = replace(
+            large_state,
+            dictionary_rows=tuple(
+                replace(row, value=f"updated {index}")
+                for index, row in enumerate(large_rows)
+            ),
+        )
+        before_recompose = inspector.recompose_count
+        inspector.sync_state(updated_state)
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: (
+                "updated 0"
+                in str(
+                    rail.query_one(
+                        "#console-inspector-dictionaries-row-0", Static
+                    ).renderable
+                )
                 and not section._reconcile_scheduled
                 and not rail._outer_reconcile_scheduled
             ),
-            description="clamped local offset after shrink",
+            description="same-key Run in-place owner sync",
         )
-        assert len(writes) == 2
+        assert inspector.recompose_count == before_recompose
+        assert (
+            rail.query_one(
+                "#console-bounded-section-chat-dictionaries", ConsoleBoundedSection
+            )
+            is section
+        )
+        assert section.viewport.scroll_y == 4
+        assert outer.scroll_y == 2
+
+        inspector.sync_state(replace(updated_state, dictionary_rows=large_rows[:2]))
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: (
+                rail.query_one(
+                    "#console-bounded-section-chat-dictionaries",
+                    ConsoleBoundedSection,
+                )
+                is not section
+            ),
+            description="real structural Run shrink replacement",
+        )
+        shrunk = rail.query_one(
+            "#console-bounded-section-chat-dictionaries", ConsoleBoundedSection
+        )
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: (
+                shrunk.desired_content_lines == 2
+                and shrunk.viewport.scroll_y == 0
+                and not shrunk._reconcile_scheduled
+            ),
+            description="real structural Run local shrink clamp",
+        )
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: (
+                outer.scroll_y <= outer.max_scroll_y
+                and hint.display is False
+                and not rail._outer_reconcile_scheduled
+            ),
+            description="real structural Run outer shrink clamp and cue update",
+        )
 
 
 @pytest.mark.asyncio

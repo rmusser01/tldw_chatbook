@@ -65,7 +65,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 
 
 @asynccontextmanager
-async def make_console_pilot(*, size=(160, 45)):
+async def make_console_pilot(*, size=(160, 45), css: str | None = None):
     """Mount a fresh, send-ready Console (ChatScreen) via the production harness.
 
     Mirrors ``test_console_left_rail.py``'s ``make_console_pilot``: rail-click
@@ -79,7 +79,14 @@ async def make_console_pilot(*, size=(160, 45)):
     """
     app = _build_test_app()
     _configure_native_ready_console(app)
-    host = ConsoleHarness(app)
+    if css is None:
+        host = ConsoleHarness(app)
+    else:
+
+        class StyledConsoleHarness(ConsoleHarness):
+            CSS = css
+
+        host = StyledConsoleHarness(app)
     async with host.run_test(size=size) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")

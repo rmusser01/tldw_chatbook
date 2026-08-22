@@ -58,6 +58,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
 from textual.events import DescendantBlur, DescendantFocus, Key, Resize
+from textual.geometry import Size
 from textual.widget import Widget
 from textual.widgets import Button, Input, Static, TextArea
 
@@ -89,6 +90,7 @@ from .rail_section_layout import outer_hint_required
 
 INSPECTOR_OUTER_HINT = "▼ more sections — scroll"
 INSPECTOR_OUTER_HINT_ID = "console-inspector-outer-scroll-hint"
+INSPECTOR_SCROLL_OWNER_CLASS = "console-inspector-scroll-owner"
 
 
 class _InspectorOuterBody(VerticalScroll):
@@ -110,6 +112,28 @@ class _InspectorOuterBody(VerticalScroll):
     def on_resize(self, _event: Resize) -> None:
         self._on_geometry_changed()
 
+    def _size_updated(
+        self,
+        size: Size,
+        virtual_size: Size,
+        container_size: Size,
+        layout: bool = True,
+    ) -> bool:
+        """Invalidate on committed size or virtual-size changes.
+
+        Textual is exact-pinned in this project; this narrow override covers
+        virtual-size-only changes whose ``Resize`` event does not bubble.
+        """
+
+        previous_size = self.size
+        previous_virtual_size = self.virtual_size
+        updated = super()._size_updated(size, virtual_size, container_size, layout)
+        if self.is_mounted and (
+            self.size != previous_size or self.virtual_size != previous_virtual_size
+        ):
+            self._on_geometry_changed()
+        return updated
+
 
 def _resolve_inspector_ownership_policy() -> InspectorOwnershipPolicy:
     """Resolve the opt-in strict policy at the production composition boundary."""
@@ -127,6 +151,13 @@ class ConsoleInspectorRail(Vertical):
     state, session settings summary, and the live-work card build all remain
     screen-owned concerns — this widget only renders the results). Nothing
     here reaches ``app_instance``.
+    """
+
+    DEFAULT_CSS = """
+    ConsoleInspectorRail .console-inspector-scroll-owner,
+    ConsoleInspectorRail .console-inspector-scroll-owner .console-rail-section-title {
+        text-style: bold underline;
+    }
     """
 
     def __init__(
@@ -206,10 +237,11 @@ class ConsoleInspectorRail(Vertical):
         )
         self._reported_unknown_fingerprints: set[tuple[str, ...]] = set()
         self._outer_reconcile_scheduled = False
+        self._outer_reconcile_dirty = False
         self._outer_reconcile_count = 0
         self._inspector_focus_active = False
+        self._navigation_generation = 0
         self._section_focus_history: dict[str, tuple[Widget, tuple[Widget, ...]]] = {}
-        self._header_text_styles: dict[Widget, object] = {}
         self._pending_focus_recoveries: set[Widget] = set()
 
     def on_mount(self) -> None:
@@ -220,9 +252,13 @@ class ConsoleInspectorRail(Vertical):
     def request_outer_reconcile(self) -> None:
         """Coalesce Inspector owner invalidation behind local section demand."""
 
-        if not self.is_mounted or self._outer_reconcile_scheduled:
+        if not self.is_mounted:
+            return
+        if self._outer_reconcile_scheduled:
+            self._outer_reconcile_dirty = True
             return
         self._outer_reconcile_scheduled = True
+        self._outer_reconcile_dirty = False
         self.call_after_refresh(self._run_scheduled_outer_reconcile)
 
     def _run_scheduled_outer_reconcile(self) -> None:
@@ -230,11 +266,35 @@ class ConsoleInspectorRail(Vertical):
 
         if not self.is_mounted:
             self._outer_reconcile_scheduled = False
+            self._outer_reconcile_dirty = False
             return
         if any(
             section._reconcile_scheduled
             for section in self.query(ConsoleBoundedSection)
         ):
+            self.call_after_refresh(self._run_scheduled_outer_reconcile)
+            return
+        # A local pass may have changed a fixed-height owner in this refresh.
+        # Let Textual commit that physical geometry before measuring the outer
+        # body; descendant Resize is not guaranteed for such changes.
+        self.refresh(layout=True)
+        self.call_after_refresh(self._finish_scheduled_outer_reconcile)
+
+    def _finish_scheduled_outer_reconcile(self) -> None:
+        """Measure after the settled local state has completed one layout pass."""
+
+        if not self.is_mounted:
+            self._outer_reconcile_scheduled = False
+            self._outer_reconcile_dirty = False
+            return
+        if any(
+            section._reconcile_scheduled
+            for section in self.query(ConsoleBoundedSection)
+        ):
+            self.call_after_refresh(self._run_scheduled_outer_reconcile)
+            return
+        if self._outer_reconcile_dirty:
+            self._outer_reconcile_dirty = False
             self.call_after_refresh(self._run_scheduled_outer_reconcile)
             return
         self._outer_reconcile_scheduled = False
@@ -265,7 +325,6 @@ class ConsoleInspectorRail(Vertical):
         if viewport_without_hint <= 0:
             return True
         required = outer_hint_required(desired_rows, viewport_without_hint)
-
         body.scroll_y = min(body.scroll_y, max(0, body.max_scroll_y))
         if hint.display is not required:
             # Clear the copy before changing layout, then measure/clamp again on
@@ -422,31 +481,108 @@ class ConsoleInspectorRail(Vertical):
             return
         event.stop()
         event.prevent_default()
-        self._focus_boundary(boundaries[target_index])
+        self._navigation_generation += 1
+        self._focus_boundary(
+            boundaries[target_index], generation=self._navigation_generation
+        )
 
     def _focus_boundary(
         self,
         boundary: tuple[ConsoleBoundedSection, Widget, Widget],
+        *,
+        generation: int,
     ) -> None:
         section, header, root = boundary
         try:
             outer = self.query_one("#console-inspector-rail-body", VerticalScroll)
         except (NoMatches, QueryError):
             return
+        target: Widget = outer
+        if section.viewport.can_focus and self._is_visible(section.viewport):
+            target = section.viewport
+        else:
+            for widget in root.query("*"):
+                if isinstance(widget, Widget) and self._is_enabled_focus_target(widget):
+                    target = widget
+                    break
+        target.focus()
+        # Focusing a descendant may make Textual reveal that control and push
+        # its external heading off the top edge. Header visibility is the
+        # navigation contract, so apply it after the focus target is settled.
         outer.scroll_to_widget(
             header,
             animate=False,
             immediate=True,
             force=True,
+            top=True,
         )
-        if section.viewport.can_focus and self._is_visible(section.viewport):
-            section.viewport.focus()
+        self.call_after_refresh(
+            self._reveal_boundary_header,
+            outer,
+            header,
+            target,
+            generation,
+        )
+
+    def _reveal_boundary_header(
+        self,
+        outer: VerticalScroll,
+        header: Widget,
+        target: Widget,
+        generation: int,
+    ) -> None:
+        """Repeat the reveal after Textual's focus scroll has committed."""
+
+        if not self._header_reveal_is_current(outer, header, target, generation):
             return
-        for widget in root.query("*"):
-            if isinstance(widget, Widget) and self._is_enabled_focus_target(widget):
-                widget.focus()
-                return
-        outer.focus()
+        outer.scroll_to(
+            y=max(0, header.virtual_region.y),
+            animate=False,
+            immediate=True,
+            force=True,
+        )
+        self.call_after_refresh(
+            self._finish_boundary_header_reveal,
+            outer,
+            header,
+            target,
+            generation,
+        )
+
+    def _finish_boundary_header_reveal(
+        self,
+        outer: VerticalScroll,
+        header: Widget,
+        target: Widget,
+        generation: int,
+    ) -> None:
+        """Reveal once more after late focus-layout work, if navigation is current."""
+
+        if not self._header_reveal_is_current(outer, header, target, generation):
+            return
+        outer.scroll_to(
+            y=max(0, header.virtual_region.y),
+            animate=False,
+            immediate=True,
+            force=True,
+        )
+
+    def _header_reveal_is_current(
+        self,
+        outer: VerticalScroll,
+        header: Widget,
+        target: Widget,
+        generation: int,
+    ) -> bool:
+        """Return whether a delayed reveal still belongs to the active navigation."""
+
+        return (
+            generation == self._navigation_generation
+            and outer.is_mounted
+            and header.is_mounted
+            and target.is_mounted
+            and self.app.focused is target
+        )
 
     def _body_controls(self, section: ConsoleBoundedSection) -> tuple[Widget, ...]:
         return tuple(
@@ -538,12 +674,8 @@ class ConsoleInspectorRail(Vertical):
         for header in (*headers, collapse):
             if header is None:
                 continue
-            if header not in self._header_text_styles:
-                self._header_text_styles[header] = header.styles.text_style
             active = header is active_header or (header is collapse and outer_active)
-            header.styles.text_style = (
-                "underline" if active else self._header_text_styles[header]
-            )
+            header.set_class(active, INSPECTOR_SCROLL_OWNER_CLASS)
 
     def on_descendant_focus(self, event: DescendantFocus) -> None:
         target = event.widget
