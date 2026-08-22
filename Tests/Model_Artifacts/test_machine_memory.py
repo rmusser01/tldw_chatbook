@@ -85,6 +85,34 @@ def test_snapshot_is_frozen_and_rejects_boolean_memory() -> None:
         _snapshot(total_bytes=True)  # type: ignore[arg-type]
 
 
+def test_darwin_non_arm_may_report_empty_partial_accelerator_evidence() -> None:
+    """The explicit unsupported Darwin branch must not invent accelerator facts."""
+    snapshot = MachineMemorySnapshot(
+        platform="darwin",
+        architecture="x86_64",
+        system_state=SystemMemoryState.OBSERVED,
+        accelerator_state=AcceleratorState.PARTIAL,
+        total_bytes=32 * GIB,
+        available_bytes=20 * GIB,
+        memory_kind=MemoryKind.SYSTEM,
+        accelerators=(),
+        system_reason=None,
+        accelerator_reason=ProbeReason.UNSUPPORTED_PLATFORM,
+    )
+
+    assert snapshot.accelerators == ()
+    assert snapshot.accelerator_reason is ProbeReason.UNSUPPORTED_PLATFORM
+
+
+def test_empty_partial_accelerator_exception_stays_darwin_non_arm_only() -> None:
+    """Broadening the exception would permit unsupported empty partial snapshots."""
+    with pytest.raises(ValueError, match="partial accelerators"):
+        _snapshot(
+            accelerator_state=AcceleratorState.PARTIAL,
+            accelerator_reason=ProbeReason.UNSUPPORTED_PLATFORM,
+        )
+
+
 def test_projection_uses_exact_32768_and_65536_scenarios() -> None:
     """A wrong scenario token count or allowance must alter this visible estimate."""
     projection = project_gguf_memory(4 * GIB, _snapshot())

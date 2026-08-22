@@ -237,6 +237,14 @@ class MachineMemorySnapshot:
                 raise ValueError("observed accelerators need facts and no reason")
             return
         if self.accelerator_state is AcceleratorState.PARTIAL:
+            empty_darwin_fallback = (
+                not self.accelerators
+                and self.platform == "darwin"
+                and self.architecture not in {"arm64", "aarch64"}
+                and self.accelerator_reason is ProbeReason.UNSUPPORTED_PLATFORM
+            )
+            if empty_darwin_fallback:
+                return
             if not self.accelerators or self.accelerator_reason is None:
                 raise ValueError("partial accelerators need facts and a reason")
             return
