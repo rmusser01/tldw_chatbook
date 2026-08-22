@@ -420,10 +420,14 @@ _COMPLETE_V1_STATEMENTS = (
     *_V1_INDEX_STATEMENTS,
 )
 
-_COMPLETE_V2_STATEMENTS = (
-    *_COMPLETE_V1_STATEMENTS,
+_V2_ADDITION_STATEMENTS = (
     *_V2_TABLE_STATEMENTS,
     *_V2_INDEX_STATEMENTS,
+)
+
+_COMPLETE_V2_STATEMENTS = (
+    *_COMPLETE_V1_STATEMENTS,
+    *_V2_ADDITION_STATEMENTS,
 )
 
 
@@ -489,20 +493,24 @@ class SyncStateSchemaSnapshot:
     indexes: tuple[IndexCensus, ...]
 
 
-_V2_TABLE_NAMES = frozenset(
+_V1_TABLE_NAMES = frozenset(
     {
         "import_sessions",
         "import_items",
         "import_payload_effects",
         "import_folder_effects",
         "import_membership_effects",
+    }
+)
+_V2_TABLE_NAMES = _V1_TABLE_NAMES | frozenset(
+    {
         "sync_migration_runs",
         "sync_roots",
         "sync_bindings",
         "sync_migration_items",
     }
 )
-_V2_INDEX_NAMES = frozenset(
+_V1_INDEX_NAMES = frozenset(
     {
         "idx_import_items_outcome",
         "idx_import_payload_state",
@@ -514,6 +522,10 @@ _V2_INDEX_NAMES = frozenset(
         "idx_import_folder_parent",
         "idx_import_items_target",
         "idx_import_items_source_session",
+    }
+)
+_V2_INDEX_NAMES = _V1_INDEX_NAMES | frozenset(
+    {
         "idx_sync_migration_runs_state",
         "idx_sync_roots_state",
         "idx_sync_roots_legacy_source",
@@ -530,9 +542,14 @@ def _normalize_sql(sql: str) -> str:
     return " ".join(sql.split())
 
 
-def _schema_snapshot(connection: sqlite3.Connection) -> SyncStateSchemaSnapshot:
-    canonical_objects = {("table", name) for name in _V2_TABLE_NAMES} | {
-        ("index", name) for name in _V2_INDEX_NAMES
+def _schema_snapshot(
+    connection: sqlite3.Connection,
+    *,
+    table_names: frozenset[str] = _V2_TABLE_NAMES,
+    index_names: frozenset[str] = _V2_INDEX_NAMES,
+) -> SyncStateSchemaSnapshot:
+    canonical_objects = {("table", name) for name in table_names} | {
+        ("index", name) for name in index_names
     }
     observed_objects = {
         (str(row[0]), str(row[1]))
@@ -542,7 +559,7 @@ def _schema_snapshot(connection: sqlite3.Connection) -> SyncStateSchemaSnapshot:
             (_SQLITE_INTERNAL_NAME_PATTERN,),
         )
     }
-    table_names = {
+    observed_table_names = {
         str(row[0])
         for row in connection.execute(
             """SELECT name FROM sqlite_master
@@ -550,13 +567,13 @@ def _schema_snapshot(connection: sqlite3.Connection) -> SyncStateSchemaSnapshot:
             (_SQLITE_INTERNAL_NAME_PATTERN,),
         )
     }
-    if table_names != _V2_TABLE_NAMES or observed_objects != canonical_objects:
+    if observed_table_names != table_names or observed_objects != canonical_objects:
         raise NotesSyncStateSchemaError(
             "The private Notes sync-state schema is incompatible with canonical v2."
         )
 
     tables: list[TableCensus] = []
-    for name in sorted(_V2_TABLE_NAMES):
+    for name in sorted(table_names):
         sql_row = connection.execute(
             "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
             (name,),
@@ -608,7 +625,7 @@ def _schema_snapshot(connection: sqlite3.Connection) -> SyncStateSchemaSnapshot:
         )
 
     indexes: list[IndexCensus] = []
-    for table_name in sorted(_V2_TABLE_NAMES):
+    for table_name in sorted(table_names):
         for list_row in connection.execute(
             """SELECT name, \"unique\", origin, partial
             FROM pragma_index_list(?) ORDER BY name""",
@@ -660,6 +677,22 @@ def _schema_snapshot(connection: sqlite3.Connection) -> SyncStateSchemaSnapshot:
 
 
 @cache
+def _canonical_v1_snapshot() -> SyncStateSchemaSnapshot:
+    with connect_private_sqlite(
+        "notes.sync_state_schema_oracle", Path(":memory:")
+    ) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        for statement in _COMPLETE_V1_STATEMENTS:
+            connection.execute(statement)
+        connection.execute("PRAGMA user_version = 1")
+        return _schema_snapshot(
+            connection,
+            table_names=_V1_TABLE_NAMES,
+            index_names=_V1_INDEX_NAMES,
+        )
+
+
+@cache
 def _canonical_v2_snapshot() -> SyncStateSchemaSnapshot:
     with connect_private_sqlite(
         "notes.sync_state_schema_oracle", Path(":memory:")
@@ -669,6 +702,18 @@ def _canonical_v2_snapshot() -> SyncStateSchemaSnapshot:
             connection.execute(statement)
         connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         return _schema_snapshot(connection)
+
+
+def _validate_v1_schema(connection: sqlite3.Connection) -> None:
+    observed = _schema_snapshot(
+        connection,
+        table_names=_V1_TABLE_NAMES,
+        index_names=_V1_INDEX_NAMES,
+    )
+    if observed != _canonical_v1_snapshot():
+        raise NotesSyncStateSchemaError(
+            "The private Notes sync-state schema is incompatible with canonical v1."
+        )
 
 
 def _validate_v2_schema(
@@ -715,8 +760,14 @@ def _initialize_schema(connection: sqlite3.Connection) -> None:
         current_version = _read_schema_version(connection)
         if current_version == SCHEMA_VERSION:
             _validate_v2_schema(connection, validate_version=True)
-        elif current_version in {0, 1}:
+        elif current_version == 0:
             for statement in _COMPLETE_V2_STATEMENTS:
+                connection.execute(statement)
+            _validate_v2_schema(connection, validate_version=False)
+            connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        elif current_version == 1:
+            _validate_v1_schema(connection)
+            for statement in _V2_ADDITION_STATEMENTS:
                 connection.execute(statement)
             _validate_v2_schema(connection, validate_version=False)
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")

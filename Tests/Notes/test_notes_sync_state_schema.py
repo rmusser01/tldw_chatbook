@@ -1100,6 +1100,80 @@ def test_upgrade_validates_complete_schema_while_version_is_still_v1(
     assert observed_versions == [(1, False)]
 
 
+@pytest.mark.parametrize("malformation", ("empty", "partial", "changed_index"))
+def test_claimed_v1_incomplete_or_malformed_schema_rejects_without_mutation(
+    tmp_path: Path,
+    malformation: str,
+) -> None:
+    database = tmp_path / f"claimed-v1-{malformation}.sqlite3"
+    with sqlite3.connect(database) as connection:
+        if malformation != "empty":
+            connection.executescript(_LEGACY_V1_SQL)
+        if malformation == "partial":
+            connection.execute("DROP TABLE import_membership_effects")
+        elif malformation == "changed_index":
+            connection.execute("DROP INDEX idx_import_items_outcome")
+            connection.execute(
+                """CREATE INDEX idx_import_items_outcome
+                ON import_items(outcome, session_id)"""
+            )
+        connection.execute("PRAGMA user_version = 1")
+        connection.commit()
+        before = (
+            connection.execute("PRAGMA user_version").fetchone(),
+            connection.execute(
+                """SELECT type, name, tbl_name, sql FROM sqlite_master
+                ORDER BY type, name"""
+            ).fetchall(),
+        )
+
+    with pytest.raises(NotesSyncStateSchemaError, match="incompatible"):
+        with notes_sync_state_transaction(database):
+            pass
+
+    with sqlite3.connect(database) as connection:
+        after = (
+            connection.execute("PRAGMA user_version").fetchone(),
+            connection.execute(
+                """SELECT type, name, tbl_name, sql FROM sqlite_master
+                ORDER BY type, name"""
+            ).fetchall(),
+        )
+    assert after == before
+
+
+def test_claimed_v1_validation_precedes_v2_ddl(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "claimed-v1-validation-order.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.executescript(_LEGACY_V1_SQL)
+        connection.execute("PRAGMA user_version = 1")
+    statements: list[str] = []
+    original_connect = schema_module.connect_private_sqlite
+
+    def traced_connect(*args, **kwargs):
+        connection = original_connect(*args, **kwargs)
+        connection.set_trace_callback(statements.append)
+        return connection
+
+    def reject_v1(connection: sqlite3.Connection) -> None:
+        assert connection.in_transaction
+        assert connection.execute("PRAGMA user_version").fetchone() == (1,)
+        assert not any("CREATE TABLE sync_migration_runs" in sql for sql in statements)
+        raise NotesSyncStateSchemaError("incompatible claimed v1")
+
+    monkeypatch.setattr(schema_module, "connect_private_sqlite", traced_connect)
+    monkeypatch.setattr(schema_module, "_validate_v1_schema", reject_v1, raising=False)
+
+    with pytest.raises(NotesSyncStateSchemaError, match="incompatible claimed v1"):
+        with notes_sync_state_transaction(database):
+            pass
+
+    assert not any("CREATE TABLE sync_migration_runs" in sql for sql in statements)
+
+
 def test_empty_database_initializes_the_canonical_v2_shared_schema(
     tmp_path: Path,
 ) -> None:
