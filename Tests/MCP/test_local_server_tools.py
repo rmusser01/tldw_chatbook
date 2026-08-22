@@ -35,10 +35,40 @@ from tldw_chatbook.MCP.local_server_tools import (
 )
 from tldw_chatbook.MCP.permission_store import MCPPermissionStore, definition_hash
 from tldw_chatbook.MCP.server import TldwMCPServer, _describe_local_tools
+from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
 
 BUILTIN_TOOL_NAMES = [descriptor["name"] for descriptor in _describe_local_tools()]
 TASK_TOOL_NAMES = {"todo_create", "todo_update", "todo_get", "todo_list"}
+
+
+def _pin_runtime_source(monkeypatch, source):
+    """Pin the runtime source the composed watchlists service will read.
+
+    The seam is ``local_server_tools.load_default_runtime_source_state`` --
+    the owner-module loader that ``build_server_local_provider`` injects as
+    ``runtime_source_loader=`` (TASK-18609). It used to be a
+    ``RuntimeSourceStateStore`` constructed in-module, and these tests went
+    on patching that vanished name for weeks (TASK-19569): four of them
+    errored at the monkeypatch line, and the two that passed
+    ``raising=False`` installed a never-read attribute and failed
+    downstream on a scrubbed ``ToolResult`` instead.
+
+    ``source`` may be a literal ``"local"``/``"server"`` or a zero-arg
+    callable, so a test can flip the source between calls. The loader
+    returns a real ``RuntimeSourceState`` -- the production shape, which
+    exercises ``WatchlistsToolService._runtime_source``'s attribute branch
+    rather than the bare-string convenience branch the old fakes used.
+
+    Deliberately NOT ``raising=False``: if this name is renamed or removed
+    again, every caller must fail loudly at the patch line.
+    """
+    resolve = source if callable(source) else (lambda: source)
+    monkeypatch.setattr(
+        local_server_tools,
+        "load_default_runtime_source_state",
+        lambda: RuntimeSourceState(active_source=resolve()),
+    )
 
 
 def _context():
@@ -190,22 +220,12 @@ def test_watchlists_registration_is_storage_lazy_and_server_mode_never_resolves_
         path_calls += 1
         raise AssertionError("server mode must not resolve the subscriptions path")
 
-    class ServerRuntimeStore:
-        def __init__(self, _path):
-            pass
-
-        def load(self):
-            return "server"
-
     monkeypatch.setattr(
         local_server_tools,
         "get_subscriptions_db_path",
         fail_path_resolution,
-        raising=False,
     )
-    monkeypatch.setattr(
-        local_server_tools, "RuntimeSourceStateStore", ServerRuntimeStore, raising=False
-    )
+    _pin_runtime_source(monkeypatch, "server")
     provider = build_server_local_provider(workspace, store)
     provider.list_catalog()
     provider.load_schema("local:watchlists_search_items")
@@ -236,13 +256,6 @@ def test_watchlists_first_local_call_opens_one_read_only_database(
     path_calls = 0
     constructions = []
 
-    class LocalRuntimeStore:
-        def __init__(self, _path):
-            pass
-
-        def load(self):
-            return "local"
-
     real_database = SubscriptionsDB
 
     def resolve_path():
@@ -254,15 +267,9 @@ def test_watchlists_first_local_call_opens_one_read_only_database(
         constructions.append((path, client_id, read_only))
         return real_database(path, client_id, read_only=read_only)
 
-    monkeypatch.setattr(
-        local_server_tools, "get_subscriptions_db_path", resolve_path, raising=False
-    )
-    monkeypatch.setattr(
-        local_server_tools, "RuntimeSourceStateStore", LocalRuntimeStore, raising=False
-    )
-    monkeypatch.setattr(
-        local_server_tools, "SubscriptionsDB", construct_database, raising=False
-    )
+    monkeypatch.setattr(local_server_tools, "get_subscriptions_db_path", resolve_path)
+    _pin_runtime_source(monkeypatch, "local")
+    monkeypatch.setattr(local_server_tools, "SubscriptionsDB", construct_database)
 
     provider = build_server_local_provider(workspace, store)
     assert path_calls == 0
@@ -303,11 +310,8 @@ def test_watchlists_lazy_resolver_closes_failure_and_retries(monkeypatch, tmp_pa
         local_server_tools,
         "get_subscriptions_db_path",
         lambda: tmp_path / "subscriptions.db",
-        raising=False,
     )
-    monkeypatch.setattr(
-        local_server_tools, "SubscriptionsDB", construct_database, raising=False
-    )
+    monkeypatch.setattr(local_server_tools, "SubscriptionsDB", construct_database)
     resolver = local_server_tools._LazyWatchlistsDBResolver()
 
     with pytest.raises(SubscriptionsDBReadError):
@@ -360,22 +364,13 @@ def test_watchlists_lazy_resolver_blocks_replacement_until_failed_close_succeeds
         constructions.append(candidate)
         return candidate
 
-    class LocalRuntimeStore:
-        def __init__(self, _path):
-            pass
-
-        def load(self):
-            return "local"
-
     monkeypatch.setattr(
         local_server_tools,
         "get_subscriptions_db_path",
         lambda: tmp_path / "subscriptions.db",
     )
     monkeypatch.setattr(local_server_tools, "SubscriptionsDB", construct_database)
-    monkeypatch.setattr(
-        local_server_tools, "RuntimeSourceStateStore", LocalRuntimeStore
-    )
+    _pin_runtime_source(monkeypatch, "local")
     provider = build_server_local_provider(workspace, store)
     _grant(store, provider, "watchlists_search_items")
     records: list[str] = []
@@ -430,11 +425,8 @@ def test_watchlists_lazy_resolver_concurrent_first_calls_retain_one_instance(
         local_server_tools,
         "get_subscriptions_db_path",
         lambda: tmp_path / "subscriptions.db",
-        raising=False,
     )
-    monkeypatch.setattr(
-        local_server_tools, "SubscriptionsDB", construct_database, raising=False
-    )
+    monkeypatch.setattr(local_server_tools, "SubscriptionsDB", construct_database)
     resolver = local_server_tools._LazyWatchlistsDBResolver()
 
     with ThreadPoolExecutor(max_workers=8) as pool:
@@ -458,22 +450,12 @@ def test_watchlists_unready_database_is_bounded_and_keeps_other_tools(
     else:
         before = None
 
-    class LocalRuntimeStore:
-        def __init__(self, _path):
-            pass
-
-        def load(self):
-            return "local"
-
     monkeypatch.setattr(
         local_server_tools,
         "get_subscriptions_db_path",
         lambda: database_path,
-        raising=False,
     )
-    monkeypatch.setattr(
-        local_server_tools, "RuntimeSourceStateStore", LocalRuntimeStore, raising=False
-    )
+    _pin_runtime_source(monkeypatch, "local")
     provider = build_server_local_provider(workspace, store)
     _grant(store, provider, "watchlists_search_items")
 
@@ -498,7 +480,6 @@ def test_watchlists_external_ask_refuses_before_storage_resolution(
         local_server_tools,
         "get_subscriptions_db_path",
         lambda: (_ for _ in ()).throw(AssertionError("must not resolve storage")),
-        raising=False,
     )
     provider = build_server_local_provider(workspace, store)
 
