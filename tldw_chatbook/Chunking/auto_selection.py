@@ -187,8 +187,9 @@ def _select_template(
     Excludes stored-invalid rows (ruling §8.8) and reserved names, scores
     each survivor individually guarded, and keeps the best
     ``(score, priority)`` under strictly-greater comparison — ties keep
-    the first-listed row (the listing is name-ordered, so the effective
-    order is priority-then-name; spec §0.2 states the coupling).
+    the first-listed row (the listing is ordered ``is_builtin DESC,
+    name ASC``, so the effective order is priority, then builtin, then
+    name; spec §0.2 states the coupling).
 
     Returns:
         ``(score, priority, name)`` of the winner, or ``None`` when no

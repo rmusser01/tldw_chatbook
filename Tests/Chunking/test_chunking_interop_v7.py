@@ -143,7 +143,9 @@ class TestNoIsSystemAnywhere:
                 continue
             source = path.read_text(encoding="utf-8", errors="replace")
             posix = rel.as_posix()
-            if re.search(r"\bis_system\b", source) and posix not in _JUSTIFIED_IS_SYSTEM_FILES or (
+            if re.search(r"\bis_system\b", source) and posix not in _JUSTIFIED_IS_SYSTEM_FILES:
+                offenders.append(posix)
+            elif (
                 re.search(r"\binclude_system\b", source)
                 and rel.parts[0] in _INCLUDE_SYSTEM_SCOPES
             ):
