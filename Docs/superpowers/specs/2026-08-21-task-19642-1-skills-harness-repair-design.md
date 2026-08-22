@@ -49,9 +49,10 @@ production ordering race:
    orphaned-manifest trust header. The list, import action, and blocked Skill
    row were already visible, while `_sync_library_canvas("skills")` logged a
    swallowed failure. Five subsequent instrumented ordered runs did not
-   reproduce the exception, but history and lifecycle tracing isolated the
-   race: rail selection starts the off-thread trust-posture worker before the
-   Skills canvas is mounted. If the worker projects after compose captured the
+   reproduce the exception, but history and lifecycle tracing identified a
+   matching race window: rail selection starts the off-thread trust-posture
+   worker before the Skills canvas is mounted. If the worker projects after
+   compose captured the
    old posture but before the replacement canvas mounts, strict targeted sync
    has no owner and drops `FAILED`, leaving the newly mounted canvas stale.
 
