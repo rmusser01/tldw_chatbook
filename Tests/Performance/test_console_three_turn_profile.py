@@ -10,6 +10,7 @@ import io
 import json
 import math
 import os
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -4989,6 +4990,93 @@ def test_remove_target_worktree_real_git_parent_swap_preserves_unrelated(
     ).exists()
 
 
+def test_remove_target_worktree_real_git_rejects_replaced_admin_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = _init_real_worktree_repository(tmp_path)
+    run_root = tmp_path / "run"
+    target = run_root / "candidate"
+    _add_real_worktree(repository, target, branch="candidate")
+    original_admin = _linked_worktree_admin(target)
+    detached_original = repository / ".git" / "detached-original-admin"
+    replacement_identity: tuple[int, int] | None = None
+    original_move = profile._move_worktree_admin_to_marker
+
+    def replace_then_move(
+        common: Path, target_text: str, admin_name: str, *claim
+    ) -> None:
+        nonlocal replacement_identity
+        original_admin.rename(detached_original)
+        shutil.copytree(detached_original, original_admin)
+        (original_admin / "replacement-sentinel").write_bytes(b"preserve")
+        metadata = original_admin.stat()
+        replacement_identity = (metadata.st_dev, metadata.st_ino)
+        original_move(common, target_text, admin_name, *claim)
+
+    monkeypatch.setattr(
+        profile, "_move_worktree_admin_to_marker", replace_then_move
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="^target_worktree_admin_identity_changed:candidate$",
+    ):
+        profile._remove_target_worktree(
+            repository, run_root, name="candidate"
+        )
+
+    assert replacement_identity is not None
+    restored = original_admin.stat()
+    assert (restored.st_dev, restored.st_ino) == replacement_identity
+    assert (original_admin / "replacement-sentinel").read_bytes() == b"preserve"
+    assert detached_original.is_dir()
+    marker = repository / ".git" / profile._worktree_admin_marker_name(
+        str(target)
+    )
+    assert (marker / "identity-conflict").is_file()
+    assert str(target) in profile._worktree_registrations(repository)
+
+
+def test_remove_target_worktree_real_git_rejects_claim_replacement_before_delete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = _init_real_worktree_repository(tmp_path)
+    run_root = tmp_path / "run"
+    target = run_root / "candidate"
+    _add_real_worktree(repository, target, branch="candidate")
+    original_delete = profile._delete_worktree_admin_marker
+    detached_claim = repository / ".git" / "detached-claimed-admin"
+
+    def replace_then_delete(
+        common: Path, target_text: str, **kwargs
+    ) -> None:
+        marker = common / profile._worktree_admin_marker_name(target_text)
+        claimed = marker / "admin"
+        claimed.rename(detached_claim)
+        shutil.copytree(detached_claim, claimed)
+        (claimed / "replacement-sentinel").write_bytes(b"preserve")
+        original_delete(common, target_text, **kwargs)
+
+    monkeypatch.setattr(
+        profile, "_delete_worktree_admin_marker", replace_then_delete
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="^target_worktree_admin_marker_conflict:candidate$",
+    ):
+        profile._remove_target_worktree(
+            repository, run_root, name="candidate"
+        )
+
+    marker = repository / ".git" / profile._worktree_admin_marker_name(
+        str(target)
+    )
+    assert (marker / "admin/replacement-sentinel").read_bytes() == b"preserve"
+    assert detached_claim.is_dir()
+    assert (run_root / ".candidate-cleanup").is_dir()
+
+
 def test_remove_target_worktree_real_git_unregisters_absent_exact_target(
     tmp_path: Path,
 ) -> None:
@@ -5097,8 +5185,10 @@ def test_remove_target_worktree_real_git_resumes_after_admin_marker_deleted(
     _add_real_worktree(repository, target, branch=name)
     original_delete_marker = profile._delete_worktree_admin_marker
 
-    def delete_then_interrupt(common: Path, target_text: str) -> None:
-        original_delete_marker(common, target_text)
+    def delete_then_interrupt(
+        common: Path, target_text: str, **kwargs
+    ) -> None:
+        original_delete_marker(common, target_text, **kwargs)
         raise KeyboardInterrupt("post-unregister checkpoint")
 
     monkeypatch.setattr(
@@ -5262,9 +5352,12 @@ def test_remove_target_worktree_real_git_preserves_unrelated_that_goes_missing(
     _add_real_worktree(repository, unrelated, branch="unrelated")
     original_move = profile._move_worktree_admin_to_marker
 
-    def move_then_detach(common: Path, target_text: str, admin_name: str) -> None:
-        original_move(common, target_text, admin_name)
+    def move_then_detach(
+        common: Path, target_text: str, admin_name: str, *claim
+    ) -> int:
+        claimed = original_move(common, target_text, admin_name, *claim)
         unrelated.rename(detached)
+        return claimed
 
     monkeypatch.setattr(
         profile, "_move_worktree_admin_to_marker", move_then_detach
@@ -5335,6 +5428,72 @@ def test_remove_target_worktree_real_git_same_target_contention_is_resumable(
 
     assert str(target) not in profile._worktree_registrations(repository)
     assert not (run_root / ".candidate-cleanup").exists()
+
+
+@pytest.mark.parametrize("iteration", range(5))
+def test_remove_target_worktree_real_git_disappearance_race_is_stable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, iteration: int
+) -> None:
+    root = tmp_path / str(iteration)
+    root.mkdir()
+    repository = _init_real_worktree_repository(root)
+    run_root = root / "run"
+    target = run_root / "candidate"
+    _add_real_worktree(repository, target, branch="candidate")
+    original_strict = profile._strict_owned_directory
+    original_rename = profile.os.rename
+    loser_waiting = threading.Event()
+    allow_loser = threading.Event()
+    selection_lock = threading.Lock()
+    loser_selected = False
+
+    def delayed_strict(path: Path, *args, **kwargs):
+        nonlocal loser_selected
+        delay = False
+        if path == target:
+            with selection_lock:
+                if not loser_selected:
+                    loser_selected = True
+                    delay = True
+        if delay:
+            loser_waiting.set()
+            assert allow_loser.wait(timeout=5)
+        return original_strict(path, *args, **kwargs)
+
+    def release_after_quarantine(source, destination, *args, **kwargs):
+        result = original_rename(source, destination, *args, **kwargs)
+        if source == "candidate" and destination == ".candidate-cleanup":
+            allow_loser.set()
+        return result
+
+    monkeypatch.setattr(profile, "_strict_owned_directory", delayed_strict)
+    monkeypatch.setattr(profile.os, "rename", release_after_quarantine)
+
+    def cleanup() -> BaseException | None:
+        try:
+            profile._remove_target_worktree(
+                repository, run_root, name="candidate"
+            )
+        except BaseException as exc:
+            return exc
+        return None
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(cleanup)
+        assert loser_waiting.wait(timeout=5)
+        second = executor.submit(cleanup)
+        outcomes = (first.result(timeout=10), second.result(timeout=10))
+
+    assert any(outcome is None for outcome in outcomes)
+    assert all(
+        outcome is None
+        or str(outcome)
+        in {
+            "target_worktree_unregister_failed:candidate",
+            "target_worktree_admin_marker_conflict:candidate",
+        }
+        for outcome in outcomes
+    ), [repr(outcome) for outcome in outcomes]
 
 
 def test_remove_target_worktree_real_git_different_targets_are_resumable(
@@ -5435,10 +5594,12 @@ def test_remove_target_worktrees_attempts_both_when_first_cleanup_fails(
         _add_real_worktree(repository, run_root / name, branch=name)
     original_move_admin = profile._move_worktree_admin_to_marker
 
-    def fail_candidate(common: Path, target: str, admin_name: str) -> None:
+    def fail_candidate(
+        common: Path, target: str, admin_name: str, *claim
+    ) -> int:
         if target.endswith("/candidate"):
             raise RuntimeError("target_worktree_unregister_failed")
-        original_move_admin(common, target, admin_name)
+        return original_move_admin(common, target, admin_name, *claim)
 
     monkeypatch.setattr(
         profile, "_move_worktree_admin_to_marker", fail_candidate
