@@ -436,7 +436,25 @@ pre-existing idempotence test stayed green.
 ### Round-3 gates
 
 `Tests/App` + `Tests/Scheduling` + `Tests/Watchlists` + `Tests/RuntimePolicy`
-and `Tests/Subscriptions` re-run; repo-wide `--collect-only -q` re-counted.
+**1584 passed, 0 failed** (round 2's 1570 plus this round's 14; the round-2
+red is gone and the known `test_export_feed_press_survives_an_os_error_from_
+the_service` picker flake did not appear). `Tests/Subscriptions` **837 passed
+/ 1 skipped**, unchanged. Repo-wide `--collect-only -q` **56,100 collected,
+1 error** — `Tests/UI/test_library_file_notes_workspace.py::test_wide_files_
+task_return_restores_database_browse_receipt` is parametrized on
+`("push_phase", "push_copy", "git_count")` but its signature takes no
+arguments. Pre-existing and not ours: this branch has never touched that file
+(its last three commits are unrelated file-notes work), and it arrived with
+the dev merge that also took collection from 55,015 to 56,100.
+
+`Tests/UI` is not one of this branch's gates and was not run to completion
+(14,686 tests), but because this round's `app.py` change lands in
+`TldwCli.__init__` — which the UI factories really do construct — the first
+1,050 UI tests were run and the 12 failures they produced were A/B'd against
+the same six files with the boundary capture removed: **11 failed without it
+vs 10 with it**, the same tests either way, one *more* red on the unpatched
+side. Load-sensitive pre-existing Console-agent reds, not this change.
+
 Live re-verified after the change: a real `SIGTERM` to a real `TldwCli`
 (headless, isolated `HOME`/`XDG`, throwaway DB, child process with the
 parent's own wall-clock kill) still runs the ordinary shutdown path — died
