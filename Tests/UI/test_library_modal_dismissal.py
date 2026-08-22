@@ -612,8 +612,8 @@ LIBRARY_MODAL_LAUNCH_EDGES = (
     _edge(
         _LIBRARY_SCREEN_FILE,
         "LibraryScreen",
-        "handle_library_notes_sync_browse",
-        SelectDirectory,
+        "handle_library_notes_lasting_folder_requested",
+        FileOpen,
     ),
     _edge(
         _LIBRARY_SCREEN_FILE,
