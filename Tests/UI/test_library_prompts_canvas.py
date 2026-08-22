@@ -1312,7 +1312,7 @@ async def test_prompts_canvas_supported_artifact_uses_shared_editor_and_read_onl
         user_preview = pilot.app.query_one("#library-prompt-user", TextArea)
         assert system_preview.read_only is True
         assert user_preview.read_only is True
-        assert system_preview.text == "# Role\n\nBe exact."
+        assert system_preview.text == "Be exact."
         assert user_preview.text == "Ship it."
         assert (
             pilot.app.query_one("#library-prompt-recipe-starter", Checkbox).value
@@ -1358,7 +1358,10 @@ async def test_prompts_canvas_shared_editor_patches_preview_without_recomposing_
             id(pilot.app.query_one("#library-prompt-system", TextArea))
             == preview_identity
         )
-        assert preview.text == "# Role\n\nBe concise."
+        # TASK-19602: a24a2202f's simplification mounts/patches the raw
+        # single-block content (its own test pins "Be exact." verbatim) --
+        # the compiled header no longer appears in these previews.
+        assert preview.text == "Be concise."
 
 
 @pytest.mark.asyncio

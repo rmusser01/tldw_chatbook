@@ -24367,11 +24367,25 @@ class LibraryScreen(BaseAppScreen):
         self._library_prompt_delete_pending_editor_prompt_id = None
 
     def _library_prompt_write_worker_is_active(self) -> bool:
-        """Return whether an admitted Prompt writer has not settled yet."""
+        """Return whether an admitted Prompt writer has not settled yet.
+
+        TASK-19602: the screen-owned worker manager is only reachable on a
+        mounted screen (``self.workers`` resolves through the active-app
+        context); headless callers (``_library_prompts_canvas_kwargs`` on
+        an unmounted instance) still get the app-owned half of the scan.
+        """
+        managers = [self.app_instance.workers]
+        try:
+            managers.append(self.workers)
+        except Exception:
+            # An unmounted screen's worker walk surfaces NoActiveAppError
+            # or its raw LookupError depending on entry point; neither
+            # exists off the app tree.
+            pass
         return any(
             worker.group in _LIBRARY_PROMPT_WRITE_WORKER_GROUPS
             and not worker.is_finished
-            for manager in (self.workers, self.app_instance.workers)
+            for manager in managers
             for worker in manager
         )
 
