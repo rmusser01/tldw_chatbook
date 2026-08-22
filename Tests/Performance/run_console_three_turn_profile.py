@@ -2011,7 +2011,13 @@ def acquire_campaign_lock(
     if _is_empty_private_directory(release_root) and not lock_root.exists():
         _rmdir_namespace(release_root)
     if _is_empty_private_directory(recovery_root) and not lock_root.exists():
-        _rmdir_namespace(recovery_root)
+        recovery_lineage = attempt_lineage(campaign_root / "attempts.jsonl")
+        if not recovery_lineage or recovery_lineage[-1] == {
+            "attempt_id": recovery_lineage[-1]["attempt_id"],
+            "state": "failed",
+            "reason_category": "interrupted",
+        }:
+            _rmdir_namespace(recovery_root)
     if _is_empty_private_directory(lock_root):
         try:
             _rename_namespace(lock_root, recovery_root)

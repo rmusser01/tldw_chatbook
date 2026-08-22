@@ -1441,6 +1441,24 @@ def test_campaign_acquisition_finishes_empty_release_marker_without_owner_token(
     assert not (tmp_path / ".campaign-release").exists()
 
 
+def test_campaign_acquisition_preserves_empty_recovery_for_running_attempt(
+    tmp_path: Path,
+) -> None:
+    _acquire_attempt(tmp_path)
+    ledger = tmp_path / "attempts.jsonl"
+    before = ledger.read_bytes()
+    (tmp_path / ".campaign-lock").rename(tmp_path / ".campaign-recovery")
+    (tmp_path / ".campaign-recovery" / "owner.json").unlink()
+
+    with pytest.raises(RuntimeError, match="^campaign_recovery_in_progress$"):
+        _acquire_attempt(tmp_path, pid=456)
+
+    assert (tmp_path / ".campaign-recovery").is_dir()
+    assert not any((tmp_path / ".campaign-recovery").iterdir())
+    assert not (tmp_path / ".campaign-lock").exists()
+    assert ledger.read_bytes() == before
+
+
 def test_campaign_live_exact_owner_recovery_refuses_without_mutation(
     tmp_path: Path,
 ) -> None:
