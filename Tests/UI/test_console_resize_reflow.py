@@ -14,7 +14,9 @@ from textual.widgets import Button, Static, Tooltip
 from tldw_chatbook.Chat.console_session_settings import ConsoleSettingsSummaryState
 from tldw_chatbook.UI.Console_Modules import left_rail as left_rail_module
 from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
+from tldw_chatbook.UI.Console_Modules.right_rail import ConsoleInspectorRail
 from tldw_chatbook.Widgets.Console.console_bounded_section import ConsoleBoundedSection
+from tldw_chatbook.app import TldwCli
 
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -35,6 +37,18 @@ def _ready_console_host() -> ConsoleHarness:
     app = _build_test_app()
     _configure_native_ready_console(app)
     return ConsoleHarness(app)
+
+
+class _ProductionResizeConsoleHarness(ConsoleHarness):
+    """Real ChatScreen hierarchy with the exact application stylesheet stack."""
+
+    CSS_PATH = TldwCli.CSS_PATH
+
+
+def _ready_production_console_host() -> _ProductionResizeConsoleHarness:
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    return _ProductionResizeConsoleHarness(app)
 
 
 def _pane_layout(console) -> dict:
@@ -395,6 +409,98 @@ async def test_height_resize_requests_one_coalesced_context_reconcile(
         await pilot.pause()
         assert reconcile_runs == stable_runs
         assert rail._allocation_reconcile_scheduled is False
+
+
+@pytest.mark.asyncio
+async def test_production_bounded_rail_resize_reconciles_geometry_and_focus() -> None:
+    """Resize, recompose, and shrink preserve honest local geometry and focus."""
+
+    host = _ready_production_console_host()
+    async with host.run_test(size=(160, 52)) as pilot:
+        screen = host.screen_stack[-1]
+        if not screen.query_one("#console-right-rail").display:
+            assert await pilot.click("#console-inspector-rail-open")
+        inspector = screen.query_one("#console-right-rail", ConsoleInspectorRail)
+        sources = inspector.query_one(
+            "#console-bounded-section-sources", ConsoleBoundedSection
+        )
+        target = Button("source action", id="production-resize-source-action")
+        await sources.viewport.remove_children()
+        await sources.viewport.mount(
+            Static("\n".join(f"resize source {row}" for row in range(29))),
+            target,
+        )
+        sources.request_reconcile()
+        inspector.request_outer_reconcile()
+        await _wait_for_context_condition(
+            pilot,
+            lambda: (
+                sources.desired_content_lines == 30
+                and sources.viewport.content_region.height == 20
+                and sources.viewport.max_scroll_y == 10
+                and sources.hint.display
+                and not inspector._outer_reconcile_scheduled
+            ),
+        )
+
+        target.focus()
+        await _wait_for_context_condition(
+            pilot,
+            lambda: (
+                pilot.app.focused is target
+                and sources.viewport.scroll_y == sources.viewport.max_scroll_y
+            ),
+        )
+        hit = screen.get_widget_at(target.region.x + 1, target.region.y)[0]
+        assert hit is target or target in hit.ancestors
+
+        await pilot.resize_terminal(160, 45)
+        await _wait_for_context_condition(
+            pilot,
+            lambda: (
+                sources.viewport.content_region.height == 20
+                and sources.viewport.scroll_y <= sources.viewport.max_scroll_y
+                and not inspector._outer_reconcile_scheduled
+            ),
+        )
+        assert pilot.app.focused is target
+        assert sources.region.contains_region(sources.viewport.region)
+        assert sources.region.contains_region(sources.hint.region)
+
+        original_section = sources
+        await sources.recompose()
+        await _wait_for_context_condition(
+            pilot,
+            lambda: not sources._reconcile_scheduled,
+        )
+        assert (
+            inspector.query_one(
+                "#console-bounded-section-sources", ConsoleBoundedSection
+            )
+            is original_section
+        )
+
+        await target.remove()
+        await sources.viewport.remove_children()
+        await sources.viewport.mount(
+            Static("\n".join(f"shrunk source {row}" for row in range(10)))
+        )
+        sources.request_reconcile()
+        inspector.request_outer_reconcile()
+        await _wait_for_context_condition(
+            pilot,
+            lambda: (
+                sources.desired_content_lines == 10
+                and sources.viewport.content_region.height == 10
+                and sources.viewport.scroll_y == 0
+                and not sources.hint.display
+                and not inspector._outer_reconcile_scheduled
+            ),
+        )
+        focused = pilot.app.focused
+        assert focused is not target
+        assert focused is not None and focused.is_mounted
+        assert focused is inspector or inspector in focused.ancestors
 
 
 @pytest.mark.asyncio

@@ -12,7 +12,6 @@ from textual.app import App, ComposeResult
 from textual.events import MouseDown, MouseScrollDown, MouseUp
 from textual.widgets import Button, Static
 
-from Tests.UI.consolidated_css import BUNDLED_STYLESHEET
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -28,6 +27,7 @@ from tldw_chatbook.Chat.console_session_settings import ConsoleSettingsSummarySt
 from tldw_chatbook.UI.Console_Modules import left_rail as left_rail_module
 from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
 from tldw_chatbook.UI.Console_Modules.right_rail import ConsoleInspectorRail
+from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Widgets.Console.console_bounded_section import (
     ConsoleBoundedSection,
 )
@@ -191,7 +191,7 @@ class _RailHarness(App[None]):
 class _ProductionConsoleHarness(ConsoleHarness):
     """Real ChatScreen host with the complete production CSS cascade."""
 
-    CSS_PATH = str(BUNDLED_STYLESHEET)
+    CSS_PATH = TldwCli.CSS_PATH
 
 
 async def _settle(pilot, passes: int = 5) -> None:
@@ -282,6 +282,186 @@ async def _open_all_production_context_sections(host, pilot) -> ConsoleLeftRail:
     return rail
 
 
+async def _open_production_inspector(host, pilot) -> ConsoleInspectorRail:
+    """Open the mounted Inspector without replacing the production shell."""
+
+    screen = host.screen_stack[-1]
+    rail = screen.query_one("#console-right-rail", ConsoleInspectorRail)
+    if not rail.display:
+        screen.query_one("#console-inspector-rail-open", Button).press()
+        await _settle(pilot, passes=8)
+    assert rail.display
+    return rail
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "terminal_size",
+    [pytest.param((235, 52), id="235x52"), pytest.param((160, 45), id="160x45")],
+)
+async def test_bounded_rail_shell_regions_are_compositor_contained(
+    terminal_size: tuple[int, int],
+) -> None:
+    """The real shell paints a 20-row Sources viewport plus its 21st-row cue."""
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = _ProductionConsoleHarness(app)
+
+    async with host.run_test(size=terminal_size) as pilot:
+        context = await _open_all_production_context_sections(host, pilot)
+        inspector = await _open_production_inspector(host, pilot)
+        screen = host.screen_stack[-1]
+        tray = inspector.query_one(
+            "#console-staged-context-tray", ConsoleStagedContextTray
+        )
+        sources = tray.query_one(
+            "#console-bounded-section-sources", ConsoleBoundedSection
+        )
+        await sources.viewport.remove_children()
+        content = Static(
+            "\n".join(f"source content {row}" for row in range(20)),
+            id="production-sources-boundary-content",
+        )
+        await sources.viewport.mount(content)
+        sources.request_reconcile()
+        inspector.request_outer_reconcile()
+        await _wait_for_rail_condition(
+            pilot,
+            context,
+            lambda: (
+                sources.desired_content_lines == 20
+                and sources.viewport.content_region.height == 20
+                and not sources.hint.display
+                and not inspector._outer_reconcile_scheduled
+            ),
+        )
+        assert tray.region.contains_region(sources.region)
+        assert sources.region.contains_region(sources.viewport.region)
+
+        content.update("\n".join(f"source content {row}" for row in range(21)))
+        sources.request_reconcile()
+        inspector.request_outer_reconcile()
+        await _wait_for_rail_condition(
+            pilot,
+            context,
+            lambda: (
+                sources.desired_content_lines == 21
+                and sources.viewport.content_region.height == 20
+                and sources.hint.display
+                and str(sources.hint.renderable) == LOCAL_HINT
+                and not inspector._outer_reconcile_scheduled
+            ),
+        )
+
+        assert context.display and inspector.display
+        assert all(
+            context.query_one(f"#console-rail-section-header-{section_id}").open
+            for section_id in SECTION_IDS
+        )
+        assert tray.region.contains_region(sources.region)
+        assert sources.region.contains_region(sources.viewport.region)
+        assert sources.region.contains_region(sources.hint.region)
+        assert not sources.viewport.region.overlaps(sources.hint.region)
+        outer_hint = inspector.query_one("#console-inspector-outer-scroll-hint", Static)
+        assert outer_hint.display
+        assert str(outer_hint.renderable) == OUTER_HINT
+        assert not sources.hint.region.overlaps(outer_hint.region)
+        assert inspector.region.contains_region(outer_hint.region)
+
+        local_point = (
+            sources.hint.region.x + 1,
+            sources.hint.region.y,
+        )
+        local_hit = screen.get_widget_at(*local_point)[0]
+        assert local_hit is sources.hint or sources.hint in local_hit.ancestors
+        outer_point = (outer_hint.region.x + 1, outer_hint.region.y)
+        outer_hit = screen.get_widget_at(*outer_point)[0]
+        assert outer_hit is outer_hint or outer_hint in outer_hit.ancestors
+        rendered = "\n".join(
+            "".join(segment.text for segment in strip)
+            for strip in screen._compositor.render_strips()
+        )
+        assert LOCAL_HINT in rendered
+        assert OUTER_HINT in rendered
+
+        hint_region = sources.hint.region
+        sources.viewport.scroll_end(animate=False, immediate=True)
+        await _wait_for_rail_condition(
+            pilot,
+            context,
+            lambda: (
+                sources.viewport.scroll_y == sources.viewport.max_scroll_y
+                and str(sources.hint.renderable) == ""
+            ),
+        )
+        assert sources.hint.display
+        assert sources.hint.region == hint_region
+
+
+@pytest.mark.asyncio
+async def test_production_inspector_counterfactual_ten_eleven_ten_reconciles() -> None:
+    """The real Inspector adds and removes its pinned slot without feedback."""
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = _ProductionConsoleHarness(app)
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        inspector = await _open_production_inspector(host, pilot)
+        outer = inspector.query_one("#console-inspector-rail-body")
+        hint = inspector.query_one("#console-inspector-outer-scroll-hint", Static)
+        await outer.remove_children()
+        content = Static("counterfactual content", id="production-outer-demand")
+        content.styles.height = 10
+        await outer.mount(content)
+        inspector.request_outer_reconcile()
+        await _settle(pilot, passes=8)
+        target_rail_height = inspector.region.height - (
+            outer.content_region.height - 10
+        )
+        for _ in range(2):
+            inspector.styles.height = target_rail_height
+            inspector.styles.min_height = target_rail_height
+            inspector.styles.max_height = target_rail_height
+            inspector.refresh(layout=True)
+            inspector.request_outer_reconcile()
+            await _settle(pilot, passes=8)
+            correction = outer.content_region.height - 10
+            if correction == 0:
+                break
+            target_rail_height -= correction
+
+        assert outer.content_region.height == 10
+        assert outer.virtual_size.height == 10
+        assert hint.display is False
+
+        content.styles.height = 11
+        content.refresh(layout=True)
+        inspector.request_outer_reconcile()
+        await _settle(pilot, passes=8)
+        assert outer.virtual_size.height == 11
+        assert outer.content_region.height == 9
+        assert hint.display
+        assert hint.region.height == 1
+        assert str(hint.renderable) == OUTER_HINT
+        assert not outer.region.overlaps(hint.region)
+
+        outer.scroll_end(animate=False, immediate=True)
+        await _settle(pilot, passes=3)
+        assert outer.scroll_y == outer.max_scroll_y
+        assert str(hint.renderable) == ""
+
+        content.styles.height = 10
+        content.refresh(layout=True)
+        inspector.request_outer_reconcile()
+        await _settle(pilot, passes=8)
+        assert outer.virtual_size.height == 10
+        assert outer.content_region.height == 10
+        assert hint.display is False
+        assert outer.scroll_y == 0
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("terminal_size", "uses_outer_scroll"),
@@ -333,6 +513,16 @@ async def test_production_css_uses_uncompressed_header_demand_and_reaches_every_
                 )
                 viewport = bounded.viewport
                 hint = bounded.hint
+                expected_demand = max(
+                    (
+                        child.virtual_region_with_margin.bottom
+                        for child in viewport.children
+                        if child.display
+                    ),
+                    default=0,
+                )
+                assert bounded.desired_content_lines == expected_demand
+                assert hint not in viewport.children
                 assert bounded.region.contains_region(viewport.region), (
                     section_id,
                     bounded.region,
