@@ -40,9 +40,10 @@ from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
     LibraryHarness,
     _active_library_screen,
+    _build_test_app,
     _wait_for_library_shell,
+    _wait_for_selector,
 )
-from Tests.UI.app_factory import _build_test_app
 
 
 FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "superpowers_skills"
@@ -82,11 +83,15 @@ REAL_FIXTURE_SKILLS = (
 
 async def _open_skills_import_row(screen, pilot) -> None:
     """Open the Skills rail row, then the inline Import row below its toolbar."""
-    screen.query_one("#library-row-browse-skills", Button).press()
-    await pilot.pause()
-    await pilot.pause()
-    screen.query_one("#library-skills-import", Button).press()
-    await pilot.pause()
+    skills_row = await _wait_for_selector(
+        screen, pilot, "#library-row-browse-skills"
+    )
+    assert isinstance(skills_row, Button)
+    skills_row.press()
+    import_row = await _wait_for_selector(screen, pilot, "#library-skills-import")
+    assert isinstance(import_row, Button)
+    import_row.press()
+    await _wait_for_selector(screen, pilot, "#library-skills-import-path")
 
 
 async def _run_skills_import_via_ui(

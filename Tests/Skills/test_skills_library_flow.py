@@ -40,10 +40,10 @@ from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
     LibraryHarness,
     _active_library_screen,
+    _build_test_app,
     _wait_for_library_shell,
     _wait_for_selector,
 )
-from Tests.UI.app_factory import _build_test_app
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -136,20 +136,25 @@ def _wire_empty_non_skill_services(app) -> None:
     app.notes_scope_service = StaticLibraryNotesListScopeService([])
     app.media_reading_scope_service = StaticLibraryMediaScopeService([])
     app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.prompt_scope_service = object()
+    app.study_scope_service = object()
+    app.study_quiz_scope_service = object()
 
 
 async def _open_skill_editor(screen, pilot, skill_name: str) -> None:
     """Open the rail's Skills row, then a specific skill's row."""
-    screen.query_one("#library-row-browse-skills").press()
-    await pilot.pause()
-    await pilot.pause()
-    screen.query_one(f"#library-skill-row-{skill_name}", Button).press()
-    await pilot.pause()
-    for _ in range(150):
-        if screen._library_skill_detail is not None:
-            break
-        await pilot.pause(0.02)
-    await pilot.pause()
+    skills_row = await _wait_for_selector(
+        screen, pilot, "#library-row-browse-skills"
+    )
+    assert isinstance(skills_row, Button)
+    skills_row.press()
+    skill_row = await _wait_for_selector(
+        screen, pilot, f"#library-skill-row-{skill_name}"
+    )
+    assert isinstance(skill_row, Button)
+    skill_row.press()
+    await _wait_for_selector(screen, pilot, "#library-skill-name")
+    assert screen._library_skill_detail is not None
 
 
 async def _wait_for_skill_status(screen, pilot, *, attempts: int = 150) -> str:
@@ -694,7 +699,6 @@ async def test_skill_trust_bootstrap_modal_rejects_mismatched_confirmation():
     and refuse to dismiss on a mismatch instead of silently proceeding with
     a possibly-mistyped passphrase nobody could recover."""
     from textual import work
-    from textual.app import App
     from tldw_chatbook.UI.Screens.skills_screen import SkillTrustBootstrapModal
 
     class _ModalHost(ConsolidatedCSSApp):
@@ -1255,7 +1259,8 @@ async def test_list_mode_unlock_refreshes_snapshot_not_just_posture(tmp_path):
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-skills").press()
-        await pilot.pause(); await pilot.pause()
+        await pilot.pause()
+        await pilot.pause()
         assert screen._library_skills_view != "editor"
 
         # Spy the snapshot refresh (a @work-decorated method the production
