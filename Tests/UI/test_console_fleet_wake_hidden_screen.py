@@ -45,6 +45,7 @@ into; a mounted-but-undisplayed screen's sync never view-clears the mark;
 the displayed screen still clears it (Task 4 semantics preserved); and
 the screen wires the coordinator's conversation-in-view probe.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -115,7 +116,7 @@ async def _second_console_over_chat(app, pilot) -> tuple[ChatScreen, ChatScreen]
     the old ChatScreen resident, and navigating back built a SECOND live
     one on top of it. That is exactly the live 15970 failure, and it is
     now unreachable through navigation. The probe's cross-screen
-    resolution (``ChatScreen._console_wake_probe_composer``) survives as
+    resolution (``wiring._displayed_console_composer_draft``) survives as
     defence in depth for any Console screen that is mounted while a
     DIFFERENT Console screen is displayed, so the geometry is constructed
     here directly through ``push_screen`` rather than through a bug.
@@ -185,12 +186,8 @@ async def test_hidden_screens_probe_sees_the_displayed_screens_typed_draft(
             "harness precondition: the typed keys must land in the "
             "displayed composer through the production key path"
         )
-        hidden_session_id = (
-            hidden._ensure_console_chat_store().ensure_session().id
-        )
-        hidden_probe = (
-            hidden._console_chat_controller.wake_user_priority_probe
-        )
+        hidden_session_id = hidden._ensure_console_chat_store().ensure_session().id
+        hidden_probe = hidden._console_chat_controller.wake_user_priority_probe
         assert hidden_probe(hidden_session_id) is True, (
             "the user-wins-ties probe must see the draft the user is "
             "actually holding -- the hidden screen's coordinator firing "
@@ -245,9 +242,7 @@ async def test_hidden_screen_sync_never_view_clears_the_unseen_mark(tmp_path):
 
         await hidden._sync_console_native_session_tabs()
         await pilot.pause()
-        assert marks.has_mark(
-            session.id, ConversationLocalMarksService.FLEET_UNSEEN
-        ), (
+        assert marks.has_mark(session.id, ConversationLocalMarksService.FLEET_UNSEEN), (
             "a hidden resident screen's sync tick must not view-clear the "
             "unseen mark while the user is on another screen -- this is "
             "how the live run ended with no badge after the off-screen "
