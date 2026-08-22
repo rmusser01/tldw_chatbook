@@ -23,7 +23,7 @@
 - Test: `Tests/Chat/test_trace_event_projection.py`
 - Test: `Tests/UI/test_trajectory_live.py`
 
-- [ ] **Step 1: Write failing contract tests**
+- [x] **Step 1: Write failing contract tests**
 
 Cover stable source-derived IDs, conversation ID, immutable owner `source_seq` distinct
 from display position, human labels, actor/run/turn fields, status,
@@ -41,12 +41,12 @@ def test_causal_parent_precedes_concurrent_child() -> None:
     assert ids.index("agent-step:parent:4") < ids.index("agent-run:child")
 ```
 
-- [ ] **Step 2: Run the new file and confirm it fails**
+- [x] **Step 2: Run the new file and confirm it fails**
 
 Run: `.venv/bin/pytest -q Tests/Chat/test_trace_event_projection.py`
 Expected: failures for unsupported adapters/fields.
 
-- [ ] **Step 3: Extend `TrajectoryRecord` minimally**
+- [x] **Step 3: Extend `TrajectoryRecord` minimally**
 
 Add optional fields with legacy-safe defaults: `event_id`, `conversation_id`,
 `source_seq`, `label`, `status`,
@@ -54,20 +54,20 @@ Add optional fields with legacy-safe defaults: `event_id`, `conversation_id`,
 `replacement_event_id`, `observed_at`, `field_states`, and `sensitivity`.
 Keep `kind`, `seq`, and existing fields so screen/import callers remain source-compatible.
 
-- [ ] **Step 4: Add pure adapter functions in `trajectory.py`**
+- [x] **Step 4: Add pure adapter functions in `trajectory.py`**
 
 Implement `_records_from_agent_runs`, `_records_from_agent_steps`,
 `_records_from_retrieval_runs`, a generic `_record_from_sidecar_event` that preserves
 unknown/new event kinds, and deterministic `_causal_order`. Inputs are plain
 dicts/dataclasses; do not import DB or Textual modules. Source IDs use fixed prefixes.
 
-- [ ] **Step 5: Thread optional sources through the real snapshot builder**
+- [x] **Step 5: Thread optional sources through the real snapshot builder**
 
 Load agent run metadata/steps and retrieval provenance in the existing off-thread
 builder in `chat_screen.py`; the `TrajectoryScreen` still receives a completed snapshot
 and never queries a DB.
 
-- [ ] **Step 6: Verify compatibility and mutation strength**
+- [x] **Step 6: Verify compatibility and mutation strength**
 
 Run:
 
@@ -77,7 +77,7 @@ Run:
 
 Temporarily remove the causal-parent ordering branch and confirm its test fails.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 `git commit -m "feat(trace): add exhaustive causal event projection"`
 
@@ -91,23 +91,23 @@ Temporarily remove the causal-parent ordering branch and confirm its test fails.
 - Test: `Tests/Agents/test_agent_step_incremental_persistence.py`
 - Test: `Tests/DB/test_agent_runs_db.py`
 
-- [ ] **Step 1: Write failing crash-survival and no-duplicate tests**
+- [x] **Step 1: Write failing crash-survival and no-duplicate tests**
 
 Assert the first `on_step` call is readable from `agent_run_steps` before run completion,
 `created_at` is UTC and not derived from the monotonic budget clock, a simulated first
 write failure is recovered at terminal persistence, and successful completion does not
 append the same step twice.
 
-- [ ] **Step 2: Confirm failure with the focused tests.**
+- [x] **Step 2: Confirm failure with the focused tests.**
 
-- [ ] **Step 3: Stamp steps at creation**
+- [x] **Step 3: Stamp steps at creation**
 
 Add a dedicated injected UTC `wall_clock` to `LoopDeps`; do not reuse `clock`, which is
 monotonic and only suitable for durations. In `run_agent_loop.add`, set `created_at`
 from `wall_clock`. Keep the callback containment rule: a raising persistence callback
 never aborts a run.
 
-- [ ] **Step 4: Persist through the existing service `on_step` seam**
+- [x] **Step 4: Persist through the existing service `on_step` seam**
 
 Add an explicit-index `append_step(run_id, step.index, payload)`/batch equivalent using
 conflict-safe inserts. Compose it with the current UI callback. At terminal persistence,
@@ -115,11 +115,11 @@ insert the complete step list by explicit index so failed incremental writes are
 and successful ones are no-ops; then write status/result. Do not use the allocating
 `append_steps()` API for this path and do not add a second event store.
 
-- [ ] **Step 5: Verify**
+- [x] **Step 5: Verify**
 
 Run: `.venv/bin/pytest -q Tests/Agents/test_agent_step_incremental_persistence.py Tests/DB/test_agent_runs_db.py Tests/Agents/test_agent_service.py`
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 `git commit -m "feat(agents): persist trace steps incrementally"`
 
