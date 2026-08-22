@@ -1172,7 +1172,7 @@ Skip this commit if Task 1 already contains every required test-only change.
 - Test: `Tests/UI/test_console_session_settings.py`
 - Test: `Tests/Architecture/test_console_wave6_inventory.py`
 
-- [ ] **Step 1: Record the clean checksum boundary**
+- [x] **Step 1: Record the clean checksum boundary**
 
 Run:
 
@@ -1184,20 +1184,30 @@ git rev-parse HEAD
 
 Expected: clean status and the empty-diff SHA-256.
 
-- [ ] **Step 2: Mutate the configuration/active-session fence**
+- [x] **Step 2: Mutate the configuration/active-session fence**
 
-Use `apply_patch` to remove one required `fence_matches` conjunct. Run the exact
-race test that distinguishes it, for example:
+Use `apply_patch` to remove each required `fence_matches` conjunct independently.
+For the active-session fence, run the isolated post-create session-switch race:
 
 ```bash
 ../../.venv/bin/python -B -m pytest -q \
-  Tests/UI/test_console_session_settings.py::test_first_chat_consumer_refuses_session_switch_and_config_generation_races
+  Tests/UI/test_console_session_settings.py::test_first_chat_reserved_create_preserves_concurrent_active_session_switch
 ```
 
-Expected RED: the target is mutated/acknowledged or the pending intent is lost.
-Apply the exact inverse patch and rerun GREEN.
+For the current-defaults/config fence, run the strengthened post-create
+generation race:
 
-- [ ] **Step 3: Mutate rollback-before-release ordering**
+```bash
+../../.venv/bin/python -B -m pytest -q \
+  Tests/UI/test_console_session_settings.py::test_first_chat_generation_change_during_reserved_create_rolls_back
+```
+
+Expected RED: the active-session mutant acknowledges the target instead of
+preserving the competing session; the config mutant projects target defaults
+before rollback. Apply the exact inverse patch after each subprobe and rerun
+GREEN.
+
+- [x] **Step 3: Mutate rollback-before-release ordering**
 
 Temporarily change `rollback_and_release` to call `_release_first_chat_claim`
 before `rollback_mutation`. Run:
@@ -1210,7 +1220,7 @@ before `rollback_mutation`. Run:
 Expected RED: the shared event trace begins with `release` before prior-state
 projection. Restore and rerun GREEN.
 
-- [ ] **Step 4: Mutate replacement safety**
+- [x] **Step 4: Mutate replacement safety**
 
 Temporarily remove the exact-current-claim guard around release or
 acknowledgement. Run:
@@ -1224,7 +1234,7 @@ acknowledgement. Run:
 Expected RED: the replacement claim is released or acknowledged. Restore and
 rerun GREEN.
 
-- [ ] **Step 5: Mutate guarded acknowledgement**
+- [x] **Step 5: Mutate guarded acknowledgement**
 
 Temporarily treat a false guarded acknowledgement as success. Run:
 
@@ -1236,7 +1246,7 @@ Temporarily treat a false guarded acknowledgement as success. Run:
 Expected RED: the test observes missing rollback/retry state. Restore and rerun
 GREEN.
 
-- [ ] **Step 6: Mutate privacy-safe logging**
+- [x] **Step 6: Mutate privacy-safe logging**
 
 Temporarily include `str(exc)` in the first-chat warning. Run the focused privacy
 assertion added to `test_console_session_settings.py`.
@@ -1248,7 +1258,7 @@ assertion added to `test_console_session_settings.py`.
 
 Expected RED: secret/sentinel exception content appears. Restore and rerun GREEN.
 
-- [ ] **Step 7: Mutate mounted focus restoration**
+- [x] **Step 7: Mutate mounted focus restoration**
 
 Temporarily remove `_restore_first_chat_focus_fn` after async resync. Run:
 
@@ -1259,7 +1269,7 @@ Temporarily remove `_restore_first_chat_focus_fn` after async resync. Run:
 
 Expected RED: prior focus is not restored after repaint. Restore and rerun GREEN.
 
-- [ ] **Step 8: Prove structural oracles independently**
+- [x] **Step 8: Prove structural oracles independently**
 
 Run:
 
@@ -1272,7 +1282,7 @@ Expected: pass; the committed synthetic fixture independently exercises screen
 ownership, DOM, sibling reach-through, duplicate definition, and compatibility
 delegate failures.
 
-- [ ] **Step 9: Prove exact restoration**
+- [x] **Step 9: Prove exact restoration**
 
 After every mutation and at the end, require:
 
@@ -1285,6 +1295,47 @@ git status --porcelain
 
 Expected: checksum equals the clean boundary; no token residue; worktree clean;
 HEAD unchanged. Mutation probes produce no commit.
+
+**Task 4 execution evidence (2026-08-22):**
+
+- Final mutation candidate HEAD was
+  `1acee40a8a75f566c4db54624b8d6dcd14273238`. The committed `session.py`
+  blob was `fee6e6c40f8c4c5a2591d947028d7aee0c7257be`, its file SHA-256 was
+  `a2551c3e7a9832e6c67f7b2ca77a616ac658d9ba0ec3824050b2c30681bcb17f`,
+  and the clean binary-diff SHA-256 was
+  `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+- Removing `store.active_session_id == expected_active_id` produced `1 failed`:
+  the isolated reserved-create race returned `True` instead of `False` and
+  would acknowledge the target after a concurrent session switch. Exact
+  restoration produced `1 passed`.
+- Removing `current == defaults` produced `1 failed`: observed control
+  projections were `[('openai', 'model-a'), ('prior-control-provider',
+  'prior-control-model')]` instead of only the prior projection. Exact
+  restoration produced `1 passed`.
+- Releasing before `rollback_mutation()` produced `1 failed`: the event order
+  was `project, release, store-rollback, project` instead of `project,
+  store-rollback, project, release`. Exact restoration produced `1 passed`.
+- Replacing `acknowledge_current(claim)` with `acknowledge(claim)` produced
+  `1 failed, 1 passed`: the acknowledgement-exception replacement case returned
+  `True` instead of `False`, bypassing the current-revision replacement guard.
+  Exact restoration produced `2 passed`.
+- Treating false guarded acknowledgement as success produced `1 failed`: the
+  consumer returned `True` instead of rolling back and requeueing. Exact
+  restoration produced `1 passed`.
+- Including `str(exc)` in the warning produced `1 failed`: the
+  `SECRET-FIRST-CHAT-EXCEPTION` sentinel appeared in rendered logs. Exact
+  restoration produced `1 passed`.
+- Removing `_restore_first_chat_focus_fn(prior_focused_widget)` produced
+  `1 failed`: the mounted-resume behavioral oracle expected exactly one restore
+  call with the retained mounted widget and observed zero. Exact restoration
+  produced `1 passed`.
+- The independent structural non-vacuity oracle passed (`1 passed`). The final
+  combined mutation-target and structural selection passed `8 passed, 2
+  warnings in 3.43s`.
+- Every probe used an explicit inverse patch. Final `git diff --check` passed,
+  the `TASK3070_MUTATION` scan found zero residue, `git status --porcelain` was
+  empty, HEAD and both checksums were unchanged, and the probes created no
+  source or test commit.
 
 ### Task 5: Rebase, reconcile diagnostics, verify, and close out
 
