@@ -828,7 +828,7 @@ revision without broadening the default atomic-write path.
 - Modify: `Tests/Skills/test_atomic_write_concurrency.py:229-360`
 - Modify: `tldw_chatbook/Skills_Interop/atomic_write.py:34-135`
 
-- [ ] **Step 1: Replace the collision-fails test with a failing recovery test**
+- [x] **Step 1: Replace the collision-fails test with a failing recovery test**
 
 Pre-create the supplied deterministic temp with sentinel bytes, patch
 `secrets.token_hex` to return a known token, and record the path passed to the
@@ -861,7 +861,7 @@ def test_owner_only_collision_uses_fresh_sibling_and_preserves_existing_temp(
         assert _mode(target) == 0o600
 ```
 
-- [ ] **Step 2: Add a failing bounded-exhaustion test**
+- [x] **Step 2: Add a failing bounded-exhaustion test**
 
 Patch `os.open` to raise a distinct `FileExistsError` on each call, record the
 writer and cleanup seams, and assert exactly eight candidates are attempted:
@@ -907,7 +907,7 @@ def test_owner_only_collision_retry_is_bounded_and_preserves_unowned_paths(
     assert not target.exists()
 ```
 
-- [ ] **Step 3: Add a failing alternate-ownership cleanup test**
+- [x] **Step 3: Add a failing alternate-ownership cleanup test**
 
 Pre-create the supplied temp, force the writer to fail after writing the fresh
 alternate, and prove only the owned alternate is removed:
@@ -936,7 +936,7 @@ def test_owner_only_alternate_writer_failure_cleans_only_owned_sibling(
     assert not target.exists()
 ```
 
-- [ ] **Step 4: Run the three new tests and verify RED**
+- [x] **Step 4: Run the three new tests and verify RED**
 
 Run:
 
@@ -953,7 +953,7 @@ deterministic collision rather than selecting a fresh sibling. Add `secrets`
 to the test module's standard-library imports before these tests so the RED
 failures exercise production behavior rather than test setup.
 
-- [ ] **Step 5: Implement bounded owner-only candidate selection**
+- [x] **Step 5: Implement bounded owner-only candidate selection**
 
 Import `secrets`, add `_OWNER_ONLY_TEMP_CANDIDATES = 8`, and add a private
 iterator that yields the supplied path followed by seven random siblings:
@@ -972,7 +972,7 @@ that path. If all candidates collide, re-raise the final `FileExistsError`
 without cleanup. Do not catch other setup errors and do not alter the default
 branch.
 
-- [ ] **Step 6: Run the owner-only class and verify GREEN**
+- [x] **Step 6: Run the owner-only class and verify GREEN**
 
 Run:
 
@@ -983,7 +983,7 @@ Run:
 
 Expected: all owner-only tests pass.
 
-- [ ] **Step 7: Run only the focused TASK-19520 verification**
+- [x] **Step 7: Run only the focused TASK-19520 verification**
 
 Run:
 
@@ -1010,7 +1010,7 @@ Expected: focused tests, lint, formatting, and whitespace checks pass. Do not
 run the broad Skills or repository suite; the user explicitly limited this
 review fix to tests related to the modified functionality.
 
-- [ ] **Step 8: Commit the production fix**
+- [x] **Step 8: Commit the production fix**
 
 ```bash
 git add \
@@ -1019,7 +1019,7 @@ git add \
 git commit -m "fix(skills): recover from stale secure temps"
 ```
 
-- [ ] **Step 9: Close the post-review task amendment**
+- [x] **Step 9: Close the post-review task amendment**
 
 Update the TASK-19520 source Markdown directly: add the bounded stale-temp
 recovery to its implementation-plan and implementation-notes sections, record

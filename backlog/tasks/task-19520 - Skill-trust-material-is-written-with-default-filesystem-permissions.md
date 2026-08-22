@@ -1,7 +1,7 @@
 ---
 id: TASK-19520
 title: Skill trust material is written with default filesystem permissions
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-21 17:00'
@@ -86,6 +86,12 @@ change.
   writer-owned temp at `0o600`, applies POSIX `fchmod` before the writer runs,
   preserves unexplained collision files, closes descriptors on every path, and
   leaves ordinary atomic-write callers unchanged.
+- Post-review hardening now recovers when a failed cleanup leaves the
+  deterministic PID/thread temp occupied: owner-only writes preserve the stale
+  path and try at most seven random same-directory siblings, clean only the
+  candidate they created, and surface the eighth collision unchanged. Focused
+  amendment verification passed 55 related tests in 2.98s; Ruff check and
+  format checks passed; `git diff --check` passed.
 - Routed trust-store JSON and bytes publications through that path, secured the
   trust root before snapshot-first creation, normalized trust-owned directories
   to `0o700` on POSIX, and tightened legacy trust files/directories on their next
