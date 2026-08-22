@@ -145,7 +145,11 @@ class RemoteView(Widget):
         """Request navigation to the exact completed managed model."""
 
         def __init__(self, reference: ArtifactRef) -> None:
-            """Carry the verified managed root without deriving identity from UI copy."""
+            """Carry the verified managed root without deriving identity from UI copy.
+
+            Args:
+                reference: Exact verified managed root to reveal.
+            """
             super().__init__()
             self.reference = reference
 
@@ -153,7 +157,11 @@ class RemoteView(Widget):
         """Request runtime selection for the exact completed managed model."""
 
         def __init__(self, reference: ArtifactRef) -> None:
-            """Carry the verified managed root into the host-owned chooser."""
+            """Carry the verified managed root into the host-owned chooser.
+
+            Args:
+                reference: Exact verified managed root to configure.
+            """
             super().__init__()
             self.reference = reference
 
@@ -161,7 +169,11 @@ class RemoteView(Widget):
         """Notify the host that prior durable completion is no longer current."""
 
         def __init__(self, query: str) -> None:
-            """Carry the submitted provider query for lifecycle attribution."""
+            """Carry the submitted provider query for lifecycle attribution.
+
+            Args:
+                query: Provider search text that supersedes prior completion.
+            """
             super().__init__()
             self.query = query
 

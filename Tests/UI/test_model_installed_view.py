@@ -324,6 +324,42 @@ async def test_reveal_reference_focuses_the_exact_installed_row_without_activati
 
 
 @pytest.mark.asyncio
+async def test_reveal_reference_never_auto_focuses_delete_when_activation_unavailable(
+    tmp_path: Path,
+) -> None:
+    """A revealed non-activatable row keeps focus on a safe header action."""
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    target = ArtifactRef("remote-gguf", "a" * 40, "q4_k_m")
+    row = replace(
+        _managed_inventory_row(tmp_path, target),
+        activation_allowed=False,
+    )
+    view = InstalledView(service_factory=MagicMock(), legacy_dir=tmp_path)
+    view._loaded = True
+    view._rows = (row,)
+    app = _InstalledApp(view)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _wait_until(pilot, lambda: bool(view.query(".model-delete")))
+        refresh = view.query_one("#installed-models-refresh", Button)
+        refresh.focus()
+        view.reveal_reference(target)
+        await _wait_until(
+            pilot,
+            lambda: any(
+                widget.has_class("-revealed")
+                for widget in view.query(".installed-model-row")
+            ),
+        )
+        await pilot.pause()
+
+        delete = view.query_one(".model-delete", Button)
+        assert app.focused is refresh
+        assert app.focused is not delete
+
+
+@pytest.mark.asyncio
 async def test_reveal_reference_focuses_after_a_fresh_inventory_load(
     tmp_path: Path,
 ) -> None:

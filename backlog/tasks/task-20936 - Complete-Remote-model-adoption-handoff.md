@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-22 17:44'
-updated_date: '2026-08-22 18:40'
+updated_date: '2026-08-22 19:03'
 labels:
   - models
   - ui
@@ -46,5 +46,5 @@ Reason: ADR-025 already governs provider-neutral managed GGUF identity, explicit
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implemented a durable provider-attributed Remote completion state with exact Open Installed and explicit Llama.cpp/Llamafile configuration handoffs. The Models screen now owns pending runtime intent across recomposition; the management window validates and reports exact managed inventory outcomes without activation or server startup. Installed navigation highlights and focuses the exact reference, with distinct inline recovery when a successful refresh proves it missing versus when inventory loading fails. Added production-stylesheet compositor and keyboard coverage at 80 columns plus lifecycle, focus-order, failure, and recompose regressions. ADR required: no; existing ADR-025 continues to govern managed artifact identity and runtime authority. Verification: 73 Remote/widget tests passed; 115 Installed/GGUF tests passed; 9 focused real-host adoption tests passed; CSS bundle guard 4 passed; Ruff and git diff checks passed. A broader host selection reached 178 passed with one unrelated modal child-mount race; that existing test passed immediately in isolation. Full repository sweep was not run under the targeted-test policy.
+Implemented a durable provider-attributed Remote completion state with exact Open Installed and explicit Llama.cpp/Llamafile configuration handoffs. The Models screen owns pending runtime intent across recomposition; the management window validates exact managed inventory without activation or server startup. Installed navigation highlights and safely focuses the exact reference, retaining non-destructive focus when activation is unavailable. A refresh blocked by changing server lifecycle now synchronously rejects and clears both window and screen handoff intent. Added path-free missing-versus-load-failure recovery and Google-style constructor documentation. Qodo findings addressed: Delete is never auto-focused, refresh refusal cannot strand a handoff, and message arguments are documented. ADR required: no; ADR-025 remains authoritative. Verification after review fixes: 204 focused tests passed; Ruff, CSS bundle synchronization, and git diff checks passed. Full repository sweep was not run under the targeted-test policy.
 <!-- SECTION:NOTES:END -->

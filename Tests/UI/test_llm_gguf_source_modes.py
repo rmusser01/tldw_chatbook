@@ -494,6 +494,28 @@ async def test_configure_managed_gguf_waits_for_fresh_exact_inventory(
 
 
 @pytest.mark.asyncio
+async def test_configure_managed_gguf_rejects_if_server_starts_before_refresh(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A refresh guard race cannot strand an accepted runtime handoff."""
+    choice_a = ManagedGGUFChoice(REF_A, "Model A · Q4_K_M · 4 MiB · Managed")
+    _app, _pilot, context, _screen, window, _service = await _mount_models(
+        monkeypatch,
+        choices=(choice_a,),
+    )
+    try:
+        states = iter((False, False, True))
+        monkeypatch.setattr(window, "_server_active", lambda _provider: next(states))
+        generation = window._managed_gguf_inventory_generation
+
+        assert window.configure_managed_gguf("llamacpp", REF_B) is False
+        assert window._pending_managed_gguf_handoff is None
+        assert window._managed_gguf_inventory_generation == generation
+    finally:
+        await _close_context(context)
+
+
+@pytest.mark.asyncio
 async def test_inventory_runs_off_loop_and_stale_results_are_ignored(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

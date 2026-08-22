@@ -1577,7 +1577,9 @@ class LLMManagementWindow(Container):
         if reference in {choice.reference for choice in self._managed_gguf_choices}:
             self._commit_managed_gguf_handoff(provider, reference)
             return True
-        self._refresh_managed_gguf_inventory()
+        if not self._refresh_managed_gguf_inventory():
+            self._pending_managed_gguf_handoff = None
+            return False
         return True
 
     def _commit_managed_gguf_handoff(
@@ -1745,13 +1747,18 @@ class LLMManagementWindow(Container):
         if not self._managed_gguf_inventory_started:
             self._refresh_managed_gguf_inventory()
 
-    def _refresh_managed_gguf_inventory(self) -> None:
-        """Start a path-free, generation-fenced inventory thread worker."""
+    def _refresh_managed_gguf_inventory(self) -> bool:
+        """Start a path-free, generation-fenced inventory thread worker.
+
+        Returns:
+            ``True`` when a worker was scheduled, or ``False`` when current
+            lifecycle authority prevents a refresh.
+        """
 
         if self.app_instance is None:
-            return
+            return False
         if any(self._server_active(p) for p in self.GGUF_PROVIDERS):
-            return
+            return False
         self._managed_gguf_inventory_started = True
         self._managed_gguf_inventory_generation += 1
         generation = self._managed_gguf_inventory_generation
@@ -1762,6 +1769,7 @@ class LLMManagementWindow(Container):
             description="Loading managed GGUF models",
             exclusive=True,
         )
+        return True
 
     def _load_managed_gguf_inventory(self, generation: int) -> None:
         """Read store inventory off-loop and deliver only path-free choices."""

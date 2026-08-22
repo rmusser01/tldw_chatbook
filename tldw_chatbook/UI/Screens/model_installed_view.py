@@ -818,7 +818,7 @@ class InstalledView(Widget):
             self.set_timer(0.01, self._focus_revealed_after_recompose)
 
     def _focus_revealed_reference(self) -> bool:
-        """Scroll the revealed row into view and focus its first safe action."""
+        """Scroll the revealed row into view and focus activation when available."""
         reference = self._revealed_reference
         if reference is None:
             return False
@@ -836,17 +836,14 @@ class InstalledView(Widget):
         action = next(
             (
                 button
-                for button in row.query(".model-activate, .model-delete").results(
-                    Button
-                )
+                for button in row.query(".model-activate").results(Button)
                 if not button.disabled
             ),
             None,
         )
         if action is not None:
             action.focus()
-            return True
-        return False
+        return True
 
     def refresh_observations(self) -> None:
         """Refresh current exact refs without re-reading managed inventory."""

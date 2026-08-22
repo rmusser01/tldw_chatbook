@@ -3968,6 +3968,27 @@ def test_configure_runtime_request_opens_choice_and_preserves_exact_reference(
     )
 
 
+def test_runtime_refresh_rejection_clears_screen_owned_handoff():
+    """A synchronous lifecycle refusal cannot survive as pending intent."""
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+
+    reference = ArtifactRef("remote-gguf", "a" * 40, "q4_k_m")
+    screen = LLMScreen.__new__(LLMScreen)
+    screen.llm_window = MagicMock()
+    screen.llm_window.configure_managed_gguf.return_value = False
+    screen._remote_runtime_handoff = None
+    screen.notify = MagicMock()
+
+    screen._remote_runtime_selected(reference, "llamacpp")
+
+    assert screen._remote_runtime_handoff is None
+    screen.notify.assert_called_once_with(
+        "Stop the active Llama.cpp or Llamafile server, then configure this "
+        "managed model again.",
+        severity="warning",
+    )
+
+
 @pytest.mark.asyncio
 async def test_pending_runtime_handoff_replays_into_recomposed_models_window(
     monkeypatch,
