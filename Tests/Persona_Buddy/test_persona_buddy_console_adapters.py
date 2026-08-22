@@ -206,3 +206,89 @@ def test_trusted_public_events_require_safe_state_and_future_expiry() -> None:
             state="thinking",
             expires_at=time.monotonic() - 1.0,
         )
+
+
+@pytest.mark.asyncio
+async def test_terminal_dispose_fences_every_console_producer_and_bind() -> None:
+    """Disposal latches before cleanup and every later producer fails closed."""
+    controller = PersonaBuddyController()
+    adapter = PersonaBuddyConsoleAdapter(controller)
+    adapter.run_state("session-a", "validating")
+    adapter.approval_round("session-a", "round-1", pending=True)
+    adapter.tool_step("run-a", 1, "tool_call")
+    adapter.wake("conversation-a", "run-a", active=True)
+    voice_generation = adapter.next_voice_generation("session-a")
+    adapter.voice_state("session-a", voice_generation, "speaking")
+    adapter.publish(
+        BuddyLifecycleEvent(
+            source="explicit",
+            owner="trusted:operation",
+            state="thinking",
+            expires_at=time.monotonic() + 30.0,
+        )
+    )
+
+    adapter.dispose()
+    adapter.dispose()
+    adapter.bind_controller(PersonaBuddyController())
+    await controller.shutdown()
+
+    assert (
+        adapter.publish(
+            BuddyLifecycleEvent(
+                source="authored", owner="trusted:late", state="thinking"
+            )
+        )
+        is False
+    )
+    assert adapter.run_state("session-a", "validating") is None
+    assert adapter.approval_round("session-a", "round-2", pending=True) is None
+    assert adapter.tool_step("run-b", 2, "tool_call") is None
+    adapter.release_run("run-a")
+    assert adapter.wake("conversation-a", "run-b", active=True) is None
+    adapter.clear_wakes()
+    assert adapter.next_voice_generation("session-a") is None
+    assert adapter.voice_state("session-a", voice_generation + 1, "listening") is None
+    adapter.release_voice("session-a", voice_generation)
+    adapter.release_session("session-a")
+    adapter.release_all()
+
+    assert adapter.active_owner_count() == 0
+    assert controller.snapshot().state == "idle"
+    for name, value in vars(adapter).items():
+        if name.endswith(("_owners", "_generation")) or name == "_tokens":
+            assert not value, (name, value)
+
+
+@pytest.mark.unit
+def test_release_all_remains_reusable_but_dispose_is_terminal() -> None:
+    controller = PersonaBuddyController()
+    adapter = PersonaBuddyConsoleAdapter(controller)
+
+    adapter.run_state("session-a", "validating")
+    adapter.release_all()
+    assert adapter.run_state("session-a", "validating") is not None
+    adapter.dispose()
+    assert adapter.run_state("session-a", "validating") is None
+
+
+@pytest.mark.unit
+def test_expired_timed_owner_is_pruned_from_adapter_bookkeeping() -> None:
+    now = [time.monotonic()]
+    controller = PersonaBuddyController(clock=lambda: now[0])
+    adapter = PersonaBuddyConsoleAdapter(controller)
+    adapter._clock = lambda: now[0]
+    adapter.publish(
+        BuddyLifecycleEvent(
+            source="explicit",
+            owner="trusted:expiring",
+            state="thinking",
+            expires_at=now[0] + 10.0,
+        )
+    )
+    assert adapter.active_owner_count() == 1
+
+    now[0] += 11.0
+
+    assert adapter.active_owner_count() == 0
+    assert adapter._tokens == {}

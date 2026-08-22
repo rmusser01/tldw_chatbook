@@ -121,6 +121,8 @@ class PersonaBuddyConsoleAdapter:
     def __init__(self, controller: PersonaBuddyController | None) -> None:
         self._controller = controller
         self._lock = RLock()
+        self._clock = time.monotonic
+        self._disposed = False
         self._tokens: dict[tuple[str, str], PersonaBuddyLeaseToken] = {}
         self._run_generation: dict[str, int] = {}
         self._run_owners: dict[str, str] = {}
@@ -129,12 +131,13 @@ class PersonaBuddyConsoleAdapter:
         self._wake_owners: dict[tuple[str, str], str] = {}
         self._voice_owners: dict[tuple[str, int], str] = {}
         self._voice_generation: dict[str, int] = {}
+        self._next_voice_generation = 0
 
     def bind_controller(self, controller: PersonaBuddyController | None) -> None:
         """Bind the app controller once it exists during startup ordering."""
-        if controller is None:
-            return
         with self._lock:
+            if self._disposed or controller is None:
+                return
             if self._controller is None:
                 self._controller = controller
             elif self._controller is not controller:
@@ -152,13 +155,17 @@ class PersonaBuddyConsoleAdapter:
     def publish(self, event: BuddyLifecycleEvent) -> bool:
         """Acquire, replace, or release one exact content-free event owner."""
 
-        controller = self._controller
-        if controller is None:
-            return False
         key = (event.source, event.owner)
         with self._lock:
+            if self._disposed:
+                return False
+            self._prune_expired_locked()
+            controller = self._controller
+            if controller is None:
+                return False
             if event.terminal:
                 token = self._tokens.pop(key, None)
+                self._drop_owner_refs_locked(event.source, event.owner)
                 return token is not None and controller.release_state(token=token)
             token = controller.acquire_state(
                 source=event.source,
@@ -179,13 +186,15 @@ class PersonaBuddyConsoleAdapter:
             )
         )
 
-    def run_state(self, session_id: str, status: object) -> str | None:
+    def run_state(
+        self, session_id: str, status: object, *, run_owner: str | None = None
+    ) -> str | None:
         """Map one per-session run state, replacing on a new validation."""
 
-        if self._controller is None:
-            return None
         normalized = str(getattr(status, "value", status)).strip().lower()
         with self._lock:
+            if self._disposed or self._controller is None:
+                return None
             owner = self._run_owners.get(session_id)
             if normalized == "validating":
                 if owner is not None:
@@ -194,6 +203,10 @@ class PersonaBuddyConsoleAdapter:
                 self._run_generation[session_id] = generation
                 owner = self._owner("run", session_id, generation)
                 self._run_owners[session_id] = owner
+            elif run_owner is not None:
+                if owner != run_owner:
+                    return None
+                owner = run_owner
             elif owner is None and normalized in _RUN_STATES:
                 generation = self._run_generation.get(session_id, 0) + 1
                 self._run_generation[session_id] = generation
@@ -221,10 +234,10 @@ class PersonaBuddyConsoleAdapter:
     ) -> str | None:
         """Acquire or settle one exact approval round."""
 
-        if self._controller is None:
-            return None
         key = (session_id, round_id)
         with self._lock:
+            if self._disposed or self._controller is None:
+                return None
             owner = self._approval_owners.get(key)
             if not pending:
                 if owner is not None:
@@ -246,10 +259,10 @@ class PersonaBuddyConsoleAdapter:
     def tool_step(self, run_id: str, sequence: int, kind: str) -> str | None:
         """Pair a tool-call start with its exact result or run cleanup."""
 
-        if self._controller is None:
-            return None
         key = (run_id, sequence)
         with self._lock:
+            if self._disposed or self._controller is None:
+                return None
             if kind == _TOOL_START:
                 owner = self._tool_owners.get(key)
                 if owner is None:
@@ -274,6 +287,8 @@ class PersonaBuddyConsoleAdapter:
         """Release every still-live tool owner for one terminal run."""
 
         with self._lock:
+            if self._disposed:
+                return
             for key, owner in tuple(self._tool_owners.items()):
                 if key[0] == run_id:
                     self._release("tool", owner)
@@ -282,10 +297,10 @@ class PersonaBuddyConsoleAdapter:
     def wake(self, conversation_id: str, run_id: str, *, active: bool) -> str | None:
         """Mirror one pending or delivering fleet-wake membership."""
 
-        if self._controller is None:
-            return None
         key = (conversation_id, run_id)
         with self._lock:
+            if self._disposed or self._controller is None:
+                return None
             owner = self._wake_owners.get(key)
             if not active:
                 if owner is not None:
@@ -308,6 +323,8 @@ class PersonaBuddyConsoleAdapter:
         """Release settled wake owners, optionally for one conversation."""
 
         with self._lock:
+            if self._disposed:
+                return
             for key, owner in tuple(self._wake_owners.items()):
                 if conversation_id is None or key[0] == conversation_id:
                     self._release("wake", owner)
@@ -316,10 +333,10 @@ class PersonaBuddyConsoleAdapter:
     def voice_state(self, session_id: str, generation: int, state: str) -> str | None:
         """Publish one exact realtime-loop generation and fence replacements."""
 
-        if self._controller is None:
-            return None
         key = (session_id, generation)
         with self._lock:
+            if self._disposed or self._controller is None:
+                return None
             current_generation = self._voice_generation.get(session_id)
             if current_generation is not None and generation < current_generation:
                 return None
@@ -339,11 +356,23 @@ class PersonaBuddyConsoleAdapter:
             self.publish(BuddyLifecycleEvent(source="voice", owner=owner, state=mapped))
             return owner
 
+    def next_voice_generation(self, session_id: str) -> int | None:
+        """Mint one app-wide monotonic realtime-loop incarnation."""
+
+        del session_id  # the token is intentionally app-wide, not screen-local
+        with self._lock:
+            if self._disposed:
+                return None
+            self._next_voice_generation += 1
+            return self._next_voice_generation
+
     def release_voice(self, session_id: str, generation: int) -> None:
         """Release only the named realtime-loop generation."""
 
         key = (session_id, generation)
         with self._lock:
+            if self._disposed:
+                return
             owner = self._voice_owners.pop(key, None)
             if owner is not None:
                 self._release("voice", owner)
@@ -357,6 +386,8 @@ class PersonaBuddyConsoleAdapter:
 
         allowed = set(sources or {"console-run", "approval", "voice"})
         with self._lock:
+            if self._disposed:
+                return
             if "console-run" in allowed:
                 owner = self._run_owners.pop(session_id, None)
                 if owner is not None:
@@ -372,25 +403,80 @@ class PersonaBuddyConsoleAdapter:
                     self.release_voice(session_id, generation)
 
     def release_all(self) -> None:
-        """Release every adapter-owned token during terminal disposal."""
+        """Release every owner while keeping this adapter reusable."""
 
         with self._lock:
-            for (source, _), token in tuple(self._tokens.items()):
-                controller = self._controller
-                if controller is not None:
-                    controller.release_state(token=token)
-            self._tokens.clear()
-            self._run_owners.clear()
-            self._approval_owners.clear()
-            self._tool_owners.clear()
-            self._wake_owners.clear()
-            self._voice_owners.clear()
-            self._voice_generation.clear()
+            if self._disposed:
+                return
+            self._prune_expired_locked()
+            self._release_all_locked()
+
+    def dispose(self) -> None:
+        """Terminally fence producers before releasing every exact token."""
+
+        with self._lock:
+            if self._disposed:
+                return
+            self._disposed = True
+            self._release_all_locked()
+            self._run_generation.clear()
+            self._next_voice_generation = 0
+
+    def _release_all_locked(self) -> None:
+        """Release and clear all live owner maps. Caller holds ``_lock``."""
+
+        controller = self._controller
+        for token in tuple(self._tokens.values()):
+            if controller is not None:
+                controller.release_state(token=token)
+        self._tokens.clear()
+        self._run_owners.clear()
+        self._approval_owners.clear()
+        self._tool_owners.clear()
+        self._wake_owners.clear()
+        self._voice_owners.clear()
+        self._voice_generation.clear()
+
+    def _prune_expired_locked(self) -> None:
+        """Drop expired timed owners from token and source bookkeeping."""
+
+        now = self._clock()
+        controller = self._controller
+        for key, token in tuple(self._tokens.items()):
+            if token.expires_at is None or token.expires_at > now:
+                continue
+            self._tokens.pop(key, None)
+            self._drop_owner_refs_locked(token.source, token.owner)
+            if controller is not None:
+                controller.release_state(token=token)
+
+    def _drop_owner_refs_locked(self, source: str, owner: str) -> None:
+        """Remove one exact released owner from its source index."""
+
+        if source == "console-run":
+            indexed = self._run_owners
+        elif source == "approval":
+            indexed = self._approval_owners
+        elif source == "tool":
+            indexed = self._tool_owners
+        elif source == "wake":
+            indexed = self._wake_owners
+        elif source == "voice":
+            indexed = self._voice_owners
+        else:
+            return
+        for key, candidate in tuple(indexed.items()):
+            if candidate != owner:
+                continue
+            indexed.pop(key, None)
+            if source == "voice" and self._voice_generation.get(key[0]) == key[1]:
+                self._voice_generation.pop(key[0], None)
 
     def active_owner_count(self, source: str | None = None) -> int:
         """Return a content-free owner count for focused lifecycle tests."""
 
         with self._lock:
+            self._prune_expired_locked()
             if source is None:
                 return len(self._tokens)
             return sum(1 for token_source, _ in self._tokens if token_source == source)

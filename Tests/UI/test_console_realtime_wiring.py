@@ -449,6 +449,50 @@ async def test_persona_buddy_realtime_fsm_replaces_generation_and_releases_on_ex
     assert app.persona_buddy_controller.snapshot().state == "idle"
 
 
+@pytest.mark.asyncio
+async def test_persona_buddy_realtime_generation_survives_screen_replacement(
+    monkeypatch,
+):
+    """A stale real screen cannot release its successor's same-session loop."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        old_screen = await _mounted_console(host, pilot)
+        old_screen.action_toggle_console_hands_free()
+        await _wait_for(lambda: old_screen._console_realtime is not None, pilot)
+        old_generation = old_screen._console_realtime.buddy_generation
+
+        replacement = chat_screen_module.ChatScreen(app)
+        await host.push_screen(replacement)
+        await _wait_for(
+            lambda: replacement.query("#console-native-composer").first() is not None,
+            pilot,
+        )
+        replacement.action_toggle_console_hands_free()
+        await _wait_for(lambda: replacement._console_realtime is not None, pilot)
+        replacement_generation = replacement._console_realtime.buddy_generation
+
+        assert replacement_generation > old_generation
+        assert app.persona_buddy_controller.snapshot().state == "offline"
+
+        old_screen._release_console_realtime_state()
+        assert app.persona_buddy_controller.snapshot().state == "offline"
+        assert (
+            replacement._console_runtime().persona_buddy_sink.active_owner_count(
+                "voice"
+            )
+            == 1
+        )
+
+        replacement._console_realtime_exit_loop(None)
+        await _wait_for(
+            lambda: app.persona_buddy_controller.snapshot().state == "idle", pilot
+        )
+
+
 def _messages(console):
     store = console._ensure_console_chat_store()
     return store.messages_for_session(store.active_session_id)

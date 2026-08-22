@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+from contextvars import ContextVar
 import functools
 import hashlib
 import inspect
@@ -1796,6 +1797,9 @@ class ConsoleChatController:
         # OWNING session instead of whatever the user currently has open.
         self._run_states: dict[str, ConsoleRunState] = {}
         self._run_state_histories: dict[str, list[ConsoleRunStatus]] = {}
+        self._buddy_run_owner_context: ContextVar[dict[str, str] | None] = (
+            ContextVar("console_buddy_run_owners", default=None)
+        )
         # Parallel-agents spec §6: run-marker state (Task 7). Both maps are
         # keyed by session id like the run-state maps above, but track
         # marker-only bookkeeping that ``_run_states`` doesn't capture on
@@ -13131,7 +13135,27 @@ class ConsoleChatController:
         self._run_states[target] = run_state
         self.run_state_history_for(target).append(run_state.status)
         if self._buddy_sink is not None:
-            self._buddy_sink.run_state(target, run_state.status)
+            context_owners = self._buddy_run_owner_context.get() or {}
+            if run_state.status is ConsoleRunStatus.VALIDATING:
+                run_owner = self._buddy_sink.run_state(target, run_state.status)
+                if run_owner is not None:
+                    updated_owners = dict(context_owners)
+                    updated_owners[target] = run_owner
+                    self._buddy_run_owner_context.set(updated_owners)
+            else:
+                run_owner = context_owners.get(target)
+                self._buddy_sink.run_state(
+                    target, run_state.status, run_owner=run_owner
+                )
+                if run_state.status in {
+                    ConsoleRunStatus.BLOCKED,
+                    ConsoleRunStatus.COMPLETED,
+                    ConsoleRunStatus.STOPPED,
+                    ConsoleRunStatus.IDLE,
+                } and run_owner is not None:
+                    updated_owners = dict(context_owners)
+                    updated_owners.pop(target, None)
+                    self._buddy_run_owner_context.set(updated_owners or None)
         self._advance_lifecycle_revision(target)
         terminal_notification_eligible = self.activity_for(
             target

@@ -1013,7 +1013,7 @@ class ConsoleRuntime:
         # Controller shutdown begins by terminally fencing the fleet-wake
         # coordinator. Only after every trusted producer is tombstoned may
         # the shared Buddy sink release its remaining owner tokens.
-        self._persona_buddy_sink.release_all()
+        self._persona_buddy_sink.dispose()
         close = getattr(gateway, "aclose", None)
         if callable(close):
             try:

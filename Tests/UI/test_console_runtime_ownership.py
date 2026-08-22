@@ -69,7 +69,7 @@ async def test_persona_buddy_release_follows_controller_wake_disposal():
     events: list[str] = []
 
     class Sink:
-        def release_all(self) -> None:
+        def dispose(self) -> None:
             events.append("sink-release")
 
     class Controller:

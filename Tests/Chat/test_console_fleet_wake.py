@@ -286,6 +286,45 @@ def test_dispose_is_terminal_idempotent_and_safe_without_a_sink():
     assert no_sink.pending_conversation_ids() == ()
 
 
+def test_buddy_wake_callback_runs_outside_registry_lock_and_is_post_fenced():
+    """A reentrant terminal dispose cannot deadlock or leave a late lease."""
+    dispose_finished = threading.Event()
+    callback_thread_blocked: list[bool] = []
+
+    class ReentrantSink(_RecordingBuddySink):
+        coordinator: ConsoleFleetWakeCoordinator
+
+        def wake(self, conversation_id: str, run_id: str, *, active: bool) -> None:
+            if active:
+                def dispose() -> None:
+                    self.coordinator.dispose()
+                    dispose_finished.set()
+
+                thread = threading.Thread(target=dispose)
+                thread.start()
+                thread.join(1)
+                callback_thread_blocked.append(thread.is_alive())
+            super().wake(conversation_id, run_id, active=active)
+
+    sink = ReentrantSink()
+    coordinator = ConsoleFleetWakeCoordinator(SimpleNamespace(_buddy_sink=sink))
+    sink.coordinator = coordinator
+
+    coordinator.on_fleet_drained(
+        _drain("conversation-1", _survivor("run-reentrant"))
+    )
+
+    assert dispose_finished.wait(1)
+    assert callback_thread_blocked == [False]
+    assert coordinator.pending_conversation_ids() == ()
+    assert sink.calls[-1] == (
+        "wake",
+        "conversation-1",
+        "run-reentrant",
+        False,
+    )
+
+
 @pytest.mark.asyncio
 async def test_dispose_fences_delivery_completion_after_its_await():
     """An accepted late result neither commits nor rebuilds disposed state."""

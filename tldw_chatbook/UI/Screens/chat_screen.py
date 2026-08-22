@@ -1041,7 +1041,7 @@ class ConsoleRealtimeSession:
             a tab switch mid-conversation must not scatter half a spoken
             exchange across two transcripts (the same discipline V3's
             `pending_session_id` enforces for its own send).
-        buddy_generation: Monotonic screen-local loop generation used only
+        buddy_generation: Monotonic app-owned loop generation used only
             to fence trusted Buddy lifecycle state from replaced loops.
         idle_timeout_seconds: The configured idle ceiling, kept here so the
             exit toast can name it without re-reading config at exit time.
@@ -3739,7 +3739,6 @@ class ChatScreen(BaseAppScreen):
         #: session is set. See `ConsoleRealtimeSession` and
         #: `_enter_console_realtime_loop`/`_release_console_realtime_state`.
         self._console_realtime: ConsoleRealtimeSession | None = None
-        self._console_realtime_generation = 0
         #: The worker releasing a just-exited realtime loop's tap/session/
         #: sink, or None. Retained only so `on_unmount` can wait for it --
         #: see `_teardown_console_realtime_loop`.
@@ -6823,7 +6822,12 @@ class ChatScreen(BaseAppScreen):
             return
 
         idle_timeout = realtime_idle_timeout_seconds()
-        self._console_realtime_generation += 1
+        buddy_generation = (
+            self._console_runtime()
+            .persona_buddy_sink.next_voice_generation(console_session_id)
+        )
+        if buddy_generation is None:
+            return
         controller = RealtimeLoopController(
             self._handle_console_realtime_intent,
             acoustic_barge_in=acoustic_barge_in_enabled(),
@@ -6833,7 +6837,7 @@ class ChatScreen(BaseAppScreen):
             controller=controller,
             console_session_id=console_session_id,
             idle_timeout_seconds=idle_timeout,
-            buddy_generation=self._console_realtime_generation,
+            buddy_generation=buddy_generation,
         )
         self._console_realtime = session
         session.tick_timer = self.set_interval(0.1, self._tick_console_realtime)
