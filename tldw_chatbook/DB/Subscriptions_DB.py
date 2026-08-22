@@ -1638,16 +1638,14 @@ class SubscriptionsDB(BaseDB):
                 # caller has not finished, so the honest answer is to decline.
                 return False
             row = connection.execute("PRAGMA wal_checkpoint(TRUNCATE);").fetchone()
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             # Broader than sqlite3.Error on purpose: `self.conn` above can
             # also raise from the private-path connector (the database file
             # deleted under a still-live instance -- routine in tests, and
             # possible at shutdown). A settle that cannot happen is a
             # warning, never a raise out of a close path.
             if not _INTERPRETER_EXITING:
-                logger.warning(
-                    f"WAL checkpoint failed for {self.db_path_str}: {exc}"
-                )
+                logger.warning("SubscriptionsDB WAL checkpoint failed during shutdown")
             return False
         # (busy, log_pages, checkpointed_pages); busy=0 means TRUNCATE ran.
         if row is not None and row[0] == 0:
@@ -1692,10 +1690,8 @@ class SubscriptionsDB(BaseDB):
             remaining = len(self._connections)
         if remaining and not _INTERPRETER_EXITING:
             logger.debug(
-                f"{remaining} SubscriptionsDB connection(s) to "
-                f"{self.db_path_str} remain open on other threads; the "
-                "WAL has been checkpointed and the process owns their "
-                "lifetime from here."
+                "SubscriptionsDB connections remain open on other threads after "
+                "WAL checkpoint"
             )
         return remaining
 

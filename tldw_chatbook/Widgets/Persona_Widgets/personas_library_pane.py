@@ -260,6 +260,15 @@ class PersonasLibraryPane(Vertical):
                 classes="console-action-secondary",
             )
             yield Button(
+                "New Actor Pack",
+                id="personas-library-new-actor-pack",
+                tooltip=(
+                    "Create a local actor with a required portrait and "
+                    "portable identity."
+                ),
+                classes="console-action-secondary",
+            )
+            yield Button(
                 "Import",
                 id="personas-library-import",
                 tooltip="Import a character card (PNG or JSON).",
@@ -326,6 +335,10 @@ class PersonasLibraryPane(Vertical):
             "characters",
             "dictionaries",
             "lore",
+        )
+        self.query_one("#personas-library-new-actor-pack", Button).display = mode in (
+            "characters",
+            "personas",
         )
         sort_visible = mode in ("characters", "personas")
         self._sort_visible = sort_visible
@@ -628,6 +641,11 @@ class PersonasLibraryPane(Vertical):
     def _import_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         self.post_message(PersonaActionRequested(action="import"))
+
+    @on(Button.Pressed, "#personas-library-new-actor-pack")
+    def _new_actor_pack_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(PersonaActionRequested(action="create_actor_pack"))
 
     @on(Button.Pressed, "#personas-library-duplicate")
     def _duplicate_pressed(self, event: Button.Pressed) -> None:

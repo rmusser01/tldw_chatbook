@@ -447,7 +447,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 44  # Recoverable copy of a discarded Notes-sync side (task-19554).
+    _CURRENT_SCHEMA_VERSION = 45  # Portable Actor Pack identity and Persona intents (TASK-19057).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -5883,6 +5883,52 @@ UPDATE db_schema_version
                 f"Migration from V43 to V44 failed for '{self._SCHEMA_NAME}': {exc}"
             ) from exc
 
+    def _migrate_from_v44_to_v45(self, conn: sqlite3.Connection) -> None:
+        """Install portable Actor Pack identity and bounded Persona intents."""
+
+        self._require_migration_entry_version(conn, 44, "V44→V45")
+        logger.info("Actor Pack schema migration started: chachanotes_v44_to_v45")
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v44_to_v45_actor_packs.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V44→V45",
+                )
+                version_cursor = cursor.execute(
+                    """
+                    UPDATE db_schema_version
+                       SET version = 45
+                     WHERE schema_name = ?
+                       AND version = 44
+                    """,
+                    (self._SCHEMA_NAME,),
+                )
+                if version_cursor.rowcount != 1:
+                    raise SchemaError(
+                        f"[{self._SCHEMA_NAME} V44→V45] Migration version update was not applied"
+                    )
+
+            final_version = self._get_db_version(conn)
+            if final_version != 45:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V44→V45] Migration version check failed. "
+                    f"Expected 45, got: {final_version}"
+                )
+            logger.info(
+                "Actor Pack schema migration completed: chachanotes_v44_to_v45"
+            )
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            logger.error("Actor Pack schema migration failed: chachanotes_v44_to_v45")
+            raise SchemaError(
+                f"Migration from V44 to V45 failed for '{self._SCHEMA_NAME}': {exc}"
+            ) from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -6065,6 +6111,7 @@ UPDATE db_schema_version
                     41: self._migrate_from_v41_to_v42,
                     42: self._migrate_from_v42_to_v43,
                     43: self._migrate_from_v43_to_v44,
+                    44: self._migrate_from_v44_to_v45,
                 }
 
                 if current_db_version == 0:
@@ -6399,61 +6446,12 @@ UPDATE db_schema_version
             ConflictError: If a character card with the same 'name' already exists.
             CharactersRAGDBError: For other database-related errors during insertion.
         """
-        required_fields = ["name"]
-        for field in required_fields:
-            if field not in card_data or not card_data[field]:
-                raise InputError(f"Required field '{field}' is missing or empty.")
-
-        now = self._get_current_utc_timestamp_iso()
-
-        # Ensure JSON fields are strings or None
-        def get_json_field_as_string(field_value):
-            if isinstance(field_value, str):
-                # Assume it's already a JSON string if it's a string
-                return field_value
-            return self._ensure_json_string(field_value)
-
-        alt_greetings_json = get_json_field_as_string(
-            card_data.get("alternate_greetings")
-        )
-        tags_json = get_json_field_as_string(card_data.get("tags"))
-        extensions_json = get_json_field_as_string(card_data.get("extensions"))
-
-        query = """
-                INSERT INTO character_cards (name, description, personality, scenario, image, post_history_instructions, \
-                                             first_message, message_example, creator_notes, system_prompt, \
-                                             alternate_greetings, tags, creator, character_version, extensions, \
-                                             created_at, last_modified, client_id, version, deleted) \
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0) \
-                """  # created_at added
-        params = (
-            card_data["name"],
-            card_data.get("description"),
-            card_data.get("personality"),
-            card_data.get("scenario"),
-            card_data.get("image"),
-            card_data.get("post_history_instructions"),
-            card_data.get("first_message"),
-            card_data.get("message_example"),
-            card_data.get("creator_notes"),
-            card_data.get("system_prompt"),
-            alt_greetings_json,
-            tags_json,
-            card_data.get("creator"),
-            card_data.get("character_version"),
-            extensions_json,
-            now,
-            now,
-            self.client_id,  # created_at, last_modified, client_id
-        )
-
         start_time = time.time()
         try:
-            with self.transaction() as conn:
-                cursor = conn.execute(
-                    query, params
-                )  # execute_query not needed due to conn from context
-                char_id = cursor.lastrowid
+            with self.transaction() as cursor:
+                char_id = self._insert_character_card_in_transaction(
+                    cursor, card_data
+                )
                 logger.info(
                     f"Added character card '{card_data['name']}' with ID: {char_id}."
                 )
@@ -6522,6 +6520,67 @@ UPDATE db_schema_version
             )
             raise
         return None  # Should not be reached
+
+    def _insert_character_card_in_transaction(
+        self,
+        cursor: sqlite3.Cursor,
+        card_data: Dict[str, Any],
+        *,
+        require_outermost: bool = False,
+    ) -> int:
+        """Insert one Character inside a manager-owned transaction."""
+
+        connection = self.get_connection()
+        depth = getattr(self._local, "transaction_depth", 0)
+        if (
+            type(cursor) is not sqlite3.Cursor
+            or cursor.connection is not connection
+            or not connection.in_transaction
+            or depth < 1
+            or (require_outermost and depth != 1)
+        ):
+            raise CharactersRAGDBError("Character transaction is not owned.")
+        if "name" not in card_data or not card_data["name"]:
+            raise InputError("Required field 'name' is missing or empty.")
+
+        def json_field(value: object) -> str | None:
+            return value if isinstance(value, str) else self._ensure_json_string(value)
+
+        now = self._get_current_utc_timestamp_iso()
+        cursor.execute(
+            """
+            INSERT INTO character_cards(
+                name, description, personality, scenario, image,
+                post_history_instructions, first_message, message_example,
+                creator_notes, system_prompt, alternate_greetings, tags, creator,
+                character_version, extensions, created_at, last_modified,
+                client_id, version, deleted
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0)
+            """,
+            (
+                card_data["name"],
+                card_data.get("description"),
+                card_data.get("personality"),
+                card_data.get("scenario"),
+                card_data.get("image"),
+                card_data.get("post_history_instructions"),
+                card_data.get("first_message"),
+                card_data.get("message_example"),
+                card_data.get("creator_notes"),
+                card_data.get("system_prompt"),
+                json_field(card_data.get("alternate_greetings")),
+                json_field(card_data.get("tags")),
+                card_data.get("creator"),
+                card_data.get("character_version"),
+                json_field(card_data.get("extensions")),
+                now,
+                now,
+                self.client_id,
+            ),
+        )
+        if cursor.lastrowid is None:
+            raise CharactersRAGDBError("Character insert did not return an ID.")
+        return int(cursor.lastrowid)
 
     def get_character_card_by_id(self, character_id: int) -> Optional[Dict[str, Any]]:
         """

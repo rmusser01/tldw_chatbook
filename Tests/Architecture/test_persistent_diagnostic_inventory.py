@@ -541,6 +541,20 @@ def _commit_available(revision: str) -> bool:
 
 _TASK_15743_STACKED = "fdee8a31f"
 _TASK_15743_REPAIRED = "afee9672a"
+_TASK_15743_CURRENT_OWNERS = {
+    (
+        "tldw_chatbook/UI/Screens/chat_screen.py",
+        "console fleet wake mount-claim failed",
+    ): "tldw_chatbook/UI/Console_Modules/fleet.py",
+    (
+        "tldw_chatbook/UI/Screens/chat_screen.py",
+        "fleet survivor check failed",
+    ): "tldw_chatbook/UI/Console_Modules/fleet.py",
+    (
+        "tldw_chatbook/UI/Screens/chat_screen.py",
+        "Console fleet completion handoff will retry",
+    ): "tldw_chatbook/UI/Console_Modules/fleet.py",
+}
 
 
 def _task_15743_archaeology_available() -> bool:
@@ -813,6 +827,7 @@ def test_task_15743_reviewed_delta_is_complete() -> None:
     ) == Counter(repair_rows)
 
     for owner, label in repair_rows:
+        current_owner = _TASK_15743_CURRENT_OWNERS.get((owner, label), owner)
         expected_fields = (
             ()
             if label in no_field_repairs
@@ -821,13 +836,14 @@ def test_task_15743_reviewed_delta_is_complete() -> None:
             else ("type(exc).__name__",)
         )
         assert (
-            REVIEWED_METADATA_ONLY_DIAGNOSTICS.get(owner, {}).get(label)
+            REVIEWED_METADATA_ONLY_DIAGNOSTICS.get(current_owner, {}).get(label)
             == expected_fields
         )
     for owner, labels in safe_rows.items():
         for label, expected_fields in labels.items():
+            current_owner = _TASK_15743_CURRENT_OWNERS.get((owner, label), owner)
             assert (
-                REVIEWED_METADATA_ONLY_DIAGNOSTICS.get(owner, {}).get(label)
+                REVIEWED_METADATA_ONLY_DIAGNOSTICS.get(current_owner, {}).get(label)
                 == expected_fields
             )
 
@@ -906,6 +922,7 @@ def test_task_15743_exception_types_survive_loguru_forwarding() -> None:
         )
     failures: list[str] = []
     for relative, label in sorted(expected):
+        relative = _TASK_15743_CURRENT_OWNERS.get((relative, label), relative)
         source = (REPO_ROOT / relative).read_text(encoding="utf-8")
         tree = ast.parse(source, filename=relative)
         logger_symbols = diagnostic_inventory._logger_symbols(tree)

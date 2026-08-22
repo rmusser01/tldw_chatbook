@@ -23,6 +23,8 @@ include tldw_chatbook/DB/migrations/chachanotes_v35_to_v36_note_folders.sql
 include tldw_chatbook/DB/migrations/chachanotes_v36_to_v37_provider_continuation.sql
 include tldw_chatbook/DB/migrations/chachanotes_v39_to_v40_transcript_annotations.sql
 include tldw_chatbook/DB/migrations/chachanotes_v42_to_v43_message_exchanges.sql
+include tldw_chatbook/DB/migrations/chachanotes_v43_to_v44_sync_conflict_preservation.sql
+include tldw_chatbook/DB/migrations/chachanotes_v44_to_v45_actor_packs.sql
 include tldw_chatbook/Third_Party/aider/LICENSE.txt
 include tldw_chatbook/Third_Party/textual_fspicker/LICENSE
 

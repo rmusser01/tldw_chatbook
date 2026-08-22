@@ -97,10 +97,30 @@ class PersonaProfileEditorWidget(Container):
         # click; reset on every load.
         self._user_touched: bool = False
         self._persona_visual_session_token = 0
+        self._actor_pack_mode = False
 
     def compose(self) -> ComposeResult:
-        yield Static("Persona Editor", classes="destination-section")
+        yield Static(
+            "Persona Editor",
+            id="personas-editor-title",
+            classes="destination-section",
+        )
         with VerticalScroll(id="personas-editor-body"):
+            with Vertical(id="personas-editor-pack-portrait") as pack_portrait:
+                yield Label("Required portrait Character")
+                yield Select(
+                    [],
+                    id="personas-editor-character-portrait",
+                    allow_blank=True,
+                    prompt="No eligible local portrait Character",
+                )
+                yield Static(
+                    "Choose a local Character with an embedded portrait.",
+                    id="personas-editor-pack-status",
+                    classes="destination-purpose",
+                    markup=False,
+                )
+            pack_portrait.display = False
             with Vertical(classes="ds-field-row"):
                 yield Label("Name")
                 yield Input(id="personas-editor-name", placeholder="Persona name")
@@ -193,6 +213,7 @@ class PersonaProfileEditorWidget(Container):
         and finds a ``load_persona`` attribute (see ccp_persona_handler._load_editor).
         """
         self._persona_visual_session_token += 1
+        self._actor_pack_mode = False
         self._loading = True
         try:
             self.set_runtime_source(runtime_source or self._runtime_source)
@@ -248,13 +269,52 @@ class PersonaProfileEditorWidget(Container):
                 self.query_one(f"#{fid}").parent.remove_class(self._FIELD_ERROR_CLASS)
         finally:
             self._loading = False
+        if self.is_mounted:
+            selector = self.query_one("#personas-editor-character-portrait", Select)
+            selector.set_options([])
         self._loaded_snapshot = self._form_snapshot()
         self._dirty_posted = False
         self._user_touched = False
+        if self.is_mounted:
+            self._sync_actor_pack_mode()
 
     def new_persona(self, *, runtime_source: str | None = None) -> None:
         """Clear the form for a new (unsaved) persona."""
         self.load_persona({}, runtime_source=runtime_source)
+
+    def begin_actor_pack_creation(
+        self, portrait_options: tuple[tuple[str, int], ...]
+    ) -> None:
+        """Reuse the local editor with one labelled required-portrait selector."""
+
+        self.new_persona(runtime_source="local")
+        self._actor_pack_mode = True
+        selector = self.query_one("#personas-editor-character-portrait", Select)
+        selector.set_options(list(portrait_options))
+        selector.value = portrait_options[0][1] if portrait_options else Select.BLANK
+        self._loaded_snapshot = self._form_snapshot()
+        self._dirty_posted = False
+        self._user_touched = False
+        self._sync_actor_pack_mode()
+
+    def mark_actor_pack_created(self, portable_uuid: str) -> None:
+        """Show the committed portable UUID beside the canonical form."""
+
+        self._actor_pack_mode = False
+        self.query_one("#personas-editor-title", Static).update(
+            "Persona Actor Pack created"
+        )
+        status = self.query_one("#personas-editor-pack-status", Static)
+        status.update(f"Portable UUID: {portable_uuid}")
+        self.query_one("#personas-editor-pack-portrait").display = True
+
+    def _sync_actor_pack_mode(self) -> None:
+        if not self.is_mounted:
+            return
+        self.query_one("#personas-editor-title", Static).update(
+            "New Persona Actor Pack" if self._actor_pack_mode else "Persona Editor"
+        )
+        self.query_one("#personas-editor-pack-portrait").display = self._actor_pack_mode
 
     @staticmethod
     def _set_shared_visual_identity_status(host: Container, copy: str) -> None:
@@ -345,6 +405,12 @@ class PersonaProfileEditorWidget(Container):
             data["personality_traits"] = self.query_one(
                 "#personas-editor-personality-traits", TextArea
             ).text
+        if self._actor_pack_mode:
+            portrait = self.query_one(
+                "#personas-editor-character-portrait", Select
+            ).value
+            if type(portrait) is int:
+                data["character_card_id"] = portrait
         if self._persona_id is not None:
             data["id"] = self._persona_id
         if self._version is not None:
@@ -360,6 +426,7 @@ class PersonaProfileEditorWidget(Container):
             self.query_one("#personas-editor-personality-traits", TextArea).text,
             self.query_one("#personas-editor-mode", Select).value,
             self.query_one("#personas-editor-enabled", Switch).value,
+            self.query_one("#personas-editor-character-portrait", Select).value,
         )
 
     @on(Input.Changed)
@@ -407,11 +474,25 @@ class PersonaProfileEditorWidget(Container):
         findings: list[tuple[str, str, str]] = []
         if not self.query_one("#personas-editor-name", Input).value.strip():
             findings.append(("personas-editor-name", "required", "error"))
+        if (
+            self._actor_pack_mode
+            and type(
+                self.query_one("#personas-editor-character-portrait", Select).value
+            )
+            is not int
+        ):
+            findings.append(
+                (
+                    "personas-editor-character-portrait",
+                    "portrait Character required",
+                    "error",
+                )
+            )
         return findings
 
     def _validated_field_ids(self) -> set[str]:
         """Field ids ``validate()`` can flag at ``error`` level."""
-        return {"personas-editor-name"}
+        return {"personas-editor-name", "personas-editor-character-portrait"}
 
     def _run_validation(self) -> list[tuple[str, str, str]]:
         """Compute findings, mark/un-mark offending rows, render the footer.

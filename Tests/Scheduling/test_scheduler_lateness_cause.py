@@ -106,6 +106,50 @@ def test_a_suspended_process_is_not_blamed_on_a_handler(db):
     assert loop._report_lateness_cause(row, "reminder", NOW) == LATENESS_CAUSE_STALLED
 
 
+@pytest.mark.parametrize(
+    ("held_seconds", "expected_cause", "expected_message"),
+    (
+        (
+            600.0,
+            LATENESS_CAUSE_BUSY,
+            "Scheduled task dispatched late because the preceding tick exceeded "
+            "the grace period; this is not a missed fire",
+        ),
+        (
+            0.0,
+            LATENESS_CAUSE_STALLED,
+            "Scheduled task dispatched late while the scheduler was active "
+            "without attributable handler delay; this is not a missed fire",
+        ),
+    ),
+)
+def test_lateness_diagnostics_exclude_task_identity_and_timing_values(
+    db, monkeypatch, held_seconds, expected_cause, expected_message
+):
+    """Persistent warnings use fixed categories; metrics retain safe labels."""
+    from tldw_chatbook.Scheduling.scheduler import loop as loop_module
+
+    async def handler(task):
+        return None
+
+    scheduler = _loop(db, now=NOW, handler=handler)
+    scheduler._running_since = NOW - timedelta(hours=3)
+    scheduler._last_tick_dispatch_seconds = held_seconds
+    warnings: list[tuple[object, tuple[object, ...], dict[str, object]]] = []
+    monkeypatch.setattr(
+        loop_module.logger,
+        "warning",
+        lambda message, *args, **kwargs: warnings.append((message, args, kwargs)),
+    )
+    task = {
+        "id": "private-task-id",
+        "next_run_at": (NOW - timedelta(hours=2)).isoformat(),
+    }
+
+    assert scheduler._report_lateness_cause(task, "reminder", NOW) == expected_cause
+    assert warnings == [(expected_message, (), {})]
+
+
 def test_the_tick_records_how_long_its_handlers_held_the_loop(db):
     """The evidence field must be produced by a real tick, not set by hand."""
     clock = {"now": NOW}
@@ -384,7 +428,7 @@ def test_stop_during_an_in_flight_tick_is_not_reported_as_away(db):
 
 
 def test_a_manual_run_is_not_attributed_as_loop_blocking(db):
-    """"Run now" on an overdue task is late by the user's choice.
+    """ "Run now" on an overdue task is late by the user's choice.
 
     `run_reminder_now` shares the dispatch seam with `tick`, so without the
     `scheduled=False` opt-out every manual run of an overdue reminder would

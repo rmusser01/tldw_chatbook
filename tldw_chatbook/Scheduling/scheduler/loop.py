@@ -411,24 +411,13 @@ class SchedulerLoop:
         )
         if cause == LATENESS_CAUSE_BUSY:
             logger.warning(
-                "Task {task_id} dispatched {late_by:.0f}s after its scheduled "
-                "time while the scheduler was running: the preceding tick "
-                "spent {held:.0f}s in its handlers, delaying this one. This "
-                "is NOT a missed fire.",
-                task_id=task.get("id"),
-                late_by=late_by,
-                held=held_seconds,
+                "Scheduled task dispatched late because the preceding tick exceeded "
+                "the grace period; this is not a missed fire"
             )
         elif cause == LATENESS_CAUSE_STALLED:
             logger.warning(
-                "Task {task_id} dispatched {late_by:.0f}s after its scheduled "
-                "time while the scheduler was running, and no handler accounts "
-                "for the delay (previous tick: {held:.0f}s) -- the process was "
-                "most likely suspended or the event loop starved. This is NOT "
-                "a missed fire.",
-                task_id=task.get("id"),
-                late_by=late_by,
-                held=held_seconds,
+                "Scheduled task dispatched late while the scheduler was active "
+                "without attributable handler delay; this is not a missed fire"
             )
         return cause
 

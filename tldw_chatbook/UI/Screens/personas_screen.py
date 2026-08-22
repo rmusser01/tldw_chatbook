@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Coroutine, Mapping
 import dataclasses
+import hashlib
 import json
 import re
 import sqlite3
@@ -71,6 +72,8 @@ from ...Character_Chat.visual_identity import (
 )
 from ...Character_Chat.world_book_import import normalize_world_book_import
 from ...Character_Chat.world_book_manager import CHARACTER_WORLD_BOOKS_KEY
+from ...Actor_Packs.contracts import ActorPackValidationError, validate_actor_portrait
+from ...Actor_Packs.creation import ActorPackCreationError, ActorPackCreationResult
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.console_expression_state import EXPRESSION_IMAGE_STATES
 from ...Constants import TAB_STTS
@@ -679,6 +682,28 @@ class _CharacterSaveAuthority:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class _ActorPackPortraitChoice:
+    """One immutable eligible local portrait option."""
+
+    character_id: int
+    name: str
+    revision: int
+    sha256: str
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _ActorPackCreateSession:
+    """Workbench authority for one pack-ready actor draft."""
+
+    generation: int
+    actor_kind: str
+    source: str
+    editor_generation: int
+    editor_session_token: int
+    portrait_choices: tuple[_ActorPackPortraitChoice, ...] = ()
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class _DrainedTaskResult:
     """One task result observed after every outer cancellation is drained."""
 
@@ -728,6 +753,20 @@ async def _drain_to_thread(
     return await _drain_async(
         asyncio.to_thread(function, *args, **kwargs), task_name=task_name
     )
+
+
+def _actor_pack_portrait_name(data: bytes) -> str:
+    """Infer the only supported bounded raster suffix without exposing a path."""
+
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "portrait.png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "portrait.jpg"
+    if data.startswith((b"GIF87a", b"GIF89a")):
+        return "portrait.gif"
+    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        return "portrait.webp"
+    raise ValueError("actor_pack_portrait_invalid")
 
 
 async def _join_task(task: asyncio.Task[Any]) -> Any:
@@ -997,6 +1036,11 @@ class PersonasScreen(BaseAppScreen):
         # Same refuse-reentry idiom for the delete confirmation dialog.
         self._delete_dialog_active: bool = False
         self._character_editor_generation: int = 0
+        self._actor_pack_generation: int = 0
+        self._actor_pack_session: _ActorPackCreateSession | None = None
+        self._actor_pack_operation_task: asyncio.Task[Any] | None = None
+        self._actor_pack_cancel_event: threading.Event | None = None
+        self._actor_pack_portrait_generation: int = 0
         # Image-gen P3 Task 3: (character_id, state) pairs with an expression
         # generation worker currently in flight - refuses a re-entrant
         # generate click for the same slot rather than racing two writes.
@@ -1571,6 +1615,7 @@ class PersonasScreen(BaseAppScreen):
         normalized = str(runtime_backend or "").strip().lower()
         if normalized not in {"local", "server"}:
             return
+        await self._drain_actor_pack_creation()
         self._advance_persona_buddy_session()
         self._next_character_page_generation()
         active_mode = self.state.active_mode
@@ -1606,6 +1651,7 @@ class PersonasScreen(BaseAppScreen):
         self._character_tts_request_generation += 1
         self._character_tts_snapshot = None
         self._clear_character_tts_profile_suggestion()
+        await self._drain_actor_pack_creation()
         super().on_unmount()
         self._cancel_search_debounce()
         await self.preview.close_gateway()
@@ -6191,6 +6237,8 @@ class PersonasScreen(BaseAppScreen):
             elif self.state.active_mode == "lore":
                 await self._run_guarded(self._begin_create_lore)
             # Creation in the remaining modes is wired in follow-up tasks.
+        elif message.action == "create_actor_pack":
+            await self._run_guarded(self._begin_create_actor_pack)
         elif message.action == "import":
             if self.state.active_mode == "characters":
                 if not self._local_character_actions_allowed():
@@ -6217,7 +6265,7 @@ class PersonasScreen(BaseAppScreen):
         # not this action-requested handler. The rest are wired in follow-up
         # tasks.
 
-    async def _begin_create_character(self) -> None:
+    async def _begin_create_character(self, *, actor_pack: bool = False) -> None:
         if not self._local_character_actions_allowed():
             return
         self._advance_persona_buddy_session()
@@ -6235,7 +6283,19 @@ class PersonasScreen(BaseAppScreen):
         self._character_save_inflight = False
         # Change-based dirty tracking: the session starts clean; the editor
         # posts EditorContentChanged on the first real modification.
-        self.query_one(PersonasCharacterEditorWidget).new_character()
+        editor = self.query_one(PersonasCharacterEditorWidget)
+        editor.new_character(actor_pack=actor_pack)
+        if actor_pack:
+            self._actor_pack_generation += 1
+            self._actor_pack_session = _ActorPackCreateSession(
+                generation=self._actor_pack_generation,
+                actor_kind="character",
+                source="local",
+                editor_generation=self._character_editor_generation,
+                editor_session_token=editor.visual_identity_session_token,
+            )
+        else:
+            self._invalidate_actor_pack_session()
         # A new character never has an avatar or expression images, but a
         # stale thumbnail from the previous editor session must not linger
         # under the new one. A brand-new character has no id yet, so the
@@ -6254,6 +6314,7 @@ class PersonasScreen(BaseAppScreen):
         self.call_after_refresh(self._focus_editor_name)
 
     async def _begin_create_profile(self) -> None:
+        self._invalidate_actor_pack_session()
         self._advance_persona_buddy_session()
         await self._drain_persona_shared_visual_identity_authoring()
         self._persona_shared_visual_identity_authority = None
@@ -6277,6 +6338,413 @@ class PersonasScreen(BaseAppScreen):
         await inspector.clear_selection()
         inspector.show_validation_editing()
         self.call_after_refresh(self._focus_editor_name)
+
+    async def _begin_create_actor_pack(self) -> None:
+        """Open the canonical editor in one local pack-ready creation mode."""
+
+        if self.state.active_mode == "characters":
+            if not self._local_character_actions_allowed():
+                return
+            await self._begin_create_character(actor_pack=True)
+            return
+        if self.state.active_mode != "personas":
+            return
+        if self.persona_handler.current_mode() != "local":
+            self._notify("Save a local copy first", "warning", timeout=None)
+            return
+        request_generation = self._actor_pack_generation
+        database = getattr(self.app_instance, "chachanotes_db", None)
+        list_cards = getattr(database, "list_character_cards", None)
+        if not callable(list_cards):
+            self._notify("No eligible local portrait Character.", "warning")
+            return
+        outcome = await _drain_to_thread(
+            list_cards,
+            limit=256,
+            offset=0,
+            include_image=True,
+            task_name="personas-actor-pack-portrait-list",
+        )
+        if outcome.cancellation is not None:
+            raise outcome.cancellation
+        if (
+            request_generation != self._actor_pack_generation
+            or self.state.active_mode != "personas"
+            or self.persona_handler.current_mode() != "local"
+        ):
+            return
+        if outcome.error is not None or not isinstance(outcome.value, list):
+            self._notify("Portrait Characters are unavailable.", "error")
+            return
+        eligibility = await _drain_to_thread(
+            self._eligible_actor_pack_portraits,
+            outcome.value,
+            task_name="personas-actor-pack-portrait-validation",
+        )
+        if eligibility.cancellation is not None:
+            raise eligibility.cancellation
+        if (
+            request_generation != self._actor_pack_generation
+            or self.state.active_mode != "personas"
+            or self.persona_handler.current_mode() != "local"
+        ):
+            return
+        if eligibility.error is not None:
+            self._notify("Portrait Characters are unavailable.", "error")
+            return
+        choices = eligibility.value
+        if not isinstance(choices, tuple):
+            self._notify("Portrait Characters are unavailable.", "error")
+            return
+        if not choices:
+            self._notify("No eligible local portrait Character.", "warning")
+            return
+        self._advance_persona_buddy_session()
+        await self._drain_persona_shared_visual_identity_authoring()
+        self._persona_shared_visual_identity_authority = None
+        await self._discard_persona_visual_authoring_async()
+        self._persona_visual_generation += 1
+        self._edit_mode = "create"
+        self.state.clear_selection()
+        self._profile_save_inflight = False
+        self._profile_save_operation_inflight = False
+        editor = self.query_one(PersonaProfileEditorWidget)
+        editor.begin_actor_pack_creation(
+            tuple((choice.name, choice.character_id) for choice in choices)
+        )
+        self._actor_pack_generation += 1
+        self._actor_pack_session = _ActorPackCreateSession(
+            generation=self._actor_pack_generation,
+            actor_kind="persona",
+            source="local",
+            editor_generation=self._persona_visual_generation,
+            editor_session_token=editor.persona_visual_session_token,
+            portrait_choices=choices,
+        )
+        self._show_center("#ccp-persona-editor-view")
+        inspector = self.query_one(PersonasInspectorPane)
+        await inspector.clear_selection()
+        inspector.show_validation_editing()
+        self.call_after_refresh(self._focus_editor_name)
+
+    @staticmethod
+    def _eligible_actor_pack_portraits(
+        records: list[object],
+    ) -> tuple[_ActorPackPortraitChoice, ...]:
+        choices: list[_ActorPackPortraitChoice] = []
+        for raw in records:
+            if not isinstance(raw, Mapping):
+                continue
+            character_id = raw.get("id")
+            revision = raw.get("version")
+            name = raw.get("name")
+            portrait = raw.get("image")
+            if (
+                type(character_id) is not int
+                or character_id < 1
+                or type(revision) is not int
+                or revision < 1
+                or type(name) is not str
+                or not name.strip()
+                or type(portrait) is not bytes
+            ):
+                continue
+            try:
+                validate_actor_portrait(_actor_pack_portrait_name(portrait), portrait)
+            except (ActorPackValidationError, ValueError):
+                continue
+            choices.append(
+                _ActorPackPortraitChoice(
+                    character_id=character_id,
+                    name=name.strip(),
+                    revision=revision,
+                    sha256=hashlib.sha256(portrait).hexdigest(),
+                )
+            )
+        return tuple(
+            sorted(choices, key=lambda choice: (choice.name, choice.character_id))
+        )
+
+    def _invalidate_actor_pack_session(self) -> None:
+        self._actor_pack_generation += 1
+        self._actor_pack_session = None
+        if self._actor_pack_cancel_event is not None:
+            self._actor_pack_cancel_event.set()
+
+    def _actor_pack_session_is_current(self, session: _ActorPackCreateSession) -> bool:
+        if (
+            self._actor_pack_session is not session
+            or session.generation != self._actor_pack_generation
+            or session.source != "local"
+            or self._edit_mode != "create"
+            or not self.is_mounted
+        ):
+            return False
+        if session.actor_kind == "character":
+            editor = self._editor_or_none()
+            return (
+                self.state.active_mode == "characters"
+                and self._local_character_actions_allowed()
+                and editor is not None
+                and session.editor_generation == self._character_editor_generation
+                and session.editor_session_token == editor.visual_identity_session_token
+            )
+        if session.actor_kind == "persona":
+            try:
+                editor = self.query_one(PersonaProfileEditorWidget)
+            except QueryError:
+                return False
+            return (
+                self.state.active_mode == "personas"
+                and self.persona_handler.current_mode() == "local"
+                and session.editor_generation == self._persona_visual_generation
+                and session.editor_session_token == editor.persona_visual_session_token
+            )
+        return False
+
+    def _begin_actor_pack_operation(
+        self,
+        session: _ActorPackCreateSession,
+        *,
+        portrait_generation: int | None,
+    ) -> tuple[asyncio.Task[Any], threading.Event] | None:
+        task = asyncio.current_task()
+        active = self._actor_pack_operation_task
+        if (
+            task is None
+            or (active is not None and not active.done())
+            or not self._actor_pack_session_is_current(session)
+            or (
+                session.actor_kind == "character"
+                and portrait_generation != self._actor_pack_portrait_generation
+            )
+        ):
+            return None
+        event = threading.Event()
+        self._actor_pack_operation_task = task
+        self._actor_pack_cancel_event = event
+        return task, event
+
+    def _finish_actor_pack_operation(self, task: asyncio.Task[Any]) -> None:
+        if self._actor_pack_operation_task is task:
+            self._actor_pack_operation_task = None
+            self._actor_pack_cancel_event = None
+        self._character_save_inflight = False
+        self._profile_save_inflight = False
+        self._profile_save_operation_inflight = False
+
+    async def _refresh_stale_actor_pack_commit(
+        self,
+        result: ActorPackCreationResult,
+        session: _ActorPackCreateSession,
+    ) -> None:
+        """Surface a committed result without retargeting newer UI authority."""
+
+        if self._actor_pack_session is session:
+            self._actor_pack_generation += 1
+            self._actor_pack_session = None
+        if result.actor_kind == "character":
+            await self.character_handler.refresh_character_list()
+        elif result.actor_kind == "persona":
+            try:
+                profiles = await self.persona_handler.refresh_persona_list(
+                    raise_on_unavailable=True
+                )
+            except Exception:
+                profiles = []
+            self._profiles = [dict(record) for record in (profiles or [])]
+            self._update_purpose_line()
+            if self.is_mounted and self.state.active_mode == "personas":
+                await self._render_profile_rows()
+        self._notify("Actor Pack created in background.", "information")
+
+    async def _drain_actor_pack_creation(self) -> None:
+        event = self._actor_pack_cancel_event
+        task = self._actor_pack_operation_task
+        cancellation: asyncio.CancelledError | None = None
+        if event is not None:
+            event.set()
+        if task is not None and task is not asyncio.current_task() and not task.done():
+            outcome = await _drain_async(
+                _join_task(task), task_name="personas-actor-pack-operation-drain"
+            )
+            cancellation = outcome.cancellation
+        self._invalidate_actor_pack_session()
+        if cancellation is not None:
+            raise cancellation
+
+    @work(exclusive=True, group="personas-actor-pack-create")
+    async def _create_actor_pack_worker(
+        self,
+        data: dict[str, Any],
+        session: _ActorPackCreateSession,
+        portrait: bytes | None = None,
+        portrait_generation: int | None = None,
+    ) -> None:
+        admitted = self._begin_actor_pack_operation(
+            session, portrait_generation=portrait_generation
+        )
+        if admitted is None:
+            self._character_save_inflight = False
+            self._profile_save_inflight = False
+            self._profile_save_operation_inflight = False
+            return
+        task, cancel_event = admitted
+        service = getattr(self.app_instance, "actor_pack_creation_service", None)
+        if service is None:
+            self._notify("Actor Pack creation is unavailable.", "error")
+            self._finish_actor_pack_operation(task)
+            return
+        try:
+            if session.actor_kind == "character":
+                if type(portrait) is not bytes:
+                    self._notify("Portrait required.", "warning")
+                    return
+                request = dict(data)
+                request.pop("image", None)
+                request.pop("avatar", None)
+                if "first_mes" in request and "first_message" not in request:
+                    request["first_message"] = request.pop("first_mes")
+                outcome = await _drain_to_thread(
+                    service.create_character,
+                    request,
+                    portrait_name=_actor_pack_portrait_name(portrait),
+                    portrait_bytes=bytes(portrait),
+                    cancel_requested=cancel_event.is_set,
+                    authority_guard=lambda: not cancel_event.is_set(),
+                    task_name="personas-create-character-actor-pack",
+                )
+            else:
+                character_id = data.get("character_card_id")
+                choice = next(
+                    (
+                        item
+                        for item in session.portrait_choices
+                        if item.character_id == character_id
+                    ),
+                    None,
+                )
+                if choice is None:
+                    self._notify("Portrait Character required.", "warning")
+                    return
+                outcome = await _drain_to_thread(
+                    service.create_persona,
+                    dict(data),
+                    source="local",
+                    expected_portrait_revision=choice.revision,
+                    expected_portrait_sha256=choice.sha256,
+                    cancel_requested=cancel_event.is_set,
+                    authority_guard=lambda: not cancel_event.is_set(),
+                    task_name="personas-create-persona-actor-pack",
+                )
+            if outcome.cancellation is not None:
+                raise outcome.cancellation
+            if outcome.error is not None:
+                self._show_actor_pack_creation_error(outcome.error, session)
+                return
+            result = outcome.value
+            result_is_current = (
+                type(result) is ActorPackCreationResult
+                and self._actor_pack_session_is_current(session)
+                and (
+                    session.actor_kind != "character"
+                    or self._actor_pack_portrait_is_current(
+                        portrait, portrait_generation
+                    )
+                )
+            )
+            if type(result) is ActorPackCreationResult and not result_is_current:
+                await self._refresh_stale_actor_pack_commit(result, session)
+                return
+            if not result_is_current:
+                return
+            if session.actor_kind == "character":
+                editor = self._editor_or_none()
+                authority = (
+                    _CharacterSaveAuthority(
+                        editor_ref=weakref.ref(editor),
+                        selected_id=None,
+                        edit_mode="create",
+                        screen_generation=self._character_editor_generation,
+                        editor_session_token=editor.visual_identity_session_token,
+                    )
+                    if editor is not None
+                    else None
+                )
+                if authority is None:
+                    return
+                await self._after_character_save(
+                    result.local_actor_id,
+                    str(data.get("name") or ""),
+                    authority=authority,
+                )
+                if (
+                    not self.is_mounted
+                    or editor.parent is None
+                    or self.state.active_mode != "characters"
+                    or self.state.selected_entity_id != result.local_actor_id
+                    or self._edit_mode != "edit"
+                ):
+                    return
+                editor.mark_actor_pack_created(result.portable_uuid)
+            else:
+                saved = dict(data)
+                saved.update({"id": result.local_actor_id, "version": 1})
+                await self._after_profile_save(saved, source="local")
+                editor = self.query_one(PersonaProfileEditorWidget)
+                if (
+                    not self.is_mounted
+                    or editor.parent is None
+                    or self.state.active_mode != "personas"
+                    or self.state.selected_entity_id != result.local_actor_id
+                    or self.persona_handler.current_mode() != "local"
+                    or self._edit_mode != "edit"
+                ):
+                    return
+                editor.mark_actor_pack_created(result.portable_uuid)
+            self._actor_pack_generation += 1
+            self._actor_pack_session = None
+            self._notify("Actor Pack identity created.", "information")
+        except (ActorPackCreationError, ValueError) as exc:
+            self._show_actor_pack_creation_error(exc, session)
+        finally:
+            self._finish_actor_pack_operation(task)
+
+    def _show_actor_pack_creation_error(
+        self, error: BaseException, session: _ActorPackCreateSession
+    ) -> None:
+        if not self._actor_pack_session_is_current(session):
+            return
+        copy = "Actor Pack creation failed."
+        if (
+            isinstance(error, ActorPackCreationError)
+            and error.user_message == "Save a local copy first"
+        ):
+            copy = error.user_message
+        self._notify(copy, "error")
+
+    def _note_actor_pack_portrait_change(self) -> None:
+        """Fence a running Character creation when its staged portrait changes."""
+
+        self._actor_pack_portrait_generation += 1
+        session = self._actor_pack_session
+        if (
+            session is not None
+            and session.actor_kind == "character"
+            and self._actor_pack_cancel_event is not None
+        ):
+            self._actor_pack_cancel_event.set()
+
+    def _actor_pack_portrait_is_current(
+        self, portrait: bytes | None, generation: int | None
+    ) -> bool:
+        editor = self._editor_or_none()
+        return (
+            type(portrait) is bytes
+            and generation == self._actor_pack_portrait_generation
+            and editor is not None
+            and editor.current_avatar_bytes() == portrait
+        )
 
     def _unique_dictionary_name(self, base: str) -> str:
         """Disambiguate against the loaded list (name column is UNIQUE)."""
@@ -8664,6 +9132,7 @@ class PersonasScreen(BaseAppScreen):
             return
         try:
             self.query_one(PersonasCharacterEditorWidget).set_avatar_image(image_data)
+            self._note_actor_pack_portrait_change()
         except Exception as exc:
             logger.opt(exception=True).error(
                 "Could not stage avatar image in editor. "
@@ -10453,6 +10922,7 @@ class PersonasScreen(BaseAppScreen):
         except QueryError:
             return
         editor._character_data.pop("image", None)
+        self._note_actor_pack_portrait_change()
         editor._mark_dirty()
         # A discrete user action (Remove button) - validate immediately, no
         # debounce, so an avatar-oversize error clears at once on removal.
@@ -10514,6 +10984,7 @@ class PersonasScreen(BaseAppScreen):
             # PIL-validated bytes; a bad idle degrades to a skip, not a crash.
             try:
                 editor.set_avatar_image(idle)
+                self._note_actor_pack_portrait_change()
                 applied.append("idle")
             except Exception as exc:
                 skipped.append(("idle", f"could not stage avatar: {exc}"))
@@ -11045,6 +11516,7 @@ class PersonasScreen(BaseAppScreen):
                     )
                     return False
                 editor.set_avatar_image(result.content)
+                self._note_actor_pack_portrait_change()
                 self.run_worker(
                     self._render_character_editor_avatar(),
                     group="personas-avatar-render",
@@ -13115,6 +13587,26 @@ class PersonasScreen(BaseAppScreen):
         message.stop()
         if not self._local_character_actions_allowed():
             return
+        session = self._actor_pack_session
+        if session is not None and session.actor_kind == "character":
+            if self._character_save_inflight:
+                return
+            data = dict(message.character_data or {})
+            errors = self._validate_character(data)
+            self.query_one(PersonasCharacterEditorWidget).show_validation(errors)
+            if errors:
+                self.query_one(PersonasInspectorPane).show_validation_editing()
+                return
+            editor = self._editor_or_none()
+            portrait = editor.current_avatar_bytes() if editor is not None else None
+            self._character_save_inflight = True
+            self._create_actor_pack_worker(
+                data,
+                session,
+                portrait=bytes(portrait) if type(portrait) is bytes else None,
+                portrait_generation=self._actor_pack_portrait_generation,
+            )
+            return
         if self._visual_identity_has_unsaved_authoring():
             self._notify(
                 "Save or Cancel reaction changes before saving the character.",
@@ -13404,6 +13896,14 @@ class PersonasScreen(BaseAppScreen):
         truth), so the screen only clears the inspector summary here.
         """
         message.stop()
+        session = self._actor_pack_session
+        if session is not None and session.actor_kind == "persona":
+            if self._profile_save_inflight or self._profile_save_operation_inflight:
+                return
+            self._profile_save_inflight = True
+            self._profile_save_operation_inflight = True
+            self._create_actor_pack_worker(dict(message.data or {}), session)
+            return
         if self._persona_visual_has_unsaved_authoring():
             self._notify(
                 "Save or Cancel Persona Visual changes before saving the Persona.",
@@ -13770,6 +14270,7 @@ class PersonasScreen(BaseAppScreen):
             or self._persona_shared_visual_identity_has_unsaved_authoring()
             or self._persona_visual_has_unsaved_authoring()
         ):
+            await self._drain_actor_pack_creation()
             await continuation()
             # Guarded continuations are exactly the transitions that change
             # edit mode / selection, so the footer hints refresh here.
@@ -13793,6 +14294,7 @@ class PersonasScreen(BaseAppScreen):
             await self._drain_visual_identity_authoring()
             await self._drain_persona_shared_visual_identity_authoring()
             await self._drain_persona_visual_authoring()
+            await self._drain_actor_pack_creation()
             await continuation()
             self._sync_title_and_console_actions()
         finally:

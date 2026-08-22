@@ -25,6 +25,7 @@ PersonaEntityKind = Literal[
 ]
 PersonaAction = Literal[
     "create",
+    "create_actor_pack",
     "import",
     "export",
     "duplicate",

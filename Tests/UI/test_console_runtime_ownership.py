@@ -485,6 +485,26 @@ def test_persona_buddy_is_app_owned_and_shutdown_after_console_producers():
     assert "persona_buddy_controller.shutdown" in disposer, disposer
 
 
+@pytest.mark.unit
+def test_actor_pack_recovery_precedes_character_persona_surfaces():
+    """Cross-store recovery runs before scope services and Buddy construction."""
+    import inspect
+
+    from tldw_chatbook.app import TldwCli
+
+    wiring = inspect.getsource(TldwCli._wire_character_persona_services)
+    local_service = wiring.index("LocalCharacterPersonaService(")
+    coordinator = wiring.index("PersonaActorPackCoordinator(")
+    recovery = wiring.index(".recover()")
+    scope = wiring.index("CharacterPersonaScopeService(")
+    assert local_service < coordinator < recovery < scope, wiring
+
+    initializer = inspect.getsource(TldwCli.__init__)
+    wiring_call = initializer.index("self._wire_character_persona_services()")
+    buddy = initializer.index("PersonaBuddyController(")
+    assert wiring_call < buddy, initializer
+
+
 @pytest.mark.asyncio
 async def test_app_fences_console_then_drains_buddy_before_profile_teardown(
     monkeypatch: pytest.MonkeyPatch,
