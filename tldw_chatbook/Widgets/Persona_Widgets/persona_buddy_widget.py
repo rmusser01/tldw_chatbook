@@ -254,6 +254,24 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             return False
         return self._current_view(self) if self._current_view is not None else True
 
+    def _resolution_size(self) -> tuple[int, int] | None:
+        """Return the exact visible portrait slot size, if it can be painted."""
+
+        if (
+            not self.is_attached
+            or not self.display
+            or self.has_class("persona-buddy-collapsed")
+            or self.has_class("persona-buddy-compact")
+        ):
+            return None
+        frame = self.query_one("#persona-buddy-frame", Static)
+        if not frame.display:
+            return None
+        region = frame.content_region
+        if region.width < 1 or region.height < 1:
+            return None
+        return region.width, region.height
+
     async def _resolution_loop(self) -> None:
         """Resolve only changed semantic authority while this view is current."""
 
@@ -262,10 +280,12 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             authority = self._resolution_authority(snapshot)
             if authority is None or authority == self._resolved_authority:
                 return
-            region = self.content_region
+            size = self._resolution_size()
+            if size is None:
+                return
             visual = await self._controller.resolve_current_visual(
-                cols=max(1, region.width),
-                lines=max(1, region.height),
+                cols=size[0],
+                lines=size[1],
             )
             if not self._is_current_view():
                 return
@@ -316,13 +336,12 @@ class PersonaBuddyWidget(Widget, can_focus=True):
     def _resolution_authority(self, snapshot: Any) -> tuple[object, ...] | None:
         """Return the full semantic/cache/viewport key for one costly resolve."""
 
-        region = self.content_region
+        size = self._resolution_size()
         if (
             not snapshot.enabled
             or not snapshot.open
             or snapshot.selection is None
-            or region.width < 1
-            or region.height < 1
+            or size is None
         ):
             return None
         return (
@@ -335,8 +354,7 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             snapshot.preferences_generation,
             snapshot.profile_generation,
             snapshot.viewport_generation,
-            region.width,
-            region.height,
+            *size,
         )
 
     def _ensure_resolution(self, snapshot: Any) -> None:

@@ -63,6 +63,7 @@ class _FakeController:
         )
         self.generation = 1
         self.persisted: list[PersonaBuddyPreferences] = []
+        self.resolve_sizes: list[tuple[int, int]] = []
         durations = durations or tuple(20 for _ in frames)
         prepared = tuple(
             SimpleNamespace(renderable=Text(label), duration_ms=duration)
@@ -120,6 +121,7 @@ class _FakeController:
 
     async def resolve_current_visual(self, *, cols: int, lines: int):
         assert cols > 0 and lines > 0
+        self.resolve_sizes.append((cols, lines))
         return self.visual
 
 
@@ -172,6 +174,20 @@ class _CountingResolutionController(_FakeController):
 
     async def resolve_current_visual(self, *, cols: int, lines: int):
         self.resolve_calls += 1
+        return self.visual
+
+
+class _SlotSizedFrameController(_FakeController):
+    async def resolve_current_visual(self, *, cols: int, lines: int):
+        assert cols > 0 and lines > 1
+        self.resolve_sizes.append((cols, lines))
+        labels = ["TOP"] + [f"ROW-{index}" for index in range(1, lines - 1)]
+        labels.append("BOTTOM")
+        frame = SimpleNamespace(
+            renderable=Text("\n".join(labels), style="bold white on rgb(20,80,140)"),
+            duration_ms=20,
+        )
+        self.visual = replace(self.visual, frames=(frame,))  # type: ignore[arg-type]
         return self.visual
 
 
@@ -551,6 +567,86 @@ async def test_resolution_runs_once_until_semantic_authority_changes():
 
         controller.generation += 1
         await _wait_until(lambda: controller.resolve_calls == 2, timeout=0.3)
+
+
+@pytest.mark.asyncio
+async def test_resolution_uses_visible_frame_content_region_not_window_region():
+    controller = _SlotSizedFrameController()
+    app = _BuddyApp(controller)
+    async with app.run_test(size=(80, 24)):
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        frame = buddy.query_one("#persona-buddy-frame", Static)
+        await _wait_until(lambda: bool(controller.resolve_sizes))
+        expected = (frame.content_region.width, frame.content_region.height)
+
+        assert controller.resolve_sizes[-1] == expected
+        assert controller.resolve_sizes[-1] != (
+            buddy.content_region.width,
+            buddy.content_region.height,
+        )
+        await _wait_until(
+            lambda: (
+                "TOP" in _compositor_text(app.screen)
+                and "BOTTOM" in _compositor_text(app.screen)
+            )
+        )
+        strips = app.screen._compositor.render_strips()
+        painted_frame = "\n".join(
+            strips[y].text[frame.region.x : frame.region.right]
+            for y in range(frame.region.y, frame.region.bottom)
+        )
+        assert "TOP" in painted_frame
+        assert "BOTTOM" in painted_frame
+
+
+@pytest.mark.asyncio
+async def test_frame_slot_resize_changes_resolution_authority_once():
+    controller = _FakeController()
+    app = _BuddyApp(controller)
+    async with app.run_test(size=(80, 24)) as pilot:
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        frame = buddy.query_one("#persona-buddy-frame", Static)
+        await _wait_until(lambda: len(controller.resolve_sizes) == 1)
+        original = frame.content_region.size
+        frame.styles.height = max(1, original.height - 1)
+        await pilot.pause()
+        await _wait_until(lambda: frame.content_region.size != original)
+
+        buddy.refresh_from_controller()
+
+        await _wait_until(lambda: len(controller.resolve_sizes) == 2)
+        assert controller.resolve_sizes[-1] == (
+            frame.content_region.width,
+            frame.content_region.height,
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ("hidden", "collapsed", "zero-frame"))
+async def test_hidden_collapsed_or_zero_frame_slot_does_not_resolve(mode: str):
+    controller = _FakeController()
+    app = _BuddyApp(controller)
+    async with app.run_test(size=(80, 24)) as pilot:
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        frame = buddy.query_one("#persona-buddy-frame", Static)
+        await _wait_until(lambda: len(controller.resolve_sizes) == 1)
+
+        if mode == "hidden":
+            buddy.display = False
+        elif mode == "collapsed":
+            controller.preferences = replace(
+                controller.preferences,
+                collapsed=True,
+            )
+        else:
+            frame.styles.height = 0
+            await pilot.pause()
+            await _wait_until(lambda: frame.content_region.height == 0)
+        controller.generation += 1
+        buddy.refresh_from_controller()
+        await asyncio.sleep(0.2)
+
+        assert len(controller.resolve_sizes) == 1
 
 
 @pytest.mark.asyncio
