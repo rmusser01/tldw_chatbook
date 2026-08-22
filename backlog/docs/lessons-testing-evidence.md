@@ -5913,3 +5913,70 @@ Then mutate the fix: a negative-space assertion that stays green under the
 mutation is not a test. And in this codebase specifically: **`loguru` uses
 brace formatting**; a `%s` template is a silent no-op that drops your payload,
 while stdlib `logging` calls on the same page take `%s` correctly.
+
+## A denylist over USER-NAMED values, and the mirror test that made it look guarded (TASK-19733, 2026-08-22)
+
+`Utils/egress.py`'s cross-origin redirect rule was
+`_STRIP_HEADERS = ("authorization", "cookie", "proxy-authorization",
+"x-goog-api-key")` — drop those four on a hop that leaves the origin, forward
+everything else. The obvious repair for the filed defect was "append
+`x-api-key`". It would have been wrong, and the test suite would have gone
+green on it.
+
+The reason is one line in `Subscriptions/monitoring_engine.py`:
+
+```python
+key_header = auth_config.get("header", "X-API-Key")
+headers[key_header] = auth_config.get("key", "")
+```
+
+The header NAME is user config. `X-API-Key` is only the default. So the
+denylist was being asked to enumerate a set the user gets to extend at
+runtime — unfixable by extending the list, whatever names you add. Written as
+a born-red test with a header the user picked (`X-Feed-Token`), the base
+failure showed the key arriving at the redirect target:
+
+```
+assert 'x-feed-token' not in Headers({'host': 'evil.example', ...,
+    'x-feed-token': 'sentinel-not-a-real-key-19733'})
+```
+
+**Generalises to:** whenever a security filter matches on a value the user
+supplies (header name, param name, filename, env var, tool name), a denylist
+is not a weaker allowlist — it is not a control at all. Invert it. And write
+the born-red test with a name nobody would have thought to denylist: had the
+test used `X-API-Key`, the one-literal fix would have passed it and the real
+hole would have shipped.
+
+**Second half, same task.** `Model_Artifacts/fetch.py` kept a hand-mirrored
+copy of that tuple, and `Tests/Model_Artifacts/test_stream_fetch.py` pinned
+`set(fetch._STRIP_HEADERS) == set(egress._STRIP_HEADERS)`. That guard reads
+like the drift is handled. It is not: it detects divergence only *after*
+someone edits one side, and only if they run that suite — and it actively
+rewards re-synchronising the copy, which preserves the defect shape. Fixed by
+deleting the mirror and importing the one object; the guard became an
+identity assertion plus `assert not hasattr(fetch, "_STRIP_HEADERS")`, so a
+re-introduced mirror fails. **A test that pins a duplicated constant is
+evidence the duplication should not exist, not evidence that it is safe.**
+
+**Third half, found by the independent review of the same task.** The fix
+above filtered the *built request object* — `request.headers` after
+`client.build_request(...)` — and its docstring then claimed cross-origin hops
+carry nothing but the allowlist "whether the header came from the `headers`
+argument or from the client object's own defaults". A probe with
+`httpx.Client(auth=("alice", <sentinel>))` put `Authorization: Basic …` on the
+wire to the second origin anyway. `httpx` applies a client-level `auth` inside
+`send()`, *after* `build_request` returns — so it is structurally invisible to
+anything that inspects the request object. (The docstring did carry a residual
+note, but scoped to an auth *callable*; a plain tuple leaked the same way.)
+
+**Generalises to:** "I filtered the request" is not the same as "I filtered
+what goes on the wire". Before trusting a strip, ask what the client library
+adds *between* the object you hold and the socket — auth flows, cookie jars,
+proxy headers, retry/redirect middleware. Prove it by constructing the
+credential through each injection route the API offers (per-call arg, client
+default header, cookie jar, `auth=`), not just the one the code under review
+happens to use. Three of those four routes were already closed here; the
+fourth was the one no test had ever expressed. The fix was
+`send(..., auth=None)` — explicit `None`, because *omitting* the argument
+leaves httpx's `USE_CLIENT_DEFAULT` sentinel in play and changes nothing.
