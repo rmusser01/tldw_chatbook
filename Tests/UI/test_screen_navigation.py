@@ -1965,7 +1965,7 @@ def test_files_back_navigation_workspace_contract_matches_real_workspace():
     # ``_register_footer_shortcuts`` out, so probes never see it -- but the
     # real widget must still satisfy it.
     footer_contract = workspace_attribute_accesses(
-        LibraryScreen._library_footer_shortcuts_for_current_state
+        LibraryScreen._library_route_shortcuts_for_current_state
     )
     assert "reload_confirmation_active" in footer_contract
 
@@ -2547,6 +2547,7 @@ def test_action_show_workbench_help_includes_landing_footer_keys(monkeypatch):
     ``SettingsScreen.action_show_workbench_help`` reads its per-category
     shortcuts directly rather than through the footer widget).
     """
+    from tldw_chatbook.Library.library_rail_state import LibraryLifecycle
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
     from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
 
@@ -2554,6 +2555,10 @@ def test_action_show_workbench_help_includes_landing_footer_keys(monkeypatch):
     screen = LibraryScreen(app)
     # Landing: no row selected (the default -- see LibraryScreen.__init__).
     assert screen._library_selected_row_id == ""
+    # The full rail is visible after progressive disclosure, so `/` is a
+    # truthful shortcut here. Starter mode intentionally omits it because
+    # there is no rail search input yet.
+    screen._library_lifecycle = LibraryLifecycle.GRADUATED
 
     pushed = []
 
@@ -2833,11 +2838,16 @@ def test_action_library_list_focus_rail_focuses_search_input(monkeypatch):
     focused_widgets = []
 
     class _FakeInput:
-        def focus(self):
-            focused_widgets.append(self)
+        display = True
+        disabled = False
 
     fake_input = _FakeInput()
     monkeypatch.setattr(screen, "query_one", lambda *a, **k: fake_input)
+    monkeypatch.setattr(
+        screen,
+        "set_focus",
+        lambda widget, **_kwargs: focused_widgets.append(widget),
+    )
 
     screen.action_library_list_focus_rail()
 
@@ -3772,10 +3782,12 @@ def test_primary_routed_screens_use_base_app_screen():
 
 
 @pytest.mark.asyncio
-async def test_library_screen_round_trip_restores_rag_query_and_rail_selection():
-    """Select the Search/RAG rail row, type a query into the real Input
-    widget, hop to Home and back, and assert both the internal state and
-    the visible Input value survived on the freshly-composed instance.
+async def test_library_screen_round_trip_returns_to_landing_with_rag_draft():
+    """A generic Library return lands at the hub without losing a RAG draft.
+
+    The selected canvas is deliberately not restored automatically. After
+    reopening the disclosed Search/RAG canvas, the freshly-composed Input
+    must still contain the saved draft.
     """
     from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH
 
@@ -3787,20 +3799,14 @@ async def test_library_screen_round_trip_restores_rag_query_and_rail_selection()
             if type(app.screen).__name__ != "Screen":
                 break
 
-        app.post_message(NavigateToScreen("library"))
+        app.post_message(NavigateToScreen("search"))
         for _ in range(150):
             await pilot.pause(0.02)
             if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
-                "#library-row-browse-search"
+                "#library-rag-query-input"
             ):
                 break
         assert type(app.screen).__name__ == "LibraryScreen"
-
-        app.screen.query_one("#library-row-browse-search").press()
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if app.screen.query("#library-rag-query-input"):
-                break
 
         app.screen.query_one("#library-rag-query-input", Input).value = "roadmap notes"
         await pilot.pause()
@@ -3819,14 +3825,25 @@ async def test_library_screen_round_trip_restores_rag_query_and_rail_selection()
         app.post_message(NavigateToScreen("library"))
         for _ in range(150):
             await pilot.pause(0.02)
-            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
-                "#library-rag-query-input"
+            if type(app.screen).__name__ == "LibraryScreen" and (
+                app.screen.query("#library-hub-explore-all")
+                or app.screen.query("#library-rail-explore-all")
+                or app.screen.query("#library-row-browse-search")
             ):
                 break
 
         restored_screen = app.screen
         assert type(restored_screen).__name__ == "LibraryScreen"
         assert restored_screen._library_rag_query == "roadmap notes"
+        assert restored_screen._library_selected_row_id == ""
+
+        await app.handle_screen_navigation(NavigateToScreen("search"))
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if app.screen.query("#library-rag-query-input"):
+                break
+
+        restored_screen = app.screen
         assert restored_screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
         query_input = restored_screen.query_one("#library-rag-query-input", Input)
         assert query_input.value == "roadmap notes"
@@ -4203,11 +4220,9 @@ async def test_search_route_round_trips_to_the_library_rag_row():
     v2 PR-1, Task 1): the "search" route no longer has a runtime-state seam
     of its own, so this locks that the alias's rail-row selection survives a
     round trip through another screen and is not just a first-navigation
-    fluke of ``_LEGACY_ROUTE_LIBRARY_NAV_CONTEXT``. Unlike the "library" +
-    click entry point exercised by
-    ``test_library_screen_round_trip_restores_rag_query_and_rail_selection``,
-    entering via the bare "search" alias re-applies that legacy nav context
-    on every visit rather than relying solely on restored screen state.
+    fluke of ``_LEGACY_ROUTE_LIBRARY_NAV_CONTEXT``. The bare "search" alias
+    must reapply that context on every visit; the separate RAG-draft round
+    trip test pins generic Library re-entry to the returning landing.
     """
     from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH
 
@@ -4858,11 +4873,12 @@ async def test_deep_link_library_route_lands_its_canvas_over_restored_state():
 
 
 @pytest.mark.asyncio
-async def test_generic_reentry_restores_last_visited_library_canvas():
-    """Core LIB-03 round trip: visit Search/RAG, leave to Home, then
-    re-enter Library GENERICALLY (bare ``NavigateToScreen``, no context --
-    the nav-bar tab button's own shape) -- the Search/RAG canvas must be
-    RESTORED, not reset back to the hub or any other canvas.
+async def test_generic_reentry_returns_to_library_landing():
+    """A bare Library route returns to the landing, not a prior canvas.
+
+    Explicit deep links still open their requested canvas. Generic re-entry
+    uses the returning-landing contract so the user chooses whether to
+    continue an authoritative prior scope.
     """
     from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH
 
@@ -4881,11 +4897,11 @@ async def test_generic_reentry_restores_last_visited_library_canvas():
         await app.handle_screen_navigation(NavigateToScreen("home"))
         assert type(app.screen).__name__ == "HomeScreen"
 
-        # Generic re-entry must restore Search/RAG.
+        # Generic re-entry returns to the hub instead of reopening Search/RAG.
         await app.handle_screen_navigation(NavigateToScreen("library"))
 
         assert type(app.screen).__name__ == "LibraryScreen"
-        assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
+        assert app.screen._library_selected_row_id == ""
 
 
 @pytest.mark.asyncio

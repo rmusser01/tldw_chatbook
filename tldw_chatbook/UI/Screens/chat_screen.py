@@ -5689,11 +5689,15 @@ class ChatScreen(BaseAppScreen):
         """
         session = getattr(self, "_session", None)
         prompts = getattr(self, "_prompts", None)
+        retrieval = getattr(self, "_retrieval", None)
+        skill = getattr(self, "_skill", None)
         return {
             # constructor-supplied callables
             "_chat_dictionary_applier": self._console_chat_dictionary_applier,
             "_world_info_applier": self._console_world_info_applier,
-            "_rag_capture_provider": self._retrieval._capture_console_staged_rag,
+            "_rag_capture_provider": getattr(
+                retrieval, "_capture_console_staged_rag", None
+            ),
             "_default_session_settings": getattr(
                 session, "_default_console_session_settings", None
             ),
@@ -5723,8 +5727,12 @@ class ChatScreen(BaseAppScreen):
             # task-2154.16 (FB-05): the ACTIVE session's own run failing --
             # one error toast carrying the run's visible copy.
             "notify_run_failure": self._notify_console_run_failure,
-            "set_pending_skill_install": self._skill._set_console_pending_skill_install,
-            "set_pending_skill_script": self._skill._set_console_pending_skill_script,
+            "set_pending_skill_install": getattr(
+                skill, "_set_console_pending_skill_install", None
+            ),
+            "set_pending_skill_script": getattr(
+                skill, "_set_console_pending_skill_script", None
+            ),
             # PR3a-2 Task 5, user-wins-ties.
             "wake_user_priority_probe": self._console_wake_user_priority,
             # task-15971: the delivery COMMIT's visibility probe -- a wake
