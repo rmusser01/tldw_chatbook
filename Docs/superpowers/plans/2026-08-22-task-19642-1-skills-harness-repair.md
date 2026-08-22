@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Restore the 29 assigned Skills Library/import integration failures and eliminate the trust-header ordering race exposed by independent closeout verification.
+**Goal:** Restore the 29 assigned Skills Library/import integration failures and eliminate the trust-header ordering and stale-worker races exposed by independent verification.
 
-**Architecture:** Keep the completed harness repair in the two Skills integration owners, then move the existing trust-posture refresh across the Skills-canvas mount boundary. Preserve strict targeted sync, route/generation/focus guards, and the no-whole-screen-fallback contract; add one deterministic mounted-owner test instead of retries, sleeps, or a new reconciliation abstraction.
+**Architecture:** Keep the completed harness repair in the two Skills integration owners, move the existing trust-posture refresh across the Skills-canvas mount boundary, and cancel that posture worker group when the service disappears. Preserve strict targeted sync, route/generation/focus guards, and the no-whole-screen-fallback contract; use deterministic owner tests instead of retries, sleeps, tokens, or a new reconciliation abstraction.
 
 **Tech Stack:** Python 3.11+, Textual 8.x, pytest/pytest-asyncio, Ruff, Backlog.md.
 
@@ -22,8 +22,9 @@
 
 - `Tests/Skills/test_skills_library_flow.py` — returning-user app factory, inert optional owners, bounded navigation helpers, and current Skill-editor interactions.
 - `Tests/Skills/test_skills_import.py` — returning-user app factory and bounded Skills/Import navigation.
-- `Tests/UI/test_library_entry_compose_once.py` — deterministic mounted-owner ordering regression.
-- `tldw_chatbook/UI/Screens/library_screen.py` — start the existing Skills trust-posture refresh after destination mounting.
+- `Tests/UI/test_library_entry_compose_once.py` — deterministic mounted-owner ordering and stale-worker overlap regressions.
+- `Tests/UI/test_library_skills_canvas.py` — editor-mode no-sync regression preserving live draft, widget identity, and focus.
+- `tldw_chatbook/UI/Screens/library_screen.py` — start the existing Skills trust-posture refresh after destination mounting and supersede it when the service disappears.
 - `backlog/tasks/task-19642.1 - Repair-recurring-Skills-Library-and-import-harness-failures.md` — checked acceptance criteria, exact evidence, and implementation notes.
 
 **Modify only if the incident is not already recorded adequately**
@@ -399,7 +400,21 @@ Expected: 34 passed.
 **Files:**
 
 - Modify: `Tests/UI/test_library_entry_compose_once.py`
+- Modify: `Tests/UI/test_library_skills_canvas.py`
 - Modify: `tldw_chatbook/UI/Screens/library_screen.py:17327-17360`
+
+### Quality-review stale-worker amendment
+
+The first no-service fix cleared and repainted the mounted Skills list but did
+not supersede an earlier `library_skills_trust_posture` worker. Add
+`test_missing_trust_service_supersedes_in_flight_posture_worker`: gate a real
+posture callable in its `asyncio.to_thread` hop, remove the trust service, run
+the no-service refresh, release the old callable, and assert the old worker is
+cancelled and the only projected posture is `""`. Verify RED first as
+`["", "ready"]`, then minimally call
+`self.workers.cancel_group(self, "library_skills_trust_posture")` before the
+existing unconditional clear. Do not add a request token unless this real
+Textual cancellation fails to block publication.
 
 - [ ] **Step 1: Add the deterministic mounted-owner RED test**
 
@@ -494,21 +509,29 @@ Expected: 1 passed.
 
 - [ ] **Step 5: Run the directly related reconciliation owners**
 
+This gate owns both follow-up lifecycle regressions: the mounted list must
+clear a stale header when the trust service disappears, while a background
+snapshot in editor mode must clear cached posture without syncing the canvas or
+losing the live draft, widget identity, or focus.
+
 Run:
 
 ```bash
 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q \
   Tests/UI/test_library_entry_compose_once.py::test_skills_rail_starts_trust_posture_after_canvas_mount \
+  Tests/UI/test_library_entry_compose_once.py::test_skills_rail_without_trust_service_clears_mounted_header \
+  Tests/UI/test_library_entry_compose_once.py::test_missing_trust_service_supersedes_in_flight_posture_worker \
   'Tests/UI/test_library_entry_compose_once.py::test_automatic_entry_worker_composes_screen_once_and_routes_in_place[skills-size0]' \
   'Tests/UI/test_library_entry_compose_once.py::test_automatic_entry_worker_composes_screen_once_and_routes_in_place[skills-size1]' \
   Tests/UI/test_library_entry_compose_once.py::test_stale_skills_posture_cannot_project_after_route_switch \
   Tests/UI/test_library_entry_compose_once.py::test_stale_skills_generation_cannot_project_on_the_same_route \
   Tests/UI/test_library_entry_compose_once.py::test_skills_posture_sync_composes_focus_with_render_completion \
   Tests/Skills/test_skills_library_flow.py::test_orphaned_manifest_is_one_click_resetup \
+  Tests/UI/test_library_skills_canvas.py::test_missing_trust_service_snapshot_preserves_open_skill_draft \
   --tb=short
 ```
 
-Expected: 7 passed. The compose-once cases must still report no screen-level
+Expected: 10 passed. The compose-once cases must still report no screen-level
 recompose after the mounted owner exists.
 
 - [ ] **Step 6: Run scoped static checks**
@@ -519,33 +542,44 @@ Run:
 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff check \
   tldw_chatbook/UI/Screens/library_screen.py \
   Tests/UI/test_library_entry_compose_once.py \
+  Tests/UI/test_library_skills_canvas.py \
   Tests/Skills/test_skills_import.py \
   Tests/Skills/test_skills_library_flow.py
 git diff --check
 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff format --check \
   tldw_chatbook/UI/Screens/library_screen.py \
   Tests/UI/test_library_entry_compose_once.py \
+  Tests/UI/test_library_skills_canvas.py \
   Tests/Skills/test_skills_import.py \
   Tests/Skills/test_skills_library_flow.py
 ```
 
 Expected: Ruff check and `git diff --check` exit 0. Formatter check retains the
-pre-existing exit 1 baseline for all four large files; record it and do not
+pre-existing exit 1 baseline for all five large files; record it and do not
 bulk-format.
 
-- [ ] **Step 7: Prove the ordering inverse**
+- [ ] **Step 7: Prove the ordering and editor-lifecycle inverses**
 
 Use `apply_patch` to move the refresh block back before shell construction,
 run only the Step 2 owner test, and confirm it fails with
 `observed_owner_state == [False]`. Restore with `apply_patch`, rerun the owner
-test to 1 passed, then require `git diff --check` green.
+test to 1 passed. Then temporarily restore the unconditional no-service Skills
+canvas sync and run
+`test_missing_trust_service_snapshot_preserves_open_skill_draft`; confirm it
+fails with one recorded sync against the open editor. Restore the list-mode
+guard, rerun that regression to 1 passed, then require `git diff --check` green.
+Finally remove only the no-service `cancel_group` call and run
+`test_missing_trust_service_supersedes_in_flight_posture_worker`; require RED
+with `["", "ready"]`. Restore cancellation, rerun to 1 passed, and require the
+worker to be cancelled with only `[""]` projected.
 
 - [ ] **Step 8: Commit the ordering repair**
 
 ```bash
 git add \
   tldw_chatbook/UI/Screens/library_screen.py \
-  Tests/UI/test_library_entry_compose_once.py
+  Tests/UI/test_library_entry_compose_once.py \
+  Tests/UI/test_library_skills_canvas.py
 git commit -m "fix(library): mount Skills before trust refresh"
 ```
 
@@ -589,18 +623,24 @@ forcing the old ordering patch through.
 
 - [ ] **Step 3: Run the complete post-rebase focused gate**
 
-After rebase, run Task 4 Steps 5-6, run the exact two-file command from Task 4
-Step 9 three consecutive times, and run the 12 editor-owner cases from Task 3
-Step 2. Then run:
+After rebase, run Task 4 Steps 5-6, explicitly including
+`test_skills_rail_without_trust_service_clears_mounted_header` and
+`test_missing_trust_service_supersedes_in_flight_posture_worker`, plus
+`test_missing_trust_service_snapshot_preserves_open_skill_draft`. Run the
+exact two-file command from Task 4 Step 9 three consecutive times, and run the
+12 editor-owner cases from Task 3 Step 2 together with
+`test_missing_trust_service_snapshot_preserves_open_skill_draft` and
+`test_missing_trust_service_supersedes_in_flight_posture_worker` as a 14-case
+editor/trust lifecycle gate. Then run:
 
 ```bash
 git diff --check origin/dev...HEAD
 git status --short
 ```
 
-Expected: `7 passed` ordering/reconciliation owners, three separate
-`34 passed` two-file runs, `12 passed` editor owners, Ruff green, the recorded
-four-file formatter baseline only, no whitespace errors, and an empty status.
+Expected: `10 passed` ordering/reconciliation and lifecycle-regression owners, three separate
+`34 passed` two-file runs, `14 passed` editor/trust lifecycle owners, Ruff green, the recorded
+five-file formatter baseline only, no whitespace errors, and an empty status.
 Do not run a repository-wide suite.
 
 - [ ] **Step 4: Obtain final independent code review**
@@ -615,13 +655,14 @@ status.
 
 Check all three ACs only after Steps 3-4 are green. Add Implementation Notes containing:
 
-- the four confirmed test-contract drift classes and mounted-owner ordering race;
+- the four confirmed test-contract drift classes, mounted-owner ordering race,
+  and no-service editor lifecycle regression;
 - all modified files, including the narrow production sequencing change;
-- three consecutive `34 passed` two-file runs, `12 passed` editor owners, and
-  `7 passed` ordering/reconciliation owners;
+- three consecutive `34 passed` two-file runs, `14 passed` editor/trust lifecycle owners, and
+  `10 passed` ordering/reconciliation and lifecycle-regression owners;
 - Ruff and `git diff --check` results;
-- the pre-existing four-file formatter baseline, without claiming formatter success;
-- all four representative causal inverse failures and successful restoration;
+- the pre-existing five-file formatter baseline, without claiming formatter success;
+- all six representative causal RED/inverse failures and successful restoration;
 - explicit confirmation that the repaired two-file Skills gate output contained
   no Prompt/Study/Quiz backend exception or local Library snapshot failure
   warning; do not extend that claim to the separate reconciliation-owner

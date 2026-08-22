@@ -1250,6 +1250,104 @@ async def test_skills_rail_starts_trust_posture_after_canvas_mount(
 
 
 @pytest.mark.asyncio
+async def test_skills_rail_without_trust_service_clears_mounted_header() -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    app.skills_scope_service = _FakeSkillsScopeService(
+        available=[{"name": "code-review"}]
+    )
+    app.local_skill_trust_service = SimpleNamespace(trust_posture=lambda: "ready")
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        active_screen = _active_library_screen(host)
+        await _wait_for_library_shell(active_screen, pilot)
+        await active_screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SKILLS)
+        await _wait_for_selector(
+            active_screen, pilot, "#library-skills-trust-header"
+        )
+        await active_screen._select_library_rail_row(
+            LIBRARY_ROW_BROWSE_CONVERSATIONS
+        )
+        app.local_skill_trust_service = None
+
+        await active_screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SKILLS)
+        await _wait_for_selector(active_screen, pilot, "#library-skills-canvas")
+
+        assert active_screen._library_skills_trust_posture == ""
+        assert not active_screen.query("#library-skills-trust-header")
+
+
+@pytest.mark.asyncio
+async def test_missing_trust_service_supersedes_in_flight_posture_worker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    app.skills_scope_service = _FakeSkillsScopeService(
+        available=[{"name": "code-review"}]
+    )
+    app.local_skill_trust_service = None
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        active_screen = _active_library_screen(host)
+        await _wait_for_library_shell(active_screen, pilot)
+        await active_screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SKILLS)
+        await _wait_for_selector(active_screen, pilot, "#library-skills-canvas")
+        await active_screen.workers.wait_for_complete()
+        canvas = active_screen.query_one(
+            "#library-skills-canvas", LibrarySkillsListCanvas
+        )
+        projected_postures: list[str] = []
+        original_sync_state = canvas.sync_state
+
+        def record_sync_state(*args, **kwargs) -> None:
+            projected_postures.append(kwargs["trust_posture"])
+            original_sync_state(*args, **kwargs)
+
+        monkeypatch.setattr(canvas, "sync_state", record_sync_state)
+        started = threading.Event()
+        release = threading.Event()
+
+        def gated_posture() -> str:
+            started.set()
+            assert release.wait(timeout=10), "Skills posture gate was not released."
+            return "ready"
+
+        app.local_skill_trust_service = SimpleNamespace(
+            trust_posture=gated_posture
+        )
+        active_screen._refresh_library_skills_trust_posture()
+        try:
+            await _wait_for_condition(
+                pilot,
+                started.is_set,
+                message="Skills posture did not reach its service gate.",
+            )
+            posture_worker = next(
+                worker
+                for worker in active_screen.workers
+                if worker.group == "library_skills_trust_posture"
+            )
+            app.local_skill_trust_service = None
+            active_screen._refresh_library_skills_trust_posture()
+        finally:
+            release.set()
+        await _wait_for_condition(
+            pilot,
+            lambda: posture_worker.is_finished,
+            message="Superseded Skills posture worker did not finish.",
+        )
+        await pilot.pause()
+
+        assert posture_worker.is_cancelled
+        assert projected_postures == [""]
+        assert active_screen._library_skills_trust_posture == ""
+        assert not active_screen.query("#library-skills-trust-header")
+
+
+@pytest.mark.asyncio
 async def test_stale_skills_posture_cannot_project_after_route_switch() -> None:
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())

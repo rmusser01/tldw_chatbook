@@ -1444,6 +1444,73 @@ async def _open_real_skill_editor(host, pilot, skill_name: str) -> LibraryScreen
 
 
 @pytest.mark.asyncio
+async def test_missing_trust_service_snapshot_preserves_open_skill_draft(
+    tmp_path,
+    monkeypatch,
+):
+    """A missing posture service must not rebuild live editor fields."""
+    local_service = LocalSkillsService(
+        store_dir=tmp_path,
+        trust_service=None,
+        allow_untrusted_without_trust_service=True,
+        policy_enforcer=None,
+    )
+    await local_service.create_skill(
+        name="draft-demo",
+        content=(
+            "---\nname: draft-demo\ndescription: Saved copy\n---\nDo the work."
+        ),
+    )
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesListScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.prompt_scope_service = object()
+    app.study_scope_service = object()
+    app.study_quiz_scope_service = object()
+    app.skills_scope_service = SkillsScopeService(
+        local_service=local_service,
+        server_service=None,
+        policy_enforcer=None,
+    )
+    app.local_skill_trust_service = None
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = await _open_real_skill_editor(host, pilot, "draft-demo")
+        await screen.workers.wait_for_complete()
+        canvas = screen.query_one(
+            "#library-skills-canvas", LibrarySkillsListCanvas
+        )
+        description = canvas.query_one("#library-skill-description", Input)
+        description.value = "Unsaved draft"
+        description.focus()
+        await pilot.pause()
+        assert screen._library_skill_dirty is True
+        assert screen._library_skill_editor_state is not None
+        assert screen._library_skill_editor_state.description == "Saved copy"
+        screen._library_skills_trust_posture = "ready"
+        sync_calls: list[None] = []
+        original_sync_state = canvas.sync_state
+
+        def recorded_sync_state(*args, **kwargs):
+            sync_calls.append(None)
+            return original_sync_state(*args, **kwargs)
+
+        monkeypatch.setattr(canvas, "sync_state", recorded_sync_state)
+
+        screen._refresh_local_source_snapshot()
+        await screen.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert screen._library_skills_trust_posture == ""
+        assert sync_calls == []
+        assert screen.query_one("#library-skill-description", Input) is description
+        assert description.value == "Unsaved draft"
+        assert description.has_focus
+
+
+@pytest.mark.asyncio
 async def test_library_skill_mode_switch_is_targeted_and_remembered(
     tmp_path, monkeypatch
 ):

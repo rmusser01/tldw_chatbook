@@ -2,7 +2,7 @@
 
 Date: 2026-08-21
 
-Status: Approved design; production ordering amendment pending spec review
+Status: Approved design; production ordering amendment approved and current
 
 Task: TASK-19642.1
 
@@ -16,8 +16,8 @@ without reverting accepted Library or Skill-editor behavior.
 
 The exact two-file baseline is 29 failed and 5 passed. The initial failures and
 the two latent assertions exposed after repairing the rail fall into four
-test-contract drifts. Independent closeout verification then exposed one
-production ordering race:
+test-contract drifts. Independent closeout and quality verification then
+exposed two production races:
 
 1. Both Skills files import the shared `TldwCli` test factory directly. That
    factory truthfully admits a newly created test profile to the Library
@@ -55,11 +55,17 @@ production ordering race:
    compose captured the
    old posture but before the replacement canvas mounts, strict targeted sync
    has no owner and drops `FAILED`, leaving the newly mounted canvas stale.
+6. The first no-service repair cleared the cached posture and repainted the
+   mounted list, but it did not supersede an earlier trust-posture worker. A
+   deterministic gated overlap removed the trust service while that worker's
+   captured callable was in flight and observed projections `""`, then stale
+   `"ready"`; the old worker still matched the current route and generation,
+   so it restored the header after the no-service refresh cleared it.
 
-The first four findings belong in the integration harness/tests. The fifth is
-a production ordering defect at the existing mounted-owner boundary and needs
-one narrow runtime fix; it is not safe to hide it with a longer test timeout or
-an integration-test refresh.
+The first four findings belong in the integration harness/tests. The final two
+are production ownership defects at the existing mounted-owner/worker-group
+boundary and need narrow runtime fixes; neither is safe to hide with a longer
+test timeout or an integration-test refresh.
 
 ## Design
 
@@ -147,6 +153,19 @@ canvas is mounted when refresh begins. The existing orphaned-manifest flow will
 continue to prove that a real `needs_resetup` posture renders the header and
 action.
 
+When no callable trust service is available, the refresh will always clear the
+posture. Before clearing, it will cancel the existing
+`library_skills_trust_posture` worker group, using the same Textual group that
+an ordinary exclusive replacement already supersedes. The async worker awaits
+its captured callable through `asyncio.to_thread`, so cancelling its task
+prevents that coroutine from resuming into posture publication even though the
+underlying thread may finish. The no-service refresh will repaint through the
+same strict targeted sync with `allow_screen_fallback=False` only while the
+Browse Skills list owns the mounted canvas. This prevents a posture from the
+prior visit or an earlier in-flight read remaining visible without recomposing
+an open editor from stale screen state or changing any route, generation,
+focus, trust, or runtime-policy contract.
+
 ## Alternatives rejected
 
 - Re-expose full Library navigation to new empty profiles: contradicts accepted
@@ -161,6 +180,9 @@ action.
   task's deterministic-fixture acceptance criterion.
 - Retry a failed posture projection: adds another reconciliation state machine
   even though the rail-entry caller can satisfy the existing owner precondition.
+- Add a separate posture request token: the existing Textual worker group
+  already provides the required async-task supersession, and the gated overlap
+  verifies that it blocks stale publication.
 - Enable `_sync_library_canvas`'s whole-screen fallback: violates the accepted
   compose-once/focus-ownership contract for automatic entry workers and masks
   the ordering defect instead of removing it.
@@ -182,17 +204,29 @@ Only tests related to the modified harness/functionality will run:
    - `test_skill_editor_healthy_trust_is_compact_until_details_are_requested`
    - `test_skill_editor_advanced_tool_picker_is_bounded_unique_and_lossless`
    - `test_library_skill_mode_switch_is_targeted_and_remembered`
-4. Add and run a deterministic entry-owner test proving Skills posture refresh
-   begins only after `#library-skills-canvas` mounts. Re-run the directly
-   related compose-once, stale-route, stale-generation, and callback-composition
-   owner tests.
+4. Add and run deterministic owners for the mounted trust-posture lifecycle:
+   - `test_skills_rail_starts_trust_posture_after_canvas_mount` proves refresh
+     begins only after `#library-skills-canvas` mounts;
+   - `test_skills_rail_without_trust_service_clears_mounted_header` proves the
+     mounted list removes a stale trust header when the service disappears;
+   - `test_missing_trust_service_supersedes_in_flight_posture_worker` proves a
+     no-service refresh cancels an earlier gated posture worker before it can
+     republish stale state;
+   - `test_missing_trust_service_snapshot_preserves_open_skill_draft` proves a
+     background snapshot clears cached posture without syncing the editor or
+     losing its live draft, widget identity, or focus.
+   Re-run the directly related compose-once, stale-route, stale-generation,
+   callback-composition, and editor-lifecycle owners. This focused
+   ordering/reconciliation gate contains 10 cases. The 12 base editor-owner
+   cases plus the two no-service lifecycle regressions form a 14-case
+   editor/trust lifecycle gate.
 5. Run the exact two-file gate three consecutive times from clean HEAD, then
    repeat the same focused gates after rebasing on current `origin/dev`.
 6. Run Ruff on all modified Python files and a revision-range
    `git diff --check`. The current
    baseline has two small Ruff findings in `test_skills_library_flow.py`
    (one unused local import and one semicolon-separated pause); because that
-   file is already in scope, remove those two findings. All four modified
+   file is already in scope, remove those two findings. All five modified
    Python files have pre-existing whole-file Ruff-format drift, so do not
    bulk-reformat or claim a green whole-file formatter check; keep every changed
    hunk formatted consistently and record the baseline explicitly.
@@ -200,7 +234,11 @@ Only tests related to the modified harness/functionality will run:
    time (fresh-profile factory, direct clean Delete, or old create-save copy),
    confirm its named focused test fails, and restore the repair. Temporarily
    moving the posture refresh back before canvas mounting must also fail the
-   new deterministic owner test.
+   mounted-owner test. Restoring the unconditional no-service canvas sync must
+   fail the editor snapshot regression by observing a sync/recompose against
+   the live draft. Removing the no-service worker-group cancellation must fail
+   the gated overlap with projections `["", "ready"]`; restore it and require
+   the old worker to remain cancelled with only `[""]` projected.
 
 No repository-wide pytest claim will be made.
 
