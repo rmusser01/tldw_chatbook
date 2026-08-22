@@ -755,7 +755,7 @@ def test_first_chat_task_ratchet_is_earned() -> None:
     current_counts = _method_name_counts(current_class)
     normalized = [ast.dump(node, include_attributes=False) for node in task0_family]
 
-    assert group.source_revision == TASK_3070_9_DESIGN_BASE
+    assert group.source_revision == POST_IMAGE_IMPLEMENTATION_BASE
     assert group.raw_lines == TASK_3070_9_DEFINITION_LINES
     assert tuple(node.name for node in design_family) == TASK_3070_9_FAMILY_NAMES
     assert tuple(node.name for node in task0_family) == TASK_3070_9_FAMILY_NAMES
@@ -790,9 +790,12 @@ multiplicity, not a unique-name dictionary. Also assert the moved methods do
 not call `query`/`query_one`, access `_workspace`/other sibling owners, or
 define a screen compatibility replacement.
 
-Update only `WAVE6_GROUPS["first_chat"].source_revision` to
-`TASK_3070_9_DESIGN_BASE` and retain its historical `raw_lines=328`. This makes
-the family provenance explicit without changing any global historical base.
+Do not alter `WAVE6_GROUPS["first_chat"].source_revision` or `raw_lines`:
+preserve its existing `POST_IMAGE_IMPLEMENTATION_BASE` historical oracle and
+`raw_lines=328` exactly. The new task-specific test reads
+`TASK_3070_9_DESIGN_BASE` and `TASK_3070_9_TASK0_IMPLEMENTATION_BASE` directly;
+neither task-specific provenance constant is inserted into the global group's
+existing `reviewed_methods` lookup.
 
 Extend the existing synthetic non-vacuity fixture so it independently rejects:
 
@@ -1025,9 +1028,17 @@ nothing here.
 
 Run the exact Task 1 selection.
 
+Then prove the unchanged global historical oracle still resolves:
+
+```bash
+../../.venv/bin/python -B -m pytest -q \
+  Tests/Architecture/test_console_wave6_inventory.py::test_wave6_inventory_matches_the_implementation_base
+```
+
 Expected: all selected tests pass; `ChatScreen` owns none of the eight methods;
 the controller owns each exactly once; measured screen totals satisfy the frozen
-ceilings.
+ceilings; and the existing global Wave 6 inventory remains green without a
+`reviewed_methods` key change.
 
 Then run:
 
