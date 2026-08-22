@@ -30,6 +30,7 @@ from tldw_chatbook.Chat.console_history_budget import (
     provider_continuation_owner_groups,
 )
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
+from tldw_chatbook.Chat.trajectory import contains_local_path
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
 from tldw_chatbook.Internal_Prompts.catalog import CATALOG
@@ -729,8 +730,9 @@ def _safe_agent_step_record(run_id: str, step: AgentStep) -> dict[str, Any]:
             marker in result.lower()
             for marker in ("reasoning_content", "chain of thought")
         )
+        path_result = contains_local_path(result)
         scrubbed = redact_log_line(result)
-        if file_result or hidden_reasoning:
+        if file_result or hidden_reasoning or path_result:
             record["result"] = ""
             states["result"] = "omitted"
         elif contains_private_key:
@@ -747,7 +749,11 @@ def _safe_agent_step_record(run_id: str, step: AgentStep) -> dict[str, Any]:
     if step.tool_name and (step.args is not None or step.result):
         record["summary"] = f"{step.tool_name} recorded"
     if step.tool_name:
-        record["sensitivity"] = "tool_content"
+        record["sensitivity"] = (
+            "path"
+            if step.result and contains_local_path(step.result)
+            else "tool_content"
+        )
     record["field_states"] = states
     record["parent_event_id"] = step.parent_event_id or (
         f"agent-step:{run_id}:{step.parent_step_index}"
@@ -4271,6 +4277,7 @@ class AgentService:
             return result
 
         context_callback_ref: dict[str, Callable[[tuple[str, ...]], None]] = {}
+        context_steps_ref: dict[str, AgentStep] = {}
         call_model = self._make_call_model(
             config,
             api_endpoint,
@@ -4350,28 +4357,31 @@ class AgentService:
 
         def observe_context_assembled(categories: tuple[str, ...]) -> None:
             """Persist safe presence-only facts at the exact request seam."""
-            attached = AgentStep(
-                index=3_000_000,
-                kind="context_attached",
-                summary=f"{', '.join(categories)} context attached",
-                created_at=_now_iso(),
-                status="completed",
-                field_states={"content": "omitted"},
-                sensitivity="system_context",
-            )
-            injected = AgentStep(
-                index=3_000_001,
-                kind="context_injected",
-                summary=f"{', '.join(categories)} context injected",
-                created_at=attached.created_at,
-                status="completed",
-                parent_step_index=attached.index,
-                source_step_index=attached.index,
-                field_states={"content": "omitted"},
-                sensitivity="system_context",
-            )
+            attached = context_steps_ref.get("attached")
+            injected = context_steps_ref.get("injected")
+            if attached is None or injected is None:
+                return
+            observed_at = _now_iso()
+            attached.summary = f"{', '.join(categories)} context attached"
+            attached.created_at = observed_at
+            attached.status = "completed"
+            attached.field_states = {"content": "omitted"}
+            attached.sensitivity = "system_context"
+            injected.summary = f"{', '.join(categories)} context injected"
+            injected.created_at = observed_at
+            injected.status = "completed"
+            injected.field_states = {"content": "omitted"}
+            injected.sensitivity = "system_context"
             observe_trace_step(attached)
             observe_trace_step(injected)
+
+        def reserve_context_trace(attached: AgentStep, injected: AgentStep) -> bool:
+            """Reserve context ordering once; assembly remains the observation seam."""
+            if context_steps_ref:
+                return False
+            context_steps_ref["attached"] = attached
+            context_steps_ref["injected"] = injected
+            return True
 
         context_callback_ref["callback"] = observe_context_assembled
 
@@ -4393,6 +4403,9 @@ class AgentService:
                 observe_trace_step
                 if self.review_tool_calls is not None
                 else (lambda _step: None)
+            ),
+            reserve_context_trace=(
+                reserve_context_trace if self.review_tool_calls is not None else None
             ),
             # PR2a Task 5: bind THIS run's id into the hook. `LoopDeps`
             # keeps its `(calls) -> verdicts` shape (the pure runtime stays

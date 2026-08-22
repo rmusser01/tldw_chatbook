@@ -426,8 +426,9 @@ async def test_user_retry_action_is_not_mislabeled_as_provider_retry(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("fallback_fails", (False, True))
 async def test_real_llamacpp_fallback_retry_reaches_console_owner(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, fallback_fails: bool
 ) -> None:
     class _EmptyStreamResponse:
         def raise_for_status(self):
@@ -468,6 +469,8 @@ async def test_real_llamacpp_fallback_retry_reaches_console_owner(
     )
 
     async def fake_complete(self, **_kwargs):
+        if fallback_fails:
+            raise RuntimeError("fallback failed")
         return "recovered"
 
     monkeypatch.setattr(ConsoleProviderGateway, "complete_llamacpp_chat", fake_complete)
@@ -481,8 +484,11 @@ async def test_real_llamacpp_fallback_retry_reaches_console_owner(
             for item in store.sessions()
             if item.id == session.id
         )
-        kinds = [row.event_kind for row in db.get_trajectory_rows(conversation_id)]
+        rows = db.get_trajectory_rows(conversation_id)
+        kinds = [row.event_kind for row in rows]
         assert kinds.count("model_retry") == 1
+        terminal_kind = "model_error" if fallback_fails else "assistant"
+        assert kinds.index("model_retry") < kinds.index(terminal_kind)
     finally:
         db.close()
 
@@ -657,6 +663,19 @@ def test_tool_marker_scrubs_credentials_and_omits_file_content_durably(tmp_path)
             content="⚙ generic_lookup → 3 matches",
             tool_output_full="chain of thought: private internal plan",
         )
+        path_outputs = (
+            "/private/var/db/secrets.txt",
+            "~/private.txt",
+            r"C:\Users\alice\secret.txt",
+            r"\\server\share\secret.txt",
+        )
+        for path_output in path_outputs:
+            store.append_message(
+                session.id,
+                role=ConsoleMessageRole.TOOL,
+                content="⚙ generic_lookup → path",
+                tool_output_full=path_output,
+            )
         store.append_message(
             session.id,
             role=ConsoleMessageRole.TOOL,
@@ -674,14 +693,22 @@ def test_tool_marker_scrubs_credentials_and_omits_file_content_durably(tmp_path)
         assert "/Users/alice/private.txt" not in serialized
         assert "private file body" not in serialized
         assert "private internal plan" not in serialized
+        assert all(path_output not in serialized for path_output in path_outputs)
         payloads = [json.loads(row.payload_json) for row in rows]
-        generic_secret, file_payload, hidden_payload, safe_payload = payloads
+        generic_secret, file_payload, hidden_payload, *tail = payloads
+        path_payloads, safe_payload = tail[:-1], tail[-1]
         assert generic_secret["field_states"]["result"] == "redacted"
         assert generic_secret["sensitivity"] == "tool_content"
         assert file_payload["result"] == ""
         assert file_payload["field_states"]["result"] == "omitted"
         assert hidden_payload["result"] == ""
         assert hidden_payload["field_states"]["result"] == "omitted"
+        assert len(path_payloads) == len(path_outputs)
+        assert all(payload["result"] == "" for payload in path_payloads)
+        assert all(
+            payload["field_states"]["result"] == "omitted" for payload in path_payloads
+        )
+        assert all(payload["sensitivity"] == "path" for payload in path_payloads)
         assert safe_payload["result"] == "3 safe matches"
         assert safe_payload["field_states"]["result"] == "observed"
     finally:
@@ -735,6 +762,83 @@ def test_sidecar_write_failure_attempts_one_nonrecursive_diagnostic(
         assert calls.count(["capture_failed"]) == 1
     finally:
         db.close()
+
+
+def test_capture_failed_identity_deduplicates_after_restart_and_separates_sources(
+    tmp_path, monkeypatch
+) -> None:
+    db_path = str(tmp_path / "chachanotes.sqlite")
+    db = CharactersRAGDB(db_path, "test_client")
+    store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+    session = store.ensure_session(title="Trajectory")
+    conversation_id = store.persist_session_if_needed(session.id)
+    user = store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="go", persist=True
+    )
+    assert user.persisted_message_id is not None
+
+    def source_row(event_id: str) -> TrajectoryRowWrite:
+        return TrajectoryRowWrite(
+            message_id=user.persisted_message_id,
+            conversation_id=conversation_id,
+            turn_id=user.turn_id or user.persisted_message_id,
+            seq=None,
+            event_kind="model_error",
+            payload_json=json.dumps(
+                {
+                    "event_id": event_id,
+                    "summary": "Provider request failed",
+                    "field_states": {"payload": "omitted"},
+                }
+            ),
+        )
+
+    first_source = source_row("source:first")
+    second_source = source_row("source:second")
+
+    def install_selective_writer(target_store):
+        real_writer = target_store.persistence.write_trajectory_rows
+
+        def selective_writer(rows):
+            if [row.event_kind for row in rows] != ["capture_failed"]:
+                raise RuntimeError("primary capture failed")
+            return real_writer(rows)
+
+        monkeypatch.setattr(
+            target_store.persistence, "write_trajectory_rows", selective_writer
+        )
+
+    try:
+        install_selective_writer(store)
+        assert not store.write_trajectory_rows([first_source])
+        first_diagnostic = next(
+            row
+            for row in db.get_trajectory_rows(conversation_id)
+            if row.event_kind == "capture_failed"
+        )
+        first_event_id = json.loads(first_diagnostic.payload_json)["event_id"]
+    finally:
+        db.close()
+
+    reopened = CharactersRAGDB(db_path, "test_client")
+    try:
+        reopened_store = ConsoleChatStore(persistence=ChatPersistenceService(reopened))
+        install_selective_writer(reopened_store)
+        assert not reopened_store.write_trajectory_rows([first_source])
+        assert not reopened_store.write_trajectory_rows([second_source])
+
+        diagnostics = [
+            row
+            for row in reopened.get_trajectory_rows(conversation_id)
+            if row.event_kind == "capture_failed"
+        ]
+        assert len(diagnostics) == 2
+        event_ids = [json.loads(row.payload_json)["event_id"] for row in diagnostics]
+        assert event_ids.count(first_event_id) == 1
+        assert len(set(event_ids)) == 2
+        assert all(event_id.startswith("capture-failed:") for event_id in event_ids)
+    finally:
+        reopened.close()
 
 
 def test_trajectory_write_failure_never_fails_the_turn(tmp_path):

@@ -51,6 +51,20 @@ class _HiddenReasoningResultTool(_CredentialResultTool):
         return {"text": "chain of thought: private internal plan"}
 
 
+class _PathResultTool(_CredentialResultTool):
+    @property
+    def name(self) -> str:
+        return "path_result"
+
+    async def execute(self, **_kwargs) -> dict:
+        return {
+            "text": (
+                "/private/var/db/secrets.txt ~/private.txt "
+                r"C:\Users\alice\secret.txt \\server\share\secret.txt"
+            )
+        }
+
+
 def _native_call(name: str, args: dict, call_id: str = "call-1") -> dict:
     return {
         "id": call_id,
@@ -293,6 +307,7 @@ def test_generic_tool_credentials_are_scrubbed_at_durable_agent_step_boundary(
     provider = BuiltinToolProvider(gate=gate)
     provider._tools["credential_result"] = _CredentialResultTool()
     provider._tools["hidden_reasoning_result"] = _HiddenReasoningResultTool()
+    provider._tools["path_result"] = _PathResultTool()
     registry = ToolCatalogRegistry()
     registry.register_provider(provider)
     replies = [
@@ -304,6 +319,7 @@ def test_generic_tool_credentials_are_scrubbed_at_durable_agent_step_boundary(
                         "tool_calls": [
                             _native_call("credential_result", {}, "credentials"),
                             _native_call("hidden_reasoning_result", {}, "reasoning"),
+                            _native_call("path_result", {}, "paths"),
                         ],
                     }
                 }
@@ -327,7 +343,11 @@ def test_generic_tool_credentials_are_scrubbed_at_durable_agent_step_boundary(
             config=AgentConfig(
                 model="model",
                 system_prompt="system",
-                allowed_tools=("credential_result", "hidden_reasoning_result"),
+                allowed_tools=(
+                    "credential_result",
+                    "hidden_reasoning_result",
+                    "path_result",
+                ),
                 native_tools=True,
             ),
             api_endpoint="openai",
@@ -342,6 +362,10 @@ def test_generic_tool_credentials_are_scrubbed_at_durable_agent_step_boundary(
             "eyJabcdefghij",
             "BEGIN PRIVATE KEY",
             "private internal plan",
+            "/private/var/db/secrets.txt",
+            "~/private.txt",
+            r"C:\Users\alice\secret.txt",
+            r"\\server\share\secret.txt",
         ):
             assert secret_fragment not in serialized
         result_step = next(
@@ -360,6 +384,14 @@ def test_generic_tool_credentials_are_scrubbed_at_durable_agent_step_boundary(
         )
         assert hidden_step["result"] == ""
         assert hidden_step["field_states"]["result"] == "omitted"
+        path_step = next(
+            step
+            for step in durable
+            if step.get("tool_name") == "path_result"
+            and step.get("field_states", {}).get("result") == "omitted"
+        )
+        assert path_step["result"] == ""
+        assert path_step["sensitivity"] == "path"
     finally:
         db.close()
 
@@ -463,5 +495,29 @@ def test_agent_service_actual_request_assembly_captures_safe_context_chain(tmp_p
         for secret in ("sk-project-secret", "sk-system-secret", "sk-workspace-secret"):
             assert secret not in serialized
         assert all(name in attached["summary"] for name in ("project", "system", "workspace"))
+        snapshot = derive_trajectory(
+            [],
+            {},
+            [],
+            [],
+            [],
+            agent_runs=[db.get_run(run_id)],
+            agent_steps=[
+                {**step, "run_id": run_id, "conversation_id": "conv-1"}
+                for step in durable
+            ],
+        )
+        records = [record for turn in snapshot.turns for record in turn.records]
+        ordered = [record.kind for record in records]
+        assert ordered.index("context_attached") < ordered.index("context_injected")
+        assert ordered.index("context_injected") < ordered.index(
+            "model_request_started"
+        )
+        model_started = next(
+            record for record in records if record.kind == "model_request_started"
+        )
+        injected_event_id = f"agent-step:{run_id}:{injected['index']}"
+        assert model_started.parent_event_id == injected_event_id
+        assert model_started.source_event_id == injected_event_id
     finally:
         db.close()

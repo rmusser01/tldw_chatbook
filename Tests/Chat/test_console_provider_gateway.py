@@ -6822,13 +6822,15 @@ class TestLlamaCppExchangeCapture:
             lambda self: _FakeClient(),
         )
 
+        retries: list[str] = []
+
         async def fake_complete(self, **_kwargs):
+            assert retries == ["model_retry"]
             return "recovered"
 
         monkeypatch.setattr(
             ConsoleProviderGateway, "complete_llamacpp_chat", fake_complete
         )
-        retries: list[str] = []
         signals = ConsoleProviderStreamSignals(
             model_retry_callback=lambda: retries.append("model_retry")
         )
@@ -6842,6 +6844,21 @@ class TestLlamaCppExchangeCapture:
         ]
         assert out == ["recovered"]
         assert retries == ["model_retry"]
+
+        def failing_callback() -> None:
+            raise RuntimeError("capture callback failed")
+
+        out_with_failed_capture = [
+            chunk
+            async for chunk in gateway.stream_chat(
+                self._resolution(streaming=True),
+                [{"role": "user", "content": "q"}],
+                signals=ConsoleProviderStreamSignals(
+                    model_retry_callback=failing_callback
+                ),
+            )
+        ]
+        assert out_with_failed_capture == ["recovered"]
 
     @pytest.mark.asyncio
     async def test_llamacpp_non_streaming_abort_after_first_item_keeps_recorded_content(

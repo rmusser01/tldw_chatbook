@@ -2045,6 +2045,7 @@ class ConsoleProviderGateway:
         reasoning_effort: str | None = None,
         thinking_budget_tokens: int | None = None,
         api_key: str | None = None,
+        on_fallback_retry_started: "Callable[[], None] | None" = None,
         on_fallback_retry: "Callable[[dict[str, Any], str], None] | None" = None,
     ) -> AsyncIterator[str]:
         """Stream OpenAI-compatible chat completion chunks from llama.cpp.
@@ -2119,6 +2120,11 @@ class ConsoleProviderGateway:
                 raise stream_error
             return
 
+        if on_fallback_retry_started is not None:
+            try:
+                on_fallback_retry_started()
+            except Exception:
+                logger.warning("model_retry_capture_failed")
         fallback = await self.complete_llamacpp_chat(
             base_url=normalized_base_url,
             model=model,
@@ -2610,7 +2616,6 @@ class ConsoleProviderGateway:
                         signals, ConsoleProviderCallSignals
                     ):
                         return
-                    signals.mark_model_retry()
                     retry_signals = signals.new_usage_call()
                     capture_request, omitted = build_request_capture(
                         {"model": resolution.model}
@@ -2654,6 +2659,11 @@ class ConsoleProviderGateway:
                         reasoning_effort=resolution.reasoning_effort,
                         thinking_budget_tokens=resolution.thinking_budget_tokens,
                         api_key=resolution.api_key,
+                        on_fallback_retry_started=(
+                            signals.mark_model_retry
+                            if isinstance(signals, ConsoleProviderStreamSignals)
+                            else None
+                        ),
                         on_fallback_retry=_capture_llamacpp_fallback,
                     ):
                         if call_signals is not None:

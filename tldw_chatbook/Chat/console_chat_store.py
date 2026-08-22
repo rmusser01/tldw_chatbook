@@ -70,6 +70,7 @@ from tldw_chatbook.Chat.console_speech import (
 from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
+from tldw_chatbook.Chat.trajectory import contains_local_path
 from tldw_chatbook.Chat.provider_continuation import (
     ProviderContinuationCheckpoint,
     dump_provider_continuation_json,
@@ -853,7 +854,7 @@ class ConsoleChatStore:
         # parent message persists. Keyed by the parent's NATIVE message id.
         self._pending_trajectory_tool_rows: dict[str, list[dict[str, Any]]] = {}
         self._pending_trajectory_event_rows: dict[str, list[dict[str, Any]]] = {}
-        self._trajectory_capture_failure_keys: set[tuple[str, str, str, str]] = set()
+        self._trajectory_capture_failure_keys: set[str] = set()
 
     def subscribe_message_completed(
         self,
@@ -4523,15 +4524,54 @@ class ConsoleChatStore:
         first = rows[0]
         if any(row.event_kind == "capture_failed" for row in rows):
             return
-        key = (
-            first.conversation_id,
-            first.message_id,
-            first.turn_id,
-            ",".join(row.event_kind for row in rows),
+        source_events: list[dict[str, str]] = []
+        for row in rows:
+            source_event_id = ""
+            try:
+                payload = json.loads(row.payload_json or "{}")
+                if isinstance(payload, dict):
+                    source_event_id = str(payload.get("event_id") or "")
+            except (TypeError, ValueError):
+                pass
+            if not source_event_id:
+                source_event_id = canonical_payload_hash(
+                    {
+                        "event_kind": row.event_kind,
+                        "payload_json": row.payload_json or "",
+                    }
+                )
+            source_events.append(
+                {"event_kind": row.event_kind, "event_id": source_event_id}
+            )
+        digest = canonical_payload_hash(
+            {
+                "stage": "trajectory_write",
+                "conversation_id": first.conversation_id,
+                "message_id": first.message_id,
+                "turn_id": first.turn_id,
+                "source_events": source_events,
+            }
         )
-        if key in self._trajectory_capture_failure_keys:
+        event_id = f"capture-failed:{digest.removeprefix('sha256:')}"
+        if event_id in self._trajectory_capture_failure_keys:
             return
-        self._trajectory_capture_failure_keys.add(key)
+        try:
+            db = getattr(self.persistence, "db", None)
+            reader = getattr(db, "get_trajectory_rows", None)
+            if callable(reader):
+                for existing in reader(first.conversation_id):
+                    if existing.event_kind != "capture_failed":
+                        continue
+                    try:
+                        existing_payload = json.loads(existing.payload_json or "{}")
+                    except (TypeError, ValueError):
+                        continue
+                    if existing_payload.get("event_id") == event_id:
+                        self._trajectory_capture_failure_keys.add(event_id)
+                        return
+        except Exception:  # noqa: BLE001 — diagnostic lookup is best-effort
+            logger.warning("trajectory_capture_diagnostic_lookup_failed")
+        self._trajectory_capture_failure_keys.add(event_id)
         diagnostic = TrajectoryRowWrite(
             message_id=first.message_id,
             conversation_id=first.conversation_id,
@@ -4541,6 +4581,7 @@ class ConsoleChatStore:
             step_started_at=first.step_started_at,
             payload_json=json.dumps(
                 {
+                    "event_id": event_id,
                     "summary": "Trace capture failed",
                     "status": "incomplete",
                     "field_states": {"payload": "capture_failed"},
@@ -4623,8 +4664,9 @@ class ConsoleChatStore:
             marker in raw_result.lower()
             for marker in ("reasoning_content", "chain of thought")
         )
+        path_result = contains_local_path(raw_result)
         scrubbed = redact_log_line(raw_result)
-        if file_result or hidden_reasoning:
+        if file_result or hidden_reasoning or path_result:
             result = ""
             result_state = "omitted"
         elif contains_private_key:
@@ -4644,7 +4686,7 @@ class ConsoleChatStore:
             "args": None,
             "result": result,
             "field_states": {"args": "not_available", "result": result_state},
-            "sensitivity": "tool_content",
+            "sensitivity": "path" if path_result else "tool_content",
         }
         if result_state == "truncated":
             payload["truncated"] = True
@@ -4974,39 +5016,40 @@ class ConsoleChatStore:
             event_kind = (
                 "user" if message.role is ConsoleMessageRole.USER else "assistant"
             )
-            rows: list[TrajectoryRowWrite] = [
-                TrajectoryRowWrite(
-                    message_id=message.persisted_message_id,
-                    conversation_id=conversation_id,
-                    turn_id=turn_id,
-                    seq=None,
-                    event_kind=event_kind,
-                    # User records get a step-start only (spec: no token
-                    # boundaries on the user's own action); assistant rows
-                    # carry whatever the controller's capture armed --
-                    # NULL timing when nothing was armed (never fabricated).
-                    step_started_at=(
-                        time.time()
-                        if event_kind == "user"
-                        else timing.get("step_started_at")
-                    ),
-                    first_token_at=timing.get("first_token_at"),
-                    completed_at=timing.get("completed_at"),
-                    model=timing.get("model"),
-                    provider=timing.get("provider"),
-                    payload_json=(
-                        json.dumps(
-                            {
-                                "trace_version": 2,
-                                "model_status": timing.get("model_status"),
-                            }
-                        )
-                        if event_kind == "assistant"
-                        and timing.get("step_started_at") is not None
-                        else None
-                    ),
-                )
-            ]
+            message_row = TrajectoryRowWrite(
+                message_id=message.persisted_message_id,
+                conversation_id=conversation_id,
+                turn_id=turn_id,
+                seq=None,
+                event_kind=event_kind,
+                # User records get a step-start only (spec: no token
+                # boundaries on the user's own action); assistant rows
+                # carry whatever the controller's capture armed --
+                # NULL timing when nothing was armed (never fabricated).
+                step_started_at=(
+                    time.time()
+                    if event_kind == "user"
+                    else timing.get("step_started_at")
+                ),
+                first_token_at=timing.get("first_token_at"),
+                completed_at=timing.get("completed_at"),
+                model=timing.get("model"),
+                provider=timing.get("provider"),
+                payload_json=(
+                    json.dumps(
+                        {
+                            "trace_version": 2,
+                            "model_status": timing.get("model_status"),
+                        }
+                    )
+                    if event_kind == "assistant"
+                    and timing.get("step_started_at") is not None
+                    else None
+                ),
+            )
+            rows: list[TrajectoryRowWrite] = (
+                [message_row] if event_kind == "user" else []
+            )
             pending = self._pending_trajectory_tool_rows.pop(message.id, None)
             for entry in pending or ():
                 rows.extend(
@@ -5031,6 +5074,8 @@ class ConsoleChatStore:
                         payload_json=entry["payload_json"],
                     )
                 )
+            if event_kind == "assistant":
+                rows.append(message_row)
             if self.write_trajectory_rows(rows):
                 self._trajectory_written_ids.add(message.id)
         except Exception as exc:

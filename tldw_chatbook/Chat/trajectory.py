@@ -44,6 +44,7 @@ from __future__ import annotations
 import hashlib
 import heapq
 import json
+import re
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
@@ -54,6 +55,7 @@ __all__ = [
     "TrajectoryRecord",
     "TrajectorySnapshot",
     "TrajectoryTurn",
+    "contains_local_path",
     "derive_trajectory",
 ]
 
@@ -79,6 +81,17 @@ _COMPACTION_PURPOSE = "conversation_compaction"
 
 # Sentinel for "no sidecar seq" in sort keys; larger than any real seq.
 _NO_SEQ = float("inf")
+
+_LOCAL_PATH_RE = re.compile(
+    r"(?<![A-Za-z0-9:/])(?:~/|/)[^\s\"'<>]+"
+    r"|(?<![A-Za-z0-9_])(?:[A-Za-z]:[\\/]|\\\\[^\\/\s]+[\\/][^\\/\s]+)"
+    r"[^\s\"'<>]*"
+)
+
+
+def contains_local_path(value: str) -> bool:
+    """Return whether text contains a local absolute or home-relative path."""
+    return bool(_LOCAL_PATH_RE.search(value))
 
 
 @dataclass(frozen=True)

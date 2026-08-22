@@ -372,6 +372,7 @@ class LoopDeps:
     ) = None
     on_step: Callable[[AgentStep], None] = lambda step: None
     on_trace_step: Callable[[AgentStep], None] = lambda step: None
+    reserve_context_trace: Callable[[AgentStep, AgentStep], bool] | None = None
     # Optional pre-dispatch batch-review hook (P5 Task 4): the generic seam
     # the MCP approval flow (Task 6) rides on. When set, called ONCE per
     # turn with the full batch of tool calls about to be dispatched
@@ -880,6 +881,7 @@ def run_agent_loop(
     restored_calls: list[ToolCall] | None = None
     restore_history_start: int | None = None
     recent_calls: deque = deque(maxlen=LOOP_DETECTION_N * MAX_LOOP_PERIOD)
+    context_trace_reserved = False
 
     def add(kind: str, *, counts_toward_budget: bool = True, **kw) -> AgentStep:
         nonlocal budget_steps, owner_sequence
@@ -1144,12 +1146,44 @@ def run_agent_loop(
             # unsafe -- a terminal return there keeps the previous
             # boundary instead).
             coherent_len = len(messages)
+            context_injected_step: AgentStep | None = None
+            if not context_trace_reserved and deps.reserve_context_trace is not None:
+                context_trace_reserved = True
+                attached = AgentStep(
+                    index=1_000_000 + trace_steps,
+                    kind="context_attached",
+                    created_at=safe_utc_timestamp(deps.wall_clock),
+                    owner_seq=owner_sequence,
+                )
+                trace_steps += 1
+                owner_sequence += 1
+                injected = AgentStep(
+                    index=1_000_000 + trace_steps,
+                    kind="context_injected",
+                    created_at=attached.created_at,
+                    owner_seq=owner_sequence,
+                    parent_step_index=attached.index,
+                    source_step_index=attached.index,
+                )
+                trace_steps += 1
+                owner_sequence += 1
+                try:
+                    if deps.reserve_context_trace(attached, injected):
+                        context_injected_step = injected
+                except Exception:  # noqa: BLE001 — capture is never load-bearing
+                    pass
             model_request_step = trace(
                 STEP_MODEL_REQUEST_STARTED,
                 summary="Model request started",
                 status="started",
                 field_states={"payload": "omitted"},
                 sensitivity="diagnostic",
+                parent_step_index=(
+                    context_injected_step.index if context_injected_step else None
+                ),
+                source_step_index=(
+                    context_injected_step.index if context_injected_step else None
+                ),
             )
             try:
                 turn = (
