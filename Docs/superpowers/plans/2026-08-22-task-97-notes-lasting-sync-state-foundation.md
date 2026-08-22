@@ -64,7 +64,7 @@
 - Test: `Tests/Notes/test_notes_sync_state_schema.py`
 - Test: `Tests/Notes/test_note_import_receipts.py`
 
-- [ ] **Step 1: Write failing ownership and shared-seam tests**
+- [x] **Step 1: Write failing ownership and shared-seam tests**
 
 Add tests that assert:
 
@@ -90,7 +90,7 @@ Add a test that imports `notes_sync_state_transaction`, opens an empty private
 database, and observes the unchanged `PRAGMA user_version = 1` receipt schema.
 This task centralizes ownership only; Task 2 owns the v2 upgrade.
 
-- [ ] **Step 2: Run the focused RED**
+- [x] **Step 2: Run the focused RED**
 
 Run:
 
@@ -105,7 +105,7 @@ Expected: FAIL because the coordinator does not exist and the registered owner
 still points at `note_import_receipts`. The existing receipt-schema assertion is
 a passing non-regression control.
 
-- [ ] **Step 3: Move the canonical v1 SQL unchanged**
+- [x] **Step 3: Move the canonical v1 SQL unchanged**
 
 In `notes_sync_state_schema.py`, cut the existing
 `_SCHEMA_TABLE_STATEMENTS` and `_SCHEMA_INDEX_STATEMENTS` tuples from
@@ -123,7 +123,7 @@ _COMPLETE_V1_STATEMENTS = (
 
 Do not add any v2 table or reserve future columns in this ownership-only commit.
 
-- [ ] **Step 4: Implement schema-before-operation transaction sequencing**
+- [x] **Step 4: Implement schema-before-operation transaction sequencing**
 
 Use one public context manager and one bounded error type:
 
@@ -159,11 +159,11 @@ existing canonical index compatibility check without taking a writer slot;
 unknown versions fail closed. The exact v2 census/migration replaces this
 bounded v1 initializer in Task 2.
 
-- [ ] **Step 5: Rewire the receipt repository and preserve its public error boundary**
+- [x] **Step 5: Rewire the receipt repository and preserve its public error boundary**
 
 Remove its direct `connect_private_sqlite`, schema constants, and initializer. Delegate its existing `transaction(immediate=...)` to `notes_sync_state_transaction`; translate `NotesSyncStateSchemaError` into the existing bounded `ImportReceiptError` without exposing paths or raw SQLite text. Keep every receipt model, method signature, transition, and SQL operation unchanged.
 
-- [ ] **Step 6: Run GREEN and the complete existing receipt module**
+- [x] **Step 6: Run GREEN and the complete existing receipt module**
 
 Run:
 
@@ -178,7 +178,7 @@ Expected: all selected tests PASS; the existing 112 receipt tests remain green,
 the database remains canonical v1, and `notes.sync_state` stays absent from
 centralized backup rows.
 
-- [ ] **Step 7: Run static checks and commit**
+- [x] **Step 7: Run static checks and commit**
 
 ```bash
 ../../.venv/bin/python -m ruff check \
@@ -215,7 +215,7 @@ git commit -m "refactor(notes): centralize private sync schema"
 - Modify: `Tests/Notes/test_notes_sync_state_schema.py`
 - Modify: `Tests/Notes/test_note_import_receipts.py`
 
-- [ ] **Step 1: Write the exact v2 DDL and historical-upgrade tests**
+- [x] **Step 1: Write the exact v2 DDL and historical-upgrade tests**
 
 Add the four v2 tables and seven indexes as literal independent test-fixture SQL
 copied from the approved design. Build the historical fixture with a test-only
@@ -242,7 +242,7 @@ DDL constants. Its census is the external oracle; compare both production fresh
 creation and the real-repository v1 upgrade against it so the same production
 mistake cannot confirm itself.
 
-- [ ] **Step 2: Run the schema RED**
+- [x] **Step 2: Run the schema RED**
 
 ```bash
 ../../.venv/bin/python -m pytest -q Tests/Notes/test_notes_sync_state_schema.py \
@@ -251,7 +251,7 @@ mistake cannot confirm itself.
 
 Expected: FAIL until the census and all exact validation branches exist. Fixture errors are not acceptable RED evidence.
 
-- [ ] **Step 3: Implement the exact census**
+- [x] **Step 3: Implement the exact census**
 
 First add the four production v2 table constants and seven production index
 constants verbatim from the approved design, set `SCHEMA_VERSION = 2`, and
@@ -274,7 +274,7 @@ class SyncStateSchemaSnapshot:
 
 Build it only from allowlisted names using `sqlite_master`, `pragma_table_xinfo`, `pragma_foreign_key_list`, and `pragma_index_xinfo`. Normalize whitespace only through one deterministic SQL normalizer used for both expected and observed SQL; do not weaken predicates or CHECK text into substring checks.
 
-- [ ] **Step 4: Write real two-connection initialization and fast-path tests**
+- [x] **Step 4: Write real two-connection initialization and fast-path tests**
 
 Use `threading.Barrier` and two independent direct coordinator connections
 against one file. Assert one complete v2 and no leaked transaction. For the
@@ -284,7 +284,7 @@ mutation-test removal of the under-lock `user_version` reread and moving
 `PRAGMA user_version = 2` earlier. Task 3 supplies the integration proof using
 both actual repositories.
 
-- [ ] **Step 5: Run GREEN and repeat the receipt compatibility module**
+- [x] **Step 5: Run GREEN and repeat the receipt compatibility module**
 
 ```bash
 ../../.venv/bin/python -m pytest -q \
@@ -294,7 +294,7 @@ both actual repositories.
 
 Expected: PASS with no changed receipt projection, transition, retry, or aggregate behavior.
 
-- [ ] **Step 6: Static checks and commit**
+- [x] **Step 6: Static checks and commit**
 
 ```bash
 ../../.venv/bin/python -m ruff check \
@@ -320,7 +320,7 @@ git commit -m "test(notes): harden sync schema migration"
 - Create: `tldw_chatbook/Notes/notes_sync_state.py`
 - Create: `Tests/Notes/test_notes_sync_state.py`
 
-- [ ] **Step 1: Write failing root/model tests**
+- [x] **Step 1: Write failing root/model tests**
 
 Cover immutable/slotted projections, redacted `repr`, bounded typed errors, create/get/list, lexical path preservation without normalization, candidate update, pause, optimistic conflict, disconnect, terminal disconnect, and the exact 64-live-root capacity. Assert public `repr` and exception text contain none of the supplied path, source locator, migration ID, or raw SQLite message.
 
@@ -330,7 +330,7 @@ repository; and a `threading.Barrier` race where each repository initializes and
 writes through its own real connection. In every case both repositories must
 remain usable and the exact v2 census must match.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```bash
 ../../.venv/bin/python -m pytest -q Tests/Notes/test_notes_sync_state.py -k 'root or projection or capacity'
@@ -338,7 +338,7 @@ remain usable and the exact v2 census must match.
 
 Expected: collection or assertion FAIL because `NotesSyncStateRepository` and its models do not exist.
 
-- [ ] **Step 3: Implement the narrow public model and error surface**
+- [x] **Step 3: Implement the narrow public model and error surface**
 
 Use string enums and frozen slotted dataclasses; mark private fields `repr=False` and provide an explicitly redacted representation:
 
@@ -376,7 +376,7 @@ class SyncRootRecord:
 
 Define `NotesSyncStateError`, `SyncStateConflictError`, `SyncStateCapacityError`, and `SyncStateCorruptionError` with bounded reason codes/counts only.
 
-- [ ] **Step 4: Implement named root operations**
+- [x] **Step 4: Implement named root operations**
 
 Implement only:
 
@@ -397,7 +397,7 @@ disconnect_root(root_id, expected_version)
 
 Every mutation uses `notes_sync_state_transaction(..., immediate=True)`, exact `row_version` compare-and-set, and one preflight before writes. Do not add generic state setters, reopen, activate, or run methods. Root disconnect must version-bump and disconnect all live children in the same transaction, even though binding APIs arrive in Task 4.
 
-- [ ] **Step 5: Run GREEN and mutation-check the optimistic predicate**
+- [x] **Step 5: Run GREEN and mutation-check the optimistic predicate**
 
 ```bash
 ../../.venv/bin/python -m pytest -q Tests/Notes/test_notes_sync_state.py -k 'root or projection or capacity'
@@ -412,7 +412,7 @@ Run the actual repository-order cases explicitly as part of this GREEN:
   -k 'repository_initialization_order or concurrent_repository_initialization'
 ```
 
-- [ ] **Step 6: Static checks and commit**
+- [x] **Step 6: Static checks and commit**
 
 ```bash
 ../../.venv/bin/python -m ruff check \
@@ -438,7 +438,7 @@ git commit -m "feat(notes): persist paused sync roots"
 - Modify: `tldw_chatbook/Notes/notes_sync_state.py`
 - Modify: `Tests/Notes/test_notes_sync_state.py`
 
-- [ ] **Step 1: Write failing binding/invariant tests**
+- [x] **Step 1: Write failing binding/invariant tests**
 
 Cover:
 
@@ -453,7 +453,7 @@ Cover:
 - two real connections racing disconnect vs create preserve the invariant;
 - exact 100,000-binding ceiling and one-over atomic rejection using a lowered test constant or preseeded SQL counts rather than a 100,001-object payload.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```bash
 ../../.venv/bin/python -m pytest -q Tests/Notes/test_notes_sync_state.py \
@@ -462,7 +462,7 @@ Cover:
 
 Expected: FAIL only for the absent binding APIs/invariants.
 
-- [ ] **Step 3: Implement the binding projection and named operations**
+- [x] **Step 3: Implement the binding projection and named operations**
 
 Mirror every approved `sync_bindings` column—including `created_at` and
 `updated_at`—in a frozen slotted `SyncBindingRecord`, with IDs, paths, digests,
@@ -487,11 +487,11 @@ disconnect_binding(binding_id, expected_version)
 
 Each write begins immediate, validates the parent root in that transaction, preflights deterministic conflicts, and leaves SQLite partial unique indexes as the final race guard. Wrap `sqlite3.IntegrityError` into a bounded repository error without echoing identifiers or paths.
 
-- [ ] **Step 4: Implement and verify atomic root-child disconnect**
+- [x] **Step 4: Implement and verify atomic root-child disconnect**
 
 In `disconnect_root`, update all non-disconnected children first with `row_version = row_version + 1`, then the root with its expected-version predicate, and roll back everything when the root predicate changes zero rows. Reads must check for `root.state='disconnected' AND binding.state<>'disconnected'` and raise `SyncStateCorruptionError` rather than return contradictory authority.
 
-- [ ] **Step 5: Run GREEN and the whole state module**
+- [x] **Step 5: Run GREEN and the whole state module**
 
 ```bash
 ../../.venv/bin/python -m pytest -q Tests/Notes/test_notes_sync_state.py
@@ -499,7 +499,7 @@ In `disconnect_root`, update all non-disconnected children first with `row_versi
 
 Mutation-check one parent-state guard and one partial unique predicate; each mutation must fail a named test before restoration.
 
-- [ ] **Step 6: Static checks and commit**
+- [x] **Step 6: Static checks and commit**
 
 ```bash
 ../../.venv/bin/python -m ruff check \
@@ -525,13 +525,13 @@ git commit -m "feat(notes): enforce provisional sync bindings"
 - Create: `Tests/Notes/test_notes_sync_legacy_migration.py`
 - Modify: `tldw_chatbook/DB/ChaChaNotes_DB.py:11936-11975`
 
-- [ ] **Step 1: Write a real ChaChaNotes/config source fixture and failing digest tests**
+- [x] **Step 1: Write a real ChaChaNotes/config source fixture and failing digest tests**
 
 Use `CharactersRAGDB` to create a current database, then seed legacy sync metadata/conflicts through its transaction seam. Use a real temporary `TLDW_CONFIG_PATH`. Pin the exact relevant-note OR predicate and unresolved conflict predicate by making each term independently include a row and making unrelated/resolved rows not affect the source digest.
 
 Test canonical stability across input/dictionary order; exact Unicode spellings; `None`/`False`/`0`/`"0"`; finite float hex; non-finite markers; missing config defaults; new-vs-legacy conflict key precedence; direction aliases; and every root/binding/item locator input. Assert malformed null/non-string/empty/NUL/over-limit path values still yield deterministic non-null rejected-item locators without persisting their raw value.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```bash
 ../../.venv/bin/python -m pytest -q Tests/Notes/test_notes_sync_legacy_migration.py \
@@ -540,11 +540,11 @@ Test canonical stability across input/dictionary order; exact Unicode spellings;
 
 Expected: FAIL because the read seam and canonical migration module do not exist.
 
-- [ ] **Step 3: Add one bounded ChaChaNotes source method**
+- [x] **Step 3: Add one bounded ChaChaNotes source method**
 
 Add `read_legacy_notes_sync_source_rows()` to `CharactersRAGDB`. Within one ordinary read transaction, select exactly the approved note fields with the exact OR predicate (including soft-deleted rows), ordered by exact note ID, then select the exact unresolved/skip conflict fields ordered by integer ID. Return frozen tuples of plain mappings; do not resolve paths, read note content, mutate rows, or expose a connection.
 
-- [ ] **Step 4: Implement exact canonical models and digest helpers**
+- [x] **Step 4: Implement exact canonical models and digest helpers**
 
 In `notes_sync_legacy_migration.py`, use the existing Notes import canonical JSON representation:
 
@@ -568,11 +568,11 @@ def _real_value(value: object) -> str | None:
 
 Read config through `get_atomic_config_snapshot()` and apply exact defaults/alias precedence from the design. Validate scalar types before hashing. Represent the source revision and locator shapes exactly as specified; preserve JSON scalar types and do no Unicode/path normalization.
 
-- [ ] **Step 5: Add operand-aware no-candidate-filesystem-access proof**
+- [x] **Step 5: Add operand-aware no-candidate-filesystem-access proof**
 
 Use nonexistent/adversarial candidate values. Spy on `Path.resolve`, `Path.absolute`, `Path.stat`, `Path.lstat`, `Path.open`, built-in `open`, and directory iteration so they raise only when the operand equals/contains a migrated candidate; allow the real config and two SQLite files. Assert config/database reads occur, while no candidate operand is touched and all file/note/config/legacy rows are byte/row identical afterward.
 
-- [ ] **Step 6: Run GREEN and mutate canonical ordering/predicates**
+- [x] **Step 6: Run GREEN and mutate canonical ordering/predicates**
 
 ```bash
 ../../.venv/bin/python -m pytest -q Tests/Notes/test_notes_sync_legacy_migration.py \
@@ -581,7 +581,7 @@ Use nonexistent/adversarial candidate values. Spy on `Path.resolve`, `Path.absol
 
 Temporarily remove note sorting and one OR-predicate term; confirm the respective named tests fail, restore, and rerun GREEN.
 
-- [ ] **Step 7: Static checks and commit**
+- [x] **Step 7: Static checks and commit**
 
 ```bash
 ../../.venv/bin/python -m ruff check \
@@ -613,15 +613,15 @@ git commit -m "feat(notes): capture legacy sync source"
 - Modify: `Tests/Notes/test_notes_sync_legacy_migration.py`
 - Modify: `Tests/Notes/test_notes_sync_state.py`
 
-- [ ] **Step 1: Write failing end-to-end migration tests**
+- [x] **Step 1: Write failing end-to-end migration tests**
 
 Cover multiple lexical roots; exact direction mapping; valid/malformed siblings; duplicate-note equivalence classes where no member wins; claims against an existing owner; legacy conflicts as `needs_rescan` only; item combination CHECKs; aggregate counts derived from items; exact same digest replay; pending replay after simulated crash; changed digest updating only exact migration-owned candidate rows; paused/reviewed/manual/disconnected rows never overwritten; matched and drifted A/B runs; and no activation/watcher/content/conflict record created.
 
-- [ ] **Step 2: Write failing capacity and CAS race tests**
+- [x] **Step 2: Write failing capacity and CAS race tests**
 
 Use lowered constants or preseeded counts to prove global 64-root/100,000-binding overflow writes no run/root/binding/item. Use two real destination connections and controlled A/B readers so both observe one pending generation but propose different B digests; assert one conditional terminal update wins and the loser rereads the immutable winner.
 
-- [ ] **Step 3: Run RED**
+- [x] **Step 3: Run RED**
 
 ```bash
 ../../.venv/bin/python -m pytest -q Tests/Notes/test_notes_sync_legacy_migration.py \
@@ -630,7 +630,7 @@ Use lowered constants or preseeded counts to prove global 64-root/100,000-bindin
 
 Expected: FAIL only for missing persistence/orchestration behavior.
 
-- [ ] **Step 4: Implement deterministic preflight and repository write models**
+- [x] **Step 4: Implement deterministic preflight and repository write models**
 
 Define private frozen request models for roots, bindings, and migration items. Classify malformed items and duplicate note equivalence classes before opening the destination write transaction. Stable destination IDs derive only from the validated locator digest (for example `legacy-root-<digest>` / `legacy-binding-<digest>`); rejected inputs use only their typed item locator and no destination ID.
 
@@ -645,7 +645,7 @@ Add one repository operation that atomically:
 7. writes exact item outcomes; and
 8. commits with every root/binding still provisional and `needs_rescan=1`.
 
-- [ ] **Step 5: Implement A/commit/B/CAS orchestration**
+- [x] **Step 5: Implement A/commit/B/CAS orchestration**
 
 `migrate_legacy_notes_sync_state(repository, notes_db)` must:
 
@@ -673,7 +673,7 @@ WHERE migration_id = ?
 
 When `rowcount == 0`, reread and return the existing terminal record without mutation. A digest match produces `matched_recheck`; mismatch produces `drifted`; both leave candidates provisional and requiring rescan.
 
-- [ ] **Step 6: Run GREEN and mutation proofs**
+- [x] **Step 6: Run GREEN and mutation proofs**
 
 ```bash
 ../../.venv/bin/python -m pytest -q \
@@ -683,7 +683,7 @@ When `rowcount == 0`, reread and return the existing terminal record without mut
 
 Individually mutate and restore: duplicate preflight winner suppression, capacity-before-write ordering, pending replay short circuit, and CAS predicate. Each mutation must make a named test fail before restoration.
 
-- [ ] **Step 7: Static checks and commit**
+- [x] **Step 7: Static checks and commit**
 
 ```bash
 ../../.venv/bin/python -m ruff check \
@@ -718,7 +718,7 @@ git commit -m "feat(notes): migrate legacy sync candidates"
 - Modify: `Tests/Notes/test_notes_sync_legacy_migration.py`
 - Modify: `Tests/Notes/test_note_import_receipts.py`
 
-- [ ] **Step 1: Add source/inventory privacy ratchets**
+- [x] **Step 1: Add source/inventory privacy ratchets**
 
 Assert:
 
@@ -728,7 +728,7 @@ Assert:
 - no new code references activation, watcher, reconcile, resolver, journal, UI, server, Sync-v2, or backup APIs;
 - legacy `sync_engine.py` remains unchanged and the new migration has no startup/app invocation.
 
-- [ ] **Step 2: Run governance RED/GREEN**
+- [x] **Step 2: Run governance RED/GREEN**
 
 Run the new ratchets before implementing any last correction; if one fails, make only the smallest boundary fix and rerun:
 
@@ -742,7 +742,7 @@ Run the new ratchets before implementing any last correction; if one fails, make
 
 Expected final result: PASS. Temporarily add a forbidden direct owner call in a scratch mutation, confirm the inventory test fails, then restore it byte-for-byte.
 
-- [ ] **Step 3: Run the complete bounded related matrix**
+- [x] **Step 3: Run the complete bounded related matrix**
 
 Do not run unrelated test directories or a full-repository sweep. Run only the touched foundation and its direct compatibility boundary:
 
@@ -758,7 +758,7 @@ Do not run unrelated test directories or a full-repository sweep. Run only the t
 
 Expected: all selected tests PASS. If an unchanged baseline failure appears, reproduce that exact node against the design base before classifying it; do not broaden the run.
 
-- [ ] **Step 4: Run final static analysis with provenance**
+- [x] **Step 4: Run final static analysis with provenance**
 
 ```bash
 ../../.venv/bin/python -m ruff check \
@@ -794,7 +794,7 @@ git diff --check
 
 Any diagnostic on a changed line must be fixed. Any claimed baseline diagnostic must be reproduced with the exact command against the design base and recorded, not waived by assertion.
 
-- [ ] **Step 5: Commit the governance tests**
+- [x] **Step 5: Commit the governance tests**
 
 ```bash
 git add Tests/DB/test_private_sqlite_inventory.py \
@@ -815,11 +815,11 @@ git commit -m "test(notes): enforce sync foundation boundaries"
 - Modify: `Docs/superpowers/plans/2026-08-22-task-97-notes-lasting-sync-state-foundation.md`
 - Optional only if a genuinely new incident generalizes: `backlog/docs/lessons-testing-evidence.md`
 
-- [ ] **Step 1: Perform an independent cumulative review**
+- [x] **Step 1: Perform an independent cumulative review**
 
 Use `superpowers:requesting-code-review` over `merge-base(origin/dev, HEAD)..HEAD`, not a stale literal branch range. Require explicit review of schema lock sequencing, census exactness, receipt compatibility, root-child invariants, privacy, migration idempotence/CAS, candidate-path non-access, capacities, and all non-goals. Resolve every P0-P2 finding with focused RED/GREEN evidence before proceeding.
 
-- [ ] **Step 2: Update the task and plan from actual evidence**
+- [x] **Step 2: Update the task and plan from actual evidence**
 
 In TASK-97:
 
@@ -830,7 +830,7 @@ In TASK-97:
 
 Update this plan's checkboxes only after each step completes. Change the design status from user-approved to implemented only after the final matrix and review pass.
 
-- [ ] **Step 3: Verify exact task resolution and final hygiene**
+- [x] **Step 3: Verify exact task resolution and final hygiene**
 
 ```bash
 backlog task 97 --plain
@@ -840,7 +840,7 @@ git diff --check
 
 Confirm the CLI resolves exact TASK-97, all ACs are checked, Implementation Plan/Notes and ADR links exist, and only intended closeout documents are dirty.
 
-- [ ] **Step 4: Mark Done through the Backlog CLI**
+- [x] **Step 4: Mark Done through the Backlog CLI**
 
 ```bash
 backlog task edit 97 -s Done
@@ -849,7 +849,7 @@ backlog task 97 --plain
 
 Expected: exact TASK-97 reports `Done`; no duplicate or misnamed task file is created.
 
-- [ ] **Step 5: Commit closeout docs**
+- [x] **Step 5: Commit closeout docs**
 
 ```bash
 git add \

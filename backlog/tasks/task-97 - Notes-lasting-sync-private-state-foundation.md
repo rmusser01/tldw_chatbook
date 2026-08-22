@@ -1,11 +1,11 @@
 ---
 id: TASK-97
 title: Notes lasting-sync private state foundation
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-06-11 17:05'
-updated_date: '2026-08-22 15:57'
+updated_date: '2026-08-22 20:45'
 labels: []
 dependencies: []
 ---
@@ -28,11 +28,11 @@ conflict UI or active sync behavior.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Existing v1 Notes import-receipt databases upgrade atomically to a shared v2 private schema, and receipt behavior remains compatible when import and sync repositories initialize in either order or concurrently through separate SQLite connections.
-- [ ] #2 The private owner persists paused local Database Notes candidate roots and provisional bindings with optimistic versions, redacted typed projections, one non-disconnected binding per note, and conditional per-root uniqueness for non-null path keys.
-- [ ] #3 Legacy configuration and per-note metadata can be captured idempotently as paused provisional candidates without accessing migrated candidate paths or mutating files, notes, configuration, or legacy rows; fresh pre/post source snapshots bound drift claims, duplicate-note classes choose no winner, and drift/conflicts/malformed items remain marked for rescan/review.
-- [ ] #4 The exact ceilings of 64 live roots and 100,000 live bindings reject the whole request atomically, and paths, note IDs, identities, digests, and raw exception text remain confined to the backup-excluded `notes.sync_state` owner and absent from diagnostic representations.
-- [ ] #5 This slice exposes no activation, watcher, reconciliation, conflict-content, resolver, journal, UI, or server-backed lasting-sync behavior, and the legacy engine remains the only active sync owner.
+- [x] #1 Existing v1 Notes import-receipt databases upgrade atomically to a shared v2 private schema, and receipt behavior remains compatible when import and sync repositories initialize in either order or concurrently through separate SQLite connections.
+- [x] #2 The private owner persists paused local Database Notes candidate roots and provisional bindings with optimistic versions, redacted typed projections, one non-disconnected binding per note, and conditional per-root uniqueness for non-null path keys.
+- [x] #3 Legacy configuration and per-note metadata can be captured idempotently as paused provisional candidates without accessing migrated candidate paths or mutating files, notes, configuration, or legacy rows; fresh pre/post source snapshots bound drift claims, duplicate-note classes choose no winner, and drift/conflicts/malformed items remain marked for rescan/review.
+- [x] #4 The exact ceilings of 64 live roots and 100,000 live bindings reject the whole request atomically, and paths, note IDs, identities, digests, and raw exception text remain confined to the backup-excluded `notes.sync_state` owner and absent from diagnostic representations.
+- [x] #5 This slice exposes no activation, watcher, reconciliation, conflict-content, resolver, journal, UI, or server-backed lasting-sync behavior, and the legacy engine remains the only active sync owner.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -61,3 +61,48 @@ ADR required: no. This task directly implements
 and
 `backlog/decisions/060-notes-sync-round-trip-and-interoperability-constraints.md`.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented the device-private TASK-97 foundation governed by ADR-059 and
+ADR-060. `notes_sync_state_schema.py` is now the sole `notes.sync_state`
+connection owner: it preserves the receipt v1 DDL, takes the writer lock only
+for v0/v1 initialization, re-reads the version under that lock, validates the
+exact supported census, and writes v2 last. Existing receipt operations now use
+that coordinator without changing their public behavior.
+
+Added `notes_sync_state.py` for paused roots, provisional bindings, redacted
+typed projections, optimistic versions, atomic root/child disconnect, live-root
+and live-binding ceilings, and the one-live-binding-per-note/conditional-path
+uniqueness invariants. Added `notes_sync_legacy_migration.py` plus one bounded
+read-only `ChaChaNotes_DB` source query. Migration uses deterministic preflight,
+snapshot A, one committed candidate generation, fresh snapshot B, and immutable
+CAS finalization; replay is idempotent, drift and duplicate-note classes choose
+no winner, and candidate paths are never accessed. No activation, watcher,
+reconciliation, conflict payload, resolver, journal, UI, server, backup/export,
+or legacy-engine authority was added.
+
+Focused implementation and governance coverage lives in
+`Tests/Notes/test_notes_sync_state_schema.py`,
+`Tests/Notes/test_notes_sync_state.py`,
+`Tests/Notes/test_notes_sync_legacy_migration.py`, the existing import receipt
+and executor modules, and both related private-owner modules. The settled
+bounded matrix passed **762 tests**, with **1 Windows-only skip** and **1
+RequestsDependencyWarning** from the installed Requests dependency stack, in
+**77.32 seconds** (77.84 seconds wall time). Scoped Ruff, Ruff format, MyPy,
+compileall, and `git diff --check` passed. Independent cumulative review at
+`c05c8c6fc` found no remaining P0-P2 issues.
+
+Review-driven corrections tightened transaction rollback and version-overflow
+handling, exact schema census/claimed-v1 validation, SQLite analysis/internal
+name handling, source capture bounds, privacy ratchets, and separation of the
+independent schema oracle from the production owner. These corrections did not
+expand the accepted scope. The governing records remain
+`backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md`
+and
+`backlog/decisions/060-notes-sync-round-trip-and-interoperability-constraints.md`;
+no new ADR was required. No new incident generalized beyond the existing
+testing-evidence, live-verification, or backlog-hygiene lessons, so no lessons
+document was changed.
+<!-- SECTION:NOTES:END -->
