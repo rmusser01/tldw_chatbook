@@ -744,12 +744,21 @@ def test_confirmation_protocol_pins_every_original_machine_contract() -> None:
         },
         "metric_names": sorted(profile.REQUIRED_METRICS),
         "primary_gate_names": sorted(profile.NON_REGRESSION_METRICS),
-        "p95": {"method": "nearest_rank", "fraction": 0.95},
+        "p95": {
+            "method": "nearest_rank",
+            "fraction": 0.95,
+            "behavior_sha256": (
+                "922773ccb034282e651537656c923f9405a073d65ab3875524ee548b6ca5fbe8"
+            ),
+        },
         "measured_blocks": 30,
         "resampling": {
             "method": "paired_complete_blocks",
             "resamples": 10_000,
             "seed": 19_641,
+            "behavior_sha256": (
+                "047c51bdaf04907ded8584fccf6e534da1d2e9ac49b3ac6bb0eb6269ad0aef5e"
+            ),
         },
         "confidence_bounds": [
             "two_sided_95",
@@ -759,6 +768,58 @@ def test_confirmation_protocol_pins_every_original_machine_contract() -> None:
         "non_regression_ceiling": 1.10,
         "improvement_ceiling": 1.00,
     }
+
+
+def test_confirmation_protocol_rejects_wrong_current_nearest_rank_behavior(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        profile,
+        "nearest_rank_percentile",
+        lambda values, _fraction: min(values),
+    )
+
+    with pytest.raises(RuntimeError, match="confirmation_protocol_statistics_invalid"):
+        _original_protocol()
+
+
+def test_confirmation_protocol_rejects_wrong_current_paired_block_behavior(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        profile,
+        "paired_p95_ratio_bounds",
+        lambda *_args, **_kwargs: {
+            "two_sided_95": (1.0, 1.0),
+            "one_sided_lower_95": 1.0,
+            "one_sided_upper_95": 1.0,
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="confirmation_protocol_statistics_invalid"):
+        _original_protocol()
+
+
+def test_current_summary_behavior_drift_mismatches_pinned_original(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _copy_original_evidence(tmp_path)
+    _materialize_original_runner(tmp_path)
+    expected = profile.load_original_protocol(tmp_path, tmp_path)
+    real_build_summary = profile.build_summary
+
+    @functools.wraps(real_build_summary)
+    def drifted_summary(*args, **kwargs):
+        result = real_build_summary(*args, **kwargs)
+        result["overall_verdict"] = "drifted"
+        return result
+
+    monkeypatch.setattr(profile, "build_summary", drifted_summary)
+    observed = _original_protocol()
+
+    assert "protocol_resampling_mismatch" in profile.protocol_mismatches(
+        expected, observed
+    )
 
 
 @pytest.mark.parametrize(
@@ -828,10 +889,16 @@ def test_confirmation_protocol_pins_every_original_machine_contract() -> None:
         (("primary_gate_names",), [], "protocol_primary_gate_names_mismatch"),
         (("p95", "method"), "linear", "protocol_p95_mismatch"),
         (("p95", "fraction"), 0.9, "protocol_p95_mismatch"),
+        (("p95", "behavior_sha256"), "0" * 64, "protocol_p95_mismatch"),
         (("measured_blocks",), 29, "protocol_measured_blocks_mismatch"),
         (("resampling", "method"), "rows", "protocol_resampling_mismatch"),
         (("resampling", "resamples"), 9_999, "protocol_resampling_mismatch"),
         (("resampling", "seed"), 1, "protocol_resampling_mismatch"),
+        (
+            ("resampling", "behavior_sha256"),
+            "0" * 64,
+            "protocol_resampling_mismatch",
+        ),
         (("confidence_bounds",), [], "protocol_confidence_bounds_mismatch"),
         (("non_regression_ceiling",), 1.11, "protocol_non_regression_ceiling_mismatch"),
         (("improvement_ceiling",), 1.01, "protocol_improvement_ceiling_mismatch"),
@@ -908,7 +975,11 @@ def test_original_protocol_is_independent_from_current_harness_drift(
     _materialize_original_runner(tmp_path)
     monkeypatch.setattr(profile, "TURN_PROMPTS", ("drifted prompt",))
     monkeypatch.setattr(profile, "FIXED_MUTATION", b"drifted mutation")
-    monkeypatch.setattr(profile, "REQUIRED_METRICS", ("drifted_metric",))
+    monkeypatch.setattr(
+        profile,
+        "REQUIRED_METRICS",
+        ("drifted_metric", *profile.REQUIRED_METRICS),
+    )
     monkeypatch.setattr(profile, "P95_FRACTION", 0.9)
     monkeypatch.setattr(profile, "MEASURED_BLOCKS", 29)
     monkeypatch.setattr(profile, "NON_REGRESSION_CEILING", 1.2)
@@ -988,7 +1059,9 @@ def test_original_protocol_discriminates_through_pinned_statistics_calls(
 
     protocol = profile.load_original_protocol(tmp_path, tmp_path)
 
-    assert protocol["p95"] == {"method": "nearest_rank", "fraction": 0.95}
+    assert protocol["p95"]["method"] == "nearest_rank"
+    assert protocol["p95"]["fraction"] == 0.95
+    assert len(protocol["p95"]["behavior_sha256"]) == 64
     assert any(name == "nearest_rank_percentile" for name, _kwargs in calls)
     assert any(
         name == "paired_p95_ratio_bounds"
@@ -3145,6 +3218,148 @@ def test_workspace_runtime_close_attempts_and_preserves_all_owned_cleanup() -> N
         "consent-shutdown-failed",
         "database-close-failed",
     ]
+
+
+@pytest.mark.parametrize("boundary", ("readiness", "permission_gate", "definition_hash"))
+def test_prepare_workspace_runtime_cleans_resources_on_construction_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    boundary: str,
+) -> None:
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.MCP import permission_store
+    from tldw_chatbook.MCP.unified_control_plane_service import (
+        UnifiedMCPControlPlaneService,
+    )
+    from tldw_chatbook.Workspaces.change_review_consent import (
+        ChangeReviewConsentService,
+        RootReadinessState,
+    )
+
+    databases: list[object] = []
+    consents: list[object] = []
+    closed: list[str] = []
+    database_init = WorkspaceDB.__init__
+    database_close = WorkspaceDB.close
+    consent_init = ChangeReviewConsentService.__init__
+    consent_shutdown = ChangeReviewConsentService.shutdown
+
+    def track_database(self, *args, **kwargs):
+        database_init(self, *args, **kwargs)
+        databases.append(self)
+
+    def close_database(self, *args, **kwargs):
+        closed.append("database")
+        return database_close(self, *args, **kwargs)
+
+    def track_consent(self, *args, **kwargs):
+        consent_init(self, *args, **kwargs)
+        consents.append(self)
+
+    def close_consent(self, *args, **kwargs):
+        closed.append("consent")
+        return consent_shutdown(self, *args, **kwargs)
+
+    monkeypatch.setattr(WorkspaceDB, "__init__", track_database)
+    monkeypatch.setattr(WorkspaceDB, "close", close_database)
+    monkeypatch.setattr(ChangeReviewConsentService, "__init__", track_consent)
+    monkeypatch.setattr(ChangeReviewConsentService, "shutdown", close_consent)
+    arm = "enabled" if boundary == "readiness" else "disabled"
+    expected = "change_review_initialization_failed"
+    if boundary == "readiness":
+        monkeypatch.setattr(
+            ChangeReviewConsentService,
+            "status",
+            lambda *_args: SimpleNamespace(
+                roots=[SimpleNamespace(state=RootReadinessState.FAILED)]
+            ),
+        )
+    elif boundary == "permission_gate":
+        expected = "permission-gate-failed"
+        monkeypatch.setattr(
+            UnifiedMCPControlPlaneService,
+            "set_tool_state",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError(expected)),
+        )
+    else:
+        expected = "definition-hash-failed"
+        monkeypatch.setattr(
+            permission_store,
+            "definition_hash",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError(expected)),
+        )
+
+    try:
+        with pytest.raises(RuntimeError, match=expected):
+            profile.prepare_workspace_runtime(tmp_path / boundary, arm=arm)
+        assert closed == ["consent", "database"]
+    finally:
+        if consents and "consent" not in closed:
+            consent_shutdown(consents[0], timeout=2.0)
+        if databases and "database" not in closed:
+            database_close(databases[0])
+
+
+def test_prepare_workspace_runtime_aggregates_primary_and_construction_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.MCP.unified_control_plane_service import (
+        UnifiedMCPControlPlaneService,
+    )
+    from tldw_chatbook.Workspaces.change_review_consent import (
+        ChangeReviewConsentService,
+    )
+
+    databases: list[object] = []
+    consents: list[object] = []
+    database_init = WorkspaceDB.__init__
+    database_close = WorkspaceDB.close
+    consent_init = ChangeReviewConsentService.__init__
+    consent_shutdown = ChangeReviewConsentService.shutdown
+
+    def track_database(self, *args, **kwargs):
+        database_init(self, *args, **kwargs)
+        databases.append(self)
+
+    def track_consent(self, *args, **kwargs):
+        consent_init(self, *args, **kwargs)
+        consents.append(self)
+
+    def fail_database(self, *args, **kwargs):
+        database_close(self, *args, **kwargs)
+        raise RuntimeError("database-cleanup-failed")
+
+    def fail_consent(self, *args, **kwargs):
+        consent_shutdown(self, *args, **kwargs)
+        raise RuntimeError("consent-cleanup-failed")
+
+    monkeypatch.setattr(WorkspaceDB, "__init__", track_database)
+    monkeypatch.setattr(WorkspaceDB, "close", fail_database)
+    monkeypatch.setattr(ChangeReviewConsentService, "__init__", track_consent)
+    monkeypatch.setattr(ChangeReviewConsentService, "shutdown", fail_consent)
+    monkeypatch.setattr(
+        UnifiedMCPControlPlaneService,
+        "set_tool_state",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("permission-gate-failed")
+        ),
+    )
+
+    try:
+        with pytest.raises(BaseExceptionGroup) as caught:
+            profile.prepare_workspace_runtime(tmp_path / "dual", arm="disabled")
+        assert [str(error) for error in caught.value.exceptions] == [
+            "permission-gate-failed",
+            "consent-cleanup-failed",
+            "database-cleanup-failed",
+        ]
+    finally:
+        # The injected failures occur after the real close operations.
+        if consents and any(
+            worker.is_alive() for worker in consents[0]._workers
+        ):
+            consent_shutdown(consents[0], timeout=2.0)
 
 
 def test_prepare_workspace_runtime_disabled_has_rw_allow_without_shadow(

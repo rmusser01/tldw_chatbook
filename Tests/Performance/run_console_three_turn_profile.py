@@ -244,6 +244,122 @@ _PROTOCOL_MISMATCH_CODES = {
 }
 
 
+def _statistics_protocol(module: Any, *, error_code: str) -> dict[str, Any]:
+    """Fingerprint percentile, paired-bootstrap, and summary behavior."""
+    nearest = module.nearest_rank_percentile
+    paired = module.paired_p95_ratio_bounds
+    summary_builder = module.build_summary
+    validate = module.validate_run
+    fractions: list[float] = []
+
+    def recording_nearest(values: Sequence[float], fraction: float) -> float:
+        fractions.append(fraction)
+        return nearest(values, fraction)
+
+    try:
+        nearest_probe = (
+            nearest([4.0, 1.0, 3.0, 2.0], 0.5),
+            nearest([4.0, 1.0, 3.0, 2.0], 0.75),
+        )
+        if nearest_probe != (2.0, 3.0):
+            raise RuntimeError(error_code)
+        try:
+            paired(
+                [
+                    {"control": 1.0, "disabled": 2.0},
+                    {"control": 2.0, "disabled": 1.0},
+                ],
+                "disabled",
+                resamples=2,
+                seed=1,
+            )
+        except ValueError:
+            pass
+        else:
+            raise RuntimeError(error_code)
+        blocks = [
+            {
+                "control": float(index + 1),
+                "disabled": float((index + 1) * (2 if index % 2 else 1)),
+                "enabled": float(index + 2),
+            }
+            for index in range(7)
+        ]
+        first_bounds = paired(blocks, "disabled", resamples=32, seed=17)
+        if first_bounds != paired(blocks, "disabled", resamples=32, seed=17):
+            raise RuntimeError(error_code)
+        alternate_bounds = paired(blocks, "disabled", resamples=32, seed=18)
+        rows = [
+            {
+                "phase": "measured",
+                "iteration": iteration,
+                "arm": arm,
+                "metrics": {
+                    metric: float(
+                        (iteration + 1) * (arm_index + 1) + metric_index
+                    )
+                    for metric_index, metric in enumerate(module.REQUIRED_METRICS)
+                },
+            }
+            for iteration in range(30)
+            for arm_index, arm in enumerate(module.ARMS)
+        ]
+        module.validate_run = lambda *_args, **_kwargs: ()
+        module.nearest_rank_percentile = recording_nearest
+        summary = summary_builder(
+            rows,
+            bootstrap_resamples=32,
+            bootstrap_seed=17,
+        )
+        matching_fractions = {
+            fraction
+            for fraction in fractions
+            if all(
+                nearest(
+                    [
+                        row["metrics"][metric]
+                        for row in rows
+                        if row["arm"] == arm
+                    ],
+                    fraction,
+                )
+                == summary["arms"][arm]["metrics"][metric]["p95"]
+                for arm in module.ARMS
+                for metric in module.REQUIRED_METRICS
+            )
+        }
+        if len(matching_fractions) != 1:
+            raise RuntimeError(error_code)
+        fraction = matching_fractions.pop()
+        p95_payload = {
+            "probe": nearest_probe,
+            "summary_fraction": fraction,
+        }
+        resampling_payload = {
+            "seed_17": first_bounds,
+            "seed_18": alternate_bounds,
+            "summary": summary,
+        }
+        def digest(value: Any) -> str:
+            return hashlib.sha256(
+                json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+        return {
+            "p95_method": "nearest_rank",
+            "p95_fraction": fraction,
+            "p95_behavior_sha256": digest(p95_payload),
+            "resampling_method": "paired_complete_blocks",
+            "resampling_behavior_sha256": digest(resampling_payload),
+        }
+    except Exception as exc:
+        if isinstance(exc, RuntimeError) and str(exc) == error_code:
+            raise
+        raise RuntimeError(error_code) from exc
+    finally:
+        module.validate_run = validate
+        module.nearest_rank_percentile = nearest
+
+
 def confirmation_protocol(
     *,
     revisions: Mapping[str, Any],
@@ -290,6 +406,9 @@ def confirmation_protocol(
         except (TypeError, ValueError) as exc:
             raise RuntimeError("confirmation_protocol_invalid") from exc
 
+    statistics_protocol = _statistics_protocol(
+        sys.modules[__name__], error_code="confirmation_protocol_statistics_invalid"
+    )
     bootstrap = inspect.signature(build_summary).parameters
     bounds = paired_p95_ratio_bounds(
         [
@@ -326,12 +445,19 @@ def confirmation_protocol(
         },
         "metric_names": sorted(REQUIRED_METRICS),
         "primary_gate_names": sorted(NON_REGRESSION_METRICS),
-        "p95": {"method": "nearest_rank", "fraction": P95_FRACTION},
+        "p95": {
+            "method": statistics_protocol["p95_method"],
+            "fraction": statistics_protocol["p95_fraction"],
+            "behavior_sha256": statistics_protocol["p95_behavior_sha256"],
+        },
         "measured_blocks": MEASURED_BLOCKS,
         "resampling": {
-            "method": "paired_complete_blocks",
+            "method": statistics_protocol["resampling_method"],
             "resamples": bootstrap["bootstrap_resamples"].default,
             "seed": bootstrap["bootstrap_seed"].default,
+            "behavior_sha256": statistics_protocol[
+                "resampling_behavior_sha256"
+            ],
         },
         "confidence_bounds": list(bounds),
         "non_regression_ceiling": NON_REGRESSION_CEILING,
@@ -465,6 +591,9 @@ def load_original_protocol(
             original.nearest_rank_percentile = real_percentile
         signature = inspect.signature(original.build_summary).parameters
         non_regression, improvement = _original_thresholds(original, rows)
+        statistics_protocol = _statistics_protocol(
+            original, error_code="original_protocol_invalid"
+        )
         hashes = manifest["fixture_hashes"]
         server = manifest["provider_server"]
         metric_names = list(built["arms"]["control"]["metrics"])
@@ -495,6 +624,7 @@ def load_original_protocol(
                 for arm in ARMS
             )
             or len(matching_fractions) != 1
+            or statistics_protocol["p95_fraction"] not in matching_fractions
         ):
             raise RuntimeError("original_protocol_invalid")
         return {
@@ -515,8 +645,11 @@ def load_original_protocol(
             "metric_names": metric_names,
             "primary_gate_names": gate_names,
             "p95": {
-                "method": "nearest_rank",
-                "fraction": matching_fractions.pop(),
+                "method": statistics_protocol["p95_method"],
+                "fraction": statistics_protocol["p95_fraction"],
+                "behavior_sha256": statistics_protocol[
+                    "p95_behavior_sha256"
+                ],
             },
             "measured_blocks": len(
                 {
@@ -526,9 +659,12 @@ def load_original_protocol(
                 }
             ),
             "resampling": {
-                "method": "paired_complete_blocks",
+                "method": statistics_protocol["resampling_method"],
                 "resamples": signature["bootstrap_resamples"].default,
                 "seed": signature["bootstrap_seed"].default,
+                "behavior_sha256": statistics_protocol[
+                    "resampling_behavior_sha256"
+                ],
             },
             "confidence_bounds": list(bounds),
             "non_regression_ceiling": non_regression,
@@ -2188,11 +2324,12 @@ def generate_corpus(
     return {"files": manifest, "content_tree_digest": content_tree_digest(root)}
 
 
-def prepare_workspace_runtime(
+def _prepare_workspace_runtime_owned(
     sample_root: Path,
     *,
     arm: str,
     readiness_timeout: float = 30.0,
+    _owned_resources: list[tuple[str, Any]],
 ) -> WorkspaceRuntime:
     """Build real isolated workspace/review/permission services for one sample."""
     if arm not in ARMS:
@@ -2220,6 +2357,7 @@ def prepare_workspace_runtime(
     database = WorkspaceDB(
         database_root / "workspaces.sqlite", client_id="task-19641-benchmark"
     )
+    _owned_resources.append(("database", database))
     registry = LocalWorkspaceRegistryService(database)
     workspace_id = "benchmark-workspace"
     registry.create_workspace(workspace_id=workspace_id, name="Benchmark")
@@ -2255,6 +2393,7 @@ def prepare_workspace_runtime(
             ),
             worker_count=1,
         )
+        _owned_resources.append(("consent", consent_service))
         registry.attach_change_review_consent_service(consent_service)
         admission = consent_service.admit_turn(workspace_id)
         if arm == "disabled":
@@ -2316,6 +2455,35 @@ def prepare_workspace_runtime(
             hub.input_schema,
         ),
     )
+
+
+def prepare_workspace_runtime(
+    sample_root: Path,
+    *,
+    arm: str,
+    readiness_timeout: float = 30.0,
+) -> WorkspaceRuntime:
+    """Build an isolated runtime and close every partial construction on failure."""
+    owned_resources: list[tuple[str, Any]] = []
+    try:
+        return _prepare_workspace_runtime_owned(
+            sample_root,
+            arm=arm,
+            readiness_timeout=readiness_timeout,
+            _owned_resources=owned_resources,
+        )
+    except BaseException as primary:
+        failures: list[BaseException] = [primary]
+        for kind, resource in reversed(owned_resources):
+            try:
+                if kind == "consent":
+                    resource.shutdown(timeout=2.0)
+                else:
+                    resource.close()
+            except BaseException as exc:
+                failures.append(exc)
+        _raise_failures("workspace_runtime_construction_failed", failures)
+        raise AssertionError("unreachable")
 
 
 def protocol_preflight_ownership(
