@@ -117,8 +117,21 @@ def contains_local_path(value: str) -> bool:
     stripped_value = value.strip()
     if stripped_value.startswith(("{", "[", "(")):
         depth = 0
+        quote: str | None = None
+        escaped = False
         for char in stripped_value:
-            if char in "{[(":
+            if escaped:
+                escaped = False
+                continue
+            if quote is not None:
+                if char == "\\":
+                    escaped = True
+                elif char == quote:
+                    quote = None
+                continue
+            if char in "\"'":
+                quote = char
+            elif char in "{[(":
                 depth += 1
                 if depth > _STRUCTURED_NESTING_MAX:
                     return True

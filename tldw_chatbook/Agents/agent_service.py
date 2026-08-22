@@ -773,18 +773,12 @@ _CHAIN_OF_THOUGHT_RE = re.compile(
     r"\bchain(?:[\s_-]+of[\s_-]+thought)\b", re.IGNORECASE
 )
 _THINK_TAG_RE = re.compile(r"<\s*/?\s*think(?:\s[^>]*)?>", re.IGNORECASE)
-_REASONING_KEY_RE = re.compile(
-    r"[\"']\s*(?:reasoning|reasoning_content|chain_of_thought)\s*[\"']\s*:",
-    re.IGNORECASE,
-)
 _UNQUOTED_REASONING_FIELD_RE = re.compile(
-    r"(?:^\s*|[,{]\s*)(?:reasoning|reasoning[\s_-]+content|"
-    r"chain[\s_-]+of[\s_-]+thought)\s*[:=]",
+    r"(?:^\s*|[,{]\s*|\\?[\"']\s*)"
+    r"(?:reasoning|reasoning[\s_-]+content|chain[\s_-]+of[\s_-]+thought)"
+    r"(?:\\?[\"'])?\s*[:=]",
     re.IGNORECASE | re.MULTILINE,
 )
-_REASONING_KEYS = frozenset({"reasoning", "reasoning_content", "chain_of_thought"})
-
-
 def _contains_hidden_reasoning(content: str) -> bool:
     """Recognize explicit reasoning containers without matching ordinary prose."""
     if (
@@ -793,27 +787,7 @@ def _contains_hidden_reasoning(content: str) -> bool:
         or _UNQUOTED_REASONING_FIELD_RE.search(content)
     ):
         return True
-    try:
-        parsed = json.loads(content)
-    except (TypeError, ValueError):
-        return bool(_REASONING_KEY_RE.search(content))
-
-    def has_reasoning_key(value: Any) -> bool:
-        if isinstance(value, Mapping):
-            return any(
-                str(key).lower() in _REASONING_KEYS or has_reasoning_key(item)
-                for key, item in value.items()
-            )
-        if isinstance(value, list):
-            return any(has_reasoning_key(item) for item in value)
-        if isinstance(value, str):
-            return bool(
-                _REASONING_KEY_RE.search(value)
-                or _UNQUOTED_REASONING_FIELD_RE.search(value)
-            )
-        return False
-
-    return has_reasoning_key(parsed)
+    return False
 
 
 def _safe_run_log_content(record_type: str, content: str) -> tuple[str, bool]:

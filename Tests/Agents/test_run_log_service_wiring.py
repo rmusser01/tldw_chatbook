@@ -259,6 +259,8 @@ def test_on_record_returns_the_assigned_record_number(wired, monkeypatch):
 
 
 def test_real_run_log_omits_sensitive_tool_args_and_results(wired, monkeypatch):
+    from tldw_chatbook.Chat import trajectory as trajectory_module
+
     db, registry, root = wired
     captured: dict = {}
     real_run_agent_loop = agent_service_module.run_agent_loop
@@ -310,9 +312,30 @@ def test_real_run_log_omits_sensitive_tool_args_and_results(wired, monkeypatch):
     safe_values = (
         "safe output: reasoning about three visible matches",
         "rendered HTML: <div>safe</div>",
+        json.dumps({"value": "[" * 65}),
     )
     for value in safe_values:
         assert isinstance(on_record("tool_result", {"content": value}), int)
+    real_loads = trajectory_module.json.loads
+    decode_count = 0
+
+    def counted_loads(value):
+        nonlocal decode_count
+        decode_count += 1
+        return real_loads(value)
+
+    monkeypatch.setattr(trajectory_module.json, "loads", counted_loads)
+    assert isinstance(
+        on_record("tool_result", {"content": '{"endpoint":"/api/safe"}'}), int
+    )
+    assert decode_count == 1
+
+    def exhausted_decoder(_value):
+        raise MemoryError
+
+    monkeypatch.setattr(trajectory_module.json, "loads", exhausted_decoder)
+    assert on_record("tool_result", {"content": '{"file_path":"/api/private"}'}) is None
+    monkeypatch.setattr(trajectory_module.json, "loads", real_loads)
 
     records = read_all(root)
     persisted = "\n".join(record.content for record in records)
