@@ -7,6 +7,7 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from loguru import logger
 from textual import events, on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -668,6 +669,21 @@ class RemoteView(Widget):
                 severity="error",
             )
             return
+        try:
+            service = self._service_factory()
+            credential_resolver = self._credential_resolver_factory()
+        except Exception as exc:
+            logger.error(
+                "Remote install dependency construction failed; error_type={}",
+                type(exc).__name__,
+            )
+            message = (
+                "Could not prepare the managed install. Check model storage "
+                "settings and try again."
+            )
+            self.notify(message, severity="error")
+            self._set_status(message)
+            return
         self._operation_reference = catalog.artifact.reference
         self._set_metadata_controls_disabled(True)
         self._set_status("Preparing the managed install plan…")
@@ -675,8 +691,8 @@ class RemoteView(Widget):
             self.InstallRequested(
                 catalog,
                 candidate,
-                service=self._service_factory(),
-                credential_resolver=self._credential_resolver_factory(),
+                service=service,
+                credential_resolver=credential_resolver,
             )
         )
 
@@ -918,6 +934,7 @@ class RemoteView(Widget):
         self._selected_candidate = candidate
         self._operation_reference = descriptor.reference
         self._refresh_with_status("Installing the selected GGUF variant…")
+        self._set_metadata_controls_disabled(True)
         return True
 
     def cancel_pending_install(self, message: str | None = None) -> None:

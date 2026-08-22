@@ -1067,6 +1067,77 @@ async def test_contextual_install_posts_requested_with_the_resolved_service_and_
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failing_dependency", ("service", "credential resolver"))
+async def test_install_dependency_failure_keeps_the_selected_candidate_retryable(
+    failing_dependency: str,
+) -> None:
+    """A dependency factory failure must not strand the view in-flight.
+
+    This catches moving ``_operation_reference``/control disabling ahead of
+    dependency construction without a rollback path. The dependency is
+    allowed to fail only after repository resolution so the test exercises
+    the install boundary, not metadata search.
+    """
+    resolved = _resolved()
+    adapter = _Adapter(resolved=resolved)
+    resolver = _Resolver([])
+    fail_now = False
+
+    def service_factory():
+        if fail_now and failing_dependency == "service":
+            raise RuntimeError("private service detail")
+        return object()
+
+    def resolver_factory():
+        if fail_now and failing_dependency == "credential resolver":
+            raise RuntimeError("private resolver detail")
+        return resolver
+
+    view = _view(
+        adapter_factory=lambda: adapter,
+        resolver_factory=resolver_factory,
+        service_factory=service_factory,
+    )
+    app = _capturing_app(view)
+    notifications: list[tuple[str, str]] = []
+
+    async with app.run_test() as pilot:
+        view.notify = lambda message, *, severity: notifications.append(
+            (message, severity)
+        )
+        await _submit(app, pilot, resolved.repository)
+        view.query_one(".remote-candidate", Button).press()
+        await pilot.pause()
+        fail_now = True
+
+        error: Exception | None = None
+        try:
+            view._install_pressed(
+                Button.Pressed(view.query_one("#remote-model-install", Button))
+            )
+        except Exception as exc:  # assertion below exposes the production leak
+            error = exc
+        await pilot.pause()
+
+        assert error is None, "dependency construction escaped the UI boundary"
+        assert app.requests == []
+        assert view._operation_reference is None
+        assert view.query_one("#remote-model-install", Button).disabled is False
+        assert view.query_one("#remote-model-search", Button).disabled is False
+        assert "private" not in str(
+            view.query_one("#remote-model-status", Static).renderable
+        )
+
+    assert notifications == [
+        (
+            "Could not prepare the managed install. Check model storage "
+            "settings and try again.",
+            "error",
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_default_credential_resolver_factory_builds_env_config_resolver_for_the_posted_intent() -> (
     None
 ):
