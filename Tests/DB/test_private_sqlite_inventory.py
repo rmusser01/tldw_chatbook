@@ -932,8 +932,8 @@ def test_notes_sync_state_inventory_row_is_exact_and_backup_excluded() -> None:
 
     assert row == {
         "id": "C50",
-        "module": "tldw_chatbook/Notes/note_import_receipts",
-        "symbol": "NoteImportReceiptRepository._connect",
+        "module": "tldw_chatbook/Notes/notes_sync_state_schema",
+        "symbol": "notes_sync_state_transaction",
         "owner_id": "notes.sync_state",
         "classification": "private_file",
         "intent": "device-private import receipts and future lasting-sync state",
@@ -944,6 +944,23 @@ def test_notes_sync_state_inventory_row_is_exact_and_backup_excluded() -> None:
             "centralized backup."
         ),
     }
+    assert SQLITE_OWNER_REGISTRY["notes.sync_state"].production_module == (
+        "tldw_chatbook/Notes/notes_sync_state_schema"
+    )
+    receipt_calls, receipt_violations = _private_sqlite_seam_violations(
+        Path("tldw_chatbook/Notes/note_import_receipts.py"),
+        "tldw_chatbook/Notes/note_import_receipts",
+    )
+    coordinator_path = Path("tldw_chatbook/Notes/notes_sync_state_schema.py")
+    assert coordinator_path.exists(), "notes sync-state coordinator must exist"
+    coordinator_calls, coordinator_violations = _private_sqlite_seam_violations(
+        coordinator_path,
+        "tldw_chatbook/Notes/notes_sync_state_schema",
+    )
+    assert receipt_calls == []
+    assert receipt_violations == []
+    assert len(coordinator_calls) == 1
+    assert coordinator_violations == []
     assert SQLITE_OWNER_REGISTRY["notes.sync_state"].centralized_backup_allowed is False
     assert "notes.sync_state" not in {
         backup_row["owner_id"] for backup_row in _inventory_rows("B")

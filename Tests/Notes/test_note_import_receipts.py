@@ -14,6 +14,7 @@ import pytest
 
 from tldw_chatbook import config
 from tldw_chatbook.Notes import note_import_receipts as receipt_module
+from tldw_chatbook.Notes import notes_sync_state_schema as schema_module
 from tldw_chatbook.Notes.note_import_execution_models import (
     ImportEffectState,
     ImportItemOutcome,
@@ -207,7 +208,7 @@ def test_effect_transition_loads_only_the_affected_dependency_subgraph(
     original = repository._load_dependency_snapshot
     observed: list[tuple[int, int, int, int]] = []
     statements: list[str] = []
-    original_connect = repository._connect
+    original_connect = schema_module.connect_private_sqlite
 
     def capture(*args, **kwargs):
         snapshot = original(*args, **kwargs)
@@ -223,12 +224,12 @@ def test_effect_transition_loads_only_the_affected_dependency_subgraph(
 
     monkeypatch.setattr(repository, "_load_dependency_snapshot", capture)
 
-    def traced_connect():
-        connection = original_connect()
+    def traced_connect(*args, **kwargs):
+        connection = original_connect(*args, **kwargs)
         connection.set_trace_callback(statements.append)
         return connection
 
-    monkeypatch.setattr(repository, "_connect", traced_connect)
+    monkeypatch.setattr(schema_module, "connect_private_sqlite", traced_connect)
     repository.transition_effects(
         _APPROVAL_ID,
         (
@@ -242,6 +243,7 @@ def test_effect_transition_loads_only_the_affected_dependency_subgraph(
             ),
         ),
     )
+    monkeypatch.setattr(schema_module, "connect_private_sqlite", original_connect)
 
     assert observed == [(1, 1, 1, 2)]
     assert _repository(tmp_path).aggregate_receipt(_APPROVAL_ID).failed == 1
@@ -263,14 +265,12 @@ def test_effect_transition_loads_only_the_affected_dependency_subgraph(
     small.transition_session(small_id, ImportSessionState.RUNNING)
     small_target = small.load_session_snapshot(small_id).payload_effects[0]
     small_statements: list[str] = []
-    small_connect = small._connect
-
-    def traced_small_connect():
-        connection = small_connect()
+    def traced_small_connect(*args, **kwargs):
+        connection = original_connect(*args, **kwargs)
         connection.set_trace_callback(small_statements.append)
         return connection
 
-    monkeypatch.setattr(small, "_connect", traced_small_connect)
+    monkeypatch.setattr(schema_module, "connect_private_sqlite", traced_small_connect)
     small.transition_effects(
         small_id,
         (
@@ -700,14 +700,14 @@ def test_prior_observation_lookup_uses_bounded_large_input_query_count(
     )
     repository = _repository(tmp_path)
     statements: list[str] = []
-    original_connect = repository._connect
+    original_connect = schema_module.connect_private_sqlite
 
-    def traced_connect():
-        connection = original_connect()
+    def traced_connect(*args, **kwargs):
+        connection = original_connect(*args, **kwargs)
         connection.set_trace_callback(statements.append)
         return connection
 
-    monkeypatch.setattr(repository, "_connect", traced_connect)
+    monkeypatch.setattr(schema_module, "connect_private_sqlite", traced_connect)
 
     assert repository.prior_observations_for_plan(plan) == ()
 
@@ -759,15 +759,15 @@ def test_prior_observation_lookup_respects_a_lowered_sqlite_variable_limit(
     )
     repository = _repository(tmp_path)
     statements: list[str] = []
-    original_connect = repository._connect
+    original_connect = schema_module.connect_private_sqlite
 
-    def limited_connect():
-        connection = original_connect()
+    def limited_connect(*args, **kwargs):
+        connection = original_connect(*args, **kwargs)
         connection.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 10)
         connection.set_trace_callback(statements.append)
         return connection
 
-    monkeypatch.setattr(repository, "_connect", limited_connect)
+    monkeypatch.setattr(schema_module, "connect_private_sqlite", limited_connect)
 
     assert repository.prior_observations_for_plan(plan) == ()
     lookup_statements = tuple(
@@ -3469,14 +3469,14 @@ def test_shared_folder_transition_respects_a_lowered_sqlite_variable_limit(
     )
     repository.transition_session(_APPROVAL_ID, ImportSessionState.RUNNING)
     root = repository.load_session_snapshot(_APPROVAL_ID).folder_effects[0]
-    original_connect = repository._connect
+    original_connect = schema_module.connect_private_sqlite
 
-    def limited_connect():
-        connection = original_connect()
+    def limited_connect(*args, **kwargs):
+        connection = original_connect(*args, **kwargs)
         connection.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 40)
         return connection
 
-    monkeypatch.setattr(repository, "_connect", limited_connect)
+    monkeypatch.setattr(schema_module, "connect_private_sqlite", limited_connect)
     repository.transition_effects(
         _APPROVAL_ID,
         (
@@ -3488,6 +3488,7 @@ def test_shared_folder_transition_respects_a_lowered_sqlite_variable_limit(
             ),
         ),
     )
+    monkeypatch.setattr(schema_module, "connect_private_sqlite", original_connect)
 
     assert _repository(tmp_path).aggregate_receipt(_APPROVAL_ID).failed == 45
 
