@@ -41,6 +41,7 @@ class Sidecar:
     replacement_event_id: str | None = None
     field_states: dict[str, str] | None = None
     sensitivity: str | None = None
+    event_id: str | None = None
 
 
 def test_message_envelope_has_stable_source_identity_and_owner_sequence() -> None:
@@ -583,3 +584,62 @@ def test_agent_step_payload_does_not_copy_sensitive_tool_content() -> None:
 
     assert "do-not-project" not in repr(record.payload)
     assert "hidden provider reasoning" not in repr(record.payload)
+
+
+def test_turn_contraction_cycle_preserves_event_causality_with_segments() -> None:
+    runs = [
+        {"id": "a1", "turn_id": "t1", "created_at": 1},
+        {"id": "b1", "turn_id": "t2", "created_at": 2, "parent_event_id": "agent-run:a1"},
+        {"id": "b2", "turn_id": "t2", "created_at": 3},
+        {"id": "a2", "turn_id": "t1", "created_at": 4, "parent_event_id": "agent-run:b2"},
+    ]
+
+    snapshot = _snapshot(agent_runs=runs)
+    ids = [record.event_id for record in _records(snapshot)]
+
+    assert [turn.turn_id for turn in snapshot.turns] == ["t1", "t2", "t1"]
+    assert ids.index("agent-run:a1") < ids.index("agent-run:b1")
+    assert ids.index("agent-run:b2") < ids.index("agent-run:a2")
+
+
+def test_isolated_cycle_does_not_reverse_independent_causal_edge() -> None:
+    runs = [
+        {"id": "cycle-a", "parent_event_id": "agent-run:cycle-b", "created_at": 1},
+        {"id": "cycle-b", "parent_event_id": "agent-run:cycle-a", "created_at": 1},
+        {"id": "parent", "created_at": 4},
+        {"id": "child", "parent_event_id": "agent-run:parent", "created_at": 2},
+    ]
+
+    ids = [record.event_id for record in _records(_snapshot(agent_runs=runs))]
+
+    assert ids.index("agent-run:parent") < ids.index("agent-run:child")
+
+
+def test_collided_identity_is_never_an_arbitrary_lineage_target() -> None:
+    runs = [
+        {"id": "duplicate", "task": "one"},
+        {"id": "duplicate", "task": "two"},
+        {"id": "child", "parent_event_id": "agent-run:duplicate"},
+    ]
+
+    records = _records(_snapshot(agent_runs=runs))
+    duplicate_ids = [r.event_id for r in records if r.run_id == "duplicate"]
+    child = next(r for r in records if r.run_id == "child")
+
+    assert len(set(duplicate_ids)) == 2
+    assert "agent-run:duplicate" not in duplicate_ids
+    assert child.parent_event_id is None
+    assert child.field_states["parent_event_id"] == "capture_failed"
+
+
+def test_equal_owner_sequences_remain_concurrent() -> None:
+    message = {"id": "a1", "sender": "assistant", "content": "x", "timestamp": 0, "deleted": False}
+    rows = [
+        Sidecar("a1", "c", "t", 1, "assistant"),
+        Sidecar("a1", "c", "t", 2, "event", step_started_at=1, event_id="trajectory:c:z"),
+        Sidecar("a1", "c", "t", 2, "event", step_started_at=2, event_id="trajectory:c:a"),
+    ]
+
+    ids = [r.event_id for r in _records(_snapshot(messages=[message], traj_rows=rows))]
+
+    assert ids.index("trajectory:c:z") < ids.index("trajectory:c:a")

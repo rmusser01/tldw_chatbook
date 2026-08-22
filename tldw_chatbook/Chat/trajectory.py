@@ -1071,9 +1071,14 @@ def _causal_order(records: Iterable[TrajectoryRecord]) -> list[TrajectoryRecord]
             continue
         owner_sequences.setdefault(owner, []).append(record)
     for owner_records in owner_sequences.values():
-        owner_records.sort(key=lambda record: (record.source_seq, record.event_id))
-        for before, after in zip(owner_records, owner_records[1:]):
-            add_edge(before.event_id, after.event_id)
+        sequence_groups: dict[int, list[TrajectoryRecord]] = {}
+        for record in owner_records:
+            sequence_groups.setdefault(record.source_seq or 0, []).append(record)
+        ordered_groups = [sequence_groups[seq] for seq in sorted(sequence_groups)]
+        for before_group, after_group in zip(ordered_groups, ordered_groups[1:]):
+            for before in before_group:
+                for after in after_group:
+                    add_edge(before.event_id, after.event_id)
 
     def key(event_id: str) -> tuple[Any, ...]:
         record = by_id[event_id]
@@ -1088,26 +1093,79 @@ def _causal_order(records: Iterable[TrajectoryRecord]) -> list[TrajectoryRecord]
             event_id,
         )
 
+    components = _strong_components(by_id, edges)
+    component_by_id = {
+        event_id: index
+        for index, component in enumerate(components)
+        for event_id in component
+    }
+    component_edges: dict[int, set[int]] = {i: set() for i in range(len(components))}
+    component_indegree = {i: 0 for i in range(len(components))}
+    for before, children in edges.items():
+        for after in children:
+            source = component_by_id[before]
+            target = component_by_id[after]
+            if source == target or target in component_edges[source]:
+                continue
+            component_edges[source].add(target)
+            component_indegree[target] += 1
+    def component_key(index: int) -> tuple[Any, ...]:
+        return min(key(event_id) for event_id in components[index])
     ready = [
-        (key(event_id), event_id)
-        for event_id, degree in indegree.items()
+        (component_key(index), index)
+        for index, degree in component_indegree.items()
         if degree == 0
     ]
     heapq.heapify(ready)
     ordered_ids: list[str] = []
     while ready:
-        _, event_id = heapq.heappop(ready)
-        ordered_ids.append(event_id)
-        for child_id in sorted(edges[event_id]):
-            indegree[child_id] -= 1
-            if indegree[child_id] == 0:
-                heapq.heappush(ready, (key(child_id), child_id))
-
-    if len(ordered_ids) != len(by_id):
-        # A malformed cycle has no honest causal serialization. Fall back
-        # to the stable concurrent key for the whole set; preserve every row.
-        ordered_ids = sorted(by_id, key=key)
+        _, index = heapq.heappop(ready)
+        ordered_ids.extend(sorted(components[index], key=key))
+        for child in sorted(component_edges[index], key=component_key):
+            component_indegree[child] -= 1
+            if component_indegree[child] == 0:
+                heapq.heappush(ready, (component_key(child), child))
     return [by_id[event_id] for event_id in ordered_ids]
+
+
+def _strong_components(
+    nodes: Mapping[str, Any], edges: Mapping[str, set[str]]
+) -> list[list[str]]:
+    """Return deterministic strongly connected components for an event graph."""
+    index = 0
+    stack: list[str] = []
+    on_stack: set[str] = set()
+    indices: dict[str, int] = {}
+    lowlinks: dict[str, int] = {}
+    components: list[list[str]] = []
+
+    def visit(node: str) -> None:
+        nonlocal index
+        indices[node] = lowlinks[node] = index
+        index += 1
+        stack.append(node)
+        on_stack.add(node)
+        for child in sorted(edges[node]):
+            if child not in indices:
+                visit(child)
+                lowlinks[node] = min(lowlinks[node], lowlinks[child])
+            elif child in on_stack:
+                lowlinks[node] = min(lowlinks[node], indices[child])
+        if lowlinks[node] != indices[node]:
+            return
+        component: list[str] = []
+        while stack:
+            child = stack.pop()
+            on_stack.remove(child)
+            component.append(child)
+            if child == node:
+                break
+        components.append(component)
+
+    for node in sorted(nodes):
+        if node not in indices:
+            visit(node)
+    return components
 
 
 def _unique_event_ids(records: Iterable[TrajectoryRecord]) -> list[TrajectoryRecord]:
@@ -1117,22 +1175,34 @@ def _unique_event_ids(records: Iterable[TrajectoryRecord]) -> list[TrajectoryRec
         base = record.event_id or f"trace-event:{_record_digest(record)}"
         groups.setdefault(base, []).append(record)
 
+    ambiguous = {base for base, group in groups.items() if len(group) > 1}
     unique: list[TrajectoryRecord] = []
     for base in sorted(groups):
         occurrences: dict[str, int] = {}
-        for index, record in enumerate(
-            sorted(groups[base], key=lambda item: _record_digest(item))
-        ):
+        for record in sorted(groups[base], key=lambda item: _record_digest(item)):
             digest = _record_digest(record)
             occurrences[digest] = occurrences.get(digest, 0) + 1
-            if index == 0:
-                event_id = base
-            else:
-                event_id = f"{base}:duplicate:{digest}"
-                if occurrences[digest] > 1:
-                    event_id = f"{event_id}:{occurrences[digest]}"
+            event_id = base
+            if base in ambiguous:
+                event_id = f"{base}:collision:{digest}:{occurrences[digest]}"
             unique.append(replace(record, event_id=event_id))
-    return unique
+    resolved: list[TrajectoryRecord] = []
+    for record in unique:
+        changes: dict[str, Any] = {}
+        states = dict(record.field_states)
+        for field_name in (
+            "parent_event_id",
+            "source_event_id",
+            "replacement_event_id",
+        ):
+            if getattr(record, field_name) in ambiguous:
+                changes[field_name] = None
+                states[field_name] = "capture_failed"
+        if changes:
+            changes["field_states"] = states
+            record = replace(record, **changes)
+        resolved.append(record)
+    return resolved
 
 
 def _record_digest(record: TrajectoryRecord) -> str:
@@ -1186,9 +1256,14 @@ def _coherent_turns(records: Iterable[TrajectoryRecord]) -> list[TrajectoryTurn]
                 ("trajectory", record.conversation_id), []
             ).append(record)
     for owner_records in owner_sequences.values():
-        owner_records.sort(key=lambda record: (record.source_seq, record.event_id))
-        for before, after in zip(owner_records, owner_records[1:]):
-            add_event_edge(before.event_id, after.event_id)
+        sequence_groups: dict[int, list[TrajectoryRecord]] = {}
+        for record in owner_records:
+            sequence_groups.setdefault(record.source_seq or 0, []).append(record)
+        ordered_groups = [sequence_groups[seq] for seq in sorted(sequence_groups)]
+        for before_group, after_group in zip(ordered_groups, ordered_groups[1:]):
+            for before in before_group:
+                for after in after_group:
+                    add_event_edge(before.event_id, after.event_id)
 
     ready = [
         (turn_position[turn_id], turn_id)
@@ -1205,7 +1280,14 @@ def _coherent_turns(records: Iterable[TrajectoryRecord]) -> list[TrajectoryTurn]
             if indegree[child_id] == 0:
                 heapq.heappush(ready, (turn_position[child_id], child_id))
     if len(turn_ids) != len(buckets):
-        turn_ids = sorted(buckets, key=lambda turn_id: turn_position[turn_id])
+        # Turn contraction can introduce a cycle even when the event graph is
+        # valid. Preserve the honest event order in repeated turn segments.
+        return _group_turns(
+            [
+                (record.turn_id or record.conversation_id or "trace", record)
+                for record in ordered
+            ]
+        )
     return [
         TrajectoryTurn(turn_id, tuple(buckets[turn_id])) for turn_id in turn_ids
     ]
