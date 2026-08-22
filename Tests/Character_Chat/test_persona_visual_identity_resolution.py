@@ -297,6 +297,35 @@ def test_persona_bound_pack_resolves_manual_requested_default_and_neutral_order(
     assert result.image_bytes
 
 
+def test_persona_pack_query_runs_inside_managed_transaction(
+    db: CharactersRAGDB,
+    service: _LocalPersonaService,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _activate(db, tmp_path, ("neutral",))
+    original_query = db.execute_query
+    transaction_states: list[bool] = []
+
+    def observe_query(query: str, params=None):
+        if "visual_identity_resolver" in query:
+            transaction_states.append(db.get_connection().in_transaction)
+        return original_query(query, params)
+
+    monkeypatch.setattr(db, "execute_query", observe_query)
+
+    result = resolve_persona_visual_identity(
+        db,
+        service,
+        persona_id="p-1",
+        requested_state="idle",
+        user_data_dir=tmp_path,
+    )
+
+    assert result.resolution_source == "pack_operational"
+    assert transaction_states == [True]
+
+
 def test_persona_missing_pack_asset_falls_back_to_linked_portrait(
     db: CharactersRAGDB,
     service: _LocalPersonaService,

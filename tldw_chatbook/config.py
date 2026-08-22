@@ -5246,7 +5246,7 @@ def get_runtime_config_snapshot(
 ) -> RuntimeConfigSnapshot:
     """Return a defensive current runtime config view."""
 
-    with _config_file_lock():
+    with _settings_rebuild_lock(), _config_file_lock():
         values = load_settings(force_reload=force_reload)
         return RuntimeConfigSnapshot(
             generation=_CONFIG_GENERATION,

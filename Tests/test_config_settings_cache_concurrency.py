@@ -155,3 +155,39 @@ def test_config_write_waits_for_settings_rebuild_before_file_lock(tmp_path):
     assert not thread.is_alive()
     assert entered_while_rebuilding is False
     assert file_lock_was_free is True
+
+
+def test_runtime_snapshot_takes_rebuild_lock_before_file_lock(monkeypatch):
+    """Runtime snapshots must follow the global rebuild -> file lock order."""
+    events: list[str] = []
+
+    class TrackingLock:
+        def __init__(self, name: str) -> None:
+            self._name = name
+            self._lock = threading.RLock()
+
+        def __enter__(self):
+            events.append(self._name)
+            self._lock.acquire()
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback) -> None:
+            del exc_type, exc_value, traceback
+            self._lock.release()
+
+    rebuild_lock = TrackingLock("rebuild")
+    file_lock = TrackingLock("file")
+    monkeypatch.setattr(config_module, "_SETTINGS_REBUILD_LOCK", rebuild_lock)
+    monkeypatch.setattr(config_module, "_CONFIG_FILE_LOCK", file_lock)
+
+    def load_settings(*, force_reload: bool = False) -> dict:
+        del force_reload
+        with config_module._settings_rebuild_lock():
+            return {"source": "test"}
+
+    monkeypatch.setattr(config_module, "load_settings", load_settings)
+
+    snapshot = config_module.get_runtime_config_snapshot(force_reload=True)
+
+    assert snapshot.values == {"source": "test"}
+    assert events[:2] == ["rebuild", "file"]

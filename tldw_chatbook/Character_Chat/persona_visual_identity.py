@@ -36,7 +36,11 @@ class LocalPersonaVisualIdentityAuthority:
 
     @property
     def cache_identity(self) -> tuple[str, ...]:
-        """Return the complete path-free authority identity."""
+        """Return the complete path-free authority identity.
+
+        Returns:
+            Stable source, Persona revision, and portrait identity fields.
+        """
 
         portrait = self.portrait
         return (
@@ -53,7 +57,15 @@ def capture_local_persona_visual_identity(
     local_service: object,
     persona_id: str,
 ) -> LocalPersonaVisualIdentityAuthority | None:
-    """Capture one eligible local Persona and its optional linked portrait."""
+    """Capture one eligible local Persona and its optional linked portrait.
+
+    Args:
+        local_service: Local Persona profile service.
+        persona_id: Exact profile-local Persona identifier.
+
+    Returns:
+        Immutable current authority, or ``None`` when the Persona is ineligible.
+    """
 
     if type(persona_id) is not str or not persona_id or len(persona_id) > 200:
         return None
@@ -89,7 +101,15 @@ def local_persona_visual_identity_is_current(
     local_service: object,
     authority: LocalPersonaVisualIdentityAuthority,
 ) -> bool:
-    """Return whether the complete local Persona authority is unchanged."""
+    """Return whether the complete local Persona authority is unchanged.
+
+    Args:
+        local_service: Local Persona profile service.
+        authority: Previously captured authority to revalidate.
+
+    Returns:
+        ``True`` only when every authority field is still current.
+    """
 
     if type(authority) is not LocalPersonaVisualIdentityAuthority:
         return False
@@ -108,7 +128,19 @@ def resolve_persona_visual_identity(
     manual_expression_key: str | None = None,
     user_data_dir: str | Path | None = None,
 ) -> _shared.VisualIdentityResolution:
-    """Resolve one eligible local Persona reaction and linked portrait fallback."""
+    """Resolve one eligible local Persona reaction and linked portrait fallback.
+
+    Args:
+        db: Initialized profile-local character database.
+        local_service: Local Persona profile service.
+        persona_id: Exact profile-local Persona identifier.
+        requested_state: Current Console operational state.
+        manual_expression_key: Optional session-local reaction override.
+        user_data_dir: Injectable profile root for profile-owned pack assets.
+
+    Returns:
+        Frozen reaction resolution with selected image bytes or stable fallback.
+    """
 
     requested_state_key = (
         requested_state.strip().lower() if type(requested_state) is str else ""
@@ -125,8 +157,9 @@ def resolve_persona_visual_identity(
             "persona", str(persona_id), requested_key, manual_key, "actor_unavailable"
         )
 
-    rows = db.execute_query(
-        """
+    with db.transaction():
+        rows = db.execute_query(
+            """
         /* visual_identity_resolver */
         WITH active_graph AS MATERIALIZED (
             SELECT b.id AS binding_id,
@@ -221,8 +254,8 @@ def resolve_persona_visual_identity(
                   a.id
          LIMIT 4
         """,
-        (authority.persona_id, manual_key, requested_key),
-    ).fetchall()
+            (authority.persona_id, manual_key, requested_key),
+        ).fetchall()
     candidates = [dict(row) for row in rows]
     for candidate in candidates:
         if candidate["asset_id"] is None:
