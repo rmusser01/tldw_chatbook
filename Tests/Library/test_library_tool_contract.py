@@ -50,6 +50,8 @@ EXPECTED_LIBRARY_TOOLS = {
     "library_get_media_structure", "library_get_media_chunk",
     "library_list_chunk_specs", "library_save_chunk_spec",
     "library_rechunk_media",
+    # student-workflow (spec §4): the note write tool
+    "library_save_note",
 }
 
 
@@ -58,12 +60,13 @@ EXPECTED_LIBRARY_TOOLS = {
 
 def test_descriptor_table_has_exact_canonical_surface():
     assert set(LIBRARY_TOOL_DESCRIPTORS) == EXPECTED_LIBRARY_TOOLS
-    assert len({d.route for d in LIBRARY_TOOL_DESCRIPTORS.values()}) == 23
+    assert len({d.route for d in LIBRARY_TOOL_DESCRIPTORS.values()}) == 24
     for descriptor in LIBRARY_TOOL_DESCRIPTORS.values():
         assert descriptor.item_type in LIBRARY_ITEM_TYPES
         assert descriptor.operation in {
             "list", "get", "search",
             "structure", "chunk", "spec_list", "spec_save", "rechunk",
+            "save",
         }
         assert descriptor.description
         assert descriptor.input_schema

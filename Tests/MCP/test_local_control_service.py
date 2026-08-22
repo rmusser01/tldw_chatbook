@@ -1955,6 +1955,10 @@ _LIBRARY_TOOL_POLICY_EXPECTATIONS = {
     "library_list_chunk_specs": ("media.reading.list.local", "media_reading_ingestion_sources"),
     "library_save_chunk_spec": ("library.templates.save.local", "library_collections"),
     "library_rechunk_media": ("library.media.rechunk.local", "library_collections"),
+    # student-workflow (Task 1, spec §4): the note write resolves to its OWN
+    # local Library write action -- never the derived notes read a note-typed
+    # tool would otherwise fall to.
+    "library_save_note": ("library.notes.save.local", "library_collections"),
 }
 
 

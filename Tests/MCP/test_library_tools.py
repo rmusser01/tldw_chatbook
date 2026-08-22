@@ -68,7 +68,7 @@ class FakeLibraryToolService:
 # -- Manifest -----------------------------------------------------------------
 
 
-def test_manifest_keeps_legacy_tools_then_appends_the_23_descriptor_tools():
+def test_manifest_keeps_legacy_tools_then_appends_the_24_descriptor_tools():
     manifest = describe_local_mcp_capabilities()
     tools = manifest["tools"]
     names = [entry["name"] for entry in tools]
@@ -76,7 +76,7 @@ def test_manifest_keeps_legacy_tools_then_appends_the_23_descriptor_tools():
     assert names[: len(LEGACY_TOOL_NAMES)] == LEGACY_TOOL_NAMES
     library_entries = tools[len(LEGACY_TOOL_NAMES) :]
     assert [entry["name"] for entry in library_entries] == LIBRARY_TOOL_NAMES
-    assert len(tools) == len(LEGACY_TOOL_NAMES) + 23
+    assert len(tools) == len(LEGACY_TOOL_NAMES) + 24
 
 
 def test_manifest_does_not_advertise_unimplemented_ingest_media():

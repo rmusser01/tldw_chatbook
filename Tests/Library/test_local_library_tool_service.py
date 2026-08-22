@@ -9,15 +9,17 @@ cases.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import re
 import sqlite3
+from types import SimpleNamespace
 from unittest.mock import ANY
 
 import pytest
 
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError, InputError
 from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
 from tldw_chatbook.Library import local_library_tool_service as service_module
 from tldw_chatbook.Library.library_collections_service import (
@@ -31,6 +33,9 @@ from tldw_chatbook.Library.library_tool_contract import (
     serialized_size,
 )
 from tldw_chatbook.Library.local_library_tool_service import LocalLibraryToolService
+from tldw_chatbook.Notes.Notes_Library import NotesInteropService
+from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
+from tldw_chatbook.Notes.notes_scope_service import NotesScopeService, ScopeType
 
 
 # --------------------------------------------------------------------------
@@ -385,9 +390,10 @@ def _error_code(result):
 # --------------------------------------------------------------------------
 
 
-def test_descriptor_table_covers_23_tools():
-    # 18 task-1337 tools + the 5 chunking-agent-tools siblings (spec §4).
-    assert len(LIBRARY_TOOL_DESCRIPTORS) == 23
+def test_descriptor_table_covers_24_tools():
+    # 18 task-1337 tools + the 5 chunking-agent-tools siblings (spec §4)
+    # + library_save_note (student-workflow spec §4).
+    assert len(LIBRARY_TOOL_DESCRIPTORS) == 24
 
 
 def test_unknown_tool_name_is_invalid_argument():
@@ -860,6 +866,510 @@ def test_get_max_chars_validation():
 
     service.invoke("library_get_note", {"id": public, "max_chars": 999_999})
     assert notes.calls[-1][1]["max_chars"] == 16_000
+
+
+# --------------------------------------------------------------------------
+# Save notes: library_save_note (student-workflow spec §4)
+# --------------------------------------------------------------------------
+
+
+class FakeSaveNotesBackend(_Recorded):
+    """In-memory stand-in for the legacy notes interop's write path.
+
+    Mirrors ``NotesInteropService``: ``add_note`` rejects empty titles with
+    ``InputError``; ``update_note`` raises the REAL ``ConflictError`` on a
+    missing row or a version mismatch (ChaChaNotes_DB.py semantics).
+    """
+
+    def __init__(self, notes=None):
+        super().__init__()
+        self._rows = {  # note_id -> {"title", "content", "version"}
+            note_id: dict(row) for note_id, row in (notes or {}).items()
+        }
+
+    def add_note(self, user_id, title, content, note_id=None):
+        self._record(
+            "add_note", {"user_id": user_id, "title": title, "content": content}
+        )
+        if not isinstance(title, str) or not title.strip():
+            raise InputError("Note title cannot be empty.")
+        new_id = note_id or f"note-{len(self._rows) + 1}"
+        self._rows[new_id] = {"title": title, "content": content, "version": 1}
+        return new_id
+
+    def get_note_by_id(self, user_id, note_id):
+        self._record("get_note_by_id", {"user_id": user_id, "note_id": note_id})
+        row = self._rows.get(note_id)
+        return dict(row) if row is not None else None
+
+    def update_note(self, user_id, note_id, update_data, expected_version):
+        self._record(
+            "update_note",
+            {
+                "user_id": user_id,
+                "note_id": note_id,
+                "update_data": dict(update_data),
+                "expected_version": expected_version,
+            },
+        )
+        row = self._rows.get(note_id)
+        if row is None:
+            raise ConflictError(
+                "Record not found in notes.", entity="notes", entity_id=note_id
+            )
+        if row["version"] != expected_version:
+            raise ConflictError(
+                f"Note ID {note_id} update failed: version mismatch.",
+                entity="notes",
+                entity_id=note_id,
+            )
+        row.update(update_data)
+        row["version"] = expected_version + 1
+        return True
+
+
+class FakeNotesScopeService:
+    """Async scope-seam stand-in over an in-memory folder dict.
+
+    Mirrors the real seams the handler consumes: children-list at the root,
+    NON-idempotent create (normalized-path collision -> FolderCollisionError),
+    and a safe re-attach. Names are keyed by the same normalize_folder_name
+    key the repository uses, so lookups match the real collision semantics.
+    """
+
+    def __init__(self):
+        self.calls = []
+        self._folders = {}  # key -> {"folder_id", "name"}
+        self._next_id = 0
+        #: When True the next create raises the collision error even if the
+        #: folder is absent -- simulating a concurrent create winning the race
+        #: (the folder then appears on the re-query).
+        self.collision_on_next_create = False
+
+    async def list_note_folder_children(
+        self, *, scope, parent_id, limit, offset, user_id=None
+    ):
+        from tldw_chatbook.Notes.note_folder_models import normalize_folder_name
+
+        self.calls.append(
+            ("list_note_folder_children", {"parent_id": parent_id, "user_id": user_id})
+        )
+        ordered = sorted(self._folders.values(), key=lambda f: f["name"])
+        page = ordered[offset : offset + limit]
+        end = offset + len(page)
+        return SimpleNamespace(
+            folders=tuple(
+                SimpleNamespace(
+                    folder_id=f["folder_id"], name=f["name"], parent_id=None
+                )
+                for f in page
+            ),
+            next_folder_offset=end if page and end < len(ordered) else None,
+            _lookup={normalize_folder_name(f["name"]).key: f for f in page},
+        )
+
+    async def create_note_folder(self, *, scope, name, parent_id, user_id=None):
+        from tldw_chatbook.Notes.note_folder_models import (
+            FolderCollisionError,
+            normalize_folder_name,
+        )
+
+        self.calls.append(("create_note_folder", {"name": name}))
+        key = normalize_folder_name(name).key
+        if key in self._folders:
+            raise FolderCollisionError(
+                "An active folder already uses the normalized path."
+            )
+        if self.collision_on_next_create:
+            self.collision_on_next_create = False
+            # The concurrent winner's folder becomes visible for the re-query.
+            self._next_id += 1
+            self._folders[key] = {
+                "folder_id": f"folder-raced-{self._next_id}",
+                "name": name,
+            }
+            raise FolderCollisionError(
+                "An active folder already uses the normalized path."
+            )
+        self._next_id += 1
+        folder = {"folder_id": f"folder-{self._next_id}", "name": name}
+        self._folders[key] = folder
+        return SimpleNamespace(folder_id=folder["folder_id"], name=name)
+
+    async def attach_note_to_folder(self, *, scope, folder_id, note_id, user_id=None):
+        self.calls.append(
+            ("attach_note_to_folder", {"folder_id": folder_id, "note_id": note_id})
+        )
+        return SimpleNamespace(folder_id=folder_id, note_id=note_id)
+
+    def folder_count(self):
+        return len(self._folders)
+
+
+class _DenyingPolicyEnforcer:
+    def __init__(self, allowed=True):
+        self.allowed = allowed
+        self.actions = []
+
+    def require_allowed(self, *, action_id):
+        self.actions.append(action_id)
+        if not self.allowed:
+            from tldw_chatbook.runtime_policy.types import PolicyDeniedError
+
+            raise PolicyDeniedError(
+                action_id=action_id,
+                reason_code="authority_denied",
+                user_message="denied by test",
+                effective_source="local",
+                authority_owner="local",
+            )
+
+
+def _save_service(**overrides):
+    backends = _backends(
+        notes_service=FakeSaveNotesBackend(),
+        notes_scope_service=FakeNotesScopeService(),
+    )
+    backends.update(overrides)
+    return LocalLibraryToolService(**backends)
+
+
+def test_save_note_note_id_and_version_must_arrive_together():
+    # The together-rule (student-workflow spec §4.1): exactly one of
+    # note_id/expected_version supplied -> invalid_argument. Pinned FIRST
+    # because it is the most-missed edge.
+    service = _save_service()
+    id_only = service.invoke(
+        "library_save_note",
+        {"title": "t", "content": "c", "note_id": _public_id("note", "note-1")},
+    )
+    assert _error_code(id_only) == "invalid_argument"
+
+    version_only = service.invoke(
+        "library_save_note", {"title": "t", "content": "c", "expected_version": 1}
+    )
+    assert _error_code(version_only) == "invalid_argument"
+
+
+def test_save_note_schema_bounds_match_the_spec():
+    schema = LIBRARY_TOOL_DESCRIPTORS["library_save_note"].input_schema
+    assert schema["required"] == ["title", "content"]
+    assert schema["additionalProperties"] is False
+    assert schema["properties"]["title"]["maxLength"] == 512
+    assert schema["properties"]["title"]["minLength"] == 1
+    assert schema["properties"]["content"]["maxLength"] == 100_000
+    assert schema["properties"]["content"]["minLength"] == 1
+    assert schema["properties"]["folder"]["maxLength"] == 256
+    assert schema["properties"]["folder"]["minLength"] == 1
+    assert schema["properties"]["note_id"]["maxLength"] == 128
+    assert schema["properties"]["expected_version"]["minimum"] == 1
+    # The route/item/operation identity the dispatch keys on.
+    descriptor = LIBRARY_TOOL_DESCRIPTORS["library_save_note"]
+    assert descriptor.item_type == "note"
+    assert descriptor.operation == "save"
+    assert "Writes local Library data only" in descriptor.description
+
+
+def test_save_note_rejects_unknown_and_missing_arguments():
+    service = _save_service()
+    unknown = service.invoke(
+        "library_save_note", {"title": "t", "content": "c", "color": "blue"}
+    )
+    assert _error_code(unknown) == "invalid_argument"
+
+    missing = service.invoke("library_save_note", {"title": "t"})
+    assert _error_code(missing) == "invalid_argument"
+
+
+def test_save_note_description_documents_the_provenance_header():
+    description = LIBRARY_TOOL_DESCRIPTORS["library_save_note"].description
+    # The header convention rides the DESCRIPTION (convention, not enforced
+    # code) -- source and revision are the load-bearing lines.
+    assert "source:" in description
+    assert "revision:" in description
+    assert "chunks:" in description
+
+
+def test_save_note_create_returns_id_version_and_created_flag():
+    notes = FakeSaveNotesBackend()
+    service = _save_service(notes_service=notes)
+
+    result = service.invoke(
+        "library_save_note", {"title": "Chapter 7", "content": "body text"}
+    )
+
+    assert "error" not in result
+    parse_public_id(result["item"]["id"], expected_type="note")
+    assert result["item"]["type"] == "note"
+    assert result["item"]["title"] == "Chapter 7"
+    assert "folder" not in result["item"]
+    assert result["version"] == 1
+    assert result["created"] is True
+    assert result["notes"] and all(isinstance(line, str) for line in result["notes"])
+    assert notes.calls[0][0] == "add_note"
+    assert notes.calls[0][1]["user_id"] == "user-1"
+
+
+def test_save_note_update_bumps_version_and_reports_not_created():
+    notes = FakeSaveNotesBackend(notes={"note-1": {"title": "Old", "content": "old", "version": 1}})
+    service = _save_service(notes_service=notes)
+
+    result = service.invoke(
+        "library_save_note",
+        {
+            "title": "New title",
+            "content": "new body",
+            "note_id": _public_id("note", "note-1"),
+            "expected_version": 1,
+        },
+    )
+
+    assert "error" not in result
+    assert result["created"] is False
+    assert result["version"] == 2
+    assert result["item"]["id"] == _public_id("note", "note-1")
+    update_call = next(call for call in notes.calls if call[0] == "update_note")
+    assert update_call[1]["update_data"] == {"title": "New title", "content": "new body"}
+    assert update_call[1]["expected_version"] == 1
+
+
+def test_save_note_stale_version_maps_to_content_changed():
+    notes = FakeSaveNotesBackend(notes={"note-1": {"title": "T", "content": "c", "version": 7}})
+    service = _save_service(notes_service=notes)
+
+    result = service.invoke(
+        "library_save_note",
+        {
+            "title": "T",
+            "content": "c2",
+            "note_id": _public_id("note", "note-1"),
+            "expected_version": 6,
+        },
+    )
+
+    assert _error_code(result) == "content_changed"
+    assert result["error"]["retryable"] is False
+
+
+def test_save_note_unknown_note_id_maps_to_not_found():
+    notes = FakeSaveNotesBackend()
+    service = _save_service(notes_service=notes)
+
+    result = service.invoke(
+        "library_save_note",
+        {
+            "title": "T",
+            "content": "c",
+            "note_id": _public_id("note", "missing-note"),
+            "expected_version": 1,
+        },
+    )
+
+    assert _error_code(result) == "not_found"
+    # The update seam was never reached (the existence pre-check refused).
+    assert all(call[0] != "update_note" for call in notes.calls)
+
+
+def test_save_note_rejects_wrong_type_and_malformed_note_ids():
+    service = _save_service()
+    wrong_type = service.invoke(
+        "library_save_note",
+        {
+            "title": "t",
+            "content": "c",
+            "note_id": _public_id("media", "media-uuid-1"),
+            "expected_version": 1,
+        },
+    )
+    assert _error_code(wrong_type) == "invalid_argument"
+
+    malformed = service.invoke(
+        "library_save_note",
+        {"title": "t", "content": "c", "note_id": "not-an-id", "expected_version": 1},
+    )
+    assert _error_code(malformed) == "invalid_argument"
+
+
+def test_save_note_folder_ensure_is_idempotent_across_saves():
+    scope = FakeNotesScopeService()
+    service = _save_service(notes_scope_service=scope)
+
+    first = service.invoke(
+        "library_save_note", {"title": "A", "content": "a", "folder": "Study"}
+    )
+    second = service.invoke(
+        "library_save_note", {"title": "B", "content": "b", "folder": "Study"}
+    )
+
+    assert "error" not in first
+    assert "error" not in second
+    assert scope.folder_count() == 1
+    creates = [call for call in scope.calls if call[0] == "create_note_folder"]
+    assert len(creates) == 1
+    attaches = [call for call in scope.calls if call[0] == "attach_note_to_folder"]
+    assert len(attaches) == 2
+    assert {attaches[0][1]["folder_id"]} == {attaches[1][1]["folder_id"]}
+    assert first["item"]["folder"] == "Study"
+    assert second["item"]["folder"] == "Study"
+
+
+def test_save_note_folder_ensure_tolerates_the_create_race():
+    scope = FakeNotesScopeService()
+    scope.collision_on_next_create = True
+    service = _save_service(notes_scope_service=scope)
+
+    result = service.invoke(
+        "library_save_note", {"title": "A", "content": "a", "folder": "Study"}
+    )
+
+    assert "error" not in result  # the race never raises to the agent
+    assert scope.folder_count() == 1
+    attach = next(call for call in scope.calls if call[0] == "attach_note_to_folder")
+    assert attach[1]["folder_id"] == "folder-raced-1"
+
+
+def test_save_note_folderless_create_never_touches_the_scope_service():
+    scope = FakeNotesScopeService()
+    service = _save_service(notes_scope_service=scope)
+
+    result = service.invoke("library_save_note", {"title": "A", "content": "a"})
+
+    assert "error" not in result
+    assert scope.calls == []
+
+
+def test_save_note_folder_without_scope_service_is_feature_unavailable():
+    notes = FakeSaveNotesBackend()
+    service = _save_service(notes_service=notes, notes_scope_service=None)
+
+    result = service.invoke(
+        "library_save_note", {"title": "A", "content": "a", "folder": "Study"}
+    )
+
+    assert _error_code(result) == "feature_unavailable"
+    # Refused before the row write: no orphan note lands unfiled.
+    assert notes.calls == []
+
+
+def test_save_note_policy_denial_precedes_every_backend_call():
+    notes = FakeSaveNotesBackend()
+    scope = FakeNotesScopeService()
+    service = _save_service(
+        notes_service=notes,
+        notes_scope_service=scope,
+        policy_enforcer=_DenyingPolicyEnforcer(allowed=False),
+    )
+
+    result = service.invoke(
+        "library_save_note", {"title": "A", "content": "a", "folder": "Study"}
+    )
+
+    assert _error_code(result) == "feature_unavailable"
+    assert result["error"]["details"]["policy_action"] == "library.notes.save.local"
+    # The mutation pin: no note row, no folder, no attach -- nothing ran.
+    assert notes.calls == []
+    assert scope.calls == []
+
+
+def test_save_note_policy_enforcement_uses_the_dedicated_action():
+    enforcer = _DenyingPolicyEnforcer(allowed=True)
+    service = _save_service(policy_enforcer=enforcer)
+
+    result = service.invoke("library_save_note", {"title": "A", "content": "a"})
+
+    assert "error" not in result
+    assert enforcer.actions == ["library.notes.save.local"]
+
+
+def test_save_note_invalid_folder_name_is_invalid_argument():
+    service = _save_service()
+    # The folder model is a tree of single segments: a slash can never name
+    # one folder (the repository's normalize_folder_name refuses it).
+    result = service.invoke(
+        "library_save_note", {"title": "A", "content": "a", "folder": "Study/Book"}
+    )
+    assert _error_code(result) == "invalid_argument"
+
+
+def test_real_save_note_creates_places_and_updates(chacha_db, tmp_path):
+    notes = NotesInteropService(
+        base_db_directory=tmp_path,
+        api_client_id="test-client",
+        global_db_to_use=chacha_db,
+    )
+    scope = NotesScopeService(
+        local_notes_service=notes,
+        server_service=None,
+        folder_repository=LocalNoteFolderRepository(chacha_db),
+    )
+    service = _save_service(notes_service=notes, notes_scope_service=scope)
+    provenance = (
+        "source: media:abc123\nrevision: 4\nchapter: Chapter 7\nchunks: 12-15\n\n"
+        "Key points..."
+    )
+
+    created = service.invoke(
+        "library_save_note",
+        {"title": "Chapter 7 notes", "content": provenance, "folder": "Study"},
+    )
+    assert "error" not in created
+    assert created["created"] is True
+    assert created["version"] == 1
+    assert created["item"]["folder"] == "Study"
+
+    # The row is readable back through the read tool with the header intact.
+    read = service.invoke("library_get_note", {"id": created["item"]["id"]})
+    assert read["content"]["text"].startswith("source: media:abc123")
+    assert "revision: 4" in read["content"]["text"]
+
+    # The folder is visible exactly once where the notes screen lists folders.
+    children = asyncio.run(
+        scope.list_note_folder_children(
+            scope=ScopeType.LOCAL_NOTE,
+            parent_id=None,
+            limit=50,
+            offset=0,
+            user_id="user-1",
+        )
+    )
+    assert [folder.name for folder in children.folders] == ["Study"]
+
+    # The update path bumps the version and keeps the placement.
+    updated = service.invoke(
+        "library_save_note",
+        {
+            "title": "Chapter 7 notes",
+            "content": provenance + "\nMore points",
+            "folder": "Study",
+            "note_id": created["item"]["id"],
+            "expected_version": 1,
+        },
+    )
+    assert "error" not in updated
+    assert updated["created"] is False
+    assert updated["version"] == 2
+    children_after = asyncio.run(
+        scope.list_note_folder_children(
+            scope=ScopeType.LOCAL_NOTE,
+            parent_id=None,
+            limit=50,
+            offset=0,
+            user_id="user-1",
+        )
+    )
+    assert [folder.name for folder in children_after.folders] == ["Study"]
+
+    # Stale version on a real row -> the named conflict error.
+    stale = service.invoke(
+        "library_save_note",
+        {
+            "title": "Chapter 7 notes",
+            "content": "conflicting",
+            "note_id": created["item"]["id"],
+            "expected_version": 1,
+        },
+    )
+    assert _error_code(stale) == "content_changed"
 
 
 # --------------------------------------------------------------------------

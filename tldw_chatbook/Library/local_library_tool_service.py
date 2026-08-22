@@ -3,10 +3,13 @@
 One ``LocalLibraryToolService`` owns the public operation contract and
 delegates storage work to the six existing local backend services (media,
 notes, prompts, skills, conversations, collections) plus the dedicated
-media chunk-tool service (structure/fetch/spec operations). Both runtimes --
-the Console provider and local MCP registration -- call this core; the
-descriptor table, ID/cursor codecs, validation, and byte fitting all live in
-``library_tool_contract`` so the two surfaces cannot drift.
+media chunk-tool service (structure/fetch/spec operations), and owns the
+note-save write path itself (student-workflow spec §4: rows via the legacy
+notes interop, folders/placements via the async ``NotesScopeService``).
+Both runtimes -- the Console provider and local MCP registration -- call
+this core; the descriptor table, ID/cursor codecs, validation, and byte
+fitting all live in ``library_tool_contract`` so the two surfaces cannot
+drift.
 
 Pure synchronous core: no Textual, MCP, or agent imports. Local backends whose
 methods are declared async but perform local work (prompts, skills) are
@@ -28,6 +31,7 @@ from tldw_chatbook.Library.library_tool_contract import (
     DEFAULT_MAX_CHARS,
     DEFAULT_MESSAGE_LIMIT,
     DISPLAY_NAME_MAX_BYTES,
+    ERROR_CONTENT_CHANGED,
     ERROR_FEATURE_UNAVAILABLE,
     ERROR_INVALID_ARGUMENT,
     ERROR_NOT_FOUND,
@@ -52,6 +56,12 @@ from tldw_chatbook.Library.library_tool_contract import (
     validate_page_args,
     validate_search_query,
 )
+from tldw_chatbook.Notes.note_folder_models import (
+    FolderCollisionError,
+    FolderValidationError,
+    normalize_folder_name,
+)
+from tldw_chatbook.runtime_policy.types import PolicyDeniedError
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 
 _LIST_METHODS = {
@@ -79,6 +89,26 @@ _PROMPT_SECTIONS = ("details", "system_prompt", "user_prompt", "prompt_definitio
 _MEDIA_CHUNK_OPERATIONS = frozenset(
     {"structure", "chunk", "spec_list", "spec_save", "rechunk"}
 )
+
+#: Student-workflow (spec §4/§6): the policy action the note-save tool runs
+#: under. Registered in ``runtime_policy/registry.py`` (the ``library.notes``
+#: resource on the ``library_collections`` capability, local-only); denial
+#: precedes every backend call.
+SAVE_NOTE_POLICY_ACTION_ID = "library.notes.save.local"
+
+#: The scope the note-save folder seam is pinned to (spec §4.3): the notes
+#: UI's own local scope -- any other scope makes folders invisible there.
+#: Written as the enum's value (``ScopeType.LOCAL_NOTE`` is a ``str`` enum)
+#: because importing ``notes_scope_service`` here is circular: it imports
+#: ``Library.library_content_evidence``, whose package ``__init__`` imports
+#: this module. The scope service normalizes the string to the same member.
+_SAVE_NOTE_FOLDER_SCOPE = "local_note"
+
+#: Root children-page size for the folder ensure lookup (the repository's
+#: own ceiling) and the page cap: one-level lookups stop after this many
+#: pages even if a pathological library keeps paginating.
+_SAVE_NOTE_FOLDER_PAGE_LIMIT = 500
+_SAVE_NOTE_FOLDER_MAX_PAGES = 20
 
 
 def _invalid(message: str) -> LibraryToolError:
@@ -319,6 +349,8 @@ class LocalLibraryToolService:
         collections_service: Any = None,
         media_chunk_service: Any = None,
         notes_user_id: str = "local_library",
+        notes_scope_service: Any = None,
+        policy_enforcer: Any = None,
     ) -> None:
         self._media = media_service
         self._notes = notes_service
@@ -328,6 +360,16 @@ class LocalLibraryToolService:
         self._collections = collections_service
         self._media_chunk = media_chunk_service
         self._notes_user_id = notes_user_id
+        # Student-workflow (spec §4.3): the folder seam. Note rows go through
+        # the legacy interop above; folders/placements live only in the async
+        # NotesScopeService, pinned to its LOCAL_NOTE scope. Optional: a
+        # missing handle degrades folder requests to feature_unavailable
+        # (never to a half-written note).
+        self._notes_scope = notes_scope_service
+        # Student-workflow (spec §6): the WRITING note tool's service-level
+        # gate (the chunk-tools precedent) -- the same enforcer handle the
+        # MCP runtime gate enforces with; None leaves that outer gate alone.
+        self._policy_enforcer = policy_enforcer
 
     # -- Entry point ---------------------------------------------------------
 
@@ -362,6 +404,8 @@ class LocalLibraryToolService:
             return self._list(descriptor, backend, arguments)
         if descriptor.operation == "search":
             return self._search(descriptor, backend, arguments)
+        if descriptor.operation == "save":
+            return self._save_note(descriptor, backend, arguments)
         return self._get(descriptor, backend, arguments)
 
     def _media_chunk_tool(
@@ -679,6 +723,254 @@ class LocalLibraryToolService:
             total_chars=int(detail.get("total_chars") or 0),
             cursor_state={},
         )
+
+    # -- Save: notes (student-workflow spec §4) ----------------------------------
+
+    def _enforce_save_note_policy(self) -> None:
+        """Spec §6: the save runs under ``library.notes.save.local``.
+
+        Enforcement precedes EVERY backend touch (denial -> the named error
+        payload, no note row, no folder). No-op without an enforcer handle --
+        the chunk-tools precedent: the MCP runtime gate (the re-pointed
+        ``_TOOL_ACTION_IDS`` mapping) stays the always-on outer layer, and
+        construction sites wire the enforcer where a runtime-policy context
+        exists.
+        """
+        if self._policy_enforcer is None:
+            return
+        try:
+            self._policy_enforcer.require_allowed(
+                action_id=SAVE_NOTE_POLICY_ACTION_ID
+            )
+        except PolicyDeniedError as exc:
+            raise LibraryToolError(
+                ERROR_FEATURE_UNAVAILABLE,
+                "Saving notes is not permitted by the current runtime policy"
+                f" ({SAVE_NOTE_POLICY_ACTION_ID}): {exc.user_message}",
+                details={
+                    "policy_action": SAVE_NOTE_POLICY_ACTION_ID,
+                    "reason_code": str(
+                        getattr(exc, "reason_code", "authority_denied")
+                    ),
+                },
+            ) from exc
+
+    @staticmethod
+    def _validate_save_note_arguments(
+        arguments: Mapping[str, Any],
+    ) -> tuple[str, str, str | None, str | None, int | None]:
+        """Type-check the save args; returns ``(title, content, folder,
+        note_id, expected_version)``.
+
+        The bounds themselves are schema-level (the descriptor's maxLength
+        literals); this re-checks the emptiness/typing the row-writer would
+        trip on anyway, so a schema-bypassing caller still fails closed with
+        the named error. The together-rule is pinned here FIRST: exactly one
+        of note_id/expected_version is the most-missed invalid shape.
+        """
+        title = arguments.get("title")
+        if not isinstance(title, str) or not title.strip():
+            raise _invalid("title must be a non-empty string")
+        content = arguments.get("content")
+        if not isinstance(content, str) or not content:
+            raise _invalid("content must be a non-empty string")
+        folder = arguments.get("folder")
+        if folder is not None and (not isinstance(folder, str) or not folder.strip()):
+            raise _invalid("folder must be a non-empty string when supplied")
+        note_id = arguments.get("note_id")
+        expected_version = arguments.get("expected_version")
+        if (note_id is None) != (expected_version is None):
+            raise _invalid(
+                "note_id and expected_version must be supplied together"
+                " (both for an update, neither for a create)"
+            )
+        if expected_version is not None and (
+            isinstance(expected_version, bool)
+            or not isinstance(expected_version, int)
+            or expected_version < 1
+        ):
+            raise _invalid("expected_version must be an integer of at least 1")
+        return title, content, folder, note_id, expected_version
+
+    def _find_note_folder(self, requested_key: str) -> Any | None:
+        """Name-lookup one root folder through the scope service's own
+        children-list seam (parent_id=None covers the root -- verified against
+        the repository's ``parent_id IS NULL`` predicate).
+
+        The repository's path-getter (``get_folder_by_path``) is NOT
+        scope-exposed; reaching the repository from the tool layer is ruled
+        out (the ledger's STOP rule), so the children-list route is the seam.
+        """
+        scope = self._notes_scope
+        offset = 0
+        for _ in range(_SAVE_NOTE_FOLDER_MAX_PAGES):
+            page = _run(
+                scope.list_note_folder_children(
+                    scope=_SAVE_NOTE_FOLDER_SCOPE,
+                    parent_id=None,
+                    limit=_SAVE_NOTE_FOLDER_PAGE_LIMIT,
+                    offset=offset,
+                    user_id=self._notes_user_id,
+                )
+            )
+            for candidate in getattr(page, "folders", None) or ():
+                try:
+                    if normalize_folder_name(candidate.name).key == requested_key:
+                        return candidate
+                except FolderValidationError:  # pragma: no cover - stored rows
+                    continue  # are pre-normalized; skip pathological ones
+            next_offset = getattr(page, "next_folder_offset", None)
+            if next_offset is None:
+                return None
+            offset = int(next_offset)
+        return None
+
+    def _ensure_note_folder(self, name: str) -> Any:
+        """Idempotently return the ONE root folder for ``name``.
+
+        Lookup -> create on miss -> RE-QUERY on collision (``create_note_folder``
+        is not idempotent; a concurrent creator winning the race is tolerated
+        by re-reading, never raised to the agent -- spec §4.3).
+        """
+        if self._notes_scope is None:
+            raise LibraryToolError(
+                ERROR_FEATURE_UNAVAILABLE,
+                "The local note folder backend is not available in this"
+                " deployment.",
+            )
+        try:
+            requested = normalize_folder_name(name)
+        except FolderValidationError:
+            raise _invalid(
+                "folder must be a single valid folder name (one level, no"
+                " slashes, not '.' or '..')"
+            ) from None
+        found = self._find_note_folder(requested.key)
+        if found is not None:
+            return found
+        try:
+            return _run(
+                self._notes_scope.create_note_folder(
+                    scope=_SAVE_NOTE_FOLDER_SCOPE,
+                    name=name,
+                    parent_id=None,
+                    user_id=self._notes_user_id,
+                )
+            )
+        except FolderCollisionError:
+            # Lost the create race: the concurrent winner is now visible to
+            # the lookup, and the placement target converges on ONE folder.
+            found = self._find_note_folder(requested.key)
+            if found is not None:
+                return found
+            raise LibraryToolError(
+                ERROR_STORAGE_ERROR,
+                "The local note folder could not be ensured; retry the save.",
+                retryable=True,
+            ) from None
+
+    def _save_note(
+        self,
+        descriptor: LibraryToolDescriptor,
+        backend: Any,
+        arguments: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Create (default) or version-locked update of one note (spec §4).
+
+        Rows go through the legacy interop (the notes UI's own row-writer);
+        folders/placements go through the async scope service (bridged with
+        the established ``_run``/``asyncio.run`` pattern). Order matters:
+        validate -> policy -> folder-ensure -> row write -> attach, so a
+        folder failure never lands an orphaned note row.
+        """
+        del descriptor  # routing already resolved; the operation is singular
+        # Deferred import: the DB module is heavy and only the exception
+        # types are needed (the personas-screen precedent for their home).
+        from tldw_chatbook.DB.ChaChaNotes_DB import ConflictError, InputError
+
+        title, content, folder_name, note_id, expected_version = (
+            self._validate_save_note_arguments(arguments)
+        )
+        # Policy before ANY backend touch (spec §6).
+        self._enforce_save_note_policy()
+        # Folder first: a failed folder-ensure must not orphan a note row.
+        folder = (
+            self._ensure_note_folder(folder_name) if folder_name is not None else None
+        )
+
+        if note_id is None:
+            try:
+                raw_id = backend.add_note(
+                    self._notes_user_id, title=title, content=content
+                )
+            except InputError as exc:
+                raise _invalid(str(exc)) from exc
+            version = 1
+            created = True
+        else:
+            _, raw_id = parse_public_id(note_id, expected_type="note")
+            if backend.get_note_by_id(self._notes_user_id, raw_id) is None:
+                raise _not_found("The requested Library item was not found.")
+            try:
+                updated = backend.update_note(
+                    self._notes_user_id,
+                    raw_id,
+                    {"title": title, "content": content},
+                    expected_version,
+                )
+            except ConflictError as exc:
+                raise LibraryToolError(
+                    ERROR_CONTENT_CHANGED,
+                    "The note changed since the expected version was read;"
+                    " re-read it (library_get_note) and retry with the"
+                    " current version.",
+                    details={"hint": "re_read_and_retry"},
+                ) from exc
+            if not updated:
+                raise LibraryToolError(
+                    ERROR_CONTENT_CHANGED,
+                    "The note changed since the expected version was read;"
+                    " re-read it (library_get_note) and retry with the"
+                    " current version.",
+                    details={"hint": "re_read_and_retry"},
+                )
+            version = int(expected_version) + 1
+            created = False
+
+        if folder is not None:
+            # Re-attach is safe: the repository's attach_manual revives the
+            # latest membership history rather than duplicating it.
+            _run(
+                self._notes_scope.attach_note_to_folder(
+                    scope=_SAVE_NOTE_FOLDER_SCOPE,
+                    folder_id=folder.folder_id,
+                    note_id=raw_id,
+                    user_id=self._notes_user_id,
+                )
+            )
+
+        item = _metadata_item(
+            make_public_id("note", raw_id), "note", "title", title, ()
+        )
+        if folder is not None:
+            item["folder"] = folder.name
+        return {
+            "item": item,
+            "version": version,
+            "created": created,
+            "notes": [
+                (
+                    "Hold the returned id and version: an update needs note_id"
+                    " and expected_version together (exactly one of them is"
+                    " refused)."
+                ),
+                (
+                    "Notes have no unique title; before re-running, search by"
+                    " title (library_search_notes) and update the match instead"
+                    " of creating a duplicate."
+                ),
+            ],
+        }
 
     # -- Get: prompts (overview manifest + one section) -------------------------
 
