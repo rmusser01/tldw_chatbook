@@ -93,28 +93,42 @@ The runner writes into one explicit confirmation campaign root outside the repos
 That root contains an append-only attempt ledger and a new, uniquely numbered staging
 directory for each attempt; it never writes measurement files directly into
 `Docs/superpowers/qa/console-three-turn-real-provider-confirmatory/`. Each attempt
-records `running`, `failed`, `invalid`, `complete_pending_review`, or `definitive` state
-and is preserved on failure with its last flushed boundary. The ledger links every
-attempt in order with a content-free failure/invalid reason. An automated-complete
-attempt enters `complete_pending_review` and blocks another attempt; approving review
-makes it definitive, while a digest-bound review that identifies an objective evidence
-defect makes it invalid and permits a retry.
+records `running`, `failed`, `invalid`, `complete_pending_review`, or
+`changes_required` state and is preserved on failure with its last flushed boundary.
+The ledger links every attempt in order with a content-free failure/invalid reason.
+
+Starting or recovering an attempt requires one atomically acquired campaign lock.
+`running`, `complete_pending_review`, and `changes_required` all block new acquisition.
+A normal process exit releases the lock after recording terminal state. If abrupt
+termination leaves `running`, an explicit recovery operation may append
+`failed:interrupted` only after it holds the campaign lock and verifies the recorded
+owner process is no longer live; it never completes or repairs raw evidence. Otherwise
+recovery refuses to proceed.
 
 The first complete protocol-valid attempt is definitive whether its result is `pass`,
 `regression`, or `inconclusive`. A retry is allowed only when the preceding attempt is
-objectively invalid or failed because a predeclared provider, contract, completeness,
-isolation, privacy, recomputation, ownership, or evidence-review gate failed. A slow,
-noisy, regressing, or inconclusive result is not a retry reason. The final manifest
-retains the ordered content-free attempt lineage, and earlier staging roots remain
-available for audit.
+objectively invalid or failed because an uncorrectable provider, acquisition, raw-data,
+product-contract, completeness, isolation, privacy, or ownership gate failed. A
+correctable manifest, summary, human-report, README, digest, receipt, or presentation
+defect enters `changes_required`; those derived artifacts must be corrected and reviewed
+again against the same raw acquisition. A slow, noisy, regressing, inconclusive, or
+correctable derived-artifact result is not a retry reason. The reviewed manifest retains
+the ordered content-free attempt lineage through `complete_pending_review`, and earlier
+staging roots remain available for audit.
 
 After the human report and README are complete, the harness creates one canonical
 artifact-set digest: SHA-256 of a deterministic, sorted mapping from every retained
-relative artifact path to that file's SHA-256. Independent review records the exact set
-digest, verdict, and content-free findings in a review receipt. Promotion refuses a
-missing/non-approving receipt or any digest mismatch; rehashes the source immediately
-before copying; uses standard-library copy into a new sibling temporary directory;
-rehashes the copy; and atomically renames that directory to
+relative artifact path to that file's SHA-256. Independent review records the attempt
+ID, exact set digest, verdict, and content-free findings in a review receipt. A
+`changes_required` receipt is bound to the rejected digest and blocks new acquisition;
+after correction, a new set digest requires a new review. An approving receipt is the
+immutable, non-circular marker that the referenced `complete_pending_review` attempt is
+definitive; neither the reviewed manifest nor reviewed ledger snapshot is rewritten
+after approval.
+
+Promotion refuses a missing/non-approving receipt or any attempt-ID/digest mismatch;
+rehashes the source immediately before copying; uses standard-library copy into a new
+sibling temporary directory; rehashes the copy; and atomically renames that directory to
 `Docs/superpowers/qa/console-three-turn-real-provider-confirmatory/`. The final
 directory must not already exist. The receipt is copied beside the reviewed files but
 is not part of the reviewed set, avoiding a circular digest. No bespoke copy protocol
@@ -142,10 +156,15 @@ cannot reclassify a sample.
 
 Only the 90 rows whose phase is exactly `measured` enter metric arrays, arm summaries,
 paired blocks, confidence intervals, validity cardinality for the reported measurement,
-or verdict. The validator separately requires exactly three valid warmups, 15 valid
-burn-in rows in five complete rotated blocks, and 90 valid measured rows in 30 complete
-rotated blocks. Missing, duplicate, misordered, or unknown-phase rows invalidate the
-run; they cannot be silently dropped.
+or verdict. Before any filtering, the phase wrapper extracts every terminal sample row
+from raw evidence and compares its complete `(sample_id, phase, iteration, arm)`
+sequence with the predeclared 3 + 15 + 90 schedule. Row position supplies ordering; no
+duplicate identity field is added. The wrapper also enforces global sample-ID uniqueness
+and invokes the digest-verified original runner's `validate_sample` for every row.
+Missing, extra, duplicated, misordered, unknown-phase, or sample-invalid rows invalidate
+the run; they cannot be silently dropped. Only after that exact-sequence check does the
+wrapper remove the 15 burn-in rows and pass exactly three warmups plus 90 measured rows
+onward.
 
 ## Product path, provider, and isolation
 
@@ -166,8 +185,11 @@ write inventory, and final ownership checks are unchanged.
 
 TASK-19641 retained the endpoint-reported model alias and sanitized llama-server
 metadata, but not a model-weight digest. This confirmation therefore cannot claim that
-the GGUF bytes are historically identical. It fails closed unless the alias and
-retained server contract match the original manifest and verifies one listener process
+the GGUF bytes are historically identical. It fails closed unless every retained
+`provider_server` field matches the original manifest—build info, context tokens,
+endpoint capabilities, sleep readiness, modalities, model alias, and total slots—and
+unless the complete original `runtime` object matches, including Python implementation
+and version, dependency versions, and SQLite. It also verifies one listener process
 identity remains continuous throughout each attempt. The report states the historical
 weight-identity limitation explicitly. Computing a new weight digest is intentionally
 out of scope because no historical digest exists to compare it with.
@@ -197,9 +219,9 @@ than trusting labels, derives the corpus digest from the harness-generated corpu
 derives tool-definition hashes through the pinned target adapters, and checks that the
 original summary exposes exactly the expected metrics and gate structure. It verifies
 the pinned original runner bytes before using that runner as the machine source for
-original statistical constants and function-source digests; Markdown prose is not a
-machine-validation input. A mismatch makes the attempt invalid before a warmup; it
-cannot be accepted with a warning.
+original statistical constants and the executed statistics implementation; Markdown
+prose is not a machine-validation input. A mismatch makes the attempt invalid before a
+warmup; it cannot be accepted with a warning.
 
 ## Harness changes
 
@@ -209,14 +231,14 @@ The smallest harness extension is preferred:
 2. `sample_schedule` receives an explicit burn-in block count, defaulting to zero for
    existing callers. The confirmatory entry point supplies exactly five and continues
    rotation across the phase seam.
-3. A small phase validator checks burn-in cardinality, exact identities, complete
-   rotations, order, and the full sample contract independently from the measured
-   dataset.
-4. The proven statistics functions remain byte-identical to the pinned original
-   runner. After phase validation, parent mode removes only `burn_in` rows and gives the
-   original warmup + measured shape to the unchanged `validate_run` and `build_summary`
-   path. Tests prove changing burn-in latency alone leaves the entire summary
-   byte-equivalent.
+3. A small phase wrapper compares the full terminal-row identity/order sequence with
+   the exact predeclared schedule, enforces global uniqueness, and runs the full sample
+   contract before filtering anything.
+4. After verifying its SHA-256, parent mode loads the pinned original runner as an
+   isolated module and directly invokes that module's original `validate_run` and
+   `build_summary` on the filtered three-warmup + 90-measured rows. This retains the
+   complete transitive statistics path without a custom dependency-digest walker. Tests
+   prove changing burn-in latency alone leaves the entire summary byte-equivalent.
 5. Parent mode creates and removes detached control and candidate target worktrees,
    while rejecting a dirty harness and recording `harness_revision` plus the runner
    file SHA-256.
@@ -282,10 +304,11 @@ inconclusive, the report says so and the task does not manufacture a pass. Provi
 contract, isolation, privacy, completeness, or ownership failure makes the result
 invalid.
 
-The campaign ledger enforces this rule operationally: after the first complete,
-protocol-valid attempt, the runner refuses another attempt even if the result is
-unfavorable. Invalid and failed retries retain their objective gate failure and remain
-linked from the definitive manifest.
+The campaign ledger enforces this rule operationally: `complete_pending_review` and
+`changes_required` refuse another acquisition even if the observed result is
+unfavorable. Only an uncorrectable acquisition/raw-evidence defect can make an attempt
+invalid and allow a retry. Invalid and failed attempts retain their objective gate
+failure and remain linked from the definitive receipt's reviewed manifest.
 
 The confirmatory report stands beside TASK-19641. It may say whether the independent
 pre-registered confirmation passed, regressed, or was inconclusive; it may not rewrite
@@ -299,18 +322,24 @@ Test-driven implementation adds focused tests for:
 - continued global rotation at the burn-in/measurement seam;
 - backward-compatible zero-burn-in scheduling;
 - burn-in sample, phase, identity, ordering, contract, and completeness failures;
+- whole-run sequence mismatches, unknown phases, cross-phase duplicate IDs, and rows
+  that would otherwise disappear during filtering;
 - measured-only summary and bootstrap inputs, including extreme burn-in latency that
   leaves the entire summary byte-equivalent;
-- separate detached target revisions, pinned original harness source/digest, and
-  recorded current harness revision/digest;
+- separate detached target revisions, direct loading of the digest-verified original
+  runner for summary generation, and recorded current harness revision/digest;
 - dirty-harness refusal and runner-file digest mismatch;
 - fixture, request-setting, metric, bootstrap, confidence-level, and threshold
   protocol mismatches against the retained evidence and pinned original runner;
 - original-evidence SHA-256 guard and separate output-root enforcement;
 - ordered attempt-ledger behavior, first-valid-attempt finality, and permitted invalid
   retries;
+- atomic campaign locking, interrupted-owner recovery, and refusal to reacquire while
+  `complete_pending_review` or `changes_required`;
+- derived-artifact correction and digest-bound re-review without provider reacquisition;
 - canonical artifact-set and review-receipt digest binding, source/destination rehash,
-  pre-existing-destination refusal, and sibling-temp atomic publication;
+  approving-receipt finality, pre-existing-destination refusal, and sibling-temp atomic
+  publication;
 - manifest and privacy validation for the new phase and exclusion metadata.
 
 Before the long run, one confirmation smoke uses one warmup per arm, one burn-in block,
