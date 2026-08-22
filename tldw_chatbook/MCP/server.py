@@ -34,14 +34,18 @@ the retired `todo_write` tool is also absent.
 
 ## Exposed local Library tools (task-1337)
 
-The 18 descriptor-backed `library_*` tools (media/notes/prompts/skills/
-conversations/collections list+get+search) are part of the local MCP
-surface: they are read-only, locally served, and contract-governed by
+The 23 descriptor-backed `library_*` tools (media/notes/prompts/skills/
+conversations/collections list+get+search, plus the chunking-agent-tools
+siblings: structure/chunk/spec-list/spec-save/re-chunk) are part of the
+local MCP surface: they are locally served and contract-governed by
 `Library/library_tool_contract.py`. The capability manifest appends them from
 the descriptor table (`_describe_local_library_tools`), and the in-app direct
 runtime (`local_runtime_delegate.LocalMCPRuntimeDelegate`) dispatches them to
 one shared `LocalLibraryToolService` (composed by
-`build_local_library_tool_service`) via `asyncio.to_thread`. The standalone
+`build_local_library_tool_service`) via `asyncio.to_thread`. The WRITING
+chunk tools are service-level policy-gated: the factory threads the
+runtime-policy enforcer into the chunk tool service (chunking-agent-tools
+Task 5, spec §6), on top of the always-on MCP action mapping. The standalone
 `TldwMCPServer` below uses `mcp-unified` and deliberately does not publish
 these in-process Library tools. The Console-only
 `[console].direct_library_tools` retrieval-mode toggle has no effect on this
@@ -253,7 +257,7 @@ def _describe_local_tools() -> list[dict[str, Any]]:
 
 
 def _describe_local_library_tools() -> list[dict[str, Any]]:
-    """Manifest entries for the 18 descriptor-backed Library tools (task-1337).
+    """Manifest entries for the descriptor-backed Library tools (task-1337).
 
     Derived from ``LIBRARY_TOOL_DESCRIPTORS`` -- never hand-maintained here --
     so the local MCP capability manifest can never drift from the contract the
@@ -286,6 +290,7 @@ def build_local_library_tool_service(
     chachanotes_db: Any,
     media_db: Any,
     notes_service: Any = None,
+    policy_enforcer: Any = None,
 ) -> Any:
     """Compose the six local Library backends into one shared synchronous service.
 
@@ -309,6 +314,13 @@ def build_local_library_tool_service(
         notes_service: Optional pre-built ``NotesInteropService``; when
             omitted, one is constructed with the canonical signature off
             ``get_chachanotes_db_path()`` and ``chachanotes_db``.
+        policy_enforcer: Optional runtime-policy enforcer
+            (``require_allowed(action_id=...)`` seam) threaded into the
+            media chunk tool service, whose WRITING tools
+            (``library_save_chunk_spec``, ``library_rechunk_media``) are
+            service-level gated (chunking-agent-tools Tasks 4-5, spec §6);
+            ``None`` leaves the always-on MCP action mapping as the outer
+            gate.
 
     Returns:
         The shared ``LocalLibraryToolService``.
@@ -403,6 +415,11 @@ def build_local_library_tool_service(
             media_db,
             backends["media"],
             template_interop=get_chunking_service(media_db),
+            # chunking-agent-tools (Task 5, spec §6): the writing chunk
+            # tools are service-level gated here too -- the delegate
+            # threads the runtime-policy enforcer through (the Console
+            # construction site passes the same app handle).
+            policy_enforcer=policy_enforcer,
         )
 
     _build("media_chunk", _build_media_chunk)

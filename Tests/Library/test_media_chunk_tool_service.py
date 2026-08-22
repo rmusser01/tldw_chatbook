@@ -973,21 +973,453 @@ def test_backend_failure_scrubs_to_storage_error(
 
 
 # ---------------------------------------------------------------------------
-# Not-yet handler (Task 5 lands in this same change)
+# library_rechunk_media (Task 5, spec §4.4)
 # ---------------------------------------------------------------------------
 
 
-def test_rechunk_tool_reports_pending(
-    service: LocalMediaChunkToolService,
-    media_db: MediaDatabase,
+def test_rechunk_descriptor_is_a_writing_tool_with_the_flat_spec_shape():
+    """The override `spec` documents its OWN flat shape -- explicitly
+    contrasted with save's nested template body -- and restates Task 1's
+    overlap ruling (omitted = 0, NOT the engine's 100 default)."""
+    descriptor = LIBRARY_TOOL_DESCRIPTORS["library_rechunk_media"]
+    assert descriptor.item_type == "media"
+    assert descriptor.route == "media.rechunk"
+    schema = descriptor.input_schema
+    assert set(schema["required"]) == {"id"}
+    assert schema["additionalProperties"] is False
+    # The writing tail (data leaves the device disclosure) -- like save.
+    assert "Writes local Library data only" in descriptor.description
+
+    props = schema["properties"]
+    assert props["reindex"]["type"] == "boolean"
+    assert props["reindex"]["default"] is False
+    spec = props["spec"]
+    assert set(spec["properties"]) == {"template", "method", "max_size", "overlap"}
+    assert spec["additionalProperties"] is False
+    # The carry: the FLAT shape + the overlap ruling, stated so agents do
+    # not transfer save's nested `chunking` body onto this tool.
+    assert "flat" in spec["description"].lower()
+    assert "chunking" in spec["description"]  # names the save-body contrast
+    assert "overlap" in spec["description"]
+    assert "0" in spec["description"]  # overlap omitted = 0
+    assert "100" in spec["description"]  # ...NOT the engine's default
+
+
+def test_rechunk_plain_spec_replaces_rows_and_reports_the_summary(
+    service: LocalMediaChunkToolService, media_db: MediaDatabase
 ):
-    _, media_uuid = _seed_media(media_db, "body\n")
+    media_id, media_uuid = _seed_media(
+        media_db, "One two three. Four five six. Seven eight nine.\n"
+    )
+    _seed_flat_chunks(media_db, media_id, ["stale row one", "stale row two"])
 
-    payload = _invoke(service, "library_rechunk_media", {"id": _public_id(media_uuid)})
+    payload = _invoke(
+        service,
+        "library_rechunk_media",
+        {
+            "id": _public_id(media_uuid),
+            "spec": {"method": "sentences", "max_size": 200, "overlap": 0},
+        },
+    )
 
+    assert "error" not in payload, payload
+    assert payload["status"] == "rechunked"
+    assert payload["item"]["id"] == _public_id(media_uuid)
+    summary = payload["chunk_summary"]
+    assert summary["chunk_count"] >= 1
+    assert summary["engine_version"]
+    assert summary["spans_present"] is True
+    assert summary["template"] is None  # a plain override names no template
+    assert isinstance(payload["notes"], list)
+
+    # The stale rows were REPLACED (the hard-delete ruling), and the new
+    # rows carry the current engine stamp with no template.
+    rows = media_db.get_connection().execute(
+        "SELECT chunk_text, chunking_template, chunk_engine_version FROM"
+        " UnvectorizedMediaChunks WHERE media_id = ? AND deleted = 0",
+        (media_id,),
+    ).fetchall()
+    assert [row["chunk_text"] for row in rows] != ["stale row one", "stale row two"]
+    assert all(row["chunking_template"] is None for row in rows)
+    assert all(row["chunk_engine_version"] for row in rows)
+
+
+def test_rechunk_spec_template_resolves_and_stamps_the_template(
+    media_db: MediaDatabase, interop
+):
+    service = LocalMediaChunkToolService(
+        media_db,
+        LocalMediaReadingService(media_db),
+        template_interop=interop,
+    )
+    interop.create_template(
+        "agent override spec",
+        "seeded for the rechunk tool test",
+        _valid_spec_body(method="sentences"),
+    )
+    media_id, media_uuid = _seed_media(
+        media_db, "Template body one. Template body two.\n"
+    )
+
+    payload = _invoke(
+        service,
+        "library_rechunk_media",
+        {"id": _public_id(media_uuid), "spec": {"template": "agent override spec"}},
+    )
+
+    assert "error" not in payload, payload
+    assert payload["status"] == "rechunked"
+    assert payload["chunk_summary"]["template"] == "agent override spec"
+    templates = {
+        row["chunking_template"]
+        for row in media_db.get_connection()
+        .execute(
+            "SELECT chunking_template FROM UnvectorizedMediaChunks"
+            " WHERE media_id = ? AND deleted = 0",
+            (media_id,),
+        )
+        .fetchall()
+    }
+    assert templates == {"agent override spec"}
+
+
+def test_rechunk_without_spec_re_runs_the_stored_config(
+    media_db: MediaDatabase, interop
+):
+    """Spec absent entirely → None → the stored per-media config governs
+    (Task 1's resolution: a stored explicit name re-runs)."""
+    service = LocalMediaChunkToolService(
+        media_db,
+        LocalMediaReadingService(media_db),
+        template_interop=interop,
+    )
+    interop.create_template(
+        "stored config spec",
+        "seeded for the stored-mode test",
+        _valid_spec_body(method="sentences"),
+    )
+    media_id, media_uuid = _seed_media(media_db, "Stored config body.\n")
+    with media_db.transaction() as conn:
+        conn.execute(
+            "UPDATE Media SET chunking_config = ?, version = version + 1"
+            " WHERE id = ?",
+            ('{"template": "stored config spec"}', media_id),
+        )
+
+    payload = _invoke(
+        service, "library_rechunk_media", {"id": _public_id(media_uuid)}
+    )
+
+    assert "error" not in payload, payload
+    assert payload["status"] == "rechunked"
+    assert payload["chunk_summary"]["template"] == "stored config spec"
+
+
+def test_rechunk_unresolvable_template_is_a_named_error_never_fallback(
+    media_db: MediaDatabase, interop, monkeypatch
+):
+    service = LocalMediaChunkToolService(
+        media_db,
+        LocalMediaReadingService(media_db),
+        template_interop=interop,
+    )
+    media_id, media_uuid = _seed_media(media_db, "body\n")
+    _seed_flat_chunks(media_db, media_id, ["existing row"])
+    # Mutation pin: the named refusal fires in the handler, BEFORE the
+    # one-item run (a silent fallback would have re-chunked plainly).
+    import tldw_chatbook.Library.local_media_chunk_tool_service as svc_mod
+
+    def _fail(*args, **kwargs):  # pragma: no cover - pin only
+        raise AssertionError("rechunk_one_item ran for a ghost template")
+
+    monkeypatch.setattr(svc_mod, "rechunk_one_item", _fail)
+
+    payload = _invoke(
+        service,
+        "library_rechunk_media",
+        {"id": _public_id(media_uuid), "spec": {"template": "ghost spec"}},
+    )
+
+    assert _error_code(payload) == ERROR_NOT_FOUND
+    message = payload["error"]["message"]
+    assert "ghost spec" in message
+    assert "refused" in message or "falling back" in message
+    # The stored rows are untouched -- never silently re-chunked another way.
+    texts = [
+        row["chunk_text"]
+        for row in media_db.get_connection()
+        .execute(
+            "SELECT chunk_text FROM UnvectorizedMediaChunks WHERE media_id = ?",
+            (media_id,),
+        )
+        .fetchall()
+    ]
+    assert texts == ["existing row"]
+
+
+def test_rechunk_reindex_default_off_is_mutation_pinned(
+    media_db: MediaDatabase, interop, monkeypatch
+):
+    """Default call touches chunk rows ONLY (ruling §8.4): with a LIVE rag
+    service wired (non-vacuous pin), the forced re-index never runs."""
+    import tldw_chatbook.Library.library_rechunk_service as rechunk_service
+
+    class _Rag:
+        def __init__(self) -> None:
+            self.calls = []
+
+    rag = _Rag()
+    service = LocalMediaChunkToolService(
+        media_db,
+        LocalMediaReadingService(media_db),
+        template_interop=interop,
+        rag_service=rag,
+    )
+    _, media_uuid = _seed_media(media_db, "body one. body two.\n")
+
+    def _fail(*args, **kwargs):  # pragma: no cover - pin only
+        raise AssertionError("the forced re-index ran without reindex: true")
+
+    monkeypatch.setattr(rechunk_service, "forced_reindex_media_item", _fail)
+
+    payload = _invoke(
+        service, "library_rechunk_media", {"id": _public_id(media_uuid)}
+    )
+
+    assert "error" not in payload, payload
+    assert "reindexed" not in payload
+    assert rag.calls == []
+
+
+def test_rechunk_reindex_opt_in_runs_and_reports(media_db: MediaDatabase, interop):
+    media_id, media_uuid = _seed_media(media_db, "reindex body.\n")
+
+    class _VectorStore:
+        def __init__(self) -> None:
+            self.deleted: list[str] = []
+
+        def delete_document(self, document_id):
+            self.deleted.append(document_id)
+
+    class _Rag:
+        def __init__(self) -> None:
+            self.vector_store = _VectorStore()
+            self.indexed: list[list[dict]] = []
+
+        async def index_batch_optimized(self, documents, show_progress=False):
+            self.indexed.append(list(documents))
+            return [{"doc_id": doc["id"], "success": True} for doc in documents]
+
+    rag = _Rag()
+    service = LocalMediaChunkToolService(
+        media_db,
+        LocalMediaReadingService(media_db),
+        template_interop=interop,
+        rag_service=rag,
+    )
+
+    payload = _invoke(
+        service,
+        "library_rechunk_media",
+        {"id": _public_id(media_uuid), "reindex": True},
+    )
+
+    assert "error" not in payload, payload
+    assert payload["reindexed"]["status"] == "reindexed"
+    assert rag.vector_store.deleted == [f"media_{media_id}"]
+    assert len(rag.indexed) == 1 and rag.indexed[0][0]["id"] == f"media_{media_id}"
+
+
+def test_rechunk_reindex_opt_in_without_a_rag_service_reports_skipped(
+    media_db: MediaDatabase, interop, monkeypatch
+):
+    import tldw_chatbook.Library.local_media_chunk_tool_service as svc_mod
+
+    _, media_uuid = _seed_media(media_db, "body.\n")
+    monkeypatch.setattr(svc_mod, "_shared_rag_service_or_none", lambda: None)
+    service = LocalMediaChunkToolService(
+        media_db,
+        LocalMediaReadingService(media_db),
+        template_interop=interop,
+    )
+
+    payload = _invoke(
+        service,
+        "library_rechunk_media",
+        {"id": _public_id(media_uuid), "reindex": True},
+    )
+
+    assert "error" not in payload, payload
+    assert payload["status"] == "rechunked"
+    assert payload["reindexed"]["status"] == "skipped"
+    assert payload["reindexed"]["reason"]
+
+
+def test_rechunk_policy_denial_precedes_any_backend_call(
+    media_db: MediaDatabase, interop, monkeypatch
+):
+    service = LocalMediaChunkToolService(
+        media_db,
+        LocalMediaReadingService(media_db),
+        template_interop=interop,
+        policy_enforcer=_StubEnforcer(deny=True),
+    )
+    row_loads = []
+    monkeypatch.setattr(
+        media_db,
+        "get_media_by_uuid",
+        lambda *a, **k: row_loads.append(1) or None,
+    )
+    import tldw_chatbook.Library.local_media_chunk_tool_service as svc_mod
+
+    def _fail(*args, **kwargs):  # pragma: no cover - pin only
+        raise AssertionError("rechunk_one_item ran under a policy denial")
+
+    monkeypatch.setattr(svc_mod, "rechunk_one_item", _fail)
+
+    payload = _invoke(
+        service,
+        "library_rechunk_media",
+        {"id": make_public_id("media", str(uuid.uuid4()))},
+    )
+
+    assert row_loads == []  # not even the row read
+    message = payload["error"]["message"]
+    assert "library.media.rechunk.local" in message
+    assert "policy denies" in message
+
+
+def test_rechunk_enforcer_sees_the_action_on_success(
+    media_db: MediaDatabase, interop
+):
+    enforcer = _StubEnforcer()
+    service = LocalMediaChunkToolService(
+        media_db,
+        LocalMediaReadingService(media_db),
+        template_interop=interop,
+        policy_enforcer=enforcer,
+    )
+    _, media_uuid = _seed_media(media_db, "body.\n")
+
+    payload = _invoke(
+        service, "library_rechunk_media", {"id": _public_id(media_uuid)}
+    )
+
+    assert "error" not in payload, payload
+    assert enforcer.actions == ["library.media.rechunk.local"]
+
+
+def test_rechunk_unknown_id_is_not_found_never_a_null_row(
+    service: LocalMediaChunkToolService, monkeypatch
+):
+    """Task 1's Minor-1 hardening: an unresolvable id is a named refusal in
+    the HANDLER -- `rechunk_one_item` is never handed a None row (which
+    would degrade to a NULL-keyed silent skip)."""
+    import tldw_chatbook.Library.local_media_chunk_tool_service as svc_mod
+
+    def _fail(*args, **kwargs):  # pragma: no cover - pin only
+        raise AssertionError("rechunk_one_item ran with an unresolvable id")
+
+    monkeypatch.setattr(svc_mod, "rechunk_one_item", _fail)
+
+    payload = _invoke(
+        service,
+        "library_rechunk_media",
+        {"id": make_public_id("media", str(uuid.uuid4()))},
+    )
+
+    assert _error_code(payload) == ERROR_NOT_FOUND
+
+
+def test_rechunk_empty_content_reports_skipped_with_reason(
+    service: LocalMediaChunkToolService, media_db: MediaDatabase
+):
+    _, media_uuid = _seed_media(media_db, "   \n")
+
+    payload = _invoke(
+        service, "library_rechunk_media", {"id": _public_id(media_uuid)}
+    )
+
+    assert "error" not in payload, payload
+    assert payload["status"] == "skipped"
+    assert payload["notes"]
+    assert "chunk_summary" not in payload  # nothing was re-chunked
+
+
+def test_rechunk_argument_validation(
+    spec_service: LocalMediaChunkToolService,
+):
+    bad_args = [
+        {},
+        {"id": "media:AAAA", "spec": "not-an-object"},
+        {"id": "media:AAAA", "spec": ["list"]},
+        {"id": "media:AAAA", "spec": {"unknown_key": 1}},
+        {"id": "media:AAAA", "spec": {"template": "  "}},
+        {"id": "media:AAAA", "spec": {"template": 7}},
+        {"id": "media:AAAA", "spec": {"template": "x", "method": "words"}},
+        {"id": "media:AAAA", "spec": {"method": "words", "max_size": "3"}},
+        {"id": "media:AAAA", "spec": {"method": "words", "max_size": 0}},
+        {"id": "media:AAAA", "spec": {"method": "words", "overlap": -1}},
+        {"id": "media:AAAA", "spec": {"method": True}},
+        {"id": "media:AAAA", "reindex": "yes"},
+        {"id": "media:AAAA", "unknown_key": True},
+    ]
+    for args in bad_args:
+        payload = _invoke(spec_service, "library_rechunk_media", args)
+        assert _error_code(payload) == ERROR_INVALID_ARGUMENT, args
+
+
+def test_rechunk_without_media_db_maps_to_feature_unavailable(media_db):
+    service = LocalMediaChunkToolService(
+        None, LocalMediaReadingService(media_db), template_interop=None
+    )
+    payload = _invoke(
+        service,
+        "library_rechunk_media",
+        {"id": make_public_id("media", str(uuid.uuid4()))},
+    )
     assert _error_code(payload) == ERROR_FEATURE_UNAVAILABLE
-    # The payload names the tool's future availability, never a bare refusal.
-    assert "library_rechunk_media" in payload["error"]["message"]
+
+
+def test_spec_save_over_budget_error_array_degrades_to_the_summary_message(
+    media_db: MediaDatabase, interop, monkeypatch
+):
+    """Task-4 review minor, pinned: when the validator's errors array
+    exceeds the 512-byte details budget, `details` drops whole and the
+    MESSAGE still carries the first-3 summary -- the refusal never loses
+    its self-correction vocabulary (§8.15)."""
+    service = LocalMediaChunkToolService(
+        media_db,
+        LocalMediaReadingService(media_db),
+        template_interop=interop,
+    )
+    filler = "x" * 200
+    big_errors = [
+        {"field": f"chunking.config.k{index}", "message": filler}
+        for index in range(5)
+    ]
+    monkeypatch.setattr(
+        LocalMediaChunkToolService,
+        "_run_template_validator",
+        staticmethod(
+            lambda body: {"valid": False, "errors": big_errors, "warnings": []}
+        ),
+    )
+
+    payload = _invoke(
+        service,
+        "library_save_chunk_spec",
+        {"name": "over budget", "spec": _valid_spec_body()},
+    )
+
+    assert _error_code(payload) == ERROR_INVALID_ARGUMENT
+    # The over-budget details dropped whole (house budget), never partial.
+    assert payload["error"]["details"] == {}
+    # The message still carries the first three errors + the count.
+    message = payload["error"]["message"]
+    assert "chunking.config.k0" in message
+    assert "chunking.config.k2" in message
+    assert "(+2 more)" in message
 
 
 # ---------------------------------------------------------------------------

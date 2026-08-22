@@ -5653,6 +5653,15 @@ class ChatScreen(BaseAppScreen):
                 template_interop=(
                     get_chunking_service(media_db) if media_db is not None else None
                 ),
+                # chunking-agent-tools (Task 5, spec §6): the app's policy
+                # enforcer closes the Console-direct gate on the WRITING
+                # chunk tools (`library_save_chunk_spec`,
+                # `library_rechunk_media`) -- denials surface as named
+                # payloads before any backend touch. The same handle every
+                # other tool-bearing service receives
+                # (`service_policy_enforcer`, built off the app's runtime
+                # policy context).
+                policy_enforcer=getattr(app, "service_policy_enforcer", None),
             )
         service = LocalLibraryToolService(
             media_service=media_reading_service,

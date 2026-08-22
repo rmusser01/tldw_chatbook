@@ -46,10 +46,10 @@ EXPECTED_LIBRARY_TOOLS = {
     "library_list_skills", "library_get_skill", "library_search_skills",
     "library_list_conversations", "library_get_conversation", "library_search_conversations",
     "library_list_collections", "library_get_collection", "library_search_collections",
-    # chunking-agent-tools siblings (spec §4; the re-chunk descriptor lands
-    # with its handler in a later task of the same change)
+    # chunking-agent-tools siblings (spec §4; re-chunk landed with Task 5)
     "library_get_media_structure", "library_get_media_chunk",
     "library_list_chunk_specs", "library_save_chunk_spec",
+    "library_rechunk_media",
 }
 
 
@@ -58,12 +58,12 @@ EXPECTED_LIBRARY_TOOLS = {
 
 def test_descriptor_table_has_exact_canonical_surface():
     assert set(LIBRARY_TOOL_DESCRIPTORS) == EXPECTED_LIBRARY_TOOLS
-    assert len({d.route for d in LIBRARY_TOOL_DESCRIPTORS.values()}) == 22
+    assert len({d.route for d in LIBRARY_TOOL_DESCRIPTORS.values()}) == 23
     for descriptor in LIBRARY_TOOL_DESCRIPTORS.values():
         assert descriptor.item_type in LIBRARY_ITEM_TYPES
         assert descriptor.operation in {
             "list", "get", "search",
-            "structure", "chunk", "spec_list", "spec_save",
+            "structure", "chunk", "spec_list", "spec_save", "rechunk",
         }
         assert descriptor.description
         assert descriptor.input_schema

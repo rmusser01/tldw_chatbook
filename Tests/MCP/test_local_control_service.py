@@ -1953,6 +1953,7 @@ _LIBRARY_TOOL_POLICY_EXPECTATIONS = {
     "library_get_media_chunk": ("media.reading.list.local", "media_reading_ingestion_sources"),
     "library_list_chunk_specs": ("media.reading.list.local", "media_reading_ingestion_sources"),
     "library_save_chunk_spec": ("library.templates.save.local", "library_collections"),
+    "library_rechunk_media": ("library.media.rechunk.local", "library_collections"),
 }
 
 
@@ -2035,3 +2036,22 @@ async def test_library_collections_deny_rule_blocks_execute_and_tools_call():
             "tools/call",
             {"name": "library_search_collections", "arguments": {"query": "x"}},
         )
+
+
+def test_control_service_forwards_its_policy_enforcer_to_the_default_delegate():
+    """Task 5 (chunking-agent-tools, spec §6): the control service's
+    enforcer rides into the runtime delegate it builds by default, so the
+    lazily-composed shared Library service (and through it the chunk tools)
+    is gated on the local MCP surface."""
+    from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
+    from tldw_chatbook.MCP.local_store import LocalMCPStore
+
+    enforcer = object()
+    service = LocalMCPControlService(
+        store=FakeLocalStore(),
+        client=FakeMCPClient(),
+        manifest_provider=lambda: {},
+        policy_enforcer=enforcer,
+    )
+
+    assert service.runtime_delegate._policy_enforcer is enforcer

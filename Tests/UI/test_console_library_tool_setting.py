@@ -131,6 +131,29 @@ def test_factory_assembles_service_only_from_local_app_attributes(monkeypatch):
     assert service._collections is app.local_library_collections_service
 
 
+def test_factory_wires_the_policy_enforcer_into_the_chunk_tool_service(monkeypatch):
+    """Task 5 (chunking-agent-tools, spec §6): the Console-direct chunk tool
+    service receives the APP's policy enforcer -- the writing chunk tools
+    (`library_save_chunk_spec`, `library_rechunk_media`) are service-level
+    gated on the Console path, closing the ungated Console-direct gap."""
+    from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+    from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer
+
+    _patch_cli_config(monkeypatch, {"console": {"direct_library_tools": True}})
+    app, screen = _build_screen()
+    app.local_media_reading_service = SimpleNamespace(marker="media")
+
+    provider = screen._console_library_provider_factory()
+
+    assert isinstance(provider, LibraryToolProvider)
+    chunk_service = provider._service._media_chunk
+    assert chunk_service is not None
+    # Identity with the app's own enforcer -- a REAL enforcer, not None and
+    # not a reconstruction (the Console gate is closed).
+    assert isinstance(app.service_policy_enforcer, ServicePolicyEnforcer)
+    assert chunk_service._policy_enforcer is app.service_policy_enforcer
+
+
 def test_factory_missing_backend_yields_per_tool_feature_unavailable(monkeypatch):
     """A backend that is None must degrade that backend's tools to
     ``feature_unavailable`` -- never fail the whole provider."""
@@ -149,7 +172,7 @@ def test_factory_missing_backend_yields_per_tool_feature_unavailable(monkeypatch
 
     assert isinstance(provider, LibraryToolProvider)
     # Catalog still exposes the full descriptor set (no total failure).
-    assert len(provider.list_catalog()) == 22
+    assert len(provider.list_catalog()) == 23
     for tool_id in ("library:library_list_notes", "library:library_list_media"):
         result = provider.invoke(tool_id, {})
         assert result.ok is False

@@ -385,9 +385,9 @@ def _error_code(result):
 # --------------------------------------------------------------------------
 
 
-def test_descriptor_table_covers_22_tools():
-    # 18 task-1337 tools + the 4 chunking-agent-tools siblings (spec §4).
-    assert len(LIBRARY_TOOL_DESCRIPTORS) == 22
+def test_descriptor_table_covers_23_tools():
+    # 18 task-1337 tools + the 5 chunking-agent-tools siblings (spec §4).
+    assert len(LIBRARY_TOOL_DESCRIPTORS) == 23
 
 
 def test_unknown_tool_name_is_invalid_argument():
@@ -461,6 +461,7 @@ _CHUNK_TOOL_ARGUMENTS = {
     "library_get_media_chunk": {"id": "media:AAAA", "chunk_index": 0},
     "library_list_chunk_specs": {"limit": 5},
     "library_save_chunk_spec": {"name": "x", "spec": {"method": "words"}},
+    "library_rechunk_media": {"id": "media:AAAA"},
 }
 
 

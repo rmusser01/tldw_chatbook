@@ -342,6 +342,58 @@ def _spec_save_schema() -> dict:
     }
 
 
+def _rechunk_schema() -> dict:
+    """The re-chunk override (spec §4.4) -- a FLAT options map.
+
+    Deliberately NOT the nested template body `library_save_chunk_spec`
+    takes: agents must not transfer that shape onto this tool. The two
+    flat modes are exclusive by construction in the handler (a `template`
+    name governs its own options; without one, the plain keys govern).
+    """
+    return _get_schema({
+        "spec": {
+            "type": "object",
+            "properties": {
+                "template": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "A saved spec (custom chunking template) name; its own options govern this run. An unresolvable name is a named refusal, never a silent fallback.",
+                },
+                "method": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Plain chunking method (e.g. words, sentences) when no template is named.",
+                },
+                "max_size": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Plain chunk-size bound when no template is named.",
+                },
+                "overlap": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Plain chunk overlap; omitted = 0, NOT the engine's 100 default (an omitted overlap never invalidates a small max_size).",
+                },
+            },
+            "additionalProperties": False,
+            "description": (
+                "FLAT one-run chunking override: {template?: name} OR"
+                " {method?, max_size?, overlap?} -- NOT the nested chunking"
+                " template body library_save_chunk_spec saves. Omit spec"
+                " entirely to re-run the item's stored chunking config."
+                " A named template governs its own options; otherwise the"
+                " plain keys govern, and an omitted overlap is 0, not the"
+                " engine's 100 default."
+            ),
+        },
+        "reindex": {
+            "type": "boolean",
+            "default": False,
+            "description": "Opt-in forced vector re-index after the re-chunk (delete + re-add, best-effort). Default false: the call replaces chunk rows only.",
+        },
+    })
+
+
 LIBRARY_TOOL_DESCRIPTORS: dict[str, LibraryToolDescriptor] = {
     d.name: d
     for d in (
@@ -383,6 +435,12 @@ LIBRARY_TOOL_DESCRIPTORS: dict[str, LibraryToolDescriptor] = {
             "library_save_chunk_spec", "media", "spec_save",
             "Create or update one custom chunking spec (custom chunking template); built-in specs are never mutated and refusals return the validator's full error list.",
             _spec_save_schema(),
+            writing=True,
+        ),
+        _descriptor(
+            "library_rechunk_media", "media", "rechunk",
+            "Re-chunk one media item now: replace its stored chunk rows in one transaction under the stored chunking config or a flat one-run spec override (a named template governs its own options; unresolvable names are refused, never silently re-chunked another way); the vector re-index is opt-in via reindex: true.",
+            _rechunk_schema(),
             writing=True,
         ),
         # -- Notes ------------------------------------------------------------

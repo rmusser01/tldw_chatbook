@@ -22,8 +22,14 @@ chunk-tool operations (spec §4) behind the shared
   interop CRUD's validate-on-write gate. The validator's FULL errors array
   rides the refusal payload (§8.15 -- agents self-correct), and a save runs
   only under the ``library.templates.save.local`` policy action (spec §6).
-* ``library_rechunk_media`` -- not-yet payload naming its own landing task;
-  the handler lands with Task 5 of this same change.
+* ``library_rechunk_media`` (§4.4) -- one item re-chunked NOW through
+  Task 1's :func:`rechunk_one_item` (the SAME per-item machinery the
+  legacy batch runs): the flat spec override resolves through the #3
+  name→dict machinery (an unresolvable template is a named refusal, never
+  a silent fallback), the stored chunk rows are replaced in one
+  transaction, and the forced vector re-index runs only under
+  ``reindex: true`` (ruling §8.4) under the ``library.media.rechunk.local``
+  policy action (spec §6).
 
 Error discipline mirrors the sibling services exactly: ``LibraryToolError``
 payloads, ``sqlite3.Error``/``OSError`` and unexpected exceptions scrubbed
@@ -32,12 +38,15 @@ to the storage-error payload, never a stack trace, SQL, or path.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 from collections.abc import Mapping
 from typing import Any
 
 from loguru import logger
+
+from .library_rechunk_service import rechunk_one_item
 
 from tldw_chatbook.Library.library_tool_contract import (
     DEFAULT_MAX_NODES,
@@ -79,17 +88,19 @@ _RECHUNK_HINT = "no stored chunks — use library_rechunk_media to enable unit f
 #: resolves this exact id for the tool.
 SPEC_SAVE_POLICY_ACTION_ID = "library.templates.save.local"
 
+#: Spec §6: the policy action the re-chunk tool runs under -- the
+#: ``library.media`` resource's ``rechunk`` verb on the same local Library
+#: agent-tools capability (deliberately NOT ``rag.admin.launch``: that verb
+#: owns the RAG-admin bulk action per ADR-003; this is a Library-media item
+#: action).
+RECHUNK_POLICY_ACTION_ID = "library.media.rechunk.local"
+
 #: Description the CRUD demands on CREATE (it refuses empty ones); the tool
 #: schema keeps the field optional, so an unsupplied one on create lands as
 #: this stable, honest default rather than a refusal.
 _DEFAULT_SPEC_DESCRIPTION = (
     "Custom chunking spec saved through the library_save_chunk_spec tool."
 )
-
-#: The tools whose handlers land with Task 5 of this change.
-_PENDING_TOOL_LANDINGS = {
-    "library_rechunk_media": "the re-chunk tool lands with the re-chunk task in this change",
-}
 
 
 def _invalid(message: str, *, details: dict | None = None) -> LibraryToolError:
@@ -164,9 +175,8 @@ class LocalMediaChunkToolService:
     """The media chunking agent tools (spec §4) behind the shared dispatch.
 
     Backend-agnostic by construction: the media DB and reading service are
-    duck-typed handles, so tests stub them freely. All four descriptor
-    names (plus the not-yet ``library_rechunk_media`` name, whose descriptor
-    lands with its handler) resolve through :meth:`invoke`.
+    duck-typed handles, so tests stub them freely. All five descriptor
+    names resolve through :meth:`invoke`.
     """
 
     def __init__(
@@ -175,11 +185,19 @@ class LocalMediaChunkToolService:
         media_reading_service: Any = None,
         template_interop: Any = None,
         policy_enforcer: Any = None,
+        rag_service: Any = None,
+        indexing_db: Any = None,
     ) -> None:
         self._media_db = media_db
         self._reading = media_reading_service
         self._templates = template_interop
         self._policy_enforcer = policy_enforcer
+        # The OPT-IN forced re-index handles (spec §4.4 ruling §8.4): when
+        # ``rag_service`` is not injected, the handler falls back to the
+        # process-wide shared RAG service seam -- resolved ONLY on an
+        # opted-in run, off every read/default path.
+        self._rag_service = rag_service
+        self._indexing_db = indexing_db
         self._template_listing: Any = None
 
     # -- Entry point ---------------------------------------------------------
@@ -198,12 +216,6 @@ class LocalMediaChunkToolService:
     def _dispatch(
         self, tool_name: str, arguments: Mapping[str, Any]
     ) -> dict[str, Any]:
-        landing = _PENDING_TOOL_LANDINGS.get(tool_name)
-        if landing is not None:
-            raise LibraryToolError(
-                ERROR_FEATURE_UNAVAILABLE,
-                f"{tool_name} is not available yet; {landing}.",
-            )
         descriptor = LIBRARY_TOOL_DESCRIPTORS.get(tool_name)
         if descriptor is None:
             raise _invalid(f"unknown Library tool: {tool_name!r}")
@@ -218,6 +230,8 @@ class LocalMediaChunkToolService:
             return self._list_specs(arguments)
         if tool_name == "library_save_chunk_spec":
             return self._save_spec(arguments)
+        if tool_name == "library_rechunk_media":
+            return self._rechunk(arguments)
         raise _invalid(f"unknown Library tool: {tool_name!r}")
 
     @staticmethod
@@ -921,5 +935,222 @@ class LocalMediaChunkToolService:
             "notes": notes,
         }
 
+    # -- library_rechunk_media (spec §4.4) --------------------------------------
 
-__all__ = ["SPEC_SAVE_POLICY_ACTION_ID", "LocalMediaChunkToolService"]
+    def _require_media_db(self) -> Any:
+        """The media DB handle, or the named degrade payload (the re-chunk
+        writes chunk rows through it -- there is no reading-service
+        fallback for a write)."""
+        if self._media_db is None:
+            raise LibraryToolError(
+                ERROR_FEATURE_UNAVAILABLE,
+                "The local media store is not available in this deployment,"
+                " so items cannot be re-chunked.",
+            )
+        return self._media_db
+
+    def _enforce_rechunk_policy(self) -> None:
+        """Spec §6: the re-chunk runs under ``library.media.rechunk.local``.
+
+        Same seam and same ordering as the spec-save gate: enforcement
+        precedes EVERY backend touch (denial -> the named error payload,
+        no row read, no chunking). No-op without an enforcer handle -- the
+        MCP runtime gate (the re-pointed tool-mapping) stays the always-on
+        outer layer, and both construction sites wire the app's enforcer.
+        """
+        if self._policy_enforcer is None:
+            return
+        try:
+            self._policy_enforcer.require_allowed(
+                action_id=RECHUNK_POLICY_ACTION_ID
+            )
+        except PolicyDeniedError as exc:
+            raise LibraryToolError(
+                ERROR_FEATURE_UNAVAILABLE,
+                "Re-chunking media items is not permitted by the current"
+                f" runtime policy ({RECHUNK_POLICY_ACTION_ID}):"
+                f" {exc.user_message}",
+                details={
+                    "policy_action": RECHUNK_POLICY_ACTION_ID,
+                    "reason_code": str(
+                        getattr(exc, "reason_code", "authority_denied")
+                    ),
+                },
+            ) from exc
+
+    @staticmethod
+    def _validate_rechunk_spec(spec: Any) -> dict[str, Any] | None:
+        """Type-check the FLAT override; returns the pre-resolved spec dict
+        Task 1's ``rechunk_one_item`` wants (or ``None`` = stored config).
+
+        The shape is closed (template | method/max_size/overlap): a
+        ``template`` name governs its own options, so it never mixes with
+        the plain keys (#3's explicit-template semantics); plain keys pass
+        straight through with the engine left to default whatever the
+        agent omitted -- EXCEPT overlap, whose omitted value Task 1 ruled
+        to be 0 inside the one-item function (never the engine's 100).
+        """
+        if spec is None:
+            return None
+        if not isinstance(spec, Mapping):
+            raise _invalid(
+                "spec must be a flat JSON object of override keys"
+                " (template, method, max_size, overlap) -- NOT the nested"
+                " chunking template body library_save_chunk_spec saves"
+            )
+        allowed = {"template", "method", "max_size", "overlap"}
+        unknown = sorted(str(key) for key in spec if key not in allowed)
+        if unknown:
+            raise _invalid(f"unknown spec key(s): {', '.join(unknown)}")
+
+        template = spec.get("template")
+        if template is not None:
+            if not isinstance(template, str) or not template.strip():
+                raise _invalid("spec.template must be a non-empty string")
+            if any(key in spec for key in ("method", "max_size", "overlap")):
+                raise _invalid(
+                    "spec.template governs its own options; plain"
+                    " method/max_size/overlap keys cannot accompany it"
+                )
+            return {"template": template.strip()}
+
+        resolved: dict[str, Any] = {}
+        method = spec.get("method")
+        if method is not None:
+            if not isinstance(method, str) or not method.strip():
+                raise _invalid("spec.method must be a non-empty string")
+            resolved["method"] = method.strip()
+        for key in ("max_size", "overlap"):
+            value = spec.get(key)
+            if value is None:
+                continue
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise _invalid(f"spec.{key} must be a non-negative integer")
+            if key == "max_size" and value < 1:
+                raise _invalid("spec.max_size must be at least 1")
+            resolved[key] = value
+        return resolved
+
+    def _rechunk(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
+        """One item re-chunked NOW through Task 1's per-item machinery."""
+        media_db = self._require_media_db()
+        spec = self._validate_rechunk_spec(arguments.get("spec"))
+        reindex = arguments.get("reindex", False)
+        if not isinstance(reindex, bool):
+            raise _invalid("reindex must be a boolean")
+
+        # Policy before ANY backend touch (spec §6) -- before the row load.
+        self._enforce_rechunk_policy()
+
+        # Minor-1 hardening (Task 1's review): the HANDLER loads the full
+        # row and refuses on an unresolvable id -- ``rechunk_one_item`` is
+        # never handed a None row (which would degrade to a NULL-keyed
+        # silent skip instead of a named refusal).
+        public_id, row = self._resolve_media_row(arguments)
+
+        if spec is not None and "template" in spec:
+            # The one name→dict hop Task 1 left to callers, PRE-CHECKED
+            # here so an unresolvable name is the named tool refusal (a
+            # #3 TemplateResolutionError mapped to a payload), never the
+            # one-item function's failed-outcome note and never a silent
+            # fallback to different chunking.
+            template_name = spec["template"]
+            from ..Chunking.template_runtime import resolve_template
+
+            if resolve_template(media_db, template_name) is None:
+                raise LibraryToolError(
+                    ERROR_NOT_FOUND,
+                    f"The chunk spec {template_name!r} named in the spec"
+                    " override does not resolve (deleted or renamed); the"
+                    " re-chunk was refused instead of silently falling"
+                    " back to different chunking.",
+                )
+
+        rag_service = self._rag_service
+        notes: list[str] = []
+        if reindex:
+            if rag_service is None:
+                # Resolved OUTSIDE the transient loop below (the
+                # #700-hardened rule); a None here degrades the opt-in
+                # re-index to a disclosed skip (§10.2.1's conditional),
+                # never a raise -- the chunk-row replacement is the call's
+                # own contract.
+                rag_service = _shared_rag_service_or_none()
+        else:
+            notes.append(
+                "reindex not requested: chunk rows were replaced only"
+                " (pass reindex: true to force the vector re-index)"
+            )
+
+        # The sync bridge: this service is a pure-synchronous core (the
+        # Console worker thread / MCP's ``asyncio.to_thread``), so the
+        # one-item coroutine runs under a transient loop -- the dispatcher's
+        # own ``_run`` pattern. The RAG service handle was resolved ABOVE,
+        # outside that loop (the #700-hardened rule the panel worker
+        # documents: never first-construct the shared service inside a
+        # closing loop).
+        outcome = asyncio.run(
+            rechunk_one_item(
+                media_db,
+                row,
+                spec=spec,
+                rag_service=rag_service,
+                indexing_db=self._indexing_db,
+                reindex=reindex,
+            )
+        )
+
+        status = str(outcome.get("status") or "failed")
+        payload: dict[str, Any] = {
+            "item": self._item_block(public_id, row),
+            "status": status,
+            "notes": notes + [str(note) for note in outcome.get("notes") or []],
+        }
+        if status == "rechunked":
+            summary = outcome.get("chunk_summary")
+            payload["chunk_summary"] = (
+                dict(summary) if isinstance(summary, Mapping) else {}
+            )
+            if reindex:
+                # The opt-in is ALWAYS answered: the run's own reindexed
+                # outcome when it ran, else the disclosed skip (spec §4.4's
+                # ``reindexed: {done|skipped|failed}`` shape).
+                reindexed = outcome.get("reindexed")
+                payload["reindexed"] = (
+                    dict(reindexed)
+                    if isinstance(reindexed, Mapping)
+                    else {
+                        "status": "skipped",
+                        "reason": "semantic index unavailable",
+                    }
+                )
+        return payload
+
+
+def _shared_rag_service_or_none() -> Any:
+    """The process-wide shared RAG service, only when the semantic index is
+    enabled (the panel re-chunk worker's own seam).
+
+    Returns ``None`` on every unavailable/failed shape: the opt-in re-index
+    then reports itself skipped (disclosed in the payload), never raises --
+    the chunk-row replacement is the call's own contract.
+    """
+    try:
+        from ..RAG_Search.ingestion_indexing import (
+            get_shared_rag_service,
+            semantic_indexing_available,
+        )
+
+        if not semantic_indexing_available():
+            return None
+        return get_shared_rag_service()
+    except Exception as exc:  # noqa: BLE001 — degrade, never sink the re-chunk
+        logger.debug(f"shared RAG service unavailable for re-chunk: {exc}")
+        return None
+
+
+__all__ = [
+    "RECHUNK_POLICY_ACTION_ID",
+    "SPEC_SAVE_POLICY_ACTION_ID",
+    "LocalMediaChunkToolService",
+]
