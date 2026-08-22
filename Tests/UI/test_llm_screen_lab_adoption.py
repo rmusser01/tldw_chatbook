@@ -640,16 +640,51 @@ async def test_remote_two_pane_install_action_stays_inside_real_models_body_at_8
             None,
         )
         await pilot.pause()
-        remote.query_one(".remote-candidate", Button).press()
-        await pilot.pause()
 
         parent = window.query_one("#llm-view-remote")
         results_pane = remote.query_one(".remote-results-pane")
         detail_pane = remote.query_one(".remote-detail-pane")
+        search = remote.query_one("#remote-model-search", Button)
+        variant_filter = remote.query_one("#remote-variant-filter", Input)
+        variant_sort = remote.query_one("#remote-variant-sort", Select)
+        candidate = remote.query_one(".remote-candidate", Button)
+        selection = remote.query_one("#remote-model-selection", Static)
         install = remote.query_one("#remote-model-install", Button)
 
         _assert_painted_inside(app, results_pane, parent)
         _assert_painted_inside(app, detail_pane, parent)
+        details = remote.query_one("#remote-model-details")
+
+        app.screen.set_focus(query)
+        await pilot.press("tab")
+        assert app.focused is search
+        await pilot.press("tab")
+        assert app.focused is details
+        _assert_painted_inside(app, details, parent)
+        await pilot.press("tab")
+        assert app.focused is variant_filter
+        _assert_painted_inside(app, variant_filter, parent)
+        assert variant_filter.region.y >= details.content_region.y
+        assert variant_filter.region.bottom <= details.content_region.bottom
+
+        await pilot.press("tab")
+        assert app.focused is variant_sort
+        _assert_painted_inside(app, variant_sort, parent)
+        assert variant_sort.region.y >= details.content_region.y
+        assert variant_sort.region.bottom <= details.content_region.bottom
+
+        await pilot.press("tab")
+        assert app.focused is candidate
+        _assert_painted_inside(app, candidate, parent)
+        assert candidate.region.y >= details.content_region.y
+        assert candidate.region.bottom <= details.content_region.bottom
+
+        await pilot.press("enter")
+        assert str(selection.renderable).startswith("Selected: model-q4.gguf")
+        _assert_painted_inside(app, selection, parent)
+
+        await pilot.press("tab")
+        assert app.focused is install
         _assert_painted_inside(app, install, parent)
         assert results_pane.region.right <= detail_pane.region.x
 
@@ -2751,7 +2786,7 @@ async def test_remote_install_progress_survives_a_screen_level_recompose(monkeyp
             str(item.renderable) for item in fresh_remote.query(Static)
         )
         assert resolved.repository in fresh_text
-        assert candidate.label in fresh_text
+        assert candidate.files[0].upstream_path in fresh_text
         assert fresh_remote.query_one("#remote-model-install", Button).disabled
 
         # Half 2 of the fix: still updating, via this screen's own
@@ -2835,7 +2870,7 @@ async def test_remote_context_survives_recompose_before_the_first_progress_tick(
         )
 
         assert resolved.repository in detail_text
-        assert candidate.label in detail_text
+        assert candidate.files[0].upstream_path in detail_text
         assert fresh_remote.query_one("#remote-model-install", Button).disabled
         assert fresh_remote.query_one("#remote-model-search", Button).disabled
         assert (

@@ -14,7 +14,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widget import Widget
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input, Select, Static
 
 from tldw_chatbook.Model_Artifacts.remote_huggingface import (
     HuggingFaceRemoteAdapter,
@@ -31,7 +31,13 @@ from tldw_chatbook.Model_Artifacts.service import (
     ModelArtifactService,
 )
 from tldw_chatbook.Model_Artifacts.store import managed_service
-from tldw_chatbook.UI.Screens.model_browser_state import format_mib
+from tldw_chatbook.UI.Screens.model_browser_state import (
+    VariantGuidance,
+    filter_variant_guidance,
+    format_mib,
+    sort_variant_guidance,
+    variant_guidance,
+)
 from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallProgress
 
 if TYPE_CHECKING:
@@ -274,10 +280,54 @@ class RemoteView(Widget):
     RemoteView .remote-compatibility {
         height: auto;
         margin-bottom: 1;
-        padding: 1;
+        padding: 0 1;
         background: $warning 12%;
         color: $text;
         text-style: bold;
+    }
+
+    RemoteView .remote-variant-guidance {
+        height: auto;
+        margin-top: 1;
+        padding: 0 1;
+        border-left: thick $accent;
+        background: $accent 8%;
+        color: $text;
+    }
+
+    RemoteView .remote-variant-controls {
+        height: auto;
+        min-height: 3;
+        margin-top: 1;
+    }
+
+    RemoteView #remote-variant-filter {
+        width: 1fr;
+        min-width: 16;
+    }
+
+    RemoteView #remote-variant-sort {
+        width: 24;
+        min-width: 18;
+        margin-left: 1;
+        margin-bottom: 0;
+    }
+
+    RemoteView .remote-variant-list,
+    RemoteView .remote-variant-facts,
+    RemoteView .remote-variant-summary,
+    RemoteView .remote-variant-empty {
+        height: auto;
+    }
+
+    RemoteView .remote-variant-empty {
+        padding: 1 0;
+    }
+
+    RemoteView .remote-source-review {
+        height: auto;
+        margin-top: 1;
+        color: $text-muted;
     }
 
     RemoteView .remote-detail-section {
@@ -341,16 +391,45 @@ class RemoteView(Widget):
     }
 
     RemoteView.-narrow .remote-header {
+        height: 4;
         padding: 0;
+    }
+
+    RemoteView.-narrow .remote-source {
+        height: 1;
     }
 
     RemoteView.-narrow #remote-model-details {
         padding: 0 1;
     }
 
-    RemoteView.-narrow .remote-action-bar {
+    RemoteView.-narrow #remote-model-status {
+        height: 1;
+        min-height: 1;
+        padding: 0;
+    }
+
+    RemoteView.-narrow .remote-variant-controls {
         layout: vertical;
         min-height: 6;
+        margin-top: 0;
+    }
+
+    RemoteView.-narrow #remote-variant-filter,
+    RemoteView.-narrow #remote-variant-sort {
+        width: 100%;
+        min-width: 0;
+        margin-left: 0;
+    }
+
+    RemoteView.-narrow .remote-action-bar {
+        layout: vertical;
+        min-height: 4;
+        padding: 0;
+    }
+
+    RemoteView.-narrow #remote-model-selection {
+        height: 1;
     }
 
     RemoteView.-narrow #remote-model-selection,
@@ -401,6 +480,8 @@ class RemoteView(Widget):
         self._resolved: ResolvedRemoteModel | None = None
         self._selected_repository: str | None = None
         self._selected_candidate: RemoteGGUFCandidate | None = None
+        self._variant_filter = ""
+        self._variant_sort = "source"
         self._operation_reference: ArtifactRef | None = None
         self._completed_reference: ArtifactRef | None = None
         self._progress: "AcquisitionProgress | None" = None
@@ -434,6 +515,7 @@ class RemoteView(Widget):
                 yield VerticalScroll(
                     *self._result_widgets(disabled=disabled),
                     id="remote-model-results",
+                    can_focus=False,
                 )
             with Vertical(classes="remote-detail-pane"):
                 yield Static(
@@ -512,7 +594,7 @@ class RemoteView(Widget):
         if self._selected_candidate is None:
             return "Select one GGUF file or complete shard set."
         return (
-            f"Selected: {_candidate_display_name(self._selected_candidate)} · "
+            f"Selected: {_candidate_primary_filename(self._selected_candidate)} · "
             f"{format_mib(self._selected_candidate.total_bytes)}"
         )
 
@@ -600,7 +682,6 @@ class RemoteView(Widget):
             else resolved.license_id
         )
         yield Static(f"License: {license_label}", markup=False)
-        yield Static(f"Source review page: {resolved.review_url}", markup=False)
         yield Static("Provenance: Local integrity recorded", markup=False)
         yield Static("Available GGUF files", classes="remote-detail-section")
         if resolved.total_candidate_count > len(resolved.candidates):
@@ -611,7 +692,85 @@ class RemoteView(Widget):
             )
         for warning in resolved.warnings:
             yield Static(f"Incomplete shard set: {warning}", markup=False)
-        for candidate in resolved.candidates:
+        yield Static(
+            (
+                "Filename-derived general guidance. Within the same model, "
+                "lower-bit variants are generally smaller; higher-bit variants "
+                "generally retain more fidelity. Runtime compatibility and "
+                "machine fit have not been verified."
+            ),
+            classes="remote-variant-guidance",
+            markup=False,
+        )
+        yield Horizontal(
+            Input(
+                value=self._variant_filter,
+                placeholder="Filter by filename or quantization",
+                id="remote-variant-filter",
+                disabled=disabled,
+            ),
+            Select(
+                (
+                    ("Source order", "source"),
+                    ("Size: smallest first", "size-asc"),
+                    ("Size: largest first", "size-desc"),
+                    ("Quantization", "quantization"),
+                ),
+                value=self._variant_sort,
+                allow_blank=False,
+                compact=True,
+                id="remote-variant-sort",
+                disabled=disabled,
+            ),
+            classes="remote-variant-controls",
+        )
+        yield Vertical(
+            *self._variant_widgets(resolved, disabled=disabled),
+            classes="remote-variant-list",
+        )
+        yield Static(
+            f"Source review page: {resolved.review_url}",
+            classes="remote-source-review",
+            markup=False,
+        )
+
+    def _variant_guidance_rows(
+        self, resolved: ResolvedRemoteModel
+    ) -> tuple[VariantGuidance, ...]:
+        """Derive locally filtered and sorted guidance for resolved candidates."""
+        rows: list[VariantGuidance] = []
+        for index, candidate in enumerate(resolved.candidates):
+            filenames = tuple(item.upstream_path for item in candidate.files)
+            primary_filename = filenames[0] if filenames else candidate.label
+            rows.append(
+                variant_guidance(
+                    primary_filename,
+                    total_bytes=candidate.total_bytes,
+                    file_count=len(candidate.files),
+                    source_index=index,
+                    filenames=filenames[1:],
+                )
+            )
+        filtered = filter_variant_guidance(rows, self._variant_filter)
+        return sort_variant_guidance(filtered, self._variant_sort)
+
+    def _variant_widgets(
+        self,
+        resolved: ResolvedRemoteModel,
+        *,
+        disabled: bool,
+    ):
+        """Yield candidate rows from current local filter and sort state."""
+        rows = self._variant_guidance_rows(resolved)
+        if not rows:
+            yield Static(
+                "No GGUF variants match this filter.",
+                classes="remote-variant-empty remote-muted",
+                markup=False,
+            )
+            return
+        for row in rows:
+            candidate = resolved.candidates[row.source_index]
             selected = candidate == self._selected_candidate
             button = Button(
                 "Selected variant" if selected else "Select variant",
@@ -620,16 +779,44 @@ class RemoteView(Widget):
                 disabled=disabled,
             )
             button.candidate = candidate
+            file_set_label = (
+                "1 file" if row.file_count == 1 else f"{row.file_count} shards"
+            )
+            quantization = row.quantization or "Not identified"
             yield Vertical(
-                Static(candidate.label, classes="remote-title", markup=False),
-                button,
                 Static(
-                    f"{len(candidate.files)} file(s) · {format_mib(candidate.total_bytes)}",
-                    classes="remote-muted",
+                    row.filename,
+                    classes="remote-title remote-variant-filename",
                     markup=False,
                 ),
+                Static(
+                    f"Quantization: {quantization} · {file_set_label} · "
+                    f"{format_mib(row.total_bytes)}",
+                    classes="remote-variant-facts",
+                    markup=False,
+                ),
+                Static(
+                    row.summary,
+                    classes="remote-muted remote-variant-summary",
+                    markup=False,
+                ),
+                button,
                 classes="remote-candidate-row",
             )
+
+    def _refresh_variant_list(self) -> None:
+        """Refresh only candidate rows so local controls retain keyboard focus."""
+        if self._resolved is None:
+            return
+        try:
+            variant_list = self.query_one(".remote-variant-list", Vertical)
+        except NoMatches:
+            return
+        disabled = self._operation_reference is not None
+        variant_list.remove_children()
+        variant_list.mount(
+            *self._variant_widgets(self._resolved, disabled=disabled)
+        )
 
     def _set_status(self, message: str) -> None:
         self.query_one("#remote-model-status", Static).update(message)
@@ -673,7 +860,10 @@ class RemoteView(Widget):
             control.disabled = disabled
 
     def _set_metadata_controls_disabled(self, disabled: bool) -> None:
-        for control in self.query("#remote-model-query, #remote-model-search"):
+        for control in self.query(
+            "#remote-model-query, #remote-model-search, "
+            "#remote-variant-filter, #remote-variant-sort"
+        ):
             control.disabled = disabled
         for button in self.query(
             ".remote-result, .remote-candidate, #remote-model-install"
@@ -695,6 +885,7 @@ class RemoteView(Widget):
         self._resolved = None
         self._selected_repository = None
         self._selected_candidate = None
+        self._variant_filter = ""
         self._completed_reference = None
         if was_completed:
             self.refresh(recompose=True)
@@ -745,6 +936,7 @@ class RemoteView(Widget):
         self._resolved = None
         self._selected_repository = repository
         self._selected_candidate = None
+        self._variant_filter = ""
         self._set_search_controls_disabled(True)
         self._set_selected_result_variant()
         self._refresh_details_with_status("Inspecting repository…")
@@ -977,6 +1169,7 @@ class RemoteView(Widget):
         self._resolved = resolved
         self._selected_repository = resolved.repository
         self._selected_candidate = None
+        self._variant_filter = ""
         message = (
             f"Pinned {resolved.repository} at {resolved.commit}. "
             "Select one GGUF candidate."
@@ -986,6 +1179,39 @@ class RemoteView(Widget):
             self._refresh_details_with_status(message)
         else:
             self._refresh_with_status(message)
+
+    @on(Input.Changed, "#remote-variant-filter")
+    def _variant_filter_changed(self, event: Input.Changed) -> None:
+        """Apply filename/quantization filtering without provider I/O."""
+        self._variant_filter = event.value
+        resolved = self._resolved
+        if resolved is None:
+            return
+        visible_candidates = {
+            resolved.candidates[row.source_index]
+            for row in self._variant_guidance_rows(resolved)
+        }
+        if (
+            self._selected_candidate is not None
+            and self._selected_candidate not in visible_candidates
+        ):
+            self._selected_candidate = None
+            self._set_status(
+                "Variant filter changed. Choose a visible variant."
+            )
+            self.query_one("#remote-model-selection", Static).update(
+                self._selection_summary()
+            )
+            self.query_one("#remote-model-install", Button).disabled = True
+        self._refresh_variant_list()
+
+    @on(Select.Changed, "#remote-variant-sort")
+    def _variant_sort_changed(self, event: Select.Changed) -> None:
+        """Apply deterministic local ordering while retaining selection."""
+        if not isinstance(event.value, str):
+            return
+        self._variant_sort = event.value
+        self._refresh_variant_list()
 
     def apply_progress(self, progress: "AcquisitionProgress") -> None:
         """Render one acquisition progress event, retaining it for later.
@@ -1175,10 +1401,9 @@ def _format_last_modified(value: str | None) -> str:
     return f"Updated {parsed.date().isoformat()}"
 
 
-def _candidate_display_name(candidate: RemoteGGUFCandidate) -> str:
-    """Return the candidate label without repeating the selected repository."""
-    _repository, separator, filename = candidate.label.partition(" · ")
-    return filename if separator else candidate.label
+def _candidate_primary_filename(candidate: RemoteGGUFCandidate) -> str:
+    """Return the first exact file path in a selectable candidate set."""
+    return candidate.files[0].upstream_path if candidate.files else candidate.label
 
 
 def _discovery_error_message(error: BaseException) -> str:

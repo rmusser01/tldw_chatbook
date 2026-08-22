@@ -3,6 +3,8 @@
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
+
 from tldw_chatbook.Model_Artifacts.acquisition import (
     ArtifactPreflightEntry,
     PreflightReport,
@@ -48,6 +50,213 @@ def _report(destination: Path) -> PreflightReport:
         sufficient_space=True,
         gating_errors=(),
     )
+
+
+def test_variant_guidance_recognizes_a_bounded_quantization_token() -> None:
+    """Removing the exact-token parser must lose useful variant guidance."""
+    from tldw_chatbook.UI.Screens import model_browser_state
+
+    guidance_factory = getattr(model_browser_state, "variant_guidance", None)
+    if guidance_factory is None:
+        pytest.fail("variant_guidance is not implemented")
+
+    guidance = guidance_factory(
+        "publisher/model.Q4_K_M.gguf",
+        total_bytes=4_294_967_296,
+        file_count=1,
+        source_index=7,
+    )
+
+    assert guidance.filename == "publisher/model.Q4_K_M.gguf"
+    assert guidance.quantization == "Q4_K_M"
+    assert guidance.summary == (
+        "4-bit quantization · for the same model, typically smaller than "
+        "higher-bit variants, with a greater fidelity trade-off."
+    )
+    assert guidance.total_bytes == 4_294_967_296
+    assert guidance.file_count == 1
+    assert guidance.source_index == 7
+
+
+@pytest.mark.parametrize(
+    ("filename", "expected_token", "expected_summary"),
+    (
+        (
+            "model-IQ2_XXS.gguf",
+            "IQ2_XXS",
+            "2-bit importance-matrix quantization · for the same model, "
+            "typically very compact, with a substantial fidelity trade-off.",
+        ),
+        (
+            "model-q5_k_m.gguf",
+            "Q5_K_M",
+            "5-bit quantization · for the same model, typically a middle "
+            "ground between 4-bit size and higher-bit fidelity.",
+        ),
+        (
+            "model.Q8_0.gguf",
+            "Q8_0",
+            "8-bit quantization · for the same model, typically large, with "
+            "a smaller fidelity trade-off than lower-bit variants.",
+        ),
+        (
+            "model-BF16.gguf",
+            "BF16",
+            "High-precision weights · typically larger than quantized "
+            "variants of the same model.",
+        ),
+    ),
+)
+def test_variant_guidance_covers_supported_quantization_families(
+    filename: str,
+    expected_token: str,
+    expected_summary: str,
+) -> None:
+    """Removing a supported family must not silently downgrade it to unknown."""
+    from tldw_chatbook.UI.Screens.model_browser_state import variant_guidance
+
+    guidance = variant_guidance(
+        filename,
+        total_bytes=1,
+        file_count=1,
+        source_index=0,
+    )
+
+    assert guidance.quantization == expected_token
+    assert guidance.summary == expected_summary
+
+
+def test_variant_guidance_recognizes_a_token_at_a_nested_path_basename() -> None:
+    """A provider path separator must not hide an exact basename token."""
+    from tldw_chatbook.UI.Screens.model_browser_state import variant_guidance
+
+    guidance = variant_guidance(
+        "nested/Q4_K_M.gguf",
+        total_bytes=1,
+        file_count=1,
+        source_index=0,
+    )
+
+    assert guidance.quantization == "Q4_K_M"
+
+
+def test_variant_guidance_does_not_merge_conflicting_shard_tokens() -> None:
+    """A mixed file set must not be presented as one known quantization."""
+    from tldw_chatbook.UI.Screens.model_browser_state import variant_guidance
+
+    guidance = variant_guidance(
+        "model-Q4_K_M-00001-of-00002.gguf",
+        total_bytes=2,
+        file_count=2,
+        source_index=0,
+        filenames=("model-Q5_K_M-00002-of-00002.gguf",),
+    )
+
+    assert guidance.quantization is None
+    assert guidance.summary == "No recognized quantization token in the filename."
+
+
+@pytest.mark.parametrize(
+    "filename",
+    (
+        "model.gguf",
+        "model-Q4KM.gguf",
+        "model-Q40.gguf",
+        "model-Q4_K_MEDIUM.gguf",
+        "model-F160.gguf",
+    ),
+)
+def test_variant_guidance_never_guesses_an_unrecognized_filename(
+    filename: str,
+) -> None:
+    """A loose substring match must not fabricate a quantization fact."""
+    from tldw_chatbook.UI.Screens.model_browser_state import variant_guidance
+
+    guidance = variant_guidance(
+        filename,
+        total_bytes=2,
+        file_count=1,
+        source_index=0,
+    )
+
+    assert guidance.quantization is None
+    assert guidance.summary == "No recognized quantization token in the filename."
+
+
+def test_variant_guidance_filter_matches_filename_or_quantization_locally() -> None:
+    """Dropping either local match field must hide a valid candidate search hit."""
+    from tldw_chatbook.UI.Screens import model_browser_state
+    from tldw_chatbook.UI.Screens.model_browser_state import VariantGuidance
+
+    filter_rows = getattr(model_browser_state, "filter_variant_guidance", None)
+    if filter_rows is None:
+        pytest.fail("filter_variant_guidance is not implemented")
+    rows = (
+        VariantGuidance("alpha-Q4_K_M.gguf", 40, 1, 0, "Q4_K_M", "four"),
+        VariantGuidance("beta-Q8_0.gguf", 80, 1, 1, "Q8_0", "eight"),
+        VariantGuidance("experimental.gguf", 60, 2, 2, None, "unknown"),
+    )
+
+    assert tuple(row.source_index for row in filter_rows(rows, "q8_0")) == (1,)
+    assert tuple(row.source_index for row in filter_rows(rows, "EXPERIMENT")) == (
+        2,
+    )
+    assert tuple(row.source_index for row in filter_rows(rows, "  ")) == (0, 1, 2)
+
+
+def test_variant_guidance_sort_orders_are_deterministic() -> None:
+    """Removing any supported order must not silently fall back to source order."""
+    from tldw_chatbook.UI.Screens import model_browser_state
+    from tldw_chatbook.UI.Screens.model_browser_state import VariantGuidance
+
+    sort_rows = getattr(model_browser_state, "sort_variant_guidance", None)
+    if sort_rows is None:
+        pytest.fail("sort_variant_guidance is not implemented")
+    rows = (
+        VariantGuidance("unknown.gguf", 60, 1, 4, None, "unknown"),
+        VariantGuidance("q8.gguf", 80, 1, 3, "Q8_0", "eight"),
+        VariantGuidance("iq2.gguf", 20, 1, 2, "IQ2_XXS", "two"),
+        VariantGuidance("bf16.gguf", 160, 1, 1, "BF16", "precision"),
+        VariantGuidance("q4.gguf", 40, 1, 0, "Q4_K_M", "four"),
+    )
+
+    assert tuple(row.source_index for row in sort_rows(rows, "source")) == (
+        0,
+        1,
+        2,
+        3,
+        4,
+    )
+    assert tuple(row.source_index for row in sort_rows(rows, "size-asc")) == (
+        2,
+        0,
+        4,
+        3,
+        1,
+    )
+    assert tuple(row.source_index for row in sort_rows(rows, "size-desc")) == (
+        1,
+        3,
+        4,
+        0,
+        2,
+    )
+    assert tuple(
+        row.source_index for row in sort_rows(rows, "quantization")
+    ) == (2, 0, 3, 1, 4)
+
+
+def test_variant_guidance_sort_rejects_an_unknown_order() -> None:
+    """A typo must fail closed instead of producing an unexplained ordering."""
+    from tldw_chatbook.UI.Screens.model_browser_state import (
+        VariantGuidance,
+        sort_variant_guidance,
+    )
+
+    rows = (VariantGuidance("q4.gguf", 40, 1, 0, "Q4_K_M", "four"),)
+
+    with pytest.raises(ValueError, match="Unsupported variant sort order"):
+        sort_variant_guidance(rows, "smallish")
 
 
 # ---------------------------------------------------------------------------

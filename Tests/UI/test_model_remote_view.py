@@ -35,7 +35,7 @@ from textual import on
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.app import App, ComposeResult
 from textual.css.query import NoMatches
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input, Select, Static
 
 from tldw_chatbook.Model_Artifacts.remote_huggingface import (
     HuggingFaceRemoteAdapter,
@@ -246,6 +246,33 @@ def _resolved(
     )
 
 
+def _variant_resolved() -> ResolvedRemoteModel:
+    """Return deliberately unsorted known and unknown variant filenames."""
+    candidates = tuple(
+        RemoteGGUFCandidate(
+            label=f"owner/repository · {filename}",
+            files=(RemoteGGUFFile(filename, size, _DIGEST),),
+            total_bytes=size,
+        )
+        for filename, size in (
+            ("model-Q8_0.gguf", 80 * 1024 * 1024),
+            ("model-Q4_K_M.gguf", 40 * 1024 * 1024),
+            ("experimental.gguf", 60 * 1024 * 1024),
+        )
+    )
+    return ResolvedRemoteModel(
+        repository="owner/repository",
+        commit=_COMMIT,
+        license_id="apache-2.0",
+        review_url=(
+            f"https://huggingface.co/owner/repository/tree/{_COMMIT}"
+        ),
+        candidates=candidates,
+        total_candidate_count=len(candidates),
+        warnings=(),
+    )
+
+
 def _catalog(*, license_id: str = "apache-2.0"):
     resolved = _resolved(license_id=license_id)
     return build_remote_catalog(resolved, resolved.candidates[0])
@@ -327,7 +354,8 @@ async def test_exact_repository_submission_resolves_without_searching() -> None:
     assert adapter.search_calls == []
     assert adapter.resolve_calls == [("owner/repository", "configured-token")]
     assert resolver_calls == ["owner/repository"]
-    assert "owner/repository · model-q4.gguf" in rendered
+    assert "owner/repository" in rendered
+    assert "model-q4.gguf" in rendered
 
 
 @pytest.mark.asyncio
@@ -577,6 +605,206 @@ async def test_candidate_selection_preserves_keyboard_focus() -> None:
 
 
 @pytest.mark.asyncio
+async def test_variant_rows_explain_filename_derived_guidance_without_fit_claims() -> (
+    None
+):
+    """Every row must expose exact facts while unknown names stay explicitly unknown."""
+    resolved = _variant_resolved()
+    view = _view(adapter_factory=MagicMock(), resolver_factory=MagicMock())
+    app = _RemoteApp(view)
+
+    async with app.run_test() as pilot:
+        view.query_one("#remote-model-query", Input).value = resolved.repository
+        view._resolve_generation = 1
+        view._apply_resolve_result(
+            1,
+            resolved.repository,
+            resolved.repository,
+            resolved,
+            None,
+        )
+        await pilot.pause()
+        rendered = _text(view)
+        filenames = tuple(
+            str(widget.renderable)
+            for widget in view.query(".remote-variant-filename").results(Static)
+        )
+
+    assert filenames == (
+        "model-Q8_0.gguf",
+        "model-Q4_K_M.gguf",
+        "experimental.gguf",
+    )
+    assert "Filename-derived general guidance" in rendered
+    assert "Runtime compatibility and machine fit have not been verified" in rendered
+    assert "Quantization: Q4_K_M · 1 file · 40.0 MiB" in rendered
+    assert "Quantization: Not identified · 1 file · 60.0 MiB" in rendered
+    assert "No recognized quantization token in the filename" in rendered
+    assert rendered.index("Available GGUF files") < rendered.index(
+        "Source review page"
+    )
+
+
+@pytest.mark.asyncio
+async def test_variant_rows_use_exact_file_authority_for_long_paths_and_shards() -> (
+    None
+):
+    """Bounded or synthetic candidate labels must never replace exact file paths."""
+    long_path = f"nested/{'long-name-' * 18}Q4_K_M.gguf"
+    shard_paths = (
+        "nested/model-Q5_K_M-00001-of-00002.gguf",
+        "nested/model-Q5_K_M-00002-of-00002.gguf",
+    )
+    candidates = (
+        RemoteGGUFCandidate(
+            label=f"owner/repository · {long_path}"[:160],
+            files=(RemoteGGUFFile(long_path, 40, _DIGEST),),
+            total_bytes=40,
+        ),
+        RemoteGGUFCandidate(
+            label="owner/repository · nested/model-Q5_K_M",
+            files=tuple(
+                RemoteGGUFFile(path, 50, _DIGEST) for path in shard_paths
+            ),
+            total_bytes=100,
+        ),
+    )
+    resolved = ResolvedRemoteModel(
+        repository="owner/repository",
+        commit=_COMMIT,
+        license_id="apache-2.0",
+        review_url=(
+            f"https://huggingface.co/owner/repository/tree/{_COMMIT}"
+        ),
+        candidates=candidates,
+        total_candidate_count=2,
+        warnings=(),
+    )
+    view = _view(adapter_factory=MagicMock(), resolver_factory=MagicMock())
+    app = _RemoteApp(view)
+
+    async with app.run_test() as pilot:
+        view.query_one("#remote-model-query", Input).value = resolved.repository
+        view._resolve_generation = 1
+        view._apply_resolve_result(
+            1,
+            resolved.repository,
+            resolved.repository,
+            resolved,
+            None,
+        )
+        await pilot.pause()
+
+        filenames = tuple(
+            str(widget.renderable)
+            for widget in view.query(".remote-variant-filename").results(Static)
+        )
+        rendered = _text(view)
+        assert filenames == (long_path, shard_paths[0])
+        assert "Quantization: Q4_K_M · 1 file" in rendered
+        assert "Quantization: Q5_K_M · 2 shards" in rendered
+
+        view.query_one("#remote-variant-filter", Input).value = "00002"
+        await pilot.pause()
+        visible = list(view.query(".remote-candidate").results(Button))
+
+    assert len(visible) == 1
+    assert getattr(visible[0], "candidate") == candidates[1]
+
+
+@pytest.mark.asyncio
+async def test_variant_filter_is_local_and_clears_a_hidden_selection() -> None:
+    """Filtering must not fetch again or leave an invisible variant installable."""
+    resolved = _variant_resolved()
+    adapter = _Adapter(resolved=resolved)
+    view = _view(
+        adapter_factory=lambda: adapter,
+        resolver_factory=lambda: _Resolver([]),
+    )
+    app = _RemoteApp(view)
+
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, resolved.repository)
+        candidates = list(view.query(".remote-candidate").results(Button))
+        candidates[0].press()
+        await pilot.pause()
+        assert view.query_one("#remote-model-install", Button).disabled is False
+
+        variant_filter = view.query_one("#remote-variant-filter", Input)
+        app.screen.set_focus(variant_filter)
+        variant_filter.value = "q4_k_m"
+        await pilot.pause()
+
+        visible = list(view.query(".remote-candidate").results(Button))
+        assert len(visible) == 1
+        assert getattr(visible[0], "candidate") == resolved.candidates[1]
+        assert view._selected_candidate is None
+        assert view.query_one("#remote-model-install", Button).disabled is True
+        assert app.focused is variant_filter
+        assert adapter.resolve_calls == [
+            (resolved.repository, "configured-token")
+        ]
+
+        variant_filter.value = "does-not-exist"
+        await pilot.pause()
+
+        assert "No GGUF variants match this filter" in _text(view)
+        assert list(view.query(".remote-candidate").results(Button)) == []
+        assert adapter.resolve_calls == [
+            (resolved.repository, "configured-token")
+        ]
+
+
+@pytest.mark.asyncio
+async def test_variant_sort_preserves_selection_and_control_focus() -> None:
+    """Reordering must retain exact candidate identity and the active control."""
+    resolved = _variant_resolved()
+    view = _view(adapter_factory=MagicMock(), resolver_factory=MagicMock())
+    app = _RemoteApp(view)
+
+    async with app.run_test() as pilot:
+        view.query_one("#remote-model-query", Input).value = resolved.repository
+        view._resolve_generation = 1
+        view._apply_resolve_result(
+            1,
+            resolved.repository,
+            resolved.repository,
+            resolved,
+            None,
+        )
+        await pilot.pause()
+        selected = resolved.candidates[0]
+        view.query_one(".remote-candidate", Button).press()
+        await pilot.pause()
+
+        sort = view.query_one("#remote-variant-sort", Select)
+        app.screen.set_focus(sort)
+        sort.value = "size-asc"
+        await pilot.pause()
+
+        filenames = tuple(
+            str(widget.renderable)
+            for widget in view.query(".remote-variant-filename").results(Static)
+        )
+        selected_buttons = tuple(
+            button
+            for button in view.query(".remote-candidate").results(Button)
+            if str(button.label) == "Selected variant"
+        )
+
+        assert filenames == (
+            "model-Q4_K_M.gguf",
+            "experimental.gguf",
+            "model-Q8_0.gguf",
+        )
+        assert view._selected_candidate == selected
+        assert len(selected_buttons) == 1
+        assert getattr(selected_buttons[0], "candidate") == selected
+        assert view.query_one("#remote-model-install", Button).disabled is False
+        assert app.focused is sort
+
+
+@pytest.mark.asyncio
 async def test_two_pane_layout_and_install_action_paint_at_eighty_columns() -> None:
     """The supported narrow terminal must paint both panes and the final action."""
     adapter = _Adapter(search_result=(_summary(),), resolved=_resolved())
@@ -601,6 +829,8 @@ async def test_two_pane_layout_and_install_action_paint_at_eighty_columns() -> N
 
         results_pane = view.query_one(".remote-results-pane")
         detail_pane = view.query_one(".remote-detail-pane")
+        variant_filter = view.query_one("#remote-variant-filter", Input)
+        variant_sort = view.query_one("#remote-variant-sort", Select)
         install = view.query_one("#remote-model-install", Button)
         widget_at_install, _offset = app.get_widget_at(*install.region.center)
         painted = "\n".join(
@@ -611,6 +841,10 @@ async def test_two_pane_layout_and_install_action_paint_at_eighty_columns() -> N
         assert results_pane.region.width > 0
         assert detail_pane.region.width > 0
         assert results_pane.region.right <= detail_pane.region.x
+        assert variant_filter.region.width > 0
+        assert variant_sort.region.width > 0
+        assert variant_filter.region.right <= variant_sort.region.x
+        assert variant_sort.region.right <= detail_pane.region.right
         assert install.region.width > 0
         assert install.region.bottom <= view.region.bottom
         assert widget_at_install is install
@@ -698,8 +932,9 @@ async def test_stale_search_and_resolve_completions_cannot_replace_newer_results
         await pilot.pause()
         rendered = _text(view)
 
-    assert "new/result · model-q4.gguf" in rendered
-    assert "old/result · model-q4.gguf" not in rendered
+    assert "new/result" in rendered
+    assert "old/result" not in rendered
+    assert "model-q4.gguf" in rendered
 
 
 @pytest.mark.asyncio
@@ -720,7 +955,7 @@ async def test_same_generation_resolve_rejects_a_different_repository_response()
         candidate_buttons = list(view.query(".remote-candidate").results(Button))
         search_disabled = view.query_one("#remote-model-search", Button).disabled
 
-    assert "other/repository · model-q4.gguf" not in rendered
+    assert "other/repository" not in rendered
     assert candidate_buttons == []
     assert view._operation_reference is None
     assert search_disabled is False
@@ -769,7 +1004,7 @@ async def test_same_generation_resolve_rejects_when_repository_input_changes() -
         candidate_buttons = list(view.query(".remote-candidate").results(Button))
         search_disabled = view.query_one("#remote-model-search", Button).disabled
 
-    assert "owner/repository · model-q4.gguf" not in rendered
+    assert "model-q4.gguf" not in rendered
     assert candidate_buttons == []
     assert view._operation_reference is None
     assert search_disabled is False
@@ -1104,6 +1339,8 @@ async def test_contextual_install_posts_requested_with_the_resolved_service_and_
         # to whether LLMScreen has even received the message yet).
         assert view.query_one(".remote-candidate", Button).disabled is True
         assert view.query_one("#remote-model-search", Button).disabled is True
+        assert view.query_one("#remote-variant-filter", Input).disabled is True
+        assert view.query_one("#remote-variant-sort", Select).disabled is True
 
 
 @pytest.mark.asyncio
