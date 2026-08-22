@@ -936,6 +936,7 @@ def fail_interrupted_briefings(
     *,
     exclude: Collection[int] = (),
     exclude_watchlists: Collection[int] = (),
+    max_row_id: int | None = None,
 ) -> int:
     """Fail every `generating` briefing as `interrupted`; return the count.
 
@@ -988,6 +989,15 @@ def fail_interrupted_briefings(
             the row named in `exclude` once recorded. Defaults to `()`, so
             every caller that predates this fix is unchanged.
 
+        max_row_id: The highest row id this sweep may touch. The startup
+            reconcile passes the boundary it captured before this process
+            could insert anything (``Subscriptions/startup_reconcile.py``),
+            which is what stops it failing rows this process's own scheduler
+            created moments earlier (Qodo, PR #1972). ``None`` -- every
+            pre-existing, UI-gated caller -- is unbounded as before; those
+            callers protect live rows with the claim-registry ``exclude``
+            arguments above instead.
+
     Returns:
         How many rows were failed.
     """
@@ -1007,6 +1017,9 @@ def fail_interrupted_briefings(
         placeholders = ",".join("?" for _ in exclude_watchlists)
         sql += f" AND watchlist_id NOT IN ({placeholders})"
         params.extend(exclude_watchlists)
+    if max_row_id is not None:
+        sql += " AND id <= ?"
+        params.append(int(max_row_id))
 
     with db.transaction() as conn:
         count = conn.execute(sql, params).rowcount

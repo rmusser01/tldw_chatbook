@@ -6610,3 +6610,73 @@ picked it for, the only live consideration left is the asymmetry of the two
 failure modes: a slow quit is an annoyance, an abandoned transaction is data
 loss. Deliberately declined at the same time: extending the deadline whenever
 a straggler is reported, which turns a bound into a suggestion.
+
+## "It runs at startup, so nothing of ours exists yet" is an ordering claim, and ordering claims decay (task-19561)
+
+`Subscriptions/startup_reconcile.py` shipped with a paragraph headed *"Why it
+is safe to sweep unscoped"*, whose argument was: the sweep runs once, during
+app startup, before any claim can have been taken in this process, so every
+in-progress row it sees belongs to a dead process.
+
+Every clause was true about the *design* and false about the *code*.
+`on_mount` starts the scheduler worker; the sweep is created later, as a
+deferred startup task after post-mount setup; `SchedulerLoop.run()` ticks
+immediately after loading its queue. So a due watchlist check launched a real
+`running` row seconds before the sweep looked at it, and the sweep marked that
+live row `failed`. Single process, every launch. Nothing anywhere enforced the
+ordering the docstring assumed — it was not even written down as a requirement,
+only as an observation about what the code happened to do at the time.
+
+The tests could not see it, because every one of them built the "stranded"
+rows itself and then called the sweep. A hand-built row cannot tell you
+*when*, relative to the rest of startup, a real row comes into existence. It
+took driving the real `SchedulerLoop` + real handler + real service against a
+throwaway DB, with only the HTTP fetch blocked so the check was genuinely
+in flight, to make the defect appear at all.
+
+**Generalisable, two parts.**
+
+*Evidence:* when a claim is about ordering between two subsystems ("this runs
+before that can have started"), the only evidence that tests it is a probe
+that actually starts both. Seeding the row yourself tests the SQL, not the
+claim.
+
+*Design:* prefer a boundary to a sequence. Fixing this by moving the sweep
+earlier in `on_mount` and pinning the order with a test would have been
+correct only until the next innocent edit to `on_mount` — a file that changes
+constantly. Capturing `MAX(id)` per table when the database is opened, in
+`__init__` where no event loop exists yet, makes "this process's rows are out
+of reach" true by construction, whatever order anything after it runs in. Two
+details make it hold: the tables are `AUTOINCREMENT`, so ids are never reused
+after a delete (a plain `INTEGER PRIMARY KEY` would reuse the highest freed
+rowid and break the scoping silently — so that guarantee gets its own test);
+and the boundary is a **required** argument, so the scoped call cannot decay
+back into the unscoped one by omission. An absent boundary means *sweep
+nothing*, because leaving a row wedged is recoverable on the next launch and
+failing a live one is not.
+
+*Corollary on mutation-testing your own regression test:* removing the `AND
+id <= ?` from the SQL did **not** turn the headline scheduler-race test red —
+its boundary was `None` (empty table), so an early return short-circuited
+ahead of the mutated statement. The test was only proven load-bearing by
+mutating the *whole* contract to HEAD semantics. If a mutation leaves a test
+green, find out which guard absorbed it before concluding the test is weak —
+or that the mutation was equivalent.
+
+## Latching "done" before doing it disables the mechanism permanently (task-19561)
+
+`install_termination_handlers()` called `claim_process_exit()` and set its
+`_handlers_installed` flag *before* attempting `signal.signal`, and it
+swallows installation errors by design (failing to install a nicety must not
+stop the app starting). One failure — not on the main thread, or any other
+`signal.signal` error — therefore produced both bad outcomes at once: the
+latch made every later call a no-op, so handlers were never installed at all,
+**and** the watchdog was armed and able to hard-exit the process anyway,
+because the claim had already gone through.
+
+**Generalisable:** an idempotence latch and a capability claim must both be
+consequences of success, never preconditions of the attempt. Set them after
+the thing works. And when you write the "degrade gracefully" branch, say out
+loud what the resulting end state is: here the correct one for a legitimately
+embedded app is *no handlers, no claim, no watchdog* — fully inert — which is
+only reachable if the failure path leaves the state untouched and retryable.

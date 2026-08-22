@@ -7018,6 +7018,27 @@ class TldwCli(
         # where a concurrent second `_initialize_schema` was measured
         # poisoning a live connection's schema view.
         self.subscriptions_db = subscriptions_db
+        # task-19561, Qodo review of PR #1972: the startup reconcile sweep runs
+        # as a deferred startup task, i.e. AFTER `on_mount` has already started
+        # the scheduler worker -- and the scheduler ticks immediately, so a due
+        # watchlist check can have launched a real `queued`/`running` row by the
+        # time the sweep looks. Unscoped, the sweep failed that live row as
+        # "interrupted".
+        #
+        # The boundary is captured HERE, in `__init__`'s wiring, rather than
+        # moved earlier in `on_mount`, precisely so that no future edit to
+        # `on_mount`'s ordering can reintroduce the race: at this point there is
+        # no event loop at all, so nothing in this process can yet have inserted
+        # into these tables. Everything this process later creates gets a
+        # strictly higher AUTOINCREMENT id and is therefore out of the sweep's
+        # reach by construction. See `Subscriptions/startup_reconcile.py`.
+        from tldw_chatbook.Subscriptions.startup_reconcile import (
+            capture_prior_process_boundary,
+        )
+
+        self._subscriptions_prior_process_boundary = capture_prior_process_boundary(
+            subscriptions_db
+        )
         self.local_watchlists_service = LocalWatchlistsService(
             db_factory=lambda: subscriptions_db
         )
@@ -11567,9 +11588,22 @@ class TldwCli(
         flat, which are exactly the cases that strand a row. Runs on a
         thread (SQLite) and is best-effort: a failed sweep is logged and the
         launch continues.
+
+        Scoped by the boundary ``_wire_watchlists_and_notifications_services``
+        captured when it opened the database, so this cannot fail a row the
+        scheduler -- started earlier, in ``on_mount`` -- launched moments ago
+        (Qodo review of PR #1972). No boundary means no sweep: leaving a row
+        wedged is recoverable on the next launch, failing a live one is not.
         """
         db = getattr(self, "subscriptions_db", None)
         if db is None:
+            return
+        boundary = getattr(self, "_subscriptions_prior_process_boundary", None)
+        if boundary is None:
+            self.loguru_logger.warning(
+                "Startup reconcile skipped: no prior-process boundary was "
+                "captured, so an unscoped sweep could fail live rows."
+            )
             return
         from tldw_chatbook.Subscriptions.startup_reconcile import (
             reconcile_interrupted_subscription_work,
@@ -11577,7 +11611,7 @@ class TldwCli(
 
         try:
             reconciled = await asyncio.to_thread(
-                reconcile_interrupted_subscription_work, db
+                reconcile_interrupted_subscription_work, db, boundary
             )
         except Exception as exc:  # noqa: BLE001 - a launch never dies on this
             self.loguru_logger.warning(

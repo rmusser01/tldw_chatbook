@@ -574,3 +574,109 @@ def test_install_termination_handlers_is_idempotent(_isolated_shutdown_state):
     finally:
         for sig, handler in previous.items():
             signal.signal(sig, handler)
+
+
+# --- a failed installation must not disable the mechanism forever ----------
+#
+# Qodo review of PR #1972. `install_termination_handlers` used to call
+# `claim_process_exit()` and latch `_handlers_installed` BEFORE attempting
+# `signal.signal`, and it swallows installation errors. One failure therefore
+# produced the worst available pair of outcomes at once: no signal handlers,
+# ever (every later call short-circuited on the latch), plus a live watchdog
+# that could still hard-exit the process, because the claim had gone through.
+
+
+def _failing_signal(*_args, **_kwargs):
+    raise ValueError("signal only works in main thread of the main interpreter")
+
+
+def test_a_failed_install_claims_nothing_and_arms_nothing(monkeypatch):
+    """The embedded case: no handlers, no claim, no watchdog. Inert."""
+    monkeypatch.setattr(app_shutdown, "_STATE", app_shutdown._ShutdownState())
+    exits: list[int] = []
+    monkeypatch.setattr(app_shutdown, "_hard_exit", exits.append)
+    monkeypatch.setattr(app_shutdown.signal, "signal", _failing_signal)
+
+    app_shutdown.install_termination_handlers()
+
+    assert app_shutdown.owns_process_exit() is False, (
+        "an install that installed nothing must not claim the process's exit"
+    )
+    assert app_shutdown.arm_exit_watchdog(0.05, reason="unowned") is False
+    assert not [t for t in threading.enumerate() if t.name == "tldw-exit-watchdog"]
+    time.sleep(0.3)
+    assert exits == [], "a watchdog was armed for handlers that do not exist"
+
+
+def test_a_failed_install_stays_retryable(monkeypatch):
+    """Failing once must not be what stops the second entry point working."""
+    monkeypatch.setattr(app_shutdown, "_STATE", app_shutdown._ShutdownState())
+    monkeypatch.setattr(app_shutdown, "_hard_exit", lambda code: None)
+    previous = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT)}
+    real_signal = signal.signal
+
+    monkeypatch.setattr(app_shutdown.signal, "signal", _failing_signal)
+    try:
+        app_shutdown.install_termination_handlers()
+        assert app_shutdown._STATE.handlers_installed is False, (
+            "a failed install latched, so no later call can ever succeed"
+        )
+
+        # Now from somewhere it *can* install -- the main thread, the real API.
+        monkeypatch.setattr(app_shutdown.signal, "signal", real_signal)
+        app_shutdown.install_termination_handlers()
+
+        assert signal.getsignal(signal.SIGTERM) is (
+            app_shutdown._handle_termination_signal
+        )
+        assert signal.getsignal(signal.SIGINT) is (
+            app_shutdown._handle_termination_signal
+        )
+        assert app_shutdown.owns_process_exit() is True, (
+            "a successful install owns the exit it is now able to request"
+        )
+        assert app_shutdown._STATE.handlers_installed is True
+    finally:
+        for sig, handler in previous.items():
+            real_signal(sig, handler)
+
+
+def test_a_partial_install_claims_the_exit_but_stays_retryable(monkeypatch):
+    """One handler live is enough to need a bound, not enough to stop trying.
+
+    A live SIGTERM handler asks the app to exit gracefully, and that ask has
+    to be bounded -- so the claim is right. But SIGINT is still missing, so
+    latching would make the gap permanent.
+    """
+    monkeypatch.setattr(app_shutdown, "_STATE", app_shutdown._ShutdownState())
+    monkeypatch.setattr(app_shutdown, "_hard_exit", lambda code: None)
+    previous = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT)}
+    real_signal = signal.signal
+
+    def half_failing(sig, handler):
+        if sig == signal.SIGINT:
+            raise OSError("cannot install this one")
+        return real_signal(sig, handler)
+
+    monkeypatch.setattr(app_shutdown.signal, "signal", half_failing)
+    try:
+        app_shutdown.install_termination_handlers()
+
+        assert signal.getsignal(signal.SIGTERM) is (
+            app_shutdown._handle_termination_signal
+        )
+        assert app_shutdown.owns_process_exit() is True
+        assert app_shutdown._STATE.handlers_installed is False, (
+            "the signal that failed must still be retryable"
+        )
+
+        monkeypatch.setattr(app_shutdown.signal, "signal", real_signal)
+        app_shutdown.install_termination_handlers()
+        assert signal.getsignal(signal.SIGINT) is (
+            app_shutdown._handle_termination_signal
+        )
+        assert app_shutdown._STATE.handlers_installed is True
+    finally:
+        for sig, handler in previous.items():
+            real_signal(sig, handler)
+        app_shutdown.disarm_exit_watchdog()

@@ -322,3 +322,134 @@ order is fixed — this is load/state sensitivity in the file-picker path, not
 ordering. Nothing in this change can reach it: the harness under test is a
 `DestinationHarness`, not `TldwCli`, so no `on_unmount`, watchdog or signal
 code runs for it.
+
+## Review Round 3 — Qodo on PR #1972 (2026-08-22)
+
+Two findings, both real, both fixed.
+
+### 1 (HIGH) The startup sweep raced the scheduler — and lost
+
+`on_mount` starts the scheduler worker; the startup reconcile is created
+*later*, as a deferred startup task after post-mount setup. `SchedulerLoop.
+run()` ticks immediately after loading its queue, so a due watchlist check
+launches a real `queued`/`running` row before the sweep ever runs — and the
+unscoped sweep failed it as "interrupted". This is worse than the
+two-instance exposure the module documented as accepted: that one needs two
+processes and self-heals; this one is single-process, on every launch, with
+the ordering it depended on enforced nowhere.
+
+**Reproduced against unmodified HEAD**, driving the real `SchedulerLoop` +
+real `WatchlistCheckHandler` + real `LocalWatchlistsService` against a
+throwaway file-backed `SubscriptionsDB` with only the HTTP fetch blocked, so
+the check was genuinely in flight:
+
+```
+rows before the sweep: [{'id': 1, 'status': 'running', 'error_msg': None}]
+sweep reported: {'runs': 1, 'briefings': 0, 'scripts': 0, 'audio': 0}
+rows after the sweep:  [{'id': 1, 'status': 'failed',
+                         'error_msg': 'Interrupted: the application stopped ...'}]
+RESULT: FAIL - the sweep failed a LIVE in-flight run
+```
+
+**Fixed with a boundary, not an ordering rule.** `capture_prior_process_
+boundary(db)` records each table's `MAX(id)` at the moment
+`_wire_watchlists_and_notifications_services` opens the `SubscriptionsDB` —
+inside `TldwCli.__init__`, where no event loop exists, so no scheduler,
+handler or UI action can yet have inserted anything. The sweep only touches
+rows at or below it.
+
+All four tables declare `id INTEGER PRIMARY KEY AUTOINCREMENT`, whose
+`sqlite_sequence` counter never goes backwards and never reuses an id even
+after a delete — so *every* row this process creates is provably above the
+boundary. That guarantee is load-bearing (a plain `INTEGER PRIMARY KEY` would
+reuse the highest freed rowid and silently break the scoping), so it has its
+own test: delete the boundary row, insert another, assert the new id is still
+higher.
+
+Ordering was the other candidate — move the sweep ahead of the scheduler and
+pin it with a test. Rejected: it stays correct only while nobody edits
+`on_mount`, which is edited constantly. A boundary captured before the loop
+exists cannot be undone by reordering anything after it. `boundary` is a
+**required positional argument** on both `reconcile_interrupted_subscription_
+work` and `fail_interrupted_watchlist_runs`, so the scoped call cannot decay
+back into the unscoped one by omission; and `_reconcile_interrupted_
+subscription_work` **skips the sweep entirely** when no boundary is present,
+because leaving a row wedged is recoverable next launch and failing a live one
+is not. `None` (empty table, or a read that raised) means the same thing and
+takes the same path.
+
+The three sibling sweeps (`fail_interrupted_briefings`/`_scripts`/`_audio`)
+gained a keyword-only `max_row_id`, defaulting to `None` so every pre-existing
+UI-gated caller — which protects live rows with its claim-registry `exclude`
+snapshots instead — is unchanged.
+
+**The two-instance exposure is narrowed, not closed**, and the module docstring
+now says so: a second instance's boundary still sits above the first
+instance's already-running rows. What it *does* buy is that rows the first
+instance creates after the second one launches are now spared, where before
+they were fair game for the whole of startup. Closing it needs a per-row
+process/owner marker, i.e. a schema change this task does not carry.
+
+**Regression coverage.** `Tests/Watchlists/test_startup_reconcile_scheduler_
+race.py` (new): the real scheduler launches a real run, the real sweep runs
+while it is still in flight, and the run must survive — plus the counterpart
+proving a genuinely stranded row is still failed in the same database at the
+same moment, and a pin that `TldwCli.__init__` alone (no `on_mount`, no loop)
+already holds the boundary. `Tests/Watchlists/test_startup_reconcile.py`
+gained the per-table protection, the empty-boundary refusal, the AUTOINCREMENT
+guarantee and the required-argument checks.
+
+Mutation-tested, not just asserted: with the bound removed the four boundary
+tests go red; with the whole `max_row_id` contract ignored (HEAD semantics)
+both scheduler-race tests go red on exactly the live-row assertion.
+
+### 2 (MEDIUM) `install_termination_handlers` could permanently self-disable
+
+It called `claim_process_exit()` and latched `_handlers_installed` *before*
+attempting `signal.signal`, and it swallows installation errors. One failure
+therefore produced the worst available pair of outcomes at once: no signal
+handlers ever (every later call short-circuited on the latch) **and** a live
+watchdog able to hard-exit anyway, because the claim had already gone through.
+
+Now nothing is latched until installation actually succeeds:
+
+- **nothing installed** → no claim, no latch, no watchdog, retryable. This is
+  the right end state for a legitimately embedded app where `signal.signal`
+  can never work (not the main thread): `arm_exit_watchdog` refuses to arm
+  without a claim, which is the same inertness `get_app()` already relies on.
+- **partial** (one signal installed, one refused) → claim, because a live
+  handler now exists whose graceful exit needs a bound; but no latch, so the
+  refused signal can still be picked up by a retry.
+- **full success** → claim and latch, preserving the documented idempotence
+  (the second entry point must not reinstall over live handlers).
+
+**Regression coverage** (`Tests/App/test_app_shutdown.py`, three tests): a
+forced `signal.signal` failure claims nothing and arms nothing (asserted by
+trying to arm and sleeping past the deadline); a failed attempt is retryable
+from a context that can install; a partial install claims but stays
+retryable. All three verified red against the HEAD shape —
+`AssertionError: an install that installed nothing must not claim the
+process's exit`, `a failed install latched, so no later call can ever
+succeed`, `the signal that failed must still be retryable` — while the
+pre-existing idempotence test stayed green.
+
+### Round-3 gates
+
+`Tests/App` + `Tests/Scheduling` + `Tests/Watchlists` + `Tests/RuntimePolicy`
+and `Tests/Subscriptions` re-run; repo-wide `--collect-only -q` re-counted.
+Live re-verified after the change: a real `SIGTERM` to a real `TldwCli`
+(headless, isolated `HOME`/`XDG`, throwaway DB, child process with the
+parent's own wall-clock kill) still runs the ordinary shutdown path — died
+**5.39 s** after the signal, waiting for an in-flight `BEGIN IMMEDIATE` thread
+worker, **both statements committed** (`rows committed: [1, 2]`), with
+`App Unmount`, the post-`app.run()` `finally` and `owns_process_exit=True`
+all present, exit code 0.
+
+**Modified/added this round:** `tldw_chatbook/Subscriptions/startup_reconcile.py`,
+`tldw_chatbook/Subscriptions/briefing_service.py`,
+`tldw_chatbook/Subscriptions/briefing_cast.py`,
+`tldw_chatbook/Subscriptions/briefing_audio.py`, `tldw_chatbook/app.py`,
+`tldw_chatbook/Utils/app_shutdown.py`, `Tests/App/test_app_shutdown.py`,
+`Tests/Watchlists/test_startup_reconcile.py`,
+`Tests/Watchlists/test_startup_reconcile_scheduler_race.py` (new),
+`backlog/docs/lessons-testing-evidence.md`.

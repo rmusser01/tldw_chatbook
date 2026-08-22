@@ -150,8 +150,19 @@ class _ShutdownState:
         with self._lock:
             return self._signal_count > 0
 
+    @property
+    def handlers_installed(self) -> bool:
+        """Whether a *successful* installation has already latched."""
+        with self._lock:
+            return self._handlers_installed
+
     def mark_handlers_installed(self) -> bool:
-        """Return True the first time only, so installation is idempotent."""
+        """Latch installation as done; True the first time only.
+
+        Called only after ``signal.signal`` has actually succeeded for every
+        signal -- see ``install_termination_handlers``. Latching it earlier
+        made a failed installation permanent.
+        """
         with self._lock:
             if self._handlers_installed:
                 return False
@@ -492,12 +503,52 @@ def install_termination_handlers() -> None:
     only be installed from the main thread; anywhere else this logs and
     returns rather than raising, because failing to install a *nicety* must
     never be what stops the application from starting.
+
+    **Nothing is latched until installation actually succeeds** (Qodo review
+    of PR #1972). The first version claimed process exit and marked the
+    handlers installed *before* calling ``signal.signal``, which produced the
+    worst possible pair of outcomes from a failure: every later call became a
+    no-op, so the handlers were never installed at all -- and the exit
+    watchdog was armed and able to hard-exit anyway, because the claim had
+    already gone through. So:
+
+    * a failed attempt claims nothing, arms nothing and latches nothing, and
+      is therefore retryable -- the second entry point, or a later call from
+      the main thread, can still succeed;
+    * a *partial* success (one signal installed, one refused) claims the
+      process, because a live handler now exists whose graceful exit needs
+      the watchdog's bound -- but still does not latch, so a retry can pick
+      up the signal that was refused;
+    * only a full success latches, which is what keeps the documented
+      idempotence: the second entry point calling this must not reinstall
+      over handlers that are already in place.
+
+    An app legitimately embedded in someone else's process -- imported, or
+    driven from a non-main thread, where ``signal.signal`` can never work --
+    therefore ends up exactly where it should: no handlers, no claim, and a
+    watchdog that stays inert because ``arm_exit_watchdog`` refuses to arm
+    without a claim. That is the same end state ``get_app()`` already relies
+    on.
     """
-    claim_process_exit()
-    if not _STATE.mark_handlers_installed():
+    if _STATE.handlers_installed:
         return
-    for sig in (signal.SIGTERM, signal.SIGINT):
+    wanted = (signal.SIGTERM, signal.SIGINT)
+    installed: list[Any] = []
+    for sig in wanted:
         try:
             signal.signal(sig, _handle_termination_signal)
         except (ValueError, OSError, RuntimeError) as exc:
             logger.warning(f"Could not install a handler for signal {sig}: {exc}")
+        else:
+            installed.append(sig)
+    if not installed:
+        logger.warning(
+            "No termination handlers could be installed; this process does not "
+            "own its own exit, so the exit watchdog stays inert. A later call "
+            "from the main thread will retry."
+        )
+        return
+    # At least one handler is live, so its graceful exit needs to be bounded.
+    claim_process_exit()
+    if len(installed) == len(wanted):
+        _STATE.mark_handlers_installed()
