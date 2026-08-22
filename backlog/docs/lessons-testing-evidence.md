@@ -5711,3 +5711,18 @@ that you inferred from reading rather than from running. In a P0 data-integrity
 file, a false incident in a comment is worse than no comment — future
 maintainers will trust it, and this repo's own standard is "state the incident,
 not just the rule", which only works if the incident is real.
+## An interrupted pytest run leaves stale later-suite nodes in `lastfailed` (TASK-19520, 2026-08-21)
+
+**Incident.** A repository-wide run was interrupted when its verification
+scope was narrowed after 2h26m. Pytest reported 272 current failures/errors,
+but `.pytest_cache/v/cache/lastfailed` contained 301 keys: the 272 nodes seen
+by the interrupted run plus 29 failures from an earlier completed Skills
+gate that the broad run had not reached. Treating every cache key as current
+would have double-counted stale evidence and filed misleading tasks.
+
+**Rule.** For an interrupted run, preserve both `lastfailed` and the collected
+`nodeids`, record the last node the session actually reached, and partition
+cache keys by collection position. Keys after the cutoff are prior-session
+evidence unless independently reproduced. Keep the run's final pytest counts
+as the accounting authority; the cache is a node-name recovery aid, not a
+self-contained result report.
