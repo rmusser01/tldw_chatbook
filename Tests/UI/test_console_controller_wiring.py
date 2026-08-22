@@ -233,6 +233,24 @@ async def test_session_first_chat_edges_are_late_bound_and_presentation_only(
         assert screen.is_attached is False
 
 
+@pytest.mark.asyncio
+async def test_session_first_chat_focus_ignores_opaque_token() -> None:
+    screen = _unmounted_console()
+    controller = screen._session
+    opaque_token = SimpleNamespace(focus=MagicMock())
+
+    controller._restore_first_chat_focus_fn(opaque_token)
+    opaque_token.focus.assert_not_called()
+
+    host = ConsolidatedCSSApp()
+    async with host.run_test(size=(120, 40)) as pilot:
+        await host.push_screen(screen)
+        await pilot.pause()
+
+        controller._restore_first_chat_focus_fn(opaque_token)
+        opaque_token.focus.assert_not_called()
+
+
 def test_retrieval_controller_is_constructed_with_late_bound_screen_edges():
     """Wave 6 wires one retrieval owner without freezing screen state."""
     screen = _unmounted_console()

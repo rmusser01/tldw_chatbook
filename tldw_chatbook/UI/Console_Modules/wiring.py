@@ -124,7 +124,7 @@ def _apply_first_chat_control_selection(
 def _restore_first_chat_focus(screen: Any, token: object | None) -> None:
     """Restore an opaque focus token only while both it and the screen are mounted."""
 
-    if screen.is_mounted and token is not None and token.is_mounted:
+    if screen.is_mounted and getattr(token, "is_mounted", False):
         token.focus()
 
 
