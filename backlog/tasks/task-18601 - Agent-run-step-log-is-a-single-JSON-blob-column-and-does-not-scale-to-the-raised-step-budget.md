@@ -38,10 +38,10 @@ which is why TASK-18600 shipped the number as specified instead of lowering it.
 ## Acceptance Criteria
 
 <!-- AC:BEGIN -->
-- [ ] #1 A run with 25000 recorded steps persists and re-opens without a user-visible stall in the run-log viewer.
-- [ ] #2 Reading a run's metadata (status, budget, result) does not require parsing its full step log.
+- [x] #1 A run with 25000 recorded steps persists and re-opens without a user-visible stall in the run-log viewer.
+- [x] #2 Reading a run's metadata (status, budget, result) does not require parsing its full step log.
 - [ ] #3 The run-log viewer can render a long run without holding every step in memory at once.
-- [ ] #4 Existing runs stored in the current blob format remain readable after the change.
+- [x] #4 Existing runs stored in the current blob format remain readable after the change.
 <!-- AC:END -->
 
 ## Measurement (2026-08-21) — the premise, quantified
@@ -79,3 +79,35 @@ steps rather than hold them all in memory (AC #3). Suggested split:
 
 Not started here; the measurement is recorded so the arc can be planned
 against a number rather than an adjective.
+
+## Part A shipped (2026-08-21) — AC #3 (viewer paging) still open
+
+Steps moved out of the rewritten `agent_runs.steps` blob into a child table;
+`append_steps` is now an INSERT instead of a read-modify-write of the whole
+log.
+
+**Measured, independently of the implementer's own numbers:**
+
+    ms per append   #1      #500    #2000
+    before          0.05    0.49    2.18     (44x growth -- quadratic)
+    after           0.088   0.024   0.024    (flat)
+
+At the 25,000-step budget AC #1 names that is roughly **5.4 minutes of write
+churn reduced to under a second**.
+
+**Compatibility (AC #4) verified by probe, not by assertion.** A run whose
+steps live only in the old blob reads back exactly (5/5 steps, identical
+content). A MIXED run -- legacy blob plus new appends -- returns all of them
+with blob steps first and new steps last, so a legacy run appended to after
+the change is not reordered or truncated.
+
+**Still open — AC #3**, the run-log viewer paging so a long run is not held
+in memory at once. Unchanged here; that is part B of the split recorded above.
+Also left deliberately: `list_runs`/`undelivered_wake_runs` still take the
+full-hydration path (disproportionate for part A, documented in the code).
+
+**Incidental find:** `Tests/Chat/test_console_agent_swap.py::_all_runs`
+bypassed the DB API and read `agent_runs` with raw SQL, so it under-reported
+steps once they moved. A pre-existing test-only bug -- fixed here, but worth
+noting as a pattern: a test that reaches around its own API stops testing the
+API and starts pinning the storage layout.

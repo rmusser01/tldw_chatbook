@@ -382,9 +382,29 @@ async def test_citation_repair_agent_real_genuine_fallback_copy_does_not_bypass(
 
 
 def _all_runs(db):
-    """Read every persisted run record directly (AgentRunsDB has no list-all)."""
+    """Read every persisted run record directly (AgentRunsDB has no list-all).
+
+    task-18601 part A: ``append_steps`` now inserts into the
+    ``agent_run_steps`` child table instead of rewriting the
+    ``agent_runs.steps`` blob, so a raw ``SELECT * FROM agent_runs``
+    alone under-reports a run's steps for any run appended to after
+    that change. Reproduces ``AgentRunsDB``'s own dual-read (blob steps
+    first, then child rows in ``seq`` order) so ``row["steps"]`` stays a
+    JSON string of the FULL step list, exactly as callers here already
+    expect from ``json.loads(row["steps"])``.
+    """
     with db.connection() as conn:
-        return [dict(r) for r in conn.execute("SELECT * FROM agent_runs").fetchall()]
+        rows = [dict(r) for r in conn.execute("SELECT * FROM agent_runs").fetchall()]
+        for row in rows:
+            blob_steps = json.loads(row["steps"] or "[]")
+            child_rows = conn.execute(
+                "SELECT payload FROM agent_run_steps WHERE run_id = ? ORDER BY seq",
+                (row["id"],),
+            ).fetchall()
+            row["steps"] = json.dumps(
+                blob_steps + [json.loads(c["payload"]) for c in child_rows]
+            )
+        return rows
 
 
 def _join_fleet_threads(timeout=5.0):

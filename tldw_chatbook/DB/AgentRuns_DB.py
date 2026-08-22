@@ -32,6 +32,13 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
+# SQLite caps host parameters per statement. The ceiling is build-dependent:
+# 32766 on SQLite >= 3.32, but 999 on older builds, and this project's floor
+# is Python 3.11, which can ship either. 900 is under the OLD ceiling, so the
+# chunked read is correct on every build rather than on the newest one.
+_IN_CLAUSE_CHUNK = 900
+
+
 class AgentRunsDB(BaseDB):
     """Run records for the agent runtime (vertical-slice spec data model).
 
@@ -53,7 +60,7 @@ class AgentRunsDB(BaseDB):
     trail (nothing branches on it at runtime).
     """
 
-    _CURRENT_SCHEMA_VERSION = 12
+    _CURRENT_SCHEMA_VERSION = 13
     _swept_paths: set[str] = set()  # DB files already reconciled this process
 
     #: Liveness-ping gate (mirrors ChaChaNotes/WorkspaceDB, task-261/3011):
@@ -232,6 +239,34 @@ class AgentRunsDB(BaseDB):
                     ON agent_runs(conversation_id);
                 CREATE INDEX IF NOT EXISTS idx_agent_runs_parent
                     ON agent_runs(parent_run_id);
+
+                -- v13 (task-18601 part A): agent_runs.steps was a single
+                -- JSON blob column that append_steps rewrote WHOLE on
+                -- every appended step -- read the entire blob, json.loads
+                -- it, extend, json.dumps, rewrite the whole column. O(n)
+                -- per append, O(n^2) per run; measured 44x slower by the
+                -- 2000th append on a real DB (~5.4 minutes of write churn
+                -- extrapolated to a 25k-step run). Steps now live here
+                -- instead, one row per step, keyed (run_id, seq) so
+                -- append_steps becomes a pure INSERT with no read of the
+                -- existing log. `agent_runs.steps` is left exactly as it
+                -- was (still the legacy blob column, still defaulting to
+                -- '[]' for every run created from now on) -- an existing
+                -- run's history stays in the blob; only NEW appends land
+                -- here. See `_rows_to_dicts`'s dual-read for how a run's
+                -- full step list is reassembled at read time (blob steps
+                -- first, then these rows, in order), and `append_steps`'s
+                -- own docstring for why concurrent callers on different
+                -- threads can't race on `seq`. ON DELETE CASCADE needs
+                -- `PRAGMA foreign_keys = ON`, already set unconditionally
+                -- by `_get_connection` for every connection this DB opens.
+                CREATE TABLE IF NOT EXISTS agent_run_steps (
+                    run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+                    seq INTEGER NOT NULL,
+                    payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (run_id, seq)
+                );
 
                 -- v3 (TASK-1971, Agent Change Review): one row per
                 -- (run, root) pair recording that turn's shadow-repo
@@ -530,6 +565,11 @@ class AgentRunsDB(BaseDB):
             # migration to own a fresh number AND bump the constant.
             conn.execute(
                 "INSERT OR IGNORE INTO schema_version (version) VALUES (12)"
+            )
+            # v13 (task-18601 part A): agent_run_steps child table -- see
+            # the CREATE TABLE comment above for the full rationale.
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_version (version) VALUES (13)"
             )
 
     def record_change_snapshot(
@@ -1018,10 +1058,136 @@ class AgentRunsDB(BaseDB):
             ).fetchall()
         return [int(row["id"]) for row in rows]
 
+    #: Every ``agent_runs`` column EXCEPT ``steps`` -- the explicit list
+    #: the metadata-only read path (AC#2) selects, so a caller that only
+    #: wants status/budget/result/etc never even pulls the (potentially
+    #: large, legacy-blob) ``steps`` TEXT value off the page, let alone
+    #: parses it. Kept as one constant so the two metadata SELECTs below
+    #: can't drift apart from each other.
+    _METADATA_COLUMNS = (
+        "id, conversation_id, parent_run_id, agent_kind, task, status, "
+        "result, budget, created_at, updated_at, assistant_message_id, "
+        "agent_definition, definition_fingerprint, wake_delivered_at, "
+        "resumed_from_run_id"
+    )
+
+    def _batch_hydrate_steps(
+        self, conn: sqlite3.Connection, run_ids: Sequence[str]
+    ) -> dict[str, list[dict]]:
+        """Fetch every ``agent_run_steps`` row for many runs in ONE query.
+
+        Mirrors this file's existing no-N+1 precedent (e.g. TASK-1972's
+        conversation-level ``change_snapshots`` fetch): a multi-row read
+        (``list_runs``, ``undelivered_wake_runs``) must not issue one
+        child-table query per returned run.
+
+        Args:
+            conn: An open connection (read or write).
+            run_ids: The run ids to fetch step rows for. Duplicates are
+                harmless; an empty sequence short-circuits without a query.
+
+        Returns:
+            ``{run_id: [step_dict, ...]}`` in ``seq`` order, for every
+            run_id that has at least one row. A run_id with zero rows is
+            simply absent (not present with an empty list).
+
+        Note:
+            Issued in chunks of ``_IN_CLAUSE_CHUNK`` ids, because a bound
+            parameter per id runs into SQLite's host-parameter ceiling and
+            no caller bounds the list (``ConsoleAgentController.
+            subagent_runs`` asks for every run in a conversation). Chunking
+            keeps the no-N+1 property -- one query per 900 runs, not per run.
+        """
+        ids = list(dict.fromkeys(run_ids))
+        if not ids:
+            return {}
+        grouped: dict[str, list[dict]] = {}
+        for start in range(0, len(ids), _IN_CLAUSE_CHUNK):
+            chunk = ids[start : start + _IN_CLAUSE_CHUNK]
+            placeholders = ",".join("?" for _ in chunk)
+            rows = conn.execute(
+                f"SELECT run_id, payload FROM agent_run_steps "
+                f"WHERE run_id IN ({placeholders}) ORDER BY run_id, seq",
+                chunk,
+            ).fetchall()
+            for row in rows:
+                grouped.setdefault(row["run_id"], []).append(
+                    json.loads(row["payload"])
+                )
+        return grouped
+
+    def _rows_to_dicts(
+        self, conn: sqlite3.Connection, rows: Sequence[sqlite3.Row]
+    ) -> list[dict]:
+        """Turn ``agent_runs`` rows into API dicts, with full step hydration.
+
+        DUAL READ (task-18601 part A, AC#4): a run's steps can live in
+        TWO places -- the legacy ``agent_runs.steps`` JSON blob (every run
+        written before this change, and never touched again by
+        ``append_steps`` from now on) and the ``agent_run_steps`` child
+        table (every append from now on, for both brand-new runs and a
+        legacy run that gets appended to again after this change landed).
+
+        Chosen strategy: READ AND CONCATENATE both sources (blob steps
+        first, then child rows in ``seq`` order) rather than migrating a
+        legacy blob into rows on first append. Trade-off, deliberately
+        accepted: a run that mixes legacy blob-steps with new child rows
+        pays one extra query per hydrating read (parse the blob + select
+        the child rows) -- negligible next to the O(n^2) writer cost this
+        task fixes, and a steps-hydrating read of n steps is at best O(n)
+        regardless (it returns n items). The alternative (migrate-on-
+        first-append) would need a write on a READ-triggered path or an
+        extra step inside ``append_steps`` proper, and would still need a
+        migration guard forever (a DB can be opened by an older binary
+        between two appends). Concatenate-at-read is simpler and never
+        mutates data implicitly. A run created after this change has an
+        empty blob ('[]'), so its hydration is one indexed child-table
+        SELECT with no JSON blob to parse at all.
+
+        Args:
+            conn: An open connection (read or write) -- used for the
+                child-table query; a bare ``sqlite3.Row`` has no DB access
+                of its own, so this can no longer be a ``@staticmethod``.
+            rows: The ``agent_runs`` rows to convert.
+
+        Returns:
+            One dict per input row, in the same order, with ``steps`` a
+            list of dicts (blob steps then child-row steps, in order) and
+            ``budget`` JSON-decoded.
+        """
+        rows = list(rows)
+        child_by_run = self._batch_hydrate_steps(conn, [r["id"] for r in rows])
+        records: list[dict] = []
+        for row in rows:
+            record = dict(row)
+            blob_steps = json.loads(record["steps"] or "[]")
+            record["steps"] = blob_steps + child_by_run.get(record["id"], [])
+            record["budget"] = (
+                json.loads(record["budget"]) if record["budget"] else None
+            )
+            records.append(record)
+        return records
+
+    def _row_to_dict(self, conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
+        """Single-row convenience wrapper around :meth:`_rows_to_dicts`."""
+        return self._rows_to_dicts(conn, [row])[0]
+
     @staticmethod
-    def _row_to_dict(row: sqlite3.Row) -> dict:
+    def _metadata_row_to_dict(row: sqlite3.Row) -> dict:
+        """Row -> dict for the metadata-only read path (AC#2).
+
+        No ``steps`` key at all -- deliberately, not ``[]`` and not
+        ``None``: every caller of the metadata-only methods below is
+        audited to never touch ``record["steps"]`` (see their docstrings
+        for exactly which real call site each replaced and why it is
+        provably steps-free), so a future caller that reaches for it by
+        mistake gets a loud ``KeyError`` instead of silently reading "no
+        steps recorded" off a query that never asked the DB about steps
+        at all. This never touches ``agent_run_steps`` and never
+        ``json.loads``es the legacy blob -- the caller's SELECT (see
+        ``_METADATA_COLUMNS``) doesn't even fetch the ``steps`` column.
+        """
         record = dict(row)
-        record["steps"] = json.loads(record["steps"] or "[]")
         record["budget"] = json.loads(record["budget"]) if record["budget"] else None
         return record
 
@@ -1206,25 +1372,73 @@ class AgentRunsDB(BaseDB):
     def append_steps(self, run_id: str, steps: list[dict]) -> None:
         """Append step records to a run's step log.
 
+        task-18601 part A: this used to be read-modify-write on the whole
+        ``agent_runs.steps`` JSON blob (read it, ``json.loads``, extend,
+        ``json.dumps``, rewrite the whole column) -- O(n) work per call
+        where n is every step ever recorded for the run, so O(n^2) over a
+        run's lifetime. Measured on a real DB: the 2000th append cost 44x
+        the 1st, ~5.4 minutes of write churn extrapolated to a 25k-step
+        run. Now a pure ``INSERT`` into ``agent_run_steps`` -- no read of
+        the existing log at all, just an existence check on ``run_id``
+        (an indexed point lookup) and a ``SELECT MAX(seq)`` (also indexed,
+        via the ``(run_id, seq)`` primary key -- SQLite answers a
+        ``MAX(seq) WHERE run_id = ?`` by walking straight to the last
+        matching index entry, not by scanning every row). ``agent_runs.
+        steps`` itself is left untouched -- see ``_rows_to_dicts``'s
+        dual-read docstring for how a run's full step list is reassembled
+        at read time.
+
+        Concurrency: computing ``next_seq`` and inserting the new rows
+        both happen inside the SAME ``self.transaction()`` (``BEGIN
+        IMMEDIATE``), which is this file's existing multi-writer-thread
+        discipline (see ``transaction()``'s own docstring: "a primary run
+        and its sub-agent runs" write concurrently today, each from its
+        own thread's held connection). ``BEGIN IMMEDIATE`` acquires
+        SQLite's single write lock up front, so a second thread's
+        ``append_steps`` call on ANY run blocks (up to ``busy_timeout``)
+        until this transaction commits or rolls back -- there is no
+        window between the ``MAX(seq)`` read and the ``INSERT`` for a
+        second writer to compute the same ``next_seq`` and collide on the
+        ``(run_id, seq)`` primary key.
+
         Args:
             run_id: The run to append to.
             steps: Serialized ``AgentStep`` dicts, appended in order after
-                any steps already recorded.
+                any steps already recorded (both the legacy blob's steps
+                and any already-inserted rows).
 
         Raises:
             KeyError: If ``run_id`` does not exist.
         """
+        stamp = _now_iso()
         with self.transaction() as conn:
-            row = conn.execute(
-                "SELECT steps FROM agent_runs WHERE id = ?", (run_id,)
+            exists = conn.execute(
+                "SELECT 1 FROM agent_runs WHERE id = ?", (run_id,)
             ).fetchone()
-            if row is None:
+            if exists is None:
                 raise KeyError(f"Unknown run id: {run_id}")
-            existing = json.loads(row["steps"] or "[]")
-            existing.extend(steps)
+            if steps:
+                max_row = conn.execute(
+                    "SELECT MAX(seq) AS max_seq FROM agent_run_steps "
+                    "WHERE run_id = ?",
+                    (run_id,),
+                ).fetchone()
+                next_seq = (
+                    int(max_row["max_seq"]) + 1
+                    if max_row and max_row["max_seq"] is not None
+                    else 0
+                )
+                conn.executemany(
+                    "INSERT INTO agent_run_steps (run_id, seq, payload, created_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    [
+                        (run_id, next_seq + offset, json.dumps(step), stamp)
+                        for offset, step in enumerate(steps)
+                    ],
+                )
             conn.execute(
-                "UPDATE agent_runs SET steps = ?, updated_at = ? WHERE id = ?",
-                (json.dumps(existing), _now_iso(), run_id),
+                "UPDATE agent_runs SET updated_at = ? WHERE id = ?",
+                (stamp, run_id),
             )
 
     def set_status(self, run_id: str, status: str, result: str | None = None) -> bool:
@@ -1354,7 +1568,44 @@ class AgentRunsDB(BaseDB):
             row = conn.execute(
                 "SELECT * FROM agent_runs WHERE id = ?", (run_id,)
             ).fetchone()
-        return self._row_to_dict(row) if row else None
+            return self._row_to_dict(conn, row) if row else None
+
+    def get_run_metadata(self, run_id: str) -> dict | None:
+        """Fetch one run's METADATA ONLY -- never touches the step log.
+
+        task-18601 part A, AC#2: a plain single-row SELECT over
+        ``_METADATA_COLUMNS`` (everything except ``steps``), so this
+        never fetches the ``steps`` blob off the page, never queries
+        ``agent_run_steps``, and never ``json.loads``es anything but
+        ``budget``. The returned dict has NO ``steps`` key at all -- see
+        ``_metadata_row_to_dict`` for why that is deliberate.
+
+        Use this instead of :meth:`get_run` wherever the caller only
+        inspects status/budget/result/task/etc, never
+        ``record["steps"]``. Two real call sites were switched to this
+        when it was added: ``ConsoleFleetWakeCoordinator._rows_for``
+        (the pending-wake poll -- ``compose_wake_notice`` only reads
+        id/agent_definition/status/task/result) and
+        ``AgentService.send_to_agent``'s "run finished in an earlier
+        session" check (only reads agent_kind/conversation_id/status).
+        :meth:`get_run` keeps its full (steps-hydrating) contract
+        unchanged for every other caller -- e.g.
+        ``change_review_screen.tool_touched_relpaths``, which reads
+        ``record["steps"]`` directly.
+
+        Args:
+            run_id: The run to fetch.
+
+        Returns:
+            The run as a dict with ``budget`` JSON-decoded and NO
+            ``steps`` key, or ``None`` if ``run_id`` does not exist.
+        """
+        with self.connection() as conn:
+            row = conn.execute(
+                f"SELECT {self._METADATA_COLUMNS} FROM agent_runs WHERE id = ?",
+                (run_id,),
+            ).fetchone()
+        return self._metadata_row_to_dict(row) if row else None
 
     def get_run_fresh(self, run_id: str) -> dict | None:
         """Fetch one run through a dedicated, immediately-closed connection.
@@ -1389,7 +1640,39 @@ class AgentRunsDB(BaseDB):
             row = conn.execute(
                 "SELECT * FROM agent_runs WHERE id = ?", (run_id,)
             ).fetchone()
-            return self._row_to_dict(row) if row else None
+            return self._row_to_dict(conn, row) if row else None
+        finally:
+            conn.close()
+
+    def get_run_metadata_fresh(self, run_id: str) -> dict | None:
+        """``get_run_metadata`` through the same dedicated-connection
+        escape hatch ``get_run_fresh`` uses -- see that method's
+        docstring for the pinned-snapshot rationale (task-15863). Used by
+        ``ConsoleFleetWakeCoordinator._rows_for``'s re-read-on-stale-
+        non-terminal path, which previously called ``get_run_fresh`` for
+        a result it only ever inspects ``status``/``wake_delivered_at``
+        on.
+
+        Args:
+            run_id: The run to read.
+
+        Returns:
+            The same metadata-only dict ``get_run_metadata`` returns (no
+            ``steps`` key), or ``None`` if no run has that id.
+
+        Raises:
+            sqlite3.Error: Propagated unchanged from the read. The private
+                connection is closed either way.
+        """
+        if self.is_memory_db:
+            return self.get_run_metadata(run_id)
+        conn = self._get_connection()
+        try:
+            row = conn.execute(
+                f"SELECT {self._METADATA_COLUMNS} FROM agent_runs WHERE id = ?",
+                (run_id,),
+            ).fetchone()
+            return self._metadata_row_to_dict(row) if row else None
         finally:
             conn.close()
 
@@ -1416,7 +1699,39 @@ class AgentRunsDB(BaseDB):
                 "ORDER BY created_at DESC, id DESC LIMIT 1",
                 (conversation_id,),
             ).fetchone()
-        return self._row_to_dict(row) if row else None
+            return self._row_to_dict(conn, row) if row else None
+
+    def latest_primary_run_metadata(self, conversation_id: str) -> dict | None:
+        """``latest_primary_run`` METADATA ONLY -- never touches the step log.
+
+        task-18601 part A, AC#2: same query/ordering as
+        :meth:`latest_primary_run`, but over ``_METADATA_COLUMNS`` (no
+        ``steps``, no ``agent_run_steps`` query). Both of that method's
+        real callers only ever read ``id``/``assistant_message_id``
+        (``ConsoleAgentController.latest_primary_run_id`` and its
+        assistant-message-anchor sibling in
+        ``Chat/console_agent_bridge.py``) -- neither touches
+        ``record["steps"]`` -- so they were switched to this.
+        :meth:`latest_primary_run` keeps its full contract for any future
+        caller that does need steps.
+
+        Args:
+            conversation_id: The conversation whose runs to inspect.
+
+        Returns:
+            The newest matching run as a dict with ``budget`` JSON-
+            decoded and NO ``steps`` key, or ``None`` when the
+            conversation has no non-superseded primary run.
+        """
+        with self.connection() as conn:
+            row = conn.execute(
+                f"SELECT {self._METADATA_COLUMNS} FROM agent_runs "
+                "WHERE conversation_id = ? "
+                "AND agent_kind = 'primary' AND status != 'superseded' "
+                "ORDER BY created_at DESC, id DESC LIMIT 1",
+                (conversation_id,),
+            ).fetchone()
+        return self._metadata_row_to_dict(row) if row else None
 
     def list_runs(
         self,
@@ -1463,7 +1778,7 @@ class AgentRunsDB(BaseDB):
             params.append(limit)
         with self.connection() as conn:
             rows = conn.execute(query, params).fetchall()
-        return [self._row_to_dict(r) for r in rows]
+            return self._rows_to_dicts(conn, rows)
 
     def count_runs(
         self,
@@ -1550,7 +1865,7 @@ class AgentRunsDB(BaseDB):
                 "ORDER BY child.updated_at ASC, child.id ASC",
                 (conversation_id, *sorted(TERMINAL_RUN_STATUSES)),
             ).fetchall()
-        return [self._row_to_dict(row) for row in rows]
+            return self._rows_to_dicts(conn, rows)
 
     def mark_wake_delivered(self, run_ids: Sequence[str]) -> int:
         """Stamp runs as wake-delivered; already-stamped rows are left alone.
