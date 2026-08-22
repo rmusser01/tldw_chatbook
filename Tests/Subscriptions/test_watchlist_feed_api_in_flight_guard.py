@@ -214,3 +214,92 @@ async def test_a_failed_feed_check_releases_the_guard(tmp_path, monkeypatch):
         "the next check never ran: the failed check stranded the in-flight "
         "claim"
     )
+
+
+class _RecordingDispatcher:
+    """The real notification seam, counted.
+
+    `LocalWatchlistsService._dispatch_alert_notification` calls
+    `dispatcher.dispatch(...)` once per triggered alert rule, so counting
+    calls here counts exactly what the user would see arrive in their
+    notification inbox.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def dispatch(self, **kwargs) -> dict:
+        self.calls.append(dict(kwargs))
+        return {"id": len(self.calls)}
+
+
+def _stats_row(db: SubscriptionsDB, source_id: int) -> dict:
+    """Today's `subscription_stats` aggregate for one source, as a dict."""
+    row = db.conn.execute(
+        "SELECT checks_performed, successful_checks, new_items_found, "
+        "items_ingested FROM subscription_stats WHERE subscription_id = ?",
+        (source_id,),
+    ).fetchone()
+    return dict(row) if row is not None else {}
+
+
+@pytest.mark.asyncio
+async def test_overlapping_feed_check_alerts_once_and_counts_statistics_once(
+    tmp_path, monkeypatch
+):
+    """The user-visible consequence, asserted where the user would see it.
+
+    task-19562 AC2. The two earlier tests pin the *fetch* count; this one
+    pins the two things the task's description names as the symptom -- the
+    alert notification and the statistics -- because a guard that turned the
+    second entrant away but still let it travel the completion accounting
+    would pass those and still double-notify.
+
+    Red against the unguarded feed arm: two `dispatch` calls, and
+    `subscription_stats` reading checks_performed=2 / new_items_found=2 for
+    a single overlapping check.
+    """
+    db = SubscriptionsDB(tmp_path / "subs.db", "test")
+    source_id = db.add_subscription(
+        name="A feed", type="rss", source="https://example.com/feed.xml"
+    )
+    dispatcher = _RecordingDispatcher()
+    scheduler_service = LocalWatchlistsService(
+        db_factory=lambda: db, notification_dispatcher=dispatcher
+    )
+    ui_service = LocalWatchlistsService(
+        db_factory=lambda: db, notification_dispatcher=dispatcher
+    )
+    # Fires whenever a check ingests at least one item -- i.e. exactly once
+    # per check that really happened.
+    await scheduler_service.create_alert_rule(
+        name="New items",
+        condition_type="items_above",
+        condition_value={"threshold": 0},
+        source_id=source_id,
+    )
+
+    gate = asyncio.Event()
+    started = asyncio.Event()
+    _gate_feed_checks(monkeypatch, gate, started)
+
+    scheduled = asyncio.create_task(_run_check(scheduler_service, source_id))
+    await asyncio.wait_for(started.wait(), timeout=10)
+    manual = asyncio.create_task(_run_check(ui_service, source_id))
+    await asyncio.sleep(0.25)  # deterministic: the first is gate-blocked
+    gate.set()
+    await asyncio.wait_for(scheduled, timeout=10)
+    await asyncio.wait_for(manual, timeout=10)
+
+    assert len(dispatcher.calls) == 1, (
+        f"the alert notification fired {len(dispatcher.calls)} times for one "
+        "overlapping check; the user is told twice about one set of items"
+    )
+
+    stats = _stats_row(db, source_id)
+    assert stats.get("checks_performed") == 1, (
+        f"statistics double-counted the overlap: {stats}"
+    )
+    assert stats.get("successful_checks") == 1, stats
+    assert stats.get("new_items_found") == 1, stats
+    assert stats.get("items_ingested") == 1, stats

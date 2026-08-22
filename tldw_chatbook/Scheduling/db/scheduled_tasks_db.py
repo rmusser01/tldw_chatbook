@@ -768,14 +768,25 @@ class ScheduledTasksDB(BaseDB):
 
         Missed-fire accounting (task-18937): when the scheduled time of this
         dispatch (the stored ``next_run_at``) is more than ``grace_seconds``
-        before ``now``, the dispatch was late -- the scheduler was not running
-        (or not aware of the task) at the scheduled time. The row then records
+        before ``now``, the dispatch was late. The row then records
         ``missed_at`` = the earliest owed occurrence's scheduled time and, for
         recurring tasks, ``missed_count`` = occurrences that elapsed
         undispatched *before* this one (the dispatch itself covers exactly one
         occurrence; skipped ones are counted, never replayed --
         run-once-then-continue). An on-time dispatch clears both fields: the
         state describes the last dispatch and self-heals.
+
+        What "late" does NOT tell you (task-19562): *why*. This docstring
+        used to assert the cause -- "the scheduler was not running (or not
+        aware of the task) at the scheduled time" -- and the UI repeated it
+        as "Missed while away". Both were wrong for a real and ordinary
+        case: ``SchedulerLoop.tick`` awaits every due handler serially and
+        inline, so one slow handler delays every task behind it, easily past
+        the grace, with the scheduler running throughout. These two fields
+        record the lateness and the skipped occurrences, which are true
+        regardless of cause; the cause itself is reported by the loop, which
+        is the only place that knows it (``SchedulerLoop.
+        _report_lateness_cause``).
 
         Timeout (task-18939): ``timed_out=True`` records the distinct
         terminal status ``"timed_out"`` -- the dispatch ran but was

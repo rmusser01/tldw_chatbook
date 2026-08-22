@@ -6355,3 +6355,111 @@ a defect in the product, a defect in the test, or a seam that moved. Only the
 first is a baseline you may carry. Then never leave a repaired guard at green —
 mutate the behaviour it protects and watch it red, at the layer that owns that
 behaviour, before you call it repaired.
+
+## An assertion whose expected value equals the platform default proves nothing — and neither does one the platform quietly satisfies for you (TASK-19562, 2026-08-22)
+
+**What happened.** Two of this task's ACs asked for facts about SQLite, and
+the obvious tests for both were inert.
+
+*One.* `SubscriptionsDB` set no `busy_timeout`, so it inherited one. AC:
+"set a timeout." The natural pin —
+`assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000` — passes
+**with the pragma deleted**, because 5000 ms is exactly what
+`sqlite3.connect(timeout=5.0)` already gives you. Deleting the production
+line and re-running was what exposed it. The pin that can actually fail
+monkeypatches the connector to pass `timeout=0` and asserts the connection
+still reports 5000: red at `0 == 5000` without the pragma.
+
+*Two.* AC: "the `-wal` is checkpointed on close." The natural pin — write
+300 rows, `close()`, assert the `-wal` is 0 bytes — also passes with the
+checkpoint removed, because **SQLite checkpoints and deletes the `-wal`
+itself when the LAST connection to a database closes**. The test was
+measuring sqlite's own cleanup. The fix was to hold a second connection open
+across the assertion (which is also the leaked worker connection the task was
+about) and additionally assert the file still *exists*: red at "close() left
+content in the -wal" once something else keeps it alive.
+
+The same platform behaviour refuted a whole premise: a child process that
+wrote a 4.1 MB `-wal` and exited normally left only the `.db` behind, with a
+new `atexit` settle hook enabled and suppressed — identical. The "the `-wal`
+is left behind at exit" concern is false for a clean exit; what is real is
+the standing WAL a long-running process carries, and the `os._exit(0)` signal
+path, which no `atexit` hook can reach.
+
+**What to do.** For any test whose expected value is a platform, library or
+language *default*, delete the production line and re-run before believing
+the green. If it still passes, the assertion is describing the platform, not
+your change — either find an input where the two diverge (force the default
+to something else, keep a second handle open) or write in the test that it
+cannot fail on its own and name the sibling that can.
+
+## Instrument the argument shape production uses, not the one that is easiest to call (TASK-19562, 2026-08-22)
+
+**What happened.** A previous session had to decide whether
+`SubscriptionsDB.record_check_result` really nested `transaction()`. It
+instrumented the context manager across "a real call", observed **depth 1,
+one entry**, and recorded the hazard as REFUTED at that call site — in the
+code, in the tests' docstring, and in the task file.
+
+Re-instrumented per argument shape:
+
+    record_check_result WITH stats    -> 2 entries, depths [1, 2]
+    record_check_result WITHOUT stats -> 1 entry,  depths [1]
+
+The nesting runs through `_update_subscription_stats` ->
+`update_subscription_stats`, reached only when `stats` is truthy — and
+`execute_run`, the only production caller, *always* passes stats. The
+earlier probe had called it the easy way, with `stats` omitted, and measured
+the one branch production never takes. The hazard was **live**, not latent:
+the daily-statistics write was durably committing the enclosing
+subscription-health UPDATE.
+
+**What to do.** When a probe decides whether a hazard is live, call the
+function the way the production call site calls it — copy the arguments from
+that call site, do not construct minimal ones. If the function branches on an
+argument's presence, probe **both** branches and record which is which; a
+single "instrumented a real call" line in a task file cannot be checked later
+by anyone, and this one was wrong in the direction that closes an
+investigation.
+
+## A sequential start/join thread loop hides per-thread leaks -- and "descriptors return to baseline" is the wrong assertion (PR #1964 review, 2026-08-22)
+
+**What happened.** Qodo found that `SubscriptionsDB._connections` held a
+strong reference to every thread's sqlite connection and only ever removed
+the *calling* thread's entry, so a worker that exited without calling
+`close()` pinned its connection -- descriptor and WAL lock -- for the life of
+the process. The first probe written to confirm it spawned 100 short-lived
+threads **one at a time** (`start(); join()`), and reported **no growth at
+all**: the registry stayed at 2 entries. The reason is that the OS recycles
+thread idents, so `self._connections[ident] = connection` overwrote the
+previous entry every iteration. The defect was real; the measurement designed
+to see it could not.
+
+Re-run with 20 threads held **concurrently** on a barrier, the same code gave
+registry 21 entries and 43 descriptors, permanently, and `gc.collect()` could
+not reclaim any of it (the sqlite3 statement cache is an `lru_cache` wrapping
+the connection, so every used connection sits in a reference cycle and is
+never freed by refcounting alone).
+
+Two further facts cost time and are worth writing down:
+
+* **`sqlite3.Connection` cannot be weak-referenced.** The obvious fix -- and
+  the one the review suggested -- is a `weakref.WeakValueDictionary`. CPython
+  3.12.11 raises `TypeError: cannot create weak reference to
+  'sqlite3.Connection' object`. Check weak-referenceability before designing
+  around it; C types often lack `tp_weaklistoffset`.
+* **Descriptors do not return to their pre-thread baseline even when every
+  connection is genuinely closed.** SQLite's unix VFS keeps closed
+  descriptors for an inode in a reuse pool while any connection to that file
+  remains open, releasing them together when the last one closes. Asserting
+  "fds back to baseline" would have failed against a correct fix. The
+  assertion that actually distinguishes fixed from broken is **"a second
+  round of threads costs no more descriptors than the first"**: fixed gave
+  13, 13, 13, 13, 13 over five rounds and 0 after the final close; broken
+  gave 23, 43, 63, 83.
+
+**What to do.** To measure anything keyed on thread identity, run the threads
+concurrently -- a sequential loop tests ident recycling, not your registry.
+And before asserting on file descriptors, establish what the *correct*
+steady state looks like by measuring a known-good control (here: the same
+code path with no registry at all), rather than assuming it is the baseline.
