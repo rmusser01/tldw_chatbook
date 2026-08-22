@@ -109,9 +109,13 @@ use the same lock. After acquiring it, a caller must reacquire root ownership
 and repeat every freshness, token, plan, authority, and recovery check before it
 builds a request or mutates anything. The existing planning lease remains a
 lifecycle/cancellation admission mechanism; it is not serialization. A lock
-entry may be discarded only after the root has no admitted or waiting mutation
-task. Executor operation-ID locks remain durable replay guards, not substitutes
-for root serialization.
+is obtained synchronously, before any await, from one standard-library
+`WeakValueDictionary[root_id, asyncio.Lock]`. The caller keeps a strong local
+reference through acquisition and release, and lock holders/waiters retain their
+own references; therefore an active lock cannot be replaced, while an idle entry
+disappears without waiter bookkeeping or an artificial root cap. Executor
+operation-ID locks remain durable replay guards, not substitutes for root
+serialization.
 
 Only bound content rows with reason `both_sides_changed` or
 `out_of_direction_change` are eligible for choices, and only when both note and
@@ -442,14 +446,16 @@ or be evicted independently.
 | original binding identity/path/serialization/digests restored with fresh note version | `binding_updated` |
 | unchanged Keep-both copy soft-deleted, or no copy required | private `undo_substage=copy_cleanup_complete` while `binding_updated` |
 | all resulting authority verified | `verified` |
-| source operation marked Undone | linked Undo `completed` |
+| resulting authority verified and source resolution projected Undone | linked Undo `completed` |
 
 Startup recovery resumes the linked Undo from these checkpoints. Each step is
 idempotent and authority-checked; a crash can therefore leave a recoverable
-partial Undo but never an unjournaled restore. Only after verification does one
-device-state transaction complete the Undo operation and compare-and-set the
-source completed operation's empty reason to `undo_completed`. A zero-row source
-CAS makes the Undo operation Needs attention rather than rewriting history.
+partial Undo but never an unjournaled restore. Only after verification does a
+compare-and-set complete the deterministic linked Undo operation. The completed
+source resolution row remains immutable. History derives **Undone** by looking
+up that source operation's deterministic linked Undo ID and requiring the linked
+operation to be completed; missing, partial, or attention Undo rows never project
+success.
 
 Undo restores the pre-resolution note/file authority and the original binding
 identity, relative path, serialization, and content digests. Restoring a note is
@@ -507,11 +513,14 @@ After successful subset apply:
 - the receipt remains until that item is undone, explicitly dismissed, or
   superseded by a newer resolution of the same item;
 - within the current app runtime, navigation or controller remount reconstructs
-  undismissed receipts from runtime-owned private per-root sets of completed and
-  dismissed operation IDs;
-- Dismiss changes only those in-memory opaque-ID sets and never deletes
-  operation history or recovery authority; dismissed receipts cannot reappear
-  during that runtime;
+  receipts from one runtime-owned private per-root insertion-ordered map of
+  active operation IDs;
+- the map is capped at 100 entries per root, matching one history page; a newer
+  receipt evicts the oldest UI receipt without changing durable history or
+  recovery authority;
+- Dismiss removes one operation ID from that map and never deletes operation
+  history or recovery authority, so the receipt cannot reappear during that
+  runtime;
 - a process restart starts with no at-action receipts, dismissed or otherwise;
   the durable Resolution history remains the restart-spanning recovery surface;
 - if conflicts remain, receipts stay above page 1 of the fresh review, focus
@@ -594,6 +603,8 @@ and object representations.
 - durable operation kinds survive recovery expiry;
 - automatic execution, reviewed apply, recovery, and Undo serialize on one root
   lock and revalidate after acquisition;
+- a weak root-lock registry never replaces a held/waited lock and sheds idle
+  entries without custom lifecycle bookkeeping;
 - conflict resolution and Undo recovery retain exact authority for 30 days;
 - per-item failure stops later items and reports completed work honestly;
 - fresh post-apply review occurs only after terminal attempted work.
@@ -625,7 +636,8 @@ version.
 - every Undo crash boundary resumes from its linked durable operation;
 - linked Undo resumes after source recovery expiry using only its own
   capacity-accounted recovery;
-- Undo completion is one-shot and marks the source only after verification;
+- Undo completion is one-shot, leaves the source row immutable, and projects
+  Undone only from the completed deterministic linked operation;
 - a second resolution after Undo succeeds without stale binding authority;
 - concurrent apply/apply and apply/Undo attempts serialize, and the loser
   revalidates against the winner's state before mutation;
@@ -646,6 +658,7 @@ version.
   and Dismiss even when other conflicts remain;
 - navigation/remount preserves current-runtime receipt dismissal, while process
   restart shows durable history and no reconstructed at-action receipt;
+- active receipt maps remain insertion ordered and capped at 100 per root;
 - interactive history rows use fresh bounded labels or the short opaque-ID
   fallback without persisting the labels;
 - deletion choices remain disabled;
