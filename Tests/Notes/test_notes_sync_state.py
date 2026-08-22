@@ -200,6 +200,69 @@ def test_migration_projections_are_exact_frozen_redacted_and_bounded() -> None:
         run.state = MigrationState.DRIFTED  # type: ignore[misc]
 
 
+def test_migration_run_projection_rejects_relationally_impossible_terminal_row(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    database = tmp_path / "notes-sync-state.sqlite3"
+    migration_id = "00000000-0000-4000-8000-000000000099"
+    with notes_sync_state_transaction(database, immediate=True) as connection:
+        connection.execute("PRAGMA ignore_check_constraints = ON")
+        connection.execute(
+            """INSERT INTO sync_migration_runs (
+                   migration_id, source_kind, source_revision_before,
+                   source_revision_after, state, created_at, updated_at
+               ) VALUES (?, 'legacy_notes_sync_v1', ?, NULL,
+                         'matched_recheck', 1, 1)""",
+            (migration_id, "a" * 64),
+        )
+
+    with pytest.raises(SyncStateCorruptionError, match="migration-run"):
+        repository.get_migration_run(migration_id)
+
+
+def test_migration_item_and_aggregate_reads_reject_impossible_relational_row(
+    tmp_path: Path,
+) -> None:
+    from tldw_chatbook.Notes import notes_sync_legacy_migration as legacy
+
+    repository = _repository(tmp_path)
+    source = legacy._source_revision(
+        {
+            "sync_conflict_resolution": "newer_wins",
+            "sync_direction": "bidirectional",
+            "sync_directory": "legacy/root",
+        },
+        (),
+        (),
+    )
+    snapshot = legacy.LegacyNotesSyncSourceSnapshot(
+        source,
+        legacy._canonical_digest(source),
+    )
+    run = repository.record_legacy_generation(snapshot)
+    database = tmp_path / "notes-sync-state.sqlite3"
+    with notes_sync_state_transaction(database, immediate=True) as connection:
+        connection.execute("PRAGMA ignore_check_constraints = ON")
+        connection.execute(
+            """UPDATE sync_migration_items
+               SET outcome = 'created', binding_id = NULL, reason_code = NULL
+               WHERE migration_id = ? AND item_kind = 'root'""",
+            (run.migration_id,),
+        )
+        connection.execute(
+            """UPDATE sync_migration_items
+               SET item_kind = 'binding', root_id = NULL
+               WHERE migration_id = ?""",
+            (run.migration_id,),
+        )
+
+    with pytest.raises(SyncStateCorruptionError, match="migration-item"):
+        repository.list_migration_items(run.migration_id)
+    with pytest.raises(SyncStateCorruptionError, match="migration-item"):
+        repository.migration_item_counts(run.migration_id)
+
+
 def test_root_projection_maps_every_column_and_redacts_private_values(
     tmp_path: Path,
 ) -> None:

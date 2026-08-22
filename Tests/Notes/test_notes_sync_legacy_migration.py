@@ -1068,6 +1068,66 @@ def test_changed_digest_never_reopens_disconnected_migration_rows(
     assert any(item.reason_code == "root_claim_unavailable" for item in items)
 
 
+@pytest.mark.parametrize("maximum_version_row", ("root", "binding"))
+def test_migration_rejects_unadvanceable_candidate_before_any_generation_write(
+    tmp_path: Path,
+    maximum_version_row: str,
+) -> None:
+    repository = _migration_repository(tmp_path)
+    original = _snapshot(
+        notes=(
+            _note_row(
+                "note",
+                sync_root_folder="legacy/root",
+                relative_file_path_on_disk="note.md",
+            ),
+        )
+    )
+    first = repository.record_legacy_generation(original)
+    root = next(
+        root
+        for root in repository.list_roots()
+        if root.lexical_root_path == "legacy/root"
+    )
+    binding = repository.list_bindings(root_id=root.root_id)[0]
+    database = tmp_path / "migration-state.sqlite3"
+    with notes_sync_state_transaction(database, immediate=True) as connection:
+        table = "sync_roots" if maximum_version_row == "root" else "sync_bindings"
+        identifier = (
+            root.root_id if maximum_version_row == "root" else binding.binding_id
+        )
+        id_column = "root_id" if maximum_version_row == "root" else "binding_id"
+        connection.execute(
+            f"UPDATE {table} SET row_version = ? WHERE {id_column} = ?",  # noqa: S608
+            ((2**63) - 1, identifier),
+        )
+        before_rows = {
+            name: tuple(connection.execute(f"SELECT * FROM {name}"))  # noqa: S608
+            for name in (
+                "sync_migration_runs",
+                "sync_roots",
+                "sync_bindings",
+                "sync_migration_items",
+            )
+        }
+    changed = _snapshot(
+        direction="disk_to_db",
+        notes=tuple(original.source["notes"]),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(sync_state.NotesSyncStateError, match="cannot be advanced"):
+        repository.record_legacy_generation(changed)
+
+    with notes_sync_state_transaction(database) as connection:
+        after_rows = {
+            name: tuple(connection.execute(f"SELECT * FROM {name}"))  # noqa: S608
+            for name in before_rows
+        }
+    assert after_rows == before_rows
+    assert len(after_rows["sync_migration_runs"]) == 1
+    assert after_rows["sync_migration_runs"][0][0] == first.migration_id
+
+
 @pytest.mark.parametrize(
     ("root_count", "binding_count", "limit_name"),
     (

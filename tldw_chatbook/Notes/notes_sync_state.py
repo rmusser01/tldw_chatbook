@@ -540,12 +540,19 @@ def _migration_run_record(row: tuple[object, ...]) -> MigrationRunRecord:
             or updated_at <= 0
         ):
             raise ValueError
+        migration_state = MigrationState(state)
+        if not _valid_migration_run_combination(
+            before,
+            cast(str | None, after),
+            migration_state,
+        ):
+            raise ValueError
         return MigrationRunRecord(
             migration_id=migration_id,
             source_kind=kind,
             source_revision_before=before,
             source_revision_after=after,
-            state=MigrationState(state),
+            state=migration_state,
             created_at=created_at,
             updated_at=updated_at,
         )
@@ -553,6 +560,49 @@ def _migration_run_record(row: tuple[object, ...]) -> MigrationRunRecord:
         raise SyncStateCorruptionError(
             "A private migration-run record is incompatible with canonical v2."
         ) from None
+
+
+def _valid_migration_run_combination(
+    before: str,
+    after: str | None,
+    state: MigrationState,
+) -> bool:
+    if state is MigrationState.PENDING_RECHECK:
+        return after is None
+    if state is MigrationState.MATCHED_RECHECK:
+        return after == before
+    return after is not None and after != before
+
+
+def _valid_migration_item_combination(
+    kind: object,
+    outcome: object,
+    root_id: object,
+    binding_id: object,
+    reason: object,
+) -> bool:
+    if kind == "root":
+        if binding_id is not None:
+            return False
+        if outcome in ("created", "matched"):
+            return root_id is not None and reason is None
+        if outcome == "needs_rescan":
+            return root_id is not None and reason is not None
+        return outcome == "rejected" and root_id is None and reason is not None
+    if kind == "binding":
+        if root_id is not None:
+            return False
+        if outcome in ("created", "matched"):
+            return binding_id is not None and reason is None
+        if outcome == "needs_rescan":
+            return binding_id is not None and reason is not None
+        return outcome == "rejected" and binding_id is None and reason is not None
+    return (
+        kind == "legacy_conflict"
+        and outcome == "needs_rescan"
+        and reason is not None
+        and not (root_id is not None and binding_id is not None)
+    )
 
 
 def _migration_item_record(row: tuple[object, ...]) -> MigrationItemRecord:
@@ -590,6 +640,14 @@ def _migration_item_record(row: tuple[object, ...]) -> MigrationItemRecord:
                 raise ValueError
         if reason is not None and (
             type(reason) is not str or _REASON_CODE_PATTERN.fullmatch(reason) is None
+        ):
+            raise ValueError
+        if not _valid_migration_item_combination(
+            kind,
+            outcome,
+            root_id,
+            binding_id,
+            reason,
         ):
             raise ValueError
         return MigrationItemRecord(
@@ -981,6 +1039,14 @@ class NotesSyncStateRepository:
             raise ValueError("migration_id must be an exact bounded identity.")
         with _repository_transaction(self._database_path) as connection:
             _require_migration_run(connection, validated_id)
+            item_rows = connection.execute(
+                f"""SELECT {_MIGRATION_ITEM_COLUMNS}
+                    FROM sync_migration_items
+                    WHERE migration_id = ?""",
+                (validated_id,),
+            ).fetchall()
+            for item_row in item_rows:
+                _migration_item_record(item_row)
             rows = connection.execute(
                 """SELECT item_kind, outcome, count(*)
                    FROM sync_migration_items
@@ -1054,6 +1120,7 @@ class NotesSyncStateRepository:
                 exact = None if exact_row is None else _root_record(exact_row)
                 stable = _select_root(connection, root_id)
                 if exact is not None and exact.state is SyncRootState.CANDIDATE:
+                    _require_advanceable_root(exact)
                     decision = {
                         "request": root_request,
                         "root_id": exact.root_id,
@@ -1139,6 +1206,7 @@ class NotesSyncStateRepository:
                     and owner is not None
                     and owner.binding_id == exact_binding.binding_id
                 ):
+                    _require_advanceable_binding(exact_binding)
                     decision = {
                         "request": binding_request,
                         "binding_id": exact_binding.binding_id,
