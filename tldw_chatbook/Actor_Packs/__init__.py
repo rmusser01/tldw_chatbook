@@ -10,6 +10,12 @@ from .creation import (
     ActorPackCreationResult,
     ActorPackCreationService,
 )
+from .export import (
+    ActorPackExportError,
+    ActorPackExportResult,
+    ActorPackExportService,
+    ActorPackExportSnapshot,
+)
 
 __all__ = [
     "ActorPackDocument",
@@ -17,5 +23,9 @@ __all__ = [
     "ActorPackCreationResult",
     "ActorPackCreationService",
     "ActorPackValidationError",
+    "ActorPackExportError",
+    "ActorPackExportResult",
+    "ActorPackExportService",
+    "ActorPackExportSnapshot",
     "validate_actor_pack_document",
 ]
