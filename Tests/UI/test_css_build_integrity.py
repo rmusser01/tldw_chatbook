@@ -312,6 +312,32 @@ def test_library_notes_compact_source_module_is_exactly_bundled() -> None:
     assert _bundled_module(bundle, "components/_agentic_terminal.tcss") == source
 
 
+def test_console_bounded_sections_have_no_legacy_fractional_css_owner() -> None:
+    """Only the bounded viewport may own direct-section scrolling geometry."""
+
+    bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    stylesheets = (
+        _AGENTIC_SOURCE.read_text(encoding="utf-8"),
+        _bundled_module(bundle, "components/_agentic_terminal.tcss"),
+    )
+
+    for css in stylesheets:
+        without_comments = re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)
+        assert "#console-left-rail-body .console-rail-section-body" not in (
+            without_comments
+        )
+        assert not re.search(
+            r"(?:^|})[^{}]*\.console-rail-section-body[^{}]*\{"
+            r"[^{}]*max-height\s*:\s*20%",
+            without_comments,
+            flags=re.DOTALL,
+        )
+        viewport = _declarations(css, ".console-bounded-section-viewport")
+        assert viewport["overflow-y"] == "auto"
+        assert viewport["overflow-x"] == "hidden"
+        assert viewport["scrollbar-gutter"] == "stable"
+
+
 def test_library_notes_compact_geometry_matches_fallback_source_and_bundle() -> None:
     stylesheets = (
         _library_screen_default_css(),
@@ -456,7 +482,12 @@ def test_relocated_shared_component_rules_are_present() -> None:
     """The moved generic rules live in _shared_components and reach the bundle."""
     shared = _SHARED_SOURCE.read_text(encoding="utf-8")
     bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
-    for selector in (".setting-label", ".section-header", ".preview-panel", ".action-buttons"):
+    for selector in (
+        ".setting-label",
+        ".section-header",
+        ".preview-panel",
+        ".action-buttons",
+    ):
         assert selector in shared
         assert selector in bundle
     # The app-wide scrollbar default now lives in core, not a feature module.

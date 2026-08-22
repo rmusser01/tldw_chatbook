@@ -425,11 +425,9 @@ async def test_production_bounded_rail_resize_reconciles_geometry_and_focus() ->
             "#console-bounded-section-sources", ConsoleBoundedSection
         )
         target = Button("source action", id="production-resize-source-action")
+        content = Static("\n".join(f"resize source {row}" for row in range(29)))
         await sources.viewport.remove_children()
-        await sources.viewport.mount(
-            Static("\n".join(f"resize source {row}" for row in range(29))),
-            target,
-        )
+        await sources.viewport.mount(content, target)
         sources.request_reconcile()
         inspector.request_outer_reconcile()
         await _wait_for_context_condition(
@@ -468,10 +466,18 @@ async def test_production_bounded_rail_resize_reconciles_geometry_and_focus() ->
         assert sources.region.contains_region(sources.hint.region)
 
         original_section = sources
+        content.update("\n".join(f"recomposed source {row}" for row in range(24)))
         await sources.recompose()
         await _wait_for_context_condition(
             pilot,
-            lambda: not sources._reconcile_scheduled,
+            lambda: (
+                sources.desired_content_lines == 25
+                and sources.viewport.content_region.height == 20
+                and sources.viewport.max_scroll_y == 5
+                and sources.viewport.scroll_y == 5
+                and sources.hint.display
+                and not sources._reconcile_scheduled
+            ),
         )
         assert (
             inspector.query_one(
@@ -480,11 +486,15 @@ async def test_production_bounded_rail_resize_reconciles_geometry_and_focus() ->
             is original_section
         )
 
-        await target.remove()
-        await sources.viewport.remove_children()
-        await sources.viewport.mount(
-            Static("\n".join(f"shrunk source {row}" for row in range(10)))
+        await content.remove()
+        replacement = Button(
+            "replacement source action", id="production-resize-source-replacement"
         )
+        await sources.viewport.mount(
+            Static("\n".join(f"shrunk source {row}" for row in range(9))),
+            replacement,
+        )
+        await target.remove()
         sources.request_reconcile()
         inspector.request_outer_reconcile()
         await _wait_for_context_condition(
@@ -497,10 +507,7 @@ async def test_production_bounded_rail_resize_reconciles_geometry_and_focus() ->
                 and not inspector._outer_reconcile_scheduled
             ),
         )
-        focused = pilot.app.focused
-        assert focused is not target
-        assert focused is not None and focused.is_mounted
-        assert focused is inspector or inspector in focused.ancestors
+        assert pilot.app.focused is replacement
 
 
 @pytest.mark.asyncio

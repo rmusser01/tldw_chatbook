@@ -3611,36 +3611,6 @@ ConsoleBoundedSection {
     text-style: italic;
 }
 
-/* TASK-15110 (owner ruling: cap sections, scroll inside). With every
-   section expanded the left rail's virtual height ran ~3x its viewport and
-   Conversations started ~20 rows below the fold with no cue. Each section
-   body now takes a fixed share of the rail viewport and scrolls its own
-   overflow -- every section HEADER stays on-screen at any rail height, and
-   the internal scrollbar is the cue the outer scroll never had. 20% x 4
-   sections + 4 header rows fits the ~29-row body at 160x48; taller
-   terminals scale the share. Scoped to the LEFT rail: the Inspector and
-   Library rails share this class but not the overflow problem. Gutter kept
-   stable for the same width-stability contract as the rail body's own
-   scrollbar (TASK-1191). */
-#console-left-rail-body .console-rail-section-body {
-    max-height: 20%;
-    overflow-y: auto;
-    overflow-x: hidden;
-    /* The reserved gutter REPLACES the body's right padding rather than
-       adding to it -- the session rows' width contract (12-col label +
-       10-col value + chrome) spends the rail's full 30 columns, and an
-       extra reserved column re-clipped the Workspace value (caught by
-       test_session_rows_fit_inside_the_rail). The gutter column doubles
-       as the right margin; the scrollbar draws in it only on overflow. */
-    padding-right: 0;
-    scrollbar-gutter: stable;
-    scrollbar-size: 1 1;
-    scrollbar-background: $ds-surface-panel;
-    scrollbar-color: $ds-grid-line;
-    scrollbar-color-hover: $ds-grid-line;
-    scrollbar-color-active: $ds-action-focus;
-}
-
 .console-model-section-line {
     height: auto;
     min-height: 1;

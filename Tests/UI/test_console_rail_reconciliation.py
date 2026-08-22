@@ -400,6 +400,68 @@ async def test_bounded_rail_shell_regions_are_compositor_contained(
 
 
 @pytest.mark.asyncio
+async def test_production_content_demand_counts_internal_box_only() -> None:
+    """Internal padding and margins count in D; external chrome does not."""
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = _ProductionConsoleHarness(app)
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        context = await _open_all_production_context_sections(host, pilot)
+        inspector = await _open_production_inspector(host, pilot)
+        tray = inspector.query_one(
+            "#console-staged-context-tray", ConsoleStagedContextTray
+        )
+        sources = tray.query_one(
+            "#console-bounded-section-sources", ConsoleBoundedSection
+        )
+        await sources.viewport.remove_children()
+        content = Static(
+            "\n".join(f"controlled content {row}" for row in range(18)),
+            id="production-demand-box",
+        )
+        content.styles.padding = (1, 0)
+        content.styles.margin = (1, 0)
+        await sources.viewport.mount(content)
+        sources.request_reconcile()
+        inspector.request_outer_reconcile()
+        await _wait_for_rail_condition(
+            pilot,
+            context,
+            lambda: (
+                not sources._reconcile_scheduled
+                and not inspector._outer_reconcile_scheduled
+            ),
+        )
+
+        assert content.virtual_region.height == 20
+        assert content.virtual_region.bottom == 21
+        assert content.virtual_region_with_margin.bottom == 22
+        assert sources.desired_content_lines == 22
+        assert sources.viewport.content_region.height == 20
+        assert sources.hint.display
+        header = tray.query_one(".console-staged-context-header")
+        assert header not in sources.viewport.children
+        assert sources.hint not in sources.viewport.children
+
+        header.styles.margin = (2, 0)
+        sources.hint.styles.margin = (3, 0)
+        sources.request_reconcile()
+        inspector.request_outer_reconcile()
+        await _wait_for_rail_condition(
+            pilot,
+            context,
+            lambda: (
+                sources.desired_content_lines == 22
+                and sources.hint.display
+                and not inspector._outer_reconcile_scheduled
+            ),
+        )
+        assert sources.desired_content_lines == 22
+
+
+@pytest.mark.asyncio
 async def test_production_inspector_counterfactual_ten_eleven_ten_reconciles() -> None:
     """The real Inspector adds and removes its pinned slot without feedback."""
 
@@ -513,15 +575,6 @@ async def test_production_css_uses_uncompressed_header_demand_and_reaches_every_
                 )
                 viewport = bounded.viewport
                 hint = bounded.hint
-                expected_demand = max(
-                    (
-                        child.virtual_region_with_margin.bottom
-                        for child in viewport.children
-                        if child.display
-                    ),
-                    default=0,
-                )
-                assert bounded.desired_content_lines == expected_demand
                 assert hint not in viewport.children
                 assert bounded.region.contains_region(viewport.region), (
                     section_id,
