@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from tldw_chatbook.Chat.console_library_policy import (
@@ -55,6 +57,38 @@ def test_policy_read_keeps_a_valid_durable_policy_and_revision():
         policy_revision=7,
         source="durable",
     )
+
+
+@pytest.mark.parametrize(
+    "invalid_field",
+    [
+        {"conversation_id": 7},
+        {"auto_retrieve": "automatic"},
+        {"assistant_access": "allowed"},
+        {"policy_revision": True},
+        {"updated_at": 7},
+    ],
+)
+def test_policy_read_rejects_malformed_durable_policy_dataclass(invalid_field):
+    """Runtime-invalid dataclass fields must not become durable authority."""
+    policy = replace(
+        ConsoleConversationLibraryPolicy(
+            conversation_id="conversation-1",
+            auto_retrieve=ConsoleAutoRetrieve.AUTOMATIC,
+            assistant_access=ConsoleAssistantLibraryAccess.ALLOWED,
+            policy_revision=7,
+            updated_at="2026-08-22T12:00:00Z",
+        ),
+        **invalid_field,
+    )
+
+    result = normalize_policy_read(policy)
+
+    assert result.durable_policy is None
+    assert result.snapshot.source == "unavailable"
+    assert result.snapshot.error_code == "corrupt_policy"
+    assert result.snapshot.auto_retrieve is ConsoleAutoRetrieve.NEVER
+    assert result.snapshot.assistant_access is ConsoleAssistantLibraryAccess.BLOCKED
 
 
 def test_policy_read_uses_safe_missing_snapshot_when_no_row_exists():

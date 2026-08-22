@@ -130,6 +130,20 @@ def _safe_snapshot(
     )
 
 
+def _is_valid_durable_policy(policy: ConsoleConversationLibraryPolicy) -> bool:
+    """Return whether a runtime dataclass instance satisfies its wire contract."""
+    return (
+        isinstance(policy.conversation_id, str)
+        and bool(policy.conversation_id.strip())
+        and isinstance(policy.auto_retrieve, ConsoleAutoRetrieve)
+        and isinstance(policy.assistant_access, ConsoleAssistantLibraryAccess)
+        and type(policy.policy_revision) is int
+        and policy.policy_revision >= 0
+        and isinstance(policy.updated_at, str)
+        and bool(policy.updated_at.strip())
+    )
+
+
 def normalize_policy_read(raw_policy: object) -> ConsoleLibraryPolicyReadResult:
     """Normalize one repository read without treating failure as permission.
 
@@ -141,7 +155,9 @@ def normalize_policy_read(raw_policy: object) -> ConsoleLibraryPolicyReadResult:
         A durable snapshot for a valid row, otherwise a safe Never/Blocked
         snapshot with bounded error information.
     """
-    if isinstance(raw_policy, ConsoleConversationLibraryPolicy):
+    if isinstance(raw_policy, ConsoleConversationLibraryPolicy) and _is_valid_durable_policy(
+        raw_policy
+    ):
         policy = raw_policy
         return ConsoleLibraryPolicyReadResult(
             snapshot=ConsoleLibraryPolicySnapshot(

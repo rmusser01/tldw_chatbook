@@ -1537,9 +1537,11 @@ def _load_settings_uncached(
     final_chat_defaults_cli = copy.deepcopy(get_toml_section("chat_defaults"))
     if not isinstance(final_chat_defaults_cli, dict):
         final_chat_defaults_cli = {}
-    final_chat_defaults_cli["rag_auto_retrieve_on_send"] = coerce_bool_setting(
-        final_chat_defaults_cli.get("rag_auto_retrieve_on_send", False),
-        False,
+    legacy_auto_retrieve = final_chat_defaults_cli.get(
+        "rag_auto_retrieve_on_send", False
+    )
+    final_chat_defaults_cli["rag_auto_retrieve_on_send"] = (
+        legacy_auto_retrieve if type(legacy_auto_retrieve) is bool else False
     )
     final_character_defaults_cli = get_toml_section("character_defaults")
     final_notes_settings_cli = get_toml_section("notes")
@@ -3071,6 +3073,7 @@ shutdown_grace_seconds = 120.0
 [console]
 collapse_large_pastes = true  # Display large pasted chunks compactly in Console composer
 stack_collapsed_rail_labels = false  # Use compact stacked labels on collapsed Console rails
+assistant_library_access_default = false  # New Console sessions block assistant Library access
 paste_collapse_threshold = 50  # Collapse pasted/inserted chunks only when longer than this many characters
 local_tools_enabled = true      # workspace, web, and Watchlists agent tools; every call still uses MCP Ask/Allow/Off permissions
 # Root-source byte limit; allowed range is 1-1048576 (1 MiB).
@@ -7008,7 +7011,7 @@ def load_console_library_migration_seed(
         else False
     )
     return ConsoleLibraryMigrationSeed(
-        auto_retrieve_on_send=coerce_bool_setting(raw_value, False)
+        auto_retrieve_on_send=raw_value if type(raw_value) is bool else False
     )
 
 

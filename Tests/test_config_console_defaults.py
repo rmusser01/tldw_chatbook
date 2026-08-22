@@ -76,6 +76,18 @@ def test_console_large_paste_collapse_defaults_enabled():
     )
 
 
+def test_console_assistant_library_access_default_is_false():
+    """Fresh Console settings default assistant Library access to blocked."""
+    template = tomllib.loads(config_module.CONFIG_TOML_CONTENT)
+
+    assert template["console"]["assistant_library_access_default"] is False
+    assert (
+        config_module.DEFAULT_CONFIG_FROM_TOML["console"]
+        ["assistant_library_access_default"]
+        is False
+    )
+
+
 def test_legacy_console_rag_auto_retrieve_template_default_is_false():
     """Fresh sessions begin with the pre-upgrade automatic-retrieval setting off."""
     template = tomllib.loads(config_module.CONFIG_TOML_CONTENT)
@@ -107,7 +119,7 @@ def test_legacy_console_rag_auto_retrieve_round_trips_as_a_strict_bool(
     assert seed.auto_retrieve_on_send is value
 
 
-@pytest.mark.parametrize("raw_value", ['"sideways"', "42", "true"])
+@pytest.mark.parametrize("raw_value", ['"sideways"', "42", '"true"'])
 def test_malformed_legacy_console_rag_auto_retrieve_value_falls_back_safely(
     tmp_path, monkeypatch, raw_value
 ):
@@ -123,6 +135,15 @@ def test_malformed_legacy_console_rag_auto_retrieve_value_falls_back_safely(
     seed = config_module.load_console_library_migration_seed(settings)
 
     assert settings["chat_defaults"]["rag_auto_retrieve_on_send"] is False
+    assert seed.auto_retrieve_on_send is False
+
+
+def test_migration_seed_rejects_string_boolean_from_an_already_loaded_config():
+    """Config-looking strings cannot bypass the strict migration boundary."""
+    seed = config_module.load_console_library_migration_seed(
+        {"chat_defaults": {"rag_auto_retrieve_on_send": "true"}}
+    )
+
     assert seed.auto_retrieve_on_send is False
 
 
