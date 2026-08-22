@@ -128,3 +128,49 @@ def test_ambient_pathspec_vars_do_not_break_every_invocation(
     (repo / "a.txt").write_text("edited\n")
     result = _run_user_git(repo, "diff", "HEAD", "--", "a.txt")
     assert "a.txt" in result.stdout, result.stderr
+
+
+def test_remote_url_with_a_space_is_not_truncated(repo, tmp_path):
+    """Qodo #2 (PR #1959): `remote -v` is `<name>\\t<url> (push)`, so the URL
+    must be recovered by stripping the ` (push)` SUFFIX — splitting on the
+    first space truncates any local-path remote containing one.
+
+    Verified before the fix: a remote at `.../with space.git` was reported
+    as `.../with`, a path that does not exist.
+    """
+    spaced = tmp_path / "with space.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(spaced)], check=True)
+    _git(repo, "remote", "add", "spaced", str(spaced))
+
+    info = detect_git_workspace(repo)
+    urls = dict(info.remotes)
+    assert urls["spaced"] == str(spaced), (
+        f"the URL must survive its space; got {urls['spaced']!r}"
+    )
+
+
+def test_all_push_urls_are_carried_for_a_multi_pushurl_remote(repo, tmp_path):
+    """A remote may configure SEVERAL `pushurl`s; a push reaches every one.
+
+    Verified against real git: two `--add remote.origin.pushurl` entries
+    make `remote -v` emit two `(push)` lines for `origin`. Naming only the
+    first would make the confirm dialog state a destination set that is
+    smaller than reality — worse than saying nothing, because the user
+    would believe it.
+    """
+    first = tmp_path / "first.git"
+    second = tmp_path / "second.git"
+    for bare in (first, second):
+        subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+    _git(repo, "remote", "add", "origin", str(first))
+    _git(repo, "config", "--add", "remote.origin.pushurl", str(first))
+    _git(repo, "config", "--add", "remote.origin.pushurl", str(second))
+
+    info = detect_git_workspace(repo)
+    all_urls = dict(info.remote_push_urls)
+    assert set(all_urls["origin"]) == {str(first), str(second)}, (
+        f"every push destination must be carried; got {all_urls!r}"
+    )
+    # The de-duplicated view stays one-entry-per-remote, because the
+    # sole-remote derivations key off its LENGTH.
+    assert len(info.remotes) == 1, info.remotes

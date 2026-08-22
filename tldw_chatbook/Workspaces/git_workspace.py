@@ -105,6 +105,11 @@ class GitWorkspaceInfo:
     remotes: tuple[tuple[str, str], ...]
     ahead: int
     behind: int
+    #: Every push destination per remote (TASK-19701). `remotes` keeps ONE
+    #: entry per remote because the sole-remote derivations key off its
+    #: length; a remote with several `pushurl`s reaches all of these.
+    #: Defaulted so existing constructions stay valid.
+    remote_push_urls: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -244,26 +249,60 @@ def _run_user_git(
     return GitCmdResult(proc.returncode, proc.stdout, proc.stderr)
 
 
-def _parse_remotes(remote_v_output: str) -> tuple[tuple[str, str], ...]:
-    """Parse ``remote -v`` output into ordered, unique ``(name, url)`` push pairs.
+def _parse_remote_push_urls(
+    remote_v_output: str,
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """Parse ``remote -v`` into ``(name, (every push URL))`` pairs.
 
-    Each line is ``<name>\\t<url> (fetch|push)``. Only ``(push)`` lines are
-    kept (fetch and push URLs are usually identical; the push URL is the
-    one that matters for this arc's actions).
+    Each line is ``<name>\\t<url> (fetch|push)``; only ``(push)`` lines are
+    kept (the push URL is the one this arc's actions use, and git has
+    already resolved ``remote.<name>.pushurl`` and
+    ``url.<other>.pushInsteadOf`` into it).
+
+    Two parsing details, both real defects found by Qodo on PR #1959 and
+    both reproduced against live git first:
+
+    * the URL is recovered by stripping the trailing ``" (push)"``, NOT by
+      splitting on the first space -- a local-path remote at
+      ``/tmp/with space.git`` was otherwise reported as ``/tmp/with``, a
+      path that does not exist;
+    * a remote may configure SEVERAL ``pushurl`` entries, and git emits one
+      ``(push)`` line per destination -- a push reaches all of them, so
+      keeping only the first understates where the user's code is about to
+      go.
     """
-    seen: dict[str, str] = {}
+    ordered: dict[str, list[str]] = {}
     for line in remote_v_output.splitlines():
         line = line.rstrip()
-        if not line or "(push)" not in line:
+        if not line.endswith("(push)"):
             continue
         name_and_rest = line.split("\t", 1)
         if len(name_and_rest) != 2:
             continue
         name, rest = name_and_rest
-        url = rest.split(" ", 1)[0]
-        if name not in seen:
-            seen[name] = url
-    return tuple(seen.items())
+        url = rest[: -len(" (push)")].rstrip()
+        if not url:
+            continue
+        urls = ordered.setdefault(name, [])
+        if url not in urls:
+            urls.append(url)
+    return tuple((name, tuple(urls)) for name, urls in ordered.items())
+
+
+def _parse_remotes(remote_v_output: str) -> tuple[tuple[str, str], ...]:
+    """One ``(name, url)`` pair per remote -- the de-duplicated view.
+
+    Kept one-entry-per-remote deliberately: ``_resolve_push_remote`` and
+    the push dialog's "do I need to ask which remote?" check both key off
+    this tuple's LENGTH, so letting a multi-``pushurl`` remote appear twice
+    would make a single remote look like a choice between two. The full
+    destination set lives in :func:`_parse_remote_push_urls`.
+    """
+    return tuple(
+        (name, urls[0])
+        for name, urls in _parse_remote_push_urls(remote_v_output)
+        if urls
+    )
 
 
 def detect_git_workspace(root: Path) -> GitWorkspaceInfo | GitWorkspaceRefusal | None:
@@ -317,7 +356,12 @@ def _detect_git_workspace(root: Path) -> GitWorkspaceInfo | GitWorkspaceRefusal 
     unborn = verify_result.returncode != 0
 
     remote_result = _run_user_git(root, "remote", "-v", check=False)
-    remotes = _parse_remotes(remote_result.stdout) if remote_result.returncode == 0 else ()
+    _push_urls = (
+        _parse_remote_push_urls(remote_result.stdout)
+        if remote_result.returncode == 0
+        else ()
+    )
+    remotes = tuple((name, urls[0]) for name, urls in _push_urls if urls)
 
     upstream: str | None = None
     upstream_remote: str | None = None
@@ -369,6 +413,7 @@ def _detect_git_workspace(root: Path) -> GitWorkspaceInfo | GitWorkspaceRefusal 
         upstream=upstream,
         upstream_remote=upstream_remote,
         remotes=remotes,
+        remote_push_urls=_push_urls,
         ahead=ahead,
         behind=behind,
     )

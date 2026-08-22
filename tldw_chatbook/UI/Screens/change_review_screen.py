@@ -4596,12 +4596,64 @@ class ChangeGitPushModal(SafeModalDismissMixin, ModalScreen["dict | None"]):
             return f"{head} → {info.upstream}"
         if info.upstream is not None:
             target = info.upstream_remote or "the upstream's remote"
-            return f"{head} ↑{info.ahead} → {info.upstream}  ·  pushes to {target}"
+            return (
+                f"{head} ↑{info.ahead} → {info.upstream}  ·  pushes to "
+                f"{self._destination_label(root, target)}"
+            )
         if self._needs_remote_choice(root):
             return f"{head}  ·  no upstream — choose a remote to track"
         names = self._remote_names(root)
         target = names[0] if names else "the remote"
-        return f"{head}  ·  no upstream — will push -u to {target}"
+        return (
+            f"{head}  ·  no upstream — will push -u to "
+            f"{self._destination_label(root, target)}"
+        )
+
+    def _destination_label(self, root: str, remote_name: str) -> str:
+        """``<name>`` plus the URL the push will ACTUALLY reach.
+
+        TASK-19701. `remote.<name>.pushurl` and `url.<other>.pushInsteadOf`
+        both send a push to a different host than the fetch URL. Naming
+        only the remote's alias left this dialog telling the user less than
+        `git remote -v` would — on the one screen whose whole job is to
+        state what a button will do before it is pressed.
+
+        The effective URL needs no new git call: detection parses
+        `remote -v`'s (push) line, which git already resolves through both
+        settings (verified against real git for each).
+
+        Decision recorded on the task (AC #1): SURFACE, never refuse. Both
+        settings are legitimate, widely used configuration — fetch over
+        https and push over ssh is a standard corporate setup — so refusing
+        would break ordinary workflows to guard against nothing this app is
+        entitled to override. The URL is shown for every push, redirected
+        or not, so the disclosure reads as normal copy rather than an alarm
+        that only appears in the unusual case.
+
+        Args:
+            root: The root currently targeted.
+            remote_name: The remote the push will use.
+
+        Returns:
+            ``"<name> (<url>)"``, or just the name when no URL is known.
+        """
+        try:
+            info = self._infos[root]
+            # EVERY destination, not just the first: a remote may configure
+            # several `pushurl`s and a push reaches all of them (Qodo #2,
+            # PR #1959 — naming one of two is a smaller truth than silence,
+            # because the user would believe it).
+            all_urls = dict(getattr(info, "remote_push_urls", ()) or ())
+            urls = tuple(all_urls.get(remote_name) or ())
+            if not urls:
+                urls = tuple(
+                    url for name, url in info.remotes if name == remote_name
+                )
+        except (KeyError, AttributeError, TypeError, ValueError):
+            return remote_name
+        if not urls:
+            return remote_name
+        return f"{remote_name} ({', '.join(urls)})"
 
     # -- layout -------------------------------------------------------------
 
