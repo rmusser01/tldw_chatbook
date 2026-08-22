@@ -208,6 +208,7 @@ def _initialize_schema(connection: sqlite3.Connection) -> None:
 
     try:
         if current_version == SCHEMA_VERSION:
+            connection.execute("BEGIN")
             for statement in _V1_INDEX_STATEMENTS:
                 connection.execute(statement)
         else:
@@ -229,9 +230,27 @@ def notes_sync_state_transaction(
     *,
     immediate: bool = False,
 ) -> Iterator[sqlite3.Connection]:
-    """Open the shared private schema and run one operation transaction."""
+    """Open the shared schema, commit it, then run one operation transaction.
 
-    connection = connect_private_sqlite("notes.sync_state", Path(database_path))
+    Args:
+        database_path: Profile-local path to the private sync-state database.
+        immediate: Reserve SQLite's writer slot for the operation when true.
+
+    Yields:
+        The active private connection inside the operation transaction.
+
+    Raises:
+        NotesSyncStateSchemaError: If the database cannot be opened or its
+            schema cannot be initialized safely.
+        Exception: Re-raises operation failures after rolling back.
+    """
+
+    try:
+        connection = connect_private_sqlite("notes.sync_state", Path(database_path))
+    except (sqlite3.Error, OSError):
+        raise NotesSyncStateSchemaError(
+            "The private Notes sync-state database could not be opened."
+        ) from None
     try:
         try:
             connection.execute("PRAGMA foreign_keys = ON")
