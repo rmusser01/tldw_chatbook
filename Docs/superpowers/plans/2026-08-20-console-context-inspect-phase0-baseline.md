@@ -81,7 +81,7 @@ Disposition vocabulary: **implement now** means a reproduced, decision-compatibl
 
 **Files:**
 - Create: `backlog/tasks/task-19639 - Keep-Console-workspace-geometry-inside-the-viewport-at-exactly-100-columns.md`
-- Create: `backlog/tasks/task-19640 - Add-an-Inspector-overflow-fold-hint.md`
+- Create: `backlog/tasks/task-19428 - Bound-Console-Context-and-Inspector-sections-with-20-line-scroll-limits.md`
 
 1. Re-sweep all remote refs, worktrees, and local task files immediately before filing.
 2. Make each task depend on TASK-19638.

@@ -44,6 +44,37 @@ Where this page's controls live:
 
 ## Features & controls
 
+### Reading long Context and Inspector sections
+
+Each open, named section in the Context and Inspector rails shows up to 20
+lines of content, then scrolls within that section. The cues tell you which
+area to move:
+
+- **▼ more — scroll** means the current section has more content. Scroll over
+  that section, or Tab to it and use the arrow keys, Page Up/Page Down, Home,
+  or End.
+- **▼ more sections — scroll** means later rail sections remain below. Scroll
+  the whole Context or Inspector rail, not the section you are currently
+  reading.
+
+Tab and Shift+Tab continue in normal order through controls, an overflowing
+section, and controls inside it; sections that fit do not become extra Tab
+stops. In the Inspector, `n` and `p` move to the next or previous named section
+without wrapping. They work only while the Inspector has focus and never take
+over an editable field. The footer shows **n/p Sections** while this is active,
+and **F1** shows the full shortcut list.
+
+On short terminals, Context scrolls as a whole so every header and open
+section remains reachable. An open section without room to show its contents
+is marked **· no room**; press its **[>]** control to prioritize it temporarily.
+This does not alter your saved open/closed choices. Section and rail scroll
+positions, and the temporary priority, last only for the current session. The
+full-width layout on larger terminals remains primary, with these safeguards
+available as the terminal narrows or shortens.
+
+The **Project** status row (for Project Instructions) and retrieval **Scope**
+remain compact rows; they do not expand into separate 20-line sections.
+
 ### The Conversation Inspector
 
 Click the status row's cost chip, press **Ctrl+Shift+P**, or run
@@ -465,6 +496,9 @@ Inspector shows what's in play:
 |---|---|
 | Ctrl+Shift+P | Open the Conversation Inspector on **Next Send** |
 | r (on **Next Send**) / Escape | Refresh the snapshot / close the Inspector |
+| Tab / Shift+Tab (in either rail) | Move through controls and any overflowing section in normal order |
+| Arrow keys / Page Up / Page Down / Home / End | Scroll within a focused overflowing section |
+| n / p (Inspector focused) | Move to the next / previous named section, without wrapping or taking over editable input |
 | `/prompt [name]` | Replace the draft with a saved prompt (picker when ambiguous) |
 | `/system [name]` | Edit the session system prompt, or apply a saved prompt's system part |
 | `/prefill [pin\|clear] [text]` | Set, pin, clear, or report the start of the assistant's reply |

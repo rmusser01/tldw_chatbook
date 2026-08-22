@@ -18,6 +18,11 @@ from .console_composer_bar import (
 )
 from .console_command_popup import ConsoleCommandPopup
 from .console_background_effect import ConsoleBackgroundEffect, ConsoleTranscriptSurface
+from .console_bounded_section import ConsoleBoundedSection
+from .console_inspector_ownership import (
+    InspectorOwnershipPolicy,
+    UnownedInspectorContentError,
+)
 from .console_changed_files_section import (
     ConsoleChangedFilesSection,
     ConsoleChangedFilesState,
@@ -68,6 +73,7 @@ __all__ = [
     "ConsoleDraftStash",
     "ConsoleCommandPopup",
     "ConsoleBackgroundEffect",
+    "ConsoleBoundedSection",
     "ConsoleChangedFilesSection",
     "ConsoleChangedFilesState",
     "ConsoleCitationSourceRow",
@@ -76,6 +82,7 @@ __all__ = [
     "ConsoleContextControlState",
     "ConsoleEditMessageModal",
     "ConsoleEditResult",
+    "InspectorOwnershipPolicy",
     "ConsoleRailHandle",
     "ConsolePromptsModal",
     "ConsolePromptsState",
@@ -101,6 +108,7 @@ __all__ = [
     "ProjectInstructionNoticeModal",
     "ProjectInstructionSetupModal",
     "ProjectInstructionSetupResult",
+    "UnownedInspectorContentError",
     "build_console_citation_source_rows",
     "build_console_context_control_state",
 ]

@@ -8,7 +8,7 @@ labels:
   - console
   - ux
 dependencies:
-  - TASK-18912
+  - TASK-19638
 priority: high
 ---
 
@@ -31,7 +31,7 @@ Prevent the reproduced exact-100-column Console rail state from expanding the gr
 ## Design
 
 <!-- SECTION:DESIGN:BEGIN -->
-Approved design: `Docs/superpowers/specs/2026-08-20-task-18913-console-exact-100-column-containment-design.md`.
+Approved design: `Docs/superpowers/specs/2026-08-20-task-19639-console-exact-100-column-containment-design.md`.
 <!-- SECTION:DESIGN:END -->
 
 ## Implementation Plan
@@ -44,7 +44,7 @@ Approved design: `Docs/superpowers/specs/2026-08-20-task-18913-console-exact-100
 5. Correct stale width arithmetic and compact-override comments without changing other rail behavior.
 6. Mutation-check both corrections independently, run focused/full verification, and record evidence before closing the task.
 
-Detailed plan: `Docs/superpowers/plans/2026-08-20-task-18913-console-exact-100-column-containment.md`.
+Detailed plan: `Docs/superpowers/plans/2026-08-20-task-19639-console-exact-100-column-containment.md`.
 
 ADR required: no
 

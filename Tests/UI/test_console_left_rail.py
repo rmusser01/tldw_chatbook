@@ -26,6 +26,9 @@ from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
+from tldw_chatbook.Widgets.Console.console_bounded_section import (
+    ConsoleBoundedSection,
+)
 from tldw_chatbook.Widgets.destination_rail import DestinationRailSectionHeader
 
 
@@ -196,6 +199,114 @@ async def test_context_sections_are_peer_sections_in_requested_order():
             "Workspaces",
             "Conversations",
         ]
+
+
+@pytest.mark.asyncio
+async def test_context_direct_bodies_use_seven_bounded_wrappers_in_dom_order():
+    """Every direct body is bounded; pinned fleet chrome is never one of them."""
+
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        body = screen.query_one("#console-left-rail-body")
+        sections = list(body.query("ConsoleBoundedSection"))
+        direct_children = list(body.children)
+
+        assert all(isinstance(section, ConsoleBoundedSection) for section in sections)
+        assert [section.section_id for section in sections] == [
+            "session",
+            "workspace",
+            "conversations",
+            "model",
+            "agent",
+            "details",
+            "character",
+        ]
+        assert [
+            section.query_one(".console-rail-section-body").id for section in sections
+        ] == [
+            "console-rail-section-body-session",
+            "console-rail-section-body-workspace",
+            "console-rail-section-body-conversations",
+            "console-rail-section-body-model",
+            "console-rail-section-body-agent",
+            "console-rail-section-body-details",
+            "console-rail-section-body-character",
+        ]
+        assert [
+            (
+                direct_children[index].section_id,
+                direct_children[index + 1].section_id,
+            )
+            for index in range(0, len(direct_children), 2)
+        ] == [
+            (section_id, section_id)
+            for section_id in [
+                "session",
+                "workspace",
+                "conversations",
+                "model",
+                "agent",
+                "details",
+                "character",
+            ]
+        ]
+        assert all(
+            isinstance(direct_children[index], DestinationRailSectionHeader)
+            and isinstance(direct_children[index + 1], ConsoleBoundedSection)
+            for index in range(0, len(direct_children), 2)
+        )
+
+        fleet = screen.query_one("#console-agent-fleet-summary")
+        assert fleet.parent is screen.query_one("#console-left-rail")
+        assert not list(fleet.query("ConsoleBoundedSection"))
+        assert fleet not in list(body.walk_children())
+
+
+@pytest.mark.asyncio
+async def test_character_absence_omits_its_bounded_descriptor_without_phantom_body():
+    """The config-gated Character section vanishes from the mounted allocation set."""
+
+    async with make_console_pilot() as pilot:
+        rail = pilot.app.screen.query_one("#console-left-rail")
+        rail._show_character_section = False
+        await rail.recompose()
+        await pilot.pause()
+
+        assert [
+            section.section_id
+            for section in rail.query("#console-left-rail-body ConsoleBoundedSection")
+        ] == [
+            "session",
+            "workspace",
+            "conversations",
+            "model",
+            "agent",
+            "details",
+        ]
+        direct_children = list(rail.query_one("#console-left-rail-body").children)
+        assert [
+            (
+                direct_children[index].section_id,
+                direct_children[index + 1].section_id,
+            )
+            for index in range(0, len(direct_children), 2)
+        ] == [
+            (section_id, section_id)
+            for section_id in [
+                "session",
+                "workspace",
+                "conversations",
+                "model",
+                "agent",
+                "details",
+            ]
+        ]
+        assert all(
+            isinstance(direct_children[index], DestinationRailSectionHeader)
+            and isinstance(direct_children[index + 1], ConsoleBoundedSection)
+            for index in range(0, len(direct_children), 2)
+        )
+        assert not rail.query("#console-bounded-section-character")
 
 
 @pytest.mark.asyncio

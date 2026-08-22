@@ -388,6 +388,51 @@ async def test_compact_workspace_grid_children_are_contained() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    ("size", "expected_displayed"),
+    [
+        pytest.param(
+            (120, 30),
+            {
+                "console-context-rail-handle",
+                "console-main-column",
+                "console-right-rail",
+            },
+            id="120x30-default-inspector-priority",
+        ),
+        pytest.param(
+            (80, 24),
+            {"console-main-column"},
+            id="80x24-default-single-pane",
+        ),
+    ],
+)
+async def test_bounded_rail_default_shell_matrix_is_compositor_contained(
+    size: tuple[int, int],
+    expected_displayed: set[str],
+) -> None:
+    """Default compact states keep hidden rails out of the hit-test plane."""
+
+    async with make_console_pilot(size=size) as pilot:
+        screen = pilot.app.screen
+        _assert_workspace_state_is_contained(
+            screen,
+            expected_displayed=expected_displayed,
+            default_context_only=False,
+        )
+        left = screen.query_one("#console-left-rail")
+        right = screen.query_one("#console-right-rail")
+        if size == (80, 24):
+            assert left.display is False
+            assert right.display is False
+            assert screen.query_one("#console-context-rail-handle").display is False
+            assert screen.query_one("#console-inspector-rail-handle").display is False
+        else:
+            assert left.display is False
+            assert right.display is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     (
         "stored_left_open",
         "stored_right_open",

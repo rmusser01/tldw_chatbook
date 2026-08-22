@@ -402,6 +402,7 @@ from ...Widgets.Chat_Widgets.skill_install_confirm_card import SkillInstallConfi
 from ...Widgets.Chat_Widgets.skill_script_confirm_card import SkillScriptConfirmCard
 from ...Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 from ...Widgets.Console import (
+    ConsoleBoundedSection,
     ConsoleChangedFilesSection,
     ConsoleChangedFilesState,
     ConsoleCitationSourcesModal,
@@ -2131,7 +2132,10 @@ class ChatScreen(BaseAppScreen):
         close decision, persistence, and Inspector-rail interaction stay
         here unchanged: they reach beyond the rail's own DOM.
         """
-        self._toggle_console_rail_section(message.section_id)
+        self._toggle_console_rail_section(
+            message.section_id,
+            next_open=message.opened,
+        )
 
     @on(ConsoleLeftRail.ReactionPickerRequested)
     async def _console_reaction_picker_requested(
@@ -2930,6 +2934,12 @@ class ChatScreen(BaseAppScreen):
         # cap so the help copy tracks a user override instead of quoting the
         # baked-in default.
         max_parallel_runs = self._ensure_console_chat_controller().max_parallel_runs
+        shortcut_groups = CONSOLE_WORKBENCH_SHORTCUT_GROUPS
+        if self._console_inspector_active():
+            shortcut_groups = (
+                *shortcut_groups,
+                ("Inspector", (("n / p", "next / previous section"),)),
+            )
         self.app.push_screen(
             WorkbenchHelpPanel(
                 WorkbenchHelpState(
@@ -2938,7 +2948,7 @@ class ChatScreen(BaseAppScreen):
                     actions=workbench_state.actions,
                     notes_heading="Agents",
                     notes=_console_workbench_agents_notes(max_parallel_runs),
-                    shortcut_groups=CONSOLE_WORKBENCH_SHORTCUT_GROUPS,
+                    shortcut_groups=shortcut_groups,
                 )
             )
         )
@@ -3145,7 +3155,19 @@ class ChatScreen(BaseAppScreen):
             else "focus"
         )
         shortcuts = (("Ctrl+Shift+F", focus_label), *shortcuts)
+        if self._console_inspector_active():
+            shortcuts = (("n/p", "Sections"), *shortcuts)
         self.register_footer_shortcuts(source="console", shortcuts=shortcuts)
+
+    def _console_inspector_active(self) -> bool:
+        """Return whether live focus is the Inspector rail or a descendant."""
+
+        try:
+            rail = self.query_one("#console-right-rail", ConsoleInspectorRail)
+        except (NoMatches, QueryError):
+            return False
+        focused = self.app.focused
+        return isinstance(focused, Widget) and rail.inspector_active(focused)
 
     def _apply_focus_chrome(self) -> None:
         """Mirror the app-level focus_mode flag onto this screen (task-18812).
@@ -4995,6 +5017,29 @@ class ChatScreen(BaseAppScreen):
         system_line.update(line_text)
         system_line.set_class(is_dim, "console-rail-system-line-dim")
         self._console_rail_system_line_last = payload
+        self._request_console_context_allocation_reconcile()
+
+    def _request_console_context_allocation_reconcile(self) -> None:
+        """Safely invalidate the mounted Context allocator after a DOM mutation."""
+
+        try:
+            left_rail = self.query_one("#console-left-rail", ConsoleLeftRail)
+        except (NoMatches, QueryError):
+            return
+        left_rail.request_allocation_reconcile()
+
+    def _request_console_live_work_reconcile(self) -> None:
+        """Settle the swapped Live Work body before its Inspector owner."""
+
+        try:
+            section = self.query_one(
+                "#console-bounded-section-live-work", ConsoleBoundedSection
+            )
+            rail = self.query_one("#console-right-rail", ConsoleInspectorRail)
+        except (NoMatches, QueryError):
+            return
+        section.request_reconcile()
+        rail.request_outer_reconcile()
 
     def _sync_console_settings_summary(self) -> None:
         """Refresh the mounted Console settings summary surfaces if present."""
@@ -5006,6 +5051,7 @@ class ChatScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             pass
         else:
+            # The child owns its bounded-body and rail invalidation.
             summary.sync_state(summary_state)
         provider_value = _summary_row_value(summary_state.provider_row) or "—"
         model_value = _summary_row_value(summary_state.model_row) or "—"
@@ -5049,6 +5095,7 @@ class ChatScreen(BaseAppScreen):
 
         self._sync_console_rail_system_line()
         self._sync_console_agent_section()
+        self._request_console_context_allocation_reconcile()
 
     def _request_console_agent_fleet_sync(self) -> None:
         """Coalesce Agent-fleet-section syncs into one trailing run (task-5).
@@ -5158,6 +5205,7 @@ class ChatScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             return
         self._console_agent_section_last = payload
+        self._request_console_context_allocation_reconcile()
 
     def _focus_console_workspace_conversation_search(self) -> None:
         """Restore focus to the conversation search input when it is mounted."""
@@ -9967,6 +10015,7 @@ class ChatScreen(BaseAppScreen):
                 )
             except QueryError:
                 pass
+            self._request_console_context_allocation_reconcile()
         except Exception:
             # Must never raise: called from `_refresh_active_character_avatar_
             # if_scope_changed` at two sites outside that method's own
@@ -10912,6 +10961,7 @@ class ChatScreen(BaseAppScreen):
             )
 
         self.refresh(layout=True)
+        self._request_console_context_allocation_reconcile()
 
     def _sync_console_rail_visibility_if_changed(
         self,
@@ -11035,12 +11085,18 @@ class ChatScreen(BaseAppScreen):
         self._sync_console_rail_visibility_if_changed(rail_state)
         return rail_state
 
-    def _toggle_console_rail_section(self, section_id: str) -> None:
+    def _toggle_console_rail_section(
+        self,
+        section_id: str,
+        *,
+        next_open: bool | None = None,
+    ) -> None:
         """Flip one left-rail section open state, then sync body and header."""
         if section_id not in CONSOLE_RAIL_SECTION_IDS:
             return
         rail_state = self._current_console_rail_state()
-        next_open = not getattr(rail_state, f"{section_id}_open")
+        if next_open is None:
+            next_open = not getattr(rail_state, f"{section_id}_open")
         if section_id == "agent":
             # TASK-915: track manual collapse/reopen of the Agent section
             # relative to the fleet's own busy signal -- never the
@@ -11060,6 +11116,7 @@ class ChatScreen(BaseAppScreen):
             pass
         else:
             left_rail.apply_section_open(section_id, next_open)
+            self._request_console_context_allocation_reconcile()
         if section_id == "character" and next_open:
             # A collapsed body has `display: none`, so
             # `_character_avatar_available_cols()` measures 0 and
@@ -11135,6 +11192,7 @@ class ChatScreen(BaseAppScreen):
                 self.query_one(
                     "#console-left-rail", ConsoleLeftRail
                 ).sync_workspace_context(state)
+                self._request_console_context_allocation_reconcile()
             # PR #660 review: a full-screen recompose constructs a FRESH tray
             # already carrying the current state, so `state_changed` alone
             # would never re-kick the legacy-alias worker after a recompose —
@@ -11182,6 +11240,7 @@ class ChatScreen(BaseAppScreen):
                 await workspace_context.mount(new_button, before=before_status)
             else:
                 await workspace_context.mount(new_button)
+            self._request_console_context_allocation_reconcile()
 
     @on(ConsoleWorkspaceContextTray.Relabeled)
     def _on_console_workspace_context_relabeled(self) -> None:
@@ -11507,7 +11566,9 @@ class ChatScreen(BaseAppScreen):
             )
         except QueryError:
             return
-        section.update_state(self._build_console_changed_files_state())
+        state = self._build_console_changed_files_state()
+        # The child owns its bounded-body and rail invalidation.
+        section.update_state(state)
 
     def _land_console_changed_files(
         self, conversation_id: "str | None", entries: list, pruned_rows: int
@@ -12106,13 +12167,7 @@ class ChatScreen(BaseAppScreen):
             badge, optional primary action, and payload rows as children.
         """
         card_state = ConsoleLiveWorkStatusCardState.from_launch(launch)
-        children: list[Any] = [
-            Static(
-                card_state.badge_text,
-                id=card_state.badge_id,
-                classes=card_state.badge_classes,
-            )
-        ]
+        children: list[Any] = []
         if card_state.primary_action is not None:
             children.append(
                 Button(
@@ -12126,11 +12181,14 @@ class ChatScreen(BaseAppScreen):
             Static(row.text, id=row.widget_id, classes=row.classes)
             for row in card_state.rows
         )
-        return Container(
+        container = Container(
             *children,
             id=card_state.container_id,
             classes=card_state.container_classes,
         )
+        container.styles.height = "auto"
+        container.styles.min_height = 0
+        return container
 
     @staticmethod
     def _hidden_static(text: str, *, id: str, classes: str = "") -> Static:
@@ -12796,11 +12854,6 @@ class ChatScreen(BaseAppScreen):
         )
         children: list[Any] = [
             Static(
-                readiness.title,
-                id=readiness.title_id,
-                classes=readiness.title_classes,
-            ),
-            Static(
                 self._retrieval._console_library_rag_scope_label(),
                 id="console-library-rag-scope",
                 classes="destination-section",
@@ -13037,14 +13090,15 @@ class ChatScreen(BaseAppScreen):
         swap_completed = False
         try:
             try:
-                rail_body = self.query_one(
-                    "#console-inspector-rail-body", VerticalScroll
+                local_section = self.query_one(
+                    "#console-bounded-section-live-work", ConsoleBoundedSection
                 )
-                # Task-400: the Context (staged sources) tray is pinned at
-                # the TOP of the rail body, so live-work cards keep their
-                # pre-move anchor -- mounted after the run-inspector block,
-                # at the bottom of the rail body.
-                anchor = self.query_one("#console-run-inspector", Vertical)
+                pending_header = self.query_one(
+                    "#console-live-work-status-badge", Static
+                )
+                readiness_header = self.query_one(
+                    "#console-live-work-source-readiness-title", Static
+                )
             except QueryError:
                 return
             for selector in (
@@ -13052,7 +13106,7 @@ class ChatScreen(BaseAppScreen):
                 f"#{SOURCE_READINESS_CARD_ID}",
             ):
                 try:
-                    stale_card = self.query_one(selector)
+                    stale_card = local_section.query_one(selector)
                 except QueryError:
                     continue
                 await stale_card.remove()
@@ -13062,7 +13116,10 @@ class ChatScreen(BaseAppScreen):
                 if launch is not None
                 else self._build_console_live_work_source_readiness_card()
             )
-            await rail_body.mount(card, after=anchor)
+            await local_section.viewport.mount(card)
+            pending_header.display = launch is not None
+            readiness_header.display = launch is None
+            self.call_after_refresh(self._request_console_live_work_reconcile)
             swapped_context = launch
             swap_completed = True
         finally:
@@ -13089,8 +13146,7 @@ class ChatScreen(BaseAppScreen):
         state = self._build_console_staged_context_state(
             self._pending_console_launch_context
         )
-        tray.styles.min_height = 3 if state.is_empty else 4
-        tray.styles.max_height = 6 if state.is_empty else 10
+        # The child owns its bounded-body and rail invalidation.
         tray.sync_state(state)
 
     @work(exclusive=True, group="console-library-rag-search")
@@ -17731,6 +17787,7 @@ class ChatScreen(BaseAppScreen):
             self._pending_console_launch_context
         )
         if inspector is not None:
+            # The child owns all group-body and rail invalidation.
             inspector.sync_state(inspector_state)
         # TASK-18060 Task 5: same in-place sync shape as the run inspector
         # immediately above -- reads only the cached summary, never the
@@ -18237,6 +18294,7 @@ class ChatScreen(BaseAppScreen):
         # badge, so the control-bar stand-in must follow immediately instead
         # of waiting for the next workbench sync.
         self._sync_console_compact_status_marker()
+        self._request_console_context_allocation_reconcile()
 
     def _sync_console_compact_status_marker(self) -> None:
         """Mirror the header status badge into the control bar when compact.

@@ -52,11 +52,16 @@ the compound-widget boundary transparently, proven live in task 3's review.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
+import os
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches, QueryError
+from textual.events import DescendantBlur, DescendantFocus, Key, Resize
+from textual.geometry import Size
 from textual.widget import Widget
-from textual.widgets import Button
+from textual.widgets import Button, Input, Static, TextArea
 
 from ...Chat.console_display_state import (
     ConsoleInspectorState,
@@ -65,9 +70,12 @@ from ...Chat.console_display_state import (
     ConsoleStagedContextState,
 )
 from ...Chat.console_session_settings import ConsoleSettingsSummaryState
+from ...Chat.console_live_work import PENDING_LAUNCH_CARD_ID
 from ...Widgets.Console import (
     ConsoleChangedFilesSection,
     ConsoleChangedFilesState,
+    ConsoleBoundedSection,
+    InspectorOwnershipPolicy,
     ConsoleProjectInstructionStatusRow,
     ConsoleRetrievalScopeRow,
     ConsoleRunInspector,
@@ -78,6 +86,70 @@ from ...Widgets.Console.console_retrieval_scope_row import (
     ROW_ID as CONSOLE_RETRIEVAL_SCOPE_ROW_ID,
 )
 from .frame import frame_console_region
+from .rail_section_layout import outer_hint_required
+
+
+INSPECTOR_OUTER_HINT = "▼ more sections — scroll"
+INSPECTOR_OUTER_HINT_ID = "console-inspector-outer-scroll-hint"
+INSPECTOR_SCROLL_OWNER_CLASS = "console-inspector-scroll-owner"
+
+
+@dataclass(frozen=True)
+class _FocusRecoveryIncident:
+    """Semantic focus snapshot that remains valid across widget replacement."""
+
+    target_id: str | None
+    target_index: int | None
+    remaining_reconcile_passes: int = 2
+
+
+class _InspectorOuterBody(VerticalScroll):
+    """Inspector scroller that invalidates its owner on scroll and resize."""
+
+    def __init__(self, *, on_geometry_changed: Callable[[], None]) -> None:
+        super().__init__(
+            id="console-inspector-rail-body",
+            classes="console-inspector-rail-body",
+            can_focus=True,
+        )
+        self._on_geometry_changed = on_geometry_changed
+
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        super().watch_scroll_y(old_value, new_value)
+        if old_value != new_value:
+            self._on_geometry_changed()
+
+    def on_resize(self, _event: Resize) -> None:
+        self._on_geometry_changed()
+
+    def _size_updated(
+        self,
+        size: Size,
+        virtual_size: Size,
+        container_size: Size,
+        layout: bool = True,
+    ) -> bool:
+        """Invalidate on committed size or virtual-size changes.
+
+        Textual is exact-pinned in this project; this narrow override covers
+        virtual-size-only changes whose ``Resize`` event does not bubble.
+        """
+
+        previous_size = self.size
+        previous_virtual_size = self.virtual_size
+        updated = super()._size_updated(size, virtual_size, container_size, layout)
+        if self.is_mounted and (
+            self.size != previous_size or self.virtual_size != previous_virtual_size
+        ):
+            self._on_geometry_changed()
+        return updated
+
+
+def _resolve_inspector_ownership_policy() -> InspectorOwnershipPolicy:
+    """Resolve the opt-in strict policy at the production composition boundary."""
+    if os.environ.get("TLDW_CONSOLE_STRICT_INSPECTOR_OWNERSHIP") == "1":
+        return InspectorOwnershipPolicy.STRICT
+    return InspectorOwnershipPolicy.RESILIENT
 
 
 class ConsoleInspectorRail(Vertical):
@@ -91,6 +163,13 @@ class ConsoleInspectorRail(Vertical):
     here reaches ``app_instance``.
     """
 
+    DEFAULT_CSS = """
+    ConsoleInspectorRail .console-inspector-scroll-owner,
+    ConsoleInspectorRail .console-inspector-scroll-owner .console-rail-section-title {
+        text-style: bold underline;
+    }
+    """
+
     def __init__(
         self,
         *,
@@ -101,6 +180,7 @@ class ConsoleInspectorRail(Vertical):
         project_instruction_state: ConsoleProjectInstructionState,
         settings_summary_state: ConsoleSettingsSummaryState,
         live_work_card_builder: Callable[[], Widget],
+        ownership_policy: InspectorOwnershipPolicy | None = None,
         **kwargs,
     ) -> None:
         """Create the right rail from pre-computed display data.
@@ -145,6 +225,9 @@ class ConsoleInspectorRail(Vertical):
                 ``ConsoleDictationController``'s late-binding constructor
                 rule -- see ``dictation.py``'s module docstring) always
                 mounts a brand-new instance instead.
+            ownership_policy: Optional explicit Inspector ownership policy.
+                Production resolves the strict opt-in environment flag at
+                this composition boundary when omitted.
             kwargs: Forwarded to ``Vertical``.
         """
         super().__init__(
@@ -159,6 +242,697 @@ class ConsoleInspectorRail(Vertical):
         self._project_instruction_state = project_instruction_state
         self._settings_summary_state = settings_summary_state
         self._live_work_card_builder = live_work_card_builder
+        self._ownership_policy = (
+            ownership_policy or _resolve_inspector_ownership_policy()
+        )
+        self._reported_unknown_fingerprints: set[tuple[str, ...]] = set()
+        self._outer_reconcile_scheduled = False
+        self._outer_reconcile_dirty = False
+        self._outer_reconcile_owner_demand = False
+        self._outer_owner_reconcile_count = 0
+        self._inspector_focus_active = False
+        self._navigation_generation = 0
+        self._section_focus_history: dict[str, tuple[Widget, tuple[Widget, ...]]] = {}
+        self._pending_focus_recoveries: dict[str, _FocusRecoveryIncident] = {}
+
+    def on_mount(self) -> None:
+        """Schedule the first owner pass after descendant layout settles."""
+
+        self.request_outer_reconcile()
+
+    def on_unmount(self) -> None:
+        """Discard pending generations when the Inspector leaves the DOM."""
+
+        self._clear_outer_reconcile_state()
+
+    def request_outer_reconcile(self) -> None:
+        """Coalesce Inspector owner invalidation behind local section demand."""
+
+        self._request_outer_reconcile(owner_demand=True)
+
+    def _request_outer_geometry_reconcile(self) -> None:
+        """Reconcile geometry without creating a second logical owner pass."""
+
+        self._request_outer_reconcile(owner_demand=False)
+
+    def _request_outer_reconcile(self, *, owner_demand: bool) -> None:
+        """Schedule one generation while preserving its semantic owner demand."""
+
+        if not self.is_mounted or not self.is_attached or self._pruning:
+            return
+        self._outer_reconcile_owner_demand |= owner_demand
+        if self._outer_reconcile_scheduled:
+            self._outer_reconcile_dirty = True
+            return
+        self._outer_reconcile_scheduled = True
+        self._outer_reconcile_dirty = False
+        self.call_after_refresh(self._run_scheduled_outer_reconcile)
+
+    def _clear_outer_reconcile_state(self) -> None:
+        """Clear scheduler state without completing a logical owner pass."""
+
+        self._outer_reconcile_scheduled = False
+        self._outer_reconcile_dirty = False
+        self._outer_reconcile_owner_demand = False
+
+    def _run_scheduled_outer_reconcile(self) -> None:
+        """Reconcile the outer fold only after every local body has settled."""
+
+        if not self.is_mounted or not self.is_attached or self._pruning:
+            self._clear_outer_reconcile_state()
+            return
+        if any(
+            section._reconcile_scheduled
+            for section in self.query(ConsoleBoundedSection)
+        ):
+            self.call_after_refresh(self._run_scheduled_outer_reconcile)
+            return
+        # A local pass may have changed a fixed-height owner in this refresh.
+        # Let Textual commit that physical geometry before measuring the outer
+        # body; descendant Resize is not guaranteed for such changes.
+        self.refresh(layout=True)
+        self.call_after_refresh(self._finish_scheduled_outer_reconcile)
+
+    def _finish_scheduled_outer_reconcile(self) -> None:
+        """Measure after the settled local state has completed one layout pass."""
+
+        if not self.is_mounted or not self.is_attached or self._pruning:
+            self._clear_outer_reconcile_state()
+            return
+        if any(
+            section._reconcile_scheduled
+            for section in self.query(ConsoleBoundedSection)
+        ):
+            self.call_after_refresh(self._run_scheduled_outer_reconcile)
+            return
+        if self._outer_reconcile_dirty:
+            self._outer_reconcile_dirty = False
+            self.call_after_refresh(self._run_scheduled_outer_reconcile)
+            return
+        owner_demand = self._outer_reconcile_owner_demand
+        self._outer_reconcile_owner_demand = False
+        self._outer_reconcile_scheduled = False
+        self._install_focus_recovery_callbacks()
+        self._reconcile_focus_recovery_state()
+        if not self._reconcile_outer_fold():
+            self._outer_reconcile_owner_demand |= owner_demand
+            return
+        if owner_demand:
+            self._outer_owner_reconcile_count += 1
+
+    def _reconcile_outer_fold(self) -> bool:
+        """Apply the counterfactual outer-hint predicate from laid-out geometry."""
+
+        try:
+            body = self.query_one("#console-inspector-rail-body", VerticalScroll)
+            hint = self.query_one(f"#{INSPECTOR_OUTER_HINT_ID}", Static)
+        except (NoMatches, QueryError):
+            return True
+
+        desired_rows = max(
+            (
+                child.virtual_region_with_margin.bottom
+                for child in body.children
+                if child.display
+            ),
+            default=0,
+        )
+        hint_rows = hint.region.height if hint.display else 0
+        viewport_without_hint = body.content_region.height + hint_rows
+        if viewport_without_hint <= 0:
+            return True
+        required = outer_hint_required(desired_rows, viewport_without_hint)
+        body.scroll_y = min(body.scroll_y, max(0, body.max_scroll_y))
+        if hint.display is not required:
+            # Clear the copy before changing layout, then measure/clamp again on
+            # the next refresh using the new actual body height.
+            hint.update("")
+            hint.display = required
+            self._request_outer_geometry_reconcile()
+            return False
+
+        self._update_outer_hint()
+        return True
+
+    def _update_outer_hint(self) -> None:
+        """Paint copy only while actual outer content remains below."""
+
+        try:
+            body = self.query_one("#console-inspector-rail-body", VerticalScroll)
+            hint = self.query_one(f"#{INSPECTOR_OUTER_HINT_ID}", Static)
+        except (NoMatches, QueryError):
+            return
+        if not hint.display:
+            hint.update("")
+            return
+        hint.update(
+            INSPECTOR_OUTER_HINT
+            if body.max_scroll_y > 0 and body.scroll_y < body.max_scroll_y
+            else ""
+        )
+
+    def on_resize(self, _event: Resize) -> None:
+        """Recompute fixed-child overflow on terminal grow and shrink."""
+
+        self.request_outer_reconcile()
+
+    @staticmethod
+    def _is_visible(widget: Widget) -> bool:
+        return widget.display and all(
+            not isinstance(ancestor, Widget) or ancestor.display
+            for ancestor in widget.ancestors
+        )
+
+    @classmethod
+    def _is_enabled_focus_target(cls, widget: Widget) -> bool:
+        return bool(
+            widget.is_mounted
+            and widget.focusable
+            and cls._is_visible(widget)
+            and not getattr(widget, "disabled", False)
+        )
+
+    def inspector_active(self, focused: Widget | None = None) -> bool:
+        """Return whether live focus belongs to this mounted Inspector rail."""
+
+        target = self.app.focused if focused is None else focused
+        return target is self or (
+            isinstance(target, Widget) and self in target.ancestors
+        )
+
+    def _mounted_boundaries(
+        self,
+    ) -> tuple[tuple[ConsoleBoundedSection, Widget], ...]:
+        """Return visible direct boundaries as body and external header."""
+
+        boundaries: list[tuple[ConsoleBoundedSection, Widget]] = []
+        for section in self.query(ConsoleBoundedSection):
+            if not self._is_visible(section):
+                continue
+            parent = section.parent
+            if not isinstance(parent, Widget):
+                continue
+            siblings = list(parent.children)
+            try:
+                index = siblings.index(section)
+            except ValueError:
+                continue
+            if index == 0:
+                continue
+            header = siblings[index - 1]
+            boundaries.append((section, header))
+        return tuple(boundaries)
+
+    def _boundary_index_for_target(
+        self,
+        target: Widget,
+        boundaries: tuple[tuple[ConsoleBoundedSection, Widget], ...],
+    ) -> int | None:
+        for index, (section, header) in enumerate(boundaries):
+            if (
+                target is section
+                or section in target.ancestors
+                or target is header
+                or header in target.ancestors
+            ):
+                return index
+        return None
+
+    def _positional_boundary_index(
+        self,
+        target: Widget,
+        boundaries: tuple[tuple[ConsoleBoundedSection, Widget], ...],
+        direction: int,
+    ) -> int | None:
+        """Resolve compact non-boundary descendants by mounted DOM position."""
+
+        if target in (
+            self,
+            self.query_one("#console-inspector-rail-body"),
+            self.query_one("#console-inspector-rail-collapse"),
+        ):
+            return 0 if direction > 0 else len(boundaries) - 1
+        order = [self, *self.query("*")]
+        try:
+            target_position = order.index(target)
+        except ValueError:
+            return 0 if direction > 0 else len(boundaries) - 1
+        candidates = []
+        for index, (_section, header) in enumerate(boundaries):
+            try:
+                header_position = order.index(header)
+            except ValueError:
+                continue
+            if (direction > 0 and header_position > target_position) or (
+                direction < 0 and header_position < target_position
+            ):
+                candidates.append((header_position, index))
+        if not candidates:
+            return None
+        return min(candidates)[1] if direction > 0 else max(candidates)[1]
+
+    def on_key(self, event: Key) -> None:
+        """Handle bubbling n/p section navigation only at the rail boundary."""
+
+        if event.key not in ("n", "p") or not self.inspector_active():
+            return
+        focused = self.app.focused
+        if isinstance(focused, (Input, TextArea)):
+            return
+        if not isinstance(focused, Widget):
+            return
+        # Once n/p is a rail-local command, consume it even when navigation
+        # reaches a no-wrap edge. Otherwise the same printable key bubbles to
+        # ChatScreen's global hands-free/realtime barge-in hook.
+        event.stop()
+        event.prevent_default()
+        direction = 1 if event.key == "n" else -1
+        boundaries = self._mounted_boundaries()
+        if not boundaries:
+            return
+        anchored = self._boundary_index_for_target(focused, boundaries)
+        if anchored is None:
+            target_index = self._positional_boundary_index(
+                focused, boundaries, direction
+            )
+        else:
+            target_index = anchored + direction
+            if target_index < 0 or target_index >= len(boundaries):
+                return
+        if target_index is None:
+            return
+        self._navigation_generation += 1
+        self._focus_boundary(
+            boundaries[target_index], generation=self._navigation_generation
+        )
+
+    def _focus_boundary(
+        self,
+        boundary: tuple[ConsoleBoundedSection, Widget],
+        *,
+        generation: int,
+    ) -> None:
+        section, header = boundary
+        try:
+            outer = self.query_one("#console-inspector-rail-body", VerticalScroll)
+        except (NoMatches, QueryError):
+            return
+        target: Widget = outer
+        if section.viewport.can_focus and self._is_visible(section.viewport):
+            target = section.viewport
+        else:
+            boundary_targets = (
+                header,
+                *header.query("*"),
+                *section.viewport.query("*"),
+            )
+            for widget in boundary_targets:
+                if isinstance(widget, Widget) and self._is_enabled_focus_target(widget):
+                    target = widget
+                    break
+        target.focus()
+        # Focusing a descendant may make Textual reveal that control and push
+        # its external heading off the top edge. Header visibility is the
+        # navigation contract, so apply it after the focus target is settled.
+        outer.scroll_to_widget(
+            header,
+            animate=False,
+            immediate=True,
+            force=True,
+            top=True,
+        )
+        self.call_after_refresh(
+            self._reveal_boundary_header,
+            outer,
+            header,
+            target,
+            generation,
+            2,
+        )
+
+    def _reveal_boundary_header(
+        self,
+        outer: VerticalScroll,
+        header: Widget,
+        target: Widget,
+        generation: int,
+        remaining_passes: int,
+    ) -> None:
+        """Repeat a generation-guarded reveal after focus/layout commits."""
+
+        if remaining_passes <= 0 or not self._header_reveal_is_current(
+            outer, header, target, generation
+        ):
+            return
+        outer.scroll_to(
+            y=max(
+                0,
+                outer.scroll_y + header.region.y - outer.content_region.y,
+            ),
+            animate=False,
+            immediate=True,
+            force=True,
+        )
+        if remaining_passes > 1:
+            self.call_after_refresh(
+                self._reveal_boundary_header,
+                outer,
+                header,
+                target,
+                generation,
+                remaining_passes - 1,
+            )
+
+    def _header_reveal_is_current(
+        self,
+        outer: VerticalScroll,
+        header: Widget,
+        target: Widget,
+        generation: int,
+    ) -> bool:
+        """Return whether a delayed reveal still belongs to the active navigation."""
+
+        return (
+            generation == self._navigation_generation
+            and outer.is_mounted
+            and header.is_mounted
+            and target.is_mounted
+            and self.app.focused is target
+        )
+
+    def _body_controls(self, section: ConsoleBoundedSection) -> tuple[Widget, ...]:
+        return tuple(
+            widget
+            for widget in section.viewport.query("*")
+            if isinstance(widget, Widget) and self._is_enabled_focus_target(widget)
+        )
+
+    def _install_focus_recovery_callbacks(self) -> None:
+        for section in self.query(ConsoleBoundedSection):
+            section._on_focus_recovery = lambda owned=section: (
+                self.recover_section_focus(owned)
+            )
+
+    def recover_section_focus(self, section: ConsoleBoundedSection) -> None:
+        """Recover next, previous, external header, outer body, then collapse."""
+
+        focused = self.app.focused
+        if isinstance(focused, Widget) and self._is_enabled_focus_target(focused):
+            if (
+                focused is not section.viewport
+                and section.viewport not in focused.ancestors
+            ):
+                if not self.inspector_active(focused):
+                    self._section_focus_history.pop(section.section_id, None)
+                return
+        previous, controls = self._section_focus_history.get(
+            section.section_id, (section.viewport, self._body_controls(section))
+        )
+        if not previous.is_attached:
+            self._schedule_removed_focus_recovery(
+                section.section_id, previous, controls
+            )
+            self.request_outer_reconcile()
+            return
+        incident = self._focus_recovery_incident(previous, controls)
+        self._section_focus_history.pop(section.section_id, None)
+        self._recover_focus_incident(section.section_id, incident)
+
+    @staticmethod
+    def _stable_widget_id(widget: Widget) -> str | None:
+        """Return a usable semantic identity for a replaceable focus target."""
+
+        return widget.id or None
+
+    def _focus_recovery_incident(
+        self,
+        previous: Widget,
+        old_controls: tuple[Widget, ...],
+    ) -> _FocusRecoveryIncident:
+        """Convert widget history into a detached-reference-free snapshot."""
+
+        return _FocusRecoveryIncident(
+            target_id=self._stable_widget_id(previous),
+            target_index=(
+                old_controls.index(previous) if previous in old_controls else None
+            ),
+        )
+
+    def _recover_focus_incident(
+        self,
+        section_id: str,
+        incident: _FocusRecoveryIncident,
+    ) -> None:
+        """Recover one semantic incident against the current mounted boundary."""
+
+        boundaries = self._mounted_boundaries()
+        boundary = next(
+            (item for item in boundaries if item[0].section_id == section_id),
+            None,
+        )
+        if boundary is not None:
+            section, header = boundary
+            current_controls = self._body_controls(section)
+            controls_by_id = {
+                stable_id: control
+                for control in current_controls
+                if (stable_id := self._stable_widget_id(control)) is not None
+            }
+            candidate_ids: list[str | None] = [incident.target_id]
+            if incident.target_index is not None:
+                index = min(incident.target_index, len(current_controls))
+                candidate_ids.extend(
+                    self._stable_widget_id(control)
+                    for control in (
+                        current_controls[index:]
+                        + tuple(reversed(current_controls[:index]))
+                    )
+                )
+            else:
+                candidate_ids.extend(
+                    self._stable_widget_id(control) for control in current_controls
+                )
+
+            seen_ids: set[str] = set()
+            for candidate_id in candidate_ids:
+                if candidate_id is None or candidate_id in seen_ids:
+                    continue
+                seen_ids.add(candidate_id)
+                candidate = controls_by_id.get(candidate_id)
+                if candidate is None:
+                    continue
+                if self._is_enabled_focus_target(candidate):
+                    self._section_focus_history[section_id] = (
+                        candidate,
+                        current_controls,
+                    )
+                    candidate.focus()
+                    return
+
+            for candidate in (header, *header.query("*")):
+                if isinstance(candidate, Widget) and self._is_enabled_focus_target(
+                    candidate
+                ):
+                    candidate.focus()
+                    return
+        for selector in (
+            "#console-inspector-rail-body",
+            "#console-inspector-rail-collapse",
+        ):
+            try:
+                candidate = self.query_one(selector, Widget)
+            except (NoMatches, QueryError):
+                continue
+            if self._is_enabled_focus_target(candidate):
+                candidate.focus()
+                return
+
+    def _reconcile_focus_recovery_state(self) -> None:
+        """Map retained focus history onto the current mounted boundaries."""
+
+        boundaries = {
+            section.section_id: section
+            for section, _header in self._mounted_boundaries()
+        }
+        for section_id, (previous, old_controls) in tuple(
+            self._section_focus_history.items()
+        ):
+            section = boundaries.get(section_id)
+            if (
+                section is not None
+                and previous.is_attached
+                and (
+                    previous is section.viewport
+                    or section.viewport in previous.ancestors
+                )
+            ):
+                self._section_focus_history[section_id] = (
+                    previous,
+                    self._body_controls(section),
+                )
+                continue
+
+            focused = self.app.focused
+            if (
+                isinstance(focused, Widget)
+                and self._is_enabled_focus_target(focused)
+                and not self.inspector_active(focused)
+            ):
+                self._section_focus_history.pop(section_id, None)
+                continue
+            self._schedule_removed_focus_recovery(section_id, previous, old_controls)
+
+        focused = self.app.focused
+        outside_focus_is_valid = bool(
+            isinstance(focused, Widget)
+            and self._is_enabled_focus_target(focused)
+            and not self.inspector_active(focused)
+        )
+        for section_id, incident in tuple(self._pending_focus_recoveries.items()):
+            if outside_focus_is_valid:
+                self._pending_focus_recoveries.pop(section_id, None)
+                continue
+            section = boundaries.get(section_id)
+            boundary_unsettled = section is None or not self._body_controls(section)
+            if boundary_unsettled and incident.remaining_reconcile_passes > 0:
+                self._pending_focus_recoveries[section_id] = _FocusRecoveryIncident(
+                    target_id=incident.target_id,
+                    target_index=incident.target_index,
+                    remaining_reconcile_passes=(
+                        incident.remaining_reconcile_passes - 1
+                    ),
+                )
+                self.request_outer_reconcile()
+                continue
+            self._pending_focus_recoveries.pop(section_id, None)
+            self._recover_focus_incident(section_id, incident)
+
+    def _paint_scroll_owner(self, focused: Widget | None) -> None:
+        active_header: Widget | None = None
+        outer_active = bool(
+            focused is not None and focused.id == "console-inspector-rail-body"
+        )
+        if focused is not None:
+            boundaries = self._mounted_boundaries()
+            index = self._boundary_index_for_target(focused, boundaries)
+            if index is not None:
+                section, header = boundaries[index]
+                if focused is section.viewport or section.viewport in focused.ancestors:
+                    active_header = header
+        headers = [header for _section, header in self._mounted_boundaries()]
+        try:
+            collapse = self.query_one("#console-inspector-rail-collapse", Button)
+        except (NoMatches, QueryError):
+            collapse = None
+        for header in (*headers, collapse):
+            if header is None:
+                continue
+            active = header is active_header or (header is collapse and outer_active)
+            header.set_class(active, INSPECTOR_SCROLL_OWNER_CLASS)
+
+    def on_descendant_focus(self, event: DescendantFocus) -> None:
+        target = event.widget
+        # Removing a focused child can make Textual choose the next app-wide
+        # focusable before the section's post-refresh recovery runs. Preserve
+        # the old local order when that incidental target is still in this
+        # Inspector; an intentional, valid focus outside the rail is left alone.
+        for section_id, (previous, controls) in tuple(
+            self._section_focus_history.items()
+        ):
+            if (
+                previous is not None
+                and previous is not target
+                and not previous.is_attached
+            ):
+                self._schedule_removed_focus_recovery(section_id, previous, controls)
+                break
+        if not self._pending_focus_recoveries:
+            self._section_focus_history.clear()
+        for section, _header in self._mounted_boundaries():
+            if target is section.viewport or section.viewport in target.ancestors:
+                incident = self._pending_focus_recoveries.get(section.section_id)
+                if (
+                    incident is not None
+                    and self._stable_widget_id(target) != incident.target_id
+                ):
+                    break
+                self._pending_focus_recoveries.pop(section.section_id, None)
+                self._section_focus_history[section.section_id] = (
+                    target,
+                    self._body_controls(section),
+                )
+                break
+        self._paint_scroll_owner(target)
+        self._set_inspector_focus_active(True)
+
+    def _recover_removed_focus_snapshot(
+        self,
+        section_id: str,
+        incident: _FocusRecoveryIncident,
+    ) -> None:
+        """Recover after Textual's incidental focus without losing old order."""
+
+        if self._pending_focus_recoveries.get(section_id) != incident:
+            return
+        focused = self.app.focused
+        if (
+            isinstance(focused, Widget)
+            and self._is_enabled_focus_target(focused)
+            and not self.inspector_active(focused)
+        ):
+            self._pending_focus_recoveries.pop(section_id, None)
+            return
+        self.request_outer_reconcile()
+
+    def _schedule_removed_focus_recovery(
+        self,
+        section_id: str,
+        removed_target: Widget,
+        old_controls: tuple[Widget, ...],
+    ) -> None:
+        """Schedule at most one recovery for a detached focus incident."""
+
+        if section_id in self._pending_focus_recoveries:
+            return
+        incident = self._focus_recovery_incident(removed_target, old_controls)
+        self._section_focus_history.pop(section_id, None)
+        self._pending_focus_recoveries[section_id] = incident
+        self.call_after_refresh(
+            self._recover_removed_focus_snapshot,
+            section_id,
+            incident,
+        )
+
+    def on_focus(self) -> None:
+        """Refresh contextual shortcuts when the rail root itself is focused."""
+
+        self._set_inspector_focus_active(True)
+
+    def on_blur(self) -> None:
+        """Defer root-focus exit truth until replacement focus is committed."""
+
+        self.call_after_refresh(self._finish_descendant_blur)
+
+    def on_descendant_blur(self, _event: DescendantBlur) -> None:
+        self.call_after_refresh(self._finish_descendant_blur)
+
+    def _finish_descendant_blur(self) -> None:
+        active = self.inspector_active()
+        if not active:
+            self._paint_scroll_owner(None)
+            self._section_focus_history.clear()
+            self._pending_focus_recoveries.clear()
+        self._set_inspector_focus_active(active)
+
+    def _set_inspector_focus_active(self, active: bool) -> None:
+        if active == self._inspector_focus_active:
+            return
+        self._inspector_focus_active = active
+        refresh_footer = getattr(
+            self.screen, "_register_console_footer_shortcuts", None
+        )
+        if callable(refresh_footer):
+            refresh_footer()
 
     def compose(self) -> ComposeResult:
         """Compose the rail header, staged-context tray, scope row, and run inspector.
@@ -188,9 +962,8 @@ class ConsoleInspectorRail(Vertical):
             collapse_button.styles.content_align = ("left", "middle")
             yield collapse_button
 
-        with VerticalScroll(
-            id="console-inspector-rail-body",
-            classes="console-inspector-rail-body",
+        with _InspectorOuterBody(
+            on_geometry_changed=self._request_outer_geometry_reconcile
         ):
             project_instruction_row = ConsoleProjectInstructionStatusRow(
                 self._project_instruction_state
@@ -210,18 +983,13 @@ class ConsoleInspectorRail(Vertical):
             staged_context_state = self._staged_context_state
             staged_context_tray = ConsoleStagedContextTray(
                 staged_context_state,
+                on_reconcile=self.request_outer_reconcile,
                 id="console-staged-context-tray",
                 classes="console-inspector-context-section",
             )
             staged_context_tray.styles.width = "100%"
             staged_context_tray.styles.min_width = 0
             staged_context_tray.styles.height = "auto"
-            staged_context_tray.styles.min_height = (
-                3 if staged_context_state.is_empty else 4
-            )
-            staged_context_tray.styles.max_height = (
-                6 if staged_context_state.is_empty else 10
-            )
             # `ChatScreen._staged_context_frame_variant` is a `@staticmethod`
             # returning "quiet" unconditionally (mirrors task 3's inlining
             # of `_workspace_context_frame_variant`) -- inlined as a literal
@@ -253,6 +1021,7 @@ class ConsoleInspectorRail(Vertical):
             changed_files_section = ConsoleChangedFilesSection(
                 self._changed_files_state,
                 id="console-changed-files-section",
+                on_reconcile=self.request_outer_reconcile,
             )
             # Same margin/padding rhythm as the Sources tray and Scope row
             # above (`.console-inspector-context-section`) -- the widget's
@@ -268,10 +1037,14 @@ class ConsoleInspectorRail(Vertical):
             with Vertical(id="console-run-inspector"):
                 yield ConsoleRunInspector(
                     self._inspector_state,
+                    ownership_policy=self._ownership_policy,
+                    reported_unknown_fingerprints=(self._reported_unknown_fingerprints),
+                    on_reconcile=self.request_outer_reconcile,
                     id="console-run-inspector-state",
                 )
                 settings_summary = ConsoleSettingsSummary(
                     self._settings_summary_state,
+                    on_reconcile=self.request_outer_reconcile,
                     id="console-settings-summary",
                     classes=(
                         "console-inspector-session-settings console-settings-summary"
@@ -281,4 +1054,39 @@ class ConsoleInspectorRail(Vertical):
                 settings_summary.styles.min_width = 0
                 yield settings_summary
 
-            yield self._live_work_card_builder()
+            live_work_card = self._live_work_card_builder()
+            pending_visible = live_work_card.id == PENDING_LAUNCH_CARD_ID
+            with Vertical(id="console-live-work-section"):
+                with Vertical(id="console-live-work-header"):
+                    pending_header = Static(
+                        "Pending Console launch",
+                        id="console-live-work-status-badge",
+                        classes="ds-status-badge console-live-work-status-badge",
+                    )
+                    pending_header.display = pending_visible
+                    yield pending_header
+                    readiness_header = Static(
+                        "Live work sources",
+                        id="console-live-work-source-readiness-title",
+                        classes=(
+                            "ds-status-badge console-live-work-source-readiness-title"
+                        ),
+                    )
+                    readiness_header.display = not pending_visible
+                    yield readiness_header
+                yield ConsoleBoundedSection(
+                    live_work_card,
+                    section_id="live-work",
+                )
+        outer_hint = Static(
+            "",
+            id=INSPECTOR_OUTER_HINT_ID,
+            classes="console-inspector-outer-scroll-hint",
+            markup=False,
+        )
+        outer_hint.can_focus = False
+        outer_hint.display = False
+        outer_hint.styles.height = 1
+        outer_hint.styles.min_height = 1
+        outer_hint.styles.max_height = 1
+        yield outer_hint

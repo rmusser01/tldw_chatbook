@@ -78,6 +78,9 @@ from tldw_chatbook.Widgets.Console.console_settings_modal import (
 from tldw_chatbook.Widgets.Console.console_settings_summary import (
     ConsoleSettingsSummary,
 )
+from tldw_chatbook.Widgets.Console.console_bounded_section import (
+    ConsoleBoundedSection,
+)
 from tldw_chatbook.Widgets.Console.console_system_prompt_modal import (
     APPLY_BUTTON_ID as SYSTEM_PROMPT_APPLY_BUTTON_ID,
     TEXT_AREA_ID as SYSTEM_PROMPT_TEXT_AREA_ID,
@@ -1763,11 +1766,74 @@ async def test_console_settings_summary_treats_missing_provider_row_as_blank() -
 
 
 def test_console_settings_summary_button_sizing_uses_named_constants() -> None:
-    assert settings_summary_module.CONSOLE_SETTINGS_SUMMARY_MAX_HEIGHT == 9
+    assert not hasattr(settings_summary_module, "CONSOLE_SETTINGS_SUMMARY_MAX_HEIGHT")
     assert settings_summary_module.CONSOLE_SETTINGS_BUTTON_HORIZONTAL_PADDING == 2
     assert settings_summary_module.CONSOLE_SETTINGS_BUTTON_MIN_WIDTH == 9
     assert settings_summary_module.CONSOLE_SETTINGS_BUTTON_MAX_WIDTH == 14
     assert settings_summary_module.CONSOLE_SETTINGS_ROW_HEIGHT == 1
+
+
+@pytest.mark.asyncio
+async def test_console_settings_header_is_external_and_one_row_body_uses_one_line() -> (
+    None
+):
+    state = ConsoleSettingsSummaryState(
+        provider_row="",
+        model_row="Model: only visible row",
+        context_row="",
+        sampling_row="",
+        identity_row="",
+    )
+
+    app = SummaryHarness(state)
+    async with app.run_test(size=(80, 20)) as pilot:
+        summary = app.query_one(ConsoleSettingsSummary)
+        header = summary.query_one("#console-settings-header", Horizontal)
+        body = summary.query_one(
+            "#console-bounded-section-session-settings", ConsoleBoundedSection
+        )
+        for _ in range(4):
+            await pilot.pause()
+
+        assert header.parent is summary
+        assert body.parent is summary
+        assert list(summary.children) == [header, body]
+        assert body.desired_content_lines == 1
+        assert body.viewport.content_region.height == 1
+        assert body.hint.display is False
+
+
+@pytest.mark.asyncio
+async def test_console_settings_body_uses_exact_twenty_line_content_ceiling() -> None:
+    state = ConsoleSettingsSummaryState(
+        model_row="Model: visible",
+        context_row="",
+        sampling_row="",
+        identity_row="",
+    )
+
+    app = SummaryHarness(state)
+    async with app.run_test(size=(80, 30)) as pilot:
+        body = app.query_one(
+            "#console-bounded-section-session-settings", ConsoleBoundedSection
+        )
+        await body.viewport.remove_children()
+        content = Static("\n".join(f"row {index}" for index in range(20)))
+        await body.viewport.mount(content)
+        body.request_reconcile()
+        for _ in range(4):
+            await pilot.pause()
+        assert body.viewport.content_region.height == 20
+        assert body.hint.display is False
+
+        content.update("\n".join(f"row {index}" for index in range(21)))
+        content.refresh(layout=True)
+        body.request_reconcile()
+        for _ in range(4):
+            await pilot.pause()
+        assert body.viewport.content_region.height == 20
+        assert body.hint.display is True
+        assert body.hint.region.height == 1
 
 
 def test_console_settings_modal_sizing_uses_named_constants() -> None:
@@ -4661,17 +4727,20 @@ async def test_console_inspector_hosts_staged_context_above_source_readiness() -
         rail_body = console.query_one("#console-inspector-rail-body")
         run_inspector = console.query_one("#console-run-inspector")
         readiness = console.query_one("#console-live-work-source-readiness")
+        live_work = console.query_one("#console-live-work-section")
+        project_status = console.query_one("#console-project-instruction-status")
         left_rail = console.query_one("#console-left-rail")
 
         # DOM order: tray first, then the run-inspector block (which renders
         # the Source Readiness section), then the bottom readiness card.
         assert settings.parent.id == "console-run-inspector"
         assert staged_context.parent is rail_body
-        assert readiness.parent is rail_body
+        assert readiness in live_work.query("*")
         children = list(rail_body.children)
-        assert children.index(staged_context) == 0
+        assert children.index(project_status) == 0
+        assert children.index(project_status) < children.index(staged_context)
         assert children.index(staged_context) < children.index(run_inspector)
-        assert children.index(run_inspector) < children.index(readiness)
+        assert children.index(run_inspector) < children.index(live_work)
 
         # The left rail no longer hosts a Context section (header, body, or
         # tray): only Session, Model, Agent, and Details remain.
@@ -4690,7 +4759,8 @@ async def test_console_inspector_hosts_staged_context_above_source_readiness() -
             if staged_context.region.height > 0 and readiness_heading.region.height > 0:
                 break
             await pilot.pause(0.05)
-        assert staged_context.region.y == rail_body.region.y
+        assert project_status.region.y == rail_body.region.y
+        assert project_status.region.y < staged_context.region.y
         assert staged_context.region.y < readiness_heading.region.y
         assert staged_context.region.y < readiness.region.y
 
@@ -4723,9 +4793,14 @@ async def test_console_left_rail_body_scrolls_below_fixed_header_without_setting
         # Conversations disclosure section while the whole section stack
         # remains inside the fixed-header rail scroller.
         assert workspace_context.parent is conversations_body
-        assert conversations_body.parent is body
-        assert workspace_context.region.width <= body.region.width
-        assert body.region.width - workspace_context.region.width <= 2
+        conversations_section = body.query_one(
+            "#console-bounded-section-conversations", ConsoleBoundedSection
+        )
+        assert conversations_section.parent is body
+        assert conversations_body.parent is conversations_section.viewport
+        viewport_width = conversations_section.viewport.region.width
+        assert workspace_context.region.width <= viewport_width
+        assert viewport_width - workspace_context.region.width <= 2
 
 
 @pytest.mark.asyncio
@@ -5494,7 +5569,18 @@ async def test_mounted_console_cancel_latest_waiter_keeps_durable_c() -> None:
 
 
 @pytest.mark.asyncio
-async def test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_resume():
+async def test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_resume(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # This test owns the roleplay writer lifecycle. Task 5's independent
+    # Changed Files thread worker may outlive the popped screen in Textual's
+    # executor context, so keep it outside this weakref/GC assertion.
+    monkeypatch.setattr(
+        ChatScreen,
+        "_console_changed_files_section_enabled",
+        staticmethod(lambda: False),
+    )
+
     class HungFirstWritePersistence:
         """One shared-store double: the FIRST system-prompt write blocks.
 

@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches, QueryError
 from textual.widgets import Static
 
 from tldw_chatbook.Chat.console_display_state import ConsoleStagedContextState
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
+from tldw_chatbook.Widgets.Console.console_bounded_section import (
+    ConsoleBoundedSection,
+)
 
 
 _STATUS_CLASS_MAP = {
@@ -43,7 +48,13 @@ class ConsoleStagedContextTray(RecomposeCaptureGuard, Vertical):
     display-state contract.
     """
 
-    def __init__(self, state: ConsoleStagedContextState, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        state: ConsoleStagedContextState,
+        *,
+        on_reconcile: Callable[[], None] | None = None,
+        **kwargs: Any,
+    ) -> None:
         """Initialize the staged-context tray.
 
         Args:
@@ -52,6 +63,61 @@ class ConsoleStagedContextTray(RecomposeCaptureGuard, Vertical):
         """
         super().__init__(**kwargs)
         self.state = state
+        self._on_reconcile = on_reconcile
+
+    def _body_widgets(self) -> list[Static | Vertical]:
+        """Build the body while keeping the stable header outside its viewport."""
+
+        body: list[Static | Vertical] = []
+        if self.state.summary:
+            body.append(
+                Static(
+                    self.state.summary,
+                    id="console-staged-context-summary",
+                    classes="console-staged-context-summary",
+                    markup=False,
+                )
+            )
+
+        if self.state.rows:
+            for index, row in enumerate(self.state.rows):
+                status_class = _normalize_source_status(row.status)
+                body.append(
+                    Vertical(
+                        Static(
+                            str(row.value),
+                            id=f"console-staged-source-name-{index}",
+                            classes="console-staged-source-name",
+                            markup=False,
+                        ),
+                        Static(
+                            status_class,
+                            id=f"console-staged-source-status-{index}",
+                            classes=f"console-staged-source-status {status_class}",
+                            markup=False,
+                        ),
+                        id=f"console-staged-context-row-{index}",
+                        classes="console-staged-source-row",
+                    )
+                )
+        else:
+            body.append(
+                Static(
+                    "No sources attached. Stage sources from Library.",
+                    id="console-staged-context-empty",
+                    classes="console-staged-context-empty",
+                )
+            )
+
+        if self.state.recovery:
+            body.append(
+                Static(
+                    self.state.recovery,
+                    id="console-staged-context-recovery",
+                    classes="console-staged-context-recovery",
+                )
+            )
+        return body
 
     def compose(self) -> ComposeResult:
         with Horizontal(classes="console-staged-context-header"):
@@ -66,56 +132,7 @@ class ConsoleStagedContextTray(RecomposeCaptureGuard, Vertical):
                 classes="console-staged-context-count",
             )
 
-        if self.state.summary:
-            # PR-T1 final review (I1): the summary is built from a launch
-            # title/source that came from user data (a note title, a media
-            # filename), so it is the same untrusted class as the source
-            # name/status rows below -- and it was the ONLY Static in this
-            # widget rendering such text with markup enabled. A title
-            # containing `[/]` raised `MarkupError` right here in compose;
-            # since staged launches now survive navigation (D3), the
-            # restore succeeded on every subsequent visit and the crash
-            # landed inside `switch_screen`, so Console became permanently
-            # unopenable rather than failing once.
-            yield Static(
-                self.state.summary,
-                id="console-staged-context-summary",
-                classes="console-staged-context-summary",
-                markup=False,
-            )
-
-        if self.state.rows:
-            for index, row in enumerate(self.state.rows):
-                status_class = _normalize_source_status(row.status)
-                with Vertical(
-                    id=f"console-staged-context-row-{index}",
-                    classes="console-staged-source-row",
-                ):
-                    yield Static(
-                        str(row.value),
-                        id=f"console-staged-source-name-{index}",
-                        classes="console-staged-source-name",
-                        markup=False,
-                    )
-                    yield Static(
-                        status_class,
-                        id=f"console-staged-source-status-{index}",
-                        classes=f"console-staged-source-status {status_class}",
-                        markup=False,
-                    )
-        else:
-            yield Static(
-                "No sources attached. Stage sources from Library.",
-                id="console-staged-context-empty",
-                classes="console-staged-context-empty",
-            )
-
-        if self.state.recovery:
-            yield Static(
-                self.state.recovery,
-                id="console-staged-context-recovery",
-                classes="console-staged-context-recovery",
-            )
+        yield ConsoleBoundedSection(*self._body_widgets(), section_id="sources")
 
     def sync_state(self, state: ConsoleStagedContextState) -> None:
         """Refresh the mounted tray from a new staged-context snapshot.
@@ -131,3 +148,17 @@ class ConsoleStagedContextTray(RecomposeCaptureGuard, Vertical):
             return
         self.state = state
         self.refresh(recompose=True)
+        self.call_after_refresh(self._request_section_reconcile)
+
+    def _request_section_reconcile(self) -> None:
+        """Settle local demand before invalidating the Inspector owner."""
+
+        try:
+            section = self.query_one(
+                "#console-bounded-section-sources", ConsoleBoundedSection
+            )
+        except (NoMatches, QueryError):
+            return
+        section.request_reconcile()
+        if self._on_reconcile is not None:
+            self._on_reconcile()
