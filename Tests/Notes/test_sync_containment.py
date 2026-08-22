@@ -216,3 +216,90 @@ def test_legacy_engine_source_has_no_pathname_sync_escape_hatches() -> None:
     assert "file_path.read_text(" not in source
     assert "file_path.parent.mkdir(" not in source
     assert "atomic_write_text(" not in source
+
+
+# --------------------------------------------------------------------------
+# create_new_text -- the never-replace counterpart to write_text (task-19554)
+# --------------------------------------------------------------------------
+def test_create_new_text_refuses_an_existing_name_without_touching_it(
+    tmp_path: Path,
+) -> None:
+    """The property the preserved-conflict-copy path depends on.
+
+    ``write_text`` renames over its target; for a saved copy of user text
+    that is destruction. ``create_new_text`` claims the name with
+    ``O_CREAT|O_EXCL`` instead, so a taken name is reported, never replaced.
+    """
+    root_path = tmp_path / "root"
+    root_path.mkdir()
+    target = root_path / "note.md.conflict-20260821T203015Z-disk.bak"
+    target.write_text("someone else's preserved copy", encoding="utf-8")
+
+    with PinnedSyncRoot(root_path) as root:
+        with pytest.raises(FileExistsError):
+            root.create_new_text(target.relative_to(root_path), "mine")
+
+    assert target.read_text(encoding="utf-8") == "someone else's preserved copy"
+
+
+def test_create_new_text_writes_a_private_file_and_reports_it(
+    tmp_path: Path,
+) -> None:
+    root_path = tmp_path / "root"
+    root_path.mkdir()
+
+    with PinnedSyncRoot(root_path) as root:
+        result = root.create_new_text(Path("note.md.conflict-x-db.bak"), "kept")
+
+    created = root_path / "note.md.conflict-x-db.bak"
+    assert created.read_text(encoding="utf-8") == "kept"
+    assert stat.S_IMODE(created.stat().st_mode) == 0o600
+    assert result.absolute_path == created
+    assert result.content == "kept"
+
+
+def test_create_new_text_rejects_a_symlinked_name_rather_than_following_it(
+    tmp_path: Path,
+) -> None:
+    root_path = tmp_path / "root"
+    root_path.mkdir()
+    outside = tmp_path / "OUTSIDE-19554-SENTINEL.bak"
+    outside.write_text("OUTSIDE-19554-SENTINEL", encoding="utf-8")
+    (root_path / "note.md.conflict-x-db.bak").symlink_to(outside)
+
+    with PinnedSyncRoot(root_path) as root:
+        with pytest.raises(OSError):
+            root.create_new_text(Path("note.md.conflict-x-db.bak"), "leaked")
+
+    assert outside.read_text(encoding="utf-8") == "OUTSIDE-19554-SENTINEL"
+
+
+def test_create_new_text_refuses_a_missing_parent(tmp_path: Path) -> None:
+    """A sidecar goes beside an existing note; it never creates directories."""
+    root_path = tmp_path / "root"
+    root_path.mkdir()
+
+    with PinnedSyncRoot(root_path) as root:
+        with pytest.raises(SyncPathError, match="missing_parent"):
+            root.create_new_text(Path("nope/note.md.conflict-x-db.bak"), "x")
+
+    assert not (root_path / "nope").exists()
+
+
+def test_create_new_text_leaves_nothing_behind_when_it_fails_after_creating(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A caller told the write failed must not find a half-written file."""
+    root_path = tmp_path / "root"
+    root_path.mkdir()
+
+    def explode(_file_fd: int, _content: bytes) -> None:
+        raise OSError("short write")
+
+    with PinnedSyncRoot(root_path) as root:
+        monkeypatch.setattr(root, "_write_all", explode)
+        with pytest.raises(OSError, match="short write"):
+            root.create_new_text(Path("note.md.conflict-x-db.bak"), "partial")
+
+    assert list(root_path.iterdir()) == []

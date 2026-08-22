@@ -106,9 +106,22 @@ A resolution that overwrites one side always keeps that side first
 The sidecar is named
 `<file name>.conflict-<UTC timestamp>-<db|disk>.bak` and holds the
 discarded text **verbatim** — no header, no diff markers — so recovering
-it is a rename. Sidecars are excluded from every subsequent scan (by the
-`.conflict-` marker, not just the `.bak` suffix), so a preserved copy
-never becomes a note of its own.
+it is a rename. Sidecars are excluded from every subsequent scan, so a
+preserved copy never becomes a note of its own. Recognition
+(`NotesSyncEngine.is_conflict_sidecar`) requires the `.conflict-` marker
+**and** the `.bak` suffix together: the `.bak` suffix alone already keeps
+sidecars out of the default `['.md', '.txt']` scan set, and the marker
+alone would silently un-sync a user's own note named something like
+`meeting.conflict-notes.md` — a silent filter must not over-match.
+
+The name is claimed with `O_CREAT | O_EXCL` through
+`PinnedSyncRoot.create_new_text`, the never-replace counterpart to
+`write_text` (which renames over its target). Checking for a free name
+and then writing it would leave a window in which a concurrent sync run
+takes the same name, and the rename would then destroy that run's
+preserved copy. A taken name raises `FileExistsError`, the writer
+advances to the next ordinal (`…-2-disk.bak`), and an exhausted name
+space raises rather than overwriting anything.
 
 The same text is also written to the conflict's own row —
 `sync_conflicts.losing_side` / `losing_content` /

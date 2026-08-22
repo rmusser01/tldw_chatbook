@@ -32,12 +32,15 @@ from .sync_paths import PinnedSyncRoot, SafeSyncFile, SyncPathError
 #
 # A resolution that overwrites one side writes that side's text, verbatim,
 # to a sidecar next to the note file BEFORE the overwrite happens, so
-# recovery is a rename. The marker is what makes a sidecar recognizable:
-# ``_scan_directory`` drops anything carrying it so a preserved copy can
-# never be re-ingested as a note (which would turn every conflict into a
-# duplicate note, and every subsequent pass into another one). The ``.bak``
-# suffix is belt to that braces -- it is outside the default
-# ``['.md', '.txt']`` scan set as well.
+# recovery is a rename. A sidecar is recognized by the marker AND the
+# ``.bak`` suffix together (``is_conflict_sidecar``), and ``_scan_directory``
+# drops what it recognizes, so a preserved copy can never be re-ingested as a
+# note -- which would turn every conflict into a duplicate note, and every
+# subsequent pass into another one. Requiring both halves is what keeps that
+# filter from eating a real note whose own name contains ``.conflict-``; the
+# ``.bak`` suffix additionally sits outside the default ``['.md', '.txt']``
+# scan set, so the marker only has to hold for a caller passing custom
+# extensions.
 CONFLICT_SIDECAR_MARKER = ".conflict-"
 CONFLICT_SIDECAR_SUFFIX = ".bak"
 _CONFLICT_SIDECAR_ATTEMPTS = 64
@@ -309,9 +312,11 @@ class NotesSyncEngine:
                 selected_root.__exit__(None, None, None)
         # Preserved conflict copies are never sync candidates. Their ``.bak``
         # suffix already keeps them out of the default extension set, but the
-        # marker check is what holds if a caller passes custom extensions:
-        # ingesting one would create a duplicate note per conflict, and its
-        # own file on the next pass.
+        # check is what holds if a caller passes custom extensions: ingesting
+        # one would create a duplicate note per conflict, and its own file on
+        # the next pass. ``is_conflict_sidecar`` requires the marker AND the
+        # suffix precisely because this filter is SILENT -- an over-match here
+        # removes a real note from sync with nothing to show for it.
         files_map = {
             relative_path: self._from_safe_file(safe_file)
             for relative_path, safe_file in safe_files.items()
@@ -573,9 +578,26 @@ class NotesSyncEngine:
 
     @staticmethod
     def is_conflict_sidecar(relative_path: Path) -> bool:
-        """Return whether a scanned entry is one of our preserved copies."""
+        """Return whether a scanned entry is one of our preserved copies.
 
-        return CONFLICT_SIDECAR_MARKER in relative_path.name
+        Both halves are required. Matching the marker alone silently un-synced
+        a user's own note if its name happened to contain ``.conflict-`` --
+        ``meeting.conflict-notes.md`` was dropped from every scan with no
+        error and no skip row, which is a worse failure than the one the
+        filter exists to prevent. Every sidecar this engine writes ends in
+        ``.bak``, so requiring the suffix as well keeps the never-re-ingest
+        guarantee intact while leaving real notes alone.
+
+        Args:
+            relative_path: A scanned entry's path relative to the sync root.
+
+        Returns:
+            Whether the entry is a preserved conflict copy.
+        """
+        name = relative_path.name
+        return name.endswith(CONFLICT_SIDECAR_SUFFIX) and (
+            CONFLICT_SIDECAR_MARKER in name
+        )
 
     def _write_conflict_sidecar(
         self,
@@ -612,16 +634,30 @@ class NotesSyncEngine:
         """
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         for attempt in range(_CONFLICT_SIDECAR_ATTEMPTS):
-            # Second-resolution stamps can repeat within one run, and an
-            # earlier preserved copy must never be clobbered by a later one.
+            # Second-resolution stamps repeat within one run and across
+            # concurrent runs, so the name has to be CLAIMED, not merely
+            # checked: ``create_new_text`` does it with O_CREAT|O_EXCL, one
+            # syscall, and reports a taken name as FileExistsError. The
+            # previous shape here -- ``if not path.exists(): write_text(...)``
+            # -- had a window between the two in which another run could
+            # create the file, and ``write_text`` renames over its target, so
+            # the winner of that race destroyed the loser's preserved copy:
+            # the one kind of data loss this whole code path exists to
+            # prevent. It also put a raw filesystem probe on a constructed
+            # path outside the module's path boundary; there is now no
+            # filesystem call here at all, only ``PinnedSyncRoot``.
             ordinal = "" if attempt == 0 else f"-{attempt + 1}"
             candidate = relative_path.with_name(
                 f"{relative_path.name}{CONFLICT_SIDECAR_MARKER}"
                 f"{stamp}{ordinal}-{side}{CONFLICT_SIDECAR_SUFFIX}"
             )
-            if (pinned_root.canonical_root / candidate).exists():
+            try:
+                return pinned_root.create_new_text(candidate, content).absolute_path
+            except FileExistsError:
                 continue
-            return pinned_root.write_text(candidate, content).absolute_path
+        # Never fall back to a replacing write: the caller treats a raise as
+        # "could not preserve" and leaves both sides alone, which is the
+        # recoverable outcome. Overwriting someone else's copy is not.
         raise SyncPathError("conflict_sidecar_name_exhausted", relative_path)
 
     def _resolve_with_preservation(

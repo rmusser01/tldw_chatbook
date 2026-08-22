@@ -607,3 +607,154 @@ class TestReportedOutcomeMatchesReality:
         assert not [c for c in progress.conflicts if c.applied]
         assert not progress.updated_files
         assert not progress.updated_notes
+
+
+# --------------------------------------------------------------------------
+# Qodo review round on PR #1922 — defects inside the shipped design
+# --------------------------------------------------------------------------
+class TestSidecarRecognitionDoesNotSwallowRealNotes:
+    """Finding 1: the sidecar filter must not un-sync legitimate notes.
+
+    ``is_conflict_sidecar`` matched the ``.conflict-`` marker ANYWHERE in a
+    filename, and ``_scan_directory`` drops what it matches. A user's own note
+    called ``meeting.conflict-notes.md`` was therefore silently excluded from
+    every sync — no error, no skip row, it simply stopped being mirrored.
+    Sidecars always end in ``.bak``, so requiring both keeps the
+    never-re-ingest guarantee without eating real notes.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_note_whose_name_contains_the_marker_still_syncs(
+        self, sync_engine, notes_service, sync_dir
+    ):
+        decoy = sync_dir / "meeting.conflict-notes.md"
+        decoy.write_text("Notes about a merge conflict at work", encoding="utf-8")
+
+        _session_id, progress = await _run(
+            sync_engine, sync_dir, ConflictResolution.NEWER_WINS
+        )
+
+        assert len(progress.created_notes) == 1, (
+            "a legitimate note containing '.conflict-' was silently dropped "
+            f"from the scan; skipped={progress.skipped_items}"
+        )
+        titles = {note["title"] for note in notes_service.list_notes(USER)}
+        assert "meeting.conflict-notes" in titles
+
+    def test_recognition_requires_both_the_marker_and_the_bak_suffix(self):
+        recognized = NotesSyncEngine.is_conflict_sidecar
+        # Real sidecars, in every shape the writer can produce.
+        assert recognized(Path("note.md.conflict-20260821T203015Z-disk.bak"))
+        assert recognized(Path("note.md.conflict-20260821T203015Z-2-db.bak"))
+        assert recognized(Path("sub/note.txt.conflict-20260821T203015Z-db.bak"))
+        # Real notes that merely mention the marker, or merely end in .bak.
+        assert not recognized(Path("meeting.conflict-notes.md"))
+        assert not recognized(Path("the.conflict-of-1914.txt"))
+        assert not recognized(Path("archive.bak"))
+        assert not recognized(Path("notes.md"))
+
+
+class TestSidecarNameIsClaimedAtomically:
+    """Finding 2: an exists-then-write sidecar can destroy another copy.
+
+    ``_write_conflict_sidecar`` used to test ``Path.exists()`` and then call
+    ``PinnedSyncRoot.write_text``, which REPLACES whatever is at the target.
+    Two sync runs resolving the same note in the same second both saw "free"
+    and the second one's rename destroyed the first one's preserved copy —
+    losing exactly the data this task exists to preserve, in the one code path
+    whose whole job is not to.
+
+    The window is opened deterministically here through ``_before_create``,
+    the module's existing test-seam idiom (see ``_before_replace``, used the
+    same way in ``test_sync_containment.py``): a competitor claims the name
+    after the name was chosen and before this run's create.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_competitor_claiming_the_name_first_is_never_clobbered(
+        self, sync_engine, notes_service, sync_dir, monkeypatch
+    ):
+        from tldw_chatbook.Notes.sync_paths import PinnedSyncRoot
+
+        _make_conflicted_note(
+            notes_service,
+            sync_engine,
+            sync_dir,
+            db_content="Modified in database",
+            disk_content="Modified on disk",
+            disk_is_newer=False,
+        )
+
+        competitor = "another run's preserved copy"
+        claimed: list[Path] = []
+
+        def _claim_the_name_first(self, relative_path: Path) -> None:
+            # Fire once: a competitor that re-claimed every candidate would
+            # exhaust the name space instead of demonstrating the clobber.
+            if claimed:
+                return
+            claimed.append(relative_path)
+            (self.canonical_root / relative_path).write_text(
+                competitor, encoding="utf-8"
+            )
+
+        monkeypatch.setattr(
+            PinnedSyncRoot, "_before_create", _claim_the_name_first, raising=True
+        )
+
+        _session_id, progress = await _run(
+            sync_engine, sync_dir, ConflictResolution.NEWER_WINS
+        )
+
+        assert claimed, "the seam never fired -- the test proves nothing"
+        sidecars = _sidecars(sync_dir)
+        contents = {path.read_text(encoding="utf-8") for path in sidecars}
+        assert competitor in contents, (
+            "this run overwrote a preserved copy that already held the name; "
+            f"surviving sidecars: {sorted(contents)}"
+        )
+        assert "Modified on disk" in contents, (
+            "this run's own copy must land too, under the next free name"
+        )
+        assert len(sidecars) == 2, sorted(path.name for path in sidecars)
+        # ...and the resolution still went through, on the second name.
+        assert progress.conflicts[0].applied is True
+        assert (sync_dir / NOTE_NAME).read_text(encoding="utf-8") == (
+            "Modified in database"
+        )
+
+    @pytest.mark.asyncio
+    async def test_an_exhausted_name_space_fails_closed(
+        self, sync_engine, notes_service, sync_dir, monkeypatch
+    ):
+        """Raise rather than overwrite when every candidate is taken."""
+        from tldw_chatbook.Notes.sync_paths import PinnedSyncRoot
+
+        note_id = _make_conflicted_note(
+            notes_service,
+            sync_engine,
+            sync_dir,
+            db_content="Modified in database",
+            disk_content="Modified on disk",
+            disk_is_newer=False,
+        )
+
+        def _always_claim(self, relative_path: Path) -> None:
+            (self.canonical_root / relative_path).write_text(
+                "squatter", encoding="utf-8"
+            )
+
+        monkeypatch.setattr(
+            PinnedSyncRoot, "_before_create", _always_claim, raising=True
+        )
+
+        _session_id, progress = await _run(
+            sync_engine, sync_dir, ConflictResolution.NEWER_WINS
+        )
+
+        assert (sync_dir / NOTE_NAME).read_text(encoding="utf-8") == (
+            "Modified on disk"
+        ), "nothing may be overwritten when no copy could be saved"
+        assert _content(notes_service, note_id) == "Modified in database"
+        assert progress.conflicts[0].applied is False
+        assert progress.errors

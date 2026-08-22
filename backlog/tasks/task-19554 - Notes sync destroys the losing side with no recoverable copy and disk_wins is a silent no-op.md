@@ -171,12 +171,13 @@ NOT stop `disk_wins`/`newer_wins` from destroying the note in the database —
 that path only needs the DB — so without this rule preservation would fail
 exactly where destruction still succeeded.
 
-*Feedback loop closed.* Sidecars are dropped from every scan by the
-`.conflict-` marker (not merely by the `.bak` suffix being outside the default
-`['.md', '.txt']` set), so a preserved copy can never be ingested as a note,
-which would otherwise turn each conflict into a duplicate note and then into
-another file. Pinned by
-`test_sidecars_are_never_re_ingested_as_notes`.
+*Feedback loop closed.* Sidecars are dropped from every scan, so a preserved
+copy can never be ingested as a note, which would otherwise turn each conflict
+into a duplicate note and then into another file. Recognition needs the
+`.conflict-` marker AND the `.bak` suffix together — see the Qodo round below
+for why the marker alone was wrong. Pinned by
+`test_sidecars_are_never_re_ingested_as_notes` and
+`test_a_note_whose_name_contains_the_marker_still_syncs`.
 
 ### `DISK_WINS`: implemented, not removed
 
@@ -274,3 +275,70 @@ caused it instead of an unrelated older one.
 * `Docs/Features/notes_bidirectional_sync.md`,
   `Docs/User_Guide/library/notes.md`,
   `backlog/docs/lessons-testing-evidence.md`.
+
+### Qodo review round (PR #1922)
+
+The design (sidecar-first + DB row + fail-closed) was endorsed over both
+alternatives. Three defects *within* it, all fixed. Findings 2 and 3 are the
+same code region and one change resolves both.
+
+**1. `is_conflict_sidecar` over-matched and silently un-synced real notes.**
+It tested for `.conflict-` anywhere in the filename, and `_scan_directory`
+drops what it matches — so a user's own `meeting.conflict-notes.md` was
+excluded from every sync with no error and no skip row. A silent filter that
+over-matches is a worse failure than the one it prevents. Recognition now
+requires the marker **and** the `.bak` suffix, which keeps the never-re-ingest
+guarantee (every sidecar this engine writes ends `.bak`) without eating real
+notes. Born red on behaviour, not on a missing symbol:
+`AssertionError: a legitimate note containing '.conflict-' was silently
+dropped from the scan; skipped=[] / assert 0 == 1`. Both halves are pinned —
+a suffix-only predicate goes red on `archive.bak`, a marker-only one on
+`meeting.conflict-notes.md`.
+
+**2 + 3. The sidecar name was checked and then written (TOCTOU), and the check
+was a raw `.exists()` outside the module's path boundary.** `Path.exists()`
+followed by `PinnedSyncRoot.write_text` — which renames over its target — left
+a window in which a concurrent run could take the same name; the second writer
+then destroyed the first writer's preserved copy. That is precisely the data
+loss this task exists to prevent, in the one path whose whole job is to
+prevent it. And the `.exists()` probe was an ad-hoc filesystem call on a
+constructed path, bypassing the boundary every other operation in this module
+goes through.
+
+Both are gone in one change: a new `PinnedSyncRoot.create_new_text` claims the
+name with `O_CREAT | O_EXCL | O_NOFOLLOW` in a single syscall — check and
+claim are the same operation, so two runs cannot both decide a name is free.
+A taken name surfaces as `FileExistsError` and the writer advances to the next
+ordinal; an exhausted name space raises rather than falling back to a
+replacing write, which keeps the fail-closed rule intact (a raise means "could
+not preserve", so the destructive path does not run). `_write_conflict_sidecar`
+now performs **no** filesystem call of its own — everything routes through
+`PinnedSyncRoot`, which is this module's path boundary by design
+(`sync_paths.py` exists because the descriptor-anchored boundary is stronger
+than the lexical checks in `Utils/path_validation.py`, which is why the sync
+engine has never imported the latter).
+
+The window is opened deterministically in the test through `_before_create`,
+following the module's existing `_before_replace` seam idiom. **Mutation
+evidence** (the fix is one flag, so the flag is what gets mutated): dropping
+`O_EXCL` for `O_TRUNC` in `create_new_text` turns both atomicity tests red —
+`assert "another run's preserved copy" in {'Modified on disk'}` (the competitor's
+copy destroyed) and `assert 'Modified in database' == 'Modified on disk'` (the
+squatter silently overwritten *and* the destructive path allowed to proceed).
+Restored, both green. A real two-thread race was not used: it would be
+non-deterministic and could pass on a machine that happened not to interleave,
+whereas the seam pins the exact window with no flake surface.
+
+`create_new_text` also carries its own boundary tests next to `write_text`'s in
+`test_sync_containment.py`: it refuses an existing name without touching it,
+refuses to follow a symlinked name, refuses a missing parent (a sidecar goes
+beside an existing note; it never creates directories), writes 0o600, and
+unlinks its own file if anything fails after the create so a caller told the
+write failed never finds a half-written one.
+
+Files touched this round: `tldw_chatbook/Notes/sync_paths.py`
+(`create_new_text`, `_before_create`), `tldw_chatbook/Notes/sync_engine.py`
+(`is_conflict_sidecar`, `_write_conflict_sidecar`),
+`Tests/Notes/test_sync_conflict_preservation.py` (+4),
+`Tests/Notes/test_sync_containment.py` (+5),
+`Docs/Features/notes_bidirectional_sync.md`.
