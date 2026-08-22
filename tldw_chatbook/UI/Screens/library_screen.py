@@ -17254,13 +17254,6 @@ class LibraryScreen(BaseAppScreen):
             # skill-editor field itself, so it needs no preceding
             # ``_reset_library_skill_editor_state()`` call here.
             self._enter_library_skill_create_editor()
-        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS:
-            # Task 5: refresh the adaptive trust header's posture on every
-            # entry into the skills LIST view (never on Create > New skill,
-            # which lands straight in the editor and has no header to
-            # refresh) -- read off-thread, see
-            # ``_refresh_library_skills_trust_posture``'s docstring for why.
-            self._refresh_library_skills_trust_posture()
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS:
             self._request_library_prompts_browse(
                 self._library_prompt_browse_controller.mutation_refresh_scope,
@@ -17287,6 +17280,12 @@ class LibraryScreen(BaseAppScreen):
         self._library_selected_row_id = shell.selected_row_id
         if not await self._replace_library_browse_canvas(shell):
             await self.recompose()
+        if (
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
+            and self._library_skills_view == "list"
+        ):
+            # The strict posture projection requires its retained owner to exist.
+            self._refresh_library_skills_trust_posture()
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA:
             self._request_library_media_browse(
                 self._library_media_browse_controller.mutation_refresh_scope,

@@ -1204,6 +1204,52 @@ async def test_late_broad_snapshot_cannot_replace_the_dedicated_prompt_page(
 
 
 @pytest.mark.asyncio
+async def test_skills_rail_starts_trust_posture_after_canvas_mount(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    app.skills_scope_service = _FakeSkillsScopeService(
+        available=[{"name": "code-review"}]
+    )
+    screen = LibraryScreen(app)
+    screen.restore_state(
+        {"library_selected_row_id": LIBRARY_ROW_BROWSE_CONVERSATIONS}
+    )
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        active_screen = _active_library_screen(host)
+        await _wait_for_library_shell(active_screen, pilot)
+        await active_screen.workers.wait_for_complete()
+        observed_owner_state: list[bool] = []
+
+        def record_refresh() -> None:
+            observed_owner_state.append(
+                bool(active_screen.query("#library-skills-canvas"))
+            )
+
+        monkeypatch.setattr(
+            active_screen,
+            "_refresh_library_skills_trust_posture",
+            record_refresh,
+        )
+
+        await active_screen._select_library_rail_row(
+            LIBRARY_ROW_BROWSE_SKILLS
+        )
+        await _wait_for_selector(
+            active_screen, pilot, "#library-skills-canvas"
+        )
+
+        assert active_screen._library_selected_row_id == (
+            LIBRARY_ROW_BROWSE_SKILLS
+        )
+        assert active_screen._library_skills_view == "list"
+        assert observed_owner_state == [True]
+
+
+@pytest.mark.asyncio
 async def test_stale_skills_posture_cannot_project_after_route_switch() -> None:
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
