@@ -55,6 +55,7 @@ from tldw_chatbook.config import (
     resolve_provider_api_key,
 )
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
+from tldw_chatbook.Utils.egress import create_default_session
 from tldw_chatbook.LLM_Calls.moonshot import (
     chat_with_moonshot as _strict_chat_with_moonshot,
 )
@@ -472,9 +473,12 @@ def get_openai_embeddings(input_data: str, model: str) -> List[float]:
     }
     try:
         logger.debug("OpenAI Embeddings: Posting request to embeddings API")
-        response = requests.post(
-            "https://api.openai.com/v1/embeddings", headers=headers, json=request_data
-        )
+        with create_default_session() as session:
+            response = session.post(
+                "https://api.openai.com/v1/embeddings",
+                headers=headers,
+                json=request_data,
+            )
         logger.debug(f"Full API response data: {response}")
         if response.status_code == 200:
             response_data = response.json()
@@ -786,7 +790,7 @@ def chat_with_openai(
             logger.debug("OpenAI: Posting request (streaming)")
 
             def stream_generator():
-                session_context = requests.Session()
+                session_context = create_default_session()
                 session = session_context.__enter__()
                 response = None
                 try:
@@ -873,7 +877,7 @@ def chat_with_openai(
                 allowed_methods=["POST"],  # Changed from method_whitelist
             )
             adapter = HTTPAdapter(max_retries=retry_strategy)
-            with requests.Session() as session:
+            with create_default_session() as session:
                 session.mount("https://", adapter)
                 session.mount("http://", adapter)  # Though OpenAI is https
                 response = session.post(
@@ -1565,7 +1569,7 @@ def chat_with_anthropic(
             allowed_methods=["POST"],
         )
         adapter = HTTPAdapter(max_retries=retry_strategy)
-        with requests.Session() as session:
+        with create_default_session() as session:
             session.mount("https://", adapter)
             response = session.post(
                 api_url,
@@ -2469,7 +2473,7 @@ def chat_with_cohere(
     logger.debug(f"Cohere request host: {safe_llm_url_host(COHERE_CHAT_URL)}")
 
     # --- Retry Mechanism ---
-    session = requests.Session()
+    session = create_default_session()
     retry_count = int(cohere_config.get("api_retries", 3))
     retry_delay = float(
         cohere_config.get("api_retry_delay", 1.0)
@@ -3080,7 +3084,7 @@ def chat_with_deepseek(
     try:
         if current_streaming:
             # ... (OpenAI-like streaming logic, use "DeepSeek" in logs) ...
-            with requests.Session() as session:
+            with create_default_session() as session:
                 response = session.post(
                     api_url, headers=headers, json=data, stream=True, timeout=180
                 )
@@ -3130,7 +3134,7 @@ def chat_with_deepseek(
                     allowed_methods=["POST"],
                 )
             )
-            with requests.Session() as session:
+            with create_default_session() as session:
                 session.mount("https://", adapter)
                 response = session.post(
                     api_url, headers=headers, json=data, timeout=120
@@ -3548,7 +3552,7 @@ def chat_with_google(
                 allowed_methods=["POST"],
             )
         )
-        with requests.Session() as session:
+        with create_default_session() as session:
             session.mount("https://", adapter)
             response = session.post(
                 api_url,
@@ -3981,7 +3985,7 @@ def chat_with_google(
             ) from e
     finally:
         # If streaming, the response object is closed inside stream_generator's finally.
-        # If not streaming, the response object is implicitly closed by the `with requests.Session() as session:` block ending.
+        # If not streaming, the response object is implicitly closed by the `with create_default_session() as session:` block ending.
         # However, if `session.post` was called outside `with` or `response` was from `session.post(stream=True)`
         # and an error occurred *before* entering `stream_generator`, it might need closing here.
         # The `nonlocal response` and assignment `response = session.post(...)` helps manage this.
@@ -4131,7 +4135,7 @@ def chat_with_groq(
     try:
         if current_streaming:
             # ... (OpenAI-like streaming logic, ensure "Groq" in logs) ...
-            with requests.Session() as session:
+            with create_default_session() as session:
                 response = session.post(
                     api_url, headers=headers, json=data, stream=True, timeout=180
                 )
@@ -4189,7 +4193,7 @@ def chat_with_groq(
                     allowed_methods=["POST"],
                 )
             )
-            with requests.Session() as session:
+            with create_default_session() as session:
                 session.mount("https://", adapter)
                 response = session.post(
                     api_url, headers=headers, json=data, timeout=120
@@ -4622,7 +4626,7 @@ def chat_with_huggingface(
                     # or method_whitelist for older versions.
                 )
             )
-            session = requests.Session()
+            session = create_default_session()
             session.mount("https://", adapter)
             session.mount("http://", adapter)
 
@@ -4906,7 +4910,7 @@ def chat_with_mistral(
     try:
         if current_streaming:
             # ... (OpenAI-like streaming logic, use "Mistral" in logs) ...
-            with requests.Session() as session:
+            with create_default_session() as session:
                 response = session.post(
                     api_url, headers=headers, json=data, stream=True, timeout=180
                 )
@@ -4950,7 +4954,7 @@ def chat_with_mistral(
                     allowed_methods=["POST"],
                 )
             )
-            with requests.Session() as session:
+            with create_default_session() as session:
                 session.mount("https://", adapter)
                 response = session.post(
                     api_url, headers=headers, json=data, timeout=120
@@ -5159,7 +5163,7 @@ def chat_with_openrouter(
     try:
         if current_streaming:
             # ... (OpenAI-like streaming logic, ensure "OpenRouter" in logs) ...
-            with requests.Session() as session:
+            with create_default_session() as session:
                 response = session.post(
                     api_url, headers=headers, json=data, stream=True, timeout=180
                 )
@@ -5204,7 +5208,7 @@ def chat_with_openrouter(
                     allowed_methods=["POST"],
                 )
             )
-            with requests.Session() as session:
+            with create_default_session() as session:
                 session.mount("https://", adapter)
                 response = session.post(
                     api_url, headers=headers, json=data, timeout=120

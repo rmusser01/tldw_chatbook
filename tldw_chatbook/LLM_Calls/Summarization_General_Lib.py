@@ -45,6 +45,7 @@ from tldw_chatbook.LLM_Calls.Local_Summarization_Lib import (
 from tldw_chatbook.Logging_Config import logging
 from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
+from tldw_chatbook.Utils.egress import create_default_session, default_session_timeout
 from tldw_chatbook.Utils.persistent_diagnostics import safe_metadata_token
 from tldw_chatbook.model_capabilities import (
     anthropic_model_rejects_sampling_params,
@@ -896,7 +897,7 @@ def summarize_with_openai(
             payload["temperature"] = temp
 
         # --- Retry Logic --- (Copied from original, seems reasonable)
-        session = requests.Session()
+        session = create_default_session()
         retry_count = int(get_cli_setting("openai_api", "api_retries", 3))
         retry_delay = int(
             get_cli_setting("openai_api", "api_retry_delay", 1)
@@ -1100,7 +1101,7 @@ def summarize_with_anthropic(
         for attempt in range(max_retries):
             try:
                 # Create a session
-                session = requests.Session()
+                session = create_default_session()
 
                 # Load config values
                 retry_count = int(get_cli_setting("anthropic_api", "api_retries", 3))
@@ -1127,9 +1128,16 @@ def summarize_with_anthropic(
                     headers=headers,
                     json=data,
                     stream=streaming,
-                    # task-19560: unbounded before this -- a half-open
-                    # connection hung the summarization forever. Same
-                    # config-driven idiom the OpenAI path already uses.
+                    # task-19830: this bare module-level `requests.post`
+                    # had no timeout at all -- a stalled connection hung
+                    # forever with no way to cancel. task-19560 then gave it
+                    # this provider-specific value, which is kept in
+                    # preference to the session-wide default because
+                    # `anthropic_api.api_timeout` is a knob users can already
+                    # set. `requests` re-arms the read timeout per chunk, so
+                    # a slow-but-progressing stream (see `stream=streaming`
+                    # above) is only killed by a stall on one chunk, never by
+                    # total elapsed duration.
                     timeout=int(
                         get_cli_setting("anthropic_api", "api_timeout", 120)
                     ),
@@ -1363,7 +1371,7 @@ def summarize_with_cohere(
 
         if streaming:
             # Create a session
-            session = requests.Session()
+            session = create_default_session()
 
             # Load config values
             retry_count = int(get_cli_setting("cohere_api", "api_retries", 3))
@@ -1459,7 +1467,7 @@ def summarize_with_cohere(
             return stream_generator()
         else:
             # Create a session
-            session = requests.Session()
+            session = create_default_session()
 
             # Load config values
             retry_count = int(get_cli_setting("cohere_api", "api_retries", 3))
@@ -1612,7 +1620,7 @@ def summarize_with_groq(
         logging.debug("Groq: Submitting request to API endpoint")
         if streaming:
             # Create a session
-            session = requests.Session()
+            session = create_default_session()
 
             # Load config values
             retry_count = int(get_cli_setting("groq_api", "api_retries", 3))
@@ -1665,7 +1673,7 @@ def summarize_with_groq(
             return stream_generator()
         else:
             # Create a session
-            session = requests.Session()
+            session = create_default_session()
 
             # Load config values
             retry_count = int(get_cli_setting("groq_api", "api_retries", 3))
@@ -1793,7 +1801,7 @@ def summarize_with_openrouter(
     if streaming:
         try:
             # Create a session
-            session = requests.Session()
+            session = create_default_session()
 
             # Load config values
             retry_count = int(get_cli_setting("openrouter_api", "api_retries", 3))
@@ -1883,7 +1891,7 @@ def summarize_with_openrouter(
     else:
         try:
             # Create a session
-            session = requests.Session()
+            session = create_default_session()
 
             # Load config values
             retry_count = int(get_cli_setting("openrouter_api", "api_retries", 3))
@@ -2025,7 +2033,7 @@ def summarize_with_huggingface(
         logging.debug("HuggingFace: Submitting request...")
         if streaming:
             # Create a session
-            session = requests.Session()
+            session = create_default_session()
 
             # Load config values
             retry_count = int(get_cli_setting("huggingface_api", "api_retries", 3))
@@ -2079,7 +2087,7 @@ def summarize_with_huggingface(
             return stream_generator()
         else:
             # Create a session
-            session = requests.Session()
+            session = create_default_session()
 
             # Load config values
             retry_count = int(get_cli_setting("huggingface_api", "api_retries", 3))
@@ -2214,7 +2222,7 @@ def summarize_with_deepseek(
 
         if streaming:
             # Create a session
-            session = requests.Session()
+            session = create_default_session()
 
             # Load config values
             retry_count = int(get_cli_setting("deepseek_api", "api_retries", 3))
@@ -2273,7 +2281,7 @@ def summarize_with_deepseek(
             return stream_generator()
         else:
             # Create a session
-            session = requests.Session()
+            session = create_default_session()
 
             # Load config values
             retry_count = int(get_cli_setting("deepseek_api", "api_retries", 3))
@@ -2401,7 +2409,7 @@ def summarize_with_mistral(
 
         if streaming:
             # Create a session
-            session = requests.Session()
+            session = create_default_session()
 
             # Load config values
             retry_count = int(get_cli_setting("mistral_api", "api_retries", 3))
@@ -2474,7 +2482,7 @@ def summarize_with_mistral(
             return stream_generator()
         else:
             # Create a session
-            session = requests.Session()
+            session = create_default_session()
 
             # Load config values
             retry_count = int(get_cli_setting("mistral_api", "api_retries", 3))
@@ -2622,7 +2630,7 @@ def summarize_with_google(
 
         if streaming:
             # Create a session
-            session = requests.Session()
+            session = create_default_session()
 
             # Load config values
             retry_count = int(get_cli_setting("google_api", "api_retries", 3))
@@ -2678,7 +2686,7 @@ def summarize_with_google(
             return stream_generator()
         else:
             # Create a session
-            session = requests.Session()
+            session = create_default_session()
 
             # Load config values
             retry_count = int(get_cli_setting("google_api", "api_retries", 3))

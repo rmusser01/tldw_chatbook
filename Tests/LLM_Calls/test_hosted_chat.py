@@ -214,7 +214,7 @@ def _track_transport_sessions(
         sessions.append(session)
         return session
 
-    monkeypatch.setattr(hosted_chat.requests, "Session", create_session)
+    monkeypatch.setattr(hosted_chat, "create_default_session", create_session)
     return sessions
 
 

@@ -24,6 +24,7 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatRateLimitError,
 )
 from tldw_chatbook.LLM_Calls.hosted_chat_streaming import OwnedSSEStream, SSERecord
+from tldw_chatbook.Utils.egress import create_default_session
 from tldw_chatbook.Utils.sensitive_llm_logging import llm_retry_count
 
 
@@ -530,7 +531,7 @@ def owned_json_post(
 
     retries = llm_retry_count(max(0, config.retries))
     url = f"{base_url}/{route}"
-    session = requests.Session()
+    session = create_default_session()
     response: requests.Response | None = None
     stream_owns_session = False
     try:

@@ -1939,10 +1939,7 @@ def test_nonstream_transport_uses_exact_mode_url_headers_and_timeout(
     response = _TransportResponse(response_payload)
     session = _RecordingSession(response)
     monkeypatch.setattr(
-        qwencloud,
-        "requests",
-        SimpleNamespace(Session=lambda: session),
-        raising=False,
+        qwencloud, "create_default_session", lambda: session, raising=False
     )
     monkeypatch.setattr(
         qwencloud,
@@ -2005,7 +2002,7 @@ def test_nonstream_cleanup_failures_never_mask_result_or_provider_error(
         response,
         close_error=RuntimeError("RAW-SESSION-CLOSE-CANARY"),
     )
-    monkeypatch.setattr(qwencloud, "requests", SimpleNamespace(Session=lambda: session))
+    monkeypatch.setattr(qwencloud, "create_default_session", lambda: session)
     monkeypatch.setattr(
         qwencloud,
         "get_runtime_config_snapshot",
@@ -2065,8 +2062,8 @@ def test_streaming_transport_transfers_response_and_session_ownership(
     session = _RecordingSession(response)
     monkeypatch.setattr(
         qwencloud,
-        "requests",
-        SimpleNamespace(Session=lambda: session),
+        "create_default_session",
+        lambda: session,
     )
     monkeypatch.setattr(
         qwencloud,
@@ -2113,10 +2110,7 @@ def test_direct_adapter_loads_only_qwencloud_config_when_arguments_are_none(
     )
     session = _RecordingSession(response)
     monkeypatch.setattr(
-        qwencloud,
-        "requests",
-        SimpleNamespace(Session=lambda: session),
-        raising=False,
+        qwencloud, "create_default_session", lambda: session, raising=False
     )
     monkeypatch.setenv("DASHSCOPE_API_KEY", "qwen-env-lower-priority")
     monkeypatch.setenv("OPENAI_API_KEY", "openai-env-canary")
@@ -2195,8 +2189,8 @@ def test_direct_adapter_loads_alias_only_qwencloud_config_without_mutation_or_le
     session = _RecordingSession(response)
     monkeypatch.setattr(
         qwencloud,
-        "requests",
-        SimpleNamespace(Session=lambda: session),
+        "create_default_session",
+        lambda: session,
     )
     monkeypatch.setenv("QWEN_ALIAS_KEY", "alias-key-canary")
     source = {
@@ -2270,8 +2264,8 @@ def test_direct_adapter_canonical_qwencloud_config_overrides_alias_in_any_order(
     session = _RecordingSession(response)
     monkeypatch.setattr(
         qwencloud,
-        "requests",
-        SimpleNamespace(Session=lambda: session),
+        "create_default_session",
+        lambda: session,
     )
     monkeypatch.setenv("QWEN_ALIAS_KEY", "alias-key-canary")
     monkeypatch.setenv("QWEN_CANONICAL_KEY", "canonical-key-canary")
@@ -2360,8 +2354,8 @@ def test_direct_adapter_rejects_malformed_canonical_table_without_alias_leakage(
         lambda: SimpleNamespace(values=source),
     )
     monkeypatch.setattr(
-        qwencloud.requests,
-        "Session",
+        qwencloud,
+        "create_default_session",
         lambda: pytest.fail("malformed Qwen config must fail before network"),
     )
 
@@ -2392,8 +2386,8 @@ def test_direct_adapter_rejects_alias_only_malformed_table_before_network(
         lambda: SimpleNamespace(values=source),
     )
     monkeypatch.setattr(
-        qwencloud.requests,
-        "Session",
+        qwencloud,
+        "create_default_session",
         lambda: pytest.fail("malformed Qwen config must fail before network"),
     )
 
@@ -2430,8 +2424,8 @@ def test_direct_adapter_ignores_malformed_alias_when_canonical_is_valid(
     session = _RecordingSession(response)
     monkeypatch.setattr(
         qwencloud,
-        "requests",
-        SimpleNamespace(Session=lambda: session),
+        "create_default_session",
+        lambda: session,
     )
     canonical = {
         "api_key": "canonical-key",
@@ -2495,7 +2489,11 @@ def test_direct_adapter_rejects_malformed_provider_config_before_network(
     def unexpected_session() -> Never:
         raise AssertionError("network must not be initialized")
 
-    monkeypatch.setattr(qwencloud.requests, "Session", unexpected_session)
+    monkeypatch.setattr(
+        qwencloud,
+        "create_default_session",
+        unexpected_session,
+    )
     monkeypatch.setattr(
         qwencloud,
         "get_runtime_config_snapshot",
@@ -2530,8 +2528,8 @@ def test_direct_adapter_uses_stripped_lower_key_and_explicit_base_override(
     session = _RecordingSession(response)
     monkeypatch.setattr(
         qwencloud,
-        "requests",
-        SimpleNamespace(Session=lambda: session),
+        "create_default_session",
+        lambda: session,
     )
     monkeypatch.setenv("QWEN_KEY", "  env-fallback-key  ")
     monkeypatch.setattr(
@@ -2573,7 +2571,11 @@ def test_direct_adapter_rejects_unresolved_placeholders_before_network(
     def unexpected_session() -> Never:
         raise AssertionError("network must not be initialized")
 
-    monkeypatch.setattr(qwencloud.requests, "Session", unexpected_session)
+    monkeypatch.setattr(
+        qwencloud,
+        "create_default_session",
+        unexpected_session,
+    )
     monkeypatch.setenv("DASHSCOPE_API_KEY", " your_key ")
     monkeypatch.setattr(
         qwencloud,
@@ -2887,10 +2889,10 @@ def test_nontransient_4xx_and_mode_model_mismatch_are_not_retried(
     for index, response in enumerate(responses):
         session = _RecordingSession(response)
         monkeypatch.setattr(
-            qwencloud,
-            "requests",
-            SimpleNamespace(Session=lambda: session),
-        )
+        qwencloud,
+        "create_default_session",
+        lambda: session,
+    )
         monkeypatch.setattr(
             qwencloud,
             "get_runtime_config_snapshot",
@@ -2975,8 +2977,8 @@ def test_qwencloud_errors_and_logs_redact_private_values(
     session = _RecordingSession(response)
     monkeypatch.setattr(
         qwencloud,
-        "requests",
-        SimpleNamespace(Session=lambda: session),
+        "create_default_session",
+        lambda: session,
     )
     monkeypatch.setattr(
         qwencloud,
@@ -3068,10 +3070,10 @@ def test_qwencloud_errors_and_logs_redact_private_values(
         )
         status_session = _RecordingSession(status_response)
         monkeypatch.setattr(
-            qwencloud,
-            "requests",
-            SimpleNamespace(Session=lambda: status_session),
-        )
+        qwencloud,
+        "create_default_session",
+        lambda: status_session,
+    )
         with (
             _captured_qwencloud_logs() as status_logs,
             pytest.raises(expected_type) as status_exc,
@@ -3097,10 +3099,10 @@ def test_qwencloud_errors_and_logs_redact_private_values(
     ):
         network_session = _RecordingSession(_TransportResponse({}), error=network_error)
         monkeypatch.setattr(
-            qwencloud,
-            "requests",
-            SimpleNamespace(Session=lambda: network_session),
-        )
+        qwencloud,
+        "create_default_session",
+        lambda: network_session,
+    )
         with (
             _captured_qwencloud_logs() as network_logs,
             pytest.raises(ChatProviderError) as network_exc,

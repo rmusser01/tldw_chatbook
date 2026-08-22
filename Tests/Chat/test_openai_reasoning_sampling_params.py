@@ -67,7 +67,7 @@ def captured_payloads(monkeypatch):
                 }
             )
 
-    monkeypatch.setattr(llm_calls.requests, "Session", _FakeSession)
+    monkeypatch.setattr(llm_calls, "create_default_session", _FakeSession)
     return payloads
 
 

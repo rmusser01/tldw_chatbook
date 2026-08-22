@@ -4556,8 +4556,8 @@ async def test_console_send_keeps_each_mistral_credential_on_its_own_endpoint(
     }
     calls: list[tuple[str, str]] = []
     monkeypatch.setattr(
-        LLM_API_Calls.requests,
-        "Session",
+        LLM_API_Calls,
+        "create_default_session",
         lambda: _CapturedMistralSession(calls),
     )
     monkeypatch.setattr(
@@ -4662,8 +4662,8 @@ async def test_console_send_keeps_custom_endpoint_and_credential_paired(
         legacy_values["custom_openai_api_2"]["api_key"] = "stale-credential"
     calls: list[tuple[str, str]] = []
     monkeypatch.setattr(
-        LLM_API_Calls_Local.requests,
-        "Session",
+        LLM_API_Calls_Local,
+        "create_default_session",
         lambda: _CapturedCustomSession(calls),
     )
     monkeypatch.setattr(
@@ -4762,8 +4762,8 @@ async def test_console_keyless_custom_send_never_falls_back_to_legacy_credential
         legacy_values["custom_openai_api_2"]["api_key"] = legacy_credential
     calls: list[tuple[str, str]] = []
     monkeypatch.setattr(
-        LLM_API_Calls_Local.requests,
-        "Session",
+        LLM_API_Calls_Local,
+        "create_default_session",
         lambda: _CapturedCustomSession(calls),
     )
     monkeypatch.setattr(
@@ -4859,8 +4859,8 @@ async def test_console_persisted_explicit_keyless_ignores_saved_env_and_legacy_k
     }
     calls: list[tuple[str, str]] = []
     monkeypatch.setattr(
-        LLM_API_Calls_Local.requests,
-        "Session",
+        LLM_API_Calls_Local,
+        "create_default_session",
         lambda: _CapturedCustomSession(calls),
     )
     monkeypatch.setattr(
@@ -4915,8 +4915,8 @@ def test_custom_adapter_fallback_honors_persisted_explicit_keyless(monkeypatch):
     calls: list[tuple[str, str]] = []
     monkeypatch.setenv("CUSTOM_API_KEY", "environment-adapter-canary")
     monkeypatch.setattr(
-        LLM_API_Calls_Local.requests,
-        "Session",
+        LLM_API_Calls_Local,
+        "create_default_session",
         lambda: _CapturedCustomSession(calls),
     )
     monkeypatch.setattr(
@@ -5069,7 +5069,7 @@ async def test_console_send_honors_configured_anthropic_base_url(monkeypatch) ->
 
     captured: dict = {}
     monkeypatch.setattr(
-        LLM_API_Calls.requests, "Session", lambda: _CapturedURLSession(captured)
+        LLM_API_Calls, "create_default_session", lambda: _CapturedURLSession(captured)
     )
 
     gateway = ConsoleProviderGateway(
@@ -5114,7 +5114,7 @@ async def test_console_send_default_anthropic_url_unchanged_when_unconfigured(
 
     captured: dict = {}
     monkeypatch.setattr(
-        LLM_API_Calls.requests, "Session", lambda: _CapturedURLSession(captured)
+        LLM_API_Calls, "create_default_session", lambda: _CapturedURLSession(captured)
     )
 
     gateway = ConsoleProviderGateway(

@@ -400,7 +400,7 @@ def test_sensitive_anthropic_error_body_and_exception_are_not_exposed(
             }
         },
     )
-    monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
+    monkeypatch.setattr(cloud_adapters, "create_default_session", lambda: session)
 
     with _captured_logs() as logs, sensitive_llm_request():
         with pytest.raises(Exception) as exc_info:
@@ -419,7 +419,7 @@ def test_sensitive_shared_local_transport_redacts_endpoint_body_and_exception(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session = _FakeSession(_FakeResponse({}, status_code=500, text="ERROR-BODY-CANARY"))
-    monkeypatch.setattr(local_adapters.requests, "Session", lambda: session)
+    monkeypatch.setattr(local_adapters, "create_default_session", lambda: session)
 
     with _captured_logs() as logs, sensitive_llm_request():
         with pytest.raises(Exception) as exc_info:
@@ -450,7 +450,7 @@ def test_sensitive_openai_http_error_log_and_exception_are_metadata_only(
             }
         },
     )
-    monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
+    monkeypatch.setattr(cloud_adapters, "create_default_session", lambda: session)
 
     with _captured_logs() as logs, sensitive_llm_request():
         with pytest.raises(requests.exceptions.HTTPError) as exc_info:
@@ -493,7 +493,7 @@ def test_sensitive_cohere_request_and_response_logs_are_metadata_only(
             },
         ),
     )
-    monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
+    monkeypatch.setattr(cloud_adapters, "create_default_session", lambda: session)
 
     with _captured_logs() as logs, sensitive_llm_request():
         result = cloud_adapters.chat_with_cohere(
@@ -520,7 +520,7 @@ def test_sensitive_google_request_content_and_error_body_are_not_logged(
         "get_runtime_config_snapshot",
         lambda: _runtime_config("google", {"api_key": "key", "api_retries": 0}),
     )
-    monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
+    monkeypatch.setattr(cloud_adapters, "create_default_session", lambda: session)
 
     with _captured_logs() as logs, sensitive_llm_request():
         with pytest.raises(Exception) as exc_info:
@@ -582,7 +582,7 @@ def test_openai_responses_api_input_field_is_never_logged(
             }
         },
     )
-    monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
+    monkeypatch.setattr(cloud_adapters, "create_default_session", lambda: session)
 
     def _invoke() -> None:
         with pytest.raises(Exception):
@@ -632,7 +632,7 @@ def test_anthropic_system_field_is_never_logged(
             }
         },
     )
-    monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
+    monkeypatch.setattr(cloud_adapters, "create_default_session", lambda: session)
 
     def _invoke() -> None:
         with pytest.raises(Exception):
@@ -673,7 +673,7 @@ def test_google_system_instruction_field_is_never_logged(
         "get_runtime_config_snapshot",
         lambda: _runtime_config("google", {"api_key": "key", "api_retries": 0}),
     )
-    monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
+    monkeypatch.setattr(cloud_adapters, "create_default_session", lambda: session)
 
     def _invoke() -> None:
         with pytest.raises(Exception):
@@ -738,7 +738,7 @@ def test_tool_definitions_log_names_only_never_schema_or_description(
             }
         },
     )
-    monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
+    monkeypatch.setattr(cloud_adapters, "create_default_session", lambda: session)
 
     with _captured_logs() as logs:
         with pytest.raises(Exception):
@@ -789,7 +789,7 @@ def test_huggingface_tool_logs_are_names_only(
             }
         },
     )
-    monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
+    monkeypatch.setattr(cloud_adapters, "create_default_session", lambda: session)
 
     context = sensitive_llm_request() if sensitive else nullcontext()
     with _captured_logs() as logs, context:
@@ -854,7 +854,7 @@ def test_sensitive_huggingface_error_body_endpoint_and_exception_are_not_logged(
             }
         },
     )
-    monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
+    monkeypatch.setattr(cloud_adapters, "create_default_session", lambda: session)
 
     with _captured_logs() as logs, sensitive_llm_request():
         with pytest.raises(Exception) as exc_info:
@@ -875,7 +875,7 @@ def test_sensitive_openai_compatible_error_bodies_are_not_logged(
     provider: str,
 ) -> None:
     session = _FakeSession(_FakeResponse({}, status_code=500, text="ERROR-BODY-CANARY"))
-    monkeypatch.setattr(hosted_chat.requests, "Session", lambda: session)
+    monkeypatch.setattr(hosted_chat, "create_default_session", lambda: session)
     if provider == "moonshot":
         call: Callable[..., object] = cloud_adapters.chat_with_moonshot
     else:
@@ -912,7 +912,7 @@ def test_sensitive_native_kobold_prompt_response_and_errors_are_not_logged(
             },
         ),
     )
-    monkeypatch.setattr(local_adapters.requests, "Session", lambda: session)
+    monkeypatch.setattr(local_adapters, "create_default_session", lambda: session)
 
     with _captured_logs() as logs, sensitive_llm_request():
         with pytest.raises(ChatProviderError) as exc_info:
@@ -1035,7 +1035,7 @@ async def test_auxiliary_pins_configured_endpoint_when_selection_url_is_empty(
     }
     session = _FakeSession(_FakeResponse({"choices": [{"message": {"content": "ok"}}]}))
     monkeypatch.setattr(cloud_adapters, "load_settings", lambda: adapter_config)
-    monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
+    monkeypatch.setattr(cloud_adapters, "create_default_session", lambda: session)
     gateway = ConsoleProviderGateway(config_provider=lambda: gateway_config, environ={})
     resolution = await gateway.resolve_for_send(
         ConsoleProviderSelection(
@@ -1074,7 +1074,7 @@ async def test_auxiliary_pins_default_openai_endpoint_before_config_changes(
     adapter_config = {"openai_api": {"api_retries": 3}}
     session = _FakeSession(_FakeResponse({"choices": [{"message": {"content": "ok"}}]}))
     monkeypatch.setattr(cloud_adapters, "load_settings", lambda: adapter_config)
-    monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
+    monkeypatch.setattr(cloud_adapters, "create_default_session", lambda: session)
     gateway = ConsoleProviderGateway(config_provider=lambda: gateway_config, environ={})
     resolution = await gateway.resolve_for_send(
         ConsoleProviderSelection(provider="openai", explicit_model="gpt-test")
@@ -1116,7 +1116,7 @@ async def test_auxiliary_pins_default_anthropic_endpoint_before_config_changes(
         )
     )
     monkeypatch.setattr(cloud_adapters, "load_settings", lambda: adapter_config)
-    monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
+    monkeypatch.setattr(cloud_adapters, "create_default_session", lambda: session)
     gateway = ConsoleProviderGateway(config_provider=lambda: gateway_config, environ={})
     resolution = await gateway.resolve_for_send(
         ConsoleProviderSelection(provider="anthropic", explicit_model="claude-test")
@@ -1166,7 +1166,7 @@ async def test_auxiliary_huggingface_router_url_matches_ordinary_adapter_after_d
     }
     session = _FakeSession(_FakeResponse({"choices": [{"message": {"content": "ok"}}]}))
     monkeypatch.setattr(cloud_adapters, "load_settings", lambda: adapter_config)
-    monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
+    monkeypatch.setattr(cloud_adapters, "create_default_session", lambda: session)
 
     ordinary = cloud_adapters.chat_with_huggingface(
         input_data=[{"role": "user", "content": "ordinary"}],
