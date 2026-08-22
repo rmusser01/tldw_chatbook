@@ -338,6 +338,10 @@ class LocalMediaChunkToolService:
             span_family: str | None = _PRIMARY_FAMILY_LABEL
         elif len(families) == 1:
             span_family = families[0]
+            notes.append(
+                f"chunk_span addresses the sole family {span_family!r}; pass"
+                " it as chunk_type when fetching units"
+            )
         else:
             span_family = None
             if families:
@@ -362,11 +366,27 @@ class LocalMediaChunkToolService:
             else []
         )
 
+        # Paging closes at the fetched window, never past it: navigation is
+        # fetched once at the 500-node ceiling, and ``node_total`` counts the
+        # WHOLE tree (an 800-node doc reports 800 but delivers a 500-node
+        # window). Bounding ``has_more`` by the window is what keeps a walk
+        # from degenerating -- otherwise offset 500 pages an empty list yet
+        # re-mints a cursor against the unreachable remainder, forever.
+        window_total = len(nodes)
+        pageable_total = min(node_total, window_total)
+        if node_total > window_total:
+            truncated = True
+            notes.append(
+                f"navigation window limited to the first {window_total} of"
+                f" {node_total} nodes; deeper nodes are not addressable"
+                " through this tool"
+            )
+
         page = nodes[offset : offset + max_nodes]
         payload_nodes = [
             self._structure_node(node, span_rows) for node in page
         ]
-        has_more = offset + len(page) < node_total
+        has_more = offset + len(page) < pageable_total
 
         if not chunk_rows:
             notes.append(_RECHUNK_HINT)

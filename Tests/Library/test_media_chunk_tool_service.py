@@ -481,6 +481,78 @@ def test_structure_max_nodes_above_maximum_clamps(
     assert len(payload["nodes"]) == 3
 
 
+def test_structure_paging_closes_at_the_500_node_window(
+    media_db: MediaDatabase,
+):
+    """The >500-node regression: the walk TERMINATES at the window edge.
+
+    Navigation is fetched once at the 500-node ceiling; a larger tree (800
+    nodes here, stubbed to the real backend's truncated shape) pages only
+    within that window. The last in-window page closes with has_more False
+    and never re-mints a cursor an empty page would loop on forever.
+    """
+    _, media_uuid = _seed_media(media_db, _DOC)
+
+    window_nodes = [
+        {
+            "id": f"heading-{index}",
+            "title": f"Section {index}",
+            "level": 0,
+            "target_start": index,
+            "target_end": index + 1,
+        }
+        for index in range(500)
+    ]
+
+    class _WindowedNavigation:
+        def get_media_navigation(self, media_id, **kwargs):
+            return {
+                "media_id": media_id,
+                "available": True,
+                "nodes": window_nodes,
+                "stats": {
+                    "returned_node_count": 500,
+                    "node_count": 800,
+                    "max_depth": 0,
+                    "truncated": True,
+                },
+            }
+
+    service = LocalMediaChunkToolService(
+        media_db, _WindowedNavigation(), template_interop=None
+    )
+    public = _public_id(media_uuid)
+
+    seen_offsets = []
+    cursor = None
+    pages = 0
+    while True:
+        args = {"id": public, "max_nodes": 200}
+        if cursor is not None:
+            args["node_cursor"] = cursor
+        payload = _invoke(service, "library_get_media_structure", args)
+        assert "error" not in payload
+        seen_offsets.append(payload["node_offset"])
+        pages += 1
+        assert pages <= 5, "structure paging failed to terminate"
+        cursor = payload["next_cursor"]
+        if cursor is None:
+            break
+
+    # Three pages cover the 500-node window (200 + 200 + 100); the walk
+    # closes on the last in-window page instead of re-minting at offset 500.
+    assert seen_offsets == [0, 200, 400]
+    assert pages == 3
+    last = payload
+    assert last["returned_node_count"] == 100
+    assert last["has_more"] is False
+    assert last["truncated"] is True
+    assert last["node_total"] == 800  # the full tree size stays disclosed
+    assert any(
+        "first 500 of 800" in note for note in last["notes"]
+    ), last["notes"]
+
+
 def test_structure_multi_family_without_primary_notes_families(
     service: LocalMediaChunkToolService, media_db: MediaDatabase
 ):
@@ -517,6 +589,32 @@ def test_structure_multi_family_without_primary_notes_families(
     assert any("paragraph" in note and "section" in note for note in payload["notes"])
 
 
+def test_structure_single_typed_family_spans_note_names_the_family(
+    service: LocalMediaChunkToolService, media_db: MediaDatabase
+):
+    media_id, media_uuid = _seed_media(media_db, _DOC)
+    spans = _doc_spans()
+    for index, (start, end) in enumerate(spans):
+        _insert_chunk(
+            db=media_db,
+            media_id=media_id,
+            chunk_index=index,
+            text=_DOC[start:end],
+            chunk_type="section",
+            start_char=start,
+            end_char=end,
+        )
+
+    payload = _invoke(
+        service, "library_get_media_structure", {"id": _public_id(media_uuid)}
+    )
+
+    # The sole family IS the span family; the note names it so the agent
+    # knows which chunk_type string the chunk_span addresses refer to.
+    assert payload["nodes"][0]["chunk_span"] == [0, 1]
+    assert any("'section'" in note for note in payload["notes"]), payload["notes"]
+
+
 # ---------------------------------------------------------------------------
 # library_get_media_chunk (spec §4.2)
 # ---------------------------------------------------------------------------
@@ -538,13 +636,18 @@ def test_fetch_reads_stored_rows_verbatim_with_raw_spans(
         end_char=117,
         metadata=json.dumps({"chunk_method": "sentences"}),
     )
-    # Mutation pin: nothing re-chunks on the read path.
+    # Mutation pin: nothing re-chunks on the read path. BOTH bindings are
+    # patched -- ``library_rechunk_service``'s ``from ... import`` binds the
+    # name in ITS module, so patching the source module alone would not
+    # catch a call routed through the re-chunk machinery.
+    import tldw_chatbook.Library.library_rechunk_service as rechunk_service
     from tldw_chatbook.RAG_Search import chunking_service
 
     def _fail(*args, **kwargs):  # pragma: no cover - pin only
         raise AssertionError("chunking ran during a stored-chunk fetch")
 
     monkeypatch.setattr(chunking_service, "improved_chunking_process", _fail)
+    monkeypatch.setattr(rechunk_service, "improved_chunking_process", _fail)
 
     payload = _invoke(
         service,

@@ -1,10 +1,11 @@
-"""Shared synchronous core for the 18 direct Library tools (task-1337, ADR-030).
+"""Shared synchronous core for the direct Library tools (task-1337, ADR-030).
 
 One ``LocalLibraryToolService`` owns the public operation contract and
 delegates storage work to the six existing local backend services (media,
-notes, prompts, skills, conversations, collections). Both runtimes -- the
-Console provider and local MCP registration -- call this core; the descriptor
-table, ID/cursor codecs, validation, and byte fitting all live in
+notes, prompts, skills, conversations, collections) plus the dedicated
+media chunk-tool service (structure/fetch/spec operations). Both runtimes --
+the Console provider and local MCP registration -- call this core; the
+descriptor table, ID/cursor codecs, validation, and byte fitting all live in
 ``library_tool_contract`` so the two surfaces cannot drift.
 
 Pure synchronous core: no Textual, MCP, or agent imports. Local backends whose
