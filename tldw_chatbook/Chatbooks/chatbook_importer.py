@@ -975,13 +975,14 @@ class ChatbookImporter:
                                 if (
                                     generation_state
                                     is AssistantGenerationState.CONTINUATION_ACTIVE
+                                    and (
+                                        continuation_checkpoint is None
+                                        or continuation_checkpoint.state != "active"
+                                    )
                                 ):
-                                    if continuation_checkpoint is None:
-                                        generation_state = None
-                                    elif continuation_checkpoint.state != "active":
-                                        raise ValueError(
-                                            "Invalid V2 conversation graph."
-                                        )
+                                    raise ValueError(
+                                        "Invalid V2 conversation graph."
+                                    )
                                 msg_dict["assistant_generation_state"] = (
                                     generation_state.value
                                     if generation_state is not None
@@ -1141,6 +1142,7 @@ class ChatbookImporter:
                         > _MAX_V2_TOTAL_PRIVATE_BYTES
                     ):
                         item["_private"] = {"provider_continuation": None}
+                        checkpoint = None
                     else:
                         total_private_bytes += private_bytes
             raw_state = raw.get("assistant_generation_state")
@@ -1159,8 +1161,7 @@ class ChatbookImporter:
             if (
                 generation_state
                 is AssistantGenerationState.CONTINUATION_ACTIVE
-                and checkpoint is not None
-                and checkpoint.state != "active"
+                and (checkpoint is None or checkpoint.state != "active")
             ):
                 raise ValueError("Invalid V2 conversation graph.")
             item["assistant_generation_state"] = (

@@ -252,6 +252,39 @@ def test_trajectory_projection_round_trips_generation_state_without_checkpoint(
         db.close_connection()
 
 
+def test_trajectory_projection_preserves_continuation_active_without_private_data(
+    tmp_path,
+) -> None:
+    db = CharactersRAGDB(
+        tmp_path / "trajectory-active.db", client_id="trajectory-test"
+    )
+    try:
+        conversation_id = db.add_conversation({"title": "Active trajectory state"})
+        message_id = db.add_message(
+            {
+                "conversation_id": conversation_id,
+                "sender": "assistant",
+                "role": "assistant",
+                "content": "",
+                "provider_continuation_json": _active_continuation_json(),
+                "assistant_generation_state": "continuation_active",
+            }
+        )
+        assert message_id is not None
+
+        payload = validate_trajectory_export(
+            build_trajectory_export(db, conversation_id)
+        )
+
+        assert payload["messages"][0]["assistant_generation_state"] == (
+            "continuation_active"
+        )
+        assert "provider_continuation_json" not in payload["messages"][0]
+        assert "console_dispatch_checkpoints" not in json.dumps(payload)
+    finally:
+        db.close_connection()
+
+
 @pytest.mark.parametrize(
     ("sender", "state"),
     [("assistant", "unknown"), ("user", "accepted")],

@@ -509,6 +509,44 @@ def test_v2_import_rejects_continuation_active_with_complete_checkpoint(
     assert message == "Failed to import any items from chatbook"
 
 
+def test_v2_import_rejects_continuation_active_without_checkpoint(
+    tmp_path: Path, chachanotes_template_db: Path
+) -> None:
+    source_paths, conversation_id, _ = _source_graph(
+        tmp_path, chachanotes_template_db
+    )
+    export_path = _create_export(tmp_path, source_paths, conversation_id)
+
+    def remove_checkpoint(conversation: dict) -> None:
+        selected = next(
+            message
+            for message in conversation["messages"]
+            if message["role"] == "assistant" and message["is_selected_variant"]
+        )
+        selected.pop("_private")
+        selected["assistant_generation_state"] = "continuation_active"
+
+    rewritten = _rewrite_export(
+        export_path,
+        tmp_path / "missing-active-checkpoint.chatbook.zip",
+        mutate_conversation=remove_checkpoint,
+    )
+    destination_path = tmp_path / "destination-missing-active.db"
+    shutil.copyfile(chachanotes_template_db, destination_path)
+    importer = ChatbookImporter({"ChaChaNotes": str(destination_path)})
+    importer.temp_dir = tmp_path / "imports-missing-active"
+    importer.temp_dir.mkdir()
+
+    success, message = importer.import_chatbook(
+        rewritten,
+        conflict_resolution=ConflictResolution.RENAME,
+        import_status=ImportStatus(),
+    )
+
+    assert success is False
+    assert message == "Failed to import any items from chatbook"
+
+
 def _private_mutations() -> list:
     def payload(conversation):
         return next(
@@ -543,10 +581,20 @@ def test_invalid_private_data_is_dropped_while_visible_graph_imports(
 ) -> None:
     source_paths, conversation_id, _ = _source_graph(tmp_path, chachanotes_template_db)
     export_path = _create_export(tmp_path, source_paths, conversation_id)
+
+    def break_private_on_closed_owner(conversation: dict) -> None:
+        selected = next(
+            message
+            for message in conversation["messages"]
+            if message["role"] == "assistant" and message["is_selected_variant"]
+        )
+        selected["assistant_generation_state"] = "complete"
+        mutate_private(conversation)
+
     broken = _rewrite_export(
         export_path,
         tmp_path / "broken.chatbook.zip",
-        mutate_conversation=mutate_private,
+        mutate_conversation=break_private_on_closed_owner,
     )
     destination_path = tmp_path / "destination.db"
     shutil.copyfile(chachanotes_template_db, destination_path)
@@ -772,6 +820,20 @@ def test_v2_oversize_private_drops_without_rejecting_visible_graph(
 
     source_paths, conversation_id, _ = _source_graph(tmp_path, chachanotes_template_db)
     export_path = _create_export(tmp_path, source_paths, conversation_id)
+
+    def close_private_owner(conversation: dict) -> None:
+        selected = next(
+            message
+            for message in conversation["messages"]
+            if message["role"] == "assistant" and message["is_selected_variant"]
+        )
+        selected["assistant_generation_state"] = "complete"
+
+    export_path = _rewrite_export(
+        export_path,
+        tmp_path / "closed-state-private-bound.chatbook.zip",
+        mutate_conversation=close_private_owner,
+    )
     monkeypatch.setattr(importer_module, "_MAX_V2_TOTAL_PRIVATE_BYTES", 1)
     destination_path = tmp_path / "destination-private-bound.db"
     shutil.copyfile(chachanotes_template_db, destination_path)
@@ -794,6 +856,28 @@ def test_v2_oversize_private_drops_without_rejecting_visible_graph(
     assert all(row["provider_continuation_json"] is None for row in rows)
 
 
+def test_v2_oversize_private_rejects_continuation_active_owner(
+    tmp_path: Path, chachanotes_template_db: Path, monkeypatch
+) -> None:
+    import tldw_chatbook.Chatbooks.chatbook_importer as importer_module
+
+    source_paths, conversation_id, _ = _source_graph(tmp_path, chachanotes_template_db)
+    export_path = _create_export(tmp_path, source_paths, conversation_id)
+    monkeypatch.setattr(importer_module, "_MAX_V2_TOTAL_PRIVATE_BYTES", 1)
+    destination_path = tmp_path / "destination-active-private-bound.db"
+    shutil.copyfile(chachanotes_template_db, destination_path)
+    importer = ChatbookImporter({"ChaChaNotes": str(destination_path)})
+    importer.temp_dir = tmp_path / "imports-active-private-bound"
+    importer.temp_dir.mkdir()
+
+    success, message = importer.import_chatbook(
+        export_path, import_status=ImportStatus()
+    )
+
+    assert success is False
+    assert message == "Failed to import any items from chatbook"
+
+
 def test_v2_deep_private_reaches_canonical_parser_before_discard(
     tmp_path: Path, chachanotes_template_db: Path, monkeypatch
 ) -> None:
@@ -803,6 +887,7 @@ def test_v2_deep_private_reaches_canonical_parser_before_discard(
     export_path = _create_export(tmp_path, source_paths, conversation_id)
 
     def make_private_deep(conversation):
+        conversation["messages"][2]["assistant_generation_state"] = "complete"
         private_value = "PRIVATE-DEEP-V2-CANARY"
         for _ in range(40):
             private_value = [private_value]

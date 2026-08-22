@@ -1414,11 +1414,6 @@ def validate_trajectory_export(payload: Any) -> dict:
                 f"Invalid trajectory export: 'messages[{index}].assistant_generation_state' "
                 "is invalid"
             ) from None
-        if state is not None and state.value == "continuation_active":
-            raise TrajectoryExportError(
-                f"Invalid trajectory export: 'messages[{index}].assistant_generation_state' "
-                "requires an active continuation"
-            )
         normalized_message["assistant_generation_state"] = (
             state.value if state is not None else None
         )
