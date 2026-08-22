@@ -1,6 +1,6 @@
 # TASK-3070.9 Console First-Chat Handoff Ownership Design
 
-**Status:** User-approved design; pending specification review
+**Status:** Approved
 **Date:** 2026-08-22
 **Approved design base:** `0da426e1e4c2846f13671690b8f981f72e673359`
 **Latest-dev Task 0 baseline:** `ede2162143331e324c44832ff6a3910e1185cf58`

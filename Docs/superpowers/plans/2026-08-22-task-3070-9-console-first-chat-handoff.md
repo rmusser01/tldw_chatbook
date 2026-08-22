@@ -129,27 +129,22 @@ Expected: only the reviewed design, plan, and task files are modified/untracked;
 `HEAD` descends from the approved base. Do not rebase with these documentation
 edits uncommitted. Preserve `0da426e1...` as immutable design evidence.
 
-- [x] **Step 2: Validate the approved-base screen and exact method family**
+- [x] **Step 2: Validate the immutable design base, Task 0 implementation base, and candidate**
 
 Run:
 
 ```bash
-../../.venv/bin/python - <<'PY'
+../../.venv/bin/python -B - <<'PY'
 import ast
+import hashlib
+import subprocess
+from collections import Counter
 from pathlib import Path
 
-path = Path("tldw_chatbook/UI/Screens/chat_screen.py")
-source = path.read_text(encoding="utf-8")
-tree = ast.parse(source)
-screen = next(
-    node for node in tree.body
-    if isinstance(node, ast.ClassDef) and node.name == "ChatScreen"
-)
-methods = [
-    node for node in screen.body
-    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-]
-names = {
+DESIGN_BASE = "0da426e1e4c2846f13671690b8f981f72e673359"
+TASK_0_IMPLEMENTATION_BASE = "ede2162143331e324c44832ff6a3910e1185cf58"
+SCREEN_PATH = "tldw_chatbook/UI/Screens/chat_screen.py"
+FAMILY_NAMES = (
     "_first_chat_defaults_match",
     "_current_first_chat_defaults",
     "eligible_console_first_chat_session_id",
@@ -158,16 +153,80 @@ names = {
     "_resync_console_after_first_chat_rollback",
     "_resync_mounted_console_after_first_chat_rollback",
     "consume_pending_console_first_chat_intent",
-}
-family = [node for node in methods if node.name in names]
-print(len(source.splitlines()), len(methods))
-print(len(family), sum(node.end_lineno - node.lineno + 1 for node in family))
-print([node.name for node in family])
+)
+EXPECTED_LINES = 19_995
+EXPECTED_METHODS = 640
+EXPECTED_FAMILY_LINES = 328
+EXPECTED_FAMILY_SHA256 = (
+    "3a2968883c63dc89de430ee72b40444ebd97fb9b36c1dbc8a46e19d063a715ee"
+)
+
+
+def source_at(revision: str) -> str:
+    return subprocess.run(
+        ["git", "show", f"{revision}:{SCREEN_PATH}"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+
+def measure(label: str, source: str) -> tuple[str, ...]:
+    tree = ast.parse(source, filename=f"{label}:{SCREEN_PATH}")
+    screen = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "ChatScreen"
+    )
+    methods = [
+        node
+        for node in screen.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    multiplicity = Counter(node.name for node in methods)
+    family = [node for node in methods if node.name in FAMILY_NAMES]
+    ordered_names = tuple(node.name for node in family)
+    family_lines = sum(node.end_lineno - node.lineno + 1 for node in family)
+    normalized = tuple(ast.dump(node, include_attributes=False) for node in family)
+    digest = hashlib.sha256("\n".join(normalized).encode()).hexdigest()
+    print(
+        label,
+        len(source.splitlines()),
+        len(methods),
+        len(family),
+        family_lines,
+        ordered_names,
+        {name: multiplicity[name] for name in FAMILY_NAMES},
+        digest,
+    )
+    assert len(source.splitlines()) == EXPECTED_LINES
+    assert len(methods) == EXPECTED_METHODS
+    assert ordered_names == FAMILY_NAMES
+    assert all(multiplicity[name] == 1 for name in FAMILY_NAMES)
+    assert len(family) == len(FAMILY_NAMES)
+    assert family_lines == EXPECTED_FAMILY_LINES
+    assert digest == EXPECTED_FAMILY_SHA256
+    return normalized
+
+
+design_family = measure("design-base", source_at(DESIGN_BASE))
+implementation_family = measure(
+    "task0-implementation-base",
+    source_at(TASK_0_IMPLEMENTATION_BASE),
+)
+candidate_family = measure(
+    "candidate-working-tree",
+    Path(SCREEN_PATH).read_text(encoding="utf-8"),
+)
+assert design_family == implementation_family == candidate_family
 PY
 ```
 
-Expected at the approved base: `19995 640`, then `8 328`, then the exact ordered
-family. This is immutable design evidence, not the final implementation baseline.
+Expected: each labelled revision/candidate prints `19995`, `640`, `8`, `328`,
+the exact ordered family, multiplicity `1` for every name, and SHA-256
+`3a2968883c63dc89de430ee72b40444ebd97fb9b36c1dbc8a46e19d063a715ee`.
+The immutable design result and frozen Task 0 implementation result remain
+separate evidence even though their measured family is identical.
 
 - [x] **Step 3: Run the rebased implementation focused baseline without changing source**
 
@@ -196,9 +255,183 @@ Expected: all selected tests pass. Record counts, warnings, and duration.
 Run:
 
 ```bash
-../../.venv/bin/python scripts/check_persistent_diagnostic_inventory.py
-../../.venv/bin/python -B -m pytest -q \
-  Tests/Architecture/test_persistent_diagnostic_inventory.py::test_reviewed_diagnostic_changes_are_metadata_only
+../../.venv/bin/python -B - <<'PY'
+from __future__ import annotations
+
+import hashlib
+import io
+import os
+import subprocess
+import sys
+import tarfile
+import tempfile
+from pathlib import Path
+
+TASK_0_IMPLEMENTATION_BASE = "ede2162143331e324c44832ff6a3910e1185cf58"
+EXPECTED_CHECKER_SHA256 = (
+    "bdd245044db1597a76c95543d9d6bb56bee1cf6d86f4d96a8f9524f0cfe47f77"
+)
+CHECKER = "scripts/check_persistent_diagnostic_inventory.py"
+METADATA_NODE = (
+    "Tests/Architecture/test_persistent_diagnostic_inventory.py::"
+    "test_reviewed_diagnostic_changes_are_metadata_only"
+)
+repo = Path.cwd().resolve()
+
+
+def artifact_snapshot(root: Path) -> tuple[tuple[str, int, int], ...]:
+    files: list[tuple[str, int, int]] = []
+    for cache_name in ("__pycache__", ".pytest_cache"):
+        for cache_root in root.rglob(cache_name):
+            if not cache_root.is_dir() or cache_root.is_symlink():
+                continue
+            for path in cache_root.rglob("*"):
+                if path.is_file() and not path.is_symlink():
+                    stat = path.stat()
+                    files.append(
+                        (path.relative_to(root).as_posix(), stat.st_size, stat.st_mtime_ns)
+                    )
+    return tuple(sorted(files))
+
+
+before_status = subprocess.run(
+    ["git", "status", "--porcelain"],
+    cwd=repo,
+    check=True,
+    capture_output=True,
+).stdout
+before_artifacts = artifact_snapshot(repo)
+subprocess.run(
+    [
+        "git",
+        "diff",
+        "--quiet",
+        TASK_0_IMPLEMENTATION_BASE,
+        "--",
+        "tldw_chatbook",
+        "Tests",
+        "scripts",
+        "Docs/security",
+    ],
+    cwd=repo,
+    check=True,
+)
+archive = subprocess.run(
+    ["git", "archive", TASK_0_IMPLEMENTATION_BASE],
+    cwd=repo,
+    check=True,
+    capture_output=True,
+).stdout
+environment = os.environ.copy()
+environment["PYTHONDONTWRITEBYTECODE"] = "1"
+environment.pop("PYTHONPATH", None)
+environment.pop("GITHUB_ACTIONS", None)
+
+
+def run(root: Path, *arguments: str) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(
+        [sys.executable, "-B", *arguments],
+        cwd=root,
+        env=environment,
+        capture_output=True,
+    )
+
+
+def combined(result: subprocess.CompletedProcess[bytes]) -> bytes:
+    return result.stdout + result.stderr
+
+
+temporary_path: Path | None = None
+with tempfile.TemporaryDirectory(
+    prefix="task30709-frozen-base.",
+    dir="/private/tmp",
+) as temporary_root:
+    temporary_path = Path(temporary_root)
+    assert temporary_path.parent == Path("/private/tmp")
+    assert temporary_path.is_dir() and not temporary_path.is_symlink()
+    assert temporary_path.stat().st_uid == os.getuid()
+    with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as bundle:
+        bundle.extractall(temporary_path, filter="data")
+    assert all(not path.is_symlink() for path in temporary_path.rglob("*"))
+    assert not (temporary_path / ".git").exists()
+
+    candidate_probe = run(
+        repo,
+        "-c",
+        "import pathlib,tldw_chatbook; print(pathlib.Path(tldw_chatbook.__file__).resolve())",
+    )
+    base_probe = run(
+        temporary_path,
+        "-c",
+        "import pathlib,tldw_chatbook; print(pathlib.Path(tldw_chatbook.__file__).resolve())",
+    )
+    assert candidate_probe.returncode == base_probe.returncode == 0
+    assert Path(candidate_probe.stdout.decode().strip()).is_relative_to(repo)
+    assert Path(base_probe.stdout.decode().strip()).is_relative_to(temporary_path)
+
+    candidate_checker = run(repo, CHECKER)
+    base_checker = run(temporary_path, CHECKER)
+    candidate_output = combined(candidate_checker)
+    base_output = combined(base_checker)
+    assert candidate_checker.returncode == base_checker.returncode == 1
+    assert candidate_output == base_output
+    assert hashlib.sha256(candidate_output).hexdigest() == EXPECTED_CHECKER_SHA256
+    rendered = candidate_output.decode("utf-8")
+    assert "task_494_calls: 7206 -> 7211" in rendered
+    assert (
+        "tldw_chatbook/DB/Subscriptions_DB.py "
+        "5/8d4a08a1d2b297b3ea78 -> 8/aba72ffb44d7eaba6204 "
+        " (+3 diagnostic call(s))"
+    ) in rendered
+    assert (
+        "tldw_chatbook/Scheduling/scheduler/loop.py "
+        "6/3a01bd3222d1bf8254f1 -> 8/c454d267a78237dcdf00 "
+        " (+2 diagnostic call(s))"
+    ) in rendered
+    assert "\npersistent sink topology:\n" not in rendered
+
+    candidate_metadata = run(
+        repo,
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        METADATA_NODE,
+    )
+    base_metadata = run(
+        temporary_path,
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        METADATA_NODE,
+    )
+    assert candidate_metadata.returncode == base_metadata.returncode == 0
+    assert b"1 passed" in combined(candidate_metadata)
+    assert b"1 passed" in combined(base_metadata)
+    print(rendered, end="")
+    print("candidate_checker_rc", candidate_checker.returncode)
+    print("base_checker_rc", base_checker.returncode)
+    print("checker_sha256", EXPECTED_CHECKER_SHA256)
+    print("persistent_sink_topology_delta_rows", 0)
+    print("candidate_metadata: 1 passed")
+    print("base_metadata: 1 passed")
+
+assert temporary_path is not None and not temporary_path.exists()
+after_status = subprocess.run(
+    ["git", "status", "--porcelain"],
+    cwd=repo,
+    check=True,
+    capture_output=True,
+).stdout
+assert after_status == before_status
+assert artifact_snapshot(repo) == before_artifacts
+print("temporary_cleanup", "verified")
+print("source_tree_status", "unchanged")
+print("source_tree_cache_artifacts", "unchanged")
+PY
 ```
 
 Expected: the checker normally passes and the metadata-only node passes. An
@@ -254,8 +487,9 @@ git range-diff \
   "${task30709_plan_post_base}..${task30709_plan_post_head}"
 ```
 
-Then repeat Steps 2–4 on the rebased candidate and record those results as the
-implementation baseline. If the eight-method membership or behavior changed,
+Then rerun the revision-explicit Step 2 comparison and the complete Step 4
+counterfactual command on the rebased candidate, and record those results as
+the implementation baseline. If the eight-method membership or behavior changed,
 or a baseline gate is red, stop and amend/re-review the design and ratchet
 before writing RED tests. The sole baseline exception is a non-write diagnostic
 checker failure accepted under every Step 4 inherited-red condition; that is
@@ -311,6 +545,15 @@ module patch because the moved imports do not exist until Task 2; this keeps RED
 on missing controller ownership instead of fixture setup. After Task 2 the same
 patches bind real module symbols. Move direct assertions on
 `console._first_chat_handoff_notified_revision` to `console._session`.
+
+Make the config-race ownership rename explicit: rename
+`test_first_chat_consumer_refuses_session_switch_and_config_generation_races`
+to `test_session_owner_refuses_session_switch_and_config_generation_races`,
+and replace the `chat_screen_module` fixture/alias target with `session_module`
+for every first-chat `get_runtime_config_snapshot` and
+`run_if_runtime_config_generation_current` patch, including the guarded-ack and
+config-guard exception tests. No first-chat config-race fixture may retain a
+screen-owner name after the move.
 
 Do not weaken any existing store snapshot, claim replacement, rollback,
 notification, mounted projection, or focus assertion.
@@ -448,11 +691,28 @@ owner to the reserve-new case so the producer remains fail-safe.
 In `Tests/Architecture/test_console_wave6_inventory.py`, add:
 
 ```python
-TASK_3070_9_IMPLEMENTATION_BASE = "0da426e1e4c2846f13671690b8f981f72e673359"
-TASK_3070_9_BASE_LINES = 19_995
-TASK_3070_9_BASE_METHODS = 640
-TASK_3070_9_LINE_CEILING = 19_667
-TASK_3070_9_METHOD_CEILING = 632
+import hashlib
+
+TASK_3070_9_DESIGN_BASE = "0da426e1e4c2846f13671690b8f981f72e673359"
+TASK_3070_9_TASK0_IMPLEMENTATION_BASE = "ede2162143331e324c44832ff6a3910e1185cf58"
+TASK_3070_9_TASK0_BASE_SCREEN_LINES = 19_995
+TASK_3070_9_TASK0_BASE_METHODS = 640
+TASK_3070_9_DEFINITION_LINES = 328
+TASK_3070_9_TASK0_MAX_SCREEN_LINES = 19_667
+TASK_3070_9_TASK0_MAX_METHODS = 632
+TASK_3070_9_FAMILY_SHA256 = (
+    "3a2968883c63dc89de430ee72b40444ebd97fb9b36c1dbc8a46e19d063a715ee"
+)
+TASK_3070_9_FAMILY_NAMES = (
+    "_first_chat_defaults_match",
+    "_current_first_chat_defaults",
+    "eligible_console_first_chat_session_id",
+    "_release_first_chat_claim",
+    "_log_first_chat_handoff_exception",
+    "_resync_console_after_first_chat_rollback",
+    "_resync_mounted_console_after_first_chat_rollback",
+    "consume_pending_console_first_chat_intent",
+)
 
 
 def test_first_chat_family_has_completed_controller_ownership() -> None:
@@ -464,16 +724,75 @@ def test_first_chat_family_has_completed_controller_ownership() -> None:
 
 
 def test_first_chat_task_ratchet_is_earned() -> None:
-    source, screen = _class_node(_SCREEN_PATH, "ChatScreen")
-    assert len(source.splitlines()) <= TASK_3070_9_LINE_CEILING
-    assert _method_count(screen) <= TASK_3070_9_METHOD_CEILING
+    group = WAVE6_GROUPS["first_chat"]
+    design_source = _source_at_revision(TASK_3070_9_DESIGN_BASE, _SCREEN_PATH)
+    design_class = _class_node_from_source(
+        design_source,
+        "ChatScreen",
+        _SCREEN_PATH,
+    )
+    task0_source = _source_at_revision(
+        TASK_3070_9_TASK0_IMPLEMENTATION_BASE,
+        _SCREEN_PATH,
+    )
+    task0_class = _class_node_from_source(task0_source, "ChatScreen", _SCREEN_PATH)
+    current_source, current_class = _class_node(_SCREEN_PATH, "ChatScreen")
+
+    def family_nodes(
+        owner: ast.ClassDef,
+    ) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
+        return [
+            node
+            for node in owner.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name in group.moved
+        ]
+
+    design_family = family_nodes(design_class)
+    task0_family = family_nodes(task0_class)
+    design_counts = _method_name_counts(design_class)
+    task0_counts = _method_name_counts(task0_class)
+    current_counts = _method_name_counts(current_class)
+    normalized = [ast.dump(node, include_attributes=False) for node in task0_family]
+
+    assert group.source_revision == TASK_3070_9_DESIGN_BASE
+    assert group.raw_lines == TASK_3070_9_DEFINITION_LINES
+    assert tuple(node.name for node in design_family) == TASK_3070_9_FAMILY_NAMES
+    assert tuple(node.name for node in task0_family) == TASK_3070_9_FAMILY_NAMES
+    assert all(
+        design_counts[name] == task0_counts[name] == 1 for name in group.moved
+    )
+    assert sum(_span(node) for node in task0_family) == TASK_3070_9_DEFINITION_LINES
+    assert [
+        ast.dump(node, include_attributes=False) for node in design_family
+    ] == normalized
+    assert hashlib.sha256("\n".join(normalized).encode()).hexdigest() == (
+        TASK_3070_9_FAMILY_SHA256
+    )
+    assert len(task0_source.splitlines()) == TASK_3070_9_TASK0_BASE_SCREEN_LINES
+    assert _method_count(task0_class) == TASK_3070_9_TASK0_BASE_METHODS
+    assert TASK_3070_9_TASK0_MAX_SCREEN_LINES == (
+        TASK_3070_9_TASK0_BASE_SCREEN_LINES - TASK_3070_9_DEFINITION_LINES
+    )
+    assert TASK_3070_9_TASK0_MAX_METHODS == (
+        TASK_3070_9_TASK0_BASE_METHODS - len(TASK_3070_9_FAMILY_NAMES)
+    )
+    assert not any(current_counts[name] for name in group.moved)
+    assert len(current_source.splitlines()) <= TASK_3070_9_TASK0_MAX_SCREEN_LINES
+    assert _method_count(current_class) <= TASK_3070_9_TASK0_MAX_METHODS
 ```
 
-Pin `CURRENT_BASE_*` to the frozen implementation source without changing the
-historical post-image constants. Count direct definitions with multiplicity,
-not a unique-name dictionary. Also assert the moved methods do not call
-`query`/`query_one`, access `_workspace`/other sibling owners, or define a
-screen compatibility replacement.
+Keep `TASK_3070_9_DESIGN_BASE` as the immutable family provenance and use
+`TASK_3070_9_TASK0_IMPLEMENTATION_BASE` for the task ratchet. Do not add or
+overwrite a generic mutable base alias, `IMPLEMENTATION_BASE`, `POST_IMAGE_*`,
+or any other global historical constant. Count direct definitions with
+multiplicity, not a unique-name dictionary. Also assert the moved methods do
+not call `query`/`query_one`, access `_workspace`/other sibling owners, or
+define a screen compatibility replacement.
+
+Update only `WAVE6_GROUPS["first_chat"].source_revision` to
+`TASK_3070_9_DESIGN_BASE` and retain its historical `raw_lines=328`. This makes
+the family provenance explicit without changing any global historical base.
 
 Extend the existing synthetic non-vacuity fixture so it independently rejects:
 
@@ -970,15 +1289,44 @@ stop and amend/re-review the design and ratchet before continuing.
 
 - [ ] **Step 2: Remeasure ownership and ratchet**
 
-Rerun Task 0 Step 2 against the rebased tree and the frozen base blob. Assert:
+Rerun the Task 0 Step 2 revision comparison, replacing only its candidate
+assertions with completed-owner assertions. Capture the final rebased
+`origin/dev` SHA in new task-specific constants without changing the immutable
+design or Task 0 constants:
+
+```python
+TASK_3070_9_FINAL_DELIVERY_BASE = "<exact post-rebase origin/dev SHA>"
+TASK_3070_9_FINAL_DELIVERY_BASE_SCREEN_LINES = <measured base lines>
+TASK_3070_9_FINAL_DELIVERY_BASE_METHODS = <measured base direct methods>
+TASK_3070_9_FINAL_DELIVERY_DEFINITION_LINES = 328
+TASK_3070_9_FINAL_DELIVERY_MAX_SCREEN_LINES = (
+    TASK_3070_9_FINAL_DELIVERY_BASE_SCREEN_LINES
+    - TASK_3070_9_FINAL_DELIVERY_DEFINITION_LINES
+)
+TASK_3070_9_FINAL_DELIVERY_MAX_METHODS = (
+    TASK_3070_9_FINAL_DELIVERY_BASE_METHODS - 8
+)
+```
+
+The final-delivery base is a separate closeout oracle, not an amendment to
+`TASK_3070_9_DESIGN_BASE` or `TASK_3070_9_TASK0_IMPLEMENTATION_BASE`. It may
+raise the delivery ceiling above the Task 0 ceiling only for unrelated upstream
+line/method growth that is enumerated and reviewed in the plan evidence. Before
+accepting such growth, assert that the final-delivery base still contains each
+family definition exactly once, in the same order, with 328 definition lines
+and normalized family AST digest
+`3a2968883c63dc89de430ee72b40444ebd97fb9b36c1dbc8a46e19d063a715ee`.
+Any family multiplicity, order, span, or AST change requires stopping for design
+review; it cannot be absorbed as unrelated growth. Assert:
 
 - every reviewed name occurs exactly once in the rebased base screen;
 - every reviewed name occurs zero times on candidate `ChatScreen`;
 - every reviewed name occurs exactly once on `ConsoleSessionController`;
 - the family AST/body content is preserved except the reviewed callback
   substitutions;
-- final line/method totals earn the exact rebased reduction without increasing
-  a ceiling.
+- final line/method ceilings equal the reviewed final-delivery base totals minus
+  328 lines / eight methods; any increase over Task 0 is exactly the enumerated
+  unrelated upstream growth.
 
 - [ ] **Step 3: Repeat mutation proof on the final rebased candidate**
 
@@ -994,7 +1342,7 @@ Run this exact read-only preview. It writes only under a validated temporary
 directory and does not invoke the canonical writer:
 
 ```bash
-../../.venv/bin/python - <<'PY'
+../../.venv/bin/python -B - <<'PY'
 from __future__ import annotations
 
 import difflib
