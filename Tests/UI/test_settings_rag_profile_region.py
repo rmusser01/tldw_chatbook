@@ -40,6 +40,13 @@ from Tests.UI.test_settings_configuration_hub import (
     _wait_for_settings_text,
     _wire_rag_profile_adapter,
 )
+from tldw_chatbook.Library.library_rechunk_service import (
+    BACKFILL_SLOT,
+    acquire_bulk_rag_slot,
+    bulk_rag_slot_in_flight,
+    release_bulk_rag_slot,
+    reset_bulk_rag_slots_for_tests,
+)
 from tldw_chatbook.RAG_Search.config_profiles import reset_profile_manager_cache
 import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
 from tldw_chatbook.UI.Screens.settings_config_models import (
@@ -59,6 +66,9 @@ from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 def _reset_profile_manager_cache_after_test():
     yield
     reset_profile_manager_cache()
+    # task-13: the backfill's in-flight state is the SHARED bulk-RAG slot
+    # guard now -- never let one test's slot leak into the next.
+    reset_bulk_rag_slots_for_tests()
 
 
 class _FakeApp:
@@ -1214,7 +1224,7 @@ def test_backfill_button_click_starts_a_worker_and_notifies(
     button = Button(id="settings-library-rag-index-backfill")
     screen.handle_library_rag_index_backfill(Button.Pressed(button))
 
-    assert screen._library_rag_backfill_in_flight is True
+    assert bulk_rag_slot_in_flight(BACKFILL_SLOT) is True
     assert worker_calls == [True]
     assert fake_app.notifications[-1][1] == "information"
 
@@ -1226,7 +1236,7 @@ def test_backfill_button_click_while_in_flight_does_not_start_a_second_worker(
     app = _build_test_app()
     screen = SettingsScreen(app)
     screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
-    screen._library_rag_backfill_in_flight = True
+    assert acquire_bulk_rag_slot(BACKFILL_SLOT) is None
     worker_calls: list[bool] = []
     screen._rag_backfill_worker = lambda: worker_calls.append(True)
 
@@ -1407,13 +1417,13 @@ def test_rag_backfill_worker_failure_notifies_and_clears_in_flight_without_raisi
         app_config={}, media_db=object(), chachanotes_db=None
     )
     screen = SettingsScreen(app_instance)
-    screen._library_rag_backfill_in_flight = True
+    assert acquire_bulk_rag_slot(BACKFILL_SLOT) is None
 
     worker = SettingsScreen.__dict__["_rag_backfill_worker"]
     wrapped = getattr(worker, "__wrapped__", worker)
     wrapped(screen)  # invoke the thread-body directly, bypassing @work dispatch
 
-    assert screen._library_rag_backfill_in_flight is False
+    assert bulk_rag_slot_in_flight(BACKFILL_SLOT) is False
     message, severity = fake_app.notifications[-1]
     assert severity == "error"
     assert "Backfill failed" in message
@@ -1505,7 +1515,7 @@ def test_rag_backfill_worker_guards_against_none_pre_resolved_service(
         app_config={}, media_db=object(), chachanotes_db=None
     )
     screen = SettingsScreen(app_instance)
-    screen._library_rag_backfill_in_flight = True
+    assert acquire_bulk_rag_slot(BACKFILL_SLOT) is None
 
     worker = SettingsScreen.__dict__["_rag_backfill_worker"]
     wrapped = getattr(worker, "__wrapped__", worker)
@@ -1516,7 +1526,7 @@ def test_rag_backfill_worker_guards_against_none_pre_resolved_service(
     # run inside it.
     assert backfill_calls == []
     # The in-flight flag must still be cleared (finally-block contract).
-    assert screen._library_rag_backfill_in_flight is False
+    assert bulk_rag_slot_in_flight(BACKFILL_SLOT) is False
     message, severity = fake_app.notifications[-1]
     assert severity == "error"
     assert "backfill" in message.lower()
@@ -3380,7 +3390,7 @@ def test_starter_panel_backfill_button_starts_the_same_backfill_worker(
     button = Button(id="settings-library-rag-starter-backfill")
     screen.handle_library_rag_starter_backfill(Button.Pressed(button))
 
-    assert screen._library_rag_backfill_in_flight is True
+    assert bulk_rag_slot_in_flight(BACKFILL_SLOT) is True
     assert worker_calls == [True]
     assert fake_app.notifications[-1][1] == "information"
 

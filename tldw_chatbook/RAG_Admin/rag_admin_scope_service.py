@@ -481,6 +481,41 @@ class RAGAdminScopeService:
         result = await self._maybe_await(method(media_id, **options))
         return dict(result or {})
 
+    async def rechunk_legacy_media(
+        self,
+        *,
+        mode: RAGAdminBackend | str | None = None,
+        rag_service: Any = None,
+        indexing_db: Any = None,
+        progress_callback: Any = None,
+    ) -> dict[str, Any]:
+        """Launch the re-chunk of older-engine items (task-13, spec §10.4).
+
+        Policy surface: this REUSES the existing ``rag.admin.launch`` verb
+        -- exactly what the backfill-shaped trigger already means -- rather
+        than adding a fifth ``rag.admin.*`` action (which would require
+        editing the registry AND the exact-equality literal test, and whose
+        tempting shortcut, the SHARED
+        ``DISCOVER_CONFIGURE_TRIGGER_OBSERVE_ACTIONS`` tuple, would
+        silently grant the verb to other capabilities).
+        """
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._admin_action_id(normalized_mode, "launch"))
+        service = self._service_for_mode(normalized_mode)
+        method = getattr(service, "rechunk_legacy_media", None)
+        if not callable(method):
+            raise ValueError(
+                f"{normalized_mode.value.title()} legacy re-chunk is not available yet."
+            )
+        result = await self._maybe_await(
+            method(
+                rag_service=rag_service,
+                indexing_db=indexing_db,
+                progress_callback=progress_callback,
+            )
+        )
+        return dict(result or {})
+
     async def get_media_embeddings_status(
         self,
         *,

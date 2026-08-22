@@ -527,6 +527,31 @@ class LocalRAGAdminService:
             raise ValueError("Local media reprocess backend is unavailable.")
         return method(media_id, **options)
 
+    async def rechunk_legacy_media(
+        self,
+        *,
+        rag_service: Any = None,
+        indexing_db: Any = None,
+        progress_callback: Any = None,
+    ) -> dict[str, Any]:
+        """Re-chunk every older-engine item (task-13, spec §10.2-§10.2.1).
+
+        Thin delegate to the Library re-chunk service (the owner of the
+        per-item flow, the hard-delete replacement ruling, and the forced
+        re-index); reached through the scope service's ``rag.admin.launch``
+        action.
+        """
+        if self.media_db is None:
+            raise ValueError("Local re-chunk backend is unavailable (no media DB).")
+        from ..Library.library_rechunk_service import rechunk_legacy_items
+
+        return await rechunk_legacy_items(
+            self.media_db,
+            rag_service=rag_service,
+            indexing_db=indexing_db,
+            progress_callback=progress_callback,
+        )
+
     def count_chunks_by_engine_version(self, db: Any) -> dict[str, int]:
         """Count media items per chunking-engine version (read-only).
 

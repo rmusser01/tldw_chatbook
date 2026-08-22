@@ -313,6 +313,15 @@ from ...RAG_Search.ingestion_indexing import (
     get_shared_rag_service,
     semantic_indexing_available,
 )
+# task-13 (spec §10.3): the backfill's in-flight state lives in the SHARED
+# bulk-RAG slot guard so the Library re-chunk control and this trigger can
+# refuse each other with a notice (mutual exclusion WITHOUT Textual worker
+# cancellation -- never ``exclusive=True`` across the two surfaces).
+from ...Library.library_rechunk_service import (
+    BACKFILL_SLOT,
+    acquire_bulk_rag_slot,
+    release_bulk_rag_slot,
+)
 from .settings_privacy_security import (
     SettingsPrivacyPosture,
     build_privacy_posture_rows,
@@ -2722,7 +2731,11 @@ class SettingsScreen(BaseAppScreen):
         #: see `_rag_reindex_confirm_status_worker` and
         #: `_handle_reindex_confirmation_result`.
         self._rag_reindex_confirm_in_flight = False
-        self._library_rag_backfill_in_flight = False
+        # task-13 (spec §10.3): the backfill's in-flight state is the
+        # SHARED bulk-RAG slot guard (Library.library_rechunk_service),
+        # not a screen-local boolean -- the Library re-chunk control and
+        # this screen's Backfill refuse each other through it. Nothing to
+        # initialize here: the guard module owns the state.
         #: Task 5 review (541 v2 UX AC5, Important): tracks whether the LAST
         #: `_refresh_rag_first_run_panel_state` evaluation found the
         #: first-run starter panel active -- lets that method detect the
@@ -13952,9 +13965,11 @@ class SettingsScreen(BaseAppScreen):
         self.app.call_from_thread(self._apply_rag_test_category_result, status)
 
     def _clear_library_rag_backfill_in_flight(self) -> None:
-        """Main-thread flip of the in-flight flag -- see
-        ``_rag_backfill_worker``'s ``finally`` block."""
-        self._library_rag_backfill_in_flight = False
+        """Main-thread release of the shared backfill slot -- see
+        ``_rag_backfill_worker``'s ``finally`` block (task-13: the slot
+        replaced the old screen-local boolean so the Library re-chunk
+        control can refuse while a backfill runs, spec §10.3)."""
+        release_bulk_rag_slot(BACKFILL_SLOT)
 
     @work(exclusive=True, thread=True, group="settings-rag-backfill")
     def _rag_backfill_worker(self) -> None:
@@ -19862,10 +19877,16 @@ class SettingsScreen(BaseAppScreen):
         self._trigger_library_rag_index_backfill()
 
     def _trigger_library_rag_index_backfill(self) -> None:
-        if self._library_rag_backfill_in_flight:
-            self.app.notify("Backfill is already running.", severity="warning")
+        # task-13 (spec §10.3): the in-flight state is the SHARED bulk-RAG
+        # slot guard -- the own-slot refusal reproduces the historical
+        # "already running" behavior, and the other-slot refusal is the new
+        # mutual exclusion with the Library re-chunk (a NOTICE, never
+        # ``exclusive=True`` cancellation: Textual 8.2.8 cancels same-group
+        # workers, which would silently kill the re-chunk mid-run).
+        refusal = acquire_bulk_rag_slot(BACKFILL_SLOT)
+        if refusal is not None:
+            self.app.notify(refusal, severity="warning")
             return
-        self._library_rag_backfill_in_flight = True
         self.app.notify(
             "Backfill started — this may take a while for large libraries.",
             severity="information",
