@@ -256,6 +256,11 @@ def _statistics_protocol(module: Any, *, error_code: str) -> dict[str, Any]:
         fractions.append(fraction)
         return nearest(values, fraction)
 
+    def digest(value: Any) -> str:
+        return hashlib.sha256(
+            json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+
     try:
         summary_parameters = inspect.signature(summary_builder).parameters
         paired_parameters = inspect.signature(paired).parameters
@@ -299,14 +304,17 @@ def _statistics_protocol(module: Any, *, error_code: str) -> dict[str, Any]:
             {"control": 25.0, "disabled": 127.0, "enabled": 68.0},
             {"control": 20.0, "disabled": 2.0, "enabled": 31.0},
         ]
-        first_bounds = paired(
-            blocks, "disabled", resamples=resamples, seed=seed
-        )
-        if first_bounds != paired(
+        default_bounds = {
+            candidate: paired(
+                blocks, candidate, resamples=resamples, seed=seed
+            )
+            for candidate in module.ARMS[1:]
+        }
+        if default_bounds["disabled"] != paired(
             blocks, "disabled", resamples=resamples, seed=seed
         ):
             raise RuntimeError(error_code)
-        alternate_bounds = paired(
+        alternate_disabled_bounds = paired(
             blocks, "disabled", resamples=resamples, seed=seed + 1
         )
         distribution = (
@@ -356,17 +364,31 @@ def _statistics_protocol(module: Any, *, error_code: str) -> dict[str, Any]:
             for iteration in range(30)
             for arm_index, arm in enumerate(module.ARMS)
         ]
-        summary_calls: list[tuple[int, int]] = []
+        summary_calls: list[dict[str, Any]] = []
 
         def recording_paired(
-            _blocks: Sequence[Mapping[str, float]],
-            _candidate: str,
+            blocks: Sequence[Mapping[str, float]],
+            candidate: str,
             *,
             resamples: int,
             seed: int,
         ) -> Any:
-            summary_calls.append((resamples, seed))
-            return first_bounds
+            call = {
+                "candidate": candidate,
+                "blocks": [
+                    {arm: float(block[arm]) for arm in module.ARMS}
+                    for block in blocks
+                ],
+                "resamples": resamples,
+                "seed": seed,
+            }
+            summary_calls.append(call)
+            sentinel = 0.75 + int(digest(call)[:8], 16) / 0xFFFFFFFF / 2
+            return {
+                "two_sided_95": (sentinel, sentinel + 0.02),
+                "one_sided_lower_95": sentinel + 0.01,
+                "one_sided_upper_95": sentinel + 0.02,
+            }
 
         module.validate_run = lambda *_args, **_kwargs: ()
         module.nearest_rank_percentile = recording_nearest
@@ -376,7 +398,10 @@ def _statistics_protocol(module: Any, *, error_code: str) -> dict[str, Any]:
             bootstrap_resamples=resamples,
             bootstrap_seed=seed,
         )
-        if not summary_calls or set(summary_calls) != {(resamples, seed)}:
+        if not summary_calls or any(
+            call["resamples"] != resamples or call["seed"] != seed
+            for call in summary_calls
+        ):
             raise RuntimeError(error_code)
         matching_fractions = {
             fraction
@@ -412,15 +437,11 @@ def _statistics_protocol(module: Any, *, error_code: str) -> dict[str, Any]:
         resampling_payload = {
             "resamples": resamples,
             "seed": seed,
-            "default_seed": first_bounds,
-            "alternate_seed": alternate_bounds,
+            "default_seed_by_candidate": default_bounds,
+            "alternate_seed_disabled": alternate_disabled_bounds,
+            "summary_call_trace": summary_calls,
             "summary": summary,
         }
-
-        def digest(value: Any) -> str:
-            return hashlib.sha256(
-                json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
-            ).hexdigest()
         return {
             "p95_method": "nearest_rank",
             "p95_fraction": fraction,

@@ -757,7 +757,7 @@ def test_confirmation_protocol_pins_every_original_machine_contract() -> None:
             "resamples": 10_000,
             "seed": 19_641,
             "behavior_sha256": (
-                "79cd4bb711ed33737ebe3ed28f0369ae44b29b5383bb95849edabcbfe0fb53eb"
+                "d3a1fc6fc6993704b14a3caae2ace886151229750956306ed12e42d3933a2e1c"
             ),
         },
         "confidence_bounds": [
@@ -867,6 +867,53 @@ def test_current_mean_summary_mismatches_pinned_original(
         return summary
 
     monkeypatch.setattr(profile, "build_summary", mean_summary)
+    observed = _original_protocol()
+
+    assert "protocol_resampling_mismatch" in profile.protocol_mismatches(
+        expected, observed
+    )
+
+
+def test_current_enabled_bootstrap_routing_mismatches_pinned_original(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _copy_original_evidence(tmp_path)
+    _materialize_original_runner(tmp_path)
+    expected = profile.load_original_protocol(tmp_path, tmp_path)
+    real_paired = profile.paired_p95_ratio_bounds
+
+    @functools.wraps(real_paired)
+    def disabled_only(blocks, _candidate, **kwargs):
+        return real_paired(blocks, "disabled", **kwargs)
+
+    monkeypatch.setattr(profile, "paired_p95_ratio_bounds", disabled_only)
+    observed = _original_protocol()
+
+    assert "protocol_resampling_mismatch" in profile.protocol_mismatches(
+        expected, observed
+    )
+
+
+def test_current_enabled_summary_routing_mismatches_pinned_original(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _copy_original_evidence(tmp_path)
+    _materialize_original_runner(tmp_path)
+    expected = profile.load_original_protocol(tmp_path, tmp_path)
+    real_build_summary = profile.build_summary
+
+    @functools.wraps(real_build_summary)
+    def disabled_only_summary(*args, **kwargs):
+        summary = real_build_summary(*args, **kwargs)
+        summary["arms"]["enabled"]["gates"] = copy.deepcopy(
+            summary["arms"]["disabled"]["gates"]
+        )
+        summary["arms"]["enabled"]["verdict"] = summary["arms"]["disabled"][
+            "verdict"
+        ]
+        return summary
+
+    monkeypatch.setattr(profile, "build_summary", disabled_only_summary)
     observed = _original_protocol()
 
     assert "protocol_resampling_mismatch" in profile.protocol_mismatches(
