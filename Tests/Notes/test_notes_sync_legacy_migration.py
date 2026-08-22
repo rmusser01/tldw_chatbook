@@ -1445,14 +1445,35 @@ def test_sync_foundation_non_goals_and_legacy_owner_are_source_ratchets() -> Non
     assert startup_callers == {}
 
 
-def test_non_goal_ast_ratchets_detect_aliased_and_reformatted_mutations() -> None:
-    mutated_foundation = """from tldw_chatbook.UI.sync import activate as begin
-import logging as audit
+@pytest.mark.parametrize(
+    ("mutated_foundation", "expected"),
+    (
+        (
+            """from tldw_chatbook.UI.sync import activate as begin
+
+def run():
+    return begin()
+""",
+            ("activate", "tldw_chatbook.UI.sync"),
+        ),
+        (
+            """import logging as audit
 
 def run():
     audit.warning(\"starting\")
-    return begin()
-"""
+""",
+            ("logging",),
+        ),
+    ),
+)
+def test_non_goal_ast_ratchets_detect_each_aliased_mutation(
+    mutated_foundation: str,
+    expected: tuple[str, ...],
+) -> None:
+    assert _foundation_reference_violations(mutated_foundation) == expected
+
+
+def test_startup_ast_ratchet_detects_reformatted_alias_mutation() -> None:
     mutated_startup = """from tldw_chatbook.Notes.notes_sync_legacy_migration import (
     migrate_legacy_notes_sync_state as run_migration,
 )
@@ -1460,7 +1481,6 @@ def run():
 run_migration(repository, notes_db)
 """
 
-    assert _foundation_reference_violations(mutated_foundation)
     assert _migration_api_references(mutated_startup) == (
         "migrate_legacy_notes_sync_state",
     )
