@@ -39,6 +39,22 @@ class _FakeNotesService:
         return True
 
 
+@pytest.fixture(autouse=True)
+def _clear_notes_service_cache():
+    """Drop the module-global service cache around every test (task-692).
+
+    ``_notes_service()`` caches the built service so the tool path stops
+    re-opening the DB per call. That cache is module state: without this,
+    a real service built by one test could be served to a later test that
+    monkeypatches ``NotesInteropService``, and the fake would never be
+    used. Today each test happens to get its own config path, so the key
+    differs -- this does not rely on that accident.
+    """
+    nmt._reset_notes_service_cache()
+    yield
+    nmt._reset_notes_service_cache()
+
+
 @pytest.fixture
 def fake_service(monkeypatch):
     monkeypatch.setattr(nmt, "NotesInteropService", _FakeNotesService)
@@ -188,3 +204,62 @@ def test_a_reload_does_not_leak_a_patched_binding(reloadable_module):
 
     assert nmt.get_chachanotes_db_path is config_module.get_chachanotes_db_path
     assert "/fake" not in str(nmt._notes_db_base_dir())
+
+
+@pytest.mark.asyncio
+async def test_note_tools_reuse_one_service_across_calls(monkeypatch, fake_service):
+    """task-692: the service (and therefore its per-user CharactersRAGDB
+    cache) is built once, not once per tool call.
+
+    Before this, every ``execute()`` constructed its own service, whose
+    ``_db_instances`` cache is an INSTANCE attribute -- so ``_get_db``
+    missed every time and opened a fresh ``CharactersRAGDB`` (a real DB
+    open plus schema-version check) on each call, then threw it away.
+    """
+    monkeypatch.setattr(nmt, "_resolve_user_id", lambda: "alice")
+    built = []
+    real_init = _FakeNotesService.__init__
+
+    def counting_init(self, **kwargs):
+        built.append(kwargs)
+        real_init(self, **kwargs)
+
+    monkeypatch.setattr(_FakeNotesService, "__init__", counting_init)
+
+    await nmt.CreateNoteTool().execute(title="a", content="c")
+    await nmt.CreateNoteTool().execute(title="b", content="c")
+    await nmt.SearchNotesTool().execute(query="q")
+
+    assert len(built) == 1, f"expected one service build, got {len(built)}"
+
+
+@pytest.mark.asyncio
+async def test_service_cache_rebuilds_when_the_db_path_changes(
+    monkeypatch, fake_service, tmp_path
+):
+    """The cache is keyed on the resolved DB path, so re-pointing the data
+    dir must NOT serve a service bound to the previous database."""
+    monkeypatch.setattr(nmt, "_resolve_user_id", lambda: "alice")
+    built = []
+    real_init = _FakeNotesService.__init__
+
+    def counting_init(self, **kwargs):
+        built.append(kwargs)
+        real_init(self, **kwargs)
+
+    monkeypatch.setattr(_FakeNotesService, "__init__", counting_init)
+
+    first = tmp_path / "one" / "chachanotes.db"
+    second = tmp_path / "two" / "chachanotes.db"
+    first.parent.mkdir(parents=True)
+    second.parent.mkdir(parents=True)
+
+    monkeypatch.setattr(nmt, "get_chachanotes_db_path", lambda: first)
+    monkeypatch.setattr(nmt, "_notes_db_base_dir", lambda: first.parent)
+    await nmt.CreateNoteTool().execute(title="a", content="c")
+    assert len(built) == 1
+
+    monkeypatch.setattr(nmt, "get_chachanotes_db_path", lambda: second)
+    monkeypatch.setattr(nmt, "_notes_db_base_dir", lambda: second.parent)
+    await nmt.CreateNoteTool().execute(title="b", content="c")
+    assert len(built) == 2, "a new DB path must rebuild the cached service"
