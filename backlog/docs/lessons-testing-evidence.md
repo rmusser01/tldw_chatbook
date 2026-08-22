@@ -5726,3 +5726,72 @@ cache keys by collection position. Keys after the cutoff are prior-session
 evidence unless independently reproduced. Keep the run's final pytest counts
 as the accounting authority; the cache is a node-name recovery aid, not a
 self-contained result report.
+## "No dangerous flag in our argv" is not a guarantee — the repository supplies argv too (task-16801, 2026-08-21)
+
+Change review's git modes shell out to `git` in the user's own repository. The
+arc's one absolute rule was "never force-push", and it was enforced by argv
+assertions: tests captured the real argv and asserted no element started with
+`--force`. Those assertions were mutation-proved twice and were genuinely
+load-bearing. They were also, three separate times, looking in the wrong place.
+
+Four vectors reached destructive git behaviour without any dangerous flag ever
+appearing in code we wrote:
+
+1. **A remote named `--force`.** `git remote add -- --force <url>` succeeds, so
+   `("push", remote_name)` becomes `git push --force`. Verified: `+ 33b7b99...
+   4a3c4a7 main -> main (forced update)`, destroying another clone's commit,
+   which the UI reported as "Pushed main to --force". `--mirror` deletes refs.
+2. **A branch named `--mirror`,** via a `.git/HEAD` reading `ref:
+   refs/heads/--mirror`, landing in `push -u <remote> <branch>`. This one was
+   cleared by an earlier audit on the grounds that `check-ref-format` guards
+   branch names -- but that validator only runs on branch CREATION, and
+   `git check-ref-format refs/heads/--mirror` **exits 0** anyway.
+3. **Push config, with no option-shaped name anywhere.** `remote.origin.push =
+   +refs/heads/*:refs/heads/*` makes an ordinary `git push origin` a forced
+   update; `remote.origin.mirror = true` also deletes refs;
+   `push.default = matching` published an unrelated branch's private commit
+   while the modal named a different branch. Non-dash remote, non-dash branch:
+   both hardening layers passed cleanly.
+4. **Pathspec magic, not options.** `--` stops option parsing but not pathspec
+   magic, so a file literally named `:!nothing` -- which `git status` lists and
+   the UI checkbox carries verbatim -- turned a one-file selection into a
+   four-file commit. Same shape reached the diff pane: `diff.external` rendered
+   `TOTALLY FABRICATED DIFF OUTPUT`, and a textconv driver rendered NOTHING for
+   a genuinely changed file while `--numstat` still reported `1 1 a.txt`.
+
+The rules with teeth:
+
+- **Audit by tracing each argv slot to its SOURCE, never by asking "does a
+  validator exist somewhere?"** That question produced a confident clean bill of
+  health for vector 2. Write the slot table: for every value reaching argv, name
+  what protects it -- a `--` separator, a specific validator, or a module
+  literal -- and treat "a validator exists elsewhere in the file" as unprotected
+  until you have traced the call.
+- **An absent-bad-flag assertion cannot see any of these.** Prefer
+  only-known-good-values-reach-argv (refuse a leading `-`; pass an explicit
+  fully-qualified refspec; set `GIT_LITERAL_PATHSPECS=1`; pass
+  `--no-ext-diff --no-textconv --no-color`) over asserting the bad thing is
+  missing.
+- **Prove the fix RED on the destruction, not on the exception.** Assert the
+  other clone's commit, the release branch and the tag all survive. A test that
+  only asserts "raises GitWorkspaceError" passes against a version that raises
+  *after* damage. Every control in this arc was run first to confirm the harness
+  could actually detect the damage -- a check that cannot fail is worthless.
+- **Refuse, do not sanitize.** Stripping a leading dash from a remote name
+  pushes to a *different* remote; there is no `--` escape for those positionals.
+- **Watch for interactions when hardening env.** `GIT_LITERAL_PATHSPECS` is
+  incompatible with ambient `GIT_GLOB_PATHSPECS`/`GIT_ICASE_PATHSPECS` (git
+  aborts every pathspec-parsing call). Because this runner deliberately
+  preserves the user's ambient environment, the security fix alone would have
+  broken the feature for those users.
+- **Probe with a driver that actually exercises the path.** The first test for
+  that incompatibility used `rev-parse`, which parses no pathspec, so it passed
+  against the broken code. Likewise a naive textconv driver (`echo IDENTICAL`)
+  does not blank the diff pane -- git appends the file path -- so it reads as a
+  cosmetic bug; blanking needs a driver whose output is genuinely constant. A
+  reviewer using the naive form would have mis-ranked the finding.
+
+Threat model, recorded because it is what makes the above worth the effort: no
+`.git` exclusion exists in `Tools/workspace_file_roots.py` or
+`Tools/file_operation_tools.py`, so an agent can write `.git/config` in the very
+root these features operate on (TASK-19700).
