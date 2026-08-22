@@ -1419,6 +1419,50 @@ async def test_empty_owner_is_settled_absence_with_one_outer_fallback():
 
 
 @pytest.mark.asyncio
+async def test_persistent_malformed_owner_drains_recovery_with_outer_fallback():
+    async with make_console_pilot(size=(160, 45)) as pilot:
+        rail = await _open_inspector(pilot)
+        sources = rail.query_one(
+            "#console-bounded-section-sources", ConsoleBoundedSection
+        )
+        await sources.viewport.remove_children()
+        source_action = Button("source action", id="malformed-owner-source-action")
+        await sources.viewport.mount(source_action)
+        sources.request_reconcile()
+        source_action.focus()
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: pilot.app.focused is source_action,
+            description="malformed-owner focused action",
+        )
+
+        owner = sources.parent
+        header = _external_boundary_header(sources)
+        malformed = ConsoleBoundedSection(
+            Static("persistent malformed owner"),
+            section_id="persistent-malformed-owner",
+        )
+        await owner.mount(malformed, before=header)
+        await sources.remove()
+        await header.remove()
+        rail.request_outer_reconcile()
+        outer = rail.query_one("#console-inspector-rail-body")
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: (
+                pilot.app.focused is outer
+                and not rail._pending_focus_recoveries
+                and not rail._outer_reconcile_scheduled
+            ),
+            description="persistent malformed owner recovery drained",
+            attempts=10,
+        )
+
+        assert tuple(owner.children) == (malformed,)
+        assert sources.section_id not in rail._section_focus_history
+
+
+@pytest.mark.asyncio
 async def test_structural_run_recompose_restores_same_stable_action_id():
     async with make_console_pilot(size=(160, 45)) as pilot:
         rail = await _open_inspector(pilot)

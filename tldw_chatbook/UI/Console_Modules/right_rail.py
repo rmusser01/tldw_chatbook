@@ -99,10 +99,8 @@ class _FocusRecoveryIncident:
     """Semantic focus snapshot that remains valid across widget replacement."""
 
     target_id: str | None
-    control_ids: tuple[str | None, ...]
     target_index: int | None
-    owner_id: str | None
-    missing_boundary_passes: int = 1
+    remaining_reconcile_passes: int = 2
 
 
 class _InspectorOuterBody(VerticalScroll):
@@ -254,7 +252,6 @@ class ConsoleInspectorRail(Vertical):
         self._inspector_focus_active = False
         self._navigation_generation = 0
         self._section_focus_history: dict[str, tuple[Widget, tuple[Widget, ...]]] = {}
-        self._section_focus_owner_ids: dict[str, str | None] = {}
         self._pending_focus_recoveries: dict[str, _FocusRecoveryIncident] = {}
 
     def on_mount(self) -> None:
@@ -610,12 +607,7 @@ class ConsoleInspectorRail(Vertical):
                 self.recover_section_focus(owned)
             )
 
-    def recover_section_focus(
-        self,
-        section: ConsoleBoundedSection,
-        *,
-        replace_incidental_inside_rail: bool = False,
-    ) -> None:
+    def recover_section_focus(self, section: ConsoleBoundedSection) -> None:
         """Recover next, previous, external header, outer body, then collapse."""
 
         focused = self.app.focused
@@ -626,12 +618,7 @@ class ConsoleInspectorRail(Vertical):
             ):
                 if not self.inspector_active(focused):
                     self._section_focus_history.pop(section.section_id, None)
-                    self._section_focus_owner_ids.pop(section.section_id, None)
-                    return
-                if not (
-                    replace_incidental_inside_rail and self.inspector_active(focused)
-                ):
-                    return
+                return
         previous, controls = self._section_focus_history.get(
             section.section_id, (section.viewport, self._body_controls(section))
         )
@@ -641,13 +628,8 @@ class ConsoleInspectorRail(Vertical):
             )
             self.request_outer_reconcile()
             return
-        incident = self._focus_recovery_incident(
-            previous,
-            controls,
-            owner_id=self._section_focus_owner_ids.get(section.section_id),
-        )
+        incident = self._focus_recovery_incident(previous, controls)
         self._section_focus_history.pop(section.section_id, None)
-        self._section_focus_owner_ids.pop(section.section_id, None)
         self._recover_focus_incident(section.section_id, incident)
 
     @staticmethod
@@ -660,20 +642,14 @@ class ConsoleInspectorRail(Vertical):
         self,
         previous: Widget,
         old_controls: tuple[Widget, ...],
-        *,
-        owner_id: str | None,
     ) -> _FocusRecoveryIncident:
         """Convert widget history into a detached-reference-free snapshot."""
 
         return _FocusRecoveryIncident(
             target_id=self._stable_widget_id(previous),
-            control_ids=tuple(
-                self._stable_widget_id(control) for control in old_controls
-            ),
             target_index=(
                 old_controls.index(previous) if previous in old_controls else None
             ),
-            owner_id=owner_id,
         )
 
     def _recover_focus_incident(
@@ -724,14 +700,9 @@ class ConsoleInspectorRail(Vertical):
                         candidate,
                         current_controls,
                     )
-                    parent = section.parent
-                    self._section_focus_owner_ids[section_id] = (
-                        parent.id if isinstance(parent, Widget) else None
-                    )
                     candidate.focus()
                     return
 
-            self._section_focus_owner_ids.pop(section_id, None)
             for candidate in (header, *header.query("*")):
                 if isinstance(candidate, Widget) and self._is_enabled_focus_target(
                     candidate
@@ -747,7 +718,6 @@ class ConsoleInspectorRail(Vertical):
             except (NoMatches, QueryError):
                 continue
             if self._is_enabled_focus_target(candidate):
-                self._section_focus_owner_ids.pop(section_id, None)
                 candidate.focus()
                 return
 
@@ -774,10 +744,6 @@ class ConsoleInspectorRail(Vertical):
                     previous,
                     self._body_controls(section),
                 )
-                parent = section.parent
-                self._section_focus_owner_ids[section_id] = (
-                    parent.id if isinstance(parent, Widget) else None
-                )
                 continue
 
             focused = self.app.focused
@@ -787,7 +753,6 @@ class ConsoleInspectorRail(Vertical):
                 and not self.inspector_active(focused)
             ):
                 self._section_focus_history.pop(section_id, None)
-                self._section_focus_owner_ids.pop(section_id, None)
                 continue
             self._schedule_removed_focus_recovery(section_id, previous, old_controls)
 
@@ -797,41 +762,22 @@ class ConsoleInspectorRail(Vertical):
             and self._is_enabled_focus_target(focused)
             and not self.inspector_active(focused)
         )
-        current_section_ids = set(boundaries)
         for section_id, incident in tuple(self._pending_focus_recoveries.items()):
             if outside_focus_is_valid:
                 self._pending_focus_recoveries.pop(section_id, None)
                 continue
-            if section_id not in current_section_ids:
-                owner = None
-                if incident.owner_id is not None:
-                    try:
-                        owner = self.query_one(f"#{incident.owner_id}", Widget)
-                    except (NoMatches, QueryError):
-                        pass
-                if owner is not None:
-                    owner_children = tuple(owner.children)
-                    boundary_structure_settled = all(
-                        index > 0
-                        and not isinstance(
-                            owner_children[index - 1], ConsoleBoundedSection
-                        )
-                        for index, child in enumerate(owner_children)
-                        if isinstance(child, ConsoleBoundedSection)
-                    )
-                    if not boundary_structure_settled:
-                        self.request_outer_reconcile()
-                        continue
-                if owner is None and incident.missing_boundary_passes > 0:
-                    self._pending_focus_recoveries[section_id] = _FocusRecoveryIncident(
-                        target_id=incident.target_id,
-                        control_ids=incident.control_ids,
-                        target_index=incident.target_index,
-                        owner_id=incident.owner_id,
-                        missing_boundary_passes=(incident.missing_boundary_passes - 1),
-                    )
-                    self.request_outer_reconcile()
-                    continue
+            section = boundaries.get(section_id)
+            boundary_unsettled = section is None or not self._body_controls(section)
+            if boundary_unsettled and incident.remaining_reconcile_passes > 0:
+                self._pending_focus_recoveries[section_id] = _FocusRecoveryIncident(
+                    target_id=incident.target_id,
+                    target_index=incident.target_index,
+                    remaining_reconcile_passes=(
+                        incident.remaining_reconcile_passes - 1
+                    ),
+                )
+                self.request_outer_reconcile()
+                continue
             self._pending_focus_recoveries.pop(section_id, None)
             self._recover_focus_incident(section_id, incident)
 
@@ -876,7 +822,6 @@ class ConsoleInspectorRail(Vertical):
                 break
         if not self._pending_focus_recoveries:
             self._section_focus_history.clear()
-            self._section_focus_owner_ids.clear()
         for section, _header in self._mounted_boundaries():
             if target is section.viewport or section.viewport in target.ancestors:
                 incident = self._pending_focus_recoveries.get(section.section_id)
@@ -889,10 +834,6 @@ class ConsoleInspectorRail(Vertical):
                 self._section_focus_history[section.section_id] = (
                     target,
                     self._body_controls(section),
-                )
-                parent = section.parent
-                self._section_focus_owner_ids[section.section_id] = (
-                    parent.id if isinstance(parent, Widget) else None
                 )
                 break
         self._paint_scroll_owner(target)
@@ -927,11 +868,7 @@ class ConsoleInspectorRail(Vertical):
 
         if section_id in self._pending_focus_recoveries:
             return
-        incident = self._focus_recovery_incident(
-            removed_target,
-            old_controls,
-            owner_id=self._section_focus_owner_ids.pop(section_id, None),
-        )
+        incident = self._focus_recovery_incident(removed_target, old_controls)
         self._section_focus_history.pop(section_id, None)
         self._pending_focus_recoveries[section_id] = incident
         self.call_after_refresh(
@@ -958,7 +895,6 @@ class ConsoleInspectorRail(Vertical):
         if not active:
             self._paint_scroll_owner(None)
             self._section_focus_history.clear()
-            self._section_focus_owner_ids.clear()
             self._pending_focus_recoveries.clear()
         self._set_inspector_focus_active(active)
 
