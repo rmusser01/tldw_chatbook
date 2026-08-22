@@ -2014,6 +2014,32 @@ def test_campaign_recovery_rollback_owner_publication_is_resumable(
     assert not (tmp_path / ".campaign-rollback").exists()
 
 
+@pytest.mark.parametrize("duplicate_state", ("owned", "empty"))
+def test_campaign_recovery_restarts_after_duplicate_rollback_checkpoint(
+    tmp_path: Path, duplicate_state: str
+) -> None:
+    attempt = _acquire_attempt(tmp_path)
+    recovery = tmp_path / ".campaign-recovery"
+    if duplicate_state == "owned":
+        _write_campaign_owner(recovery, attempt.owner)
+    else:
+        recovery.mkdir()
+
+    event = profile.recover_interrupted_attempt(
+        tmp_path, process_start_probe=lambda _pid: None
+    )
+
+    assert event == _attempt_event(
+        "attempt-0001", "failed", reason_category="interrupted"
+    )
+    assert profile.attempt_lineage(tmp_path / "attempts.jsonl") == (
+        _attempt_event("attempt-0001", "running"),
+        event,
+    )
+    assert not (tmp_path / ".campaign-lock").exists()
+    assert not recovery.exists()
+
+
 def test_campaign_recovery_rollback_conflict_preserves_both_locked_owners(
     tmp_path: Path,
 ) -> None:
@@ -2284,7 +2310,10 @@ def test_campaign_attempt_cleanup_removes_only_owned_target_worktrees(
         run_command=run_command,
     )
 
-    assert commands.count(["git", "worktree", "prune", "--expire", "now"]) == 2
+    assert [command for command in commands if command[2:4] == ["remove", "--force"]] == [
+        ["git", "worktree", "remove", "--force", str(attempt_root / "control")],
+        ["git", "worktree", "remove", "--force", str(attempt_root / "candidate")],
+    ]
     assert registered == set()
     assert raw.read_bytes() == b"retained\n"
     assert attempt_root.is_dir()
@@ -4871,9 +4900,13 @@ def test_remove_target_worktree_only_removes_owned_fixed_target(tmp_path: Path) 
         name="candidate",
         run_command=fake_run,
     )
-    assert ["git", "worktree", "prune", "--expire", "now"] in [
-        command for command, _kwargs in calls
-    ]
+    assert [
+        "git",
+        "worktree",
+        "remove",
+        "--force",
+        str(target),
+    ] in [command for command, _kwargs in calls]
     assert not target.exists()
     with pytest.raises(RuntimeError, match="target_worktree_invalid"):
         remove_target_worktree(
@@ -4922,7 +4955,7 @@ def test_remove_target_worktree_unregisters_exact_registered_missing_target(
         if command == ["git", "worktree", "list", "--porcelain"]:
             stdout = "".join(f"worktree {path}\n\n" for path in sorted(registered))
             return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
-        if command == ["git", "worktree", "prune", "--expire", "now"]:
+        if command == ["git", "worktree", "remove", "--force", str(target)]:
             registered.clear()
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
@@ -4933,7 +4966,7 @@ def test_remove_target_worktree_unregisters_exact_registered_missing_target(
         run_command=fake_run,
     )
 
-    assert ["git", "worktree", "prune", "--expire", "now"] in calls
+    assert ["git", "worktree", "remove", "--force", str(target)] in calls
     assert registered == set()
 
 
@@ -4959,23 +4992,23 @@ def test_remove_target_worktree_parent_swap_cannot_redirect_deletion(
             attempts.rename(tmp_path / "original-attempts")
             attempts.symlink_to(tmp_path / "outside", target_is_directory=True)
         if command[:4] == ["git", "worktree", "remove", "--force"]:
-            Path(command[-1]).rmdir()
             registered.clear()
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
-    with pytest.raises(RuntimeError, match="target_worktree_unregister_failed"):
-        profile._remove_target_worktree(
-            tmp_path / "repository",
-            run_root,
-            name="candidate",
-            run_command=fake_run,
-        )
+    profile._remove_target_worktree(
+        tmp_path / "repository",
+        run_root,
+        name="candidate",
+        run_command=fake_run,
+    )
 
     assert outside.is_dir()
-    assert (tmp_path / "original-attempts" / "attempt-0001" / "candidate").is_dir()
+    assert not (
+        tmp_path / "original-attempts" / "attempt-0001" / ".candidate-cleanup"
+    ).exists()
 
 
-def test_remove_target_worktree_refuses_prune_with_unrelated_stale_registration(
+def test_remove_target_worktree_preserves_unrelated_stale_registration(
     tmp_path: Path,
 ) -> None:
     run_root = tmp_path / "run"
@@ -4986,19 +5019,26 @@ def test_remove_target_worktree_refuses_prune_with_unrelated_stale_registration(
 
     def fake_run(command, **_kwargs):
         calls.append(command)
-        stdout = "".join(f"worktree {path}\n\n" for path in sorted(registered))
-        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+        if command == ["git", "worktree", "list", "--porcelain"]:
+            stdout = "".join(
+                f"worktree {path}\n\n" for path in sorted(registered)
+            )
+            return subprocess.CompletedProcess(
+                command, 0, stdout=stdout, stderr=""
+            )
+        registered.remove(str(target.resolve()))
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
-    with pytest.raises(RuntimeError, match="^target_worktree_prune_refused$"):
-        profile._remove_target_worktree(
-            tmp_path / "repository",
-            run_root,
-            name="candidate",
-            run_command=fake_run,
-        )
+    profile._remove_target_worktree(
+        tmp_path / "repository",
+        run_root,
+        name="candidate",
+        run_command=fake_run,
+    )
 
-    assert ["git", "worktree", "prune", "--expire", "now"] not in calls
-    assert target.is_dir()
+    assert ["git", "worktree", "remove", "--force", str(target)] in calls
+    assert registered == {str(tmp_path / "missing-unrelated")}
+    assert not target.exists()
 
 
 def test_remove_target_worktree_resumes_inode_bound_quarantine(
@@ -5027,6 +5067,83 @@ def test_remove_target_worktree_resumes_inode_bound_quarantine(
 
     assert registered == set()
     assert not quarantine.exists()
+
+
+@pytest.mark.parametrize("name", ("control", "candidate"))
+def test_remove_target_worktree_finishes_unregistered_quarantine(
+    tmp_path: Path, name: str
+) -> None:
+    run_root = tmp_path / "run"
+    quarantine = run_root / f".{name}-cleanup"
+    (quarantine / "nested").mkdir(parents=True)
+    (quarantine / "nested" / "evidence").write_bytes(b"cleanup checkpoint")
+    unrelated = str(tmp_path / "unrelated-worktree")
+    commands: list[list[str]] = []
+
+    def fake_run(command, **_kwargs):
+        commands.append(command)
+        assert command == ["git", "worktree", "list", "--porcelain"]
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=f"worktree {unrelated}\n\n",
+            stderr="",
+        )
+
+    profile._remove_target_worktree(
+        tmp_path / "repository",
+        run_root,
+        name=name,
+        run_command=fake_run,
+    )
+
+    assert commands == [["git", "worktree", "list", "--porcelain"]]
+    assert not quarantine.exists()
+
+
+def test_remove_target_worktree_exact_remove_preserves_newly_missing_registration(
+    tmp_path: Path,
+) -> None:
+    run_root = tmp_path / "run"
+    target = run_root / "candidate"
+    target.mkdir(parents=True)
+    unrelated_path = tmp_path / "unrelated-worktree"
+    unrelated_path.mkdir()
+    target_text = str(target.resolve())
+    unrelated_text = str(unrelated_path.resolve())
+    registered = {target_text, unrelated_text}
+    commands: list[list[str]] = []
+
+    def fake_run(command, **_kwargs):
+        commands.append(command)
+        if command == ["git", "worktree", "list", "--porcelain"]:
+            stdout = "".join(
+                f"worktree {path}\n\n" for path in sorted(registered)
+            )
+            return subprocess.CompletedProcess(
+                command, 0, stdout=stdout, stderr=""
+            )
+        assert command == [
+            "git",
+            "worktree",
+            "remove",
+            "--force",
+            target_text,
+        ]
+        unrelated_path.rmdir()
+        registered.remove(target_text)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    profile._remove_target_worktree(
+        tmp_path / "repository",
+        run_root,
+        name="candidate",
+        run_command=fake_run,
+    )
+
+    assert registered == {unrelated_text}
+    assert not target.exists()
+    assert not (run_root / ".candidate-cleanup").exists()
 
 
 def test_remove_target_worktrees_attempts_both_when_first_cleanup_fails(
@@ -5069,7 +5186,9 @@ def test_remove_target_worktrees_attempts_both_when_first_cleanup_fails(
             run_command=fake_run,
         )
 
-    assert calls.count(["git", "worktree", "prune", "--expire", "now"]) == 2
+    assert len(
+        [command for command in calls if command[2:4] == ["remove", "--force"]]
+    ) == 2
     assert (run_root / "candidate").is_dir()
     assert not (run_root / "control").exists()
 

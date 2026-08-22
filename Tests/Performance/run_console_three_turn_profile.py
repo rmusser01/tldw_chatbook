@@ -2265,6 +2265,16 @@ def recover_interrupted_attempt(
     lineage = attempt_lineage(ledger)
     latest = lineage[-1] if lineage else None
     orphan_id = _legacy_orphan_attempt_id(campaign_root, lineage)
+    if (recovery_root.exists() or recovery_root.is_symlink()) and (
+        lock_root.exists() or lock_root.is_symlink()
+    ):
+        canonical_owner = _read_lock_owner(lock_root)
+        if _is_empty_private_directory(recovery_root):
+            _rmdir_namespace(recovery_root)
+        else:
+            recovery_owner = _read_lock_owner(recovery_root)
+            if recovery_owner == canonical_owner:
+                _delete_exact_lock_root(recovery_root, recovery_owner)
     owner: CampaignLockOwner | None = None
     if recovery_root.exists() or recovery_root.is_symlink():
         if lineage and lineage[-1] == {
@@ -4752,14 +4762,7 @@ def _remove_directory_contents_fd(descriptor: int) -> None:
     os.fsync(descriptor)
 
 
-def _refuse_unrelated_prunable_registrations(
-    registrations: frozenset[str], target: str
-) -> None:
-    if any(path != target and not Path(path).exists() for path in registrations):
-        raise RuntimeError("target_worktree_prune_refused")
-
-
-def _prune_exact_missing_registration(
+def _remove_exact_worktree_registration(
     repository_root: Path,
     target: str,
     registrations: frozenset[str],
@@ -4768,9 +4771,8 @@ def _prune_exact_missing_registration(
 ) -> None:
     if target not in registrations:
         return
-    _refuse_unrelated_prunable_registrations(registrations, target)
     completed = run_command(
-        ["git", "worktree", "prune", "--expire", "now"],
+        ["git", "worktree", "remove", "--force", target],
         cwd=repository_root,
         check=False,
         capture_output=True,
@@ -4779,7 +4781,7 @@ def _prune_exact_missing_registration(
     if completed.returncode != 0:
         raise RuntimeError("target_worktree_unregister_failed")
     after = _worktree_registrations(repository_root, run_command=run_command)
-    if registrations - after != {target} or after - registrations:
+    if target in after or not registrations - {target} <= after:
         raise RuntimeError("target_worktree_unregister_failed")
 
 
@@ -4838,14 +4840,15 @@ def _remove_target_worktree(
                 registration_failure,
             ],
         ) from None
-    if target_text not in registrations:
+    registered = target_text in registrations
+    if not registered:
         if owned_name is None:
             return
-        raise RuntimeError(f"target_worktree_remove_failed:{name}")
-    _refuse_unrelated_prunable_registrations(registrations, target_text)
+        if owned_name != quarantine_name:
+            raise RuntimeError(f"target_worktree_remove_failed:{name}")
     if owned_name is None:
         try:
-            _prune_exact_missing_registration(
+            _remove_exact_worktree_registration(
                 repository_root,
                 target_text,
                 registrations,
@@ -4860,7 +4863,7 @@ def _remove_target_worktree(
         return
     root_descriptor = os.open(root, _directory_open_flags())
     owned_descriptor: int | None = None
-    quarantined = owned_name == quarantine_name
+    moved_now = False
     try:
         observed_root = os.fstat(root_descriptor)
         if (observed_root.st_dev, observed_root.st_ino) != root_identity:
@@ -4873,7 +4876,7 @@ def _remove_target_worktree(
         observed_owned = os.fstat(owned_descriptor)
         if (observed_owned.st_dev, observed_owned.st_ino) != owned_identity:
             raise RuntimeError(confinement_error)
-        if not quarantined:
+        if owned_name != quarantine_name:
             os.rename(
                 name,
                 quarantine_name,
@@ -4881,26 +4884,27 @@ def _remove_target_worktree(
                 dst_dir_fd=root_descriptor,
             )
             os.fsync(root_descriptor)
-            quarantined = True
+            moved_now = True
         try:
-            _prune_exact_missing_registration(
-                repository_root,
-                target_text,
-                registrations,
-                run_command=run_command,
-            )
-        except RuntimeError as exc:
-            try:
-                os.rename(
-                    quarantine_name,
-                    name,
-                    src_dir_fd=root_descriptor,
-                    dst_dir_fd=root_descriptor,
+            if registered:
+                _remove_exact_worktree_registration(
+                    repository_root,
+                    target_text,
+                    registrations,
+                    run_command=run_command,
                 )
-                os.fsync(root_descriptor)
-                quarantined = False
-            except OSError:
-                pass
+        except RuntimeError as exc:
+            if moved_now:
+                try:
+                    os.rename(
+                        quarantine_name,
+                        name,
+                        src_dir_fd=root_descriptor,
+                        dst_dir_fd=root_descriptor,
+                    )
+                    os.fsync(root_descriptor)
+                except OSError:
+                    pass
             if str(exc) == "target_worktree_unregister_failed":
                 raise RuntimeError(
                     f"target_worktree_unregister_failed:{name}"
