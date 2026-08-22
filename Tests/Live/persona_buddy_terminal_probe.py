@@ -44,6 +44,32 @@ _CHECK_NAMES = (
 )
 
 
+def _validated_cli_path(value: str) -> Path:
+    """Confine explicit probe paths to the workspace or platform temp roots."""
+
+    root = Path(__file__).resolve().parents[2]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    from tldw_chatbook.Utils.path_validation import validate_path
+
+    roots = (root, Path(tempfile.gettempdir()).resolve(), Path("/tmp").resolve())
+    candidate = Path(value)
+    for index, allowed_root in enumerate(roots):
+        if index and not candidate.is_absolute():
+            continue
+        try:
+            resolved = (
+                candidate.resolve()
+                if candidate.is_absolute()
+                else (allowed_root / candidate).resolve()
+            )
+            resolved.relative_to(allowed_root)
+        except ValueError:
+            continue
+        return validate_path(resolved, allowed_root, redact_paths=True)
+    raise argparse.ArgumentTypeError("persona_buddy_probe_path_invalid")
+
+
 class _ProbeChildFailure(RuntimeError):
     """Structured child-process failure retained until evidence is durable."""
 
@@ -871,9 +897,9 @@ def _parent(
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--child", action="store_true")
-    parser.add_argument("preferences", nargs="?", type=Path)
-    parser.add_argument("report", nargs="?", type=Path)
-    parser.add_argument("--report", dest="parent_report", type=Path)
+    parser.add_argument("preferences", nargs="?", type=_validated_cli_path)
+    parser.add_argument("report", nargs="?", type=_validated_cli_path)
+    parser.add_argument("--report", dest="parent_report", type=_validated_cli_path)
     parser.add_argument("--inject-child-failure", action="store_true")
     arguments = parser.parse_args()
     if arguments.child:

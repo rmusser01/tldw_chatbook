@@ -107,11 +107,7 @@ class BuddyLifecycleEvent:
             and self.source not in _CUSTOM_STATE_SOURCES
         ):
             raise ValueError("persona_buddy_console_state_invalid")
-        if (
-            self.source == "explicit"
-            and not self.terminal
-            and (self.expires_at is None or self.expires_at <= time.monotonic())
-        ):
+        if self.source == "explicit" and not self.terminal and self.expires_at is None:
             raise ValueError("persona_buddy_console_expiry_invalid")
 
 
@@ -162,6 +158,12 @@ class PersonaBuddyConsoleAdapter:
             self._prune_expired_locked()
             controller = self._controller
             if controller is None:
+                return False
+            if (
+                event.source == "explicit"
+                and event.expires_at is not None
+                and event.expires_at <= self._clock()
+            ):
                 return False
             if event.terminal:
                 token = self._tokens.pop(key, None)

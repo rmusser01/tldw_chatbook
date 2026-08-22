@@ -372,7 +372,11 @@ class PersonaBuddyController:
         self._shutdown_task: asyncio.Task[None] | None = None
 
     def snapshot(self) -> PersonaBuddySnapshot:
-        """Return the current immutable selection and resolved state."""
+        """Return the current immutable selection and resolved state.
+
+        Returns:
+            The current content-free Buddy state snapshot.
+        """
 
         with self._lock:
             self._discard_expired_locked()

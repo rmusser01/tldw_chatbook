@@ -191,6 +191,9 @@ def persist_persona_buddy_preferences(
         return save_settings_to_cli_config(
             {"persona_buddy": serialize_persona_buddy_preferences(preferences)}
         )
-    except Exception:
-        logger.error("persona_buddy_preferences_save_failed")
+    except Exception as error:
+        logger.error(
+            "persona_buddy_preferences_save_failed exception_type={}",
+            type(error).__name__,
+        )
         return False

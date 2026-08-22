@@ -52,3 +52,27 @@ def test_injected_child_failure_persists_atomic_parent_evidence(tmp_path: Path) 
     )
     assert payload["category"] in completed.stderr
     assert str(artifact) in completed.stderr
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX PTY capability required")
+def test_probe_rejects_cli_paths_outside_workspace_and_temp_roots() -> None:
+    probe = Path(__file__).with_name("persona_buddy_terminal_probe.py")
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(probe),
+            "--child",
+            "/etc/persona-buddy-preferences.json",
+            "/etc/persona-buddy-report.json",
+            "--inject-child-failure",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert completed.returncode == 2
+    assert "persona_buddy_probe_path_invalid" in completed.stderr
+    assert "/etc/" not in completed.stderr

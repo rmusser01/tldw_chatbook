@@ -199,13 +199,39 @@ def test_trusted_public_events_require_safe_state_and_future_expiry() -> None:
         BuddyLifecycleEvent(source="console-run", owner=owner, state="model.directive")
     with pytest.raises(ValueError):
         BuddyLifecycleEvent(source="authored", owner=owner, state="api_key.exposed")
-    with pytest.raises(ValueError):
-        BuddyLifecycleEvent(
-            source="explicit",
-            owner=owner,
-            state="thinking",
-            expires_at=time.monotonic() - 1.0,
+    assert (
+        adapter.publish(
+            BuddyLifecycleEvent(
+                source="explicit",
+                owner=owner,
+                state="thinking",
+                expires_at=time.monotonic() - 1.0,
+            )
         )
+        is False
+    )
+
+
+@pytest.mark.unit
+def test_explicit_expiry_uses_the_adapter_clock_domain() -> None:
+    now = [100.0]
+    controller = PersonaBuddyController(clock=lambda: now[0])
+    adapter = PersonaBuddyConsoleAdapter(controller)
+    adapter._clock = lambda: now[0]
+
+    event = BuddyLifecycleEvent(
+        source="explicit",
+        owner="trusted:custom-clock",
+        state="thinking",
+        expires_at=110.0,
+    )
+
+    assert adapter.publish(event) is True
+    assert controller.snapshot().state == "thinking"
+
+    now[0] = 111.0
+    assert adapter.active_owner_count() == 0
+    assert controller.snapshot().state == "idle"
 
 
 @pytest.mark.asyncio

@@ -162,7 +162,10 @@ def test_preference_failure_is_path_free(
         logger.remove(sink)
 
     rendered = "".join(messages)
-    assert rendered.strip() == "persona_buddy_preferences_save_failed"
+    assert (
+        rendered.strip()
+        == "persona_buddy_preferences_save_failed exception_type=RuntimeError"
+    )
     assert "/private/" not in rendered
 
 
