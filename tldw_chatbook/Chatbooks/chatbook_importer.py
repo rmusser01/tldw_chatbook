@@ -63,6 +63,87 @@ _MAX_V2_TOTAL_PRIVATE_BYTES = 16 * 1024 * 1024
 _MAX_V2_GRAPH_DEPTH = 2_048
 
 
+# Outcome vocabulary shared by ``ImportTypeResult`` and ``ImportStatus``
+# (task-19734). These name what actually happened, so a caller can never read
+# "the import ran" as "items were imported".
+IMPORT_OUTCOME_NONE = "none"  # this type was not part of the import at all
+IMPORT_OUTCOME_EXCLUDED = "excluded"  # present in the chatbook, not attempted
+IMPORT_OUTCOME_EMPTY = "empty"  # nothing to import (an empty chatbook)
+IMPORT_OUTCOME_IMPORTED = "imported"  # every attempted item landed
+IMPORT_OUTCOME_PARTIAL = "partial"  # some landed, some did not
+IMPORT_OUTCOME_SKIPPED = "skipped"  # nothing landed; everything already present
+IMPORT_OUTCOME_FAILED = "failed"  # nothing landed and something went wrong
+
+# The content types this importer can actually write, in dispatch order.
+# Anything else in a chatbook's selections is reported as unsupported rather
+# than silently inflating the totals (task-19734).
+_IMPORTABLE_CONTENT_TYPES: Tuple["ContentType", ...] = (
+    ContentType.CHARACTER,
+    ContentType.CONVERSATION,
+    ContentType.NOTE,
+    ContentType.PROMPT,
+    ContentType.MEDIA,
+    ContentType.KEPT_BRIEFING,
+)
+
+
+class ImportTypeResult:
+    """Per-content-type outcome counters for a single import run.
+
+    ``attempted`` is how many items of this type the import was asked to
+    write; the other three are what actually happened to them. Nothing here
+    is ever derived from a manifest's advertised totals -- that is the whole
+    point (task-19734): the UI used to tick "✓ Imported conversations" off a
+    manifest count, which stays true even when every item was skipped.
+    """
+
+    def __init__(self, content_type: "ContentType"):
+        self.content_type = content_type
+        self.attempted = 0
+        self.excluded = 0
+        self.successful = 0
+        self.skipped = 0
+        self.failed = 0
+
+    @property
+    def accounted(self) -> int:
+        """Items whose fate is known (some paths can bail before recording)."""
+        return self.successful + self.skipped + self.failed
+
+    @property
+    def outcome(self) -> str:
+        """What actually happened to this content type.
+
+        An attempted type that recorded no successes and no skips is
+        ``failed``, not ``imported``: an early return (a missing database
+        path, say) leaves every counter at zero, and silence must not read
+        as success.
+        """
+        if self.attempted <= 0:
+            if self.excluded > 0:
+                return IMPORT_OUTCOME_EXCLUDED
+            return IMPORT_OUTCOME_NONE
+        if self.successful <= 0:
+            if self.failed > 0 or self.skipped <= 0:
+                return IMPORT_OUTCOME_FAILED
+            return IMPORT_OUTCOME_SKIPPED
+        if self.successful >= self.attempted:
+            return IMPORT_OUTCOME_IMPORTED
+        return IMPORT_OUTCOME_PARTIAL
+
+    def to_dict(self) -> dict:
+        """Convert this type's result to a dictionary."""
+        return {
+            "content_type": self.content_type.value,
+            "attempted": self.attempted,
+            "excluded": self.excluded,
+            "successful": self.successful,
+            "skipped": self.skipped,
+            "failed": self.failed,
+            "outcome": self.outcome,
+        }
+
+
 class ImportStatus:
     """Track import progress and results."""
 
@@ -74,6 +155,76 @@ class ImportStatus:
         self.skipped_items = 0
         self.errors: List[str] = []
         self.warnings: List[str] = []
+        # Per-content-type results, keyed by ``ContentType`` (task-19734).
+        self.by_type: Dict["ContentType", ImportTypeResult] = {}
+
+    def result_for(self, content_type: "ContentType") -> ImportTypeResult:
+        """Return (creating if needed) the result record for one content type."""
+        result = self.by_type.get(content_type)
+        if result is None:
+            result = ImportTypeResult(content_type)
+            self.by_type[content_type] = result
+        return result
+
+    def result_snapshot(self, content_type: "ContentType") -> ImportTypeResult:
+        """Read one type's result without adding it to this run's records."""
+        return self.by_type.get(content_type) or ImportTypeResult(content_type)
+
+    def plan(self, content_type: "ContentType", attempted: int) -> ImportTypeResult:
+        """Record how many items of ``content_type`` this run will attempt."""
+        result = self.result_for(content_type)
+        result.attempted += max(0, int(attempted))
+        return result
+
+    def exclude(self, content_type: "ContentType", count: int) -> ImportTypeResult:
+        """Record items present in the chatbook that the user opted out of."""
+        result = self.result_for(content_type)
+        result.excluded += max(0, int(count))
+        return result
+
+    def record_processed(self, content_type: "ContentType") -> None:
+        """Count one item of ``content_type`` as having been reached."""
+        self.processed_items += 1
+        self.result_for(content_type)
+
+    def record_success(self, content_type: "ContentType") -> None:
+        """Count one successfully imported item of ``content_type``."""
+        self.successful_items += 1
+        self.result_for(content_type).successful += 1
+
+    def record_skipped(self, content_type: "ContentType") -> None:
+        """Count one skipped (already present) item of ``content_type``."""
+        self.skipped_items += 1
+        self.result_for(content_type).skipped += 1
+
+    def record_failure(self, content_type: "ContentType") -> None:
+        """Count one failed item of ``content_type``."""
+        self.failed_items += 1
+        self.result_for(content_type).failed += 1
+
+    @property
+    def planned_items(self) -> int:
+        """Total items the run was asked to attempt, summed over types."""
+        return sum(result.attempted for result in self.by_type.values())
+
+    @property
+    def outcome(self) -> str:
+        """What actually happened across the whole import.
+
+        Mirrors :attr:`ImportTypeResult.outcome`, so a run and each of its
+        types are described in the same vocabulary.
+        """
+        accounted = self.successful_items + self.skipped_items + self.failed_items
+        attempted = max(self.planned_items, self.total_items, accounted)
+        if attempted <= 0:
+            return IMPORT_OUTCOME_EMPTY
+        if self.successful_items <= 0:
+            if self.failed_items > 0 or self.skipped_items <= 0:
+                return IMPORT_OUTCOME_FAILED
+            return IMPORT_OUTCOME_SKIPPED
+        if self.successful_items >= attempted:
+            return IMPORT_OUTCOME_IMPORTED
+        return IMPORT_OUTCOME_PARTIAL
 
     def add_error(self, error: str):
         """Add an error message."""
@@ -91,6 +242,11 @@ class ImportStatus:
             "successful_items": self.successful_items,
             "failed_items": self.failed_items,
             "skipped_items": self.skipped_items,
+            "outcome": self.outcome,
+            "by_type": {
+                content_type.value: result.to_dict()
+                for content_type, result in self.by_type.items()
+            },
             "errors": self.errors,
             "warnings": self.warnings,
         }
@@ -332,8 +488,33 @@ class ChatbookImporter:
                         content_selections[item.type] = []
                     content_selections[item.type].append(item.id)
 
-            # Count total items to import
-            status.total_items = sum(len(ids) for ids in content_selections.values())
+            # Record what each content type was asked to do BEFORE any of it
+            # runs, so a type that dies before recording a single item still
+            # reads as "attempted and produced nothing" rather than as absent
+            # (task-19734). Media only counts as attempted when it is actually
+            # going to be imported, and a content type this importer cannot
+            # write is never counted as attempted -- otherwise the totals
+            # carry a permanent unexplained shortfall.
+            for planned_type in _IMPORTABLE_CONTENT_TYPES:
+                if planned_type not in content_selections:
+                    continue
+                if planned_type is ContentType.MEDIA and not import_media:
+                    status.exclude(
+                        ContentType.MEDIA, len(content_selections[ContentType.MEDIA])
+                    )
+                    continue
+                status.plan(planned_type, len(content_selections[planned_type]))
+
+            for unsupported_type, unsupported_ids in content_selections.items():
+                if unsupported_type in _IMPORTABLE_CONTENT_TYPES or not unsupported_ids:
+                    continue
+                status.add_warning(
+                    f"{len(unsupported_ids)} {unsupported_type.value} item(s) in this "
+                    "chatbook are not supported by the importer and were not imported"
+                )
+
+            # Total items to import: what the run will actually attempt.
+            status.total_items = status.planned_items
 
             # Import each content type
             if ContentType.CHARACTER in content_selections:
@@ -394,32 +575,39 @@ class ChatbookImporter:
                     status,
                 )
 
-            # Success if we processed items without fatal errors
-            # This includes both imported and skipped items
-            success = (
-                status.successful_items + status.skipped_items
-            ) > 0 or status.total_items == 0
+            # The run succeeded unless nothing landed and something went wrong
+            # (task-19734). A skip is not a success: an all-skipped re-import
+            # returns True here because it is not an *error*, but its message
+            # says in words that nothing was imported, and callers that need
+            # to branch on what happened read ``status.outcome`` rather than
+            # inferring an import from this boolean.
+            outcome = status.outcome
+            success = outcome != IMPORT_OUTCOME_FAILED
 
-            if success:
-                if status.successful_items > 0:
-                    details = []
-                    if status.skipped_items > 0:
-                        details.append(f"{status.skipped_items} skipped")
-                    if status.failed_items > 0:
-                        details.append(f"{status.failed_items} failed")
+            if outcome == IMPORT_OUTCOME_EMPTY:
+                message = "No items to import"
+            elif outcome in (IMPORT_OUTCOME_IMPORTED, IMPORT_OUTCOME_PARTIAL):
+                details = []
+                if status.skipped_items > 0:
+                    details.append(f"{status.skipped_items} skipped")
+                if status.failed_items > 0:
+                    details.append(f"{status.failed_items} failed")
 
-                    message = f"Successfully imported {status.successful_items}/{status.total_items} items"
-                    if details:
-                        message += f" ({', '.join(details)})"
-                elif status.skipped_items > 0:
-                    message = f"Skipped {status.skipped_items}/{status.total_items} items due to conflicts"
-                    if status.failed_items > 0:
-                        message += f" ({status.failed_items} failed)"
-                else:
-                    message = "No items to import"
-                logger.info(message)
+                message = f"Successfully imported {status.successful_items}/{status.total_items} items"
+                if details:
+                    message += f" ({', '.join(details)})"
+            elif outcome == IMPORT_OUTCOME_SKIPPED:
+                message = (
+                    "No items were imported: "
+                    f"{status.skipped_items}/{status.total_items} items were already "
+                    "present and were skipped"
+                )
             else:
                 message = "Failed to import any items from chatbook"
+
+            if success:
+                logger.info(message)
+            else:
                 logger.error(message)
 
             return success, message
@@ -466,7 +654,7 @@ class ChatbookImporter:
         )
 
         for conv_id in conversation_ids:
-            status.processed_items += 1
+            status.record_processed(ContentType.CONVERSATION)
             logger.info(
                 f"ChatbookImporter._import_conversations: Processing conversation {conv_id} ({status.processed_items}/{len(conversation_ids)})"
             )
@@ -481,7 +669,7 @@ class ChatbookImporter:
                         f"ChatbookImporter._import_conversations: Conversation file not found: {conv_file.name}"
                     )
                     status.add_warning(f"Conversation file not found: {conv_file.name}")
-                    status.failed_items += 1
+                    status.record_failure(ContentType.CONVERSATION)
                     continue
 
                 # Load conversation data
@@ -523,7 +711,7 @@ class ChatbookImporter:
                         logger.info(
                             "ChatbookImporter._import_conversations: Skipping conversation due to conflict resolution"
                         )
-                        status.skipped_items += 1
+                        status.record_skipped(ContentType.CONVERSATION)
                         continue
                     elif resolution == ConflictResolution.RENAME:
                         old_name = conv_name
@@ -690,19 +878,19 @@ class ChatbookImporter:
                             context_message_id,
                             msg,
                         )
-                    status.successful_items += 1
+                    status.record_success(ContentType.CONVERSATION)
                     logger.info(
                         f"ChatbookImporter._import_conversations: Successfully imported conversation: {conv_name}"
                     )
                 else:
-                    status.failed_items += 1
+                    status.record_failure(ContentType.CONVERSATION)
                     status.add_error(f"Failed to create conversation: {conv_name}")
                     logger.error(
                         f"ChatbookImporter._import_conversations: Failed to create conversation: {conv_name}"
                     )
 
             except Exception as e:
-                status.failed_items += 1
+                status.record_failure(ContentType.CONVERSATION)
                 status.add_error(f"Error importing conversation {conv_id}: {str(e)}")
                 logger.opt(exception=True).error(
                     "ChatbookImporter._import_conversations: Error importing conversation {}",
@@ -1124,7 +1312,7 @@ class ChatbookImporter:
         logger.info(f"ChatbookImporter._import_notes: Looking for notes in {notes_dir}")
 
         for note_id in note_ids:
-            status.processed_items += 1
+            status.record_processed(ContentType.NOTE)
             logger.info(
                 f"ChatbookImporter._import_notes: Processing note {note_id} ({status.processed_items}/{len(note_ids)})"
             )
@@ -1142,7 +1330,7 @@ class ChatbookImporter:
                         f"ChatbookImporter._import_notes: Note metadata not found for ID: {note_id}"
                     )
                     status.add_warning(f"Note metadata not found for ID: {note_id}")
-                    status.failed_items += 1
+                    status.record_failure(ContentType.NOTE)
                     continue
 
                 # Load note file
@@ -1155,7 +1343,7 @@ class ChatbookImporter:
                         f"ChatbookImporter._import_notes: Note file not found: {note_file}"
                     )
                     status.add_warning(f"Note file not found: {note_file}")
-                    status.failed_items += 1
+                    status.record_failure(ContentType.NOTE)
                     continue
 
                 # Parse markdown with frontmatter
@@ -1191,7 +1379,7 @@ class ChatbookImporter:
                     )
 
                     if resolution == ConflictResolution.SKIP:
-                        status.skipped_items += 1
+                        status.record_skipped(ContentType.NOTE)
                         continue
                     elif resolution == ConflictResolution.RENAME:
                         note_title = self._generate_unique_note_title(note_title, db)
@@ -1201,14 +1389,14 @@ class ChatbookImporter:
                 new_note_id = db.add_note(title=note_title, content=note_content)
 
                 if new_note_id:
-                    status.successful_items += 1
+                    status.record_success(ContentType.NOTE)
                     logger.info(f"Imported note: {note_title}")
                 else:
-                    status.failed_items += 1
+                    status.record_failure(ContentType.NOTE)
                     status.add_error(f"Failed to create note: {note_title}")
 
             except Exception as e:
-                status.failed_items += 1
+                status.record_failure(ContentType.NOTE)
                 status.add_error(f"Error importing note {note_id}: {str(e)}")
                 logger.opt(exception=True).error(
                     "ChatbookImporter._import_notes: Error importing note {}",
@@ -1243,7 +1431,7 @@ class ChatbookImporter:
         )
 
         for char_id in character_ids:
-            status.processed_items += 1
+            status.record_processed(ContentType.CHARACTER)
             logger.info(
                 f"ChatbookImporter._import_characters: Processing character {char_id} ({status.processed_items}/{len(character_ids)})"
             )
@@ -1256,7 +1444,7 @@ class ChatbookImporter:
                         f"ChatbookImporter._import_characters: Character file not found: {char_file.name}"
                     )
                     status.add_warning(f"Character file not found: {char_file.name}")
-                    status.failed_items += 1
+                    status.record_failure(ContentType.CHARACTER)
                     continue
 
                 # Load character data
@@ -1277,7 +1465,7 @@ class ChatbookImporter:
                     status.add_error(
                         f"Failed to parse character card for {char_id} (format: {format_name})"
                     )
-                    status.failed_items += 1
+                    status.record_failure(ContentType.CHARACTER)
                     continue
 
                 # Log the detected format
@@ -1309,7 +1497,7 @@ class ChatbookImporter:
                         logger.info(
                             "ChatbookImporter._import_characters: Skipping character due to conflict resolution"
                         )
-                        status.skipped_items += 1
+                        status.record_skipped(ContentType.CHARACTER)
                         continue
                     elif resolution == ConflictResolution.RENAME:
                         old_name = char_name
@@ -1355,19 +1543,19 @@ class ChatbookImporter:
                 )
 
                 if new_char_id:
-                    status.successful_items += 1
+                    status.record_success(ContentType.CHARACTER)
                     logger.info(
                         f"ChatbookImporter._import_characters: Successfully imported character: {char_name}"
                     )
                 else:
-                    status.failed_items += 1
+                    status.record_failure(ContentType.CHARACTER)
                     status.add_error(f"Failed to create character: {char_name}")
                     logger.error(
                         f"ChatbookImporter._import_characters: Failed to create character: {char_name}"
                     )
 
             except Exception as e:
-                status.failed_items += 1
+                status.record_failure(ContentType.CHARACTER)
                 status.add_error(f"Error importing character {char_id}: {str(e)}")
                 logger.opt(exception=True).error(
                     "ChatbookImporter._import_characters: Error importing character {}",
@@ -1395,8 +1583,8 @@ class ChatbookImporter:
                 not isinstance(prompt_id, str)
                 or _PROMPT_ARCHIVE_ITEM_ID.fullmatch(prompt_id) is None
             ):
-                status.processed_items += 1
-                status.failed_items += 1
+                status.record_processed(ContentType.PROMPT)
+                status.record_failure(ContentType.PROMPT)
                 status.add_error("Unable to import Prompt item.")
                 logger.error(
                     "ChatbookImporter._import_prompts: Prompt import failed "
@@ -1411,8 +1599,8 @@ class ChatbookImporter:
             db = PromptsDatabase(db_path, "chatbook_importer")
         except Exception:
             for prompt_id in valid_prompt_ids:
-                status.processed_items += 1
-                status.failed_items += 1
+                status.record_processed(ContentType.PROMPT)
+                status.record_failure(ContentType.PROMPT)
                 status.add_error("Unable to import Prompt item.")
                 logger.error(
                     "ChatbookImporter._import_prompts: Prompt import failed "
@@ -1423,14 +1611,14 @@ class ChatbookImporter:
         prompts_dir = extract_dir / "content" / "prompts"
 
         for prompt_id in valid_prompt_ids:
-            status.processed_items += 1
+            status.record_processed(ContentType.PROMPT)
 
             try:
                 # Find prompt file
                 prompt_file = prompts_dir / f"prompt_{prompt_id}.json"
                 if not prompt_file.exists():
                     status.add_error("Unable to import Prompt item.")
-                    status.failed_items += 1
+                    status.record_failure(ContentType.PROMPT)
                     logger.error(
                         "ChatbookImporter._import_prompts: Prompt import failed "
                         "item={} category=missing",
@@ -1462,14 +1650,14 @@ class ChatbookImporter:
                 new_prompt_id = result[0] if result else None
 
                 if new_prompt_id:
-                    status.successful_items += 1
+                    status.record_success(ContentType.PROMPT)
                     logger.info(
                         "ChatbookImporter._import_prompts: Prompt imported "
                         "item={} category=success",
                         prompt_id,
                     )
                 else:
-                    status.failed_items += 1
+                    status.record_failure(ContentType.PROMPT)
                     status.add_error("Unable to import Prompt item.")
                     logger.error(
                         "ChatbookImporter._import_prompts: Prompt import failed "
@@ -1478,7 +1666,7 @@ class ChatbookImporter:
                     )
 
             except Exception as exc:
-                status.failed_items += 1
+                status.record_failure(ContentType.PROMPT)
                 status.add_error("Unable to import Prompt item.")
                 category = (
                     exc.category
@@ -1514,7 +1702,7 @@ class ChatbookImporter:
         metadata_dir = media_dir / "metadata"
 
         for media_id in media_ids:
-            status.processed_items += 1
+            status.record_processed(ContentType.MEDIA)
 
             try:
                 # Find media metadata file
@@ -1523,7 +1711,7 @@ class ChatbookImporter:
                     status.add_warning(
                         f"Media metadata file not found: {metadata_file.name}"
                     )
-                    status.failed_items += 1
+                    status.record_failure(ContentType.MEDIA)
                     continue
 
                 # Load media metadata
@@ -1542,7 +1730,7 @@ class ChatbookImporter:
                 if existing:
                     # Handle conflict
                     if conflict_resolution == ConflictResolution.SKIP:
-                        status.skipped_items += 1
+                        status.record_skipped(ContentType.MEDIA)
                         logger.info(f"Skipped existing media: {title}")
                         continue
                     elif conflict_resolution == ConflictResolution.RENAME:
@@ -1606,20 +1794,20 @@ class ChatbookImporter:
                     )
 
                     if new_media_id:
-                        status.successful_items += 1
+                        status.record_success(ContentType.MEDIA)
                         logger.info(f"Imported media: {title}")
                     else:
-                        status.failed_items += 1
+                        status.record_failure(ContentType.MEDIA)
                         status.add_error(f"Failed to create media: {title}")
 
                 except Exception as e:
-                    status.failed_items += 1
+                    status.record_failure(ContentType.MEDIA)
                     status.add_error(
                         f"Database error importing media '{title}': {str(e)}"
                     )
 
             except Exception as e:
-                status.failed_items += 1
+                status.record_failure(ContentType.MEDIA)
                 status.add_error(f"Error importing media {media_id}: {str(e)}")
                 logger.error(f"Error importing media {media_id}: {e}")
 
@@ -1759,7 +1947,7 @@ class ChatbookImporter:
         kept_dir = extract_dir / "content" / "kept_briefings"
 
         for kept_id in kept_briefing_ids:
-            status.processed_items += 1
+            status.record_processed(ContentType.KEPT_BRIEFING)
             try:
                 kept_file = self._kept_briefing_file_path(
                     extract_dir, kept_dir, manifest, kept_id
@@ -1768,7 +1956,7 @@ class ChatbookImporter:
                     status.add_warning(
                         f"Kept briefing file not found: {kept_file.name}"
                     )
-                    status.failed_items += 1
+                    status.record_failure(ContentType.KEPT_BRIEFING)
                     continue
 
                 with open(kept_file, "r", encoding="utf-8") as f:
@@ -1804,7 +1992,7 @@ class ChatbookImporter:
                         # Lost a race with another writer between the
                         # failed insert and this read -- a hard failure
                         # rather than a guess.
-                        status.failed_items += 1
+                        status.record_failure(ContentType.KEPT_BRIEFING)
                         status.add_error(
                             "Kept briefing conflict for "
                             f"source_briefing_id={source_briefing_id} could not "
@@ -1823,9 +2011,9 @@ class ChatbookImporter:
                 # count (task-1870 fix-wave F5 -- see the per-item try
                 # around `_import_kept_scripts`).
                 if newly_inserted:
-                    status.successful_items += 1
+                    status.record_success(ContentType.KEPT_BRIEFING)
                 else:
-                    status.skipped_items += 1
+                    status.record_skipped(ContentType.KEPT_BRIEFING)
                     if conflict:
                         status.add_warning(
                             "Kept briefing conflict: source_briefing_id="
@@ -1890,7 +2078,7 @@ class ChatbookImporter:
                 )
 
             except Exception as e:
-                status.failed_items += 1
+                status.record_failure(ContentType.KEPT_BRIEFING)
                 status.add_error(
                     f"Error importing kept briefing {kept_id}: {str(e)}"
                 )

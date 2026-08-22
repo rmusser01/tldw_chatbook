@@ -87,6 +87,33 @@ run is not clearance for that form. If the guard fails, fix the default — neve
 
 ---
 
+## Square brackets in widget text are console markup — an unescaped `[Word]` is deleted from the UI without a warning
+
+**TASK-19734, 2026-08-21.** The import wizard's mislabelled tag checkbox was
+relabelled to name what it actually does — prefix imported item names with
+`[Imported]` — written as the plain string
+`'Prefix imported item names with "[Imported]"'`. Textual renders label and
+`Static` text as console markup, so `[Imported]` parsed as an (unknown) style tag
+and was dropped: the shipped control read `Prefix imported item names with ""`.
+The behaviour is silent — no exception, no log line, no styling change — and it
+only surfaced because a test asserted the substring was in the rendered label:
+
+```python
+>>> str(Checkbox('… with "[Imported]"').label)
+'… with ""'
+>>> str(Checkbox(r'… with "\[Imported]"').label)   # escaped
+'… with "[Imported]"'
+```
+
+Escape with a raw string and a leading backslash (`r'\[Imported]'`) anywhere a
+literal bracket must reach the user, and **assert on the rendered label**
+(`str(widget.label)` / `str(static.renderable)`), never on the source constant —
+a test that checks the constant passes while the UI shows nothing. This bites
+hardest on exactly the copy that most needs to be literal: names, prefixes,
+placeholders, file globs, `[Imported]`-style markers.
+
+---
+
 ## Related
 
 - `lessons-testing-evidence.md` — includes the Pilot-harness traps (detached widget
