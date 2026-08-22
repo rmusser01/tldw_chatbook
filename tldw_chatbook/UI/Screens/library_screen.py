@@ -22712,17 +22712,30 @@ class LibraryScreen(BaseAppScreen):
         if block_state is not None:
             system_prompt = block_state.compiled_system
             user_prompt = block_state.compiled_user
-        elif isinstance(self._library_prompt_detail, Mapping):
-            editor_state = build_prompt_editor_state(self._library_prompt_detail)
-            system_prompt = editor_state.system_prompt
-            user_prompt = editor_state.user_prompt
         else:
+            # TASK-19602: the live legacy-lane TextAreas are the working
+            # copy the user sees and edits, so non-empty live text outranks
+            # the persisted detail. Structured/foreign artifacts mount
+            # those lanes EMPTY (their truth is the STRUCTURE section) --
+            # empty live lanes fall back to the detail's compatibility
+            # text rather than blanking the copy/export.
             try:
-                system_prompt = self.query_one(
+                live_system = self.query_one(
                     "#library-prompt-system", TextArea
                 ).text
-                user_prompt = self.query_one("#library-prompt-user", TextArea).text
+                live_user = self.query_one("#library-prompt-user", TextArea).text
             except (NoMatches, QueryError):
+                live_system = live_user = None
+            if live_system or live_user:
+                system_prompt = live_system or ""
+                user_prompt = live_user or ""
+            elif isinstance(self._library_prompt_detail, Mapping):
+                editor_state = build_prompt_editor_state(
+                    self._library_prompt_detail
+                )
+                system_prompt = editor_state.system_prompt
+                user_prompt = editor_state.user_prompt
+            else:
                 return None
         return name, author, details, system_prompt, user_prompt, keywords_text
 
