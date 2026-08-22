@@ -1143,14 +1143,71 @@ def _record_digest(record: TrajectoryRecord) -> str:
 
 
 def _coherent_turns(records: Iterable[TrajectoryRecord]) -> list[TrajectoryTurn]:
-    """Group a causal stream into one stable block per turn."""
+    """Group a causal stream into one causally ordered block per turn."""
+    ordered = list(records)
     buckets: dict[str, list[TrajectoryRecord]] = {}
-    for record in records:
+    event_turn: dict[str, str] = {}
+    turn_position: dict[str, int] = {}
+    for position, record in enumerate(ordered):
         turn_id = record.turn_id or record.conversation_id or "trace"
         buckets.setdefault(turn_id, []).append(record)
+        event_turn[record.event_id] = turn_id
+        turn_position.setdefault(turn_id, position)
+
+    edges: dict[str, set[str]] = {turn_id: set() for turn_id in buckets}
+    indegree = {turn_id: 0 for turn_id in buckets}
+
+    def add_event_edge(before: str | None, after: str | None) -> None:
+        before_turn = event_turn.get(before or "")
+        after_turn = event_turn.get(after or "")
+        if (
+            before_turn is None
+            or after_turn is None
+            or before_turn == after_turn
+            or after_turn in edges[before_turn]
+        ):
+            return
+        edges[before_turn].add(after_turn)
+        indegree[after_turn] += 1
+
+    for record in ordered:
+        add_event_edge(record.parent_event_id, record.event_id)
+        add_event_edge(record.source_event_id, record.event_id)
+        add_event_edge(record.event_id, record.replacement_event_id)
+        if record.kind == "retrieval_run" and record.message_id:
+            add_event_edge(record.event_id, f"message:{record.message_id}")
+
+    owner_sequences: dict[tuple[str, str], list[TrajectoryRecord]] = {}
+    for record in ordered:
+        if record.source_seq is None or not record.conversation_id:
+            continue
+        if record.event_id.startswith(("message:", "trajectory:")):
+            owner_sequences.setdefault(
+                ("trajectory", record.conversation_id), []
+            ).append(record)
+    for owner_records in owner_sequences.values():
+        owner_records.sort(key=lambda record: (record.source_seq, record.event_id))
+        for before, after in zip(owner_records, owner_records[1:]):
+            add_event_edge(before.event_id, after.event_id)
+
+    ready = [
+        (turn_position[turn_id], turn_id)
+        for turn_id, degree in indegree.items()
+        if degree == 0
+    ]
+    heapq.heapify(ready)
+    turn_ids: list[str] = []
+    while ready:
+        _, turn_id = heapq.heappop(ready)
+        turn_ids.append(turn_id)
+        for child_id in sorted(edges[turn_id]):
+            indegree[child_id] -= 1
+            if indegree[child_id] == 0:
+                heapq.heappush(ready, (turn_position[child_id], child_id))
+    if len(turn_ids) != len(buckets):
+        turn_ids = sorted(buckets, key=lambda turn_id: turn_position[turn_id])
     return [
-        TrajectoryTurn(turn_id, tuple(records))
-        for turn_id, records in buckets.items()
+        TrajectoryTurn(turn_id, tuple(buckets[turn_id])) for turn_id in turn_ids
     ]
 
 

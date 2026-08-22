@@ -503,6 +503,30 @@ def test_delayed_external_event_does_not_fragment_an_existing_turn() -> None:
     assert any(record.event_id == "agent-run:late" for record in snapshot.turns[0].records)
 
 
+def test_cross_turn_parent_orders_coherent_turn_blocks() -> None:
+    messages = [
+        {"id": "u1", "sender": "user", "content": "q1", "timestamp": 1, "deleted": False},
+        {"id": "u2", "sender": "user", "content": "q2", "timestamp": 2, "deleted": False},
+    ]
+    rows = [
+        Sidecar("u1", "conv-1", "t1", None, "user"),
+        Sidecar("u2", "conv-1", "t2", None, "user"),
+    ]
+    child = {
+        "id": "late-child",
+        "conversation_id": "conv-1",
+        "turn_id": "t1",
+        "parent_event_id": "message:u2",
+        "created_at": 3,
+    }
+
+    snapshot = _snapshot(messages=messages, traj_rows=rows, agent_runs=[child])
+    ids = [record.event_id for record in _records(snapshot)]
+
+    assert [turn.turn_id for turn in snapshot.turns] == ["t2", "t1"]
+    assert ids.index("message:u2") < ids.index("agent-run:late-child")
+
+
 def test_real_agent_owner_shapes_preserve_actor_tool_metadata_and_outcome() -> None:
     run = {
         "id": "run-1",
