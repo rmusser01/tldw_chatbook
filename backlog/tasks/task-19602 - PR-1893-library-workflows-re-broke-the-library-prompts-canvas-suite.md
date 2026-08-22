@@ -190,3 +190,28 @@ Remaining 5, with root-cause evidence:
 - source-choices keyboard (sizes 1/2): keyboard switch path.
 - cancelled_prompt_import: order-dependent with the trio fix's
   drain semantics (18611 notes).
+
+## Fix progress tranche 5 (2026-08-22, PR #1921 merged)
+
+2 more cleared (5 -> 3): both were the wide focused-task contract
+(1bda754fa) reaching the file-notes suite -- the db-files switch test's
+post-reload Database press never entered its handler (spy: zero handler
+entries) because wide terminals hide the source strip behind
+#library-notes-task-return; the test now presses the live control. The
+source-choices keyboard test aligns its wide-size rail assert and
+returns via task-return; the compact size keeps the strip flow.
+
+Remaining 3, with evidence:
+- cancelled_prompt_import retry Undo: post-settlement probe shows
+  receipt set, mutation_in_flight False, mutation_status '' -- yet the
+  receipt row (and Undo) is NOT composed; the canvas recompose after
+  the import's browse projection drops the row despite
+  delete_receipt in kwargs. Next: instrument
+  _library_prompts_canvas_kwargs timing vs the recompose that follows
+  import settlement; likely a state-object refresh ordering gap
+  (possibly a real product bug).
+- copy-lane x2: the a24a2202f editor republishes block state on a
+  system-lane change and reverts a programmatic user-lane .text write
+  (block_state non-None even for legacy prompts). Needs the editor's
+  real edit seam (_change_field / per-lane publish), not textarea
+  assignment.
