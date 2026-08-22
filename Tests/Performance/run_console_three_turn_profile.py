@@ -139,7 +139,7 @@ _CHILD_SPEC_KEYS = frozenset(
 
 @dataclass(frozen=True)
 class SamplePlan:
-    """One warmup or measured arm invocation owned by the parent."""
+    """One warmup, burn-in, or measured arm invocation owned by the parent."""
 
     phase: str
     arm: str
@@ -687,7 +687,10 @@ def validate_confirmation_rows(
     if observed != expected:
         errors.append("confirmation_schedule_contract")
     sample_ids = [row.get("sample_id") for row in rows]
-    if len(sample_ids) != len(set(sample_ids)):
+    if any(
+        sample_id in sample_ids[:position]
+        for position, sample_id in enumerate(sample_ids)
+    ):
         errors.append("confirmation_sample_id_duplicate")
     sample_errors = [validate_sample(row) for row in rows]
     if any(sample_errors):

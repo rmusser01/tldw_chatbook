@@ -440,6 +440,31 @@ def test_validate_confirmation_rows_rejects_cross_phase_duplicate_sample_ids() -
     )
 
 
+def test_validate_confirmation_rows_handles_unhashable_duplicate_sample_ids() -> None:
+    schedule, rows = _valid_confirmation_rows()
+    rows[10]["sample_id"] = ["malformed"]
+    rows[11]["sample_id"] = ["malformed"]
+    seen_positions = []
+    validate_confirmation_rows = getattr(profile, "validate_confirmation_rows", None)
+
+    def injected_validate_sample(row: dict[str, object]) -> tuple[str, ...]:
+        seen_positions.append(row["schedule_position"])
+        return ()
+
+    assert callable(validate_confirmation_rows)
+    errors, _filtered = validate_confirmation_rows(
+        rows,
+        schedule,
+        validate_sample=injected_validate_sample,
+    )
+
+    assert errors == (
+        "confirmation_schedule_contract",
+        "confirmation_sample_id_duplicate",
+    )
+    assert seen_positions == list(range(108))
+
+
 def test_validate_confirmation_rows_validates_every_row_including_burn_in() -> None:
     schedule, rows = _valid_confirmation_rows()
     rows[3]["status"] = "failed"
@@ -635,7 +660,13 @@ def test_confirmatory_schedule_continues_rotation_after_five_burn_in_blocks() ->
         ("warmup", "disabled", -1),
         ("warmup", "enabled", -1),
     ]
-    assert len([row for row in schedule if row.phase == "burn_in"]) == 15
+    burn_in = [row for row in schedule if row.phase == "burn_in"]
+    assert len(burn_in) == 15
+    for block in range(5):
+        block_rows = burn_in[block * len(profile.ARMS) : (block + 1) * len(profile.ARMS)]
+        assert [(row.arm, row.iteration) for row in block_rows] == [
+            (arm, block) for arm in profile.balanced_arm_order(block)
+        ]
     measured = [row for row in schedule if row.phase == "measured"]
     assert len(measured) == 90
     assert [row.arm for row in measured[:3]] == list(profile.balanced_arm_order(5))
