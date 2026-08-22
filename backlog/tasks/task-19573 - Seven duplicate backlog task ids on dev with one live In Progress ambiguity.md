@@ -72,7 +72,7 @@ more than 14 days and three carry no date at all.
 - [x] Renumbering updates every inbound reference (dependencies, branch names,
       PR bodies where practical), not just the filenames
 - [x] Backlog Guard is green on `dev`
-- [ ] A **local** gate exists — a pytest that fails on duplicate ids — so a
+- [x] A **local** gate exists — a pytest that fails on duplicate ids — so a
       collision is caught before push rather than by a workflow nobody can
       block on
 - [x] The id-claiming protocol is revised to survive concurrent sessions: the
@@ -133,3 +133,17 @@ rather than reopening it unilaterally, since the task's core defect (red
 guard, live ambiguity) is genuinely resolved and closed elsewhere
 (TASK-19601); the three open items above should be tracked as their own
 follow-up rather than reopening this one.
+
+## Follow-up: the local gate (2026-08-21)
+
+`Tests/CI/test_backlog_task_id_uniqueness.py` closes the last AC. It checks
+both namespaces the workflow checks -- the filename prefix and the first
+frontmatter `id:` line -- and adds a third assertion the workflow does not
+have: every task file must *declare* an id, so deleting an `id:` line
+silences nothing.
+
+Red-proofed against all three defects it claims to catch (a filename
+collision, a frontmatter-only collision, and a missing `id:`); each fails
+the matching assertion and only that one. A module fixture asserts the task
+directory is non-empty, so a wrong PROJECT_ROOT cannot make the gate
+vacuously green.
