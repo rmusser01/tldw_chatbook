@@ -5887,9 +5887,7 @@ UPDATE db_schema_version
         """Install portable Actor Pack identity and bounded Persona intents."""
 
         self._require_migration_entry_version(conn, 44, "V44→V45")
-        logger.info(
-            f"Migrating schema from V44 to V45 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
-        )
+        logger.info("Actor Pack schema migration started: chachanotes_v44_to_v45")
         migration_path = (
             Path(__file__).parent
             / "migrations"
@@ -5923,12 +5921,10 @@ UPDATE db_schema_version
                     f"Expected 45, got: {final_version}"
                 )
             logger.info(
-                f"[{self._SCHEMA_NAME} V44→V45] Migration completed successfully for DB: {self.db_path_str}."
+                "Actor Pack schema migration completed: chachanotes_v44_to_v45"
             )
         except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
-            logger.opt(exception=True).error(
-                f"[{self._SCHEMA_NAME} V44→V45] Migration failed: {exc}"
-            )
+            logger.error("Actor Pack schema migration failed: chachanotes_v44_to_v45")
             raise SchemaError(
                 f"Migration from V44 to V45 failed for '{self._SCHEMA_NAME}': {exc}"
             ) from exc
