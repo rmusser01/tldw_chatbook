@@ -540,8 +540,8 @@ def test_shared_lock_prevents_lost_concurrent_set_and_delete_updates(
                 self._owner = None
             self._lock.release()
 
-    instrumented_lock = InstrumentedLock(config_module._CONFIG_FILE_LOCK)
-    monkeypatch.setattr(config_module, "_CONFIG_FILE_LOCK", instrumented_lock)
+    instrumented_lock = InstrumentedLock(config_module._SETTINGS_REBUILD_LOCK)
+    monkeypatch.setattr(config_module, "_SETTINGS_REBUILD_LOCK", instrumented_lock)
     monkeypatch.setattr(
         config_module,
         "load_settings",

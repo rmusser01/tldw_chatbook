@@ -129,3 +129,29 @@ def test_cache_hit_path_does_no_rebuild(counting_bootstrap):
     for _ in range(5):
         assert isinstance(config_module.load_settings(), dict)
     assert counting_bootstrap == [], "a cache hit must not rebuild"
+
+
+def test_config_write_waits_for_settings_rebuild_before_file_lock(tmp_path):
+    """A writer must not invert the settings-rebuild/config-file lock order."""
+    config_module.load_settings()
+    entered_write = threading.Event()
+    release_write = threading.Event()
+
+    def writer() -> None:
+        with config_module._config_write_lock(tmp_path / "config.toml"):
+            entered_write.set()
+            release_write.wait(timeout=5)
+
+    with config_module._SETTINGS_REBUILD_LOCK:
+        thread = threading.Thread(target=writer)
+        thread.start()
+        entered_while_rebuilding = entered_write.wait(timeout=0.25)
+        file_lock_was_free = config_module._CONFIG_FILE_LOCK.acquire(blocking=False)
+        if file_lock_was_free:
+            config_module._CONFIG_FILE_LOCK.release()
+        release_write.set()
+
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+    assert entered_while_rebuilding is False
+    assert file_lock_was_free is True

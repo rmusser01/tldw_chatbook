@@ -955,6 +955,17 @@ _SETTINGS_CACHE_LOCK = None  # Will be initialized when needed
 _SETTINGS_REBUILD_LOCK = None  # Will be initialized when needed
 
 
+def _settings_rebuild_lock():
+    """Return the process-wide reentrant settings rebuild lock."""
+
+    global _SETTINGS_REBUILD_LOCK
+    if _SETTINGS_REBUILD_LOCK is None:
+        import threading
+
+        _SETTINGS_REBUILD_LOCK = threading.RLock()
+    return _SETTINGS_REBUILD_LOCK
+
+
 def resolve_tldw_api_config(app_config) -> Dict:
     """Return the [tldw_api] section from either config shape.
 
@@ -1352,15 +1363,12 @@ def load_settings(force_reload: bool = False) -> Dict:
     Returns:
         The merged settings mapping.
     """
-    global _SETTINGS_CACHE_LOCK, _SETTINGS_REBUILD_LOCK
+    global _SETTINGS_CACHE_LOCK
 
-    if _SETTINGS_CACHE_LOCK is None or _SETTINGS_REBUILD_LOCK is None:
+    if _SETTINGS_CACHE_LOCK is None:
         import threading
 
-        if _SETTINGS_CACHE_LOCK is None:
-            _SETTINGS_CACHE_LOCK = threading.Lock()
-        if _SETTINGS_REBUILD_LOCK is None:
-            _SETTINGS_REBUILD_LOCK = threading.RLock()
+        _SETTINGS_CACHE_LOCK = threading.Lock()
 
     active_config_path = _get_effective_config_path()
 
@@ -1381,7 +1389,7 @@ def load_settings(force_reload: bool = False) -> Dict:
     # Miss: serialize the rebuild. Whoever loses the race re-checks the cache
     # and returns the winner's freshly built settings rather than repeating
     # the entire rebuild.
-    with _SETTINGS_REBUILD_LOCK:
+    with _settings_rebuild_lock():
         if not force_reload:
             cached = _cache_hit()
             if cached is not None:
@@ -5054,7 +5062,11 @@ def _config_interprocess_lock(config_path: Path) -> Iterator[None]:
 def _config_write_lock(config_path: Path) -> Iterator[None]:
     """Serialize one config write transaction within and across processes."""
 
-    with _config_file_lock(), _config_interprocess_lock(config_path):
+    with (
+        _settings_rebuild_lock(),
+        _config_file_lock(),
+        _config_interprocess_lock(config_path),
+    ):
         yield
 
 
