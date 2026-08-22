@@ -1092,16 +1092,119 @@ def test_campaign_owner_publish_link_failure_never_exposes_canonical_lock(
     assert not (tmp_path / ".campaign-acquire").exists()
 
 
-def test_campaign_partial_owner_temp_is_reclaimed_after_canonical_publish(
+def test_campaign_owner_publish_preserves_unrelated_partial_temp(
     tmp_path: Path,
 ) -> None:
-    abandoned = tmp_path / ".campaign-owner-abandoned"
-    abandoned.write_bytes(b'{"pid":')
+    unrelated = tmp_path / ".campaign-owner-unrelated"
+    unrelated.write_bytes(b'{"pid":')
 
     owner = _acquire_lock(tmp_path)
 
     assert profile._read_lock_owner(tmp_path / ".campaign-lock") == owner
-    assert not abandoned.exists()
+    assert unrelated.read_bytes() == b'{"pid":'
+
+
+def test_campaign_competing_acquirer_cannot_lose_its_owner_temp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    loser_ready = threading.Event()
+    winner_done = threading.Event()
+    real_link = profile.os.link
+    results: dict[str, object] = {}
+
+    def coordinated_link(source: Path, target: Path) -> None:
+        token = json.loads(Path(source).read_text(encoding="utf-8"))["owner_token"]
+        if token == "b" * 64:
+            loser_ready.set()
+            assert winner_done.wait(5)
+        real_link(source, target)
+
+    monkeypatch.setattr(profile.os, "link", coordinated_link)
+
+    def acquire(label: str, pid: int, token: str) -> None:
+        try:
+            results[label] = profile.acquire_campaign_lock(
+                tmp_path,
+                pid=pid,
+                process_start_probe=lambda _pid: _OWNER_START,
+                owner_token_factory=lambda: token,
+            )
+        except BaseException as exc:
+            results[label] = exc
+        finally:
+            if label == "winner":
+                winner_done.set()
+
+    loser = threading.Thread(
+        target=acquire, args=("loser", 222, "b" * 64)
+    )
+    winner = threading.Thread(
+        target=acquire, args=("winner", 111, "a" * 64)
+    )
+    loser.start()
+    assert loser_ready.wait(5)
+    winner.start()
+    winner.join(5)
+    loser.join(5)
+
+    assert not winner.is_alive()
+    assert not loser.is_alive()
+    assert isinstance(results["winner"], profile.CampaignLockOwner)
+    assert isinstance(results["loser"], RuntimeError)
+    assert str(results["loser"]) == "campaign_lock_held"
+    assert not tuple(tmp_path.glob(".campaign-owner-*"))
+
+
+def test_campaign_acquirer_and_recovery_finalize_same_owner_idempotently(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    acquirer_read_marker = threading.Event()
+    recovery_done = threading.Event()
+    real_read_owner_file = profile._read_owner_file
+    results: dict[str, object] = {}
+
+    def coordinated_read_owner_file(path: Path):
+        owner = real_read_owner_file(path)
+        if (
+            threading.current_thread().name == "campaign-acquirer"
+            and path.name == ".campaign-acquire"
+        ):
+            acquirer_read_marker.set()
+            assert recovery_done.wait(5)
+        return owner
+
+    monkeypatch.setattr(profile, "_read_owner_file", coordinated_read_owner_file)
+
+    def acquire() -> None:
+        try:
+            results["acquire"] = _acquire_lock(tmp_path)
+        except BaseException as exc:
+            results["acquire"] = exc
+
+    def recover() -> None:
+        try:
+            results["recover"] = profile.recover_interrupted_attempt(
+                tmp_path, process_start_probe=lambda _pid: _OWNER_START
+            )
+        except BaseException as exc:
+            results["recover"] = exc
+        finally:
+            recovery_done.set()
+
+    acquirer = threading.Thread(target=acquire, name="campaign-acquirer")
+    acquirer.start()
+    assert acquirer_read_marker.wait(5)
+    recovery = threading.Thread(target=recover, name="campaign-recovery")
+    recovery.start()
+    recovery.join(5)
+    acquirer.join(5)
+
+    assert not recovery.is_alive()
+    assert not acquirer.is_alive()
+    assert isinstance(results["acquire"], profile.CampaignLockOwner)
+    assert isinstance(results["recover"], RuntimeError)
+    assert str(results["recover"]) == "campaign_lock_owner_live"
+    assert profile._read_lock_owner(tmp_path / ".campaign-lock") == results["acquire"]
 
 
 def test_campaign_lock_refuses_second_owner_and_releases_only_exact_token(
