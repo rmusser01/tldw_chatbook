@@ -1079,9 +1079,7 @@ class PersonaBuddyController:
                 prepared: list[PersonaBuddyPreparedFrame] = []
                 prepared_cells = 0
                 for frame in resolution.frames:
-                    remaining_cells = (
-                        MAX_PERSONA_BUDDY_PREPARED_CELLS - prepared_cells
-                    )
+                    remaining_cells = MAX_PERSONA_BUDDY_PREPARED_CELLS - prepared_cells
                     if remaining_cells < 1:
                         return None
                     painted = prepare_persona_buddy_frame(

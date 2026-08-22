@@ -402,9 +402,7 @@ async def test_drag_while_viewport_becomes_compact_preserves_preferred_size():
         assert (preferred.width, preferred.height) == (28, 12)
         await pilot.resize_terminal(28, 12)
         await _wait_until(lambda: not buddy.has_class("persona-buddy-compact"))
-        await _wait_until(
-            lambda: (buddy.region.width, buddy.region.height) == (28, 12)
-        )
+        await _wait_until(lambda: (buddy.region.width, buddy.region.height) == (28, 12))
 
 
 @pytest.mark.asyncio

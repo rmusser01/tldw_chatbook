@@ -275,11 +275,7 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             self.refresh_from_controller(schedule_resolution=False)
             self._resolved_authority = authority
             current_visual = current_snapshot.visual
-            if (
-                visual is not None
-                and not visual.available
-                and current_visual is visual
-            ):
+            if visual is not None and not visual.available and current_visual is visual:
                 confirm = getattr(
                     self.screen, "confirm_persona_buddy_unavailable", None
                 )
@@ -477,10 +473,7 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             and not self.has_class("persona-buddy-compact")
             and getattr(visual, "animate", False)
             and len(frames) > 1
-            and (
-                self.frame_index < len(frames) - 1
-                or getattr(visual, "loop", False)
-            )
+            and (self.frame_index < len(frames) - 1 or getattr(visual, "loop", False))
         )
         if not active:
             self._stop_frame_timer()
@@ -533,9 +526,7 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         )
         self.set_class(collapsed and not compact, "persona-buddy-collapsed")
         collapse = self.query_one("#persona-buddy-collapse", Button)
-        collapse.label = (
-            "Buddy" if compact else ("Open Buddy" if collapsed else "Fold")
-        )
+        collapse.label = "Buddy" if compact else ("Open Buddy" if collapsed else "Fold")
         self._apply_geometry(self._working_preferences.geometry)
 
     def _compact_for_geometry(self, geometry: PersonaBuddyGeometry) -> bool:
@@ -543,8 +534,7 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         available_width = min(geometry.width, max(1, viewport.width))
         available_height = min(geometry.height, max(1, viewport.height))
         return (
-            available_width < _DEFAULT_WIDTH
-            or available_height < _FULL_CONTENT_HEIGHT
+            available_width < _DEFAULT_WIDTH or available_height < _FULL_CONTENT_HEIGHT
         )
 
     def _clamped_geometry(self, geometry: PersonaBuddyGeometry) -> PersonaBuddyGeometry:

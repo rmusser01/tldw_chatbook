@@ -353,8 +353,7 @@ def _child(preferences_path: Path, report_path: Path) -> int:
                 "open": preferences_now.open,
                 "resolution_calls": self.resolution_calls,
                 "compact": bool(
-                    buddy is not None
-                    and buddy.has_class("persona-buddy-compact")
+                    buddy is not None and buddy.has_class("persona-buddy-compact")
                 ),
                 "graceful_exit_requested": self.graceful_exit_requested,
                 "painted": "Buddy"
@@ -476,9 +475,7 @@ def _run_child(
             startup_output.extend(_drain_for(master, 0.02))
         if initial is None:
             tail = bytes(startup_output[-4000:]).decode("utf-8", errors="replace")
-            raise RuntimeError(
-                f"persona_buddy_terminal_initial_report_missing\n{tail}"
-            )
+            raise RuntimeError(f"persona_buddy_terminal_initial_report_missing\n{tail}")
 
         def wait_for_report(predicate: Any, *, timeout: float = 2.0) -> dict[str, Any]:
             deadline = time.monotonic() + timeout
@@ -623,9 +620,7 @@ def _run_child(
             observed["modal_close_replay"] = not modal_closed["view_present"]
 
             os.write(master, b"o")
-            wait_for_report(
-                lambda payload: payload["open"] and payload["view_present"]
-            )
+            wait_for_report(lambda payload: payload["open"] and payload["view_present"])
 
             os.write(master, b"m")
             modal_report = wait_for_report(
@@ -667,8 +662,7 @@ def _run_child(
                     and payload["controls"]["persona-buddy-close"]["display"]
                     and payload["controls"]["persona-buddy-collapse"]["label"]
                     == "Buddy"
-                    and payload["controls"]["persona-buddy-close"]["label"]
-                    == "Close"
+                    and payload["controls"]["persona-buddy-close"]["label"] == "Close"
                 )
             )
             _set_size(master, 10, 2)
@@ -692,12 +686,9 @@ def _run_child(
             os.write(master, b"k")
             compact_moved = wait_for_report(
                 lambda payload: (
-                    payload["geometry"]["y"]
-                    == max(0, compact_display_y - 1)
-                    and payload["geometry"]["width"]
-                    == compact_preferred["width"]
-                    and payload["geometry"]["height"]
-                    == compact_preferred["height"]
+                    payload["geometry"]["y"] == max(0, compact_display_y - 1)
+                    and payload["geometry"]["width"] == compact_preferred["width"]
+                    and payload["geometry"]["height"] == compact_preferred["height"]
                 )
             )
             _set_size(master, 28, 12)
@@ -706,8 +697,7 @@ def _run_child(
                 lambda payload: (
                     not payload["compact"]
                     and payload["region"]["width"] == compact_preferred["width"]
-                    and payload["region"]["height"]
-                    == compact_preferred["height"]
+                    and payload["region"]["height"] == compact_preferred["height"]
                 )
             )
             observed["compact_move_restore"] = bool(
@@ -736,8 +726,7 @@ def _run_child(
         process.wait(timeout=2)
         payload = json.loads(report.read_text(encoding="utf-8"))
         observed["graceful_exit"] = bool(
-            process.returncode == 0
-            and payload["graceful_exit_requested"]
+            process.returncode == 0 and payload["graceful_exit_requested"]
         )
         payload["initial_region"] = initial["region"]
         payload["observed"] = observed
@@ -830,9 +819,7 @@ def _parent(
                 ),
                 "viewport_clamp": first["observed"]["viewport_clamp"],
                 "compact_controls": first["observed"]["compact_controls"],
-                "compact_move_restore": first["observed"][
-                    "compact_move_restore"
-                ],
+                "compact_move_restore": first["observed"]["compact_move_restore"],
                 "capture_release": first["capture_released"],
                 "paint": first["observed"]["paint"],
                 "geometry_restore": second["loaded_geometry"] == first["geometry"],

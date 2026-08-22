@@ -1027,9 +1027,7 @@ async def test_preference_patch_is_immediate_before_slow_persistence() -> None:
         preference_writer=writer,
     )
     revision = controller.apply_preferences_patch(open=False)
-    operation = asyncio.create_task(
-        controller.persist_preferences_revision(revision)
-    )
+    operation = asyncio.create_task(controller.persist_preferences_revision(revision))
 
     assert controller.current_preferences().open is False
     assert await asyncio.to_thread(entered.wait, 2)
@@ -1061,9 +1059,7 @@ async def test_stale_geometry_persistence_cannot_resurrect_blocked_close() -> No
         preference_writer=writer,
     )
     close_revision = controller.apply_preferences_patch(open=False)
-    close = asyncio.create_task(
-        controller.persist_preferences_revision(close_revision)
-    )
+    close = asyncio.create_task(controller.persist_preferences_revision(close_revision))
     assert await asyncio.to_thread(entered.wait, 2)
 
     moved = PersonaBuddyGeometry(x=3, y=4, width=24, height=10)
