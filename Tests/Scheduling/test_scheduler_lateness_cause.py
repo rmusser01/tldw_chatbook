@@ -68,9 +68,98 @@ def test_a_late_dispatch_while_the_scheduler_runs_is_reported_as_busy(db):
     # The scheduler has been up since before the owed occurrence -- i.e. it
     # was watching at the scheduled time, so it cannot have been "away".
     loop._running_since = NOW - timedelta(hours=3)
+    # ...and the preceding tick demonstrably held the loop for longer than
+    # the grace. Both halves are required (review of task-19562): being up
+    # only rules "away" out, it does not make a handler the culprit.
+    loop._last_tick_dispatch_seconds = 600.0
     row = db.get_reminder_task(task_id)
 
     assert loop._report_lateness_cause(row, "reminder", NOW) == "busy"
+
+
+def test_a_suspended_process_is_not_blamed_on_a_handler(db):
+    """The misattribution this classifier shipped with, pinned.
+
+    A laptop with its lid closed keeps the app running and consumes ZERO
+    handler time; on wake every owed occurrence is hours late with
+    `_running_since` long predating it. The first version of the rule --
+    "scheduled after we started, therefore busy" -- reported that as
+    "an earlier handler in the same tick held the loop", which is false, and
+    false for the commonest way a desktop app goes quiet. `busy` now
+    requires the evidence; without it the honest answer is `stalled`.
+    """
+
+    async def handler(task):
+        return None
+
+    task_id = _hourly(db, next_run_at=NOW - timedelta(hours=2), title="late")
+    loop = _loop(db, now=NOW, handler=handler)
+    loop._running_since = NOW - timedelta(hours=3)
+    loop._last_tick_dispatch_seconds = 0.0  # nothing ran; nothing blocked
+    row = db.get_reminder_task(task_id)
+
+    assert loop._report_lateness_cause(row, "reminder", NOW) == "stalled"
+
+
+def test_the_tick_records_how_long_its_handlers_held_the_loop(db):
+    """The evidence field must be produced by a real tick, not set by hand."""
+    clock = {"now": NOW}
+
+    async def handler(task):
+        clock["now"] = clock["now"] + timedelta(minutes=10)
+        return None
+
+    db.create_reminder_task(
+        owner_id="local",
+        title="slow",
+        schedule_kind="recurring",
+        cron="* * * * *",
+        timezone="UTC",
+        next_run_at=(NOW - timedelta(seconds=1)).isoformat(),
+        enabled=True,
+    )
+    loop = SchedulerLoop(
+        db,
+        handlers={"reminder": handler},
+        clock=lambda: clock["now"],
+        missed_fire_grace_seconds=60.0,
+    )
+    assert loop._last_tick_dispatch_seconds == 0.0
+    loop.queue.load()
+    asyncio.run(loop.tick())
+
+    assert loop._last_tick_dispatch_seconds == pytest.approx(600.0), (
+        "tick did not record the time its handlers spent holding the loop"
+    )
+
+
+def test_a_raising_handler_still_records_the_tick_span(db):
+    """A failed dispatch must not leave the previous tick's figure standing."""
+    clock = {"now": NOW}
+
+    async def handler(task):
+        clock["now"] = clock["now"] + timedelta(minutes=10)
+        raise RuntimeError("handler exploded")
+
+    db.create_reminder_task(
+        owner_id="local",
+        title="boom",
+        schedule_kind="recurring",
+        cron="* * * * *",
+        timezone="UTC",
+        next_run_at=(NOW - timedelta(seconds=1)).isoformat(),
+        enabled=True,
+    )
+    loop = SchedulerLoop(
+        db,
+        handlers={"reminder": handler},
+        clock=lambda: clock["now"],
+        missed_fire_grace_seconds=60.0,
+    )
+    loop.queue.load()
+    asyncio.run(loop.tick())
+
+    assert loop._last_tick_dispatch_seconds == pytest.approx(600.0)
 
 
 def test_a_late_dispatch_after_a_restart_is_reported_as_away(db):

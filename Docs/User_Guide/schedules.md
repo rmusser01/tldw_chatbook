@@ -23,11 +23,16 @@ reminder's scheduled time passes, the reminder is **not replayed**: when you
 next open the app, the overdue occurrence fires once, immediately, and the
 task records honestly that it was late.
 
-A second cause produces the same "ran late" state, which is why the notice
-no longer claims the app was closed: the scheduler runs each tick's due
+Other causes produce the same "ran late" state, which is why the notice no
+longer claims the app was closed. The scheduler runs each poll's due
 handlers one after another, so a slow handler (a watchlist check may run up
-to its 300-second execution timeout) delays the tasks queued behind it in
-that tick. The app log names which cause it was.
+to its 300-second execution timeout) holds the loop and pushes the *next*
+poll — and everything due by then — past the grace window. A machine that
+sleeps or suspends with the app still open does the same thing without any
+handler being slow. The app log names which it was: `busy` when the previous
+poll's handlers account for the delay, `stalled` when the scheduler was up
+but nothing it ran explains it, and `away` when the scheduler genuinely was
+not running at the scheduled time.
 
 - **One-time reminders** fire once, late, and then complete as usual. Their
   detail pane shows "Ran late: the \<scheduled time\> occurrence dispatched

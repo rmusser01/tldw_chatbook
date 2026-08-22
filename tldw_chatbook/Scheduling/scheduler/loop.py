@@ -70,17 +70,24 @@ class SchedulerLoop:
         )
         self.running = False
         #: When this loop last started polling, or None while it is not
-        #: running (task-19562). This is the one fact that distinguishes the
-        #: two causes of a late dispatch, and only the loop has it: if a
-        #: task's scheduled time fell AFTER this instant, the scheduler was
-        #: demonstrably up and watching at that moment, so the lateness came
-        #: from inside the process -- `tick` awaits every handler serially,
-        #: and one slow handler delays every task behind it. If it fell
-        #: before, the app really was away. Nothing downstream can tell
-        #: those apart from the row alone, which is exactly how "missed
-        #: while away" came to be shown for a scheduler that never stopped
-        #: running.
+        #: running (task-19562). Necessary but NOT sufficient to name the
+        #: cause of a late dispatch: if a task's scheduled time fell before
+        #: this instant the app really was away, but a scheduled time after
+        #: it only rules "away" out -- it does not establish that a handler
+        #: was what held the loop. `_last_tick_dispatch_seconds` carries that
+        #: second half.
         self._running_since: datetime | None = None
+        #: How long the previous tick spent dispatching, on the loop's own
+        #: clock (review of task-19562). This is the evidence half of the
+        #: attribution, and it is what makes "busy" falsifiable rather than
+        #: assumed: `tick` freezes `now` at its start, so an over-running
+        #: handler cannot make a task in ITS OWN tick look late -- it delays
+        #: the NEXT tick. A dispatch is only attributed to a busy scheduler
+        #: when the preceding tick demonstrably burned more than the
+        #: missed-fire grace. Without this, a suspended machine (lid closed,
+        #: app still running, zero handler time consumed) was reported as
+        #: "an earlier handler held the loop", which is simply false.
+        self._last_tick_dispatch_seconds: float = 0.0
         self._tick_count = 0
         self._reload_requested = False
         self.queue = PriorityQueue(
@@ -180,8 +187,24 @@ class SchedulerLoop:
             await asyncio.sleep(self.poll_interval)
 
     async def tick(self) -> None:
-        """Evaluate once and dispatch any due tasks."""
+        """Evaluate once and dispatch any due tasks.
+
+        The dispatch span is measured (review of task-19562) because it is
+        the only evidence that distinguishes a loop held by its own handlers
+        from a process that was not scheduled at all -- see
+        `_report_lateness_cause`. Recorded in a `finally` so a raising
+        handler cannot leave the previous tick's figure standing.
+        """
         now = self.clock()
+        try:
+            await self._dispatch_due(now)
+        finally:
+            self._last_tick_dispatch_seconds = max(
+                (self.clock() - now).total_seconds(), 0.0
+            )
+
+    async def _dispatch_due(self, now: datetime) -> None:
+        """Dispatch everything due at ``now`` (the tick's frozen clock)."""
         due = self.queue.pop_due(now)
         for task in due:
             task_type = task.get("type", "reminder")
@@ -303,16 +326,34 @@ class SchedulerLoop:
         time") for a scheduler that had never stopped.
 
         The row cannot carry the difference without a schema change, but the
-        loop can state it here, where `_running_since` is available: a
-        scheduled time that falls after this loop started is a dispatch the
-        scheduler was present for, so any lateness is in-process. The
-        counter makes the two causes separable in metrics; the UI copy no
-        longer claims to know which one it was (see
-        `scheduling/task_detail.py`).
+        loop can state it here. Two facts are needed, and the first version
+        of this used only one:
+
+        * `_running_since` -- a scheduled time BEFORE it means the app was
+          genuinely away. This half rules "away" in or out and is sound.
+        * `_last_tick_dispatch_seconds` -- the review of task-19562 measured
+          the missing half. `scheduled_at >= _running_since` alone was being
+          reported as "an earlier handler in the same tick held the loop",
+          and that was false twice over. A suspended machine (lid closed, app
+          still running) consumes ZERO handler time and produced exactly that
+          warning; and `tick` freezes `now` at its start, so a handler can
+          never make a task in its OWN tick look late -- it delays the NEXT
+          tick. "busy" therefore now requires the evidence: the preceding
+          tick must itself have burned more than the missed-fire grace.
+
+        When the scheduler was up but nothing it did explains the delay, the
+        honest answer is neither -- the process was not scheduled (suspend,
+        sleep, or a starved event loop). That is reported as ``"stalled"``
+        rather than folded into a cause it is not.
+
+        The counter makes the causes separable in metrics; the UI copy
+        deliberately claims none of them (see `scheduling/task_detail.py`).
 
         Returns:
-            ``"busy"`` (late, scheduler was up), ``"away"`` (late, scheduler
-            was not up at the scheduled time), or None when not late.
+            ``"busy"`` (late, and the previous tick demonstrably held the
+            loop), ``"stalled"`` (late, scheduler was up, nothing it ran
+            accounts for it), ``"away"`` (late, scheduler was not up at the
+            scheduled time), or None when not late.
         """
         scheduled_raw = task.get("next_run_at")
         if not isinstance(scheduled_raw, str) or not scheduled_raw:
@@ -328,11 +369,13 @@ class SchedulerLoop:
             return None
 
         running_since = self._running_since
-        cause = (
-            "busy"
-            if running_since is not None and scheduled_at >= running_since
-            else "away"
-        )
+        held_seconds = self._last_tick_dispatch_seconds
+        if running_since is None or scheduled_at < running_since:
+            cause = "away"
+        elif held_seconds > self.missed_fire_grace_seconds:
+            cause = "busy"
+        else:
+            cause = "stalled"
         log_counter(
             "scheduler_dispatch_late",
             labels={"task_type": task_type, "cause": cause},
@@ -340,10 +383,23 @@ class SchedulerLoop:
         if cause == "busy":
             logger.warning(
                 "Task {task_id} dispatched {late_by:.0f}s after its scheduled "
-                "time while the scheduler was running -- an earlier handler "
-                "in the same tick held the loop. This is NOT a missed fire.",
+                "time while the scheduler was running: the preceding tick "
+                "spent {held:.0f}s in its handlers, delaying this one. This "
+                "is NOT a missed fire.",
                 task_id=task.get("id"),
                 late_by=late_by,
+                held=held_seconds,
+            )
+        elif cause == "stalled":
+            logger.warning(
+                "Task {task_id} dispatched {late_by:.0f}s after its scheduled "
+                "time while the scheduler was running, and no handler accounts "
+                "for the delay (previous tick: {held:.0f}s) -- the process was "
+                "most likely suspended or the event loop starved. This is NOT "
+                "a missed fire.",
+                task_id=task.get("id"),
+                late_by=late_by,
+                held=held_seconds,
             )
         return cause
 

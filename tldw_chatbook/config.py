@@ -3242,13 +3242,15 @@ scheduler_poll_interval_seconds = 30
 # A dispatch more than this many seconds after its scheduled time counts as
 # late and is recorded on the task (missed_at/missed_count, task-18937).
 # Default is 2x the poll interval: an idle scheduler dispatches within one
-# poll. Beyond 2x means one of two things, and the row cannot tell them
+# poll. Beyond 2x has several possible causes and the row cannot tell them
 # apart (task-19562): the scheduler was not running at the scheduled time
-# (app closed or asleep), OR it was running and busy -- tick awaits every
-# due handler serially, so one slow handler delays the rest of that tick.
-# The loop logs which it was and counts it as scheduler_dispatch_late with
-# a cause label. A task created mid-session reloads the queue immediately,
-# so that case does not false-positive here.
+# (app closed), the machine slept or the loop was starved while the app
+# stayed open, or the scheduler was busy -- tick awaits every due handler
+# serially, so a slow handler holds the loop and pushes the NEXT poll past
+# the grace. The loop logs which it was and counts it as
+# scheduler_dispatch_late with a cause label (away / stalled / busy). A
+# task created mid-session reloads the queue immediately, so that case does
+# not false-positive here.
 missed_fire_grace_seconds = 60
 # Handler execution timeout (task-18939): a scheduled-task handler still
 # running after this many seconds is cancelled and its dispatch records

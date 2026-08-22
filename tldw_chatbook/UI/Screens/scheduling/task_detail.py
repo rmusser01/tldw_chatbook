@@ -574,8 +574,8 @@ class TaskDetail(Vertical):
         else:
             copy = (
                 f"Ran late: the {scheduled} occurrence dispatched well after "
-                "its scheduled time (the app was closed, or the scheduler was "
-                "busy with an earlier task)."
+                "its scheduled time (for example the app was closed or "
+                "asleep, or the scheduler was busy with an earlier task)."
             )
         notice.update(copy)
         notice.display = True
