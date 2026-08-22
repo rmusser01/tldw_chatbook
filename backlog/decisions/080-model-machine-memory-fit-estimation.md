@@ -1,4 +1,4 @@
-# ADR-080: Keep model machine-fit estimates local, conservative, and runtime-neutral
+# ADR-080: Keep model memory scenarios local, explicit, and runtime-neutral
 
 Status: Accepted
 Date: 2026-08-22
@@ -6,16 +6,19 @@ Related Task: TASK-20938
 
 ## Decision
 
-Chatbook will expose a provider-neutral machine-memory observation and GGUF fit
-estimation contract for model discovery. The contract is advisory: it estimates
-whether one model can plausibly load at a small 32K context or standard 64K
-context, but it does not claim runtime compatibility, successful inference,
-GPU offload, or acceptable speed.
+Chatbook will expose a provider-neutral machine-memory observation and GGUF
+memory-scenario contract for model discovery. The contract is advisory: it
+compares one model's heuristic allowance at exactly 32,768 or 65,536 tokens
+with installed system RAM, but it does not claim that the model supports either
+context, runtime compatibility, successful inference, GPU offload, or
+acceptable speed.
 
 Machine observations remain process-memory only. They are never persisted,
 synchronized, or included in ordinary or debug logs. The probe collects only
 bounded platform, architecture, total/available physical-memory, memory-kind,
-and accelerator-memory facts. It never collects hostnames, serial numbers,
+and accelerator-memory facts. System-memory and accelerator evidence have
+independent states so missing GPU evidence cannot weaken a valid RAM capacity
+observation. It never collects hostnames, serial numbers,
 GPU UUIDs, driver inventories, process lists, or network data.
 
 The supported observation platforms are macOS, Linux, and Windows. Physical
@@ -23,15 +26,16 @@ memory comes from the already-required `psutil` dependency and is observed off
 the Textual event loop. Apple Silicon is classified as unified memory: its
 physical-memory value is shown once and is never added again as VRAM. On Linux
 and Windows, dedicated accelerator memory is optional evidence. A bounded,
-fixed-argument `nvidia-smi` probe may run only from reviewed system locations,
-with no shell, a short timeout, a strict output cap, and sanitized parsing.
-Linux may additionally read bounded AMD or Intel DRM VRAM counters from
-resolved system-owned sysfs paths. Multiple accelerators remain separate and
+fixed-argument `nvidia-smi` probe may run only from explicit trusted system
+locations, with no shell, a short timeout, a strict output cap, and sanitized
+parsing.
+Linux may additionally read the kernel-documented AMD DRM VRAM counter from
+resolved system-owned sysfs paths. Intel DRM observation is deferred until a
+primary kernel contract is identified. Multiple accelerators remain separate and
 are never summed because usable combinations depend on runtime configuration.
-Missing accelerator evidence makes the snapshot partial; it does not prevent a
-system-memory estimate. A complete snapshot means every supported probe branch
-for that platform settled successfully; it is not an exhaustive hardware or
-driver inventory.
+Missing accelerator evidence does not prevent a system-memory estimate.
+Accelerator values are labeled observed/reported evidence and never usable
+runtime capacity; OS reservation, vGPU, MIG, and runtime policy may differ.
 
 The v1 estimation policy uses the exact candidate byte total and integer-only
 allowances rounded upward to MiB:
@@ -39,34 +43,40 @@ allowances rounded upward to MiB:
 - runtime allowance = `max(1 GiB, 10% of GGUF bytes)`;
 - 32K context allowance = `max(4 GiB, 25% of GGUF bytes)`;
 - 64K context allowance = twice the 32K allowance;
-- safe machine reserve = `max(2 GiB, 20% of total physical memory)`;
-- safe model budget = total physical memory minus that reserve.
+- machine reserve = `max(2 GiB, 20% of total physical memory)`;
+- RAM working budget = total physical memory minus that reserve.
 
-For each context, an estimated load within the safe model budget is **likely**,
-an estimate above the safe budget but within total physical memory is a
-**close call**, and an estimate above total physical memory is **unlikely**.
-Missing or invalid physical-memory evidence yields **unknown**. Current
-available memory is displayed as volatile evidence when valid but does not
-change the rating, so background load cannot make rows oscillate while users
-compare them.
+For each scenario, an estimated load within the RAM working budget is
+**within budget**, an estimate above that budget but within total physical
+memory **crosses the reserve**, and an estimate above total physical memory
+**exceeds installed RAM**. Missing or invalid physical-memory evidence yields
+**unknown**. Current available memory is displayed as volatile evidence and
+produces a separate close-other-workloads warning when below the scenario
+estimate, but it does not change the stable capacity classification.
 
-The Remote Models UI will lead with the 64K result and show the 32K fallback.
-Examples include `Likely fits at 64K`, `Likely at 32K · 64K is close`, and
-`Unlikely at 32K`. Every row shows the estimated load and safe budget that
-produced its label. A compact machine-evidence panel exposes RAM/unified memory,
-available memory when valid, per-device VRAM when observed, assumptions, and a
-keyboard-reachable Refresh action. Ratings never disable candidate selection,
-consent, or installation.
+The Remote Models UI will lead with the 65,536-token result and show the
+32,768-token fallback. Examples include `64K scenario within RAM budget`,
+`32K within budget · 64K crosses reserve`, and `32K exceeds installed RAM`.
+Every expanded row shows both estimated loads and the RAM working budget that
+produced its label. Adjacent copy states that these are memory scenarios, not
+model-context or runtime checks, and that observed VRAM does not affect the
+rating. Ratings never disable candidate selection, consent, or installation.
 
-RemoteView owns only the presentation and request generation. A separate
+The recomposition-stable LLMScreen owns the accepted process-session snapshot,
+observation time, probe generation, and Worker. A separate
 format/provider-neutral module owns immutable observation values, bounded
-platform probes, and pure estimation. Observation begins lazily after a
-repository resolves. It runs in an exclusive thread worker, and only the
-current generation may publish. Refresh retains the previous accepted snapshot
-until a newer snapshot succeeds; a refresh failure is shown alongside the age
-of the retained evidence. Candidate estimate statics update in place so a
-finishing probe cannot destroy keyboard focus. Filtered or sorted rows project
-the latest accepted snapshot when they are rebuilt.
+platform probes, and pure estimation. RemoteView requests rechecks and renders
+immutable presentation state. Observation begins lazily after a repository
+resolves; only the current generation may publish. A failed refresh retains the
+previous valid RAM snapshot with fixed observed-at copy. A replacement
+RemoteView is hydrated after deferred mounting. Candidate estimate statics
+update in place so a finishing probe cannot destroy keyboard focus.
+
+At a measured RemoteView content width below 72 cells, the repository workflow
+uses one-pane drill-down with a text-labeled Back action and collapsed estimate
+details. At 72 cells or wider, results and detail remain side by side with
+expanded estimate details. Exact filenames remain untruncated in the scrolling
+detail pane at every width.
 
 ## Context
 
@@ -82,7 +92,8 @@ metadata, a selected runtime, GPU-layer settings, or a proven accelerator
 backend. Fetching provider-specific file headers would add network and adapter
 contracts, while importing native ML runtimes to inspect accelerators can
 initialize hardware or abort headless processes. The estimate therefore needs
-an explicit conservative policy whose inputs and limitations are visible.
+an explicit heuristic policy whose inputs, classification boundary, and
+limitations are visible.
 
 ADR-025 remains authoritative for artifact truth, structural GGUF admission,
 managed storage, provenance, and the rule that generic GGUF validity is not
@@ -105,18 +116,20 @@ advisory comparison projection.
 ## Consequences
 
 - A new provider-neutral model capability module becomes the single owner of
-  machine-memory snapshots and GGUF memory estimates.
-- Most Linux and Windows snapshots may be partial because absence of one
-  supported accelerator probe is not proof that no accelerator exists.
+  snapshot types, bounded observation, and pure GGUF memory estimates;
+  LLMScreen owns the accepted process-session value and probe lifecycle.
+- Valid Linux and Windows RAM observations remain usable even when independent
+  accelerator evidence is partial or not observed.
 - CPU architecture is evidence context only. Core count, throughput, and model
   speed are not estimated.
 - Apple Silicon receives one unified-memory value rather than misleading RAM
   plus VRAM totals.
-- 64K is the standard comparison and 32K is the small fallback. Smaller context
-  configurations may work when both estimates are pessimistic, but v1 does not
-  add more context presets.
-- The estimates intentionally favor false caution over false reassurance and
-  may be conservative for architectures with efficient grouped-query attention.
+- 65,536 tokens is the primary memory scenario and 32,768 is the fallback.
+  Neither label claims that the model supports that context. Smaller context
+  configurations may use less memory, but v1 does not add more presets.
+- The allowances are transparent policy values, not architecture-derived KV
+  cache measurements. Their outcomes describe only whether the policy total is
+  within the chosen RAM boundary.
 - Exact context memory remains unknown until architecture metadata and runtime
   settings are available. A future runtime-specific estimator must add a new
   evidence tier rather than silently changing the meaning of these labels.
